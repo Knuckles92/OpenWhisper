@@ -320,7 +320,7 @@ def test_ended_unlocks_active_while_retaining_dashboard(runtime):
     rt._finalizing = True
     rt._finalization = {
         "status": "running",
-        "message": "Preparing final cloud insights…",
+        "message": "Preparing final insights…",
     }
     controller.meeting_active = True
 
@@ -349,7 +349,7 @@ def test_terminal_finalization_clears_guard_without_modal(runtime):
         "status": "ended",
         "finalization": {
             "status": "completed",
-            "message": "Final cloud insights are ready.",
+            "message": "Final insights are ready.",
         },
     })
 
@@ -362,6 +362,20 @@ def test_terminal_finalization_clears_guard_without_modal(runtime):
     )
 
 
+def test_engine_pause_status_mirrors_onto_the_tab(runtime):
+    rt, controller = runtime
+    states = []
+    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+
+    rt._on_engine_event("status", {"status": "paused"})
+    rt._on_engine_event("status", {"status": "active"})
+    rt._on_engine_event("status", {"status": "ending"})
+
+    assert states[0]["paused"] is True
+    assert states[1]["paused"] is False
+    assert "paused" not in states[2]
+
+
 def test_failed_finalization_is_non_modal(runtime):
     rt, controller = runtime
     errors = []
@@ -371,7 +385,7 @@ def test_failed_finalization_is_non_modal(runtime):
         "status": "ended",
         "finalization": {
             "status": "failed",
-            "message": "Final cloud insights failed: boom",
+            "message": "Final insights failed: boom",
         },
     })
 
@@ -411,7 +425,7 @@ def test_retry_insights_runs_and_updates_finalization(runtime, monkeypatch):
             "error": None,
             "finalization": {
                 "status": "completed",
-                "message": "Final cloud insights are ready.",
+                "message": "Final insights are ready.",
                 "steps": [
                     {
                         "id": "consolidation",
@@ -439,7 +453,7 @@ def test_retry_insights_runs_and_updates_finalization(runtime, monkeypatch):
     assert fake_engine._set_finalization.called
     status, message = fake_engine._set_finalization.call_args[0][:2]
     assert status == "completed"
-    assert message == "Final cloud insights are ready."
+    assert message == "Final insights are ready."
 
 
 def test_retry_after_engine_teardown_uses_card_meeting(runtime, monkeypatch):
@@ -463,7 +477,7 @@ def test_retry_after_engine_teardown_uses_card_meeting(runtime, monkeypatch):
             "error": None,
             "finalization": {
                 "status": "completed",
-                "message": "Final cloud insights are ready.",
+                "message": "Final insights are ready.",
                 "steps": [],
             },
         }
@@ -724,7 +738,7 @@ def test_retry_finalization_from_worker_uses_signal(runtime, monkeypatch):
             "error": None,
             "finalization": {
                 "status": "completed",
-                "message": "Final cloud insights are ready.",
+                "message": "Final insights are ready.",
                 "steps": [],
             },
         }
@@ -1097,6 +1111,55 @@ def test_finalize_recovered_passes_meeting_dict(runtime, monkeypatch):
     assert release == controller.restore_local_engine
     assert "finalized" in statuses[-1].lower()
     assert errors == []
+
+
+def test_finalize_recovered_hands_off_to_the_retry_pipeline(runtime, monkeypatch):
+    rt, _controller = runtime
+    meeting = {"id": "m_dead", "spool_dir": "/spool/m_dead", "cloud_enabled": True}
+    monkeypatch.setattr(
+        rt, "_repository",
+        lambda: SimpleNamespace(get_meeting=lambda meeting_id: meeting),
+    )
+    monkeypatch.setattr(
+        "meeting.recovery.finalize_meeting", lambda *args, **kwargs: True,
+    )
+    monkeypatch.setitem(
+        _RUNTIME_GLOBALS, "resolve_meeting_end_redecode", lambda settings: True,
+    )
+    retried = []
+    monkeypatch.setattr(
+        rt, "retry_finalization",
+        lambda step, meeting_id=None: retried.append((step, meeting_id)),
+    )
+
+    rt._finalize_recovered_worker("m_dead")
+
+    assert retried == [("redecode", "m_dead")]
+
+
+@pytest.mark.parametrize(
+    "meeting, redecode, polish, report, expected",
+    [
+        ({"spool_dir": "/s", "cloud_enabled": False}, True, True, True, "redecode"),
+        ({"spool_dir": "", "cloud_enabled": False}, True, True, True, None),
+        ({"spool_dir": "/s", "cloud_enabled": True}, False, True, True, "polish"),
+        ({"spool_dir": "/s", "cloud_enabled": True}, False, False, True, "consolidation"),
+        ({"spool_dir": "/s", "cloud_enabled": True}, False, False, False, None),
+    ],
+)
+def test_recovered_follow_up_matches_live_end_settings(
+    monkeypatch, meeting, redecode, polish, report, expected,
+):
+    monkeypatch.setitem(
+        _RUNTIME_GLOBALS, "resolve_meeting_end_redecode", lambda s: redecode,
+    )
+    monkeypatch.setitem(
+        _RUNTIME_GLOBALS, "resolve_meeting_end_polish", lambda s: polish,
+    )
+    monkeypatch.setitem(
+        _RUNTIME_GLOBALS, "resolve_meeting_end_report", lambda s: report,
+    )
+    assert MeetingRuntime._recovered_follow_up_step(meeting, {}) == expected
 
 
 def test_finalize_recovered_reports_failure(runtime, monkeypatch):

@@ -364,21 +364,6 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
             </aside>
 
             <div className="workspace-center">
-              {isHost && showActivity && !reportsSettled && (
-                <ActivityPane
-                  token={token}
-                  onUndo={sendUndo}
-                  onHide={() => setShowActivity(false)}
-                  refreshKey={ui.state.seq}
-                  cloudEnabled={ui.state.cloud_enabled}
-                  intelligenceOnline={ui.state.intelligence_online}
-                  meetingStatus={ui.state.status}
-                  finalizationStatus={ui.state.finalization?.status ?? null}
-                  finalizationMessage={ui.state.finalization?.message ?? null}
-                  agentActivity={ui.agentActivity}
-                />
-              )}
-
               {ui.state.status === 'ended' || ui.state.finalization?.status === 'completed' ? (
                 <>
                 {isHost && <InsightReview state={ui.state} onSendOp={sendOp} onEvidenceClick={handleEvidenceClick}
@@ -461,6 +446,20 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                       cloudEnabled={ui.state.cloud_enabled}
                       paused={ui.state.status === 'paused'} isHost={isHost} />}
                 </>
+              )}
+              {isHost && showActivity && !reportsSettled && (
+                <ActivityPane
+                  token={token}
+                  onUndo={sendUndo}
+                  onHide={() => setShowActivity(false)}
+                  refreshKey={ui.state.seq}
+                  cloudEnabled={ui.state.cloud_enabled}
+                  intelligenceOnline={ui.state.intelligence_online}
+                  meetingStatus={ui.state.status}
+                  finalizationStatus={ui.state.finalization?.status ?? null}
+                  finalizationMessage={ui.state.finalization?.message ?? null}
+                  agentActivity={ui.agentActivity}
+                />
               )}
             </div>
 

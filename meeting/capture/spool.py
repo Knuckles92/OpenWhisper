@@ -103,8 +103,8 @@ _MAX_GAP_LOGS = 5
 #: keep peak memory bounded on a long meeting.
 SESSION_RESAMPLE_WINDOW_S = 30.0
 
-#: How often the session JSON watermark is rewritten during capture.
-_SESSION_META_EVERY_SAMPLES = 16000 * 5
+#: Seconds of audio between session JSON watermark rewrites during capture.
+_SESSION_META_EVERY_S = 5.0
 
 #: Queue item that tells the writer thread to finalize and exit.
 _SENTINEL = object()
@@ -1013,9 +1013,12 @@ class SpoolWriter:
         payload = np.ascontiguousarray(frames, dtype=np.int16)
         self._session_fp.write(payload.tobytes())
         self._session_samples += int(payload.size)
+        # The session PCM is at the device rate; the interval is in seconds.
+        meta_every = int(
+            _SESSION_META_EVERY_S * (self._session_rate or TARGET_RATE)
+        )
         if opened or (
-            self._session_samples - self._session_meta_at
-            >= _SESSION_META_EVERY_SAMPLES
+            self._session_samples - self._session_meta_at >= meta_every
         ):
             self._write_session_meta()
             self._session_meta_at = self._session_samples

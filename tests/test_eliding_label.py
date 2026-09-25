@@ -11,7 +11,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QLabel
+from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QSizePolicy, QWidget
 
 from ui_qt.widgets.eliding_label import ElidingLabel
 
@@ -74,6 +74,32 @@ def test_minimum_width_still_ignores_text_length(app):
     assert long.minimumSizeHint().width() < long.fontMetrics().horizontalAdvance(
         long.text()
     )
+
+
+def test_new_text_grows_a_label_laid_out_while_empty(app):
+    # Laid out empty, the label is narrower than an ellipsis, so the new text
+    # elides to "" just as the old one did; the layout must still hear that
+    # the hint changed.
+    host = QWidget()
+    row = QHBoxLayout(host)
+    label = ElidingLabel("")
+    # A sliver of width, as a hidden panel laid out before its text is set
+    # leaves it; a width of zero takes a different path in the elide.
+    label.setMinimumWidth(6)
+    row.addWidget(label)
+    filler = QWidget()
+    filler.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    row.addWidget(filler, stretch=1)
+    host.resize(600, 40)
+    host.show()
+    app.processEvents()
+    assert label.width() < label.fontMetrics().horizontalAdvance("…")
+
+    label.setText("Microphone (USB Audio)")
+    app.processEvents()
+    assert label.width() >= label.sizeHint().width()
+    assert QLabel.text(label) == "Microphone (USB Audio)"
+    host.close()
 
 
 def test_size_hint_is_the_same_whether_or_not_currently_elided(app):

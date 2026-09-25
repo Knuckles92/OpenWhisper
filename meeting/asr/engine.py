@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 
 from meeting.asr.audio import load_wav_int16, prepare_for_whisper
+from meeting.asr.hallucination import is_hallucination
 from meeting.asr.revise import (
     REVISION_WINDOW_S,
     align_revision_start,
@@ -63,6 +64,13 @@ DRAFT_PROMPT_WORDS = 50
 #: real time on duplicate audio once the window is full.  A 20-second cadence
 #: keeps revisions responsive while bounding the steady-state overlap cost.
 REVISE_MIN_ADVANCE_S = 20.0
+
+#: With language set to auto, the offline re-decode reuses the live pass's
+#: language only when the meeting was clearly one language: enough confident
+#: chunk detections, nearly all agreeing. Bilingual meetings keep auto.
+LANGUAGE_VOTE_MIN_PROB = 0.8
+LANGUAGE_VOTE_MIN_COUNT = 5
+LANGUAGE_VOTE_SHARE = 0.9
 
 #: Queue sentinel telling the worker to exit.
 _STOP = object()
@@ -166,6 +174,8 @@ class MeetingAsrEngine:
         self._pending_revise: Dict[str, float] = {}
         self._last_revised_frontier: Dict[str, float] = {}
         self._revise_lock = threading.Lock()
+        #: Confident auto-detected languages of chunks that held speech.
+        self._language_votes: Dict[str, int] = {}
 
     def start(
         self,
@@ -273,9 +283,36 @@ class MeetingAsrEngine:
             spool_dir,
             self.meeting_id,
             chunks,
-            language=self.language,
+            language=self.dominant_language(),
             progress_cb=progress_cb,
         )
+
+    def dominant_language(self) -> Optional[str]:
+        """The configured language, or the one live chunks clearly agreed on.
+
+        Returns:
+            An ISO-639-1 code, or ``None`` to keep per-window detection.
+        """
+        if self.language:
+            return self.language
+        votes = dict(self._language_votes)
+        total = sum(votes.values())
+        if total < LANGUAGE_VOTE_MIN_COUNT:
+            return None
+        language, count = max(votes.items(), key=lambda item: item[1])
+        return language if count >= LANGUAGE_VOTE_SHARE * total else None
+
+    def _record_language(self, info: Any, held_speech: bool) -> None:
+        if self.language or not held_speech:
+            return
+        language = getattr(info, "language", None)
+        probability = getattr(info, "language_probability", None)
+        if (
+            isinstance(language, str) and language
+            and isinstance(probability, (int, float))
+            and probability >= LANGUAGE_VOTE_MIN_PROB
+        ):
+            self._language_votes[language] = self._language_votes.get(language, 0) + 1
 
     def stop(self) -> None:
         """Stop the worker and release the model."""
@@ -489,7 +526,7 @@ class MeetingAsrEngine:
         if audio.size == 0:
             return []
 
-        whisper_segments, _info = self._backend.model.transcribe(
+        whisper_segments, info = self._backend.model.transcribe(
             audio,
             beam_size=beam_size,
             vad_filter=True,
@@ -505,7 +542,7 @@ class MeetingAsrEngine:
         segments: List[TranscriptSegment] = []
         for ordinal, seg in enumerate(whisper_segments):
             text = (seg.text or "").strip()
-            if not text:
+            if not text or is_hallucination(seg):
                 continue
             segments.append(TranscriptSegment(
                 segment_id=self._stable_segment_id(chunk.chunk_id, ordinal),
@@ -516,6 +553,7 @@ class MeetingAsrEngine:
                 end_s=chunk.start_s + float(seg.end),
                 text=text,
             ))
+        self._record_language(info, bool(segments))
         return segments
 
     def _draft_prompt(self, chunk: SpooledChunk) -> Optional[str]:
@@ -796,7 +834,7 @@ class MeetingAsrEngine:
         decoded: List[TranscriptSegment] = []
         for ordinal, seg in enumerate(whisper_segments):
             text = (seg.text or "").strip()
-            if not text:
+            if not text or is_hallucination(seg):
                 continue
             start_s = audio_start + float(seg.start)
             end_s = audio_start + float(seg.end)

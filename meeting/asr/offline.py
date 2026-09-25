@@ -9,11 +9,13 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 from meeting.asr.audio import WHISPER_SAMPLE_RATE, load_wav_int16, prepare_for_whisper
+from meeting.asr.hallucination import is_hallucination
 from meeting.capture.spool import (
     QUIET_RMS,
     find_cut_point,
@@ -21,7 +23,7 @@ from meeting.capture.spool import (
     resolve_session_wav,
     session_meta_path,
 )
-from meeting.interfaces import CHANNELS, TranscriptSegment
+from meeting.interfaces import CHANNEL_LOOPBACK, CHANNEL_MIC, CHANNELS, TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +249,7 @@ def transcribe_session_audio(
         decoded: List[TranscriptSegment] = []
         for ordinal, seg in enumerate(whisper_segments):
             text = (seg.text or "").strip()
-            if not text:
+            if not text or is_hallucination(seg):
                 continue
             start_s = window_origin + float(seg.start)
             end_s = window_origin + float(seg.end)
@@ -360,5 +362,62 @@ def transcribe_meeting_sessions(
             "Offline ASR %s: %d segments from %.1fs of audio",
             channel, len(decoded), frames.size / float(rate or WHISPER_SAMPLE_RATE),
         )
+    merged = drop_mic_echo(merged)
     merged.sort(key=lambda seg: (float(seg.start_s), seg.channel, seg.segment_id))
     return merged
+
+
+#: Acoustic delay plus decode timing jitter between the two channels.
+ECHO_TIME_SLACK_S = 1.0
+#: Share of a mic segment's words that must also be heard on system audio.
+ECHO_WORD_OVERLAP = 0.6
+#: Shorter mic segments ("yes", "okay, sure") are kept: both sides really do
+#: say them at the same moment.
+ECHO_MIN_WORDS = 3
+
+_WORD = re.compile(r"\w+")
+
+
+def drop_mic_echo(segments: List[TranscriptSegment]) -> List[TranscriptSegment]:
+    """Drop mic segments that repeat what system audio played at that moment.
+
+    Without headphones the microphone re-records remote speakers, and that
+    copy would otherwise be stored a second time attributed to "Me". System
+    audio is the clean source, so the mic copy is the one removed.
+
+    Args:
+        segments: Segments from every channel.
+
+    Returns:
+        ``segments`` without the mic echoes, order preserved.
+    """
+    loopback = [
+        (float(seg.start_s), float(seg.end_s), set(_WORD.findall(seg.text.lower())))
+        for seg in segments if seg.channel == CHANNEL_LOOPBACK
+    ]
+    if not loopback:
+        return segments
+    kept: List[TranscriptSegment] = []
+    dropped = 0
+    for seg in segments:
+        if seg.channel != CHANNEL_MIC:
+            kept.append(seg)
+            continue
+        words = _WORD.findall(seg.text.lower())
+        if len(words) < ECHO_MIN_WORDS:
+            kept.append(seg)
+            continue
+        start = float(seg.start_s) - ECHO_TIME_SLACK_S
+        end = float(seg.end_s) + ECHO_TIME_SLACK_S
+        heard: set = set()
+        for lb_start, lb_end, lb_words in loopback:
+            if lb_start < end and lb_end > start:
+                heard |= lb_words
+        shared = sum(1 for word in words if word in heard)
+        if shared >= ECHO_WORD_OVERLAP * len(words):
+            dropped += 1
+            continue
+        kept.append(seg)
+    if dropped:
+        logger.info("Offline ASR dropped %d mic segment(s) echoing system audio", dropped)
+    return kept

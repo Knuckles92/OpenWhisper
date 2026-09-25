@@ -825,6 +825,10 @@ def _op_reassign_segment_speaker(state: MeetingState, op: Dict[str, Any],
         return _reject(op, "invalid_segment")
     if participant_id is not None and participant_id not in state.participants:
         return _reject(op, "unknown_participant")
+    # A row that is not committed yet (or was replaced by a re-decode) would
+    # otherwise fail persistence and take the rest of the batch with it.
+    if ctx.segment_exists is not None and not ctx.segment_exists(segment_id):
+        return _reject(op, "unknown_segment", target_id=segment_id)
     # Human corrections are authoritative: a diarizer re-cluster batch computed
     # moments before a pin landed must not silently revert it (and, because the
     # store writes pinned=ctx.is_human, would also clear the pin flag). Humans

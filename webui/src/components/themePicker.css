@@ -1,0 +1,49 @@
+.masthead-tools { display: flex; align-items: center; gap: 20px; min-width: 0; }
+.appearance-picker { position: relative; z-index: 50; font-family: var(--font); }
+.appearance-trigger {
+  display: flex; align-items: center; gap: 7px; padding: 6px 10px;
+  border: 1px solid var(--hair-2); border-radius: 8px; background: var(--surface);
+  color: var(--ink); font-size: 12px; font-weight: 500; list-style: none; cursor: pointer;
+}
+.appearance-trigger::-webkit-details-marker { display: none; }
+.appearance-trigger:hover { background: var(--hover); }
+.appearance-panel {
+  position: absolute; right: 0; top: calc(100% + 10px); z-index: 50;
+  width: min(360px, calc(100vw - 32px)); max-height: calc(100dvh - 100px);
+  overflow-y: auto; overscroll-behavior: contain; padding: 20px;
+  background: var(--surface-raised); color: var(--ink); border: 1px solid var(--hair-2);
+  border-radius: 16px; box-shadow: var(--shadow-pop); text-align: left;
+}
+.appearance-panel fieldset { min-width: 0; padding: 0; margin: 0; border: 0; }
+.appearance-panel legend { padding: 0; font: 600 15px/1.4 var(--font); color: var(--ink); }
+.appearance-hint { margin: 4px 0 16px; font-size: 12px; color: var(--soft); }
+.appearance-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.appearance-option { position: relative; display: flex; flex-direction: column; min-width: 0; gap: 4px; padding: 8px; border: 1px solid var(--hair-2); border-radius: 10px; cursor: pointer; }
+.appearance-option:hover { background: var(--hover); }
+.appearance-option:has(input:checked) { border-color: var(--leaf); box-shadow: 0 0 0 1px var(--leaf); }
+.appearance-option:has(input:focus-visible), .appearance-modes label:has(input:focus-visible) { outline: 3px solid var(--leaf); outline-offset: 3px; }
+.appearance-option-name { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 700; }
+.appearance-check { visibility: hidden; color: var(--leaf); }
+.appearance-option:has(input:checked) .appearance-check { visibility: visible; }
+.appearance-option-description { font-size: 10px; line-height: 1.4; color: var(--soft); }
+.appearance-swatch { display: block; height: 56px; padding: 6px; margin-bottom: 4px; border-radius: 5px; background: var(--swatch-ground); border: 1px solid rgba(0,0,0,.08); }
+.appearance-swatch-bar { display: block; height: 8px; margin-bottom: 5px; border-radius: 2px; background: var(--swatch-bar); }
+.appearance-swatch-content { display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 4px; height: 28px; }
+.appearance-swatch-content i { border-radius: 2px; background: var(--swatch-paper); }
+.appearance-swatch-content i:nth-child(2) { background: var(--swatch-accent); }
+[data-preview='studio'] { --swatch-ground: #f1f2ec; --swatch-bar: #263b34; --swatch-paper: #fff; --swatch-accent: #f2d9c8; }
+[data-preview='sunlit'] { --swatch-ground: #eee2d2; --swatch-bar: #fffdfa; --swatch-paper: #fdfaf4; --swatch-accent: #e6f2e4; }
+[data-preview='sage'] { --swatch-ground: #e8efeb; --swatch-bar: #1f2b26; --swatch-paper: #fff; --swatch-accent: #cadfce; }
+[data-preview='focus'] { --swatch-ground: #e4ece7; --swatch-bar: #a1b8a7; --swatch-paper: #f8fbf9; --swatch-accent: #e8f0ea; }
+[data-preview='original'] { --swatch-ground: #1c1c1e; --swatch-bar: #0a84ff; --swatch-paper: #3a3a3c; --swatch-accent: #2c2c2e; }
+.appearance-panel .appearance-mode { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--hair); }
+.appearance-mode legend { float: left; font-size: 12px; padding-top: 7px; }
+.appearance-modes { display: flex; margin-left: auto; width: fit-content; padding: 3px; background: var(--hover); border-radius: 8px; }
+.appearance-modes label { position: relative; cursor: pointer; border-radius: 5px; }
+.appearance-modes span { display: block; padding: 4px 10px; border-radius: 5px; color: var(--soft); font-size: 12px; }
+.appearance-modes input:checked + span { color: var(--ink); background: var(--surface-raised); box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.appearance-footnote { margin: 14px 0 0; color: var(--soft); font-size: 10px; }
+@media (max-width: 600px) { .masthead-tools { gap: 0; } .appearance-panel { position: fixed; top: 56px; right: 16px; max-height: calc(100dvh - 136px); padding: 16px; } .appearance-trigger { padding: 6px 8px; font-size: 11px; } }
+@media (forced-colors: active) { .appearance-option:has(input:checked) { outline: 2px solid Highlight; } .appearance-modes input:checked + span { outline: 2px solid Highlight; } }
+
+.appearance-option:last-child:nth-child(odd) { grid-column: 1 / -1; }

@@ -277,6 +277,50 @@ class TestSegmentHandlerFix:
         assert results[0].ok is False
         assert results[0].reason == "segment_pinned"
 
+    def test_bulk_lookup_answers_a_whole_batch_in_one_query(self, repo):
+        from meeting.state.store import repository_segment_lookup
+
+        meeting_id = _seed_meeting(repo)
+        bulk = repository_segment_lookup(repo, meeting_id)
+        lookups = []
+
+        def counted(segment_ids):
+            lookups.append(set(segment_ids))
+            return bulk(segment_ids)
+
+        def per_id(_sg_id):
+            raise AssertionError("cited ids must come from the bulk lookup")
+
+        store = MeetingStateStore(
+            MeetingState(meeting_id=meeting_id),
+            repository=repo,
+            segment_handler=make_segment_handler(repo, meeting_id),
+            segment_exists=per_id,
+            segment_pinned=per_id,
+            segment_lookup=counted,
+        )
+        created = store.apply("system", "diarizer", [{
+            "op": "upsert_participant",
+            "display_name": "Speaker 1",
+            "kind": "others_cluster",
+            "is_provisional": True,
+        }])
+        pid = created[0].effect["participant"]["id"]
+        results = store.apply("system", "diarizer", [
+            {"op": "reassign_segment_speaker", "segment_id": "sg_lb",
+             "participant_id": pid},
+            {"op": "reassign_segment_speaker", "segment_id": "sg_pin",
+             "participant_id": pid},
+            {"op": "reassign_segment_speaker", "segment_id": "sg_gone",
+             "participant_id": pid},
+        ])
+
+        assert lookups == [{"sg_lb", "sg_pin", "sg_gone"}]
+        assert results[0].ok is True
+        assert results[1].reason == "segment_pinned"
+        assert results[2].ok is False
+        assert repo.get_segment(meeting_id, "sg_lb")["speaker_participant_id"] == pid
+
 
 class TestCloudPass:
     def test_injectable_transcribe_relabels(self, repo, monkeypatch):

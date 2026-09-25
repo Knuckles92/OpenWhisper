@@ -156,6 +156,28 @@ def test_verifier_failure_and_missing_evidence_are_advisory(monkeypatch):
     assert target.snapshot()["cards"]["decisions"][0]["citation_check"]["status"] == "missing"
 
 
+def test_verifier_queue_checks_oldest_first_and_refreshes_queued_items():
+    from meeting.citation_verifier import MAX_PENDING
+
+    verifier = CitationVerifier(store(), Repo([row()]), None, lambda: False,
+                                executor=ManualExecutor())
+    verifier.busy = True  # hold the drain so the queue only fills
+    for i in range(MAX_PENDING):
+        verifier.pending[f"it_{i}"] = {"id": f"it_{i}", "text": "old"}
+
+    update = OpResult(ok=True, op={"op": "update_item"}, effect={"item": {
+        "id": "it_0", "card": "decisions", "status": "proposed", "text": "new",
+    }})
+    verifier.observe(1, [update])
+
+    assert verifier.pending["it_0"]["text"] == "new"
+    checked = []
+    verifier.check = checked.append
+    verifier.busy = False
+    verifier._drain()
+    assert [item["id"] for item in checked[:2]] == ["it_0", "it_1"]
+
+
 def test_verifier_rejects_stale_revision_and_changed_source(monkeypatch):
     monkeypatch.setattr("meeting.citation_verifier.resolve_typesafe_feature_enabled", lambda _: True)
     target, repo = store(), Repo([row()])

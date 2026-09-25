@@ -10,6 +10,7 @@ No Qt imports; this package stays standalone-extractable.
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import threading
@@ -25,6 +26,7 @@ from meeting.finalization import (
     STEP_ORDER,
     failed_steps_message,
     make_step as _make_step,
+    summary_stats,
 )
 from meeting.interfaces import (
     CHANNEL_MIC,
@@ -44,7 +46,7 @@ from meeting.stored import (
 )
 from meeting.state.schema import CARD_KEYS, CardItem, FinalizationState, MeetingState
 from meeting.state.store import MeetingStateStore
-from meeting.time_utils import elapsed_seconds
+from meeting.time_utils import meeting_duration_s
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,7 @@ TranscribeFn = Callable[..., Any]
 ModelLease = Tuple[Callable[[], bool], Callable[[], None]]
 
 __all__ = [
+    "FinalizationBusyError",
     "rerun_finalization",
     "rerun_redecode",
     "rerun_polish",
@@ -158,8 +161,8 @@ def _try_diarize(
 ) -> None:
     """Best-effort loopback diarization; never raises to the caller."""
     try:
-        from meeting.asr.audio import prepare_for_whisper
         from meeting.asr.offline import load_channel_session
+        from meeting.diarize.assign import assign_from_frames, refresh_labels
         from meeting.diarize.clustering import create_diarizer
         from meeting.interfaces import CHANNEL_LOOPBACK
         from services.components import speaker_model_path
@@ -187,20 +190,8 @@ def _try_diarize(
         return
     if frames is None or getattr(frames, "size", 0) == 0:
         return
-    for seg in loopback:
-        start = max(0, int(round((seg.start_s - origin) * rate)))
-        end = min(len(frames), int(round((seg.end_s - origin) * rate)))
-        if end <= start:
-            continue
-        try:
-            audio = prepare_for_whisper(frames[start:end], rate)
-            participant_id = diarizer.assign(seg, audio, 16000)
-        except Exception:
-            logger.exception("Diarizer assignment failed for %s", seg.segment_id)
-            continue
-        if participant_id:
-            seg.speaker_participant_id = participant_id
-            seg.speaker_source = "diarizer"
+    labeled = assign_from_frames(diarizer, loopback, frames, rate, origin)
+    refresh_labels(diarizer, labeled)
 
 
 def _word_count(rows: Sequence[Any]) -> int:
@@ -301,8 +292,8 @@ def _overall_from_steps(
     if not cloud_enabled and not any(
         step.get("id") in {"polish", "consolidation"} for step in steps
     ):
-        return "disabled", "Cloud intelligence is off for this meeting."
-    return "completed", "Final cloud insights are ready."
+        return "disabled", "AI insights are off for this meeting."
+    return "completed", "Final insights are ready."
 
 
 def _persist_finalization(
@@ -350,44 +341,21 @@ def _collect_summary_stats(
     meeting_id: str,
     meeting: Dict[str, Any],
 ) -> Dict[str, Any]:
-    stats: Dict[str, Any] = {
-        "segments": 0,
-        "words": 0,
-        "key_points": 0,
-        "action_items": 0,
-        "decisions": 0,
-        "risks": 0,
-        "questions": 0,
-        "duration_s": 0.0,
-    }
-    started = meeting.get("started_at")
-    ended = meeting.get("ended_at")
-    if started and ended:
-        try:
-            paused = float(meeting.get("paused_total_s") or 0)
-            elapsed = elapsed_seconds(started, ended)
-            stats["duration_s"] = max(
-                0.0, float(elapsed or 0.0) - paused,
-            )
-        except (TypeError, ValueError):
-            pass
+    duration_s = meeting_duration_s(meeting) or 0.0
+    cards: Dict[str, Any] = {}
+    questions: List[Any] = []
     try:
-        cards = store.with_state(lambda s: dict(s.cards))
-        questions = store.with_state(lambda s: list(s.questions))
-        stats["key_points"] = len(cards.get("key_points", []))
-        stats["action_items"] = len(cards.get("action_items", []))
-        stats["decisions"] = len(cards.get("decisions", []))
-        stats["risks"] = len(cards.get("risks", []))
-        stats["questions"] = len(questions)
+        cards, questions = store.with_state(
+            lambda s: (dict(s.cards), list(s.questions))
+        )
     except Exception:
         logger.exception("Could not collect card stats for %s", meeting_id)
     try:
         segments = repository.get_segments(meeting_id)
-        stats["segments"] = len(segments)
-        stats["words"] = _word_count(segments)
     except Exception:
         logger.exception("Could not collect transcript stats for %s", meeting_id)
-    return stats
+        segments = []
+    return summary_stats(cards, questions, segments, duration_s)
 
 
 def acquire_model_lease(lease: Optional[ModelLease]) -> bool:
@@ -545,6 +513,12 @@ def rerun_redecode(
             logger.exception("Could not mark chunks done after redecode retry")
     _reload_store(store, repository, meeting_id)
     _strip_unevidenced_proposed(store)
+    try:
+        from meeting.state.repair import repair_meeting_state
+
+        repair_meeting_state(store, repository.get_segments(meeting_id))
+    except Exception:
+        logger.exception("State repair after redecode retry failed")
     return {"ok": True, "error": None}
 
 
@@ -675,6 +649,38 @@ def rerun_polish(
             logger.exception("Agent core shutdown failed after polish retry")
 
 
+class FinalizationBusyError(RuntimeError):
+    """Raised when another retry is already running for the same meeting."""
+
+
+_running_lock = threading.Lock()
+_running_meetings: set = set()
+
+
+def _one_run_per_meeting(fn: Callable[..., Dict[str, Any]]) -> Callable[..., Dict[str, Any]]:
+    """Refuse a second concurrent retry of one meeting from any caller.
+
+    The desktop card, the dashboard, and crash recovery each keep their own
+    busy flag; this is the one they all pass through.
+    """
+    @functools.wraps(fn)
+    def wrapper(repository: Any, meeting_id: str, **kwargs: Any) -> Dict[str, Any]:
+        with _running_lock:
+            if meeting_id in _running_meetings:
+                raise FinalizationBusyError(
+                    "post-meeting steps are already running for this meeting"
+                )
+            _running_meetings.add(meeting_id)
+        try:
+            return fn(repository, meeting_id, **kwargs)
+        finally:
+            with _running_lock:
+                _running_meetings.discard(meeting_id)
+
+    return wrapper
+
+
+@_one_run_per_meeting
 def rerun_finalization(
     repository: Any,
     meeting_id: str,
@@ -721,6 +727,7 @@ def rerun_finalization(
 
     Raises:
         ValueError: When the meeting is unknown.
+        FinalizationBusyError: When a retry of this meeting is already running.
     """
     meeting = repository.get_meeting(meeting_id)
     if meeting is None:

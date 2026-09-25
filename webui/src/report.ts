@@ -1,4 +1,5 @@
 import { citationLabel } from './components/CitationBadge';
+import { SPEAKER_COLORS } from './people';
 import { sortedCardItems } from './state';
 import type { CardItem, MeetingStateDoc, Participant, Segment } from './types';
 
@@ -73,7 +74,8 @@ export function resolveReportView(views: ReportViewId[]): ReportViewId {
 }
 
 const SEVERITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
-const SPEAKER_PALETTE = ['#2f6b4f', '#a2603c', '#4a6b8a', '#8a7340', '#6b4a7a', '#3c6b6b'];
+/** The same warm voices as the live dashboard (see people.ts). */
+const SPEAKER_PALETTE = SPEAKER_COLORS;
 
 /**
  * The views this meeting recorded (defaulting to the three agent views), then

@@ -140,8 +140,8 @@ function leadGhostText(
   intelligenceOnline: boolean,
 ): string {
   if (status === 'ending') return 'Wrapping up insights…';
-  if (!cloudEnabled) return 'Enable cloud insights to generate live insights.';
-  if (!intelligenceOnline) return 'Cloud intelligence is offline';
+  if (!cloudEnabled) return 'Turn on AI insights to generate live insights.';
+  if (!intelligenceOnline) return 'AI insights are offline';
   if (status === 'ended') return 'No substantive insights captured yet.';
   return 'Listening for insights…';
 }

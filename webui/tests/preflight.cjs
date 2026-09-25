@@ -41,7 +41,7 @@ test('readiness reflects real capture state and asks for a brief when none is se
   const checks = [...container.querySelectorAll('.pf-check')].map((row) => row.textContent);
   assert.ok(checks.some((t) => /Microphone.*Detected/.test(t)));
   assert.ok(checks.some((t) => /System audio.*Not captured/.test(t)));
-  assert.ok(checks.some((t) => /Cloud insights.*Online/.test(t)));
+  assert.ok(checks.some((t) => /AI insights.*Online/.test(t)));
   assert.ok(checks.some((t) => /Speaker separation.*Me \/ Others only/.test(t)));
   assert.match(container.textContent, /Share the guest link to invite others/);
   assert.match(container.textContent, /Waiting for the first words/);

@@ -1,9 +1,9 @@
-"""One-time consent dialog for Meeting Mode cloud intelligence.
+"""One-time consent dialog for Meeting Mode AI insights.
 
-Shown before the first cloud-enabled meeting (and again from the cloud
-toggle while consent has not been given). Explains exactly what leaves the
-machine — transcript text and dashboard state sent to the selected text
-endpoint — and what never does: audio.
+Shown before the first meeting with AI insights on (and again from the AI
+insights switch while consent has not been given). Explains exactly where
+transcript text and dashboard state go — the selected text endpoint, which may
+be remote or on this computer — and what never leaves: audio.
 """
 import logging
 from typing import Final, Optional
@@ -41,8 +41,8 @@ class MeetingConsentDialog(QDialog):
             destination, remote
         )
 
-        self.setWindowTitle("Enable Cloud Intelligence")
-        self.setAccessibleName("Enable cloud intelligence for meetings")
+        self.setWindowTitle("Turn On AI Insights")
+        self.setAccessibleName("Turn on AI insights for meetings")
         self.setAccessibleDescription(
             "Consent choice for sending transcript text and dashboard state "
             f"to {self.destination}. Meeting audio is not uploaded."
@@ -87,7 +87,7 @@ class MeetingConsentDialog(QDialog):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
 
-        title = QLabel("Enable cloud intelligence for meetings?")
+        title = QLabel("Turn on AI insights for meetings?")
         title.setObjectName("headerLabel")
         layout.addWidget(title)
 
@@ -109,11 +109,11 @@ class MeetingConsentDialog(QDialog):
             )
 
         body = QLabel(
-            "Cloud intelligence keeps live meeting insights — topic, key "
-            "points, decisions, action items, and questions — updated on the "
-            "dashboard while you talk.\n\n"
+            "AI insights keep the meeting's topic, key points, decisions, "
+            "action items, and questions updated on the dashboard while you "
+            "talk.\n\n"
             f"{location}\n\n"
-            "Cloud intelligence does not upload audio. Recording and "
+            "AI insights do not upload audio. Recording and "
             "transcription stay local. Speaker identification is a "
             "separate setting and, if enabled, uploads the system-audio "
             "recording after the meeting.\n\n"
@@ -127,7 +127,7 @@ class MeetingConsentDialog(QDialog):
 
         toggle_note = QLabel(
             "You can turn this on or off for each meeting with the "
-            '"Cloud intelligence" toggle. Without it, meetings are '
+            '"AI insights" switch. Without it, meetings are '
             "transcript-only."
         )
         toggle_note.setObjectName("infoLabel")
@@ -144,7 +144,7 @@ class MeetingConsentDialog(QDialog):
         not_now_btn.clicked.connect(self.reject)
         button_layout.addWidget(not_now_btn)
 
-        enable_btn = PrimaryButton("Enable cloud intelligence")
+        enable_btn = PrimaryButton("Turn on AI insights")
         enable_btn.setObjectName("meetingConsentEnableButton")
         enable_btn.clicked.connect(lambda: self._finish(self.RESULT_ENABLE))
         button_layout.addWidget(enable_btn)

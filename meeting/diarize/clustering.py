@@ -457,11 +457,38 @@ class OnlineDiarizer:
 
         if do_recluster:
             relabel_ops = self._filter_stale_ops(self._recluster())
+            # The caller persists this segment with the returned label, so its
+            # own relabel must travel as the return value, not as an op on a
+            # row that does not exist yet.
+            relabel_ops = [
+                op for op in relabel_ops
+                if op.get("segment_id") != segment.segment_id
+            ]
+            current = self.current_label(segment.segment_id)
+            if current:
+                pid = current
             if relabel_ops:
                 cb = self._relabel_cb
                 if cb is not None:
                     cb(relabel_ops)
         return pid
+
+    def current_label(self, segment_id: str) -> Optional[str]:
+        """The participant currently recorded for a segment, if any.
+
+        Reflects re-cluster corrections made after the segment's own
+        ``assign`` returned, so batch (offline) callers can refresh labels
+        they already stamped onto unpersisted segment objects.
+
+        Args:
+            segment_id: The segment to look up.
+
+        Returns:
+            The participant id, or None when the segment is untracked.
+        """
+        with self._lock:
+            record = self._by_segment_id.get(segment_id)
+            return record.participant_id if record is not None else None
 
     def _filter_stale_ops(
         self, ops: List[Dict[str, Any]]

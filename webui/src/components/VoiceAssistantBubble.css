@@ -2,29 +2,29 @@
   position: fixed; z-index: 80; left: 50%; bottom: max(26px, env(safe-area-inset-bottom));
   transform: translateX(-50%); width: min(440px, calc(100vw - 32px));
   display: flex; align-items: center; gap: 16px; padding: 18px 18px 18px 20px;
-  color: #f4f8ff; background: rgba(14, 23, 39, .97); border: 1px solid #526b8959;
-  border-radius: 28px; box-shadow: 0 16px 56px #0005, 0 2px 8px #0003;
-  backdrop-filter: blur(18px); animation: assistant-arrive .24s ease-out;
+  color: #fbf3ea; background: rgba(30, 22, 17, .96); border: 1px solid #f1ad7133;
+  border-radius: 28px; box-shadow: 0 18px 56px #1b100a66, 0 2px 8px #1b100a33, inset 0 1px 0 #fff1;
+  backdrop-filter: blur(18px); animation: assistant-arrive .28s cubic-bezier(.2, .8, .3, 1);
 }
 .voice-assistant-orb {
   flex: 0 0 56px; height: 56px; display: grid; place-items: center; border-radius: 50%;
-  background: radial-gradient(circle, #c4e8ff70, #72b8fb35 45%, #5e96eb00 74%);
+  background: radial-gradient(circle, #ffd7b880, #f4a26b3d 45%, #f08a5d00 74%);
   position: relative;
 }
-.voice-assistant-orb::before { content: ''; position: absolute; inset: 7px; border: 1px solid #aad9ff66; border-radius: 50%; animation: assistant-breathe 2.4s ease-in-out infinite; }
+.voice-assistant-orb::before { content: ''; position: absolute; inset: 7px; border: 1px solid #ffc9a166; border-radius: 50%; animation: assistant-breathe 2.4s ease-in-out infinite; }
 .voice-assistant-wave { display: flex; gap: 3px; height: 28px; align-items: center; }
-.voice-assistant-wave i { display: block; width: 3px; height: 16px; border-radius: 8px; background: #effaff; animation: assistant-wave .9s ease-in-out infinite alternate; }
+.voice-assistant-wave i { display: block; width: 3px; height: 16px; border-radius: 8px; background: linear-gradient(180deg, #ffe3c9, #f4a26b); animation: assistant-wave .9s ease-in-out infinite alternate; }
 .voice-assistant-copy { min-width: 0; flex: 1; display: grid; gap: 5px; }
-.voice-assistant-copy > span { color: #a8b9d0; text-transform: uppercase; font-size: 10px; font-weight: 600; letter-spacing: .16em; }
+.voice-assistant-copy > span { color: #d8c3ae; text-transform: uppercase; font-size: 10px; font-weight: 600; letter-spacing: .16em; }
 .voice-assistant-copy > strong { font-size: 14px; line-height: 1.5; font-weight: 600; }
-.voice-assistant > button { align-self: flex-start; border: 0; border-radius: 50%; background: transparent; color: #a8b9d0; font-size: 22px; line-height: 24px; padding: 0 4px; cursor: pointer; }
+.voice-assistant > button { align-self: flex-start; border: 0; border-radius: 50%; background: transparent; color: #d8c3ae; font-size: 22px; line-height: 24px; padding: 0 4px; cursor: pointer; }
 .voice-assistant > button:hover, .voice-assistant > button:focus-visible { background: #ffffff16; color: white; }
-.voice-assistant[data-phase=saved] .voice-assistant-orb { background: radial-gradient(circle, #b4ffdf66, #6ad4b32e 45%, transparent 74%); }
-.voice-assistant-check { color: #c7ffe7; font-size: 28px; }
-.voice-assistant[data-phase=error] .voice-assistant-orb, .voice-assistant[data-phase=uncertain] .voice-assistant-orb, .voice-assistant[data-phase=unavailable] .voice-assistant-orb { background: radial-gradient(circle, #ffd59a66, #d69b6a2e 45%, transparent 74%); }
+.voice-assistant[data-phase=saved] .voice-assistant-orb { background: radial-gradient(circle, #b8f5d680, #73cd9f33 45%, transparent 74%); }
+.voice-assistant-check { color: #c9f7df; font-size: 28px; }
+.voice-assistant[data-phase=error] .voice-assistant-orb, .voice-assistant[data-phase=uncertain] .voice-assistant-orb, .voice-assistant[data-phase=unavailable] .voice-assistant-orb { background: radial-gradient(circle, #ffd59a70, #e8bd6d33 45%, transparent 74%); }
 @keyframes assistant-wave { from { transform: scaleY(.4); } to { transform: scaleY(1.35); } }
 @keyframes assistant-breathe { 50% { transform: scale(1.25); opacity: .35; } }
-@keyframes assistant-arrive { from { opacity: 0; translate: 0 10px; } to { opacity: 1; translate: 0 0; } }
+@keyframes assistant-arrive { from { opacity: 0; translate: 0 12px; scale: .98; } to { opacity: 1; translate: 0 0; scale: 1; } }
 @media (prefers-reduced-motion: reduce) {
   .voice-assistant, .voice-assistant-orb::before, .voice-assistant-wave i { animation: none; }
 }

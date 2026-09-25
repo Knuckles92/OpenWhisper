@@ -560,7 +560,7 @@ class MeetingRuntime:
         against polish and the final report without a live recording.
 
         Args:
-            cloud_enabled: Explicit cloud-intelligence choice, or None to use
+            cloud_enabled: Explicit AI insights choice, or None to use
                 the remembered per-meeting toggle.
             system_audio_policy: Session-only capture policy from readiness.
         """
@@ -679,7 +679,7 @@ class MeetingRuntime:
                     {"cloud_enabled": False}
                 )
                 self.controller.meeting_status_update.emit(
-                    "Cloud intelligence stays off"
+                    "AI insights stay off"
                 )
         else:
             logger.debug("Consent result received with no pending meeting action")
@@ -761,6 +761,7 @@ class MeetingRuntime:
                 if self._background_engines:
                     options.server_port = 0
             engine = MeetingEngine(options, repository=self._repository())
+            engine.model_lease = self._model_lease()
             engine.add_listener(
                 lambda kind, payload: self.controller.meeting_engine_event.emit(
                     engine, kind, payload
@@ -1013,8 +1014,16 @@ class MeetingRuntime:
     def retry_speakers(self) -> None:
         self.retry_finalization("speaker_id")
 
-    def retry_finalization(self, from_step: str = "failed") -> None:
-        """Retry finalization from a step, or from the earliest failed step."""
+    def retry_finalization(
+        self, from_step: str = "failed", meeting_id: Optional[str] = None,
+    ) -> None:
+        """Retry finalization from a step, or from the earliest failed step.
+
+        Args:
+            from_step: Step id to start from, or ``failed``.
+            meeting_id: Meeting to retry; defaults to the current engine's
+                meeting, then the Past Meetings card, then the newest meeting.
+        """
         step_key = str(from_step or "failed").strip() or "failed"
         with self._lock:
             if (
@@ -1029,7 +1038,11 @@ class MeetingRuntime:
                 )
                 return
             engine = self._engine
-            meeting_id = getattr(engine, "meeting_id", None) or self._card_meeting_id
+            meeting_id = (
+                meeting_id
+                or getattr(engine, "meeting_id", None)
+                or self._card_meeting_id
+            )
             if not meeting_id:
                 repo = self._repository()
                 recent = repo.list_meetings()
@@ -1078,22 +1091,11 @@ class MeetingRuntime:
                 "message": message,
             }
             try:
-                from meeting.refinalize import DEFAULT_TIMEOUT_S, rerun_finalization
-                from services.settings import resolve_meeting_language
-                from services.transcript_cleanup import find_api_key
+                from meeting.refinalize import rerun_finalization
+                from services.meeting_rerun import rerun_options
 
                 repo = self._repository()
-                settings = settings_manager.load_all_settings()
-                provider = resolve_meeting_llm_provider(settings)
-                model = resolve_meeting_llm_model(settings)
-                agent_core_kind = resolve_meeting_agent_core(settings)
-                payload_dir = meeting_agent_payload_dir(agent_core_kind)
                 meeting = repo.get_meeting(meeting_id) or {}
-                from services.text_llm import snapshot_from_meeting
-
-                endpoint = snapshot_from_meeting(meeting, settings).to_dict()
-                provider = meeting.get("agent_provider") or provider
-                model = meeting.get("agent_model") or model
                 store = None
                 if (
                     engine is not None
@@ -1119,28 +1121,13 @@ class MeetingRuntime:
                     repo,
                     meeting_id,
                     from_step=step_key,
-                    redecode_coverage_guard=resolve_meeting_redecode_coverage_guard(settings),
-                    provider=provider,
-                    model=model,
-                    endpoint=endpoint,
-                    agent_core_kind=agent_core_kind,
-                    sidecar_payload_dir=payload_dir,
                     store=store,
-                    timeout_s=DEFAULT_TIMEOUT_S,
-                    asr_model_name=str(
-                        meeting.get("asr_model")
-                        or resolve_meeting_whisper_model(settings)
-                    ),
-                    language=resolve_meeting_language(settings),
-                    speaker_api_key=find_api_key("openai") or "",
                     progress_cb=_progress,
                     # Only the redecode step loads a model, and only it takes
                     # the lease — a polish-only retry never touches the
                     # dictation engine.
-                    model_lease=(
-                        self.controller.release_local_engine,
-                        self.controller.restore_local_engine,
-                    ),
+                    model_lease=self._model_lease(),
+                    **rerun_options(meeting),
                 )
                 finalization = dict(result.get("finalization") or {})
                 status = str(finalization.get("status") or (
@@ -1366,6 +1353,7 @@ class MeetingRuntime:
                     llm_endpoint=resolve_meeting_llm_endpoint(settings),
                     agent_core_kind=resolve_meeting_agent_core(settings),
                     sidecar_payload_dir=meeting_agent_payload_dir(resolve_meeting_agent_core(settings)),
+                    model_lease=self._model_lease(),
                 )
                 server = MeetingWebServer(
                     archive,
@@ -1440,14 +1428,14 @@ class MeetingRuntime:
             except Exception as exc:
                 logger.error(f"Failed to apply cloud toggle: {exc}")
                 self.controller.meeting_error.emit(
-                    f"Could not change cloud intelligence: {exc}"
+                    f"Could not change AI insights: {exc}"
                 )
                 return
 
         self.controller.meeting_state_changed.emit({"cloud_enabled": enabled})
         self.controller.meeting_status_update.emit(
-            "Cloud intelligence enabled" if enabled
-            else "Cloud intelligence disabled"
+            "AI insights on" if enabled
+            else "AI insights off"
         )
 
     def _cloud_consent_given(self) -> bool:
@@ -1475,10 +1463,7 @@ class MeetingRuntime:
                 repository,
                 meeting,
                 asr_language=resolve_meeting_language(settings),
-                model_lease=(
-                    self.controller.release_local_engine,
-                    self.controller.restore_local_engine,
-                ),
+                model_lease=self._model_lease(),
             ):
                 self.controller.meeting_error.emit(
                     "Could not finalize the meeting — "
@@ -1488,11 +1473,39 @@ class MeetingRuntime:
             self.controller.meeting_status_update.emit(
                 "Interrupted meeting finalized"
             )
+            follow_up = self._recovered_follow_up_step(meeting, settings)
         except Exception as exc:
             logger.error(f"Failed to finalize meeting '{meeting_id}': {exc}")
             self.controller.meeting_error.emit(
                 f"Could not finalize the meeting: {exc}"
             )
+            return
+        if follow_up:
+            # Recovery only transcribes leftover audio; the same retry the
+            # Past Meetings card uses runs the steps a live End would have.
+            self.retry_finalization(follow_up, meeting_id=meeting_id)
+
+    @staticmethod
+    def _recovered_follow_up_step(
+        meeting: Dict[str, Any], settings: Dict[str, Any],
+    ) -> Optional[str]:
+        """Return the first post-meeting step a recovered meeting still needs."""
+        if meeting.get("spool_dir") and resolve_meeting_end_redecode(settings):
+            return "redecode"
+        if not meeting.get("cloud_enabled"):
+            return None
+        if resolve_meeting_end_polish(settings):
+            return "polish"
+        if resolve_meeting_end_report(settings):
+            return "consolidation"
+        return None
+
+    def _model_lease(self):
+        """``(acquire, release)`` pair that frees the dictation Whisper model."""
+        return (
+            self.controller.release_local_engine,
+            self.controller.restore_local_engine,
+        )
 
     def copy_past_meeting_transcript(self, meeting_id: str) -> Optional[str]:
         """Return the exported transcript for a past meeting, or None."""
@@ -1693,6 +1706,10 @@ class MeetingRuntime:
                 state_payload: Dict[str, Any] = {}
                 if status:
                     state_payload["status"] = str(status)
+                    # Pause/resume can come from the dashboard, which only
+                    # changes the engine status; mirror it onto the tab.
+                    if status in ("active", "paused"):
+                        state_payload["paused"] = status == "paused"
                     # Prefer human notes when present; otherwise keep the short
                     # lifecycle status for the status line.
                     note = payload.get("note")
@@ -1810,7 +1827,7 @@ class MeetingRuntime:
         state_payload["finalization"] = normalized
         if status == "running":
             self.controller.meeting_status_update.emit(
-                message or "Preparing final cloud insights…"
+                message or "Preparing final insights…"
             )
         elif terminal and message:
             # Persistent non-modal feedback; never a meeting_error dialog.

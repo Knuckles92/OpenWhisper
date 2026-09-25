@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from meeting.interfaces import OpResult
 from meeting.state.patches import SEGMENT_OPS, OpContext, apply_ops
@@ -33,6 +33,45 @@ SegmentHandler = Callable[[OpResult], Optional[Dict[str, Any]]]
 
 Subscriber = Callable[[int, List[OpResult]], None]
 
+#: Bulk ``{segment_id: speaker_pinned}`` for the ids that exist.
+SegmentLookup = Callable[[Iterable[str]], Dict[str, bool]]
+
+_SEGMENT_ID_KEYS = frozenset({"segment_id"})
+_SEGMENT_LIST_KEYS = frozenset({"evidence", "segment_ids"})
+
+
+def _referenced_segment_ids(ops: List[Dict[str, Any]]) -> Set[str]:
+    """Segment ids an op batch cites, so one query can answer them all.
+
+    Anything missed here still goes through the per-id predicates.
+    """
+    ids: Set[str] = set()
+
+    def visit(value: Any, depth: int) -> None:
+        if depth > 2 or not isinstance(value, dict):
+            return
+        for key, item in value.items():
+            if key in _SEGMENT_ID_KEYS and isinstance(item, str):
+                ids.add(item)
+            elif key in _SEGMENT_LIST_KEYS and isinstance(item, list):
+                ids.update(sid for sid in item if isinstance(sid, str))
+            elif isinstance(item, dict):
+                visit(item, depth + 1)
+
+    for op in ops:
+        visit(op, 0)
+    return ids
+
+
+def repository_segment_lookup(
+    repository: Any, meeting_id: str,
+) -> Optional[SegmentLookup]:
+    """Bulk segment lookup bound to one meeting, or None if unsupported."""
+    flags = getattr(repository, "segment_flags", None)
+    if not callable(flags):
+        return None
+    return lambda segment_ids: flags(meeting_id, segment_ids)
+
 class MeetingStateStore:
     """Thread-safe owner of one meeting's ``MeetingState`` document."""
 
@@ -43,6 +82,7 @@ class MeetingStateStore:
         segment_handler: Optional[SegmentHandler] = None,
         segment_exists: Optional[Callable[[str], bool]] = None,
         segment_pinned: Optional[Callable[[str], bool]] = None,
+        segment_lookup: Optional[SegmentLookup] = None,
     ) -> None:
         """Args:
             state: The state document this store owns.
@@ -54,12 +94,16 @@ class MeetingStateStore:
             segment_pinned: Predicate reporting whether a segment already
                 carries a human speaker pin, so automated relabels cannot
                 revert a human correction.
+            segment_lookup: Optional bulk form of both predicates. When set,
+                each batch answers its cited ids with one query; the
+                predicates still decide anything the batch did not cite.
         """
         self._state = state
         self._repository = repository
         self._segment_handler = segment_handler
         self._segment_exists = segment_exists
         self._segment_pinned = segment_pinned
+        self._segment_lookup = segment_lookup
         self._lock = threading.RLock()
         self._subscribers: List[Subscriber] = []
 
@@ -99,8 +143,8 @@ class MeetingStateStore:
             # Applying to a round-tripped candidate makes repository failure
             # a real rejection instead of leaving an unpersisted live state.
             candidate = MeetingState.from_dict(self._state.to_dict())
-            ctx = OpContext(actor_type, actor_id, self._segment_exists,
-                            self._segment_pinned)
+            exists, pinned = self._batch_predicates(ops)
+            ctx = OpContext(actor_type, actor_id, exists, pinned)
             results = apply_ops(candidate, ops, ctx)
 
             for result in results:
@@ -242,6 +286,46 @@ class MeetingStateStore:
                 cb(seq, applied)
             except Exception:
                 logger.exception("State subscriber raised")
+
+    def _batch_predicates(
+        self, ops: List[Dict[str, Any]],
+    ) -> Tuple[Optional[Callable[[str], bool]], Optional[Callable[[str], bool]]]:
+        """Segment predicates for one batch, answered from a single lookup.
+
+        Validation sees the segment log as it was before the batch either
+        way: segment ops only run after every op has been validated.
+        """
+        exists_fallback = self._segment_exists
+        pinned_fallback = self._segment_pinned
+        if self._segment_lookup is None or (
+            exists_fallback is None and pinned_fallback is None
+        ):
+            return exists_fallback, pinned_fallback
+        cited = _referenced_segment_ids(ops)
+        if not cited:
+            return exists_fallback, pinned_fallback
+        try:
+            flags = self._segment_lookup(cited)
+        except Exception:
+            logger.exception("Bulk segment lookup failed; checking ids one by one")
+            return exists_fallback, pinned_fallback
+        if not isinstance(flags, dict):
+            return exists_fallback, pinned_fallback
+
+        def exists(segment_id: str) -> bool:
+            if segment_id in cited:
+                return segment_id in flags
+            return bool(exists_fallback(segment_id)) if exists_fallback else True
+
+        def pinned(segment_id: str) -> bool:
+            if segment_id in cited:
+                return bool(flags.get(segment_id))
+            return bool(pinned_fallback(segment_id)) if pinned_fallback else False
+
+        return (
+            exists if exists_fallback is not None else None,
+            pinned if pinned_fallback is not None else None,
+        )
 
     def _apply_segment_op(self, result: OpResult) -> None:
         """Route a validated segment op to the segment handler."""

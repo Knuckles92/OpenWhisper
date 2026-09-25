@@ -149,7 +149,7 @@ class FakeEngine:
         self.resumed = True
 
     def set_cloud_enabled(self, enabled):
-        pass
+        self.cloud_calls = getattr(self, "cloud_calls", []) + [enabled]
 
     def get_transcript(self, after_start_s=-1.0, limit=None):
         return []
@@ -191,6 +191,42 @@ class TestResolveRole:
         a, b = generate_token_pair()
         assert a != b
         assert len(generate_token()) >= 32
+
+class TestCloudConsent:
+    @pytest.fixture(autouse=True)
+    def _no_settings_writes(self, monkeypatch):
+        import meeting.web.api as api_mod
+
+        self.saved = []
+        monkeypatch.setattr(api_mod, "_remember_cloud_choice", self.saved.append)
+        self.api_mod = api_mod
+
+    def test_enable_without_desktop_consent_is_refused(self, client, monkeypatch):
+        tc, engine, _ = client
+        monkeypatch.setattr(self.api_mod, "_cloud_consent_given", lambda: False)
+
+        r = tc.post("/api/meeting/cloud", params={"token": HOST_TOKEN},
+                    json={"enabled": True})
+
+        assert r.status_code == 403
+        assert "consent" in r.json()["detail"]
+        assert getattr(engine, "cloud_calls", []) == []
+        assert self.saved == []
+
+    def test_enable_with_consent_and_disable_always_allowed(
+            self, client, monkeypatch):
+        tc, engine, _ = client
+        monkeypatch.setattr(self.api_mod, "_cloud_consent_given", lambda: True)
+        assert tc.post("/api/meeting/cloud", params={"token": HOST_TOKEN},
+                       json={"enabled": True}).status_code == 200
+
+        monkeypatch.setattr(self.api_mod, "_cloud_consent_given", lambda: False)
+        assert tc.post("/api/meeting/cloud", params={"token": HOST_TOKEN},
+                       json={"enabled": False}).status_code == 200
+
+        assert engine.cloud_calls == [True, False]
+        assert self.saved == [True, False]
+
 
 class TestHostOnlyAuthz:
     def test_guest_cannot_list_meetings(self, client):
@@ -577,6 +613,54 @@ class TestRerunInsights:
         assert calls["meeting_id"] == "m_test"
         assert calls["provider"] == "openrouter"  # fallback when unrecorded
         assert calls["agent_core_kind"] == "pi"
+
+    def test_rerun_uses_shared_options_and_the_host_lease(self, client, monkeypatch):
+        tc, engine, _ = client
+        engine.ended = True
+        lease = (lambda: True, lambda: None)
+        engine.model_lease = lease
+        calls = {}
+
+        def fake_rerun(repository, meeting_id, **kwargs):
+            calls.update(kwargs)
+            return {"ok": True, "state": {}, "applied": 0, "error": None}
+
+        monkeypatch.setattr("meeting.web.api.rerun_finalization", fake_rerun)
+        monkeypatch.setattr(
+            "services.meeting_rerun.rerun_options",
+            lambda meeting: {"provider": "p", "model": "m", "language": "de",
+                             "redecode_coverage_guard": True},
+        )
+        r = tc.post("/api/meetings/m_test/reinsights", params={"token": HOST_TOKEN})
+
+        assert r.status_code == 200
+        assert calls["model_lease"] is lease
+        assert calls["language"] == "de"
+        assert calls["redecode_coverage_guard"] is True
+
+    def test_retry_already_running_elsewhere_is_409(self, client, monkeypatch):
+        from meeting.refinalize import FinalizationBusyError
+
+        tc, engine, _ = client
+        engine.ended = True
+
+        def fake_rerun(repository, meeting_id, **kwargs):
+            raise FinalizationBusyError("already running")
+
+        monkeypatch.setattr("meeting.web.api.rerun_finalization", fake_rerun)
+        r = tc.post("/api/meetings/m_test/reinsights", params={"token": HOST_TOKEN})
+        assert r.status_code == 409
+
+    def test_live_end_still_finalizing_is_409(self, client, monkeypatch):
+        tc, engine, _ = client
+        engine.ended = True
+        engine.store._state["finalization"] = {"status": "running"}
+        monkeypatch.setattr(
+            "meeting.web.api.rerun_finalization",
+            lambda *a, **k: pytest.fail("must not start a second pipeline"),
+        )
+        r = tc.post("/api/meetings/m_test/reinsights", params={"token": HOST_TOKEN})
+        assert r.status_code == 409
 
     def test_missing_transcript_is_400(self, client, monkeypatch):
         tc, engine, _ = client

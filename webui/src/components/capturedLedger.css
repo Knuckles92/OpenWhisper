@@ -1,28 +1,31 @@
 /* Captured ledger: quick-add, filter tabs, and to-do style action rows.
    Colours come only from the shared tokens so the dark theme can re-point them. */
 
+/* Doubled class: the generic .card-add-row (align-items: center) loads later
+   and would otherwise centre the input row, indenting it from the kinds. */
+.ledger-composer.card-add-row,
 .ledger-composer {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 6px;
+  gap: 8px;
   margin: 0 0 12px;
 }
 
 .ledger-kinds {
   display: flex;
   gap: 2px;
-  padding: 2px;
-  border-radius: var(--radius-control);
-  background: var(--hair);
+  padding: 3px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
   align-self: flex-start;
 }
 
 .ledger-kinds button {
   min-height: 28px;
-  padding: 0 10px;
+  padding: 0 11px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 9px;
   background: transparent;
   color: var(--soft);
   font-size: 12px;
@@ -37,9 +40,10 @@
 
 .ledger-kinds button.active {
   background: var(--surface-raised);
-  border-color: var(--hair-2);
+  border-color: transparent;
   color: var(--ink);
   font-weight: 600;
+  box-shadow: 0 1px 2px rgba(84, 58, 34, 0.12), 0 2px 6px -3px rgba(84, 58, 34, 0.2);
 }
 
 .ledger-input {
@@ -96,10 +100,22 @@
 }
 
 .ledger-tab-count {
-  font-family: var(--font-mono);
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  font-family: var(--font);
   font-variant-numeric: tabular-nums;
-  font-size: 11px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
   color: var(--soft);
+}
+
+.ledger-tabs button.active .ledger-tab-count {
+  background: var(--wash);
+  color: var(--leaf);
 }
 
 /* Actions: checkbox + text, owner and due under the text. */
@@ -110,18 +126,60 @@
   align-items: start;
 }
 
+/* A soft rounded to-do box; ticking it fills with the commitment colour and
+   the check springs in. */
 .ledger-check {
-  width: 16px;
-  height: 16px;
-  margin: 3px 0 0;
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid;
+  place-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
   padding: 0;
-  accent-color: var(--k-commitment);
+  border: 1.5px solid color-mix(in srgb, var(--k-commitment) 55%, var(--line));
+  border-radius: 6px;
+  background: var(--surface-raised);
   cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.ledger-check::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  clip-path: polygon(14% 52%, 0 67%, 38% 100%, 100% 22%, 86% 8%, 37% 70%);
+  transform: scale(0);
+  transition: transform 220ms cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+
+.ledger-check:hover:not(:disabled) {
+  border-color: var(--k-commitment);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--k-commitment) 14%, transparent);
+}
+
+.ledger-check:checked {
+  background: var(--k-commitment);
+  border-color: var(--k-commitment);
+}
+
+.ledger-check:checked::before {
+  transform: scale(1);
+}
+
+.ledger-check:focus-visible {
+  outline: 2px solid var(--k-commitment);
+  outline-offset: 2px;
 }
 
 .ledger-check:disabled {
   cursor: default;
   opacity: 1;
+}
+
+.ledger-check:disabled:not(:checked) {
+  border-style: dashed;
 }
 
 .ledger-action-body .card-item-text {
@@ -167,17 +225,20 @@
   /* Light ink on the saturated speaker colour, in both themes. */
   color: var(--bar-ink);
   font-size: 9px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.02em;
+  box-shadow: 0 2px 5px -3px rgba(84, 58, 34, 0.5);
 }
 
 .ledger-due {
-  padding: 1px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--hair-2);
-  font-family: var(--font-mono);
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  font-family: var(--font);
   font-variant-numeric: tabular-nums;
   font-size: 11px;
+  font-weight: 600;
   color: var(--ink-2);
 }
 
@@ -216,9 +277,10 @@
 .ledger-state .ledger-confirm {
   min-height: 26px;
   margin-left: auto;
-  padding: 0 10px;
-  border-color: color-mix(in srgb, var(--k-decision) 45%, var(--line));
-  background: transparent;
+  padding: 0 12px;
+  border-radius: 999px;
+  border-color: color-mix(in srgb, var(--k-decision) 40%, transparent);
+  background: color-mix(in srgb, var(--k-decision) 6%, transparent);
   color: var(--k-decision);
   font-size: 12px;
   font-weight: 600;
@@ -242,7 +304,21 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ledger-tabs button,
-  .ledger-kinds button {
+  .ledger-kinds button,
+  .ledger-check,
+  .ledger-check::before {
     transition: none;
+  }
+}
+
+/* Forced colours drop custom fills; fall back to the native box. */
+@media (forced-colors: active) {
+  .ledger-check {
+    appearance: auto;
+    -webkit-appearance: checkbox;
+  }
+
+  .ledger-check::before {
+    content: none;
   }
 }

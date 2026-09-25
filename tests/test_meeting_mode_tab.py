@@ -17,6 +17,7 @@ from services.settings import SettingsKey, settings_manager
 from ui_qt.main_window import MainWindow
 from ui_qt.widgets.meeting_mode_tab import (
     MeetingModeTab,
+    ai_insights_destination,
     meeting_audio_shows_platform_warning,
     meeting_audio_support_copy,
 )
@@ -489,7 +490,7 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertFalse(self.tab._elapsed_timer.isActive())
 
     def test_start_emits_cloud_choice(self):
-        """Start Meeting emits the current cloud-intelligence choice."""
+        """Start Meeting emits the current AI insights choice."""
         received = []
         self.tab.start_requested.connect(
             lambda cloud, brief: received.append((cloud, brief))
@@ -504,19 +505,57 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.tab.start_requested.connect(
             lambda cloud, brief: received.append((cloud, brief))
         )
+        self.tab.cloud_checkbox.setChecked(True)
         self.tab.brief_input.setPlainText(
             "  Capture every objection to the vendor choice.  "
         )
-        self.tab.cloud_checkbox.setChecked(False)
         self.tab.start_button.click()
         self.assertEqual(
-            received, [(False, "Capture every objection to the vendor choice.")]
+            received, [(True, "Capture every objection to the vendor choice.")]
         )
+
+    def test_brief_is_hidden_while_ai_insights_are_off(self):
+        """The brief only steers AI insights, so without them it goes away."""
+        received = []
+        resized = []
+        self.tab.start_requested.connect(
+            lambda cloud, brief: received.append((cloud, brief))
+        )
+        self.tab.content_height_changed.connect(lambda: resized.append(True))
+        self.tab.cloud_checkbox.setChecked(True)
+        self.tab.brief_input.setPlainText("Capture every objection.")
+        self.assertFalse(self.tab.brief_panel.isHidden())
+
+        self.tab.cloud_checkbox.setChecked(False)
+        self.assertTrue(self.tab.brief_panel.isHidden())
+        # The window re-fits its height when the panel comes or goes.
+        self.assertTrue(resized)
+        # Hidden text is kept for later but never sent.
+        self.assertEqual(
+            self.tab.brief_input.toPlainText(), "Capture every objection."
+        )
+        self.tab.start_button.click()
+        self.assertEqual(received, [(False, "")])
+
+        self.tab.cloud_checkbox.setChecked(True)
+        self.assertFalse(self.tab.brief_panel.isHidden())
+        self.tab.start_button.click()
+        self.assertEqual(received[-1], (True, "Capture every objection."))
+
+    def test_brief_follows_switch_changes_made_without_signals(self):
+        """A declined consent dialog unticks the switch with signals blocked."""
+        self.tab.cloud_checkbox.setChecked(True)
+        self.tab.set_meeting_state({"cloud_enabled": False})
+        self.assertFalse(self.tab.cloud_checkbox.isChecked())
+        self.assertTrue(self.tab.brief_panel.isHidden())
+        self.tab.set_meeting_state({"cloud_enabled": True})
+        self.assertFalse(self.tab.brief_panel.isHidden())
 
     def test_meeting_brief_is_capped_at_the_validation_limit(self):
         """A pasted essay is trimmed here rather than rejected by the store."""
         from meeting.state.patches import MAX_INTENT_LEN
 
+        self.tab.cloud_checkbox.setChecked(True)
         self.tab.brief_input.setPlainText("b" * (MAX_INTENT_LEN + 500))
         self.assertEqual(len(self.tab.meeting_brief()), MAX_INTENT_LEN)
 
@@ -539,9 +578,81 @@ class TestMeetingModeTabState(unittest.TestCase):
         tooltip = self.tab.cloud_checkbox.toolTip()
         self.assertIn("On:", tooltip)
         self.assertIn("Off:", tooltip)
-        self.assertIn("Audio stays local", tooltip)
+        self.assertIn("Audio stays on this PC", tooltip)
         self.assertGreater(len(tooltip.splitlines()), 1)
         self.assertLessEqual(max(map(len, tooltip.splitlines())), 52)
+
+    def test_ai_insights_switch_names_the_feature_not_the_location(self):
+        """The switch says what it produces; the model line says where."""
+        self.assertEqual(self.tab.cloud_checkbox.text(), "AI insights")
+        self.assertTrue(self.tab.ai_destination.text())
+
+    def test_ai_details_show_only_while_setting_up(self):
+        """Idle explains AI insights; otherwise only the switch remains."""
+        self.assertFalse(self.tab.ai_details.isHidden())
+        self.assertFalse(self.tab.ai_settings_button.isHidden())
+        self.assertTrue(self.tab.ai_compact_destination.isHidden())
+
+        self.tab.set_meeting_state({"active": True, "status": "active"})
+        self.app.processEvents()
+        # The switch acts on the live meeting, so it stays in view.
+        self.assertFalse(self.tab.ai_panel.isHidden())
+        self.assertTrue(self.tab.ai_details.isHidden())
+        self.assertTrue(self.tab.ai_settings_button.isHidden())
+        self.assertFalse(self.tab.ai_compact_destination.isHidden())
+
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {"status": "failed", "message": "Final insights failed."},
+        })
+        self.app.processEvents()
+        # Start new meeting on an incomplete card reads the switch.
+        self.assertFalse(self.tab.ai_panel.isHidden())
+        self.assertTrue(self.tab.ai_details.isHidden())
+
+        self.tab.set_meeting_state({
+            "finalization": {"status": "completed", "message": "Final insights are ready."},
+        })
+        self.app.processEvents()
+        self.assertFalse(self.tab.ai_details.isHidden())
+
+    def test_change_link_requests_intelligence_settings(self):
+        requested = []
+        self.tab.ai_settings_requested.connect(lambda: requested.append(True))
+        self.tab.ai_settings_button.click()
+        self.assertEqual(requested, [True])
+
+    def test_ai_destination_holds_still_during_a_meeting(self):
+        """A running meeting keeps the endpoint it started with."""
+        target = "ui_qt.widgets.meeting_mode_tab.ai_insights_destination"
+        local = ("Ollama on this PC · llama3.1", "transcript text stays on this computer")
+        with patch(target, return_value=local):
+            self.tab.refresh_ai_destination()
+        self.assertEqual(
+            self.tab.ai_destination.text(),
+            "Ollama on this PC · llama3.1 — transcript text stays on this computer.",
+        )
+        self.assertEqual(
+            self.tab.ai_compact_destination.text(), "Ollama on this PC · llama3.1"
+        )
+
+        self.tab.set_meeting_state({"active": True, "status": "active"})
+        remote = ("OpenAI · gpt-5-mini", "sends transcript text, never audio")
+        with patch(target, return_value=remote):
+            self.tab.refresh_ai_destination()
+        self.assertIn("Ollama", self.tab.ai_destination.text())
+
+    def test_brief_field_behaves_like_a_form_control(self):
+        """Tab leaves the field, and its height is counted in text lines."""
+        field = self.tab.brief_input
+        self.assertTrue(field.tabChangesFocus())
+        self.assertIs(self.tab.brief_label.buddy(), field)
+        before = field.sizeHint().height()
+        font = field.font()
+        font.setPointSize(font.pointSize() * 2)
+        field.setFont(font)
+        self.assertGreater(field.sizeHint().height(), before)
 
     def test_running_finalization_hides_start_and_shows_indeterminate_bar(self):
         """Running finalization keeps a result card with indeterminate progress."""
@@ -550,7 +661,7 @@ class TestMeetingModeTabState(unittest.TestCase):
             "status": "ended",
             "finalization": {
                 "status": "running",
-                "message": "Preparing final cloud insights…",
+                "message": "Preparing final insights…",
             },
             "dashboard_available": True,
         })
@@ -566,8 +677,8 @@ class TestMeetingModeTabState(unittest.TestCase):
     def test_completed_and_disabled_restore_start(self):
         """Terminal info outcomes keep the card and restore Start Meeting."""
         for status, message in (
-            ("completed", "Final cloud insights are ready."),
-            ("disabled", "Cloud intelligence is off for this meeting."),
+            ("completed", "Final insights are ready."),
+            ("disabled", "AI insights are off for this meeting."),
         ):
             with self.subTest(status=status):
                 self.tab.set_meeting_state({
@@ -596,7 +707,7 @@ class TestMeetingModeTabState(unittest.TestCase):
             "status": "failed",
             "finalization": {
                 "status": "completed",
-                "message": "Final cloud insights are ready.",
+                "message": "Final insights are ready.",
                 "content_summary": {
                     "meeting_status": "failed",
                     "is_empty": True,
@@ -626,7 +737,7 @@ class TestMeetingModeTabState(unittest.TestCase):
             "status": "ended",
             "finalization": {
                 "status": "failed",
-                "message": "Final cloud insights failed: boom",
+                "message": "Final insights failed: boom",
             },
         })
         self.app.processEvents()
@@ -730,7 +841,7 @@ class TestMeetingModeTabState(unittest.TestCase):
             "status": "ended",
             "finalization": {
                 "status": "failed",
-                "message": "Final cloud insights failed: RPC timeout",
+                "message": "Final insights failed: RPC timeout",
             },
             "dashboard_available": True,
         })
@@ -749,7 +860,7 @@ class TestMeetingModeTabState(unittest.TestCase):
             "status": "ended",
             "finalization": {
                 "status": "running",
-                "message": "Re-running final cloud insights…",
+                "message": "Re-running final insights…",
             },
         })
         self.app.processEvents()
@@ -914,7 +1025,7 @@ class TestMeetingModeTabState(unittest.TestCase):
             "status": "ended",
             "finalization": {
                 "status": "failed",
-                "message": "Final cloud insights were interrupted.",
+                "message": "Final insights were interrupted.",
             },
         })
         self.app.processEvents()
@@ -936,7 +1047,7 @@ class TestMeetingModeTabState(unittest.TestCase):
             "status": "ended",
             "finalization": {
                 "status": "completed",
-                "message": "Final cloud insights are ready.",
+                "message": "Final insights are ready.",
             },
         })
         self.app.processEvents()
@@ -948,7 +1059,7 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertEqual(deferred, [True])
 
     def test_disabled_card_emits_done(self):
-        """A cloud-off leftover card can be dismissed with Done."""
+        """An AI-insights-off leftover card can be dismissed with Done."""
         deferred = []
         self.tab.defer_insights_requested.connect(lambda: deferred.append(True))
         self.tab.set_meeting_state({
@@ -956,7 +1067,7 @@ class TestMeetingModeTabState(unittest.TestCase):
             "status": "ended",
             "finalization": {
                 "status": "disabled",
-                "message": "Cloud intelligence is off for this meeting.",
+                "message": "AI insights are off for this meeting.",
             },
         })
         self.app.processEvents()
@@ -981,7 +1092,7 @@ class TestMeetingModeTabState(unittest.TestCase):
             "insights_tone": "success",
             "finalization": {
                 "status": "completed",
-                "message": "Final cloud insights are ready.",
+                "message": "Final insights are ready.",
             },
         })
         self.app.processEvents()
@@ -1004,7 +1115,7 @@ class TestMeetingModeTabState(unittest.TestCase):
             "display_title": "Failed meeting",
             "finalization": {
                 "status": "completed",
-                "message": "Final cloud insights are ready.",
+                "message": "Final insights are ready.",
                 "content_summary": {
                     "meeting_status": "failed",
                     "is_empty": True,
@@ -1018,6 +1129,43 @@ class TestMeetingModeTabState(unittest.TestCase):
 
         self.assertFalse(self.tab.finalization_report_button.isEnabled())
         self.assertIn("No report", self.tab.finalization_report_button.toolTip())
+
+
+class TestAiInsightsDestination(unittest.TestCase):
+    """The line under the switch says which model runs and what leaves."""
+
+    def test_remote_provider_sends_text_but_never_audio(self):
+        where, privacy = ai_insights_destination({
+            "meeting_llm_provider": "openrouter",
+            "meeting_llm_model": "deepseek/deepseek-v4.1-flash",
+        })
+        self.assertEqual(where, "OpenRouter · deepseek-v4.1-flash")
+        self.assertEqual(privacy, "sends transcript text, never audio")
+
+    def test_local_provider_runs_on_this_pc(self):
+        where, privacy = ai_insights_destination({
+            "meeting_llm_provider": "ollama",
+            "meeting_llm_model": "llama3.1:8b",
+        })
+        self.assertEqual(where, "Ollama on this PC · llama3.1:8b")
+        self.assertEqual(privacy, "transcript text stays on this computer")
+
+    def test_local_provider_makes_no_privacy_claim_while_typesafe_is_on(self):
+        """TypeSafe judgments are a separate service that gets excerpts."""
+        _, privacy = ai_insights_destination({
+            "meeting_llm_provider": "ollama",
+            "meeting_llm_model": "llama3.1:8b",
+            SettingsKey.TYPESAFE_ENABLED: True,
+        })
+        self.assertEqual(privacy, "the model runs on this computer")
+
+    def test_unresolvable_profile_points_to_settings(self):
+        with patch(
+            "services.settings.resolve_meeting_llm_profile", return_value=None
+        ):
+            where, privacy = ai_insights_destination({})
+        self.assertEqual(where, "No AI model chosen")
+        self.assertIn("Settings → Meeting Mode → Intelligence", privacy)
 
 
 if __name__ == "__main__":

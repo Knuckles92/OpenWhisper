@@ -155,6 +155,7 @@ def decode_meeting(
     engine._pending_revise.clear()
     engine._last_revised_frontier.clear()
     engine._draft_context.clear()
+    engine._language_votes.clear()
 
     session_wav = work_dir / "loopback_session.wav"
     _write_chunk(session_wav, resample_to_16k(pcm, source_rate))

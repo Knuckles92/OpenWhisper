@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 _FEATURES: Final[tuple[str, ...]] = (
     "Live transcript and a shareable browser dashboard",
-    "Optional cloud insights: topics, decisions, action items",
+    "Optional AI insights: topics, decisions, action items",
     "Speaker labels, playback, and export",
     "Past meetings stay in the sidebar",
 )

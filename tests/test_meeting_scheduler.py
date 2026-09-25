@@ -297,6 +297,37 @@ class TestSegmentWatermark:
         sched._fire()
         assert len(agent.calls) == 1
 
+    def test_revised_segment_is_resent_with_its_new_text(self):
+        engine = FakeEngine([
+            {"id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "one"},
+        ])
+        agent = FakeAgent()
+        sched = self._sched(engine, agent)
+
+        sched._fire()
+        engine._segments[0] = {
+            "id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "won",
+        }
+        sched.notify_revised(["sg_1"])
+        sched._fire()
+
+        card_calls = [c for c in agent.calls if not (c.is_polish or c.is_notes)]
+        assert len(card_calls) == 2
+        assert [s["text"] for s in card_calls[1].new_segments] == ["won"]
+
+    def test_seed_marks_card_and_notes_cursors(self):
+        segments = [
+            {"id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "one"},
+            {"id": "sg_2", "start_s": 5.0, "end_s": 10.0, "text": "two"},
+        ]
+        sched = self._sched(FakeEngine(segments), FakeAgent())
+
+        sched.seed_sent_segments(segments)
+
+        assert set(sched._sent_starts) == {"sg_1", "sg_2"}
+        assert set(sched._notes_sent_starts) == {"sg_1", "sg_2"}
+        assert sched._notes_max_sent_start_s == 5.0
+
     def test_failed_checkpoint_retries_the_same_segments(self):
         engine = FakeEngine([
             {"id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "one"},
@@ -480,7 +511,7 @@ class TestConsolidationRace:
         assert agent.calls[0].is_consolidation is True
         assert outcome == ConsolidationOutcome(
             status="completed",
-            message="Final cloud insights are ready.",
+            message="Final insights are ready.",
         )
 
     def test_consolidation_unhealthy_agent(self):

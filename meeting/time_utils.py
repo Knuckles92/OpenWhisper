@@ -71,21 +71,34 @@ def format_meeting_started_at(value: Any) -> str:
     return started.strftime("%b %d, %Y · %I:%M %p") if started else "Unknown date"
 
 
-def format_meeting_duration(meeting: Dict[str, Any]) -> str:
-    """Format elapsed meeting time minus pause credit."""
+def meeting_duration_s(meeting: Dict[str, Any]) -> Optional[float]:
+    """Recorded meeting seconds: wall time from start to end minus pauses.
+
+    Args:
+        meeting: Meeting row with ``started_at``, ``ended_at`` and
+            ``paused_total_s``.
+
+    Returns:
+        Non-negative seconds, or None when either timestamp is missing.
+    """
     elapsed = elapsed_seconds(
         meeting.get("started_at"), meeting.get("ended_at")
     )
     if elapsed is None:
-        return ""
+        return None
     try:
-        seconds = max(
-            0,
-            int(elapsed)
-            - int(float(meeting.get("paused_total_s") or 0)),
-        )
+        paused = float(meeting.get("paused_total_s") or 0)
     except (TypeError, ValueError):
+        paused = 0.0
+    return max(0.0, float(elapsed) - paused)
+
+
+def format_meeting_duration(meeting: Dict[str, Any]) -> str:
+    """Format elapsed meeting time minus pause credit."""
+    duration = meeting_duration_s(meeting)
+    if duration is None:
         return ""
+    seconds = int(duration)
     hours, remainder = divmod(seconds, 3600)
     minutes, remaining_seconds = divmod(remainder, 60)
     if not hours and not minutes:

@@ -8,9 +8,20 @@
   flex-direction: column;
   gap: 3vh;
   padding: 5vh 4.5vw 4vh;
-  background: var(--bar);
+  /* Cocoa, lit from the top-left like a warm lamp, a little garden light
+     from the far corner. */
+  background:
+    radial-gradient(90vw 70vh at 0% 0%, rgba(244, 138, 100, 0.16), transparent 62%),
+    radial-gradient(70vw 60vh at 100% 100%, rgba(125, 211, 163, 0.08), transparent 60%),
+    var(--bar);
   color: var(--bar-ink);
   overflow: hidden;
+  animation: room-in 420ms cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+
+@keyframes room-in {
+  from { opacity: 0; transform: scale(1.01); }
+  to { opacity: 1; transform: none; }
 }
 
 .room-exit {
@@ -22,15 +33,16 @@
   gap: 8px;
   padding: 6px 12px;
   border: 1px solid var(--bar-line);
-  border-radius: var(--radius-control);
-  background: transparent;
+  border-radius: 999px;
+  background: rgba(251, 243, 234, 0.04);
   color: var(--bar-soft);
   font-size: 13px;
 }
 
-.room-exit:hover {
+.room-exit:hover:not(:disabled) {
   color: var(--bar-ink);
   border-color: var(--bar-soft);
+  background: rgba(251, 243, 234, 0.08);
 }
 
 .room-exit:focus-visible {
@@ -90,12 +102,13 @@
 }
 
 @keyframes room-breathe {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(244, 138, 100, 0.55); }
+  50% { box-shadow: 0 0 0 0.6vw rgba(244, 138, 100, 0); }
 }
 
 .room-clock {
-  font-family: var(--font-mono);
+  font-family: var(--font);
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
   color: var(--bar-ink);
@@ -151,8 +164,8 @@
 .room-speaker {
   display: inline-block;
   margin-right: 0.8vw;
-  padding: 0.1em 0.45em;
-  border-radius: 6px;
+  padding: 0.12em 0.6em;
+  border-radius: 999px;
   background: var(--bar-ink);
   font-size: 0.72em;
   font-weight: 700;
@@ -206,11 +219,12 @@
 
 .room-heading.decision::before {
   transform: rotate(45deg) scale(0.85);
+  background: #73cd9f;
 }
 
 .room-heading.action::before {
   background: transparent;
-  border: 2px solid var(--bar-live);
+  border: 2px solid #bca1ed;
   border-radius: 3px;
 }
 
@@ -253,8 +267,9 @@
 .room-open {
   margin-top: auto;
   padding: 2.4vh 1.6vw;
-  border: 1px solid var(--bar-line);
-  border-radius: 10px;
+  border: 1px solid rgba(232, 189, 109, 0.35);
+  border-radius: 18px;
+  background: rgba(232, 189, 109, 0.08);
 }
 
 .room-chapters {
@@ -269,8 +284,8 @@
   flex-basis: 0;
   min-width: 0;
   padding: 1.2vh 1vw;
-  border-radius: 6px;
-  background: var(--bar-line);
+  border-radius: 12px;
+  background: rgba(251, 243, 234, 0.08);
   color: var(--bar-soft);
   font-size: clamp(12px, 1vw, 20px);
   font-weight: 600;
@@ -300,6 +315,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .room,
   .room-status.live .room-dot {
     animation: none;
   }

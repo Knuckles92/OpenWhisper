@@ -3,7 +3,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QPushButton
+from PyQt6.QtWidgets import QApplication, QLabel, QPushButton
 
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
 
@@ -77,6 +77,34 @@ class TestCleanupRuleDialogChoice(_QtTestCase):
         )
         assert not dialog._offer_choice
         assert "Save Rule" in self._labels(dialog)
+
+    def test_typed_original_is_quoted_as_typed(self):
+        dialog = CleanupRuleDialog(
+            "Always spell the name as Alex.",
+            original="always spell my name Alex",
+        )
+        texts = [label.text() for label in dialog.findChildren(QLabel)]
+        assert any(t.startswith("You typed") for t in texts)
+        assert any("exactly what you typed" in t for t in texts)
+
+    def test_dictated_original_is_quoted_as_said(self):
+        dialog = CleanupRuleDialog(
+            "Always spell the name as Alex.",
+            original="always spell my name alex",
+            dictated=True,
+        )
+        labels = self._labels(dialog)
+        assert "Use What I Said" in labels
+        assert "Use Exactly as Typed" not in labels
+        texts = [label.text() for label in dialog.findChildren(QLabel)]
+        assert any(t.startswith("You said") for t in texts)
+        assert any("your words as transcribed" in t for t in texts)
+        assert not any("typed" in t for t in texts)
+        for btn in dialog.findChildren(QPushButton):
+            if btn.text() == "Use What I Said":
+                btn.click()
+                break
+        assert dialog.rule_text() == "always spell my name alex"
 
     def test_edit_mode_has_no_choice(self):
         dialog = CleanupRuleDialog("Existing rule text")

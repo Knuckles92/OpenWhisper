@@ -16,6 +16,7 @@ class CleanupRuleDialog(QDialog):
         original: Optional[str] = None,
         notice: Optional[str] = None,
         parent=None,
+        dictated: bool = False,
     ):
         """Offer the polished rule and, when applicable, its original wording.
 
@@ -23,14 +24,17 @@ class CleanupRuleDialog(QDialog):
             rule: Rule text to confirm or edit (polished text when confirming).
             original: The raw instruction the rule was polished from. None when
                 editing an existing rule. When set and polish succeeded, the
-                user can choose polished (recommended) or exactly as typed.
+                user can choose polished (recommended) or their own words.
             notice: Optional warning line (e.g. AI polish unavailable).
             parent: Optional parent widget.
+            dictated: The original came (at least partly) from dictation, so
+                it is quoted as said and transcribed rather than typed.
         """
         super().__init__(parent)
         self.setObjectName("cleanupRuleDialog")
         self._original = (original or "").strip()
         self._polished = (rule or "").strip()
+        self._dictated = bool(dictated)
         self._offer_choice = (
             original is not None
             and not notice
@@ -79,7 +83,8 @@ class CleanupRuleDialog(QDialog):
         layout.addLayout(header)
 
         if original is not None and original.strip():
-            said = QLabel(f'You said  ·  “{original.strip()}”')
+            source = "You said" if self._dictated else "You typed"
+            said = QLabel(f"{source}  ·  “{original.strip()}”")
             said.setObjectName("cleanupRuleOriginal")
             said.setWordWrap(True)
             layout.addWidget(said)
@@ -91,10 +96,14 @@ class CleanupRuleDialog(QDialog):
             layout.addWidget(warn)
 
         if self._offer_choice:
+            keep = (
+                "your words as transcribed" if self._dictated
+                else "exactly what you typed"
+            )
             info = QLabel(
                 "AI polished your instruction into a clearer rule for the cleanup "
-                "prompt. We recommend the polished version, or you can keep exactly "
-                "what you typed. Edit either choice below before saving."
+                f"prompt. We recommend the polished version, or you can keep {keep}. "
+                "Edit either choice below before saving."
             )
         else:
             info = QLabel(
@@ -135,7 +144,9 @@ class CleanupRuleDialog(QDialog):
         buttons.addWidget(cancel_btn)
 
         if self._offer_choice:
-            as_typed_btn = Button("Use Exactly as Typed")
+            as_typed_btn = Button(
+                "Use What I Said" if self._dictated else "Use Exactly as Typed"
+            )
             as_typed_btn.set_base_minimum_size(156, 42)
             as_typed_btn.setToolTip("Save your original wording without AI changes")
             as_typed_btn.clicked.connect(self._accept_as_typed)

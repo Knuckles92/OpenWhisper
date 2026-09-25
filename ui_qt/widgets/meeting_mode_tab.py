@@ -1,20 +1,23 @@
 """Meeting Mode tab for the main window.
 
-Idle state shows a Start Meeting control, the cloud-intelligence toggle, and an
+Idle state shows the AI insights switch with the model it will use, an
 optional brief saying what the host wants out of the meeting (carried into the
-engine so the agent works to it from the first checkpoint);
+engine so the agent works to it from the first checkpoint, and shown only
+while AI insights are on), and Start Meeting;
 during a meeting it becomes a status card with an elapsed timer and the
-pause/end/dashboard/guest-link controls. After capture ends, a persistent
-finalization card reports running/completed/disabled/unavailable/failed cloud
-outcomes without blocking other tabs. All user intent leaves through signals;
-state flows back in via ``set_meeting_state`` payload dicts (partial updates —
-absent keys leave the current state untouched).
+pause/end/dashboard/guest-link controls, with the switch still available below.
+After capture ends, a persistent finalization card reports
+running/completed/disabled/unavailable/failed AI outcomes without blocking
+other tabs. All user intent leaves through signals; state flows back in via
+``set_meeting_state`` payload dicts (partial updates — absent keys leave the
+current state untouched).
 """
+import logging
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -35,7 +38,10 @@ from meeting.time_utils import format_meeting_identity_meta
 from services.settings import SettingsKey, settings_manager
 from ui_qt.widgets.buttons import Button, DangerButton, SuccessButton
 from ui_qt.widgets.cards import Card
+from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.wrapped_label import WrappedLabel
+
+logger = logging.getLogger(__name__)
 
 
 def meeting_audio_support_copy(platform: Optional[str] = None) -> tuple[str, str]:
@@ -79,14 +85,69 @@ def meeting_audio_support_copy(platform: Optional[str] = None) -> tuple[str, str
     return subtitle, hint
 
 
-def cloud_intelligence_tooltip() -> str:
-    """Explain the cloud toggle in a compact, wrapped hover hint."""
+def ai_insights_tooltip() -> str:
+    """Explain the AI insights switch in a compact, wrapped hover hint."""
     return (
-        "On: Send transcript text to your configured AI\n"
-        "model for live insights and post-meeting reports.\n"
-        "Off: Save the recording and transcript without\n"
-        "these AI extras. Audio stays local either way."
+        "On: send transcript text to the AI model chosen\n"
+        "in Settings for live insights and a final report.\n"
+        "Off: keep the recording and transcript only.\n"
+        "Audio stays on this PC either way."
     )
+
+
+def ai_insights_destination(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, str]:
+    """Say which model AI insights would use and what leaves this computer.
+
+    The switch is named for what it produces, so this line carries what the
+    old "cloud" name implied, and stays true for a model on this PC.
+
+    Args:
+        settings: Settings mapping; loaded when omitted.
+
+    Returns:
+        ``(where, privacy)``, e.g. ``("OpenRouter · deepseek-v4.1-flash",
+        "sends transcript text, never audio")``.
+    """
+    try:
+        from services.settings import (
+            resolve_meeting_llm_model,
+            resolve_meeting_llm_profile,
+            resolve_typesafe_enabled,
+        )
+
+        if settings is None:
+            settings = settings_manager.load_all_settings()
+        profile = resolve_meeting_llm_profile(settings)
+        model = resolve_meeting_llm_model(settings)
+        typesafe = resolve_typesafe_enabled(settings)
+    except Exception:
+        logger.debug("Could not resolve the meeting AI model", exc_info=True)
+        profile = None
+    if profile is None:
+        return (
+            "No AI model chosen",
+            "pick one in Settings → Meeting Mode → Intelligence",
+        )
+    if profile.is_local:
+        where = f"{profile.name} on this PC"
+        # TypeSafe judgments are a separate service that still receives
+        # excerpts, so only claim the text stays here when they are off.
+        privacy = (
+            "the model runs on this computer"
+            if typesafe
+            else "transcript text stays on this computer"
+        )
+    else:
+        where = profile.name
+        privacy = "sends transcript text, never audio"
+    # OpenRouter ids carry the vendor ("deepseek/deepseek-v4.1-flash"); the
+    # provider already names the route, so the short name reads better.
+    short_model = (model or "").rsplit("/", 1)[-1]
+    if short_model:
+        where = f"{where} · {short_model}"
+    return where, privacy
 
 
 def meeting_audio_shows_platform_warning(platform: Optional[str] = None) -> bool:
@@ -101,6 +162,31 @@ def meeting_audio_shows_platform_warning(platform: Optional[str] = None) -> bool
     return True
 
 
+class _BriefEdit(QPlainTextEdit):
+    """Brief field whose height is a count of text lines at the live font.
+
+    The stylesheet supplies the font size, border, and padding only once the
+    field is polished, and again whenever the UI type size changes, so a pixel
+    height fixed in the constructor clips at a larger scale. Qt re-reads the
+    size hint after each font or style change.
+    """
+
+    VISIBLE_LINES = 3
+
+    def sizeHint(self) -> QSize:
+        margins = self.contentsMargins()
+        height = (
+            self.VISIBLE_LINES * self.fontMetrics().lineSpacing()
+            + 2 * round(self.document().documentMargin())
+            + margins.top()
+            + margins.bottom()
+        )
+        return QSize(super().sizeHint().width(), height)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(super().minimumSizeHint().width(), self.sizeHint().height())
+
+
 class MeetingModeTab(QWidget):
     """Full-page tab with Meeting Mode session controls."""
 
@@ -113,6 +199,8 @@ class MeetingModeTab(QWidget):
     open_report_requested = pyqtSignal()
     copy_guest_link_requested = pyqtSignal()
     cloud_toggled = pyqtSignal(bool)
+    #: "Change…" beside AI insights: open Settings → Meeting Mode → Intelligence.
+    ai_settings_requested = pyqtSignal()
     retry_insights_requested = pyqtSignal()
     retry_speakers_requested = pyqtSignal()
     retry_step_requested = pyqtSignal(str)
@@ -173,7 +261,7 @@ class MeetingModeTab(QWidget):
 
     @staticmethod
     def _link_button(text: str, object_name: str, tooltip: str = "") -> QPushButton:
-        """Build a flat text action for the finalization footer's first tier.
+        """Build a flat text action, e.g. the finalization footer's first tier.
 
         Args:
             text: Button label.
@@ -185,7 +273,7 @@ class MeetingModeTab(QWidget):
         """
         button = QPushButton(text)
         button.setObjectName(object_name)
-        button.setProperty("meetingFooterLink", True)
+        button.setProperty("meetingLink", True)
         button.setFlat(True)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -290,7 +378,7 @@ class MeetingModeTab(QWidget):
         self.subtitle.setFont(QFont("Segoe UI", 11))
         self.subtitle.setToolTip(platform_copy)
         intro_card.layout.addWidget(self.subtitle)
-        self.platform_hint = WrappedLabel(platform_copy)
+        self.platform_hint = WrappedLabel(platform_copy, intro_card)
         self.platform_hint.setObjectName("meetingModePlatformHint")
         self.platform_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.platform_hint.setFont(QFont("Segoe UI", 10))
@@ -299,116 +387,8 @@ class MeetingModeTab(QWidget):
         intro_card.layout.addWidget(self.platform_hint)
         content_layout.addWidget(intro_card)
 
-        cloud_row = QHBoxLayout()
-        cloud_row.setSpacing(6)
-        cloud_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.cloud_checkbox = QCheckBox("Cloud intelligence")
-        self.cloud_checkbox.setObjectName("meetingCloudCheckbox")
-        self.cloud_checkbox.setChecked(
-            bool(settings_manager.get(SettingsKey.MEETING_CLOUD_LAST_ENABLED, False))
-        )
-        self.cloud_checkbox.setAccessibleDescription(
-            "When checked, transcript text is sent to the configured AI model "
-            "for live insights and post-meeting reports. Audio stays local."
-        )
-        self.cloud_checkbox.setToolTip(cloud_intelligence_tooltip())
-        self.cloud_checkbox.toggled.connect(self.cloud_toggled)
-        cloud_row.addWidget(self.cloud_checkbox)
-
-        content_layout.addLayout(cloud_row)
-
-        # Idle controls
-        self.idle_card = Card()
-        self.idle_card.setMinimumHeight(0)
-        idle_inner = QWidget()
-        idle_layout = QVBoxLayout(idle_inner)
-        idle_layout.setContentsMargins(0, 8, 0, 8)
-        idle_layout.setSpacing(16)
-        idle_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        # The brief is stated before Start so the agent works to it from the
-        # first checkpoint. It stays editable on the dashboard afterwards.
-        self.brief_label = WrappedLabel(
-            "What do you want out of this meeting? (optional)"
-        )
-        self.brief_label.setObjectName("meetingBriefLabel")
-        self.brief_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        idle_layout.addWidget(self.brief_label)
-
-        self.brief_input = QPlainTextEdit()
-        self.brief_input.setObjectName("meetingBriefInput")
-        self.brief_input.setPlaceholderText(
-            "e.g. “We decide the vendor today — capture who objected "
-            "and why.”"
-        )
-        self.brief_input.setAccessibleName("Meeting brief")
-        self.brief_input.setAccessibleDescription(
-            "Optional. What you want out of this meeting's notes, including "
-            "anything the AI note taker should watch for. It is read on every "
-            "pass and can be changed from the dashboard during the meeting."
-        )
-        # Grows with the card up to a readable measure, and shrinks on a
-        # narrow window instead of forcing the tab to scroll sideways.
-        self.brief_input.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        self.brief_input.setMaximumWidth(460)
-        self.brief_input.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        # Four lines at the user's font scale, so a larger UI font grows the
-        # box instead of clipping the words inside it.
-        line_height = self.brief_input.fontMetrics().lineSpacing()
-        frame = 2 * int(self.brief_input.frameWidth())
-        self.brief_input.setFixedHeight(4 * line_height + frame + 16)
-        self.brief_input.setMinimumWidth(280)
-        brief_row = QHBoxLayout()
-        brief_row.addStretch(1)
-        # Stretch on the field too, or the spacers would claim every spare
-        # pixel and leave it at its (narrow) size hint.
-        brief_row.addWidget(self.brief_input, 4)
-        brief_row.addStretch(1)
-        idle_layout.addLayout(brief_row)
-
-        self.start_button = SuccessButton("Start Meeting")
-        self.start_button.setObjectName("meetingStartButton")
-        self.start_button.setMinimumHeight(48)
-        self.start_button.setMaximumWidth(320)
-        self.start_button.setAccessibleDescription(
-            "Begin microphone and supported system-audio capture."
-        )
-        self.start_button.clicked.connect(self._on_start_clicked)
-        idle_layout.addWidget(self.start_button, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        self.demo_button = Button("Load demo meeting")
-        self.demo_button.setObjectName("meetingDemoButton")
-        self.demo_button.setMaximumWidth(320)
-        self.demo_button.setToolTip(
-            "Open the dashboard with a fake transcript so you can test "
-            "end-of-meeting cleanup and the final report without recording."
-        )
-        self.demo_button.setAccessibleDescription(
-            "Load a fake meeting and open its dashboard without recording audio."
-        )
-        self.demo_button.clicked.connect(self._on_demo_clicked)
-        idle_layout.addWidget(
-            self.demo_button, alignment=Qt.AlignmentFlag.AlignCenter
-        )
-
-        self.demo_hint = WrappedLabel(
-            "Loads a fake transcript and opens the dashboard. Turn on "
-            "Cloud intelligence, then End, to test cleanup and the report."
-        )
-        self.demo_hint.setObjectName("meetingDemoHint")
-        self.demo_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.demo_hint.setFont(QFont("Segoe UI", 10))
-        idle_layout.addWidget(self.demo_hint)
-
-        self.idle_card.layout.addWidget(idle_inner)
-        content_layout.addWidget(self.idle_card)
-
-        # Active session card
+        # Active session card. It comes before the AI insights panel so the
+        # meeting's own controls lead while it runs.
         self.session_card = Card()
         self.session_card.setMinimumHeight(0)
 
@@ -467,6 +447,61 @@ class MeetingModeTab(QWidget):
         self.session_card.layout.addLayout(links_row)
 
         content_layout.addWidget(self.session_card)
+
+        # The AI insights panel and the idle controls share one column, inset
+        # to the cards' content edge, so the two setup panels stack as tightly
+        # as Quick Record's engine cards.
+        setup_group = QWidget()
+        setup_group.setObjectName("meetingSetupGroup")
+        setup_layout = QVBoxLayout(setup_group)
+        setup_layout.setContentsMargins(16, 0, 16, 0)
+        setup_layout.setSpacing(12)
+        setup_layout.addWidget(self._build_ai_panel())
+
+        # Idle controls
+        self.idle_card = Card()
+        self.idle_card.setMinimumHeight(0)
+        idle_layout = self.idle_card.layout
+        idle_layout.setContentsMargins(0, 0, 0, 8)
+        idle_layout.setSpacing(16)
+        idle_layout.addWidget(self._build_brief_panel())
+
+        self.start_button = SuccessButton("Start Meeting")
+        self.start_button.setObjectName("meetingStartButton")
+        self.start_button.setMinimumHeight(48)
+        self.start_button.setMaximumWidth(320)
+        self.start_button.setAccessibleDescription(
+            "Begin microphone and supported system-audio capture."
+        )
+        self.start_button.clicked.connect(self._on_start_clicked)
+        idle_layout.addWidget(self.start_button, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.demo_button = Button("Load demo meeting")
+        self.demo_button.setObjectName("meetingDemoButton")
+        self.demo_button.setMaximumWidth(320)
+        self.demo_button.setToolTip(
+            "Open the dashboard with a fake transcript so you can test "
+            "end-of-meeting cleanup and the final report without recording."
+        )
+        self.demo_button.setAccessibleDescription(
+            "Load a fake meeting and open its dashboard without recording audio."
+        )
+        self.demo_button.clicked.connect(self._on_demo_clicked)
+        idle_layout.addWidget(
+            self.demo_button, alignment=Qt.AlignmentFlag.AlignCenter
+        )
+
+        self.demo_hint = WrappedLabel(
+            "Loads a fake transcript and opens the dashboard. Turn on "
+            "AI insights, then End, to test cleanup and the report."
+        )
+        self.demo_hint.setObjectName("meetingDemoHint")
+        self.demo_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.demo_hint.setFont(QFont("Segoe UI", 10))
+        idle_layout.addWidget(self.demo_hint)
+
+        setup_layout.addWidget(self.idle_card)
+        content_layout.addWidget(setup_group)
 
         # Post-meeting finalization / result card
         self.finalization_card = Card()
@@ -698,8 +733,199 @@ class MeetingModeTab(QWidget):
 
         content_layout.addStretch()
 
+    #: Lines the AI insights details up with the checkbox text: the
+    #: indicator's 20px plus the 8px ``spacing`` theme.qss gives the checkbox.
+    _AI_DETAIL_INDENT = 28
+
+    def _build_ai_panel(self) -> QFrame:
+        """Build the AI insights switch with what it does and where it runs.
+
+        Returns:
+            The panel. It stays visible during a meeting, where the switch
+            turns insights on or off live, but shows its details only while
+            the next meeting is being set up.
+        """
+        panel = QFrame()
+        panel.setObjectName("meetingAiPanel")
+        self.ai_panel = panel
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(4)
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(12)
+        self.cloud_checkbox = QCheckBox("AI insights")
+        self.cloud_checkbox.setObjectName("meetingAiInsightsCheckbox")
+        self.cloud_checkbox.setChecked(
+            bool(settings_manager.get(SettingsKey.MEETING_CLOUD_LAST_ENABLED, False))
+        )
+        self.cloud_checkbox.setAccessibleDescription(
+            "When checked, transcript text goes to the AI model chosen in "
+            "Settings for live insights and a final report. Audio stays on "
+            "this computer."
+        )
+        self.cloud_checkbox.setToolTip(ai_insights_tooltip())
+        # Show or hide the brief first, so it has already changed by the time
+        # turning the switch on opens the consent dialog.
+        self.cloud_checkbox.toggled.connect(self._sync_brief_availability)
+        self.cloud_checkbox.toggled.connect(self.cloud_toggled)
+        title_row.addWidget(self.cloud_checkbox)
+        title_row.addStretch()
+
+        # While a meeting runs the details are hidden, so the model moves up
+        # into the switch's row.
+        self.ai_compact_destination = ElidingLabel()
+        self.ai_compact_destination.setObjectName("meetingAiCompactDestination")
+        self.ai_compact_destination.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.ai_compact_destination.hide()
+        title_row.addWidget(self.ai_compact_destination)
+
+        self.ai_settings_button = self._link_button(
+            "Change…",
+            "meetingAiSettingsButton",
+            "Choose the AI model in Settings → Meeting Mode → Intelligence",
+        )
+        self.ai_settings_button.setAccessibleName("Change the AI insights model")
+        self.ai_settings_button.clicked.connect(self.ai_settings_requested)
+        title_row.addWidget(self.ai_settings_button)
+        layout.addLayout(title_row)
+
+        self.ai_details = QWidget()
+        self.ai_details.setObjectName("meetingAiDetails")
+        details_layout = QVBoxLayout(self.ai_details)
+        details_layout.setContentsMargins(self._AI_DETAIL_INDENT, 0, 0, 0)
+        details_layout.setSpacing(2)
+        self.ai_description = WrappedLabel(
+            "Live notes, insights, and a final report."
+        )
+        self.ai_description.setObjectName("meetingAiDescription")
+        details_layout.addWidget(self.ai_description)
+        self.ai_destination = WrappedLabel("")
+        self.ai_destination.setObjectName("meetingAiDestination")
+        self.ai_destination.setAccessibleName("AI insights model")
+        details_layout.addWidget(self.ai_destination)
+        layout.addWidget(self.ai_details)
+
+        self.refresh_ai_destination()
+        return panel
+
+    def _build_brief_panel(self) -> QFrame:
+        """Build the optional brief as a labelled field with its own hint.
+
+        Returns:
+            The panel. It lives in the idle card, so it leaves with Start once
+            a meeting begins; the dashboard owns the brief from then on. It is
+            also hidden while AI insights are off.
+        """
+        # Initial visibility is restored below, before addWidget() can adopt
+        # the panel. Give it an owner now so it never opens as a blank window.
+        panel = QFrame(self.idle_card)
+        panel.setObjectName("meetingBriefPanel")
+        self.brief_panel = panel
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(6)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        self.brief_label = QLabel("Meeting brief")
+        self.brief_label.setObjectName("meetingBriefLabel")
+        header.addWidget(self.brief_label)
+        header.addStretch()
+        optional = QLabel("Optional")
+        optional.setObjectName("meetingBriefOptional")
+        header.addWidget(optional)
+        layout.addLayout(header)
+
+        # The brief is stated before Start so the agent works to it from the
+        # first checkpoint. It stays editable on the dashboard afterwards.
+        self.brief_input = _BriefEdit()
+        self.brief_input.setObjectName("meetingBriefInput")
+        self.brief_input.setPlaceholderText(
+            "What do you want out of this meeting? e.g. “We decide the vendor "
+            "today — capture who objected and why.”"
+        )
+        self.brief_input.setAccessibleName("Meeting brief")
+        self.brief_input.setAccessibleDescription(
+            "Optional. What you want out of this meeting's notes, including "
+            "anything the AI note taker should watch for. It is read on every "
+            "pass and can be changed from the dashboard during the meeting."
+        )
+        # Tab leaves the field like any other form control; a brief has no
+        # use for literal tab characters.
+        self.brief_input.setTabChangesFocus(True)
+        self.brief_input.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self.brief_input.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.brief_label.setBuddy(self.brief_input)
+        layout.addWidget(self.brief_input)
+
+        self.brief_hint = WrappedLabel(
+            "AI insights read this on every pass. You can change it from the "
+            "dashboard."
+        )
+        self.brief_hint.setObjectName("meetingBriefHint")
+        layout.addWidget(self.brief_hint)
+        self._sync_brief_availability()
+        return panel
+
+    def _sync_brief_availability(self, *_args) -> None:
+        """Show the brief only while AI insights are on.
+
+        The brief exists to steer AI insights. Without them it would only
+        label the meeting on the dashboard and in the export, so with the
+        switch off the panel is hidden and nothing typed there is sent. The
+        text stays for when the switch comes back on.
+        """
+        on = self.cloud_checkbox.isChecked()
+        changed = self.brief_panel.isHidden() == on
+        self.brief_panel.setVisible(on)
+        if changed:
+            # The window fits its height to this page, so let it follow.
+            self.content_height_changed.emit()
+
+    def refresh_ai_destination(self) -> None:
+        """Re-read which model AI insights will use for the next meeting.
+
+        A running meeting keeps the endpoint it started with, so the line is
+        left alone until it ends rather than showing a later Settings change.
+        """
+        if self._active:
+            return
+        where, privacy = ai_insights_destination()
+        line = f"{where} — {privacy}."
+        if line == self.ai_destination.text():
+            return
+        self.ai_destination.setText(line)
+        self.ai_compact_destination.setText(where)
+        self.ai_compact_destination.setToolTip(line)
+        self.content_height_changed.emit()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.refresh_ai_destination()
+
+    def event(self, event) -> bool:
+        # Coming back from Settings is how the model usually changes.
+        if event.type() == QEvent.Type.WindowActivate:
+            self.refresh_ai_destination()
+        return super().event(event)
+
     def meeting_brief(self) -> str:
-        """The host's pre-meeting brief, trimmed and capped for the engine."""
+        """The host's pre-meeting brief, trimmed and capped for the engine.
+
+        Empty while AI insights are off: the field is hidden then, so text
+        left in it must not reach the meeting.
+        """
+        if not self.cloud_checkbox.isChecked():
+            return ""
         # Imported here rather than at module scope so the validation layer
         # stays the single source of the cap without widening what the main
         # window loads at startup.
@@ -788,6 +1014,9 @@ class MeetingModeTab(QWidget):
             self.cloud_checkbox.blockSignals(True)
             self.cloud_checkbox.setChecked(bool(payload["cloud_enabled"]))
             self.cloud_checkbox.blockSignals(False)
+            # Blocked signals skip the toggled slots, so the brief (for
+            # instance after a declined consent dialog) syncs here instead.
+            self._sync_brief_availability()
 
         if "elapsed_s" in payload:
             try:
@@ -815,6 +1044,8 @@ class MeetingModeTab(QWidget):
                 self._background_available = False
                 self._finalization = None
                 self._identity = {}
+                # The engine snapshots its endpoint now; show that one.
+                self.refresh_ai_destination()
 
         if "dashboard_available" in payload:
             self._has_dashboard = bool(payload["dashboard_available"])
@@ -982,9 +1213,14 @@ class MeetingModeTab(QWidget):
         # incomplete card is asking the user to retry, defer, or start new.
         incomplete = self._is_incomplete_finalization(finalization)
         hide_idle_start = running_finalization or incomplete
-        self.idle_card.setVisible(
-            not showing_session and not hide_idle_start
-        )
+        setting_up = not showing_session and not hide_idle_start
+        self.idle_card.setVisible(setting_up)
+        # The switch always stays (it acts on a live meeting, and "Start new
+        # meeting" reads it), but what it does and "Change…" only matter
+        # while the next meeting is being set up.
+        self.ai_details.setVisible(setting_up)
+        self.ai_settings_button.setVisible(setting_up)
+        self.ai_compact_destination.setVisible(not setting_up)
         self.start_button.setVisible(not hide_idle_start)
         show_demo = (
             self._developer_mode
@@ -1091,16 +1327,16 @@ class MeetingModeTab(QWidget):
         titles = {
             "running": "Finalizing Meeting",
             "completed": "Final Insights Ready",
-            "disabled": "Cloud Insights Off",
+            "disabled": "AI Insights Off",
             "unavailable": "Final Insights Unavailable",
             "failed": "Final Insights Incomplete",
         }
         defaults = {
-            "running": "Preparing final cloud insights…",
-            "completed": "Final cloud insights are ready.",
-            "disabled": "Cloud intelligence is off for this meeting.",
-            "unavailable": "Final cloud insights could not run.",
-            "failed": "Final cloud insights failed.",
+            "running": "Preparing final insights…",
+            "completed": "Final insights are ready.",
+            "disabled": "AI insights are off for this meeting.",
+            "unavailable": "Final insights could not run.",
+            "failed": "Final insights failed.",
         }
         failed_steps = [
             step for step in steps

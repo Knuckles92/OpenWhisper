@@ -25,7 +25,7 @@ from meeting.export.transcript_txt import (
     transcript_lines,
 )
 from meeting.highlights import PULSE_LABELS
-from meeting.time_utils import as_local_time, elapsed_seconds
+from meeting.time_utils import as_local_time, meeting_duration_s
 
 logger = logging.getLogger(__name__)
 
@@ -135,14 +135,15 @@ def _metadata_line(meeting: Dict[str, Any], state: Dict[str, Any],
 
 def _duration_s(meeting: Dict[str, Any],
                 segments: List[Dict[str, Any]]) -> Optional[float]:
-    """Meeting duration: the segments' max ``end_s``, else ended-started."""
+    """Meeting duration: the segments' max ``end_s``, else recorded time.
+
+    Segment times are meeting-clock seconds (pauses excluded), so the
+    fallback subtracts pause credit too.
+    """
     ends = [float(s.get("end_s") or 0.0) for s in segments]
     if ends and max(ends) > 0:
         return max(ends)
-    span = elapsed_seconds(meeting.get("started_at"), meeting.get("ended_at"))
-    if span is not None and span >= 0:
-        return span
-    return None
+    return meeting_duration_s(meeting)
 
 
 def _append_intent(out: List[str], state: Dict[str, Any]) -> None:

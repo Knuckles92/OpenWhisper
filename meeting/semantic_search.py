@@ -8,7 +8,7 @@ from services.typesafe import judge_from_settings
 
 logger = logging.getLogger(__name__)
 MAX_CANDIDATES = 48
-SCOPE = "Ranked up to 48 passages from keyword matches and recent cloud-enabled meetings."
+SCOPE = "Ranked up to 48 passages from keyword matches and recent meetings that had AI insights on."
 
 
 def search_history(repository, query, *, semantic=False, exclude_meeting_id=None, limit=50, judge=None):

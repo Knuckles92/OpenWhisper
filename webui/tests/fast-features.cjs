@@ -242,13 +242,13 @@ test('highlight status from hello and live updates replaces the empty message wi
   assert.equal(container.querySelectorAll('.pulse-mark').length, 1);
   await update({type:'status', live_highlights_status:'on'});
   await update({type:'patch', results:[{seq:2, effect:{entity:'cloud_enabled', enabled:false}}]});
-  assert.match(container.textContent, /Live highlights are on, but Cloud insights are off/);
+  assert.match(container.textContent, /Live highlights are on, but AI insights are off/);
 });
 
 for (const [props, expected] of [
   [{highlightStatus:'off', isHost:false}, /Live highlights are off.*host can enable/],
   [{highlightStatus:'unavailable', isHost:true}, /Live highlights are on, but unavailable.*Meeting settings/],
-  [{highlightStatus:'on', cloudEnabled:false, isHost:false}, /host has Cloud insights turned off/],
+  [{highlightStatus:'on', cloudEnabled:false, isHost:false}, /host has AI insights turned off/],
   [{highlightStatus:'on', meetingStatus:'paused'}, /Live highlights are on.*Resume the meeting/],
   [{}, /Live highlight status is unavailable/],
   [{highlightStatus:'on', meetingStatus:'ended'}, /No highlights were captured for this meeting/],

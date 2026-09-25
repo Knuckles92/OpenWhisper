@@ -40,7 +40,7 @@ from meeting.interfaces import (
 )
 from meeting.state.schema import MeetingState, new_id, now_iso
 from meeting.state.segment_ops import make_segment_handler
-from meeting.state.store import MeetingStateStore
+from meeting.state.store import MeetingStateStore, repository_segment_lookup
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +141,9 @@ class MeetingEngine:
         self.clock = MeetingClock()
         self.meeting_id: Optional[str] = None
         self.store: Optional[MeetingStateStore] = None
+        #: ``(acquire, release)`` pair the host app sets so dashboard re-runs
+        #: free its dictation model before loading Whisper for a redecode.
+        self.model_lease: Optional[Tuple[Callable[[], bool], Callable[[], None]]] = None
 
         self._lifecycle_lock = threading.RLock()
         self._active = False
@@ -536,6 +539,9 @@ class MeetingEngine:
                         "speaker_pinned"
                     )
                 ),
+                segment_lookup=repository_segment_lookup(
+                    self.repository, meeting_id,
+                ),
             )
             results = self.store.apply("system", None, [{
                 "op": "upsert_participant", "display_name": "Me",
@@ -707,41 +713,32 @@ class MeetingEngine:
         return drained
 
     def _finalization_summary_stats(self) -> Dict[str, Any]:
-        summary_stats: Dict[str, Any] = {
-            "segments": 0,
-            "words": 0,
-            "key_points": 0,
-            "action_items": 0,
-            "decisions": 0,
-            "risks": 0,
-            "questions": 0,
-            "duration_s": 0.0,
-        }
+        from meeting.finalization import summary_stats
+
         try:
-            summary_stats["duration_s"] = float(self.clock.elapsed_s())
+            duration_s = float(self.clock.now_s())
         except Exception:
-            pass
+            logger.exception("Could not read meeting duration for summary")
+            duration_s = 0.0
+        cards: Dict[str, Any] = {}
+        questions: List[Any] = []
         if self.store is not None:
             try:
-                cards = self.store.with_state(lambda s: dict(s.cards))
-                questions = self.store.with_state(lambda s: list(s.questions))
-                summary_stats["key_points"] = len(cards.get("key_points", []))
-                summary_stats["action_items"] = len(cards.get("action_items", []))
-                summary_stats["decisions"] = len(cards.get("decisions", []))
-                summary_stats["risks"] = len(cards.get("risks", []))
-                summary_stats["questions"] = len(questions)
+                cards, questions = self.store.with_state(
+                    lambda s: (dict(s.cards), list(s.questions))
+                )
             except Exception:
-                pass
+                logger.exception("Could not collect card stats for summary")
         try:
             transcript = self.get_transcript()
-            summary_stats["segments"] = len(transcript)
-            summary_stats["words"] = sum(len(str(seg.get("text") or "").split()) for seg in transcript)
         except Exception:
-            pass
-        return summary_stats
+            logger.exception("Could not collect transcript stats for summary")
+            transcript = []
+        return summary_stats(cards, questions, transcript, duration_s)
 
     def _end_worker(self, drain_timeout_s: float) -> None:
-        terminal_persisted = False
+        terminal_status: Optional[str] = None
+        ended_emitted = False
         try:
             # Flip the dashboard off "Live" immediately — drain + consolidation
             # can take a while, and leaving status=active looks hung.
@@ -803,7 +800,7 @@ class MeetingEngine:
                     ended_at=now_iso(),
                     paused_total_s=self.clock.paused_total_s(),
                 )
-                terminal_persisted = True
+                terminal_status = status
             except Exception:
                 logger.exception("Failed to persist terminal meeting metadata")
                 raise
@@ -870,14 +867,14 @@ class MeetingEngine:
             elif not cloud_enabled:
                 self._set_finalization(
                     "disabled",
-                    "Cloud intelligence is off for this meeting.",
+                    "AI insights are off for this meeting.",
                     emit=False,
                 )
             elif not complete:
                 self._set_finalization(
                     "unavailable",
                     (
-                        "Final cloud insights are unavailable until "
+                        "Final insights are unavailable until "
                         "transcription recovery finishes."
                     ),
                     emit=False,
@@ -901,6 +898,7 @@ class MeetingEngine:
                 "status": status,
                 "unfinished_chunks": unfinished,
             })
+            ended_emitted = True
 
             offline_ok = False
             if will_offline:
@@ -990,7 +988,7 @@ class MeetingEngine:
                 self._set_finalization(
                     "unavailable",
                     (
-                        "Final cloud insights are unavailable until "
+                        "Final insights are unavailable until "
                         "transcription recovery finishes."
                     ),
                 )
@@ -1076,7 +1074,7 @@ class MeetingEngine:
                     self.revoke_agent_writes()
                     self._set_finalization(
                         "failed",
-                        f"Final cloud insights failed: {exc}",
+                        f"Final insights failed: {exc}",
                         stage="failed",
                         current_step=total_steps,
                         total_steps=total_steps,
@@ -1114,7 +1112,7 @@ class MeetingEngine:
                             if summary_stats["decisions"]:
                                 parts.append(f"{summary_stats['decisions']} decisions")
                             summary_line = ", ".join(parts)
-                            final_msg = f"Final insights ready — {summary_line}." if summary_line else "Final cloud insights are ready."
+                            final_msg = f"Final insights ready — {summary_line}." if summary_line else "Final insights are ready."
                     else:
                         final_msg = message
 
@@ -1142,7 +1140,7 @@ class MeetingEngine:
                             "Speaker identification finished."
                             if cloud_enabled else
                             "Speaker identification finished. "
-                            "Cloud intelligence is off for this meeting."
+                            "AI insights are off for this meeting."
                         )
                     elif speaker_skipped:
                         final_status = "completed"
@@ -1169,13 +1167,13 @@ class MeetingEngine:
                 elif not cloud_enabled:
                     self._set_finalization(
                         "disabled",
-                        "Cloud intelligence is off for this meeting.",
+                        "AI insights are off for this meeting.",
                     )
                 elif not complete and not offline_ok:
                     self._set_finalization(
                         "unavailable",
                         (
-                            "Final cloud insights are unavailable until "
+                            "Final insights are unavailable until "
                             "transcription recovery finishes."
                         ),
                     )
@@ -1209,7 +1207,9 @@ class MeetingEngine:
             self._active = False
             self.revoke_agent_writes()
             self._emit("error", {"code": "end_failed", "message": str(exc)})
-            self._finish_failed_end(exc, terminal_persisted)
+            self._finish_failed_end(
+                exc, terminal_status, ended_emitted=ended_emitted,
+            )
 
     def _run_cloud_speaker_pass(
         self,
@@ -1364,6 +1364,15 @@ class MeetingEngine:
             ),
             keep_evidenced=True,
         )
+        # The end-of-capture repair ran against the draft transcript; timeline
+        # coverage and summary fallbacks are rebuilt from the final one.
+        if self.store is not None:
+            try:
+                from meeting.state.repair import repair_meeting_state
+
+                repair_meeting_state(self.store, rows)
+            except Exception:
+                logger.exception("State repair after offline ASR failed")
         payload = {"items": rows, "removed_ids": deleted}
         self._emit("segments", payload)
         self._broadcast({"type": "segments", **payload})
@@ -1449,8 +1458,8 @@ class MeetingEngine:
     ) -> None:
         """Assign Me/diarizer labels using session audio instead of chunks."""
         try:
-            from meeting.asr.audio import prepare_for_whisper
             from meeting.asr.offline import load_channel_session
+            from meeting.diarize.assign import assign_from_frames, refresh_labels
         except Exception:
             logger.exception(
                 "Offline speaker helpers unavailable; skipping diarization"
@@ -1470,25 +1479,18 @@ class MeetingEngine:
             frames, rate, origin = load_channel_session(spool_dir, channel, chunks)
             if frames is None or frames.size == 0:
                 continue
-            for seg in channel_segments:
-                start = max(0, int(round((seg.start_s - origin) * rate)))
-                end = min(len(frames), int(round((seg.end_s - origin) * rate)))
-                if end <= start:
-                    continue
-                try:
-                    audio = prepare_for_whisper(frames[start:end], rate)
-                    participant_id = self._diarizer.assign(seg, audio, 16000)
-                except Exception:
-                    logger.exception(
-                        "Diarizer assignment failed for offline %s",
-                        seg.segment_id,
-                    )
-                    participant_id = None
-                if participant_id:
-                    seg.speaker_participant_id = participant_id
-                    seg.speaker_source = "diarizer"
+            labeled = assign_from_frames(
+                self._diarizer, channel_segments, frames, rate, origin,
+            )
+            refresh_labels(self._diarizer, labeled)
 
-    def _finish_failed_end(self, exc: Exception, ended_persisted: bool) -> None:
+    def _finish_failed_end(
+        self,
+        exc: Exception,
+        terminal_status: Optional[str],
+        *,
+        ended_emitted: bool = False,
+    ) -> None:
         """Unwind after ``_end_worker`` raised, still reporting ``ended``.
 
         The Qt runtime only leaves exclusive meeting mode on the ``ended``
@@ -1497,8 +1499,11 @@ class MeetingEngine:
 
         Args:
             exc: The exception that aborted the end.
-            ended_persisted: True when the meeting row was already marked
-                ended before the failure.
+            terminal_status: The status already committed to the meeting row
+                (``ended`` / ``needs_recovery``), or None when the failure
+                came before the terminal write. A committed status is kept:
+                only finalization is marked failed.
+            ended_emitted: True when ``ended`` already went to listeners.
         """
         self._stop_asr("failed end")
         self.revoke_agent_writes()
@@ -1508,8 +1513,8 @@ class MeetingEngine:
         except Exception:
             logger.exception("Clock pause failed after a failed end")
         self._stop_heartbeat()
-        status = "needs_recovery"
-        if not ended_persisted:
+        status = terminal_status or "needs_recovery"
+        if terminal_status is None:
             try:
                 self.repository.update_meeting(
                     self.meeting_id, status=status, ended_at=now_iso(),
@@ -1517,10 +1522,13 @@ class MeetingEngine:
             except Exception:
                 logger.exception("Failed to persist failed end status")
         if self.store is not None:
-            try:
-                self.store.update_runtime_fields(status=status)
-            except Exception:
-                logger.exception("Failed to update state status after a failed end")
+            if terminal_status is None:
+                try:
+                    self.store.update_runtime_fields(status=status)
+                except Exception:
+                    logger.exception(
+                        "Failed to update state status after a failed end"
+                    )
             try:
                 self._set_finalization(
                     "failed",
@@ -1531,15 +1539,17 @@ class MeetingEngine:
                 logger.exception(
                     "Failed to persist finalization after a failed end"
                 )
-        self._broadcast({"type": "meeting_ended", "status": status})
+        if not ended_emitted:
+            self._broadcast({"type": "meeting_ended", "status": status})
         try:
             self._emit_status()
         except Exception:
             logger.exception("Status emit failed after a failed end")
-        self._emit("ended", {
-            "meeting_id": self.meeting_id, "canceled": False,
-            "status": status, "error": str(exc),
-        })
+        if not ended_emitted:
+            self._emit("ended", {
+                "meeting_id": self.meeting_id, "canceled": False,
+                "status": status, "error": str(exc),
+            })
 
     def cancel(self) -> None:
         """Discard the session fast: no drain, no consolidation.
@@ -1656,20 +1666,20 @@ class MeetingEngine:
         if not cloud_enabled:
             self._set_finalization(
                 "disabled",
-                "Cloud intelligence is off for this meeting.",
+                "AI insights are off for this meeting.",
                 emit=False,
             )
             return
         if status == "running":
             self._set_finalization(
                 "failed",
-                "Final cloud insights were interrupted by application shutdown.",
+                "Final insights were interrupted by application shutdown.",
                 emit=False,
             )
         else:
             self._set_finalization(
                 "unavailable",
-                "Final cloud insights did not run before shutdown.",
+                "Final insights did not run before shutdown.",
                 emit=False,
             )
 
@@ -2404,8 +2414,7 @@ class MeetingEngine:
         scheduler = self._scheduler
         if scheduler is not None and items:
             try:
-                # Revised text should refresh agent context even when ids reuse.
-                scheduler.notify_segments(len(items))
+                scheduler.notify_revised([row.get("id") for row in items])
             except Exception:
                 logger.exception("Scheduler notify failed after revise")
 
@@ -2421,10 +2430,17 @@ class MeetingEngine:
         if not by_chunk:
             return
         try:
-            from meeting.asr.audio import load_wav_int16, prepare_for_whisper
+            from meeting.asr.audio import load_wav_int16
+            from meeting.diarize.assign import assign_from_frames, refresh_labels
         except Exception:
             logger.exception("meeting.asr.audio unavailable; skipping diarization")
             return
+
+        def _on_unlabeled() -> None:
+            if not self._degraded_diarization:
+                self._check_diarizer_degraded()
+
+        labeled: List[TranscriptSegment] = []
         for chunk_id, chunk_segments in by_chunk.items():
             chunk = self._chunk_index.get(chunk_id) if chunk_id is not None else None
             if chunk is None:
@@ -2435,23 +2451,11 @@ class MeetingEngine:
                 logger.exception("Failed to reload chunk %s for diarization",
                                  chunk_id)
                 continue
-            for seg in chunk_segments:
-                start = max(0, int((seg.start_s - chunk.start_s) * rate))
-                end = min(len(frames), int((seg.end_s - chunk.start_s) * rate))
-                if end <= start:
-                    continue
-                try:
-                    audio = prepare_for_whisper(frames[start:end], rate)
-                    participant_id = self._diarizer.assign(seg, audio, 16000)
-                except Exception:
-                    logger.exception("Diarizer assignment failed for %s",
-                                     seg.segment_id)
-                    participant_id = None
-                if participant_id:
-                    seg.speaker_participant_id = participant_id
-                    seg.speaker_source = "diarizer"
-                elif not self._degraded_diarization:
-                    self._check_diarizer_degraded()
+            labeled.extend(assign_from_frames(
+                self._diarizer, chunk_segments, frames, rate, chunk.start_s,
+                on_unlabeled=_on_unlabeled,
+            ))
+        refresh_labels(self._diarizer, labeled)
 
     @staticmethod
     def _segment_dict(seg: TranscriptSegment, created_at: str) -> Dict[str, Any]:
@@ -2532,7 +2536,12 @@ class MeetingEngine:
         self._emit_status()
 
     def _on_diarizer_relabel(self, ops: List[Dict[str, Any]]) -> None:
-        """Apply re-clustering relabel ops through the single-writer store."""
+        """Apply re-clustering relabel ops through the single-writer store.
+
+        The store rejects ops for segments still in flight (assigned but not
+        yet committed with their chunk); the ASR path refreshes those labels
+        from the diarizer before commit.
+        """
         if self.store is None or not ops:
             return
         try:
@@ -2764,8 +2773,6 @@ class MeetingEngine:
             return
         seed = getattr(scheduler, "seed_sent_segments", None)
         if not callable(seed):
-            seed = getattr(scheduler, "_mark_sent", None)
-        if not callable(seed):
             logger.warning("Checkpoint scheduler exposes no send-cursor seam; "
                            "the next checkpoint may resend earlier transcript")
             return
@@ -2795,7 +2802,7 @@ class MeetingEngine:
             self.store.update_runtime_fields(intelligence_online=False)
             self._set_finalization(
                 "disabled",
-                "Cloud intelligence is off for this meeting.",
+                "AI insights are off for this meeting.",
                 emit=False,
             )
         self._emit("intelligence", {"online": False})
@@ -2820,13 +2827,13 @@ class MeetingEngine:
             end_claimed = self._end_thread is not None or not self._active
         if end_claimed:
             raise RuntimeError(
-                "Cloud intelligence can only be changed while the meeting is "
+                "AI insights can only be changed while the meeting is "
                 "active or paused."
             )
         meeting_status = self.store.with_state(lambda s: s.status)
         if meeting_status not in {"active", "paused"}:
             raise RuntimeError(
-                "Cloud intelligence can only be changed while the meeting is "
+                "AI insights can only be changed while the meeting is "
                 "active or paused."
             )
         results = self.store.apply("host", self._me_participant_id, [{
@@ -2876,7 +2883,7 @@ class MeetingEngine:
         if (self.store is None or scheduler is None
                 or not self.is_active()
                 or not self.store.with_state(lambda s: s.cloud_enabled)):
-            raise RuntimeError("Enable cloud insights in an active meeting first.")
+            raise RuntimeError("Turn on AI insights in an active meeting first.")
         return scheduler.request_note_adjustment(text)
 
     def apply_client_action(self, actor_type: str, actor_id,

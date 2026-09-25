@@ -498,6 +498,77 @@ class TestReplaceFinalTranscript:
         remaining_ids = {row["id"] for row in repo.get_segments(meeting_id)}
         assert remaining_ids == {"sg_new1", "sg_new2"}
 
+    def test_offline_speaker_labels_win_over_unpinned_live_labels(self, repo):
+        meeting_id = make_meeting(repo)
+        live = [
+            make_segment(meeting_id, "sg_live1", start=0.0, end=2.0, text="a"),
+            make_segment(meeting_id, "sg_live2", start=2.0, end=4.0, text="b"),
+        ]
+        for seg in live:
+            seg.channel = "loopback"
+            seg.speaker_participant_id = "p_live"
+            seg.speaker_source = "diarizer"
+        repo.add_segments(live)
+        offline = [
+            TranscriptSegment(
+                segment_id="sg_off1", meeting_id=meeting_id, chunk_id=None,
+                channel="loopback", start_s=0.0, end_s=2.0, text="a",
+                speaker_participant_id="p_offline", speaker_source="diarizer",
+            ),
+            TranscriptSegment(
+                segment_id="sg_off2", meeting_id=meeting_id, chunk_id=None,
+                channel="loopback", start_s=2.0, end_s=4.0, text="b",
+            ),
+        ]
+
+        rows, _deleted, _id_map = repo.replace_final_transcript(meeting_id, offline)
+
+        by_id = {row["id"]: row for row in rows}
+        assert by_id["sg_off1"]["speaker_participant_id"] == "p_offline"
+        # An unlabeled offline row keeps the live label rather than none.
+        assert by_id["sg_off2"]["speaker_participant_id"] == "p_live"
+
+    def test_evidence_on_retained_pinned_rows_is_kept(self, repo):
+        meeting_id = make_meeting(repo)
+        pinned = make_segment(meeting_id, "sg_pin", start=50.0, end=52.0, text="kept")
+        pinned.speaker_pinned = True
+        pinned.speaker_participant_id = "p_me"
+        pinned.speaker_source = "human"
+        repo.add_segments([pinned])
+        repo.update_meeting(meeting_id, state_json=json.dumps({
+            "meeting_id": meeting_id,
+            "cards": {
+                "key_points": [{
+                    "id": "it_1", "text": "cites pinned", "status": "proposed",
+                    "evidence": ["sg_pin"],
+                }],
+                "user_notes": [], "decisions": [], "action_items": [],
+                "risks": [], "timeline": [],
+            },
+            "questions": [],
+        }))
+        offline = [TranscriptSegment(
+            segment_id="sg_new", meeting_id=meeting_id, chunk_id=None,
+            channel="mic", start_s=0.0, end_s=2.0, text="elsewhere",
+        )]
+
+        _rows, deleted, _id_map = repo.replace_final_transcript(meeting_id, offline)
+
+        assert "sg_pin" not in deleted
+        state = json.loads(repo.get_meeting(meeting_id)["state_json"])
+        assert state["cards"]["key_points"][0]["evidence"] == ["sg_pin"]
+
+    def test_segment_flags_reports_existing_ids_and_pins(self, repo):
+        meeting_id = make_meeting(repo)
+        plain = make_segment(meeting_id, "sg_plain", start=0.0, end=1.0, text="x")
+        pinned = make_segment(meeting_id, "sg_pinned", start=1.0, end=2.0, text="y")
+        pinned.speaker_pinned = True
+        repo.add_segments([plain, pinned])
+
+        flags = repo.segment_flags(meeting_id, ["sg_plain", "sg_pinned", "sg_missing"])
+
+        assert flags == {"sg_plain": False, "sg_pinned": True}
+
     def test_mark_chunks_done(self, repo):
         meeting_id = make_meeting(repo)
         chunk_id = repo.register_chunk(

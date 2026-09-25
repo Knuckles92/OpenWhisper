@@ -160,7 +160,7 @@ test('voice hint explains why commands are inert without hiding itself', async (
   assert.match(container.querySelector('.voice-hint-blocked').textContent, /paused/);
   await act(async () => root.render(React.createElement(Hint,
     {guide, meetingId:'m3', cloudEnabled:false, paused:false, isHost:false})));
-  assert.match(container.querySelector('.voice-hint-blocked').textContent, /host has Cloud intelligence off/);
+  assert.match(container.querySelector('.voice-hint-blocked').textContent, /host has AI insights off/);
   await click(container.querySelector('.voice-hint-more'));
   assert.match(container.textContent, /this page does not open your microphone/);
   // A guest is never told to go change host-only settings.

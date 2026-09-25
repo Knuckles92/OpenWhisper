@@ -997,6 +997,15 @@ def resolve_meeting_audio_upload_consent(
     )
 
 
+def resolve_meeting_cloud_consent(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the user accepted sending meeting text to the AI provider."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_CLOUD_CONSENT_GIVEN, False,
+    )
+
+
 def resolve_meeting_unsupported_platform_ack(
     settings: Optional[Dict[str, Any]] = None,
 ) -> bool:
@@ -1047,8 +1056,8 @@ def resolve_meeting_past_recall_enabled(
 ) -> bool:
     """Return whether meeting agents may search past transcripts.
 
-    Off by default. When enabled, cloud intelligence may send excerpts from
-    earlier meetings to the model. Distinct from cloud-intelligence consent,
+    Off by default. When enabled, AI insights may send excerpts from
+    earlier meetings to the model. Distinct from AI insights consent,
     which covers only the current meeting.
     """
     return _resolve_bool_setting(
@@ -1135,9 +1144,9 @@ def resolve_meeting_context_folder_enabled(
 ) -> bool:
     """Return whether meeting agents may search a local knowledge folder.
 
-    Off by default. When enabled, cloud intelligence may send excerpts from
+    Off by default. When enabled, AI insights may send excerpts from
     files in the configured folder to the model. Distinct from both
-    cloud-intelligence consent and past-meeting recall.
+    AI insights consent and past-meeting recall.
     """
     return _resolve_bool_setting(
         settings, SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED, False,

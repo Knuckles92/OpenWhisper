@@ -32,7 +32,7 @@ class TestMeetingIntroDialog(unittest.TestCase):
         self.assertIn("Welcome to Meeting Mode", text)
         self.assertIn("live transcript", text.lower())
         self.assertIn("dashboard", text.lower())
-        self.assertIn("cloud insights", text.lower())
+        self.assertIn("ai insights", text.lower())
         self.assertIn("Settings → Meeting Mode", text)
         # Meeting models live on Settings pages now, not a separate window.
         self.assertNotIn("Model Manager", text)

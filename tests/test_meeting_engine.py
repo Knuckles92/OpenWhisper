@@ -190,7 +190,7 @@ class FakeScheduler:
         self.guidance_notices = 0
         FakeScheduler.instances.append(self)
 
-    def _mark_sent(self, segments):
+    def seed_sent_segments(self, segments):
         self.seeded = list(segments)
 
     def start(self):
@@ -223,7 +223,7 @@ class FakeScheduler:
         self.consolidations += 1
         return ConsolidationOutcome(
             status="completed",
-            message="Final cloud insights are ready.",
+            message="Final insights are ready.",
         )
 
 # Fixtures
@@ -644,6 +644,50 @@ class TestEndLifecycle:
         assert engine.is_active() is False
         assert repo.get_meeting(meeting_id)["status"] == "needs_recovery"
 
+    def test_failure_after_terminal_write_keeps_the_meeting_ended(
+            self, make_engine, repo):
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        meeting_id = engine.meeting_id
+
+        def boom():
+            raise RuntimeError("highlight finalization exploded")
+
+        engine._finalize_highlights = boom
+
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+
+        assert events_of(engine, "error")[-1]["code"] == "end_failed"
+        assert repo.get_meeting(meeting_id)["status"] == "ended"
+        assert engine.store.with_state(lambda s: s.status) == "ended"
+        assert engine.store.with_state(
+            lambda s: s.finalization.status
+        ) == "failed"
+        ended = events_of(engine, "ended")
+        assert len(ended) == 1
+        assert ended[0]["status"] == "ended"
+
+    def test_summary_stats_use_the_clock_and_skip_removed_items(
+            self, make_engine):
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        added = engine.store.apply("host", None, [
+            {"op": "add_item", "card": "key_points", "text": "Keep this"},
+            {"op": "add_item", "card": "key_points", "text": "Drop that"},
+        ])
+        dropped = added[1].effect["item"]
+        engine.store.apply("host", None, [{
+            "op": "remove_item", "id": dropped["id"],
+            "base_revision": dropped["revision"],
+        }])
+        engine.clock.now_s = lambda: 42.0
+
+        stats = engine._finalization_summary_stats()
+
+        assert stats["duration_s"] == 42.0
+        assert stats["key_points"] == 1
+
     def test_normal_end_emits_ended_and_marks_the_meeting(
             self, make_engine, repo, fakes):
         engine = make_engine(cloud_enabled=True)
@@ -708,7 +752,7 @@ class TestEndLifecycle:
             consolidation_release.wait(timeout=5.0)
             return ConsolidationOutcome(
                 status="completed",
-                message="Final cloud insights are ready.",
+                message="Final insights are ready.",
             )
 
         scheduler.run_consolidation = slow_consolidation
@@ -788,7 +832,7 @@ class TestEndLifecycle:
         def boom(timeout_s=120.0, progress_cb=None):
             scheduler.consolidations += 1
             return ConsolidationOutcome(
-                status="failed", message="Final cloud insights failed: boom",
+                status="failed", message="Final insights failed: boom",
             )
 
         scheduler.run_consolidation = boom
@@ -1319,6 +1363,24 @@ class TestStoreWiring:
             participant["id"]
         )
 
+    def test_relabel_batch_skips_segments_not_yet_committed(
+            self, make_engine, repo):
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        repo.add_segments([loopback_segment(engine.meeting_id, "sg_saved")])
+        participant = engine.add_guest("Alex")
+
+        engine._on_diarizer_relabel([
+            {"op": "reassign_segment_speaker", "segment_id": "sg_saved",
+             "participant_id": participant["id"]},
+            {"op": "reassign_segment_speaker", "segment_id": "sg_in_flight",
+             "participant_id": participant["id"]},
+        ])
+
+        assert repo.get_segment(
+            engine.meeting_id, "sg_saved"
+        )["speaker_participant_id"] == participant["id"]
+
 class TestDemoMeeting:
     def test_demo_mode_skips_live_audio_and_seeds_transcript(
             self, make_engine, repo, fakes):
@@ -1463,7 +1525,7 @@ def test_terminal_finalization_adopts_topic_as_title(make_engine):
 
     engine._set_finalization(
         "completed",
-        "Final cloud insights are ready.",
+        "Final insights are ready.",
         emit=False,
     )
 
@@ -1479,7 +1541,7 @@ def test_set_finalization_preserves_card_deferred(make_engine):
 
     engine._set_finalization(
         "unavailable",
-        "Final cloud insights are unavailable.",
+        "Final insights are unavailable.",
         emit=False,
     )
 

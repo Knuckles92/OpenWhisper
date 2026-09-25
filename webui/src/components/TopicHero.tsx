@@ -27,7 +27,7 @@ function topicPlaceholder(
 ): string {
   if (status === 'ending') return 'Wrapping up insights…';
   if (!cloudEnabled) return 'Waiting for the discussion to begin…';
-  if (!intelligenceOnline) return 'Cloud intelligence is offline';
+  if (!intelligenceOnline) return 'AI insights are offline';
   return 'Listening for insights…';
 }
 
@@ -40,7 +40,7 @@ function summaryPlaceholder(
     return 'Final insights are being generated from the full transcript…';
   }
   if (!cloudEnabled) {
-    return 'Enable cloud insights to generate a live summary.';
+    return 'Turn on AI insights to generate a live summary.';
   }
   if (!intelligenceOnline) {
     return 'Transcript continues; insights resume when intelligence is online.';
@@ -71,7 +71,14 @@ export default function TopicHero({
   const uniqueEvidence = [...new Set(evidence)];
 
   return (
-    <section className="topic-hero">
+    <section className="topic-hero" data-status={status}>
+      <svg className="topic-art" viewBox="0 0 120 120" fill="none" aria-hidden="true">
+        <circle cx="60" cy="60" r="49" />
+        <circle cx="60" cy="60" r="37" />
+        <circle cx="60" cy="60" r="25" />
+        <path d="M48 60h24M60 48v24" />
+        <circle className="topic-art-satellite" cx="99" cy="30" r="7" />
+      </svg>
       {/* The title already sits in the command bar; the eyebrow names the moment. */}
       <div className="topic-hero-eyebrow" title={meetingTitle || undefined}>
         <i className={pulseClass} aria-hidden />

@@ -46,7 +46,7 @@ def review_config(enabled=False, sensitivity="normal", consent="", cloud_enabled
     enabled = bool(enabled and consent == CONSENT)
     return {"enabled": enabled, "consent": consent, "sensitivity": sensitivity,
             "status": "pending" if enabled and cloud_enabled else "unavailable" if enabled else "disabled",
-            "questions": [], "message": "" if cloud_enabled else "Cloud intelligence is off for this meeting."}
+            "questions": [], "message": "" if cloud_enabled else "AI insights are off for this meeting."}
 
 
 def _fingerprint(segments):

@@ -313,7 +313,7 @@ function NoteAgentRequest({ onRequest, disabled }: {
         {pending ? 'Updating notes…' : 'Update notes'}
       </button>
       <p role="status" aria-live="polite">
-        {feedback || (disabled ? 'Available while cloud insights are online in an active meeting.' : 'Changes appear in the shared meeting notes. Your own notes stay protected.')}
+        {feedback || (disabled ? 'Available while AI insights are online in an active meeting.' : 'Changes appear in the shared meeting notes. Your own notes stay protected.')}
       </p>
     </div>
   );
@@ -321,7 +321,7 @@ function NoteAgentRequest({ onRequest, disabled }: {
 
 function ghostText(status: string, cloudEnabled: boolean, intelligenceOnline: boolean): string {
   if (status === 'ending' || status === 'ended') return 'The note taker\u2019s page is complete.';
-  if (!cloudEnabled) return 'Enable cloud insights and the AI note taker will keep minutes.';
+  if (!cloudEnabled) return 'Turn on AI insights and the note taker will keep minutes.';
   if (!intelligenceOnline) return 'The AI note taker is offline.';
   return 'The AI note taker is listening\u2026';
 }

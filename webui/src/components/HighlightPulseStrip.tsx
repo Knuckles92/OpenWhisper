@@ -282,8 +282,8 @@ export default function HighlightPulseStrip({ pulses, onSelect, playbackAvailabl
       message = 'Live highlight status is unavailable. Reconnect to check the current setting.';
     } else if (!cloudEnabled) {
       message = isHost
-        ? 'Live highlights are on, but Cloud insights are off. Turn on Cloud insights to resume highlights.'
-        : 'Live highlights are on, but the host has Cloud insights turned off.';
+        ? 'Live highlights are on, but AI insights are off. Turn on AI insights to resume highlights.'
+        : 'Live highlights are on, but the host has AI insights turned off.';
     } else if (highlightStatus === 'unavailable') {
       message = isHost
         ? 'Live highlights are on, but unavailable. Check Fast judgments setup in Meeting settings.'

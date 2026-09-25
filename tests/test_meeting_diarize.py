@@ -248,6 +248,67 @@ class TestPinRaceProtection:
                 "participant_id": "p_A"}]
         assert d._filter_stale_ops(ops) == []
 
+class TestReclusterOwnSegment:
+    """The segment that triggers a re-cluster is not persisted yet."""
+
+    def test_assign_returns_post_recluster_label_without_an_own_op(self):
+        vectors = _synthetic_speakers(12, speakers=2, seed=11)
+        speaker_a = vectors[0::2]
+        speaker_b = vectors[1::2]
+        d = _make_diarizer([speaker_b[-1]])
+        records = [
+            _SegRecord(f"sg_a{i}", vec, "p_A", False, float(i), float(i) + 1.0)
+            for i, vec in enumerate(speaker_a[:-1])
+        ] + [
+            _SegRecord(f"sg_b{i}", vec, "p_B", False, 10.0 + i, 11.0 + i)
+            for i, vec in enumerate(speaker_b[:-1])
+        ]
+        d._records = list(records)
+        d._by_segment_id = {r.segment_id: r for r in records}
+        # A stale centroid makes the online pass pick the wrong speaker; the
+        # re-cluster then corrects it.
+        d._clusters = [_Cluster("p_A", speaker_b[0].copy(), count=len(records))]
+        delivered = []
+        d.set_relabel_callback(delivered.extend)
+        d._new_since_recluster = 25
+
+        pid = d.assign(_segment("sg_new", 50.0),
+                       np.zeros(16000, dtype=np.float32), 16000)
+
+        assert pid == "p_B"
+        assert d.current_label("sg_new") == "p_B"
+        assert all(op["segment_id"] != "sg_new" for op in delivered)
+
+
+class TestSharedAssignHelpers:
+    def test_refresh_labels_applies_later_recluster_corrections(self):
+        from meeting.diarize.assign import assign_from_frames, refresh_labels
+
+        class Diarizer:
+            def __init__(self):
+                self.labels = {}
+
+            def assign(self, seg, audio, rate):
+                self.labels[seg.segment_id] = "p_first"
+                return "p_first"
+
+            def current_label(self, segment_id):
+                return self.labels.get(segment_id)
+
+        diarizer = Diarizer()
+        segments = [_segment("sg_1", 0.0), _segment("sg_2", 1.0)]
+        labeled = assign_from_frames(
+            diarizer, segments, np.zeros(32000, dtype=np.int16), 16000, 0.0,
+        )
+        assert [s.speaker_participant_id for s in labeled] == ["p_first"] * 2
+
+        diarizer.labels["sg_1"] = "p_moved"
+        refresh_labels(diarizer, labeled)
+
+        assert segments[0].speaker_participant_id == "p_moved"
+        assert segments[1].speaker_participant_id == "p_first"
+
+
 class TestPinOnUnknownSegment:
     def test_pin_never_embedded_segment_does_not_raise(self):
         d = _make_diarizer()

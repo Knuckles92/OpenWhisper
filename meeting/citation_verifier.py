@@ -11,6 +11,8 @@ from meeting.state.schema import now_iso
 from services.settings import resolve_typesafe_feature_enabled
 
 logger = logging.getLogger(__name__)
+#: Most distinct items waiting for a check; updates to queued items always land.
+MAX_PENDING = 80
 CRITERIA = {
     "supported": "The cited speech supports the entire claim, including asserted agreement, owner, deadline and numbers.",
     "contradicted": "The cited speech explicitly conflicts with the claim.",
@@ -44,7 +46,7 @@ class CitationVerifier:
                 if item.get("card") in ("user_notes", "timeline") or item.get("status") != "proposed":
                     continue
                 with self.lock:
-                    if len(self.pending) < 80:
+                    if item["id"] in self.pending or len(self.pending) < MAX_PENDING:
                         self.pending[item["id"]] = item
         with self.lock:
             if self.closed or self.busy or not (self.pending or self.invalidations or self.invalidate_all):
@@ -83,7 +85,9 @@ class CitationVerifier:
                     self.invalidate_all = False
                     item = None
                 else:
-                    _, item = self.pending.popitem()
+                    # Oldest first, so a steady stream of new cards cannot
+                    # starve earlier ones.
+                    item = self.pending.pop(next(iter(self.pending)))
             try:
                 if invalidate:
                     has_checks = self.store.with_state(lambda state: any(

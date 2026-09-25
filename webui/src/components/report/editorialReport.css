@@ -259,9 +259,10 @@
 }
 
 .ed-mono {
-  font-family: var(--font-mono);
+  font-family: var(--font);
   font-variant-numeric: tabular-nums;
   font-size: 12px;
+  font-weight: 600;
   color: var(--soft);
 }
 

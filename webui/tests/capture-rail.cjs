@@ -94,7 +94,7 @@ test('with nothing captured the lead explains why instead of leaving a gap', asy
     newestFirst: true, embedded: true, highlightTop: 3, status: 'active',
     cloudEnabled: false, intelligenceOnline: false,
   });
-  assert.match(container.querySelector('.capture-lead-ghost').textContent, /Enable cloud insights/);
+  assert.match(container.querySelector('.capture-lead-ghost').textContent, /Turn on AI insights/);
   assert.equal(container.querySelector('.capture-rest-title'), null);
 });
 

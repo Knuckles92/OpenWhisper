@@ -229,6 +229,70 @@ class TestRedeocdeGuard:
         )
         assert redecode["status"] == "completed"
 
+    def test_redecode_rebuilds_repairs_from_the_final_transcript(
+        self, repo, monkeypatch,
+    ):
+        make_meeting(repo, state_json=seeded_state("m_retry", DEFAULT_STEPS))
+        add_transcript(repo, "m_retry")
+        repaired = []
+
+        def fake_repair(store, segments):
+            repaired.append([row["id"] for row in segments])
+            return 0
+
+        monkeypatch.setattr(
+            "meeting.state.repair.repair_meeting_state", fake_repair,
+        )
+        result = rerun_redecode(repo, "m_retry", transcribe_fn=rich_decode)
+
+        assert result["ok"] is True
+        assert repaired == [["sg_new_1", "sg_new_2"]]
+
+
+class TestOneRunPerMeeting:
+    def test_second_concurrent_retry_is_refused(self, repo, monkeypatch):
+        import threading
+
+        from meeting.refinalize import FinalizationBusyError
+
+        make_meeting(repo, state_json=seeded_state("m_retry", DEFAULT_STEPS))
+        add_transcript(repo, "m_retry")
+        install_cores(monkeypatch, FakeAgentCore())
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_decode(spool_dir, chunks, progress_cb=None):
+            started.set()
+            release.wait(timeout=10)
+            return rich_decode(spool_dir, chunks)
+
+        first = threading.Thread(
+            target=rerun_finalization,
+            args=(repo, "m_retry"),
+            kwargs=dict(
+                from_step="redecode", provider="openrouter", model="m",
+                transcribe_fn=slow_decode,
+            ),
+            daemon=True,
+        )
+        first.start()
+        assert started.wait(timeout=10)
+        try:
+            with pytest.raises(FinalizationBusyError):
+                rerun_finalization(
+                    repo, "m_retry", from_step="polish",
+                    provider="openrouter", model="m",
+                )
+        finally:
+            release.set()
+            first.join(timeout=10)
+
+        result = rerun_finalization(
+            repo, "m_retry", from_step="finalize",
+            provider="openrouter", model="m",
+        )
+        assert result["finalization"]["status"] in {"completed", "failed"}
+
 
 class TestStepSelection:
     def test_consolidation_retry_does_not_redecode(self, repo, monkeypatch):

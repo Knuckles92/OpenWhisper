@@ -2,32 +2,41 @@
 .preflight {
   display: flex;
   flex-direction: column;
-  gap: 22px;
-  max-width: 760px;
+  gap: 18px;
+  max-width: none;
 }
 
 .pf-intro {
+  --soft: var(--hero-soft);
+  --ink-2: var(--hero-ink);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
+  padding: 28px;
+  border-radius: 18px;
+  background: var(--hero);
 }
 
 .pf-eyebrow {
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  align-self: flex-start;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--leaf);
+  color: var(--hero-soft);
 }
 
 .pf-headline {
   margin: 0;
   font-family: var(--font-display);
   font-weight: 400;
-  font-size: clamp(1.9rem, 3.2vw, 2.6rem);
-  line-height: 1.1;
-  letter-spacing: -0.01em;
-  color: var(--ink);
+  font-size: clamp(2.1rem, 3.5vw, 2.9rem);
+  line-height: 1.06;
+  letter-spacing: -0.015em;
+  color: var(--hero-ink);
   text-wrap: balance;
   overflow-wrap: anywhere;
 }
@@ -41,62 +50,81 @@
 .pf-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
-  padding: 16px 18px;
-  border: 1px solid var(--hair-2);
-  border-radius: var(--radius-control);
+  padding: 18px 20px;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
   background: var(--surface);
+  box-shadow: var(--shadow-card);
 }
 
+/* The opening meter follows actual speech detection, just like the header. */
 .pf-listen {
   grid-column: 1 / -1;
   flex-direction: row;
   align-items: center;
-  gap: 16px;
+  gap: 18px;
+  padding: 20px 22px;
+  background: var(--bar);
+  color: var(--bar-ink);
 }
 
 .pf-card-title {
   margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--soft);
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--ink);
 }
 
 .pf-level {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  height: 28px;
+  gap: 4px;
+  height: 36px;
   flex-shrink: 0;
 }
 
 .pf-level span {
-  width: 4px;
-  height: 6px;
-  border-radius: 2px;
-  background: var(--line);
+  --rest: 6px;
+  --peak: 30px;
+  width: 5px;
+  height: var(--rest);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--live) 26%, transparent);
+  transition: height 240ms ease, background 240ms ease;
 }
+
+.pf-level span:nth-child(2) { --rest: 9px; --peak: 22px; }
+.pf-level span:nth-child(3) { --rest: 7px; --peak: 34px; }
+.pf-level span:nth-child(4) { --rest: 12px; --peak: 26px; }
+.pf-level span:nth-child(5) { --rest: 8px; --peak: 36px; }
+.pf-level span:nth-child(6) { --rest: 11px; --peak: 24px; }
+.pf-level span:nth-child(7) { --rest: 7px; --peak: 30px; }
+.pf-level span:nth-child(8) { --rest: 9px; --peak: 20px; }
+.pf-level span:nth-child(9) { --rest: 5px; --peak: 14px; }
 
 .pf-level.hearing span {
-  background: var(--leaf-2);
-  animation: pf-level 1.2s ease-in-out infinite;
+  background: linear-gradient(180deg, var(--apricot), var(--live));
+  animation: pf-level 1.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
 
-.pf-level.hearing span:nth-child(2n) { animation-delay: -0.4s; }
-.pf-level.hearing span:nth-child(3n) { animation-delay: -0.8s; }
+.pf-level.hearing span:nth-child(2n) { animation-delay: -0.4s; animation-duration: 0.95s; }
+.pf-level.hearing span:nth-child(3n) { animation-delay: -0.8s; animation-duration: 1.35s; }
 .pf-level.hearing span:nth-child(5n) { animation-delay: -0.2s; }
 
 @keyframes pf-level {
-  0%, 100% { height: 6px; }
-  50% { height: 26px; }
+  0%, 100% { height: var(--rest); }
+  50% { height: var(--peak); }
 }
 
 .pf-listen-text {
-  font-size: 15px;
-  color: var(--ink-2);
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  line-height: 1.4;
+  color: var(--bar-ink);
 }
 
 .pf-checks,
@@ -119,7 +147,7 @@
 }
 
 .pf-glyph { flex-shrink: 0; }
-.pf-glyph.pf-ready { color: var(--leaf); }
+.pf-glyph.pf-ready { color: var(--success); }
 .pf-glyph.pf-off { color: var(--soft); }
 .pf-glyph.pf-warn { color: var(--warning); }
 
@@ -131,11 +159,12 @@
   text-align: right;
 }
 
-.pf-check-state.pf-ready { color: var(--leaf); }
+.pf-check-state.pf-ready { color: var(--success); }
 .pf-check-state.pf-warn { color: var(--warning); }
 
 .pf-copy {
-  padding: 4px 10px;
+  padding: 4px 12px;
+  border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
 }
@@ -163,7 +192,7 @@
 }
 
 .pf-avatar.online {
-  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--leaf-2);
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--success);
 }
 
 .pf-hint {
@@ -177,5 +206,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pf-level.hearing span { animation: none; height: 16px; }
+  .pf-level.hearing span { animation: none; height: calc((var(--rest) + var(--peak)) / 2); }
 }

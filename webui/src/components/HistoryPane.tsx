@@ -902,7 +902,7 @@ export default function HistoryPane({
                   <div className="banner info no-print" role="status">
                     {rerunningSpeakers
                       ? 'Relabeling speakers — this can take a minute.'
-                      : 'Re-analyzing the transcript with cloud intelligence — this can take a minute.'}
+                      : 'Re-running AI insights on the transcript — this can take a minute.'}
                   </div>
                 )}
                 {rerunNote && (

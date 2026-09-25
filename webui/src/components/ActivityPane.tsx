@@ -76,7 +76,7 @@ function eventDescription(event: AuditEvent): string {
     reassign_segment_speaker: 'Corrected a speaker',
     set_title: 'Renamed the meeting',
     set_meeting_intent: 'Updated the meeting brief',
-    set_cloud_enabled: 'Changed cloud intelligence',
+    set_cloud_enabled: 'Changed AI insights',
   };
   if (event.action.startsWith('undo:')) return 'Undid an earlier change';
   return descriptions[event.action] ?? event.action.replace(/_/g, ' ');
@@ -263,7 +263,7 @@ export default function ActivityPane({
     statusText = finalMsg || 'Session review complete.';
     statusTone = 'complete';
   } else if (finalizationStatus === 'disabled') {
-    statusText = finalMsg || 'Cloud insights were off for this meeting.';
+    statusText = finalMsg || 'AI insights were off for this meeting.';
     statusTone = 'paused';
   } else if (finalizationStatus === 'unavailable' || finalizationStatus === 'failed') {
     statusText =
@@ -280,7 +280,7 @@ export default function ActivityPane({
       : 'Meeting ended.';
     statusTone = 'complete';
   } else if (!cloudEnabled) {
-    statusText = 'Paused — cloud insights are off';
+    statusText = 'Paused — AI insights are off';
     statusTone = 'paused';
   } else if (!intelligenceOnline) {
     statusText = 'Offline — the transcript is still running';
@@ -405,7 +405,7 @@ export default function ActivityPane({
             <p className="agent-activity-empty">
               {cloudEnabled
                 ? 'Pi has not changed the meeting insights yet.'
-                : 'Turn on cloud insights when you want Pi to follow the conversation.'}
+                : 'Turn on AI insights when you want Pi to follow the conversation.'}
             </p>
           ) : (
             <ol className="activity-list">

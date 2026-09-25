@@ -30,7 +30,7 @@ from meeting.export.json_export import export_json
 from meeting.export.markdown import export_markdown
 from meeting.export.transcript_txt import export_transcript_txt
 from meeting.audio_playback import build_playback
-from meeting.refinalize import rerun_finalization
+from meeting.refinalize import FinalizationBusyError, rerun_finalization
 from meeting.respeaker import rerun_speakers
 from meeting.persist.data_lifecycle import delete_meeting_data
 from meeting.state.custom_reports import MAX_REQUEST_CHARS
@@ -105,6 +105,28 @@ def _decode_cursor(cursor: str) -> tuple[Optional[float], Optional[str]]:
 _RUNNING_STATUSES = {"active", "paused", "ending"}
 #: Avatars shown per History row; the full count travels separately.
 _DIGEST_PARTICIPANTS = 6
+
+
+def _cloud_consent_given() -> bool:
+    """Whether the desktop consent dialog for AI insights was accepted."""
+    try:
+        from services.settings import resolve_meeting_cloud_consent
+    except Exception:
+        logger.exception("Could not read AI insights consent")
+        return False
+    return resolve_meeting_cloud_consent()
+
+
+def _remember_cloud_choice(enabled: bool) -> None:
+    """Persist the toggle as the next meeting's default, like the desktop."""
+    try:
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(
+            SettingsKey.MEETING_CLOUD_LAST_ENABLED, bool(enabled),
+        )
+    except Exception:
+        logger.warning("Could not persist the AI insights toggle", exc_info=True)
 
 
 def _meeting_duration_s(meeting: Dict[str, Any]) -> Optional[float]:
@@ -509,14 +531,15 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail="unknown meeting")
-        from meeting.state.store import MeetingStateStore
+        from meeting.state.store import MeetingStateStore, repository_segment_lookup
         from meeting.insight_review import start_review
         store = getattr(engine, "store", None) if getattr(engine, "meeting_id", None) == meeting_id else None
         if store is None:
             if meeting_id not in review_stores:
                 review_stores[meeting_id] = MeetingStateStore(
                     MeetingState.from_dict(_stored_state(meeting_id, meeting)), repository=repository,
-                    segment_exists=lambda sid: repository.segment_exists(meeting_id, sid))
+                    segment_exists=lambda sid: repository.segment_exists(meeting_id, sid),
+                    segment_lookup=repository_segment_lookup(repository, meeting_id))
             store = review_stores[meeting_id]
         if meeting_id in insights_running:
             raise HTTPException(status_code=409, detail="A meeting update is already running")
@@ -558,31 +581,9 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail="unknown meeting")
-        # The meeting's own recorded provider/model win; the engine's options
-        # fill in for meetings recorded with cloud intelligence off.
-        options = getattr(engine, "options", None)
-        provider = (meeting.get("agent_provider")
-                    or getattr(options, "llm_provider", "") or "openrouter")
-        model = meeting.get("agent_model") or getattr(options, "llm_model", "") or ""
-        endpoint = getattr(options, "llm_endpoint", None)
-        raw_endpoint = meeting.get("agent_endpoint_json")
-        if isinstance(raw_endpoint, dict):
-            endpoint = raw_endpoint
-        elif isinstance(raw_endpoint, str) and raw_endpoint.strip():
-            try:
-                parsed = json.loads(raw_endpoint)
-            except Exception:
-                parsed = None
-            if isinstance(parsed, dict):
-                endpoint = parsed
-        speaker_api_key = ""
-        try:
-            from services.transcript_cleanup import find_api_key
+        from services.meeting_rerun import rerun_options
 
-            speaker_api_key = find_api_key("openai") or ""
-        except Exception:
-            speaker_api_key = ""
-        language = getattr(options, "asr_language", None)
+        options = await asyncio.to_thread(rerun_options, meeting)
         # Check-and-claim with no await between: a double-click cannot start
         # two agent cores writing the same past meeting.
         if meeting_id in insights_running:
@@ -592,8 +593,12 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             )
         live_review_store = (getattr(engine, "store", None)
                              if getattr(engine, "meeting_id", None) == meeting_id else review_stores.get(meeting_id))
-        if live_review_store and live_review_store.snapshot().get("insight_review", {}).get("status") == "running":
-            raise HTTPException(status_code=409, detail="Wait for insight review to finish")
+        if live_review_store is not None:
+            live_snapshot = live_review_store.snapshot()
+            if (live_snapshot.get("finalization") or {}).get("status") == "running":
+                raise HTTPException(status_code=409, detail="Wait for the post-meeting steps to finish")
+            if (live_snapshot.get("insight_review") or {}).get("status") == "running":
+                raise HTTPException(status_code=409, detail="Wait for insight review to finish")
         if _report_in_flight(live_review_store):
             raise HTTPException(status_code=409, detail="Wait for the report being written to finish")
         review_stores.pop(meeting_id, None)
@@ -605,18 +610,16 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                 functools.partial(
                     rerun_finalization, repository, meeting_id,
                     from_step="failed",
-                    provider=provider, model=model, endpoint=endpoint,
-                    agent_core_kind=getattr(options, "agent_core_kind", "pi"),
-                    sidecar_payload_dir=getattr(options, "sidecar_payload_dir", None),
-                    asr_model_name=str(meeting.get("asr_model") or "auto"),
-                    language=language,
-                    speaker_api_key=speaker_api_key,
+                    model_lease=getattr(engine, "model_lease", None),
+                    **options,
                 ),
             )
             replace_state = getattr(live_review_store, "replace_document", None)
             if callable(replace_state) and result.get("state"):
                 replace_state(MeetingState.from_dict(result["state"]))
             return result
+        except FinalizationBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -782,7 +785,7 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         if store is not None and getattr(engine, "meeting_id", None) == meeting_id:
             return store
         if meeting_id not in review_stores:
-            from meeting.state.store import MeetingStateStore
+            from meeting.state.store import MeetingStateStore, repository_segment_lookup
 
             review_stores[meeting_id] = MeetingStateStore(
                 MeetingState.from_dict(_stored_state(meeting_id, meeting)),
@@ -790,6 +793,7 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                 segment_exists=lambda sid: repository.segment_exists(
                     meeting_id, sid
                 ),
+                segment_lookup=repository_segment_lookup(repository, meeting_id),
             )
         return review_stores[meeting_id]
 
@@ -798,7 +802,7 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
 
         The meeting's own recorded endpoint wins so a report matches the
         intelligence that produced the record; the engine's current options
-        fill in for meetings recorded with cloud intelligence off.
+        fill in for meetings recorded with AI insights off.
         """
         options = getattr(engine, "options", None)
         provider = (meeting.get("agent_provider")
@@ -953,7 +957,17 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         await _require(token, host_only=True)
         body = await _json_body(request)
         enabled = bool(body.get("enabled"))
+        if enabled and not await asyncio.to_thread(_cloud_consent_given):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Turn on AI insights once from the desktop app first; it "
+                    "asks for consent before meeting text is sent to the AI "
+                    "provider."
+                ),
+            )
         await asyncio.to_thread(engine.set_cloud_enabled, enabled)
+        await asyncio.to_thread(_remember_cloud_choice, enabled)
         return {"ok": True, "enabled": enabled}
 
     @app.post("/api/meeting/tokens/regenerate")
@@ -1050,7 +1064,7 @@ function finalizationLabel(){
     return msg || "Preparing final insights";
   }
   if (st === "completed") return msg || "Final insights ready";
-  if (st === "disabled") return msg || "Cloud insights off";
+  if (st === "disabled") return msg || "AI insights off";
   if (st === "unavailable") return msg || "Final insights unavailable";
   if (st === "failed") return msg || "Final insights failed";
   return msg || st;

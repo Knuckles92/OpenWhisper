@@ -8,6 +8,25 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+### Changed
+- **Cloud intelligence is now AI insights** — the Meeting Mode switch, its consent dialog, Settings, status messages, and the browser dashboard use the new name, because the feature can already run on a model on this computer (Ollama or another local OpenAI-compatible server) as well as on a cloud provider. A line under the switch names the provider and model it will use and what leaves the computer ("sends transcript text, never audio", or "transcript text stays on this computer" for a local server), and **Change…** opens Settings → Meeting Mode → Intelligence. Searching Settings for "cloud intelligence" still finds that page. Saved settings and past meetings are unaffected.
+- **Meeting Mode setup is tidier** — the AI insights switch and the meeting brief now sit in panels that match Quick Record's cards. The brief is a labelled field with a visible border (before, only its placeholder text showed), sized in lines so it grows with the UI font size, and Tab moves on to Start Meeting instead of typing a tab character. Because the brief only steers AI insights, it is hidden while the switch is off and is not sent with the meeting; anything typed comes back when the switch is turned on again. During a meeting the switch stays below the meeting controls with the model beside it.
+- **Fewer phantom transcript lines** — Meeting Mode drops lines Whisper invents over silence or noise ("Thanks for watching", a lone "you", or one phrase repeated to the end of a window) before they are saved or cited. The same words are kept when the decoder is confident someone was speaking.
+- **No duplicate "Me" lines without headphones** — the end-of-meeting re-transcription removes microphone lines that repeat what system audio was playing at that moment, so remote speakers are not also credited to you. Short replies such as "yes" or "okay, sure" are kept.
+- **Language in auto mode** — when a meeting was clearly in one language, the end-of-meeting re-transcription uses it instead of guessing again for each stretch of audio. Bilingual meetings keep automatic detection.
+
+### Fixed
+- **Speaker labels after End** — the high-accuracy re-transcription no longer has its speaker labels overwritten by the rougher live ones; only your own speaker corrections take priority. Lines kept because you corrected their speaker also keep their card citations.
+- **Live speaker grouping** — regrouping speakers during a meeting no longer fails for the whole group when one line is still being transcribed, and each new line gets the regrouped speaker rather than the one it had a moment earlier.
+- **Transcript fixes reach the AI note taker** — when live transcription revises a line that was already sent, the corrected text is sent again instead of being skipped.
+- **A late failure no longer reopens a finished meeting** — if a step fails after a meeting has been saved as ended, it stays ended and offers a retry instead of being marked as needing recovery.
+- **Recovered meetings get their insights** — finishing an interrupted meeting from the recovery prompt now continues into the same post-meeting steps a normal End runs (re-transcription, cleanup, and the summary), following your Meeting Mode settings.
+- **One retry, wherever you start it** — retrying post-meeting steps from the dashboard now uses the same model, language, and accuracy settings as Past Meetings and frees the dictation model before re-transcribing. The two can no longer run on the same meeting at once, and the dashboard waits while a meeting is still finishing.
+- **Meeting summary numbers** — the final summary counts meeting length without pauses and no longer counts removed cards or dismissed questions.
+- **Pause from the dashboard** now also updates the desktop Pause button.
+- **AI insights consent** — turning AI insights on from the browser dashboard now requires the consent given once in the desktop app.
+- **Citation checks** run oldest first and keep the latest edit of a waiting card, so a busy meeting cannot starve earlier cards.
+
 ## [2.6.08] - 2026-09-22
 
 ### Fixed

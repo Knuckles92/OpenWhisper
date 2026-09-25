@@ -47,7 +47,7 @@ def finish_review(state, op, ctx):
     if review.get("run_id") != op.get("run_id") or review.get("status") != "running":
         return _reject(op, "stale_review")
     if not state.cloud_enabled or not review.get("enabled") or review.get("consent") != "typesafe-text-v1":
-        review.update(status="unavailable", message="Cloud intelligence is off. Review was stopped.")
+        review.update(status="unavailable", message="AI insights are off. Review was stopped.")
         return _result(op, state)
     changed = []
     eligible = set()
@@ -229,7 +229,7 @@ def answer_review(state, op, ctx):
 def unavailable_review(state, op, ctx):
     if ctx.actor_type != "system":
         return _reject(op, "system_only")
-    state.insight_review.update(status="unavailable", message="Cloud intelligence and TypeSafe sharing must both be enabled for this meeting.")
+    state.insight_review.update(status="unavailable", message="AI insights and TypeSafe sharing must both be on for this meeting.")
     return _result(op, state)
 
 

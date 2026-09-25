@@ -275,6 +275,45 @@ class TestAsrRetry:
             engine.stop()
 
 
+class TestOfflineLanguage:
+    def _engine(self):
+        backend = SimpleNamespace(
+            is_available=lambda: True, model=MagicMock(), cleanup=lambda: None,
+        )
+        return _make_engine(FakeRepository(), backend)
+
+    @staticmethod
+    def _vote(engine, language, probability=0.95, held_speech=True, times=1):
+        info = SimpleNamespace(language=language, language_probability=probability)
+        for _ in range(times):
+            engine._record_language(info, held_speech)
+
+    def test_clear_single_language_carries_into_the_offline_pass(self):
+        engine = self._engine()
+        self._vote(engine, "de", times=9)
+        self._vote(engine, "en")
+        assert engine.dominant_language() == "de"
+
+    def test_bilingual_or_thin_evidence_keeps_auto(self):
+        mixed = self._engine()
+        self._vote(mixed, "de", times=6)
+        self._vote(mixed, "en", times=3)
+        assert mixed.dominant_language() is None
+
+        thin = self._engine()
+        self._vote(thin, "de", times=4)
+        self._vote(thin, "de", probability=0.5, times=5)
+        self._vote(thin, "de", held_speech=False, times=5)
+        assert thin.dominant_language() is None
+
+    def test_configured_language_always_wins(self):
+        engine = self._engine()
+        engine.language = "fr"
+        self._vote(engine, "de", times=9)
+        assert engine.dominant_language() == "fr"
+        assert engine._language_votes == {}
+
+
 class TestRollingReviseScheduling:
     def _engine(self):
         backend = SimpleNamespace(

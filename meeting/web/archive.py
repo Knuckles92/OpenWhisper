@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from meeting.interfaces import OpResult
 from meeting.state.schema import FinalizationState, MeetingState
-from meeting.state.store import MeetingStateStore
+from meeting.state.store import MeetingStateStore, repository_segment_lookup
 from meeting.web.auth import generate_token_pair
 
 
@@ -31,9 +31,11 @@ class ArchivedMeetingDashboard:
         llm_endpoint: Optional[Dict[str, Any]] = None,
         agent_core_kind: str = "pi",
         sidecar_payload_dir: Optional[str] = None,
+        model_lease: Optional[Tuple[Callable[[], bool], Callable[[], None]]] = None,
     ) -> None:
         self.repository = repository
         self.meeting_id = str(meeting["id"])
+        self.model_lease = model_lease
         stored_endpoint = None
         raw_endpoint = meeting.get("agent_endpoint_json")
         if isinstance(raw_endpoint, dict):
@@ -64,6 +66,7 @@ class ArchivedMeetingDashboard:
                     "speaker_pinned"
                 )
             ),
+            segment_lookup=repository_segment_lookup(repository, self.meeting_id),
         )
         self._server = None
 
@@ -160,7 +163,7 @@ class ArchivedMeetingDashboard:
 
     def set_cloud_enabled(self, enabled: bool) -> None:
         """Reject cloud toggles because no intelligence worker is running."""
-        raise RuntimeError("Cloud intelligence is unavailable for archived playback")
+        raise RuntimeError("AI insights are unavailable for archived playback")
 
     def shutdown(self) -> None:
         """Stop the attached history dashboard server."""

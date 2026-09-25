@@ -16,7 +16,7 @@ function readDismissed(meetingId: string): boolean {
 function blockedReason(paused: boolean, cloudEnabled: boolean, isHost: boolean): string | null {
   if (paused) return 'paused';
   if (cloudEnabled) return null;
-  return isHost ? 'needs Cloud intelligence' : 'host has Cloud intelligence off';
+  return isHost ? 'needs AI insights' : 'host has AI insights off';
 }
 
 export default function VoiceCommandHelp({ guide, meetingId, cloudEnabled, paused, isHost }: {

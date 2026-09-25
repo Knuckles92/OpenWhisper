@@ -68,9 +68,10 @@
   color: var(--soft);
 }
 .history-pane .shelf-mono {
-  font-family: var(--font-mono);
+  font-family: var(--font);
   font-variant-numeric: tabular-nums;
   font-size: 12px;
+  font-weight: 600;
   color: var(--soft);
 }
 .history-pane button,
@@ -190,7 +191,8 @@
 .history-pane .search-hit > span {
   color: var(--soft);
   opacity: 1;
-  font-family: var(--font-mono);
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
 }
 .history-pane .shelf-filters select {
   height: 38px;

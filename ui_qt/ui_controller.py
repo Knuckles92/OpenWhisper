@@ -38,6 +38,7 @@ from ui_qt.dialogs.settings_dialog import (
     CLEANUP_PROFILES,
     DOWNLOADS,
     HOTKEYS,
+    MEETING_INTELLIGENCE,
     OVERVIEW,
     SettingsDialog,
 )
@@ -251,6 +252,9 @@ class UIController(QObject):
             lambda: self.on_meeting_copy_guest_link and self.on_meeting_copy_guest_link()
         )
         meeting_tab.cloud_toggled.connect(self._on_meeting_cloud_toggled)
+        meeting_tab.ai_settings_requested.connect(
+            lambda: self.open_settings_destination(MEETING_INTELLIGENCE)
+        )
         meeting_tab.retry_insights_requested.connect(
             self._on_meeting_retry_insights
         )
@@ -1281,10 +1285,10 @@ class UIController(QObject):
             self.on_meeting_open_dashboard()
 
     def show_meeting_consent_dialog(self) -> bool:
-        """Show the one-time cloud-intelligence consent dialog.
+        """Show the one-time AI insights consent dialog.
 
         Returns:
-            True when the user enables cloud intelligence.
+            True when the user turns AI insights on.
         """
         from ui_qt.dialogs.meeting_consent_dialog import MeetingConsentDialog
 

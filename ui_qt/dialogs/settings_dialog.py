@@ -148,8 +148,12 @@ from ui_qt.widgets.hotkey_capture import HotkeyCaptureInput, HotkeyCaptureThread
 from ui_qt.widgets.cleanup_profiles_panel import CleanupProfilesPanel
 from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
 from ui_qt.widgets.nav_rail import NavRail
+from ui_qt.widgets.rule_activity import ItemGlow, RuleActivityStrip
 
 logger = logging.getLogger(__name__)
+
+#: A dictated rule stops recording on its own after this long.
+_RULE_DICTATION_CAP_MS = 60_000
 
 
 def is_native_wayland_session(
@@ -185,6 +189,11 @@ _SEARCH_ALIASES = {
         "Download models and components",
         "Models & storage › Downloads",
         "download manager library catalog hugging face",
+    ),
+    MEETING_INTELLIGENCE: (
+        "Cloud intelligence",
+        "Now AI insights; choose its model on Meeting Mode › Intelligence",
+        "cloud insights ai insights meeting model llm",
     ),
 }
 
@@ -256,6 +265,7 @@ class SettingsDialog(QDialog):
 
     _cleanup_rule_polished = pyqtSignal(str, str, str)
     _rule_dictation_finished = pyqtSignal(str, str)
+    _rule_dictation_level = pyqtSignal(float)
     _api_key_verified = pyqtSignal(str, bool, str)
 
     on_audio_device_changed: Optional[Callable] = None
@@ -314,6 +324,9 @@ class SettingsDialog(QDialog):
         self.hotkey_row_descriptions: Dict[str, WrappedLabel] = {}
         self._saved_cleanup_prompt = ""
         self._rule_polishing = False
+        # Whether the words being polished came (at least partly) from
+        # dictation, so the review dialog can say "said" instead of "typed".
+        self._rule_polish_dictated = False
         self._rule_dictation_state = "idle"
         self._rule_recorder: Optional[AudioRecorder] = None
         self._rule_recorder_device: Optional[int] = None
@@ -324,7 +337,7 @@ class SettingsDialog(QDialog):
         )
         self._rule_dictation_timer = QTimer(self)
         self._rule_dictation_timer.setSingleShot(True)
-        self._rule_dictation_timer.setInterval(60_000)
+        self._rule_dictation_timer.setInterval(_RULE_DICTATION_CAP_MS)
         self._rule_dictation_timer.timeout.connect(self._stop_rule_dictation)
         # Lets a burst of chevron or arrow-key steps settle into one
         # retention change; typed counts commit on Enter or focus-out.
@@ -340,6 +353,7 @@ class SettingsDialog(QDialog):
 
         self._cleanup_rule_polished.connect(self._on_cleanup_rule_polished)
         self._rule_dictation_finished.connect(self._on_rule_dictation_finished)
+        self._rule_dictation_level.connect(self.cleanup_rule_activity.push_level)
         self._api_key_verified.connect(self._on_api_key_verified)
         self.finished.connect(self._release_rule_recorder)
         self.models.assignments_changed.connect(self._refresh_rail_values)
@@ -1175,8 +1189,9 @@ class SettingsDialog(QDialog):
 
         self.cleanup_rules_composer_tile = InfoTile(
             "Teach a new rule",
-            "Type or dictate a natural instruction. The AI turns it into a "
-            "clear, reusable rule before saving.",
+            "Type or dictate an instruction in your own words. Your AI "
+            "cleanup model rewrites it as a clear rule, and you review it "
+            "before it's saved.",
             _design_icon("plus-blue.svg"),
         )
         rule_input_row = QHBoxLayout()
@@ -1189,10 +1204,16 @@ class SettingsDialog(QDialog):
             'Try: Always spell my name "Alex Rivera"'
         )
         self.cleanup_rule_input.returnPressed.connect(self._add_cleanup_rule)
+        self.cleanup_rule_input.textEdited.connect(
+            lambda _text: self._set_rule_notice("")
+        )
         rule_input_row.addWidget(self.cleanup_rule_input, stretch=1)
         self.cleanup_rule_mic_btn = Button("Dictate")
         self.cleanup_rule_mic_btn.setObjectName("cleanupRuleDictateButton")
-        self.cleanup_rule_mic_btn.set_base_minimum_size(92, 40)
+        # theme.qss swaps the icon (microphone / stop) on this property.
+        self.cleanup_rule_mic_btn.setProperty("recording", False)
+        self.cleanup_rule_mic_btn.setIconSize(QSize(16, 16))
+        self.cleanup_rule_mic_btn.set_base_minimum_size(108, 40)
         self.cleanup_rule_mic_btn.setToolTip(
             "Speak the instruction instead of typing it"
         )
@@ -1203,10 +1224,23 @@ class SettingsDialog(QDialog):
         self.cleanup_rule_add_btn.set_base_minimum_size(104, 40)
         self.cleanup_rule_add_btn.clicked.connect(self._add_cleanup_rule)
         rule_input_row.addWidget(self.cleanup_rule_add_btn)
-        self.cleanup_rules_composer_tile.add_body_layout(rule_input_row)
+        # No spacing between the input row and the activity strip: the strip
+        # carries its own gap inside the height it animates, so it slides
+        # open from nothing.
+        composer_column = QVBoxLayout()
+        composer_column.setContentsMargins(0, 0, 0, 0)
+        composer_column.setSpacing(0)
+        composer_column.addLayout(rule_input_row)
+        self.cleanup_rule_activity = RuleActivityStrip(
+            _RULE_DICTATION_CAP_MS // 1000
+        )
+        composer_column.addWidget(self.cleanup_rule_activity)
+        self.cleanup_rules_composer_tile.add_body_layout(composer_column)
+        # Problems only; progress is narrated by the activity strip.
         self.cleanup_rule_status = QLabel("")
         self.cleanup_rule_status.setObjectName("cleanupRuleStatus")
         self.cleanup_rule_status.setWordWrap(True)
+        self.cleanup_rule_status.hide()
         self.cleanup_rules_composer_tile.add_body(self.cleanup_rule_status)
         self._tile_group(
             layout, "Teach a rule", [self.cleanup_rules_composer_tile], columns=1
@@ -1214,8 +1248,8 @@ class SettingsDialog(QDialog):
 
         self.cleanup_rules_library_tile = InfoTile(
             "Your rules",
-            "Select a rule or double-click it to edit. Every rule applies "
-            "whenever AI cleanup runs.",
+            "Select a rule or double-click it to edit. Every rule applies to "
+            "AI cleanup, and to profiles set to also apply learned rules.",
             _design_icon("stack-slate.svg"),
         )
         self.cleanup_rules_count = QLabel()
@@ -1235,6 +1269,7 @@ class SettingsDialog(QDialog):
             lambda _item: self._edit_cleanup_rule()
         )
         self.cleanup_rules_library_tile.add_body(self.cleanup_rules_list)
+        self._rule_glow = ItemGlow(self.cleanup_rules_list)
 
         self.cleanup_rules_empty = QLabel(
             "No rules yet\n\nAdd your first instruction above to start "
@@ -1334,7 +1369,7 @@ class SettingsDialog(QDialog):
             columns=1,
             intro=(
                 "Transcript text and meeting state are sent to the provider. "
-                "Cloud intelligence does not upload audio."
+                "AI insights do not upload audio."
             ),
         )
 
@@ -1409,7 +1444,7 @@ class SettingsDialog(QDialog):
             ("citations", SettingsKey.TYPESAFE_CITATIONS_ENABLED, "Advisory citation checks",
              "Send generated claims and their cited transcript excerpts to TypeSafe/Jev. Flags weak evidence without changing the claim."),
             ("semantic_search", SettingsKey.TYPESAFE_SEMANTIC_SEARCH_ENABLED, "Semantic history search",
-             "Send your search query and shortlisted excerpts from cloud-enabled past meetings to TypeSafe/Jev to rank by meaning. Keyword search stays available."),
+             "Send your search query and shortlisted excerpts from past meetings that had AI insights on to TypeSafe/Jev to rank by meaning. Keyword search stays available."),
             ("question_radar", SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED, "Open questions radar",
              "Send a minute of transcript and tracked questions to TypeSafe/Jev to find unanswered questions and suggest answers."),
             ("highlights", SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED, "Live highlight pulses",
@@ -1430,7 +1465,7 @@ class SettingsDialog(QDialog):
             columns=3,
             intro=(
                 "Transcript excerpts go to TypeSafe (api.typesafe.ai) only "
-                "while cloud intelligence is on for the meeting."
+                "while AI insights are on for the meeting."
             ),
         )
 
@@ -1450,8 +1485,8 @@ class SettingsDialog(QDialog):
 
         self.meeting_end_polish_tile = SettingTile(
             "Clean up the transcript with the LLM",
-            "Rewrites the finished transcript for readability. Needs cloud "
-            "intelligence on for the meeting.",
+            "Rewrites the finished transcript for readability. Needs AI "
+            "insights on for the meeting.",
             _design_icon("stack-purple.svg"),
         )
         self.meeting_end_polish_check = self.meeting_end_polish_tile.checkbox
@@ -1464,7 +1499,7 @@ class SettingsDialog(QDialog):
         self.meeting_end_report_tile = SettingTile(
             "Write the final report",
             "Topic, summary, and cards, generated once live captions finish. "
-            "Needs cloud intelligence on for the meeting.",
+            "Needs AI insights on for the meeting.",
             _design_icon("check-green.svg"),
         )
         self.meeting_end_report_check = self.meeting_end_report_tile.checkbox
@@ -1477,7 +1512,7 @@ class SettingsDialog(QDialog):
             "Optional, for new meetings. Sends relevant transcript excerpts, speaker names, "
             "and insights to TypeSafe to identify ambiguities. Start with the three "
             "highest-priority questions, then choose Review more to see the rest. No audio is sent. "
-            "Requires cloud intelligence, TypeSafe fast judgments on the Fast judgments page, "
+            "Requires AI insights, TypeSafe fast judgments on the Fast judgments page, "
             "and a TypeSafe API key (Settings → API keys or TYPESAFE_API_KEY).",
             _design_icon("check-green.svg"),
         )
@@ -2438,7 +2473,11 @@ class SettingsDialog(QDialog):
             self._rail_refresh_pending = True
             return
         self.rail.set_value(OVERVIEW, "What is running now")
-        self.rail.set_value(CLEANUP_PROFILES, f"{len(load_cleanup_profiles(settings_manager.load_all_settings()))} profiles")
+        profile_count = len(load_cleanup_profiles(settings_manager.load_all_settings()))
+        self.rail.set_value(
+            CLEANUP_PROFILES,
+            f"{profile_count} profile{'' if profile_count == 1 else 's'}",
+        )
         if self.auto_paste_check.isChecked():
             general = "Auto-paste on"
         elif self.copy_clipboard_check.isChecked():
@@ -2458,7 +2497,8 @@ class SettingsDialog(QDialog):
         rule_count = self.cleanup_rules_list.count()
         self.rail.set_value(
             CLEANUP_RULES,
-            "No rules" if rule_count == 0 else f"{rule_count} rules",
+            "No rules" if rule_count == 0
+            else f"{rule_count} rule{'' if rule_count == 1 else 's'}",
         )
         if self.meeting_end_report_check.isChecked():
             after = "Report"
@@ -2815,7 +2855,7 @@ class SettingsDialog(QDialog):
         if checked:
             reply = QMessageBox.question(
                 self, "Enable experimental TypeSafe insight review?",
-                "For future meetings with cloud intelligence on, send relevant transcript "
+                "For future meetings with AI insights on, send relevant transcript "
                 "excerpts, speaker names, and generated insights to TypeSafe after the meeting? "
                 "This is a separate service from your meeting LLM. No audio is sent. "
                 "Review is optional and does not block saving your recording.",
@@ -3006,36 +3046,70 @@ class SettingsDialog(QDialog):
         self.cleanup_rule_edit_btn.setEnabled(enabled and has_selection)
         self.cleanup_rule_delete_btn.setEnabled(enabled and has_selection)
 
+    def _set_rule_notice(self, text: str) -> None:
+        """Show a problem under the composer, or clear it with ``""``."""
+        self.cleanup_rule_status.setText(text)
+        self.cleanup_rule_status.setVisible(bool(text))
+
+    def _set_rule_mic_recording(self, recording: bool) -> None:
+        button = self.cleanup_rule_mic_btn
+        button.setProperty("recording", recording)
+        button.style().unpolish(button)
+        button.style().polish(button)
+        button.setText("Stop" if recording else "Dictate")
+        button.setToolTip(
+            "Stop and transcribe · Esc throws the recording away"
+            if recording else
+            "Speak the instruction instead of typing it"
+        )
+
+    def _rule_transcribe_detail(self) -> str:
+        """Where the dictation engine runs, named as the rail names it."""
+        summary = self.models.voice_summary()
+        if self.models.voice_is_remote():
+            return f"Sent to OpenAI · {summary.split(' · ', 1)[-1]}"
+        return f"On this computer · {summary}"
+
+    @staticmethod
+    def _rule_polish_detail(provider: str, model: str, settings) -> str:
+        """The endpoint and model that will rewrite the words."""
+        name = profile_display_name(provider, settings)
+        return " · ".join(part for part in (name, model) if part)
+
     def _add_cleanup_rule(self) -> None:
         self._polish_cleanup_rule(self.cleanup_rule_input.text())
 
-    def _polish_cleanup_rule(self, raw: str) -> None:
+    def _polish_cleanup_rule(self, raw: str, dictated: bool = False) -> None:
         raw = raw.strip()
-        if (
-            not raw
-            or self._rule_polishing
-            or self._rule_dictation_state != "idle"
-        ):
+        if self._rule_polishing or self._rule_dictation_state != "idle":
+            return
+        if not raw:
+            self.cleanup_rule_activity.finish()
             return
         staged = {r.casefold() for r in self._staged_cleanup_rules()}
         if raw.casefold() in staged:
-            self.cleanup_rule_status.setText("That rule already exists.")
+            self.cleanup_rule_activity.finish()
+            self._set_rule_notice("That rule already exists.")
             return
         if self.cleanup_rules_list.count() >= config.MAX_TRANSCRIPT_CLEANUP_RULES:
-            self.cleanup_rule_status.setText(
+            self.cleanup_rule_activity.finish()
+            self._set_rule_notice(
                 f"Rule limit reached ({config.MAX_TRANSCRIPT_CLEANUP_RULES})."
             )
             return
 
         self._rule_polishing = True
-        self.cleanup_rule_status.setText("Polishing rule with AI…")
-        self._update_cleanup_rule_controls()
+        self._rule_polish_dictated = dictated
+        self._set_rule_notice("")
 
-        provider = resolve_transcript_cleanup_provider()
-        model = resolve_transcript_cleanup_model()
-        reasoning = resolve_transcript_cleanup_reasoning(
-            settings_manager.load_all_settings()
+        settings = settings_manager.load_all_settings()
+        provider = resolve_transcript_cleanup_provider(settings)
+        model = resolve_transcript_cleanup_model(settings)
+        reasoning = resolve_transcript_cleanup_reasoning(settings)
+        self.cleanup_rule_activity.show_polishing(
+            self._rule_polish_detail(provider, model, settings)
         )
+        self._update_cleanup_rule_controls()
 
         def worker():
             try:
@@ -3057,15 +3131,24 @@ class SettingsDialog(QDialog):
 
     def _on_cleanup_rule_polished(self, raw: str, polished: str, error: str) -> None:
         self._rule_polishing = False
-        self.cleanup_rule_status.setText("")
+        dictated, self._rule_polish_dictated = self._rule_polish_dictated, False
+        self.cleanup_rule_activity.finish()
         self._update_cleanup_rule_controls()
+        if not self.isVisible():
+            # Settings closed while the model worked. The words are still in
+            # the input for next time; a review dialog now would pop up alone.
+            return
 
-        notice = (
-            "AI polish unavailable — your wording will be saved as written."
-            if error
-            else None
+        notice = None
+        if error:
+            notice = (
+                "AI polish unavailable — your words will be saved as transcribed."
+                if dictated else
+                "AI polish unavailable — your wording will be saved as written."
+            )
+        dialog = CleanupRuleDialog(
+            polished, original=raw, notice=notice, dictated=dictated, parent=self
         )
-        dialog = CleanupRuleDialog(polished, original=raw, notice=notice, parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         rule = dialog.rule_text()
@@ -3073,12 +3156,14 @@ class SettingsDialog(QDialog):
             return
         staged = {r.casefold() for r in self._staged_cleanup_rules()}
         if rule.casefold() in staged:
-            self.cleanup_rule_status.setText("That rule already exists.")
+            self._set_rule_notice("That rule already exists.")
             return
         self.cleanup_rules_list.addItem(rule)
+        item = self.cleanup_rules_list.item(self.cleanup_rules_list.count() - 1)
         self.cleanup_rule_input.clear()
         self._update_cleanup_rule_controls()
         self._persist_cleanup_rules()
+        self._rule_glow.flash(item)
 
     def _edit_cleanup_rule(self) -> None:
         items = self.cleanup_rules_list.selectedItems()
@@ -3106,10 +3191,10 @@ class SettingsDialog(QDialog):
         if self._rule_dictation_state != "idle" or self._rule_polishing:
             return
         if self.on_dictation_transcribe is None:
-            self.cleanup_rule_status.setText("Dictation is unavailable.")
+            self._set_rule_notice("Dictation is unavailable.")
             return
         if self.get_meeting_active is not None and self.get_meeting_active():
-            self.cleanup_rule_status.setText(
+            self._set_rule_notice(
                 "Meeting Mode is active — end the meeting to dictate a rule."
             )
             return
@@ -3121,24 +3206,65 @@ class SettingsDialog(QDialog):
             self._rule_recorder = AudioRecorder(
                 device_id=device_id, output_file=self._rule_dictation_path
             )
+            self._rule_recorder.set_audio_level_callback(
+                self._emit_rule_dictation_level
+            )
             self._rule_recorder_device = device_id
 
         if not self._rule_recorder.start_recording():
-            self.cleanup_rule_status.setText("Couldn't start recording.")
+            reason = self._rule_recorder.last_start_error
+            self._set_rule_notice(
+                f"Couldn't start recording: {reason}." if reason
+                else "Couldn't start recording."
+            )
             return
         self._rule_dictation_state = "recording"
-        self.cleanup_rule_mic_btn.setText("Stop")
-        self.cleanup_rule_status.setText("Recording… click Stop when done.")
+        self._set_rule_notice("")
+        self._set_rule_mic_recording(True)
+        self.cleanup_rule_activity.show_listening(
+            self.audio_device_combo.currentText() or "Default microphone"
+        )
         self._rule_dictation_timer.start()
         self._update_cleanup_rule_controls()
+
+    def _emit_rule_dictation_level(self, level: float) -> None:
+        """Hand a level from the audio thread to the composer's trace."""
+        try:
+            self._rule_dictation_level.emit(level)
+        except RuntimeError:
+            pass  # The window is gone; the stream closes with its recorder.
+
+    def _cancel_rule_dictation(self) -> None:
+        """Throw the take away without transcribing it."""
+        if self._rule_dictation_state != "recording":
+            return
+        self._rule_dictation_timer.stop()
+        if self._rule_recorder is not None:
+            self._rule_recorder.cancel_recording()
+        self._rule_dictation_state = "idle"
+        self._set_rule_mic_recording(False)
+        self.cleanup_rule_activity.finish()
+        self._update_cleanup_rule_controls()
+
+    def keyPressEvent(self, event) -> None:
+        # Esc while a rule is being dictated discards just the take; Settings
+        # stays open.
+        if (
+            event.key() == Qt.Key.Key_Escape
+            and self._rule_dictation_state == "recording"
+        ):
+            self._cancel_rule_dictation()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def _stop_rule_dictation(self) -> None:
         if self._rule_dictation_state != "recording":
             return
         self._rule_dictation_timer.stop()
         self._rule_dictation_state = "transcribing"
-        self.cleanup_rule_mic_btn.setText("Transcribing…")
-        self.cleanup_rule_status.setText("Transcribing dictation…")
+        self._set_rule_mic_recording(False)
+        self.cleanup_rule_activity.show_transcribing(self._rule_transcribe_detail())
         self._update_cleanup_rule_controls()
 
         recorder = self._rule_recorder
@@ -3179,17 +3305,30 @@ class SettingsDialog(QDialog):
 
     def _on_rule_dictation_finished(self, text: str, error: str) -> None:
         self._rule_dictation_state = "idle"
-        self.cleanup_rule_mic_btn.setText("Dictate")
         self._update_cleanup_rule_controls()
         if error:
-            self.cleanup_rule_status.setText(error)
+            self.cleanup_rule_activity.finish()
+            self._set_rule_notice(error)
             return
         current = self.cleanup_rule_input.text().strip()
         raw = f"{current} {text}".strip() if current else text
-        self._polish_cleanup_rule(raw)
+        # The words land in the input first, so a canceled review (or a
+        # Settings window closed mid-polish) keeps them for editing.
+        self.cleanup_rule_input.setText(raw)
+        if not self.isVisible():
+            self.cleanup_rule_activity.finish(animate=False)
+            return
+        self._polish_cleanup_rule(raw, dictated=True)
 
     def _release_rule_recorder(self, *_args) -> None:
         self._rule_dictation_timer.stop()
+        if self._rule_dictation_state == "recording":
+            # Settings is reused when it reopens, so a take still recording
+            # at close is discarded here rather than left showing "Stop".
+            self._rule_dictation_state = "idle"
+            self._set_rule_mic_recording(False)
+            self.cleanup_rule_activity.finish(animate=False)
+            self._update_cleanup_rule_controls()
         if self._rule_recorder is not None:
             self._rule_recorder.cleanup()
             self._rule_recorder = None

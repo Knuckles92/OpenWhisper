@@ -45,7 +45,7 @@ class TestCloudConsentCopy(_QtTestCase):
         body = dialog.findChild(QLabel, "consentBodyLabel")
         text = body.text() if body is not None else ""
         assert "Your audio never leaves this computer" not in text
-        assert "does not upload audio" in text
+        assert "AI insights do not upload audio" in text
         assert "Past-meeting recall" in text
 
     def test_cloud_consent_names_local_endpoint(self):

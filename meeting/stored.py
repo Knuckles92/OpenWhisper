@@ -7,7 +7,7 @@ from typing import Any
 
 from meeting.state.schema import MeetingState
 from meeting.state.segment_ops import make_segment_handler
-from meeting.state.store import MeetingStateStore
+from meeting.state.store import MeetingStateStore, repository_segment_lookup
 
 logger = logging.getLogger(__name__)
 
@@ -72,4 +72,5 @@ def open_store(
                 "speaker_pinned"
             )
         ),
+        segment_lookup=repository_segment_lookup(repository, meeting_id),
     )

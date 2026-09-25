@@ -1584,11 +1584,14 @@ QMenu::item:selected {
     color: @on-accent;
 }
 
-/* Checkboxes */
+/* The label area must blend into its parent, including the trailing space
+   Qt reserves for textless checkboxes on tinted settings cards. */
 QCheckBox {
     color: @text;
+    background-color: transparent;
     spacing: 8px;
     font-size: 14px;
+    outline: none;
 }
 
 QCheckBox::indicator {
@@ -1886,6 +1889,25 @@ QPushButton#cleanupRuleEditButton:disabled {
     border-color: @slate-border-subtle;
 }
 
+QPushButton#cleanupRuleDictateButton {
+    qproperty-icon: url(ui_qt/assets/tabler/microphone-slate@icon-suffix.svg);
+}
+
+/* While a rule is being dictated the button is the red Stop, like the main
+   recording controls. */
+QPushButton#cleanupRuleDictateButton[recording="true"] {
+    qproperty-icon: url(ui_qt/assets/tabler/player-stop-danger@icon-suffix.svg);
+    color: @danger-text-soft;
+    background-color: rgba(@danger-rgb, 0.12);
+    border-color: rgba(@danger-rgb, 0.45);
+}
+
+QPushButton#cleanupRuleDictateButton[recording="true"]:hover {
+    color: @danger-text;
+    background-color: rgba(@danger-rgb, 0.2);
+    border-color: @danger;
+}
+
 QPushButton#cleanupRuleDeleteButton {
     color: @danger-text-soft;
     background-color: transparent;
@@ -1904,11 +1926,52 @@ QPushButton#cleanupRuleDeleteButton:disabled {
     border-color: @slate-border-subtle;
 }
 
+/* Shown only for a problem (duplicate rule, no audio); progress lives in the
+   activity strip. */
 QLabel#cleanupRuleStatus {
+    color: @warning-text-soft;
+    background-color: transparent;
+    font-size: 11px;
+}
+
+/* The composer's live strip: listening, transcribing, polishing. */
+QWidget#ruleActivityHost {
+    background-color: transparent;
+}
+
+QFrame#ruleActivityStrip {
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 9px;
+}
+
+QFrame#ruleActivityStrip[state="listening"] {
+    background-color: rgba(@danger-rgb, 0.07);
+    border-color: rgba(@danger-rgb, 0.38);
+}
+
+QLabel#ruleActivityTitle {
+    color: @slate-text;
+    background-color: transparent;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#ruleActivityDetail {
     color: @slate-text-3;
     background-color: transparent;
-    min-height: 14px;
     font-size: 11px;
+}
+
+QLabel#ruleActivityTime {
+    color: @slate-text-2;
+    background-color: transparent;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QLabel#ruleActivityTime[nearCap="true"] {
+    color: @warning-text;
 }
 
 QListWidget#cleanupRulesList {
@@ -2110,33 +2173,108 @@ QPushButton#meetingEndButton:disabled {
     color: @text-muted;
 }
 
-QCheckBox#meetingCloudCheckbox {
-    color: @text-secondary;
-    font-size: 13px;
+/* Idle setup: the AI insights switch and the optional brief, as panels that
+   match Quick Record's engine cards. */
+QFrame#meetingAiPanel,
+QFrame#meetingBriefPanel {
+    background-color: @surface;
+    border: 1px solid @border;
+    border-radius: 12px;
+}
+
+QWidget#meetingSetupGroup,
+QWidget#meetingAiDetails {
+    background-color: transparent;
+}
+
+QCheckBox#meetingAiInsightsCheckbox {
+    color: @text;
+    font-size: 14px;
+    font-weight: 600;
     spacing: 8px;
     background-color: transparent;
 }
 
-QCheckBox#meetingCloudCheckbox:hover {
-    color: @text;
+/* Recessed like the fields around it. The ID outranks the global :checked
+   rule, so the checked state is restated here. */
+QCheckBox#meetingAiInsightsCheckbox::indicator {
+    background-color: @bg;
 }
 
+QCheckBox#meetingAiInsightsCheckbox::indicator:hover {
+    border-color: @accent;
+}
+
+QCheckBox#meetingAiInsightsCheckbox::indicator:checked {
+    background-color: @accent;
+    border-color: @accent;
+    image: url(ui_qt/assets/check.svg);
+}
+
+QLabel#meetingAiDescription,
+QLabel#meetingAiDestination,
+QLabel#meetingAiCompactDestination,
+QLabel#meetingBriefHint {
+    color: @text-secondary;
+    font-size: 12px;
+    background-color: transparent;
+}
+
+QLabel#meetingBriefLabel {
+    color: @text;
+    font-size: 13px;
+    font-weight: 600;
+    background-color: transparent;
+}
+
+QLabel#meetingBriefOptional {
+    color: @text-secondary;
+    font-size: 11px;
+    background-color: transparent;
+}
+
+/* Recessed against its panel, like the engine fields on Quick Record. */
+QPlainTextEdit#meetingBriefInput {
+    background-color: @bg;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: 8px;
+    padding: 4px 6px;
+    font-size: 13px;
+    selection-background-color: @accent;
+}
+
+QPlainTextEdit#meetingBriefInput:hover {
+    border-color: @border-strong;
+}
+
+QPlainTextEdit#meetingBriefInput:focus {
+    border-color: @accent;
+}
+
+/* Keep focus inside the existing indicator: a border on the whole checkbox
+   encloses its label and clips the content when mouse clicks give it focus.
+   The named variants must outrank their checked/hover indicator rules. */
+QCheckBox::indicator:focus,
+QCheckBox#engineCleanupCheck::indicator:focus,
+QCheckBox#engineLivePreviewCheck::indicator:focus,
+QCheckBox#meetingAiInsightsCheckbox::indicator:focus {
+    border-color: @accent-soft;
+}
+
+/* A text cue preserves keyboard focus without adding a frame or changing
+   the content rectangle of compact buttons and links. Text fields retain
+   their normal one-pixel focus border. */
 QWidget#meetingModeTab QPushButton:focus,
 QWidget#meetingModeTab QToolButton:focus,
-QWidget#meetingModeTab QCheckBox:focus {
-    border: 2px solid @accent-cyan;
-}
-
 QDialog#meetingIntroDialog QPushButton:focus,
 QDialog#meetingConsentDialog QPushButton:focus,
 QDialog#meetingAudioConsentDialog QPushButton:focus,
 QDialog#meetingUnsupportedDialog QPushButton:focus,
-QDialog#meetingUnsupportedDialog QCheckBox:focus,
 QDialog#meetingSystemAudioDialog QPushButton:focus,
 QDialog#meetingLinuxAudioDialog QPushButton:focus,
-QDialog#meetingLinuxAudioDialog QTextEdit:focus,
 QDialog#meetingRecoveryDialog QPushButton:focus {
-    border: 2px solid @accent-cyan;
+    text-decoration: underline;
 }
 
 QWidget#meetingFinalizationCard {
@@ -2298,8 +2436,9 @@ QWidget#meetingFinalizationDecisionsRow {
     background-color: transparent;
 }
 
-/* First footer tier: flat links that open or repeat something. */
-QPushButton[meetingFooterLink="true"] {
+/* Flat links that open or repeat something: the finalization footer's first
+   tier and "Change…" beside AI insights. */
+QPushButton[meetingLink="true"] {
     color: @accent;
     background-color: transparent;
     border: none;
@@ -2310,17 +2449,17 @@ QPushButton[meetingFooterLink="true"] {
     min-height: 0;
 }
 
-QPushButton[meetingFooterLink="true"]:hover {
+QPushButton[meetingLink="true"]:hover {
     color: @accent-soft;
     background-color: transparent;
 }
 
-QPushButton[meetingFooterLink="true"]:pressed {
+QPushButton[meetingLink="true"]:pressed {
     color: @accent-pressed;
     background-color: transparent;
 }
 
-QPushButton[meetingFooterLink="true"]:disabled {
+QPushButton[meetingLink="true"]:disabled {
     color: @text-muted;
     background-color: transparent;
 }

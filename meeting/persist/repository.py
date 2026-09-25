@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import case, func, or_, text as sql_text
 from sqlalchemy.orm import object_session
@@ -123,10 +123,13 @@ def _best_evidence_match(
     old_items: Sequence[Dict[str, Any]],
     new_items: Sequence[TranscriptSegment],
     id_map: Dict[str, str],
+    retained_ids: frozenset = frozenset(),
 ) -> Optional[str]:
     """Map one evidence id onto a unique overlapping new segment."""
     if old_id in id_map:
         return id_map[old_id]
+    if old_id in retained_ids:
+        return old_id
     old = next((item for item in old_items if item["id"] == old_id), None)
     if old is None:
         return None
@@ -147,6 +150,7 @@ def _remap_state_evidence(
     id_map: Dict[str, str],
     old_items: Sequence[Dict[str, Any]],
     new_items: Sequence[TranscriptSegment],
+    retained_ids: frozenset = frozenset(),
 ) -> None:
     """Rewrite ``sg_`` evidence on cards/questions onto the new transcript.
 
@@ -154,7 +158,8 @@ def _remap_state_evidence(
     meeting, and an anchor that survives the re-decode lets the final
     consolidation reconcile the item instead of rebuilding (and hallucinating)
     from scratch. Items whose anchors all die end up with empty evidence,
-    which the engine's post-redecode strip uses to drop them.
+    which the engine's post-redecode strip uses to drop them. Ids in
+    ``retained_ids`` (unmatched pinned rows kept as-is) stay valid anchors.
     """
     from meeting.state.schema import CARD_KEYS
 
@@ -166,7 +171,9 @@ def _remap_state_evidence(
         for item in values:
             if not isinstance(item, str) or not item.startswith("sg_"):
                 continue
-            mapped = _best_evidence_match(item, old_items, new_items, id_map)
+            mapped = _best_evidence_match(
+                item, old_items, new_items, id_map, retained_ids,
+            )
             if mapped and mapped not in seen:
                 remapped.append(mapped)
                 seen.add(mapped)
@@ -621,6 +628,35 @@ class SqlMeetingRepository:
                 MeetingSegment.id == segment_id
             ).first() is not None
 
+    def segment_flags(
+        self, meeting_id: str, segment_ids: Iterable[str],
+    ) -> Dict[str, bool]:
+        """Bulk existence + pin lookup for a batch of segment ids.
+
+        Args:
+            meeting_id: Owning meeting id.
+            segment_ids: Ids to look up; duplicates and non-strings ignored.
+
+        Returns:
+            ``{segment_id: speaker_pinned}`` for ids that exist in this
+            meeting; missing ids are absent.
+        """
+        ids = sorted({sid for sid in segment_ids if isinstance(sid, str) and sid})
+        if not ids:
+            return {}
+        flags: Dict[str, bool] = {}
+        with self._db.get_session() as session:
+            for start in range(0, len(ids), 500):
+                rows = session.query(
+                    MeetingSegment.id, MeetingSegment.speaker_pinned,
+                ).filter(
+                    MeetingSegment.meeting_id == meeting_id,
+                    MeetingSegment.id.in_(ids[start:start + 500]),
+                ).all()
+                for seg_id, pinned in rows:
+                    flags[str(seg_id)] = bool(pinned)
+        return flags
+
     def update_segment_speaker(self, meeting_id: str, segment_id: str,
                                participant_id: Optional[str],
                                source: str, pinned: bool) -> None:
@@ -802,8 +838,10 @@ class SqlMeetingRepository:
 
         Unpinned live rows are deleted. Speaker-pinned rows keep their
         participant assignment via time IoU onto the new rows, and unmatched
-        pinned rows are retained. Evidence ids on protected dashboard content
-        are remapped when a unique IoU match exists.
+        pinned rows are retained. Unpinned live labels only fill new rows the
+        offline pass left unlabeled. Evidence ids on protected dashboard
+        content are remapped when a unique IoU match exists; anchors on
+        retained pinned rows are kept.
 
         Args:
             meeting_id: Owning meeting id.
@@ -853,16 +891,21 @@ class SqlMeetingRepository:
                 old = old_items[oi]
                 new = new_items[ni]
                 id_map[old["id"]] = new.segment_id
-                if old["pinned"] or old["speaker_participant_id"]:
+                # A human pin always wins. An unpinned live label only fills
+                # a gap; otherwise the offline diarization pass is kept.
+                if old["pinned"] or (
+                    old["speaker_participant_id"]
+                    and not new.speaker_participant_id
+                ):
                     new.speaker_participant_id = old["speaker_participant_id"]
-                    new.speaker_source = (
-                        old["speaker_source"] if old["pinned"] else new.speaker_source
-                    )
+                    new.speaker_source = old["speaker_source"]
                     new.speaker_pinned = bool(old["pinned"])
 
             deleted: List[str] = []
+            retained: set = set()
             for oi, old in enumerate(old_items):
                 if old["pinned"] and oi not in used_old:
+                    retained.add(old["id"])
                     continue
                 row = session.get(MeetingSegment, old["id"])
                 if row is None:
@@ -901,7 +944,10 @@ class SqlMeetingRepository:
                 except (TypeError, ValueError):
                     state = None
                 if isinstance(state, dict):
-                    _remap_state_evidence(state, id_map, old_items, new_items)
+                    _remap_state_evidence(
+                        state, id_map, old_items, new_items,
+                        frozenset(retained),
+                    )
                     meeting.state_json = json.dumps(state, ensure_ascii=False)
 
             session.flush()

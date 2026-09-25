@@ -45,6 +45,51 @@ def polish_blocks(
     return blocks
 
 
+def summary_stats(
+    cards: Any,
+    questions: Any,
+    transcript: Sequence[Any],
+    duration_s: float,
+) -> dict[str, Any]:
+    """Counts shown on the finalization card, shared by live End and retry.
+
+    Soft-deleted items (``status == "removed"``) are excluded so the card
+    matches what the dashboard and exports display.
+
+    Args:
+        cards: ``{card_key: [item, ...]}`` with dict or ``CardItem`` items.
+        questions: Question list (dicts or ``Question`` objects).
+        transcript: Segment dicts or ``TranscriptSegment`` objects.
+        duration_s: Recorded meeting seconds, pauses excluded.
+    """
+    def _status(item: Any) -> str:
+        if isinstance(item, dict):
+            return str(item.get("status") or "")
+        return str(getattr(item, "status", "") or "")
+
+    def _live(items: Any) -> int:
+        return sum(1 for item in (items or []) if _status(item) != "removed")
+
+    def _text(seg: Any) -> str:
+        if isinstance(seg, dict):
+            return str(seg.get("text") or "")
+        return str(getattr(seg, "text", "") or "")
+
+    cards = cards if isinstance(cards, dict) else {}
+    return {
+        "segments": len(transcript),
+        "words": sum(len(_text(seg).split()) for seg in transcript),
+        "key_points": _live(cards.get("key_points")),
+        "action_items": _live(cards.get("action_items")),
+        "decisions": _live(cards.get("decisions")),
+        "risks": _live(cards.get("risks")),
+        "questions": sum(
+            1 for q in (questions or []) if _status(q) != "dismissed"
+        ),
+        "duration_s": max(0.0, float(duration_s or 0.0)),
+    }
+
+
 def sparse_redecode_detail(new_words: int, old_words: int) -> str:
     return (
         f"Re-transcription produced {new_words} words versus {old_words} in the "

@@ -6,7 +6,7 @@ import { ops } from '../types';
 import type { SocketStatus } from '../ws';
 import { enabledReportViews, type ReportViewId } from '../report';
 import { initials, speakerColor } from '../people';
-import { readTheme, saveTheme, type ThemeChoice } from '../theme';
+import ThemePicker from './ThemePicker';
 import ConfirmDialog from './ConfirmDialog';
 import ReportDownload from './report/ReportDownload';
 import ReportViewSelect from './report/ReportViewSelect';
@@ -48,12 +48,6 @@ interface HeaderBarProps {
 }
 
 const MAX_AVATARS = 4;
-
-const THEME_OPTIONS: Array<[ThemeChoice, string]> = [
-  ['system', 'Auto'],
-  ['light', 'Light'],
-  ['dark', 'Dark'],
-];
 
 function statusLabel(status: string): string {
   if (status === 'active') return 'Live';
@@ -144,11 +138,7 @@ export default function HeaderBar({
   const [busy, setBusy] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm>(null);
   const moreRef = useRef<HTMLDetailsElement>(null);
-  const [theme, setTheme] = useState<ThemeChoice>(() => readTheme());
-  const pickTheme = (choice: ThemeChoice) => {
-    saveTheme(choice);
-    setTheme(choice);
-  };
+
 
   useEffect(() => {
     setTitleDraft(state.title);
@@ -251,9 +241,9 @@ export default function HeaderBar({
   const contextNote = showHistory
     ? null
     : finalizationStatus === 'completed'
-      ? finalizationMessage || 'Final cloud insights are ready.'
+      ? finalizationMessage || 'Final insights are ready.'
       : finalizationStatus === 'disabled' && meetingEnded
-        ? finalizationMessage || 'Cloud intelligence is off for this meeting.'
+        ? finalizationMessage || 'AI insights are off for this meeting.'
         : null;
   const showContext =
     socketStatus !== 'open' || (!showHistory && !state.cloud_enabled) || showReportActions
@@ -261,9 +251,15 @@ export default function HeaderBar({
 
   return (
     <header className="header-bar">
+      <div className="meeting-masthead">
+        <span className="cb-brand">OpenWhisper<span className="brand-period">.</span></span>
+        <div className="masthead-tools">
+          <span className="masthead-caption">A space for the conversation</span>
+          <ThemePicker />
+        </div>
+      </div>
       <div className={`command-bar${showHistory ? ' history' : ''}`}>
         <div className="cb-left">
-          <span className="cb-brand">OpenWhisper</span>
           {showHistory ? (
             <span className="cb-section">Meeting history</span>
           ) : (
@@ -398,7 +394,7 @@ export default function HeaderBar({
                 <div className="cb-menu">
                   <label className="cb-menu-item cb-toggle">
                     <span>
-                      <strong>Cloud insights</strong>
+                      <strong>AI insights</strong>
                       <small>Live notes, topics and highlights</small>
                     </span>
                     <input
@@ -428,21 +424,6 @@ export default function HeaderBar({
                       </span>
                     </button>
                   )}
-                  <div className="cb-menu-item cb-theme" role="group" aria-label="Theme">
-                    <span>Theme</span>
-                    <span className="cb-theme-options">
-                      {THEME_OPTIONS.map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          aria-pressed={theme === value}
-                          onClick={() => pickTheme(value)}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </span>
-                  </div>
                   {!showActivity && (
                     <button
                       type="button"
@@ -468,19 +449,6 @@ export default function HeaderBar({
                 </div>
               </details>
             </>
-          )}
-          {!isHost && !showHistory && (
-            <button
-              type="button"
-              className="cb-button icon"
-              aria-label={`Theme: ${theme}. Switch theme`}
-              title={`Theme: ${theme}`}
-              onClick={() => pickTheme(theme === 'system' ? 'dark' : theme === 'dark' ? 'light' : 'system')}
-            >
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-                <path d="M13.5 9.5A5.5 5.5 0 016.5 2.5a5.5 5.5 0 107 7z" strokeLinejoin="round" />
-              </svg>
-            </button>
           )}
           {!isHost && !showHistory && onOpenRoom && (
             <button
@@ -594,7 +562,7 @@ export default function HeaderBar({
               )}
             </span>
           ) : (
-            finalizationMessage || 'Preparing final cloud insights…'
+            finalizationMessage || 'Preparing final insights…'
           )}
         </div>
       )}
@@ -603,8 +571,8 @@ export default function HeaderBar({
         <div className="banner warning" role="status">
           {finalizationMessage ||
             (finalizationStatus === 'failed'
-              ? 'Final cloud insights failed.'
-              : 'Final cloud insights could not run.')}
+              ? 'Final insights failed.'
+              : 'Final insights could not run.')}
           {isHost && <FinalizationDiagnostics finalization={finalization} meetingId={state.meeting_id} />}
         </div>
       )}

@@ -50,7 +50,7 @@ class MeetingAudioConsentDialog(QDialog):
             "who spoke when. The local transcript text is kept; only "
             "speaker labels change.\n\n"
             "Your microphone recording and live transcription stay on "
-            "this computer. This is separate from cloud intelligence, "
+            "this computer. This is separate from AI insights, "
             "which sends transcript text and dashboard state but not "
             "audio.\n\n"
             "An OpenAI API key is required. You can switch back to "

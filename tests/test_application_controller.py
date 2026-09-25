@@ -2297,7 +2297,7 @@ class TestApplicationController:
 
         assert controller.ui_controller.meeting_consent_requests == 1
         assert {"cloud_enabled": False} in controller.ui_controller.meeting_states
-        assert "Cloud intelligence stays off" in controller.ui_controller.meeting_statuses
+        assert "AI insights stay off" in controller.ui_controller.meeting_statuses
 
     def test_meeting_cleanup_gives_up_on_a_hanging_engine_shutdown(self):
         """App exit must not wait minutes for the engine to drain."""

@@ -359,7 +359,7 @@ class FinalizationState:
         """Initial finalization for a newly created meeting.
 
         Args:
-            cloud_enabled: Whether cloud intelligence is on for the meeting.
+            cloud_enabled: Whether AI insights are on for the meeting.
 
         Returns:
             ``pending`` when cloud is enabled, otherwise ``disabled``.
@@ -368,7 +368,7 @@ class FinalizationState:
             return cls(status="pending", message="")
         return cls(
             status="disabled",
-            message="Cloud intelligence is off for this meeting.",
+            message="AI insights are off for this meeting.",
         )
 
     @classmethod
@@ -381,7 +381,7 @@ class FinalizationState:
         """Infer finalization for snapshots that predate this field.
 
         Args:
-            cloud_enabled: Persisted cloud-intelligence flag.
+            cloud_enabled: Persisted AI insights flag.
             meeting_status: Persisted meeting lifecycle status.
 
         Returns:
@@ -391,13 +391,13 @@ class FinalizationState:
         if not cloud_enabled:
             return cls(
                 status="disabled",
-                message="Cloud intelligence is off for this meeting.",
+                message="AI insights are off for this meeting.",
             )
         if meeting_status in _TERMINAL_MEETING_STATUSES:
             return cls(
                 status="unavailable",
                 message=(
-                    "Final cloud insights were not recorded for this meeting."
+                    "Final insights were not recorded for this meeting."
                 ),
             )
         return cls(status="pending", message="")
@@ -490,7 +490,7 @@ class FinalizationState:
 
         Args:
             value: Persisted finalization payload or ``None``.
-            cloud_enabled: Meeting cloud-intelligence flag.
+            cloud_enabled: Meeting AI insights flag.
             meeting_status: Persisted meeting lifecycle status.
 
         Returns:
@@ -508,7 +508,7 @@ class FinalizationState:
         if not cloud_enabled:
             return cls(
                 status="disabled",
-                message="Cloud intelligence is off for this meeting.",
+                message="AI insights are off for this meeting.",
                 stage=fin.stage,
                 current_step=fin.current_step,
                 total_steps=fin.total_steps,
@@ -531,7 +531,7 @@ class FinalizationState:
             return cls(
                 status="failed",
                 message=(
-                    "Final cloud insights were interrupted before they "
+                    "Final insights were interrupted before they "
                     "finished."
                 ),
                 stage=fin.stage,
@@ -545,7 +545,7 @@ class FinalizationState:
         return cls(
             status="unavailable",
             message=(
-                "Final cloud insights were not recorded for this meeting."
+                "Final insights were not recorded for this meeting."
             ),
             stage=fin.stage,
             current_step=fin.current_step,

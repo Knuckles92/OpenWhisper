@@ -29,9 +29,17 @@ class ElidingLabel(QLabel):
         self.setText(text)
 
     def setText(self, text: str) -> None:
-        self._full_text = text or ""
+        text = text or ""
+        changed = text != self._full_text
+        self._full_text = text
         self.setToolTip(self._full_text)
         self._apply_elide()
+        if changed:
+            # The size hint follows the full text, but QLabel only reports a
+            # new hint when the displayed text changes. A label laid out too
+            # narrow for even an ellipsis shows "" before and after, so the
+            # layout would keep the old width and never make room.
+            self.updateGeometry()
 
     def text(self) -> str:
         """Return the full text, not the elided form being displayed."""
