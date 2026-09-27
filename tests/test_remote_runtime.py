@@ -229,6 +229,25 @@ def test_idle_reconnect_updates_device_even_when_model_is_unchanged(paired_backe
     assert backend.runtime["selected"]["device"] == "cuda"
 
 
+def test_catalog_refresh_updates_choices_without_reconnecting_audio(paired_backend, controls, engine):
+    backend = paired_backend
+    backend.reload_model()
+    process = backend._process
+    state = runtime_state(engine.describe())
+    state["dependencies"] = [{"device": "cuda", "label": "GPU runtime", "ready": True}]
+    catalog = {"engine": engine.describe(), "runtime": state, "can_select": True,
+               "models": [{"family": engine.family, "model": engine.model, "label": "Whisper turbo",
+                           "cached": True, "runtime_ready": True}]}
+    ready = {"capabilities": {"engine_controls": True}}
+    assert backend.refresh_host_catalog(backend._pairing, ready, catalog)
+    assert backend._process is process and process.alive
+    assert backend.runtime["dependencies"][0]["ready"]
+    assert not backend.refresh_host_catalog(object(), ready, catalog)
+    assert not backend.refresh_host_catalog(backend._pairing, ready,
+                                            {**catalog, "engine": {**engine.describe(), "model": "base"}})
+    assert backend._process is process and backend.model_name == engine.model
+
+
 def test_old_host_remains_readable_but_cannot_be_configured(paired_backend, engine):
     paired_backend.reload_model()
     assert paired_backend.runtime is None
@@ -305,6 +324,32 @@ def test_legacy_runtime_fields_are_read_only(engine):
     assert widget.compute_combo.currentData() == "int8"
     assert not widget.device_combo.isEnabled()
     assert "Update OpenWhisper" in widget.device_combo.toolTip()
+
+
+def test_missing_gpu_runtime_has_setup_route_in_main_card(engine, monkeypatch):
+    from services import components
+    from ui_qt.widgets.upload_file_tab import UploadFileTab
+
+    monkeypatch.setattr(components, "gpu_runtime_available", lambda: False)
+    tab = UploadFileTab()
+    tab.set_backend("Remote computer")
+    tab.set_remote_models(_choices(engine))
+    tab.set_remote_link(RemoteLink("connected", host="devbox", device="cpu"))
+    tab.show()
+    destinations = []
+    changes = []
+    tab.help_requested.connect(destinations.append)
+    tab.remote_runtime_selected.connect(lambda *args: changes.append(args))
+    assert "GPU Acceleration" in tab.remote_dependency_label.text()
+    tab.remote_manage_button.click()
+    assert destinations == ["remote_models"]
+    combo = tab.remote_engine.device_combo
+    index = combo.findData("setup:cuda")
+    assert index >= 0 and combo.isEnabled()
+    combo.activated.emit(index)
+    assert destinations == ["remote_models", "remote_models"]
+    assert not changes
+    tab.close()
 
 
 def test_optional_card_shows_language_and_only_host_devices(engine):

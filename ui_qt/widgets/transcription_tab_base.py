@@ -29,6 +29,7 @@ from ui_qt.utils.collapse_animation import (
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.markdown_render import PREVIEW_STYLE, render_markdown
 from ui_qt.widgets.cards import HeaderCard
+from ui_qt.widgets.buttons import Button
 from ui_qt.widgets.downloads_label import DownloadsLabel
 from ui_qt.widgets.engine_field import (
     EngineStatus,
@@ -264,6 +265,18 @@ class TranscriptionTabBase(QWidget):
         self.remote_runtime_label.setTextFormat(Qt.TextFormat.PlainText)
         self.remote_runtime_label.hide()
         engine_layout.addWidget(self.remote_runtime_label)
+
+        self.remote_management_row = QWidget()
+        remote_management = QHBoxLayout(self.remote_management_row)
+        remote_management.setContentsMargins(0, 0, 0, 0)
+        self.remote_dependency_label = WrappedLabel("")
+        self.remote_dependency_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.remote_manage_button = Button("Manage host models")
+        self.remote_manage_button.clicked.connect(lambda: self.help_requested.emit("remote_models"))
+        remote_management.addWidget(self.remote_dependency_label, stretch=1)
+        remote_management.addWidget(self.remote_manage_button)
+        self.remote_management_row.hide()
+        engine_layout.addWidget(self.remote_management_row)
 
         self.status_dot = StatusDot(diameter=16)
         # Stands in for the dot while Remote is selected.
@@ -821,6 +834,7 @@ class TranscriptionTabBase(QWidget):
         self.api_model_field.setVisible(not visible and not remote)
         self.remote_model_field.setVisible(remote)
         self.remote_engine.setVisible(remote)
+        self.remote_management_row.setVisible(remote)
         self._show_remote_runtime()
         if remote:
             self._show_remote_models()
@@ -835,6 +849,12 @@ class TranscriptionTabBase(QWidget):
         """What the paired computer can run, and what it runs now (``RemoteModels``)."""
         self._remote_models = choices
         self.remote_engine.set_state(choices)
+        dependencies = (getattr(choices, "runtime", None) or {}).get("dependencies", [])
+        missing = [item["label"] for item in dependencies if item.get("installable")]
+        self.remote_dependency_label.setText(
+            "Available to install on host: " + ", ".join(missing) if missing else
+            "Browse models, set up CPU or GPU, and manage downloads on the host."
+        )
         self._show_remote_models()
         # The host's engine decides whether the Remote engine can preview.
         self._sync_live_preview()
@@ -892,7 +912,7 @@ class TranscriptionTabBase(QWidget):
             )
         elif models is not None:
             combo.addItem("No models ready", None)
-            tip = f"{host} has no downloaded models. Download one in OpenWhisper there."
+            tip = f"{host} has no models ready. Open Manage host models to download models and install their runtimes."
         else:
             combo.addItem("Connecting..." if self._engine_busy else "Not connected", None)
             tip = f"{host}'s models show here once this computer connects."

@@ -14,6 +14,7 @@ def runtime_state(engine: dict) -> dict:
     """Describe saved choices separately from the device actually running."""
     from services.components import gpu_runtime_available, is_installed
     from services.gpu_info import nvidia_gpu
+    from services.remote_asr.dependencies import dependency_options
 
     family = engine.get("family")
     if family not in (*BACKENDS, WHISPER_BACKEND):
@@ -58,6 +59,7 @@ def runtime_state(engine: dict) -> dict:
         "compute_types": compute_types,
         "languages": (["en"] if family == "moonshine" else ["en", "auto"]) if family in BACKENDS else [],
         "gpu": {"name": gpu.name, "total_mib": gpu.total_mib} if gpu else {},
+        "dependencies": dependency_options(family),
     }
 
 

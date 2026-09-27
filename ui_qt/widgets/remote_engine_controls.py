@@ -59,6 +59,11 @@ class RemoteEngineControls(QWidget):
                 values.append(value)
             for item in values:
                 combo.addItem(_LABELS.get(item, item), item)
+            if key == "device":
+                for dependency in runtime.get("dependencies", []):
+                    if dependency.get("installable") and dependency["device"] not in values:
+                        combo.addItem(f"{_LABELS.get(dependency['device'], dependency['device'])} · Set up on host",
+                                      "setup:" + dependency["device"])
             if not values:
                 combo.addItem("Not reported" if engine else "Not connected", None)
             elif value:
@@ -73,7 +78,7 @@ class RemoteEngineControls(QWidget):
                 tip += " The saved choice is currently unavailable on the host."
                 combo.model().item(combo.findData(value)).setEnabled(False)
             combo.setToolTip(tip)
-            editable = bool(options[key]) and (len(options[key]) > 1 or value not in options[key])
+            editable = combo.count() > 1 or (bool(options[key]) and value not in options[key])
             combo.setProperty("remoteEditable", bool(runtime.get("can_configure") and editable))
         self._sync_enabled()
 
@@ -93,6 +98,10 @@ class RemoteEngineControls(QWidget):
         runtime = getattr(self._state, "runtime", None) or {}
         combo = dict(self._combos())[key]
         if not combo.isEnabled() or value is None or value == (runtime.get("selected") or {}).get(key):
+            return
+        if isinstance(value, str) and value.startswith("setup:"):
+            self.set_state(self._state)
+            self.help_requested.emit("remote_models")
             return
         self._pending = True
         self._sync_enabled()

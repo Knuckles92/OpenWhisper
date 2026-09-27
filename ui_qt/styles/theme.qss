@@ -3678,3 +3678,36 @@ QLabel#settingsSearchHint {
     border: none;
     font-size: 11px;
 }
+
+QListWidget#remoteModelList {
+    background-color: @slate-bg;
+    border: 1px solid @slate-border-subtle;
+    border-radius: 10px;
+    padding: 6px;
+}
+QListWidget#remoteModelList::item {
+    padding: 12px 10px;
+    margin: 2px;
+    border-radius: 7px;
+}
+QListWidget#remoteModelList::item:selected {
+    background-color: rgba(@accent-rgb, 0.18);
+    color: @accent-soft;
+}
+QFrame#remoteModelInspector {
+    background-color: @slate-bg;
+    border: 1px solid @slate-border-subtle;
+    border-radius: 10px;
+}
+QFrame#remoteModelInspector QLabel {
+    background-color: transparent;
+}
+QLabel#remoteModelTitle {
+    font-size: 18px;
+    font-weight: 600;
+}
+QLabel#remoteHostSummary {
+    background-color: rgba(@accent-rgb, 0.08);
+    border-radius: 8px;
+    padding: 12px;
+}

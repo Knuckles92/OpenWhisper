@@ -569,6 +569,21 @@ class RemoteSpeechBackend(LocalSpeechBackend):
                          and capabilities.get("engine_controls") is True}
                         if isinstance(runtime, dict) and runtime else None)
 
+    def refresh_host_catalog(self, pairing, ready: dict, catalog: dict) -> bool:
+        """Refresh setup choices from the management connection without touching audio."""
+        engine = catalog.get("engine") or {}
+        with self._state_lock:
+            if self._pairing != pairing or not self._process or not self._process.alive:
+                return False
+            # Engine changes still go through the normal reconnect/load path.
+            if any(engine.get(key) != self.engine.get(key) for key in ("family", "model", "device", "compute_type")):
+                return False
+            self._adopt_runtime({**ready, "runtime": catalog.get("runtime")})
+            self.host_models = parse_host_models([
+                item for item in catalog.get("models", []) if item.get("cached") and item.get("runtime_ready")
+            ]) if catalog.get("can_select") else ()
+            return True
+
     def _adopt(self, pairing, connection, ready: dict) -> None:
         """Take a fresh connection's engine as ours. Caller holds the state lock."""
         engine = ready.get("engine") if isinstance(ready.get("engine"), dict) else {}

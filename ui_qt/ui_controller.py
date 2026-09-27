@@ -723,7 +723,24 @@ class UIController(QObject):
             dialog.refresh()
             dialog.focus_api_keys("OPENAI_API_KEY")
             self._raise_dialog(dialog)
-        elif destination in ("ondemand", "downloads"):
+        elif destination == "remote_models":
+            if self.remote_engine is None:
+                return
+            pairing = self.remote_engine.client_pairing()
+            if pairing is None:
+                self.open_settings_destination("remote_engine")
+                return
+            from ui_qt.dialogs.remote_models import RemoteModelsDialog
+
+            dialog = getattr(self, "_remote_models_dialog", None)
+            if dialog is None or dialog._host_name != pairing.host_name:
+                if dialog is not None:
+                    dialog.close()
+                    dialog.deleteLater()
+                dialog = RemoteModelsDialog(self.remote_engine, pairing.host_name, self.main_window)
+                self._remote_models_dialog = dialog
+            self._raise_dialog(dialog)
+        elif destination in ("ondemand", "downloads", "remote_engine"):
             self.open_settings_destination(destination)
 
     def open_hotkey_settings(self) -> None:

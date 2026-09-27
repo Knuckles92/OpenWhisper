@@ -1,7 +1,7 @@
 """Host-owned model inventory and bounded, fetch-only remote downloads.
 
 Only bundled speech models are accepted, never client-supplied repositories,
-paths, runtime installers or settings. Downloads share the local Downloads
+paths or runtime installers. Downloads share the local Downloads
 page's policy and claim coordinator. An accepted download survives a client
 closing its window; permission changes prevent new work, not work in progress.
 """
@@ -47,13 +47,17 @@ class HostModelManager:
             resolve_runtime,
             selected_device,
         )
+        from services.remote_asr.dependencies import dependency_options
         from services.settings import settings_manager
 
         settings = settings_manager.load_all_settings()
         runtimes = {WHISPER_BACKEND: True}
         models = model_choices()
+        dependencies = {}
         for entry in models:
             family, model = entry["family"], entry["model"]
+            if family not in dependencies:
+                dependencies[family] = dependency_options(family)
             if family not in runtimes:
                 component, _device = resolve_runtime(family, selected_device(family, settings))
                 runtimes[family] = is_installed(component)
@@ -61,6 +65,9 @@ class HostModelManager:
                 cached=is_model_cached(model),
                 runtime_ready=runtimes[family],
                 download_size=format_download_size(model) or "",
+                dependencies=dependencies[family],
+                selected_device=(settings.get("whisper_device", "auto") if family == WHISPER_BACKEND
+                                 else selected_device(family, settings)),
             )
         return {"models": models, "download": self.job()}
 

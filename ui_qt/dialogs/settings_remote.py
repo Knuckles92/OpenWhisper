@@ -204,8 +204,9 @@ class RemoteEngineSection(QObject):
         self.management_tile = SettingTile(
             "Allow paired computers to manage models",
             "Off by default. All paired computers can browse the speech model catalog "
-            "and download models onto this computer. Downloads use this computer's network "
-            "and storage and still require its Hugging Face download policy to allow them. "
+            "and download models and install verified speech runtimes onto this computer. "
+            "Downloads use this computer's network and storage. Model weights still require "
+            "its Hugging Face download policy to allow them. "
             "Turning this off blocks new requests; downloads already started continue. "
             "Selecting already-downloaded models remains available without this setting.",
             icon("server-blue.svg"),
@@ -699,8 +700,9 @@ class RemoteEngineSection(QObject):
         from ui_qt.dialogs.remote_models import RemoteModelsDialog
 
         dialog = RemoteModelsDialog(self._service, pairing.host_name, self.client_tile.window())
-        dialog.exec()
-        dialog.deleteLater()
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.show()
+        self._models_dialog = dialog
 
     def _forget(self) -> None:
         if self._service is not None:

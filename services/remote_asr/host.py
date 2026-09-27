@@ -185,7 +185,7 @@ class SpeechHost:
         tailscale_owner: Optional[Callable[[], str]] = None,
         addresses: Optional[Callable[[], List[str]]] = None,
         models: Optional[Callable[[], List[dict]]] = None,
-        select_model: Optional[Callable[[str, str, str], dict]] = None,
+        select_model: Optional[Callable[..., dict]] = None,
         model_management: Optional[Callable[[], bool]] = None,
         manage_models: Optional[Callable[[str, dict, str], dict]] = None,
         runtime: Optional[Callable[[], dict]] = None,
@@ -564,6 +564,7 @@ class SpeechHost:
             "models": self._model_list(),
             "runtime": self._runtime(),
             "capabilities": {"model_management": self._can_manage_models(),
+                             "runtime_installation": self._can_manage_models(),
                              "engine_controls": self._configure_runtime is not None},
         })
         connection_id = uuid.uuid4().hex[:8]
@@ -615,7 +616,7 @@ class SpeechHost:
         request_id = header.get("id")
         if header.get("op") == "configure_runtime":
             return self._configure_runtime_request(request_id, header, device_name)
-        if header.get("op") in ("model_catalog", "download_model"):
+        if header.get("op") in ("model_catalog", "download_model", "install_runtime"):
             return self._manage_model_request(request_id, header, device_name)
         if header.get("op") == "select_model":
             # Asked for whatever this computer runs now, so a switch made
@@ -678,9 +679,11 @@ class SpeechHost:
                     "Model management is disabled on the host. Enable it in Settings → Remote engine there."}
         op = header["op"]
         fields = {"id", "op"} if op == "model_catalog" else {"id", "op", "family", "model"}
-        if set(header) - fields or (op == "download_model" and not all(
+        if op == "install_runtime":
+            fields.add("device")
+        if (set(header) - fields or (op != "model_catalog" and not all(
             isinstance(header.get(key), str) and header[key] for key in ("family", "model")
-        )):
+        )) or (op == "install_runtime" and header.get("device") not in ("cpu", "cuda"))):
             return {"id": request_id, "code": "bad_request", "error": "Invalid model management request."}
         try:
             result = self._manage_models(op, header, device_name)
@@ -709,13 +712,19 @@ class SpeechHost:
         client show one "Switching…" state and then the engine it switched to.
         """
         family, model = header.get("family"), header.get("model")
+        if "device" in header:
+            if not self._can_manage_models():
+                return {"id": request_id, "code": "forbidden", "error": "Model management is disabled on the host."}
+            if set(header) - {"id", "op", "family", "model", "device"} or header["device"] not in ("cpu", "cuda"):
+                return {"id": request_id, "error": "Invalid model device request."}
         if not isinstance(family, str) or not isinstance(model, str) or not model:
             return {"id": request_id, "error": "Choose a model to switch to"}
         if self._select_model is None:
             return {"id": request_id,
                     "error": f"{self.host_name} doesn't let paired computers change its model."}
         try:
-            engine = self._select_model(family, model, device_name)
+            engine = (self._select_model(family, model, device_name, header["device"]) if "device" in header
+                      else self._select_model(family, model, device_name))
         except Exception as exc:
             return {"id": request_id, "error": str(exc) or type(exc).__name__}
         self._emit("engine", {"family": family, "model": model, "by": device_name})

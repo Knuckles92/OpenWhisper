@@ -70,7 +70,7 @@ def _default_identity_dir() -> str:
 
 
 class RemoteEngineService:
-    """``switch_engine(family, model, device_name)`` selects one of this
+    """``switch_engine(family, model, device_name[, device])`` selects one of this
     computer's models on its UI thread for a paired client, raising with the
     reason when it can't right now; ``engine_settled()`` says when the load
     that started has finished. Without them, clients can't change the model.
@@ -83,9 +83,10 @@ class RemoteEngineService:
         identity_dir: Optional[str] = None,
         on_client_changed: Optional[Callable[[], None]] = None,
         bind: str = "0.0.0.0",
-        switch_engine: Optional[Callable[[str, str, str], None]] = None,
+        switch_engine: Optional[Callable[..., None]] = None,
         engine_settled: Optional[Callable[[], bool]] = None,
         configure_engine: Optional[Callable[[str, str, dict, str], None]] = None,
+        on_host_catalog: Optional[Callable[[object, dict, dict], None]] = None,
     ):
         self._backend_provider = backend_provider
         self._switch_engine = switch_engine
@@ -97,6 +98,7 @@ class RemoteEngineService:
         # 127.0.0.1, which also keeps Windows from asking about the firewall.
         self._bind = bind
         self.on_client_changed = on_client_changed
+        self.on_host_catalog = on_host_catalog
         self._lock = threading.RLock()
         self._host = None
         self._host_error = ""
@@ -108,6 +110,9 @@ class RemoteEngineService:
         from services.remote_asr.model_management import HostModelManager
 
         self._model_manager = HostModelManager(lambda: self._notify("models"))
+        from services.remote_asr.dependencies import HostRuntimeInstaller
+
+        self._runtime_installer = HostRuntimeInstaller(lambda: self._notify("components"))
 
     # ---- listeners ----
 
@@ -288,9 +293,15 @@ class RemoteEngineService:
             result = self._model_manager.catalog()
             result["engine"] = self._engine().describe()
             result["can_select"] = self._switch_engine is not None
+            result["can_install_runtime"] = True
+            result["installation"] = self._runtime_installer.job()
+            result["runtime"] = self.runtime_state()
             return result
         if op == "download_model":
             return self._model_manager.download(fields.get("family"), fields.get("model"), device_name)
+        if op == "install_runtime":
+            return self._runtime_installer.install(fields.get("family"), fields.get("model"),
+                                                   fields.get("device"), device_name)
         raise ValueError("Unknown model management operation.")
 
     def host_models(self) -> List[dict]:
@@ -329,7 +340,15 @@ class RemoteEngineService:
         finally:
             self._runtime_lock.release()
 
-    def select_model(self, family: str, model: str, device_name: str) -> dict:
+    def select_model(self, family: str, model: str, device_name: str, device: Optional[str] = None) -> dict:
+        if not self._runtime_lock.acquire(blocking=False):
+            raise RuntimeError("The host is changing its engine. Try again in a moment.")
+        try:
+            return self._select_model(family, model, device_name, device)
+        finally:
+            self._runtime_lock.release()
+
+    def _select_model(self, family: str, model: str, device_name: str, device: Optional[str]) -> dict:
         """Switch this computer to ``model`` for a paired client. Blocking.
 
         Runs on the client's connection thread and returns the new engine's
@@ -337,16 +356,25 @@ class RemoteEngineService:
         the client shows as is.
         """
         name = socket.gethostname()
-        choice = next((entry for entry in self.host_models()
+        choices = self.host_models()
+        if device is not None:
+            from services.remote_asr.dependencies import validate_model_device
+
+            # Rechecked by the controller on the UI thread before saving anything.
+            choices = [validate_model_device(family, model, device)]
+        choice = next((entry for entry in choices
                        if entry["family"] == family and entry["model"] == model), None)
         if choice is None:
             raise RuntimeError(f"{model} isn't ready on {name}. Download it there first.")
         label = choice["label"]
         current = self._engine().describe()
-        if current.get("available") and (current.get("family"), current.get("model")) == (family, model):
+        if device is None and current.get("available") and (current.get("family"), current.get("model")) == (family, model):
             return current
         # Raises with the reason when this computer can't switch right now.
-        self._switch_engine(family, model, device_name)
+        if device is None:
+            self._switch_engine(family, model, device_name)
+        else:
+            self._switch_engine(family, model, device_name, device)
         deadline = time.monotonic() + SWITCH_TIMEOUT_S
         while not self._engine_settled():
             if time.monotonic() >= deadline:
@@ -523,7 +551,7 @@ class RemoteEngineService:
             self.on_client_changed()
         return pairing
 
-    def remote_model_request(self, op: str, **fields) -> dict:
+    def remote_model_request(self, op: str, *, expected_pairing=None, **fields) -> dict:
         """One off-UI-thread management request, separate from dictation.
 
         No automatic retry: a dropped reply may already have started a download
@@ -531,12 +559,14 @@ class RemoteEngineService:
         """
         from services.remote_asr.client import RemoteConnection, RemoteEngineError
 
-        if op not in ("model_catalog", "download_model", "select_model"):
+        if op not in ("model_catalog", "download_model", "install_runtime", "select_model"):
             raise ValueError("Unknown model management operation.")
         pairing = self.client_pairing()
         token = remote_settings.load_client_token()
         if pairing is None or not token:
             raise RemoteEngineError("Pair with a host before managing its models.")
+        if expected_pairing is not None and pairing != expected_pairing:
+            raise RemoteEngineError("The paired host changed. Close this window and open Manage host models again.")
         connection = RemoteConnection(
             pairing.host, pairing.port, token, pairing.fingerprint, alternates=pairing.alternates,
         )
@@ -549,8 +579,13 @@ class RemoteEngineService:
                 raise RemoteEngineError(
                     "Model management is disabled on the host. Enable it in Settings → Remote engine there."
                 )
-            return connection.request(op, timeout=SWITCH_TIMEOUT_S + 10 if op == "select_model" else 30,
-                                      **fields)
+            if (op == "install_runtime" or "device" in fields) and capabilities.get("runtime_installation") is not True:
+                raise RemoteEngineError("Update OpenWhisper on the host to install runtimes and choose a model's device remotely.")
+            result = connection.request(op, timeout=SWITCH_TIMEOUT_S + 10 if op == "select_model" else 30,
+                                        **fields)
+            if op == "model_catalog" and self.on_host_catalog is not None:
+                self.on_host_catalog(pairing, ready, result)
+            return result
         finally:
             connection.close()
 

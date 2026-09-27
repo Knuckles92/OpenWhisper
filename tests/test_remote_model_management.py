@@ -56,7 +56,7 @@ def managed(tmp_path, monkeypatch, downloads):
     monkeypatch.setattr(tailscale, "status", lambda: tailscale.TailscaleStatus("not_installed"))
     engine = FakeEngine()
 
-    def switch(family, model, name):
+    def switch(family, model, name, device=None):
         engine.family, engine.model = family, model
 
     service = RemoteEngineService(lambda: None, identity_dir=str(tmp_path / "identity"), switch_engine=switch)
@@ -87,14 +87,14 @@ def test_permission_is_rechecked_on_existing_connections(managed):
     connection = _connect(managed.host, managed.pairing)
     try:
         assert connection.ready["capabilities"]["model_management"] is False
-        for op in ("model_catalog", "download_model"):
+        for op in ("model_catalog", "download_model", "install_runtime"):
             with pytest.raises(RuntimeError, match="disabled"):
                 connection.request(op)
         assert connection.request("describe")["available"]
         managed.service.set_model_management(True)
         assert connection.request("model_catalog")["models"]
         managed.service.set_model_management(False)
-        for op in ("model_catalog", "download_model"):
+        for op in ("model_catalog", "download_model", "install_runtime"):
             with pytest.raises(RuntimeError, match="disabled"):
                 connection.request(op, family="local_whisper", model="tiny")
         assert settings_manager.load_all_settings()[SettingsKey.REMOTE_HOST_MODEL_MANAGEMENT] is False
@@ -155,7 +155,8 @@ def test_catalog_is_safe_and_reports_missing_runtime_separately(managed, downloa
     assert entries["parakeet-v3"]["cached"] and not entries["parakeet-v3"]["runtime_ready"]
     assert not entries["base"]["cached"]
     assert entries["tiny"]["download_size"]
-    assert set(entries["tiny"]) == {"family", "model", "label", "cached", "runtime_ready", "download_size"}
+    assert set(entries["tiny"]) == {"family", "model", "label", "cached", "runtime_ready", "download_size", "dependencies", "selected_device"}
+    assert all(not ({"url", "path", "archives"} & set(dep)) for dep in entries["tiny"]["dependencies"])
     assert result["can_select"]
     assert result["download"] == {}
     assert downloads.calls == []
@@ -296,16 +297,16 @@ def test_management_dialog_runs_off_ui_thread_and_reflects_host_readiness(manage
     dialog.show()
     assert _pump_until(lambda: not dialog._busy)
     assert dialog._valid
-    dialog.model_combo.setCurrentIndex(dialog.model_combo.findData("parakeet:parakeet-v3"))
+    dialog.select_model("parakeet:parakeet-v3")
     assert not dialog.select_button.isEnabled()  # downloaded, runtime absent
-    assert "runtime" in dialog.detail.text()
-    dialog.model_combo.setCurrentIndex(dialog.model_combo.findData("local_whisper:tiny"))
+    assert "runtime" in dialog.runtime_detail.text()
+    dialog.select_model("local_whisper:tiny")
     assert dialog.select_button.isEnabled()
     assert not dialog.download_button.isEnabled()
     dialog._request("model_catalog")
     assert not dialog.select_button.isEnabled()  # request in flight
     assert _pump_until(lambda: not dialog._busy)
-    assert dialog.model_combo.currentData() == "local_whisper:tiny"
+    assert dialog._choice()["model"] == "tiny"
     managed.service.set_model_management(False)
     dialog._request("model_catalog")
     assert _pump_until(lambda: not dialog._busy)
@@ -327,7 +328,7 @@ def test_dialog_confirms_download_and_polls_until_complete(managed, downloads, m
     dialog.show()
     try:
         assert _pump_until(lambda: not dialog._busy)
-        dialog.model_combo.setCurrentIndex(dialog.model_combo.findData("local_whisper:tiny"))
+        dialog.select_model("local_whisper:tiny")
         monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.No)
         dialog.download_button.click()
         assert downloads.calls == []

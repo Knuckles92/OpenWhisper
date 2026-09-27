@@ -19,9 +19,20 @@ Opt-in model management is advertised only to authenticated clients as
 engine and the last remote download's progress. ``download_model`` takes
 ``family`` and ``model`` from that catalog and acknowledges a host-owned
 background download; poll ``model_catalog`` for completion. Neither operation
-installs runtimes, changes download policy or selects a model. Authorization
+changes download policy or selects a model. Authorization
 is checked on every request. Accepted downloads continue after disconnect or
 permission changes. These additive operations keep protocol version 1.
+
+Hosts with ``capabilities.runtime_installation`` also accept ``install_runtime``
+with a bundled ``family``, ``model`` and explicit ``device`` (cpu/cuda). The host
+resolves a platform-compatible, pinned component and installs it in the background
+using its shared component coordinator. Clients cannot supply URLs, paths or
+commands. ``model_catalog`` includes per-device dependency readiness and reasons,
+download sizes, plus ``installation`` progress, failure and restart status.
+The same host model-management opt-in is rechecked for every install request.
+Accepted installations survive disconnect and permission changes. On these hosts,
+``select_model`` may include ``device`` to load a cached model with a ready runtime
+in one change; this extension also requires model-management permission.
 
 Runtime controls are advertised to paired clients as
 ``ready.capabilities.engine_controls``. ``ready.runtime`` describes the host's

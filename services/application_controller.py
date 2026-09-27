@@ -77,6 +77,7 @@ class _ClientModelSwitch:
     model: str
     device_name: str
     runtime: Optional[dict] = None
+    target_device: Optional[str] = None
     #: Why the switch can't happen now; empty once it is queued.
     error: Optional[str] = None
     done: threading.Event = field(default_factory=threading.Event)
@@ -88,6 +89,7 @@ class ApplicationController(QObject):
     # fixed text, optional raw text, optional CleanupInfo
     transcription_completed = pyqtSignal(str, object, object)
     transcription_failed = pyqtSignal(str)
+    remote_catalog_received = pyqtSignal(object, object, object)
     # Multi-file upload, emitted from the batch worker thread.
     # (1-based position, total, source name) as each file starts
     batch_progress = pyqtSignal(int, int, str)
@@ -323,6 +325,7 @@ class ApplicationController(QObject):
         self.remote_engine = RemoteEngineService(
             lambda: self.current_backend,
             on_client_changed=self.remote_pairing_changed.emit,
+            on_host_catalog=self.remote_catalog_received.emit,
             switch_engine=self._switch_engine_for_client,
             configure_engine=self._configure_engine_for_client,
             engine_settled=self._engine_settled,
@@ -987,14 +990,14 @@ class ApplicationController(QObject):
         self._reload_note = f"Switching {host} to {choice.label}..."
         self.reload_whisper_model()
 
-    def _switch_engine_for_client(self, family: str, model: str, device_name: str) -> None:
+    def _switch_engine_for_client(self, family: str, model: str, device_name: str, device: Optional[str] = None) -> None:
         """Host: switch to a model a paired computer chose, and wait for the answer.
 
         Called on that computer's connection thread. The switch itself runs
         on the Qt thread, like any engine change; this raises RuntimeError
         with the reason when it can't happen now.
         """
-        request = _ClientModelSwitch(family, model, device_name)
+        request = _ClientModelSwitch(family, model, device_name, target_device=device)
         self.client_model_switch_requested.emit(request)
         if not request.done.wait(10.0):
             raise RuntimeError(f"{socket.gethostname()} didn't respond. Try again in a moment.")
@@ -1029,7 +1032,10 @@ class ApplicationController(QObject):
 
     def _on_client_model_switch(self, request: "_ClientModelSwitch") -> None:
         try:
-            if request.runtime is None:
+            if request.target_device is not None:
+                request.error = self._switch_engine_to(request.family, request.model, request.device_name,
+                                                      target_device=request.target_device)
+            elif request.runtime is None:
                 request.error = self._switch_engine_to(request.family, request.model, request.device_name)
             else:
                 request.error = self._switch_engine_to(request.family, request.model, request.device_name, runtime=request.runtime)
@@ -1039,7 +1045,8 @@ class ApplicationController(QObject):
         finally:
             request.done.set()
 
-    def _switch_engine_to(self, family: str, model: str, device_name: str, *, runtime: Optional[dict] = None) -> Optional[str]:
+    def _switch_engine_to(self, family: str, model: str, device_name: str, *, runtime: Optional[dict] = None,
+                          target_device: Optional[str] = None) -> Optional[str]:
         """Select a model here as the user would; returns why not, or None once queued.
 
         Persists the model the way the engine fields do, selects its backend
@@ -1053,6 +1060,19 @@ class ApplicationController(QObject):
             return f"{name} is running a meeting. Change its model after the meeting ends."
         if self.recorder.is_recording or self.is_transcribing():
             return f"{name} is transcribing right now. Try again in a moment."
+        if target_device is not None:
+            from services.remote_asr.dependencies import validate_model_device
+
+            if self._reload_in_flight or self._reload_pending:
+                return f"{name} is loading its engine. Try again in a moment."
+            validate_model_device(family, model, target_device)
+            if family == WHISPER_BACKEND:
+                settings_manager.update_settings({SettingsKey.WHISPER_DEVICE: target_device,
+                                                  SettingsKey.WHISPER_COMPUTE_TYPE: "auto"})
+            else:
+                devices = dict(settings_manager.get(SettingsKey.LOCAL_ASR_DEVICES, {}) or {})
+                devices[family] = target_device
+                settings_manager.save_setting(SettingsKey.LOCAL_ASR_DEVICES, devices)
         if runtime is not None:
             from services.remote_asr.engines import host_engine_for
             from services.remote_asr.runtime import validate_runtime
@@ -1079,7 +1099,7 @@ class ApplicationController(QObject):
                 return f"{name} couldn't switch to {label} right now."
         self.ui_controller.refresh_local_engine_controls()
         whisper = self.transcription_backends.get(WHISPER_BACKEND)
-        if (runtime is None and family == WHISPER_BACKEND and whisper is not None and whisper.is_available()
+        if (runtime is None and target_device is None and family == WHISPER_BACKEND and whisper is not None and whisper.is_available()
                 and whisper.last_loaded_model == model and not self._reload_pending):
             return None  # Selecting the backend was all it took.
         self._reload_note = f"Switching to {label} for {device_name}..."
@@ -1228,6 +1248,14 @@ class ApplicationController(QObject):
             self.remote_clients_changed.emit(self.remote_engine.connected_clients())
         if kind == "models":
             self.model_cache_changed.emit()
+        if kind == "components":
+            self.component_state_changed.emit()
+            self.model_cache_changed.emit()
+
+    def _on_remote_catalog(self, pairing, ready: dict, catalog: dict) -> None:
+        remote = self.transcription_backends.get("remote")
+        if remote is not None and remote.refresh_host_catalog(pairing, ready, catalog):
+            self.ui_controller.refresh_remote_models()
 
     def _prune_update_leftovers(self) -> None:
         """Collect the downloads and transactions an earlier update left behind."""
@@ -2287,6 +2315,7 @@ class ApplicationController(QObject):
         self.remote_pairing_changed.connect(self._on_remote_pairing_changed)
         self.client_model_switch_requested.connect(self._on_client_model_switch)
         self.remote_link_poke.connect(self._publish_remote_link)
+        self.remote_catalog_received.connect(self._on_remote_catalog)
         self.remote_settled.connect(self._on_remote_settled)
         self.remote_retry_requested.connect(self._retry_remote)
         self.remote_clients_changed.connect(self.ui_controller.set_remote_clients)
