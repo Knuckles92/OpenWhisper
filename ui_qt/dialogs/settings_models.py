@@ -38,6 +38,7 @@ from services.components import (
     current_platform_tag,
     meeting_agent_payload_dir,
 )
+from services import openai_retirement
 from services.hf_access import (
     CachedModelInfo,
     peek_cached_models,
@@ -52,6 +53,8 @@ from services.settings import (
     TranscriptCleanupModelSort,
     TranscriptCleanupProvider,
     TranscriptCleanupReasoning,
+    api_model_choices,
+    api_model_label,
     default_transcript_cleanup_model,
     resolve_api_transcription_model,
     resolve_meeting_agent_core,
@@ -291,8 +294,9 @@ class ModelAssignments(QObject):
         card.addWidget(self.speech_controls)
         self.api_model_combo = ElidingComboBox()
         self.api_model_combo.setMinimumHeight(40)
-        self.api_model_combo.addItems(list(config.API_MODEL_CHOICES))
-        self.api_model_combo.currentTextChanged.connect(self._on_api_model_changed)
+        for model in api_model_choices():
+            self.api_model_combo.addItem(api_model_label(model), model)
+        self.api_model_combo.currentIndexChanged.connect(self._on_api_model_changed)
         self.api_model_field = self._field("Model", self.api_model_combo)
         card.addWidget(self.api_model_field)
 
@@ -414,10 +418,12 @@ class ModelAssignments(QObject):
             "On-device (WeSpeaker · Speaker 1, Speaker 2, …)",
             MeetingSpeakerIdBackend.LOCAL,
         )
-        self.meeting_speaker_id_combo.addItem(
-            "OpenAI (gpt-4o-transcribe-diarize, system audio after End)",
-            MeetingSpeakerIdBackend.OPENAI,
-        )
+        if not openai_retirement.retired():
+            self.meeting_speaker_id_combo.addItem(
+                "OpenAI (system audio after End · ends "
+                f"{openai_retirement.SHUTDOWN_LABEL})",
+                MeetingSpeakerIdBackend.OPENAI,
+            )
         self._speaker_id_backend_previous = MeetingSpeakerIdBackend.LOCAL
         self.meeting_speaker_id_combo.currentIndexChanged.connect(
             self._on_speaker_id_backend_changed
@@ -591,7 +597,10 @@ class ModelAssignments(QObject):
             self.on_runtime_settings_changed()
         self._refresh_rail_values()
 
-    def _on_api_model_changed(self, model: str) -> None:
+    def _on_api_model_changed(self, _index: int = 0) -> None:
+        model = self.api_model_combo.currentData()
+        if model is None:
+            return
         settings_manager.save_setting(SettingsKey.API_TRANSCRIPTION_MODEL, model)
         if self.on_backend_changed:
             self.on_backend_changed("API")
@@ -1152,8 +1161,11 @@ class ModelAssignments(QObject):
         self._update_ondemand_whisper_enabled()
 
         settings = self._settings_snapshot()
+        api_index = self.api_model_combo.findData(
+            resolve_api_transcription_model(settings)
+        )
         blocker = self.api_model_combo.blockSignals(True)
-        self.api_model_combo.setCurrentText(resolve_api_transcription_model(settings))
+        self.api_model_combo.setCurrentIndex(max(0, api_index))
         self.api_model_combo.blockSignals(blocker)
         device = settings.get(SettingsKey.WHISPER_DEVICE, "auto")
         compute = settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, "auto")
@@ -1268,7 +1280,9 @@ class ModelAssignments(QObject):
             self.speaker_id_status.setText(
                 "Uploads system audio after End and relabels speakers on the "
                 "local transcript. Requires an OpenAI API key (Settings → API "
-                "keys). Microphone audio stays on this computer."
+                "keys). Microphone audio stays on this computer. OpenAI "
+                "retires the model this uses (gpt-4o-transcribe-diarize) on "
+                "February 26, 2027; after that, on-device labels are used."
             )
             return
         try:
@@ -1423,7 +1437,7 @@ class ModelAssignments(QObject):
         if engine_value == "local_whisper":
             return f"Local Whisper · {self.ondemand_whisper_picker.current_model()}"
         if engine_value == "api":
-            return f"API · {self.api_model_combo.currentText()}"
+            return f"API · {self.api_model_combo.currentData() or config.DEFAULT_API_MODEL}"
         return self.speech_controls.model_combo.currentText()
 
     def voice_detail(self) -> str:

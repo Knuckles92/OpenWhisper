@@ -13,6 +13,8 @@ from config import config
 from services.settings import (
     LEGACY_STREAMING_KEYS,
     SettingsKey,
+    api_model_choices,
+    api_model_label,
     resolve_api_transcription_model,
     settings_manager,
 )
@@ -173,7 +175,9 @@ class TranscriptionTabBase(QWidget):
         self._apply_backend_status(EngineStatus.UNKNOWN)
 
         self.local_engine = LocalEngineControls()
-        self.api_model_combo = engine_combo(config.API_MODEL_CHOICES)
+        self.api_model_combo = engine_combo(())
+        for model in api_model_choices():
+            self.api_model_combo.addItem(api_model_label(model), model)
         self.api_model_combo.setToolTip(
             "OpenAI transcription model. Requires an API key in Settings → API keys."
         )
@@ -314,7 +318,7 @@ class TranscriptionTabBase(QWidget):
 
     def _connect_signals(self):
         self.model_combo.currentTextChanged.connect(self._on_backend_changed)
-        self.api_model_combo.currentTextChanged.connect(self._on_api_model_changed)
+        self.api_model_combo.currentIndexChanged.connect(self._on_api_model_changed)
         self.local_engine.engine_settings_changed.connect(self.engine_settings_changed)
         self.local_engine.help_requested.connect(self.help_requested)
         self.cleanup_check.toggled.connect(self._on_cleanup_toggled)
@@ -395,11 +399,15 @@ class TranscriptionTabBase(QWidget):
 
     def refresh_api_model(self):
         model = resolve_api_transcription_model(settings_manager.load_all_settings())
+        index = self.api_model_combo.findData(model)
         blocked = self.api_model_combo.blockSignals(True)
-        self.api_model_combo.setCurrentText(model)
+        self.api_model_combo.setCurrentIndex(max(0, index))
         self.api_model_combo.blockSignals(blocked)
 
-    def _on_api_model_changed(self, model: str):
+    def _on_api_model_changed(self, _index: int = 0):
+        model = self.api_model_combo.currentData()
+        if model is None:
+            return
         settings_manager.save_setting(SettingsKey.API_TRANSCRIPTION_MODEL, model)
         self.model_changed.emit(self.current_model)
 

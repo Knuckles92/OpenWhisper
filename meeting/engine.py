@@ -1221,7 +1221,8 @@ class MeetingEngine:
 
         Returns:
             ``{ok, skipped, applied, error}``. ``skipped`` is True when the
-            backend, consent, or API key is missing.
+            backend, consent, or API key is missing, or OpenAI has retired
+            the diarization model.
         """
         if self.options.speaker_id_backend != "openai":
             return {
@@ -1274,7 +1275,8 @@ class MeetingEngine:
             }
         return {
             "ok": bool(result.get("ok")),
-            "skipped": False,
+            # OpenAI retired the model early: on-device labels stand.
+            "skipped": bool(result.get("retired")),
             "applied": int(result.get("applied") or 0),
             "created": int(result.get("created") or 0),
             "error": result.get("error"),

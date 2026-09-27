@@ -4,8 +4,10 @@ import os
 import logging
 import tempfile
 import threading
+from datetime import date
 from typing import Callable, Dict, Any, Final, List, Tuple, Optional, TypeVar
 from config import config
+from services import openai_retirement
 from services.batch_upload import BatchRelation
 
 logger = logging.getLogger(__name__)
@@ -18,13 +20,42 @@ LEGACY_API_MODELS = {
 }
 
 
-def resolve_api_transcription_model(settings: dict[str, Any]) -> str:
+def api_model_choices(today: Optional[date] = None) -> Tuple[str, ...]:
+    """API transcription models OpenAI still serves, in display order."""
+    if not openai_retirement.retired(today):
+        return config.API_MODEL_CHOICES
+    return tuple(
+        model for model in config.API_MODEL_CHOICES
+        if model not in openai_retirement.RETIRING_TRANSCRIPTION_MODELS
+    )
+
+
+def api_model_label(model: str, today: Optional[date] = None) -> str:
+    """Picker text for an API model; retiring ones carry the shutdown date."""
+    if (
+        model in openai_retirement.RETIRING_TRANSCRIPTION_MODELS
+        and not openai_retirement.retired(today)
+    ):
+        return f"{model} (retiring {openai_retirement.SHUTDOWN_LABEL})"
+    return model
+
+
+def serving_api_model(model: str, today: Optional[date] = None) -> str:
+    """``model`` while OpenAI serves it, otherwise the default API model."""
+    if model in api_model_choices(today):
+        return model
+    return config.DEFAULT_API_MODEL
+
+
+def resolve_api_transcription_model(
+    settings: dict[str, Any], today: Optional[date] = None,
+) -> str:
     model = settings.get(SettingsKey.API_TRANSCRIPTION_MODEL)
     if isinstance(model, str) and model in config.API_MODEL_CHOICES:
-        return model
+        return serving_api_model(model, today)
     legacy = settings.get(SettingsKey.SELECTED_MODEL)
     if isinstance(legacy, str) and legacy in LEGACY_API_MODELS:
-        return LEGACY_API_MODELS[legacy]
+        return serving_api_model(LEGACY_API_MODELS[legacy], today)
     return config.DEFAULT_API_MODEL
 
 
@@ -289,7 +320,7 @@ class MeetingSpeakerIdBackend:
     """Values for ``SettingsKey.MEETING_SPEAKER_ID_BACKEND``."""
     OFF: Final[str] = "off"        # Me / Others channel labels only
     LOCAL: Final[str] = "local"    # On-device WeSpeaker clustering
-    OPENAI: Final[str] = "openai"  # Post-meeting gpt-4o-transcribe-diarize
+    OPENAI: Final[str] = "openai"  # Post-meeting gpt-4o-transcribe-diarize, until 2027-02-26
 
     ALL: Final[Tuple[str, ...]] = (OFF, LOCAL, OPENAI)
 
@@ -977,12 +1008,19 @@ def resolve_meeting_agent_core(
 
 def resolve_meeting_speaker_id_backend(
     settings: Optional[Dict[str, Any]] = None,
+    today: Optional[date] = None,
 ) -> str:
-    """Return a valid speaker-identification backend."""
+    """Return a valid speaker-identification backend.
+
+    OpenAI speaker identification becomes on-device once OpenAI retires
+    gpt-4o-transcribe-diarize.
+    """
     if settings is None:
         settings = settings_manager.load_all_settings()
 
     backend = settings.get(SettingsKey.MEETING_SPEAKER_ID_BACKEND)
+    if backend == MeetingSpeakerIdBackend.OPENAI and openai_retirement.retired(today):
+        return MeetingSpeakerIdBackend.LOCAL
     if backend in MeetingSpeakerIdBackend.ALL:
         return backend
     return config.MEETING_SPEAKER_ID_BACKEND

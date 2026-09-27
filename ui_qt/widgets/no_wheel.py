@@ -84,6 +84,22 @@ class ElidingComboBox(NoWheelComboBox):
         )
         painter.drawControl(QStyle.ControlElement.CE_ComboBoxLabel, option)
 
+    def showPopup(self) -> None:
+        """Widen the popup to its longest item.
+
+        Qt sizes the popup to the closed combo and middle-elides rows that do
+        not fit, so in a narrow field two long values became
+        indistinguishable ("gpt-4o-tr…26, 2027)"). Qt still clamps the popup
+        to the screen.
+        """
+        view = self.view()
+        scrollbar = view.verticalScrollBar()
+        extra = 2 * view.frameWidth()
+        if self.count() > self.maxVisibleItems():
+            extra += scrollbar.sizeHint().width()
+        view.setMinimumWidth(view.sizeHintForColumn(0) + extra)
+        super().showPopup()
+
 
 class NoWheelSpinBox(QSpinBox):
     """QSpinBox that only changes value on wheel when it has keyboard focus.

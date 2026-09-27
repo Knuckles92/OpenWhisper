@@ -158,7 +158,7 @@ On Linux, hotkeys also reach the focused app. Native Wayland limits global hotke
 | Qwen3-ASR | 0.6B, 1.7B | Windows x64 CPU / NVIDIA GPU | Dictation, uploads |
 | Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 CPU / NVIDIA GPU | Dictation with preview, uploads, meetings with native preview |
 | Moonshine | Streaming Small / Medium, English | Windows x64 CPU | Dictation, uploads, meetings with native preview |
-| OpenAI API | GPT-Transcribe, GPT-4o Transcribe, GPT-4o Mini Transcribe, Whisper | Cloud; API key and network required | Dictation, uploads |
+| OpenAI API | GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027 | Cloud; API key and network required | Dictation, uploads |
 
 Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. macOS transcription uses CPU; see [GPU acceleration](#gpu-acceleration) for Windows and Linux.
 

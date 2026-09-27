@@ -914,13 +914,34 @@ class TestApiModelSelection(_DialogTestCase):
         dialog.on_backend_changed = requested.append
         assert not dialog.api_model_field.isHidden()
         assert dialog.ondemand_whisper_field.isHidden()
-        assert dialog.api_model_combo.currentText() == "whisper-1"
-        dialog.api_model_combo.setCurrentText("gpt-transcribe")
+        combo = dialog.api_model_combo
+        assert combo.currentData() == "whisper-1"
+        assert combo.currentText() == "whisper-1 (retiring Feb 26, 2027)"
+        combo.setCurrentIndex(combo.findData("gpt-transcribe"))
         assert values[SettingsKey.API_TRANSCRIPTION_MODEL] == "gpt-transcribe"
         assert requested == ["API"]
         assert dialog.rail.value(ONDEMAND_VOICE) == "API · gpt-transcribe"
         dialog.refresh()
         assert requested == ["API"]
+
+    def test_retired_models_leave_the_picker_after_shutdown(self):
+        from datetime import date
+
+        from services import openai_retirement
+
+        with patch.object(openai_retirement, "_today", lambda: date(2027, 2, 26)):
+            dialog, _values = self._make_dialog(extra_settings={
+                SettingsKey.SELECTED_MODEL: "api",
+                SettingsKey.API_TRANSCRIPTION_MODEL: "whisper-1",
+                SettingsKey.MEETING_SPEAKER_ID_BACKEND: MeetingSpeakerIdBackend.OPENAI,
+            })
+            combo = dialog.api_model_combo
+            assert [combo.itemData(i) for i in range(combo.count())] == ["gpt-transcribe"]
+            assert combo.currentData() == "gpt-transcribe"
+            speaker = dialog.meeting_speaker_id_combo
+            backends = [speaker.itemData(i) for i in range(speaker.count())]
+            assert backends == [MeetingSpeakerIdBackend.OFF, MeetingSpeakerIdBackend.LOCAL]
+            assert speaker.currentData() == MeetingSpeakerIdBackend.LOCAL
 
 
 class TestOptionalSpeechSummary(_DialogTestCase):

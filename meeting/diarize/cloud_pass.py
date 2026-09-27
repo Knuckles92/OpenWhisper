@@ -4,6 +4,10 @@ Uploads the system-audio recording to ``gpt-4o-transcribe-diarize``, maps
 returned turns onto the existing local transcript by time overlap, and
 emits ``reassign_segment_speaker`` ops. Local Whisper text is never replaced.
 
+OpenAI retires that model on 2027-02-26 with no diarizing replacement; see
+``services.openai_retirement``. After that the setting resolves to on-device
+labels, and a model that disappears early is reported as ``retired``.
+
 ``transcribe_fn`` is injectable so tests never touch the network.
 """
 from __future__ import annotations
@@ -25,6 +29,7 @@ from meeting.diarize.cloud_audio import (
     plan_windows,
 )
 from meeting.interfaces import CHANNEL_LOOPBACK
+from services import openai_retirement
 
 logger = logging.getLogger(__name__)
 
@@ -565,6 +570,13 @@ def run_cloud_speaker_pass(
                 known_speaker_references=window_clips or None,
             )
         except Exception as exc:
+            if openai_retirement.is_model_gone_error(exc):
+                logger.warning("OpenAI no longer serves %s", model)
+                return {
+                    "ok": False, "applied": 0, "created": 0,
+                    "windows": len(windows), "retired": True,
+                    "error": openai_retirement.SPEAKER_MODEL_RETIRED_MESSAGE,
+                }
             logger.exception("Cloud diarize request failed for window %s", index)
             return {
                 "ok": False, "applied": 0, "created": 0,

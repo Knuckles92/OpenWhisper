@@ -5,10 +5,12 @@ from typing import Optional, List
 from openai import OpenAI
 from .base import TranscriptionBackend
 from config import config
+from services import openai_retirement
 from services.credentials import resolve_credential
 from services.settings import (
     LEGACY_API_MODELS,
     resolve_api_transcription_model,
+    serving_api_model,
     settings_manager,
 )
 
@@ -49,12 +51,29 @@ class OpenAIBackend(TranscriptionBackend):
         if self.model_type == "api":
             return resolve_api_transcription_model(settings_manager.load_all_settings())
         if self.model_type in LEGACY_API_MODELS:
-            return LEGACY_API_MODELS[self.model_type]
+            return serving_api_model(LEGACY_API_MODELS[self.model_type])
         if self.model_type in config.API_MODEL_CHOICES:
-            return self.model_type
+            return serving_api_model(self.model_type)
         raise ValueError(f"Unknown API transcription model: {self.model_type}")
 
     def _transcribe_file(self, audio_path: str, api_model: str) -> str:
+        try:
+            return self._request_transcript(audio_path, api_model)
+        except Exception as exc:
+            if (
+                api_model not in openai_retirement.RETIRING_TRANSCRIPTION_MODELS
+                or not openai_retirement.is_model_gone_error(exc)
+            ):
+                raise
+            # OpenAI switched the model off before this computer's clock
+            # reached the shutdown date.
+            logger.warning(
+                "OpenAI no longer serves %s; retrying with %s",
+                api_model, config.DEFAULT_API_MODEL,
+            )
+            return self._request_transcript(audio_path, config.DEFAULT_API_MODEL)
+
+    def _request_transcript(self, audio_path: str, api_model: str) -> str:
         with open(audio_path, "rb") as audio_file:
             response = self.client.audio.transcriptions.create(
                 model=api_model,

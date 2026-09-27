@@ -66,6 +66,7 @@ sys.path.insert(0, project_root)
 from transcriber.local_backend import LocalWhisperBackend
 from transcriber.openai_backend import OpenAIBackend
 from config import config
+from services.settings import api_model_choices
 
 logging.basicConfig(
     level=logging.CRITICAL,  # Only show critical errors
@@ -258,7 +259,7 @@ class ModelBenchmark:
 
         if not skip_api:
             print("Initializing OpenAI backends...")
-            for backend_name in config.API_MODEL_CHOICES:
+            for backend_name in api_model_choices():
                 try:
                     backend = OpenAIBackend(backend_name)
                     if backend.is_available():

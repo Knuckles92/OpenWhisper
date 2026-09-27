@@ -1507,6 +1507,29 @@ class TestCloudSpeakerStep:
         assert steps["speaker_id"]["status"] == "failed"
         assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
 
+    def test_openai_model_retired_early_is_skipped(self, make_engine, monkeypatch):
+        from services import openai_retirement
+
+        message = openai_retirement.SPEAKER_MODEL_RETIRED_MESSAGE
+        cloud_pass = types.ModuleType("meeting.diarize.cloud_pass")
+        cloud_pass.run_cloud_speaker_pass = lambda *args, **kwargs: {
+            "ok": False, "retired": True, "applied": 0, "created": 0,
+            "error": message,
+        }
+        monkeypatch.setitem(sys.modules, "meeting.diarize.cloud_pass", cloud_pass)
+        engine = make_engine(
+            cloud_enabled=False,
+            speaker_id_backend="openai",
+            speaker_id_audio_consent=True,
+        )
+        engine.start()
+        result = engine._run_cloud_speaker_pass(transcribe_fn=lambda *a, **k: [])
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        assert result["ok"] is False
+        assert result["skipped"] is True
+        assert result["error"] == message
+
 def test_engine_module_has_no_dead_recent_text_api():
     """The unused topic-shift buffer is gone (the scheduler reads the DB)."""
     from meeting.engine import MeetingEngine

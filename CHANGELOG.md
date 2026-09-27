@@ -15,7 +15,12 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 - **No duplicate "Me" lines without headphones** — the end-of-meeting re-transcription removes microphone lines that repeat what system audio was playing at that moment, so remote speakers are not also credited to you. Short replies such as "yes" or "okay, sure" are kept.
 - **Language in auto mode** — when a meeting was clearly in one language, the end-of-meeting re-transcription uses it instead of guessing again for each stretch of audio. Bilingual meetings keep automatic detection.
 
+### Deprecated
+- **Older OpenAI transcription models retire February 26, 2027** — OpenAI is shutting down Whisper, GPT-4o Transcribe, and GPT-4o Mini Transcribe. Until then they stay in the API model list marked "retiring". From that date the list offers only GPT-Transcribe, and a saved choice of a retired model uses it instead. If OpenAI switches a model off before this computer's clock reaches the date, the transcription is retried once with GPT-Transcribe. GPT-Transcribe costs $0.0045 a minute; GPT-4o Mini Transcribe costs $0.003 and the others $0.006.
+- **OpenAI speaker identification ends February 26, 2027** — OpenAI is retiring gpt-4o-transcribe-diarize, and GPT-Transcribe cannot label speakers. Until then the Meeting Mode option keeps working and shows the end date. After that, meetings use on-device speaker labels (WeSpeaker), and the OpenAI option leaves Settings. If OpenAI switches the model off early, the post-meeting step is marked skipped, not failed, and the on-device labels are kept.
+
 ### Fixed
+- **Full names in narrow dropdowns** — open lists in narrow fields, such as the API model on the Upload and Quick Record tabs, now widen to fit their longest entry instead of shortening entries in the middle until two models look the same.
 - **Speaker labels after End** — the high-accuracy re-transcription no longer has its speaker labels overwritten by the rougher live ones; only your own speaker corrections take priority. Lines kept because you corrected their speaker also keep their card citations.
 - **Live speaker grouping** — regrouping speakers during a meeting no longer fails for the whole group when one line is still being transcribed, and each new line gets the regrouped speaker rather than the one it had a moment earlier.
 - **Transcript fixes reach the AI note taker** — when live transcription revises a line that was already sent, the corrected text is sent again instead of being skipped.

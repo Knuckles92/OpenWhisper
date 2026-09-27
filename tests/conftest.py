@@ -182,6 +182,23 @@ def _isolated_credential_store():
         credentials.set_store(previous)
 
 
+@pytest.fixture(autouse=True)
+def _before_openai_transcription_shutdown():
+    """Pin the OpenAI retirement clock to before 2027-02-26.
+
+    Tests that select a retiring OpenAI model must not start failing when the
+    real date passes. Tests of the post-shutdown behavior pass ``today`` or
+    re-pin ``openai_retirement._today``.
+    """
+    from datetime import date
+
+    from services import openai_retirement
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(openai_retirement, "_today", lambda: date(2026, 9, 26))
+        yield
+
+
 @pytest.fixture
 def db(tmp_path):
     """A DatabaseManager backed by a throwaway sqlite file."""

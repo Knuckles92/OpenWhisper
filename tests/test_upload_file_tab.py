@@ -1471,13 +1471,15 @@ class TestApiModelField:
         tab.choose_backend("API")
         assert tab.local_engine.isHidden()
         assert not tab.api_model_field.isHidden()
-        tab.api_model_combo.setCurrentText("whisper-1")
+        combo = tab.api_model_combo
+        combo.setCurrentIndex(combo.findData("whisper-1"))
         assert manager.get(SettingsKey.API_TRANSCRIPTION_MODEL) == "whisper-1"
         tab.choose_backend("Local Whisper")
         assert tab.api_model_field.isHidden()
         assert tab.local_engine.model_combo.currentText() == local_model
         tab.choose_backend("API")
-        assert tab.api_model_combo.currentText() == "whisper-1"
+        assert combo.currentData() == "whisper-1"
+        assert combo.currentText() == "whisper-1 (retiring Feb 26, 2027)"
         tab.set_backend_enabled(False)
         assert not tab.api_model_combo.isEnabled()
         tab.set_backend_enabled(True)
@@ -1495,9 +1497,11 @@ class TestApiModelField:
         announcements = []
         second.model_changed.connect(announcements.append)
         first.model_changed.connect(second.set_backend)
-        first.api_model_combo.setCurrentText("gpt-4o-mini-transcribe")
-        assert second.api_model_combo.currentText() == "gpt-4o-mini-transcribe"
+        first.api_model_combo.setCurrentIndex(
+            first.api_model_combo.findData("gpt-4o-mini-transcribe")
+        )
+        assert second.api_model_combo.currentData() == "gpt-4o-mini-transcribe"
         assert announcements == []
         manager.save_setting(SettingsKey.API_TRANSCRIPTION_MODEL, "whisper-1")
         first.choose_backend("API")
-        assert first.api_model_combo.currentText() == second.api_model_combo.currentText() == "whisper-1"
+        assert first.api_model_combo.currentData() == second.api_model_combo.currentData() == "whisper-1"
