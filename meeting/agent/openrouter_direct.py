@@ -15,11 +15,6 @@ import logging
 import threading
 from typing import Any, Dict, List, Optional
 
-try:
-    from openai import OpenAI
-except ImportError:  # pragma: no cover - openai is an app dependency
-    OpenAI = None  # type: ignore[assignment]
-
 from config import config
 from meeting.agent.base import find_provider_api_key
 from meeting.agent.evidence import repair_evidence_ids
@@ -43,6 +38,24 @@ from meeting.state.schema import CARD_KEYS
 from services.text_generation import generate
 
 logger = logging.getLogger(__name__)
+
+# The openai SDK loads with the first agent that needs it rather than with
+# this module, which the dashboard and re-insight paths import: 0.7 s that a
+# meeting without a direct agent never needs. Tests replace this.
+OpenAI = None
+
+
+def _openai_class():
+    """The SDK client class, imported on first use; None if it is missing."""
+    global OpenAI
+    if OpenAI is None:
+        try:
+            from openai import OpenAI as client_class
+        except ImportError:  # pragma: no cover - openai is an app dependency
+            return None
+        OpenAI = client_class
+    return OpenAI
+
 
 _CHECKPOINT_TIMEOUT_S = 60.0
 _CONSOLIDATION_TIMEOUT_S = 300.0
@@ -391,7 +404,7 @@ class DirectOpenRouterAgent:
         self._use_json_response_format = True
         self._model = self._resolve_model(cfg)
 
-        if OpenAI is None:
+        if _openai_class() is None:
             logger.error("openai package unavailable; direct agent core offline")
             self._fatal = True
             return
@@ -443,7 +456,7 @@ class DirectOpenRouterAgent:
         return (
             not self._shut_down
             and not self._fatal
-            and OpenAI is not None
+            and _openai_class() is not None
             and self._api_key is not None
         )
 
@@ -511,10 +524,11 @@ class DirectOpenRouterAgent:
         with self._client_lock:
             if self._client is not None:
                 return self._client
-            if OpenAI is None or not self._api_key or self._shut_down:
+            client_class = _openai_class()
+            if client_class is None or not self._api_key or self._shut_down:
                 return None
             try:
-                self._client = OpenAI(
+                self._client = client_class(
                     api_key=self._api_key,
                     base_url=self._base_url,
                     default_headers=self._headers,

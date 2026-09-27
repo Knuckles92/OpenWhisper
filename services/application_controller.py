@@ -61,6 +61,14 @@ REMOTE_WATCH_INTERVAL_MS = 1000
 REMOTE_RETRY_DELAYS_S = (2, 5, 15, 30, 60)
 
 
+def _import_openai_sdk() -> None:
+    """Warm-up target: a later client build then only constructs the client."""
+    try:
+        import openai  # noqa: F401
+    except Exception:
+        logger.debug("openai SDK warm-up failed", exc_info=True)
+
+
 @dataclass
 class _ClientModelSwitch:
     """A paired computer's model choice, answered on the Qt thread."""
@@ -914,6 +922,29 @@ class ApplicationController(QObject):
             name="remote-host-start",
             daemon=True,
         ).start()
+        self._warm_openai_sdk()
+
+    def _warm_openai_sdk(self) -> None:
+        """Import the openai SDK on a worker when this session is set to use it.
+
+        Neither the API engine nor transcript cleanup builds its client at
+        startup, so without this the first API dictation or cleanup would
+        wait out the SDK's import, most of a second. Sessions that use
+        neither never load it.
+        """
+        try:
+            target = getattr(self.current_backend, "prepare_client", None)
+            if not callable(target):
+                from services.cleanup_profiles import cleanup_may_run
+
+                if not cleanup_may_run(settings_manager.load_all_settings()):
+                    return
+                target = _import_openai_sdk
+            threading.Thread(
+                target=target, name="openai-sdk-warmup", daemon=True
+            ).start()
+        except Exception:
+            logger.debug("Could not start the openai SDK warm-up", exc_info=True)
 
     # ---- remote engine: choosing the paired computer's model ----
 

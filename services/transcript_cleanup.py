@@ -4,9 +4,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Tuple
-
-from openai import OpenAI
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple
 
 from config import config
 from services.text_generation import generate
@@ -26,6 +24,9 @@ from services.settings import (
     TranscriptCleanupReasoning,
     default_transcript_cleanup_model,
 )
+
+if TYPE_CHECKING:
+    from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +175,15 @@ class TranscriptCleanup:
         api_key: Optional[str] = None,
         reasoning: Optional[str] = None,
         cancel_event: Optional[threading.Event] = None,
+        *,
+        defer_client: bool = False,
     ):
+        """``defer_client`` leaves the client to the first ``configure()``.
+
+        The dictation runtime builds its instance at startup, and building a
+        client there would import the openai SDK, most of a second, in
+        sessions that never clean anything up.
+        """
         self.provider = self._normalize_provider(provider)
         self.model = model or default_transcript_cleanup_model(self.provider)
         self.reasoning = (
@@ -192,7 +201,9 @@ class TranscriptCleanup:
         # Owned by the caller; once set, a waiting cleanup() returns the raw
         # text at once instead of when the provider finishes.
         self.cancel_event = cancel_event
-        self._initialize_client()
+        # With no ``_connection`` yet, the next configure() builds the client.
+        if not defer_client:
+            self._initialize_client()
 
     @staticmethod
     def _normalize_provider(provider: Optional[str]) -> str:

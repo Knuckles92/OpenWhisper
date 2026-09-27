@@ -1,8 +1,8 @@
 """OpenAI API transcription backend."""
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, List
-from openai import OpenAI
+from typing import TYPE_CHECKING, Optional, List
 from .base import TranscriptionBackend
 from config import config
 from services import openai_retirement
@@ -13,6 +13,9 @@ from services.settings import (
     serving_api_model,
     settings_manager,
 )
+
+if TYPE_CHECKING:
+    from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -25,19 +28,37 @@ CHUNK_UPLOAD_CONCURRENCY = 3
 class OpenAIBackend(TranscriptionBackend):
     """OpenAI API transcription backend."""
 
+    #: Whether ``client`` still has to be built for ``api_key``. The
+    #: controller creates this backend at startup in every session, and the
+    #: openai SDK takes most of a second to import, so the client waits for
+    #: the first request or for ``prepare_client`` on a worker.
+    _client_pending = False
+
     def __init__(self, model_type: str = "api", api_key: str = None):
         super().__init__()
         self.model_type = model_type
         self.api_key = api_key or self._get_api_key()
         self.client: Optional[OpenAI] = None
-        self._initialize_client()
+        self._client_lock = threading.Lock()
+        self._client_pending = True
 
     def _get_api_key(self) -> Optional[str]:
         return resolve_credential("OPENAI_API_KEY")
 
+    def prepare_client(self) -> None:
+        """Build the client if it is still pending. Safe from any thread."""
+        if not self._client_pending:
+            return
+        with self._client_lock:
+            if self._client_pending:
+                self._initialize_client()
+                self._client_pending = False
+
     def _initialize_client(self):
         if self.api_key:
             try:
+                from openai import OpenAI
+
                 self.client = OpenAI(api_key=self.api_key)
                 logger.info("OpenAI client initialized successfully")
             except Exception as e:
@@ -84,6 +105,7 @@ class OpenAIBackend(TranscriptionBackend):
 
     def transcribe(self, audio_path: str) -> str:
         """Transcribe an audio file with the configured OpenAI model."""
+        self.prepare_client()
         if not self.is_available():
             raise Exception("OpenAI API is not available (no API key or client initialization failed)")
 
@@ -112,13 +134,20 @@ class OpenAIBackend(TranscriptionBackend):
             self.is_transcribing = False
 
     def is_available(self) -> bool:
-        """Return whether the API client is initialized."""
-        return self.client is not None and self.api_key is not None
+        """Return whether there is a key and a client, built or still pending.
+
+        Recording start asks this on the UI thread, so it never builds the
+        client itself; the request does, on its worker.
+        """
+        return self.api_key is not None and (
+            self.client is not None or self._client_pending
+        )
 
     def update_api_key(self, api_key: Optional[str]):
-        """Replace the API key and reinitialize the client."""
-        self.api_key = api_key
-        self._initialize_client()
+        """Replace the API key; the next request rebuilds the client."""
+        with self._client_lock:
+            self.api_key = api_key
+            self._client_pending = True
 
     def _transcribe_one_chunk(self, chunk_file: str, api_model: str) -> str:
         """Upload one chunk. Raises if the job was canceled before it started."""
@@ -142,6 +171,7 @@ class OpenAIBackend(TranscriptionBackend):
         ``CHUNK_UPLOAD_CONCURRENCY`` stays low on purpose — there is no retry
         path here, so more parallelism mostly buys a higher chance of a 429.
         """
+        self.prepare_client()
         if not self.is_available():
             raise Exception("OpenAI API is not available (no API key or client initialization failed)")
 

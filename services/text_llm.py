@@ -9,15 +9,30 @@ import logging
 import re
 import secrets
 from dataclasses import dataclass, replace
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urlsplit, urlunsplit
-
-from openai import OpenAI
 
 from config import config
 from services.credentials import resolve_credential
 
+if TYPE_CHECKING:
+    import openai
+
 logger = logging.getLogger(__name__)
+
+# The openai SDK loads with the first client rather than at startup, where it
+# measured 0.7 s: dictation on a local or remote engine never builds one.
+# Tests replace this.
+OpenAI = None
+
+
+def _openai_class():
+    global OpenAI
+    if OpenAI is None:
+        from openai import OpenAI as client_class
+
+        OpenAI = client_class
+    return OpenAI
 
 PROFILE_KIND_OPENAI = "openai"
 PROFILE_KIND_OPENROUTER = "openrouter"
@@ -532,7 +547,7 @@ def create_openai_client(
     api_key: Optional[str] = None,
     session_id: str = "",
     max_retries: Optional[int] = None,
-) -> OpenAI:
+) -> openai.OpenAI:
     """Build a client, resolving credentials when no explicit key is supplied.
 
     ``max_retries`` of None keeps the SDK default (two retries).
@@ -543,7 +558,7 @@ def create_openai_client(
             f"No API key found for {profile.name} (set {profile.api_key_env})"
         )
     retries = {} if max_retries is None else {"max_retries": max_retries}
-    return OpenAI(
+    return _openai_class()(
         api_key=key,
         base_url=profile.base_url,
         default_headers=provider_headers(profile, session_id),

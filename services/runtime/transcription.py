@@ -69,7 +69,7 @@ class TranscriptionRuntime:
         # The same event ends a cleanup request's wait, so a Cancel during
         # "Cleaning up..." frees the job instead of waiting on the provider.
         self._transcript_cleanup = TranscriptCleanup(
-            cancel_event=self._cancel_requested
+            cancel_event=self._cancel_requested, defer_client=True
         )
         # Why the most recent cleanup pass fell back to raw text, or None.
         self._last_cleanup_failure: Optional[str] = None
