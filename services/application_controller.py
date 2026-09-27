@@ -206,6 +206,10 @@ class ApplicationController(QObject):
         # bool flag is enough because stopping is only checked between models.
         self._batch_stop_requested = False
         self._runtime_prompted = set()
+        # The "Use this GPU" offer: None until shown, then "shown" while it is
+        # open and "answered" after. A missing model's download consent waits
+        # for it, since the answer decides which model and device to fetch for.
+        self._gpu_offer_state: Optional[str] = None
 
         self.transcription_backends: Dict[str, TranscriptionBackend] = {}
         self.current_backend: Optional[TranscriptionBackend] = None
@@ -1172,6 +1176,12 @@ class ApplicationController(QObject):
             self._schedule_remote_retry()
         self._watch_remote()
 
+    def _on_engine_busy_for_host(self, busy: bool) -> None:
+        """A load settled: paired computers learn if the shared engine changed."""
+        remote_engine = getattr(self, "remote_engine", None)
+        if not busy and remote_engine is not None:
+            remote_engine.engine_changed()
+
     def _on_remote_host_event(self, kind: str) -> None:
         """Host: which paired computers are connected, and busy (any thread)."""
         if kind in ("clients", "activity", "state"):
@@ -1242,6 +1252,12 @@ class ApplicationController(QObject):
         if not getattr(backend, "is_model_missing", False):
             # Load failed for another reason (hardware, corrupt install);
             # downloading would not help.
+            return
+        if self._gpu_offer_waiting(backend):
+            # Asked after "Use this GPU" is answered: it may pick another
+            # model, and accepting grants this download itself. The offer
+            # (idempotent) is what shows; declining it calls back here.
+            self.gpu_fallback_detected.emit()
             return
 
         model_name = backend.model_name
@@ -1676,6 +1692,80 @@ class ApplicationController(QObject):
             self.ui_controller.refresh_local_engine_controls()
 
         self.status_update.emit(self._describe_gpu_fallback(backend))
+        self._offer_gpu_setup(backend)
+
+    # ---- "Use this GPU" ----
+
+    def _gpu_offer_waiting(self, backend) -> bool:
+        """The offer is due or open for this backend. Cheap; any thread."""
+        return (
+            self._gpu_offer_state != "answered"
+            and backend is self.transcription_backends.get("local_whisper")
+            and getattr(backend, "gpu_fallback_cause", None) == GpuFallbackCause.MISSING_LIBRARIES
+            and ComponentId.GPU_ACCEL in available_component_ids()
+            and not settings_manager.get(SettingsKey.WHISPER_GPU_OFFER_DECLINED, False)
+        )
+
+    def _offer_gpu_setup(self, backend) -> None:
+        """Offer one action for the GPU the libraries are missing for (Qt thread).
+
+        Shown once: "Keep using the CPU" is remembered, and GPU
+        Acceleration stays in Downloads either way. A model download that
+        waited on the answer carries on after "Keep using the CPU".
+        """
+        if self._gpu_offer_state is not None or not self._gpu_offer_waiting(backend):
+            return
+        if self.is_meeting_active() or self.recorder.is_recording or self.is_transcribing():
+            return  # asked at the next load instead
+        from services.gpu_setup import plan_gpu_setup
+
+        supported = getattr(backend, "_get_supported_compute_types", None)
+        try:
+            plan = plan_gpu_setup(
+                settings_manager.load_all_settings(), supported("cuda")
+            ) if supported is not None else None
+        except Exception:
+            logger.warning("Could not plan GPU setup", exc_info=True)
+            plan = None
+        if plan is None or (plan.model_download_bytes and is_hf_hub_offline_env_set()):
+            self._gpu_offer_state = "answered"
+            self.ensure_local_model_available()
+            return
+        self._gpu_offer_state = "shown"
+        try:
+            accepted = self.ui_controller.show_use_gpu_dialog(plan)
+        finally:
+            self._gpu_offer_state = "answered"
+        if accepted:
+            self._start_gpu_setup(plan)
+        else:
+            settings_manager.save_setting(SettingsKey.WHISPER_GPU_OFFER_DECLINED, True)
+            self.ensure_local_model_available()
+
+    def _start_gpu_setup(self, plan) -> None:
+        """Carry out an accepted "Use this GPU" (Qt thread).
+
+        The dialog is the consent for the model download too. With the CUDA
+        libraries missing, installing them comes first, and
+        ``_on_component_install_finished`` reloads the engine when it lands;
+        the reload then finds the model missing and downloads it on this
+        grant, and loads it on the GPU.
+        """
+        logger.info(
+            "Setting up Local Whisper on the GPU: %s at %s (install CUDA: %s, download: %s)",
+            plan.model, plan.compute_type, plan.install_component, bool(plan.model_download_bytes),
+        )
+        settings_manager.save_setting(SettingsKey.WHISPER_DEVICE, "auto")
+        if plan.switches_model:
+            settings_manager.save_setting(SettingsKey.WHISPER_MODEL, plan.model_setting)
+        if plan.model_download_bytes:
+            hf_access_coordinator.grant_once(plan.model)
+        self.ui_controller.refresh_local_engine_controls()
+        if plan.install_component:
+            self.status_update.emit("Installing GPU Acceleration...")
+            self.request_component_install(ComponentId.GPU_ACCEL)
+        else:
+            self.reload_whisper_model()
 
     @staticmethod
     def _describe_gpu_fallback(backend) -> str:
@@ -2162,6 +2252,7 @@ class ApplicationController(QObject):
         self.status_update.connect(self.ui_controller.set_status)
         self.device_info_update.connect(self.ui_controller.set_device_info)
         self.engine_busy_changed.connect(self.ui_controller.set_engine_busy)
+        self.engine_busy_changed.connect(self._on_engine_busy_for_host)
         self.streaming_setup_requested.connect(self.streaming_runtime.setup_streaming)
         self.model_download_started.connect(
             self.ui_controller.on_model_download_started

@@ -376,6 +376,12 @@ class RemoteSpeechBackend(LocalSpeechBackend):
         if process is None or process.alive:
             return False
         host = self.host_name or process.where
+        if getattr(process, "closed_for_engine_change", False):
+            # The host pushes this when its engine changes (see
+            # SpeechHost.engine_changed); the retry adopts the new one.
+            logger.info("Remote engine %s switched engines; reconnecting", host)
+            self._drop(process, f"{host} switched engines. Reconnecting...")
+            return True
         logger.info("Remote engine connection to %s closed while idle", host)
         self._drop(process, f"{host} stopped answering.")
         return True

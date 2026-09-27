@@ -114,6 +114,8 @@ class SettingsKey:
     WHISPER_MODEL: Final[str] = "whisper_model"
     WHISPER_DEVICE: Final[str] = "whisper_device"
     WHISPER_COMPUTE_TYPE: Final[str] = "whisper_compute_type"
+    # "Keep using the CPU" on the "Use this GPU" offer; it isn't shown again.
+    WHISPER_GPU_OFFER_DECLINED: Final[str] = "whisper_gpu_offer_declined"
     HF_ACCESS_POLICY: Final[str] = "hf_access_policy"
     # Legacy boolean replaced by HF_ACCESS_POLICY; kept for migration only.
     HF_HUB_OFFLINE: Final[str] = "hf_hub_offline"

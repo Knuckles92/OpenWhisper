@@ -66,8 +66,8 @@ _CATALOG: dict[str, ComponentDetails] = {
             "NVIDIA CUDA 12 libraries that faster-whisper's engine "
             "(CTranslate2) loads for GPU inference: cuBLAS, NVRTC, and the "
             "CUDA runtime. OpenWhisper downloads the official NVIDIA PyPI "
-            "wheels and extracts only the DLLs — you do not need the CUDA "
-            "Toolkit installer. The driver on the machine must already "
+            "wheels and extracts only the libraries — you do not need the "
+            "CUDA Toolkit installer. The driver on the machine must already "
             "provide CUDA 12 (version 525 or newer)."
         ),
         origin_name="NVIDIA CUDA / cuBLAS",
@@ -76,22 +76,27 @@ _CATALOG: dict[str, ComponentDetails] = {
         source_name="PyPI NVIDIA CUDA 12 wheels",
         source_url=NVIDIA_PYPI_URL,
         source_label="PyPI ↗",
-        maintainer="NVIDIA (wheels); OpenWhisper extracts the runtime DLLs",
+        maintainer="NVIDIA (wheels); OpenWhisper extracts the runtime libraries",
         family="CUDA runtime",
         requires="NVIDIA GPU and a CUDA 12 driver (525+). No CUDA Toolkit.",
         payload="cuBLAS 12.9, NVRTC, and the CUDA 12 runtime",
-        local_format="Windows CUDA DLLs in the component folder",
+        local_format=(
+            "CUDA libraries in the component folder (DLLs on Windows, "
+            "shared objects on Linux)"
+        ),
         license="NVIDIA CUDA license (binary libraries)",
         best_for=(
-            "Windows machines with an NVIDIA GPU that want local Whisper "
-            "transcription two to four times faster than CPU."
+            "Windows and Linux computers with an NVIDIA GPU that want local "
+            "Whisper transcription two to four times faster than CPU."
         ),
         limitations=(
             "Requires a compatible NVIDIA GPU and driver; AMD and Intel "
             "graphics are not supported.",
-            "About 633 MB to download and 959 MB installed.",
+            "About 633 MB to download and 959 MB installed on Windows; "
+            "674 MB and 1.1 GB on Linux x86_64.",
             "cuDNN is not included — CTranslate2 4.8 does not load it.",
-            "Pascal and earlier cards run in int8 rather than float16.",
+            "Cards without float16 (GTX 10 series and older) run int8, which "
+            "also needs about half the GPU memory.",
         ),
         compact_tags="NVIDIA CUDA",
         source_note=_SOURCE_NOTE,

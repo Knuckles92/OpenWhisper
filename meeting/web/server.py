@@ -8,9 +8,7 @@ never installed. Stop is cooperative via ``should_exit``.
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import logging
-import socket
 import threading
 import time
 from typing import Any, Dict, Optional
@@ -36,38 +34,14 @@ STOP_JOIN_TIMEOUT_S = 10.0
 
 
 def discover_lan_ipv4() -> Optional[str]:
-    """Return a usable outward-facing IPv4 address, never a loopback address."""
-    candidates = []
-    # A UDP connect does not send application data, but asks the OS which
-    # interface it would route through.  This avoids hostname mappings such as
-    # Debian's common 127.0.1.1 entry, which produces an unusable guest link.
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-            probe.connect(("192.0.2.1", 9))
-            candidates.append(probe.getsockname()[0])
-    except OSError:
-        pass
-    try:
-        for info in socket.getaddrinfo(
-            socket.gethostname(), None, socket.AF_INET, socket.SOCK_DGRAM
-        ):
-            candidates.append(info[4][0])
-    except OSError:
-        pass
-    for candidate in candidates:
-        try:
-            address = ipaddress.ip_address(candidate)
-        except ValueError:
-            continue
-        if (
-            address.version == 4
-            and not address.is_loopback
-            and not address.is_unspecified
-            and not address.is_link_local
-            and not address.is_multicast
-        ):
-            return str(address)
-    return None
+    """Return a usable outward-facing IPv4 address, never a loopback address.
+
+    A LAN address over a VPN's, and never a Docker or VM bridge's; see
+    ``services.lan_address``.
+    """
+    from services.lan_address import discover_lan_ipv4 as discover
+
+    return discover()
 
 
 class _ThreadedUvicornServer(uvicorn.Server):

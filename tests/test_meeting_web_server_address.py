@@ -1,28 +1,31 @@
-"""LAN dashboard links must advertise a reachable non-loopback address."""
-from unittest.mock import MagicMock, patch
+"""LAN dashboard links must advertise a reachable non-loopback address.
+
+The choice itself (a LAN address over a VPN's, never a Docker bridge) is
+covered in test_lan_address.py; the dashboard uses the same answer.
+"""
+from unittest.mock import patch
 
 from meeting.web.server import MeetingWebServer, discover_lan_ipv4
+from services import lan_address
 
 
-def _probe(address):
-    probe = MagicMock()
-    probe.__enter__.return_value = probe
-    probe.getsockname.return_value = (address, 45678)
-    return probe
+def _machine(route, hostname=()):
+    return (
+        patch.object(lan_address, "_interfaces", lambda: []),
+        patch.object(lan_address, "_route_address", lambda: route),
+        patch.object(lan_address, "_hostname_addresses", lambda: list(hostname)),
+    )
 
 
 def test_route_selected_lan_address_wins():
-    with patch("meeting.web.server.socket.socket", return_value=_probe("192.168.1.44")), patch(
-        "meeting.web.server.socket.getaddrinfo", return_value=[]
-    ):
+    interfaces, route, hostname = _machine("192.168.1.44")
+    with interfaces, route, hostname:
         assert discover_lan_ipv4() == "192.168.1.44"
 
 
 def test_loopback_hostname_mapping_is_skipped_for_real_interface():
-    with patch("meeting.web.server.socket.socket", return_value=_probe("127.0.0.1")), patch(
-        "meeting.web.server.socket.getaddrinfo",
-        return_value=[(2, 2, 17, "", ("127.0.1.1", 0)), (2, 2, 17, "", ("10.0.0.8", 0))],
-    ):
+    interfaces, route, hostname = _machine("127.0.0.1", ["127.0.1.1", "10.0.0.8"])
+    with interfaces, route, hostname:
         assert discover_lan_ipv4() == "10.0.0.8"
 
 

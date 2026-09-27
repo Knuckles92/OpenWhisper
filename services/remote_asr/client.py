@@ -289,6 +289,15 @@ class RemoteConnection:
         return not self._closed and ws is not None and ws.state is State.OPEN
 
     @property
+    def closed_for_engine_change(self) -> bool:
+        """The host closed this connection because it switched engines."""
+        ws = self._ws
+        try:
+            return ws is not None and ws.close_code == protocol.CLOSE_ENGINE_CHANGED
+        except Exception:
+            return False
+
+    @property
     def latency(self) -> Optional[float]:
         """The last keepalive's round trip in seconds; None before one returns."""
         return self._rtt

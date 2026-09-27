@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 # close() un-registers the directory; holding the references makes the intent
 # explicit and guarantees the paths stay registered for as long as we run.
 _DLL_DIRECTORY_HANDLES: List[object] = []
+# Same for Linux: a ctypes.CDLL closes its dlopen handle when collected.
+_SHARED_LIBRARY_HANDLES: List[object] = []
+# Their names, for ui_qt.bootstrap to log: activation runs before logging is.
+PRELOADED_LIBRARIES: List[str] = []
 
 
 @dataclass(frozen=True)
@@ -55,14 +59,65 @@ def register_dll_directory(path: str) -> bool:
     return True
 
 
+def preload_shared_libraries(path: str) -> List[str]:
+    """Load every shared object in ``path`` globally (Linux); returns their names.
+
+    Linux has nothing like the Windows DLL search path to add a folder to:
+    ``LD_LIBRARY_PATH`` is read once, when the process starts. CTranslate2
+    ``dlopen``s ``libcublas.so.12`` by name the first time a GPU model runs,
+    and glibc answers a by-name request from libraries already loaded, so
+    loading them from this folder with ``RTLD_GLOBAL`` first is enough.
+    ``main._preload_cuda_libraries`` does the same for the pip wheels.
+    A library that fails to load is skipped, not fatal.
+    """
+    if not sys.platform.startswith("linux") or not os.path.isdir(path):
+        return []
+    import ctypes
+
+    loaded = []
+    for name in sorted(os.listdir(path)):
+        if not (name.endswith(".so") or ".so." in name):
+            continue
+        try:
+            handle = ctypes.CDLL(os.path.join(path, name), mode=ctypes.RTLD_GLOBAL)
+        except OSError as exc:
+            logger.debug(f"Could not preload {name}: {exc}")
+            continue
+        _SHARED_LIBRARY_HANDLES.append(handle)
+        loaded.append(name)
+    PRELOADED_LIBRARIES.extend(loaded)
+    return loaded
+
+
+def _activate_gpu_libraries(component_dir: str) -> Tuple[bool, str]:
+    """Windows: register ``bin`` on the loader path. Linux: preload ``lib``."""
+    if sys.platform.startswith("linux"):
+        from services.components import gpu_runtime_available
+
+        # CUDA from the pip wheels or the system is already loaded (main.py
+        # preloads it first); a second copy of cuBLAS would only cost memory.
+        if gpu_runtime_available():
+            return True, ""
+        lib_dir = os.path.join(component_dir, "lib")
+        if not os.path.isdir(lib_dir):
+            return False, "Its library folder is missing."
+        if not preload_shared_libraries(lib_dir) or not gpu_runtime_available():
+            return False, "Its CUDA libraries could not be loaded."
+        return True, ""
+    bin_dir = os.path.join(component_dir, "bin")
+    if not os.path.isdir(bin_dir) or not register_dll_directory(bin_dir):
+        return False, "Its library folder is missing."
+    return True, ""
+
+
 def activate_component(component_id: str) -> Tuple[bool, str]:
     """Put one installed component into use in this process.
 
     GPU Acceleration registers its ``bin`` directory on the Windows loader
-    path. Meeting-agent and speaker-id have no native ``bin`` tree — a
-    completed install is already usable, so activation succeeds without
-    ``os.add_dll_directory``. Also usable mid-session, right after an
-    install. Never raises.
+    path, or preloads its ``lib`` directory on Linux. Meeting-agent and
+    speaker-id have no native ``bin`` tree — a completed install is already
+    usable, so activation succeeds without ``os.add_dll_directory``. Also
+    usable mid-session, right after an install. Never raises.
 
     """
     try:
@@ -88,12 +143,14 @@ def activate_component(component_id: str) -> Tuple[bool, str]:
         from services.local_asr.catalog import RUNTIME_IDS
         if component_id in RUNTIME_IDS:
             return True, ""
-        bin_dir = os.path.join(component_dir(component_id), "bin")
-        if os.path.isdir(bin_dir):
-            if not register_dll_directory(bin_dir):
+        if component_id == ComponentId.GPU_ACCEL:
+            ok, reason = _activate_gpu_libraries(component_dir(component_id))
+            if not ok:
+                return False, reason
+        else:
+            bin_dir = os.path.join(component_dir(component_id), "bin")
+            if os.path.isdir(bin_dir) and not register_dll_directory(bin_dir):
                 return False, "Its library folder is missing."
-        elif component_id == ComponentId.GPU_ACCEL:
-            return False, "Its library folder is missing."
 
         logger.info(
             f"Activated component '{component_id}' "

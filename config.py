@@ -66,19 +66,56 @@ def local_app_dir() -> str:
     return os.path.join(base, APP_NAME)
 
 
-def data_root() -> str:
-    """Directory for writable user data.
+#: Overrides where settings, history and recordings live, frozen or not.
+DATA_DIR_ENV = "OPENWHISPER_DATA_DIR"
+SETTINGS_FILENAME = "openwhisper_settings.json"
 
-    Frozen builds install to ``%LOCALAPPDATA%\\Programs\\OpenWhisper``, which
-    must be treated as read-only, so user data goes to
-    ``%LOCALAPPDATA%\\OpenWhisper`` instead. Running from source returns ``""``
-    so every path stays CWD-relative exactly as before — developer workflows
-    and the test suite are unaffected.
+
+def _source_data_dir() -> str:
+    """Where a source run keeps its data instead of the per-user directory.
+
+    * The working directory or the checkout, when either already has a
+      settings file. Source runs used to write every file relative to the
+      working directory, and the bundled launchers (scripts/openwhisper,
+      openwhisper.cmd) cd into the checkout first; that data stays in use.
+    * The checkout, when it is a git checkout (``.git`` is a folder, or a
+      file in a worktree). A development copy keeps to itself rather than
+      sharing the installed app's settings and database, which a branch's
+      migration must never reach.
+
+    "" otherwise: a source tree used as the app, like an unpacked release on
+    Linux, shares the per-user directory with the packaged build.
     """
-    if not is_frozen():
-        return ""
+    checkout = os.path.dirname(os.path.abspath(__file__))
+    for folder in (os.getcwd(), checkout):
+        if os.path.isfile(os.path.join(folder, SETTINGS_FILENAME)):
+            return folder
+    if os.path.exists(os.path.join(checkout, ".git")):
+        return checkout
+    return ""
 
-    root = local_app_dir()
+
+def data_root() -> str:
+    """Directory for writable user data. Always absolute.
+
+    ``OPENWHISPER_DATA_DIR`` wins when set. Otherwise frozen builds, which
+    install to a read-only ``%LOCALAPPDATA%\\Programs\\OpenWhisper``, use
+    the per-user directory (``%LOCALAPPDATA%\\OpenWhisper``,
+    ``~/.local/share/OpenWhisper``), and so does a source tree run as the
+    app: it shares the packaged build's settings, pairings and history. It
+    used to write them wherever it was started, so a launcher had to cd
+    into the per-user directory first or the settings never landed there.
+    Development checkouts, and data already kept the old way, stay where
+    they are; see ``_source_data_dir``.
+    """
+    override = os.environ.get(DATA_DIR_ENV)
+    if override:
+        root = os.path.abspath(os.path.expanduser(override))
+    else:
+        existing = "" if is_frozen() else _source_data_dir()
+        if existing:
+            return existing
+        root = local_app_dir()
     os.makedirs(root, exist_ok=True)
     return root
 
@@ -95,26 +132,18 @@ def components_root() -> str:
 
 
 def user_data_path(filename: str) -> str:
-    """Resolve ``filename`` against the writable user-data root.
-
-    Returns the bare filename when running from source, preserving the
-    historical CWD-relative behavior.
-    """
-    root = data_root()
-    return os.path.join(root, filename) if root else filename
+    """Resolve ``filename`` against the writable user-data root (absolute)."""
+    return os.path.join(data_root(), filename)
 
 
 def env_file_path() -> str:
     """Locate the optional ``.env`` file holding API keys.
 
-    Frozen builds look in the user-data root first, because the bundle
-    directory is read-only and a user-supplied ``.env`` cannot live there.
-    Falls back to the repository root so source checkouts keep working.
+    The user-data root first, because a frozen bundle directory is
+    read-only and a user-supplied ``.env`` cannot live there. Falls back to
+    the repository root so source checkouts keep working.
     """
-    candidates = []
-    root = data_root()
-    if root:
-        candidates.append(os.path.join(root, ENV_FILE_NAME))
+    candidates = [os.path.join(data_root(), ENV_FILE_NAME)]
     candidates.append(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), ENV_FILE_NAME)
     )
@@ -135,7 +164,7 @@ class AppConfig:
     # File paths. These resolve under %LOCALAPPDATA%\OpenWhisper in frozen
     # builds and stay CWD-relative when running from source.
     SETTINGS_FILE: str = field(
-        default_factory=lambda: user_data_path("openwhisper_settings.json")
+        default_factory=lambda: user_data_path(SETTINGS_FILENAME)
     )
     RECORDED_AUDIO_FILE: str = field(
         default_factory=lambda: user_data_path("recorded_audio.wav")

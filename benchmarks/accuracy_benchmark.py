@@ -60,7 +60,6 @@ sys.path.insert(0, project_root)
 
 from transcriber.local_backend import LocalWhisperBackend
 from transcriber.openai_backend import OpenAIBackend
-from config import config
 from services.settings import api_model_choices
 
 logging.basicConfig(

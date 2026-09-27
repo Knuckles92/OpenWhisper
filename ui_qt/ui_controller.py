@@ -862,6 +862,13 @@ class UIController(QObject):
         dialog = RequiredRuntimeDialog(model_name, component_id, parent=self.main_window)
         return dialog.exec() == dialog.DialogCode.Accepted
 
+    def show_use_gpu_dialog(self, plan) -> bool:
+        """The "Use this GPU" offer; True when accepted."""
+        from ui_qt.dialogs.use_gpu_dialog import UseGpuDialog
+
+        dialog = UseGpuDialog(plan, parent=self.main_window)
+        return dialog.exec() == dialog.DialogCode.Accepted
+
     def open_settings_destination(self, name: str = OVERVIEW):
         """Show Settings on one destination (single instance, re-raised).
 

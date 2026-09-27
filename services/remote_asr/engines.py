@@ -61,7 +61,7 @@ class SpeechWorkerEngine(HostEngine):
 
     @property
     def identity(self) -> tuple:
-        return ("worker", self.backend.backend_id, self.backend.model_name)
+        return ("worker", self.backend.backend_id, self.backend.model_name, self.backend.device)
 
     def describe(self) -> dict:
         from services.local_asr.catalog import MODELS
@@ -97,7 +97,10 @@ class WhisperEngine(HostEngine):
 
     @property
     def identity(self) -> tuple:
-        return ("whisper", self._model_name())
+        # Device and compute type count: turbo moving from the CPU to the GPU
+        # is a different engine to a client, as much as another model is.
+        return ("whisper", self._model_name(), self.backend.device,
+                getattr(self.backend, "compute_type", None))
 
     def _model_name(self) -> str:
         return self.backend.last_loaded_model or getattr(self.backend, "model_name", "") or ""
@@ -110,6 +113,7 @@ class WhisperEngine(HostEngine):
             "model": name,
             "label": f"Whisper {name}".strip(),
             "device": backend.device or "",
+            "compute_type": getattr(backend, "compute_type", None) or "",
             "streaming": False,
             "available": backend.is_available(),
             "status": backend.device_info,

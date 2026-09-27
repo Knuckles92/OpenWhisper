@@ -110,6 +110,12 @@ class CustomTitleBar(QFrame):
         self.setFixedHeight(self.BASE_HEIGHT)
         self.setObjectName("customTitleBar")
         self.setAutoFillBackground(True)
+        # Before any child exists. Qt restyles a widget's children before it
+        # sends the widget its own StyleChange, which is when WidgetStyleFilter
+        # substitutes the @tokens, so children styled first parsed the raw
+        # "@surface" sheet and logged "Could not parse stylesheet of object
+        # CustomTitleBar" on every launch.
+        self.setStyleSheet(self._TITLE_BAR_STYLE)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 0, 0, 0)
@@ -121,7 +127,6 @@ class CustomTitleBar(QFrame):
         layout.addStretch()
         self._build_window_buttons(layout)
 
-        self.setStyleSheet(self._TITLE_BAR_STYLE)
         self._sync_height()
 
     def _build_menu_bar(self, layout: QHBoxLayout) -> None:

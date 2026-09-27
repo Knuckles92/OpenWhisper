@@ -60,8 +60,10 @@ def _make_meeting_agent_installed(root: Path, manifest: dict) -> Path:
 
 
 def test_activation_registers_the_bin_directory(
-    component_root, recorded_registrations
+    component_root, recorded_registrations, monkeypatch
 ):
+    # Windows registers bin/; Linux preloads lib/ (test_linux_gpu_component.py).
+    monkeypatch.setattr(component_runtime.sys, "platform", "win32")
     _make_installed(component_root, "gpu-accel", {"version": "cuda12.9"})
 
     ok, reason = component_runtime.activate_component("gpu-accel")
