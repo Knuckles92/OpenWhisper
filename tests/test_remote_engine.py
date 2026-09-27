@@ -344,6 +344,22 @@ def test_close_from_another_thread_cancels_a_waiting_request(host, engine):
     assert errors and "canceled" in str(errors[0]).lower()
 
 
+def test_the_keepalive_times_pongs_and_closes_on_a_missed_one(host, monkeypatch):
+    from services.remote_asr import client
+
+    monkeypatch.setattr(client, "KEEPALIVE_INTERVAL_S", 0.05)
+    monkeypatch.setattr(client, "KEEPALIVE_TIMEOUT_S", 0.3)
+    connection = _connect(host, _pair(host))
+    # One ping goes out on connect, timed finely enough for a home network.
+    assert _wait_for(lambda: connection.beats >= 2)
+    assert connection.latency is not None and 0 < connection.latency < 1
+    assert connection.alive
+    # A host that stops answering pings is closed, as websockets' own would.
+    connection._ws.ping = lambda *args, **kwargs: threading.Event()
+    assert _wait_for(lambda: not connection.alive, timeout=3)
+    assert connection.closed
+
+
 def test_unreachable_host_reports_plainly():
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
@@ -473,13 +489,190 @@ def test_remote_backend_without_pairing_says_how_to_pair():
     assert "Pair with a host" in backend.device_info
 
 
-def test_remote_backend_cancel_closes_the_connection(paired_backend):
+def test_cancel_stops_waiting_but_keeps_the_connection(paired_backend, engine):
     backend = paired_backend
     backend.reload_model()
+    connection = backend._process
+    started = threading.Event()
+
+    def slow(audio, language):
+        started.set()
+        time.sleep(0.6)
+        return {"text": "late", "segments": []}
+
+    engine.transcribe = slow
+    errors = []
+
+    def run():
+        try:
+            backend.transcribe_windows([(0, _tone(1600))])
+        except Exception as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    assert started.wait(3)
     backend.cancel_transcription()
-    assert not backend.is_available()
+    worker.join(2)
+    assert not worker.is_alive()
+    assert errors and "canceled" in str(errors[0]).lower()
+    # Nothing to reconnect: the same connection serves the next job.
+    assert backend.is_available() and backend._process is connection
     with pytest.raises(RuntimeError, match="canceled"):
         backend.decode_window(_tone(160))
+    backend.reset_cancel_flag()
+    del engine.transcribe
+    # The canceled request's late reply is skipped, not taken for this one's.
+    assert backend.decode_window(_tone(320)) == "heard 320"
+
+
+def test_the_next_job_clears_a_remote_engines_cancel():
+    from services.runtime.transcription import TranscriptionRuntime
+    from transcriber.optional_backend import LocalSpeechBackend
+    from transcriber.remote_backend import RemoteSpeechBackend
+
+    remote = RemoteSpeechBackend()
+    remote.cancel_transcription()
+    runtime = SimpleNamespace(controller=SimpleNamespace(current_backend=remote))
+    TranscriptionRuntime._rearm_remote_engine(runtime)
+    assert not remote.should_cancel
+    # A local engine is reloaded after a cancel instead, which clears it.
+    local = LocalSpeechBackend.__new__(LocalSpeechBackend)
+    local.should_cancel = True
+    runtime.controller.current_backend = local
+    TranscriptionRuntime._rearm_remote_engine(runtime)
+    assert local.should_cancel
+
+
+# ---- the link: what the engine card shows ----
+
+def test_link_without_a_pairing_is_unpaired():
+    from transcriber.remote_backend import RemoteSpeechBackend
+
+    backend = RemoteSpeechBackend()
+    assert backend.link().state == "unpaired"
+    backend.reload_model()
+    link = backend.link()
+    assert link.state == "unpaired" and "Pair with a host" in link.detail
+
+
+def test_link_reads_connected_and_the_round_trip(paired_backend):
+    backend = paired_backend
+    assert backend.link().state == "offline"  # paired, not reached yet
+    changes = []
+    backend.on_link_changed = lambda: changes.append(backend.link().state)
+    backend.reload_model()
+    assert "connecting" in changes and changes[-1] == "connected"
+    link = backend.link()
+    assert link.host == "devbox" and link.route == "local network"
+    assert link.engine_label == "Fake Parakeet" and link.device == "cuda"
+    # One ping goes out on connect, so the round trip is known at once.
+    assert _wait_for(lambda: backend.link().latency_ms is not None)
+    assert backend.link().beat > 0
+
+
+def test_link_is_busy_while_a_request_waits_and_counts_replies(paired_backend, engine):
+    backend = paired_backend
+    backend.reload_model()
+    started, release = threading.Event(), threading.Event()
+
+    def slow(audio, language):
+        started.set()
+        release.wait(3)
+        return {"text": "done", "segments": []}
+
+    engine.transcribe = slow
+    worker = threading.Thread(target=lambda: backend.decode_window(_tone(1600)))
+    worker.start()
+    assert started.wait(3)
+    assert backend.link().busy and backend.link().replies == 0
+    release.set()
+    worker.join(3)
+    assert not backend.link().busy and backend.link().replies == 1
+
+
+def test_check_link_notices_a_host_that_went_away_between_requests(paired_backend, host):
+    backend = paired_backend
+    backend.reload_model()
+    assert not backend.check_link()
+    host.stop()
+    assert _wait_for(lambda: not backend._process.alive)
+    assert backend.check_link()
+    assert not backend.is_available()
+    link = backend.link()
+    assert link.state == "offline" and link.detail == "devbox stopped answering."
+    assert not backend.check_link()  # reported once
+
+
+def test_restore_link_reconnects_quietly_or_adopts_a_new_engine(paired_backend, host, engine):
+    backend = paired_backend
+    backend.reload_model()
+    port = host.port
+    host.stop()
+    assert _wait_for(lambda: backend.check_link() or not backend.is_available())
+    assert backend.restore_link() == "offline"
+    assert "Couldn't reach" in backend.last_error
+    host.start(port=port, bind="127.0.0.1")
+    assert backend.restore_link() == "connected"
+    assert backend.is_available() and backend.backend_id == "parakeet"
+    assert backend.decode_window(_tone(160)) == "heard 160"
+    # Back with another engine: adopted, and the caller told so.
+    backend._drop(backend._process, "gone")
+    engine.family, engine.model = "nemotron", "nemotron-streaming"
+    assert backend.restore_link() == "changed"
+    assert backend.backend_id == "nemotron" and backend.is_available()
+    assert backend.restore_link() == "connected"  # nothing to do
+
+
+def test_timing_splits_the_host_from_the_network(paired_backend):
+    backend = paired_backend
+    backend.reload_model()
+    mark = backend.timing_mark()
+    backend.transcribe_windows([(0, _tone(1600)), (1600, _tone(1600))])
+    timing = backend.timing_since(mark)
+    assert timing.host == "devbox" and timing.requests == 2
+    assert timing.host_s is not None and 0 <= timing.host_s <= timing.round_trip_s
+    assert timing.network_s == pytest.approx(timing.round_trip_s - timing.host_s)
+    # Silent windows never leave, so they add nothing.
+    mark = backend.timing_mark()
+    backend.decode_window(np.zeros(1600, np.float32))
+    assert backend.timing_since(mark).requests == 0
+
+
+def test_a_host_that_doesnt_time_requests_gives_no_split(paired_backend, host, monkeypatch):
+    backend = paired_backend
+    backend.reload_model()
+    original = host._dispatch
+
+    def untimed(*args, **kwargs):
+        reply = original(*args, **kwargs)
+        reply.pop("host_ms", None)
+        return reply
+
+    monkeypatch.setattr(host, "_dispatch", untimed)
+    mark = backend.timing_mark()
+    backend.decode_window(_tone(1600))
+    timing = backend.timing_since(mark)
+    assert timing.requests == 1 and timing.host_s is None and timing.network_s is None
+
+
+def test_the_host_says_who_it_is_decoding_for(host, engine):
+    events = []
+    host._on_event = lambda kind, detail: events.append((kind, dict(detail)))
+    connection = _connect(host, _pair(host))
+    seen = []
+
+    def watching(audio, language):
+        seen.append(host.connected_clients())
+        return {"text": "ok", "segments": []}
+
+    engine.transcribe = watching
+    connection.request("transcribe", audio=_tone(160))
+    assert seen[0][0]["busy"] and seen[0][0]["name"] == "laptop"
+    assert not host.connected_clients()[0]["busy"]
+    activity = [detail for kind, detail in events if kind == "activity"]
+    assert activity == [{"name": "laptop", "busy": True}, {"name": "laptop", "busy": False}]
+    connection.close()
 
 
 # ---- the service ----
@@ -564,14 +757,31 @@ def _controller(backend, events):
         _engine_released_for_lease=False,
         _restore_after_reload=False,
         _reload_handoff_lock=threading.Lock(),
+        _reload_pending=False,
         executor=Mock(),
+        _remote_restoring=False,
+        _remote_retry_step=0,
+        _remote_retry_at=None,
+        _remote_link=None,
+        _remote_reported="",
+        ui_controller=Mock(),
     )
+    from PyQt6.QtCore import QTimer
+
+    controller._remote_watch = QTimer()
+    controller._remote_retry_timer = QTimer()
+    controller._remote_retry_timer.setSingleShot(True)
     for name in ("device_info_update", "status_update", "engine_busy_changed",
-                 "runtime_consent_requested", "streaming_setup_requested"):
+                 "runtime_consent_requested", "streaming_setup_requested",
+                 "remote_settled", "remote_retry_requested"):
         setattr(controller, name, _Signal(name, events))
     for name in ("_reload_worker", "_reload_selected_engine", "_finish_speech_reload",
                  "_flush_pending_streaming_setup", "transcription_readiness_message",
-                 "local_whisper_loading_message", "_submit_restore_reload"):
+                 "local_whisper_loading_message", "_submit_restore_reload",
+                 "release_local_engine", "restore_local_engine", "retry_remote_now",
+                 "_selected_remote", "_watch_remote", "_on_remote_watch",
+                 "_publish_remote_link", "_schedule_remote_retry", "_cancel_remote_retry",
+                 "_on_remote_settled", "_on_local_engine_settings_changed"):
         setattr(controller, name, getattr(ApplicationController, name).__get__(controller))
     return controller
 
@@ -588,16 +798,108 @@ def test_an_unreachable_host_never_asks_to_install_a_local_runtime():
     assert ("engine_busy_changed", False) in events
 
 
-def test_selecting_the_remote_engine_connects_and_warms_the_host(paired_backend, engine):
+def test_selecting_the_remote_engine_connects_without_a_warmup_decode(paired_backend, engine):
     events = []
     controller = _controller(paired_backend, events)
     controller._reload_worker()
     assert ("device_info_update", "Fake Parakeet on devbox | cuda", True) in events
-    # Parakeet is a warmup engine, so the reload sent one throwaway decode.
-    assert [call[0] for call in engine.calls] == ["transcribe"]
+    # Parakeet warms up locally, but the host warmed its own worker when it
+    # loaded, so connecting decodes nothing there.
+    assert engine.calls == []
     assert not controller._reload_in_flight
     # The host decides which engine this is, so the preview is set up again.
     assert ("streaming_setup_requested",) in events
+    # And the link watch starts on the Qt thread once the reload settles.
+    assert ("remote_settled", "reload") in events
+
+
+def test_a_dropped_host_is_reported_at_once_and_retried_with_backoff(paired_backend, host):
+    from services.application_controller import REMOTE_RETRY_DELAYS_S
+
+    events = []
+    controller = _controller(paired_backend, events)
+    controller._reload_worker()
+    controller._on_remote_settled("reload")
+    assert controller._remote_watch.isActive()
+    published = controller.ui_controller.set_remote_link.call_args[0][0]
+    assert published.state == "connected" and published.retry_at is None
+    host.stop()
+    assert _wait_for(lambda: not paired_backend._process.alive)
+    events.clear()
+    controller._on_remote_watch()
+    # Said now, not at the next recording.
+    assert ("device_info_update", "devbox stopped answering.", False) in events
+    assert controller._remote_retry_timer.isActive()
+    assert controller._remote_retry_timer.interval() == REMOTE_RETRY_DELAYS_S[0] * 1000
+    link = controller.ui_controller.set_remote_link.call_args[0][0]
+    assert link.state == "offline" and link.retry_at is not None
+    # Each failure waits longer, up to the last delay, which repeats.
+    controller._remote_retry_timer.stop()
+    for delay in (*REMOTE_RETRY_DELAYS_S[1:], REMOTE_RETRY_DELAYS_S[-1]):
+        controller._on_remote_settled("offline")
+        assert controller._remote_retry_timer.interval() == delay * 1000
+        controller._remote_retry_timer.stop()
+
+
+def test_a_quiet_reconnect_restores_the_engine_card(paired_backend, host):
+    events = []
+    controller = _controller(paired_backend, events)
+    controller._reload_worker()
+    port = host.port
+    host.stop()
+    assert _wait_for(lambda: not paired_backend._process.alive)
+    controller._on_remote_watch()
+    host.start(port=port, bind="127.0.0.1")
+    events.clear()
+    controller._on_remote_settled(paired_backend.restore_link())
+    assert ("device_info_update", "Fake Parakeet on devbox | cuda", True) in events
+    assert not controller._remote_retry_timer.isActive() and controller._remote_retry_step == 0
+    # The preview may have been waiting for this connection.
+    assert ("streaming_setup_requested",) in events
+
+
+def test_repeat_failures_dont_clear_the_status_line_every_time():
+    from transcriber.remote_backend import RemoteSpeechBackend
+
+    backend = RemoteSpeechBackend()
+    backend.host_name = "devbox"
+    backend._unpaired = False
+    backend.last_error = "Couldn't reach devbox:47821."
+    events = []
+    controller = _controller(backend, events)
+    controller._on_remote_settled("offline")
+    controller._remote_retry_timer.stop()
+    controller._on_remote_settled("offline")
+    reports = [event for event in events if event[0] == "device_info_update"]
+    assert reports == [("device_info_update", "Couldn't reach devbox:47821.", False)]
+
+
+def test_an_unpaired_remote_is_not_retried():
+    from transcriber.remote_backend import RemoteSpeechBackend
+
+    backend = RemoteSpeechBackend()
+    backend.reload_model()
+    controller = _controller(backend, [])
+    controller._on_remote_settled("reload")
+    assert not controller._remote_retry_timer.isActive()
+
+
+def test_a_meeting_leaves_the_remote_connection_alone(paired_backend, engine):
+    events = []
+    controller = _controller(paired_backend, events)
+    controller._reload_worker()
+    connection = paired_backend._process
+    assert controller.release_local_engine() is False
+    assert paired_backend._process is connection and paired_backend.is_available()
+    assert not any(event[0] == "device_info_update" and "Released" in event[1] for event in events)
+    controller.restore_local_engine()
+    assert engine.calls == []  # no reconnect, so no decode either
+
+
+def test_local_engine_settings_leave_a_remote_engine_alone(paired_backend):
+    controller = _controller(paired_backend, [])
+    controller._on_local_engine_settings_changed()
+    controller.reload_whisper_model.assert_not_called()
 
 
 def _preview_runtime(backend):
@@ -1070,11 +1372,15 @@ def test_readiness_retries_a_remote_engine_that_could_not_connect():
 
     backend = RemoteSpeechBackend()
     backend.last_error = "Couldn't reach devbox:47821."
-    controller = _controller(backend, [])
+    events = []
+    controller = _controller(backend, events)
     controller._reload_in_flight = False
     message = controller.transcription_readiness_message()
     assert message == "Couldn't reach devbox:47821. Trying again..."
-    controller.reload_whisper_model.assert_called_once()
+    # A quiet reconnect, handed to the Qt thread (hotkeys call this off it),
+    # rather than a full engine reload.
+    assert ("remote_retry_requested",) in events
+    controller.reload_whisper_model.assert_not_called()
 
 
 def test_remote_is_a_valid_saved_engine():

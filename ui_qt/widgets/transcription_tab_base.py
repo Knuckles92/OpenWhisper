@@ -1,10 +1,11 @@
 """Shared model-selection and transcript tab scaffolding."""
 import logging
+import time
 from typing import Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QCheckBox, QFrame, QTextEdit,
-    QButtonGroup, QPushButton, QScrollArea,
+    QButtonGroup, QPushButton, QScrollArea, QLabel,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
@@ -19,7 +20,12 @@ from services.settings import (
     settings_manager,
 )
 from ui_qt.overlay_state import OverlayState
-from ui_qt.utils.collapse_animation import SECTION_COLLAPSE_DURATION_MS
+from ui_qt.utils.collapse_animation import (
+    SECTION_COLLAPSE_DURATION_MS,
+    UNLIMITED_HEIGHT,
+    create_max_height_animation,
+    run_max_height_animation,
+)
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.markdown_render import PREVIEW_STYLE, render_markdown
 from ui_qt.widgets.cards import HeaderCard
@@ -32,8 +38,12 @@ from ui_qt.widgets.engine_field import (
 )
 from ui_qt.widgets.stats_display import TranscriptionStatsWidget
 from ui_qt.widgets.local_engine_controls import LocalEngineControls
+from ui_qt.widgets.remote_link import RemoteLinkGlyph
 
 logger = logging.getLogger(__name__)
+
+#: Engine-wide busy lines the Remote engine's link replaces with its own.
+_LINK_SAYS_IT_BETTER = ("Loading speech engine...", "Reloading speech engine...")
 
 
 class TranscriptPane(QFrame):
@@ -78,6 +88,7 @@ class TranscriptionTabBase(QWidget):
     model_changed = pyqtSignal(str)  # Model display name
     engine_settings_changed = pyqtSignal()  # Local engine chip changed
     remote_model_selected = pyqtSignal(str, str)  # Paired computer's (family, model)
+    remote_retry_requested = pyqtSignal()  # The link was clicked while offline
     help_requested = pyqtSignal(str)
     engine_downloads_requested = pyqtSignal()
     transcription_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
@@ -118,6 +129,15 @@ class TranscriptionTabBase(QWidget):
         # controller first reports them.
         self._remote_models = None
         self._remote_selectable = False
+        # The Remote backend's connection (a RemoteLink), shown instead of the
+        # status dot while Remote is selected; None until the controller says.
+        self._remote_link = None
+        self._remote_shown = False
+        # Host side: whether a paired computer's request was being served,
+        # and how many have been, so each finished one flies home.
+        self._serving_busy = False
+        self._served = 0
+        self._serving_shown = False
         self._setup_ui()
         self._connect_signals()
         self.load_cleanup_setting()
@@ -222,6 +242,14 @@ class TranscriptionTabBase(QWidget):
         engine_layout.addLayout(self._field_row)
 
         self.status_dot = StatusDot(diameter=16)
+        # Stands in for the dot while Remote is selected.
+        self.link_glyph = RemoteLinkGlyph()
+        self.link_glyph.hide()
+        self.link_glyph.clicked.connect(self._on_link_clicked)
+        # Ticks the "retrying in N s" countdown, only while one is shown.
+        self._link_countdown = QTimer(self)
+        self._link_countdown.setInterval(1000)
+        self._link_countdown.timeout.connect(self._refresh_engine_status)
 
         self.resolved_label = DownloadsLabel(self.INITIAL_STATUS)
         self.resolved_label.setObjectName("engineResolvedLabel")
@@ -249,12 +277,30 @@ class TranscriptionTabBase(QWidget):
         footer_row.setContentsMargins(0, 0, 0, 0)
         footer_row.setSpacing(6)
         footer_row.addWidget(self.status_dot)
+        footer_row.addWidget(self.link_glyph)
         footer_row.addWidget(self.resolved_label, stretch=1)
         footer_row.addSpacing(6)
         footer_row.addWidget(self.cleanup_check)
         footer_row.addSpacing(6)
         footer_row.addWidget(self.live_preview_check)
         engine_layout.addLayout(footer_row)
+
+        # Host side: which paired computers use this one's engine, slid in
+        # below the footer while any is connected.
+        self.serving_row = QWidget()
+        self.serving_row.setObjectName("remoteServingRow")
+        serving_layout = QHBoxLayout(self.serving_row)
+        serving_layout.setContentsMargins(0, 2, 0, 0)
+        serving_layout.setSpacing(6)
+        self.serving_glyph = RemoteLinkGlyph(mirrored=True)
+        self.serving_label = QLabel()
+        self.serving_label.setObjectName("remoteServingLabel")
+        serving_layout.addWidget(self.serving_glyph)
+        serving_layout.addWidget(self.serving_label, stretch=1)
+        self.serving_row.setMaximumHeight(0)
+        self.serving_row.hide()
+        self._serving_anim = create_max_height_animation(self.serving_row, self)
+        engine_layout.addWidget(self.serving_row)
 
         content_layout.addWidget(self.engine_card)
 
@@ -491,6 +537,10 @@ class TranscriptionTabBase(QWidget):
         self._status_message = status_text
         if status_text in ("Ready", "Ready to record", "Whisper engine ready"):
             self._status_message = ""
+        elif status_text and status_text == self._device_info:
+            # A reload reports its engine as status too. That is the idle
+            # readout already, and for Remote the link says it better.
+            self._status_message = ""
         self._refresh_engine_status()
 
     def set_device_info(self, device_info: str, ready: Optional[bool] = None):
@@ -541,13 +591,25 @@ class TranscriptionTabBase(QWidget):
             OverlayState.CLEANING: "Cleaning up...",
             OverlayState.CANCELING: "Canceling...",
         }
+        host = self._connected_host()
+        if host:
+            messages[OverlayState.TRANSCRIBING] = f"Transcribing on {host}..."
         previous = self._activity_state
         self._activity_state = state
         if state in messages:
             self._status_message = messages[state]
-        elif self._status_message == messages.get(previous):
+        elif self._status_message == messages.get(previous) or (
+            previous is OverlayState.TRANSCRIBING and self._status_message.startswith("Transcribing")
+        ):
             self._status_message = ""
         self._refresh_engine_status()
+
+    def _connected_host(self) -> str:
+        """The paired computer's name while Remote is shown and connected."""
+        link = self._remote_link
+        if self._remote_shown and link is not None and link.state == "connected":
+            return link.host
+        return ""
 
     def _refresh_engine_status(self) -> None:
         busy = self.engine_loading or self._activity_state in (
@@ -555,19 +617,116 @@ class TranscriptionTabBase(QWidget):
             OverlayState.CLEANING, OverlayState.CANCELING,
         )
         idle_message = self._device_info
-        if self._engine_busy:
+        link_text = self._link_text() if self._remote_shown else ""
+        if link_text and not (self._engine_busy and self._remote_link.state != "connecting"):
+            # The link says what the busy state would: "Connecting to jed...".
+            idle_message = link_text
+        elif self._engine_busy:
             idle_message = "Loading speech engine..."
         elif self._model_downloads:
             idle_message = f"Downloading model '{next(iter(self._model_downloads))}'..."
         message = self._status_message or idle_message
+        showing_link = self._remote_shown and self._remote_link is not None
+        placeholders = _LINK_SAYS_IT_BETTER + ((self.INITIAL_STATUS,) if self.INITIAL_STATUS else ())
+        if link_text and self._status_message in placeholders:
+            # "Connecting to jed..." beats a generic loading line; a specific
+            # one ("Switching jed to ...") still wins.
+            message = link_text
         self.resolved_label.setText(message or self.INITIAL_STATUS)
         self.resolved_label.setAccessibleName(message or self.INITIAL_STATUS)
         self.status_dot.set_status(self._engine_status)
         self.status_dot.set_busy(busy)
-        self.status_dot.setVisible(self._engine_dot_visible or busy)
+        self.status_dot.setVisible(not showing_link and (self._engine_dot_visible or busy))
+        self.link_glyph.setVisible(showing_link)
+        if showing_link:
+            # Otherwise the label keeps its own tooltip, the full message.
+            self.resolved_label.setToolTip(self._link_tooltip())
+        counting = showing_link and self._remote_link.retry_at is not None
+        if counting and not self._link_countdown.isActive():
+            self._link_countdown.start()
+        elif not counting:
+            self._link_countdown.stop()
         self._apply_backend_status(
             EngineStatus.UNKNOWN if self._engine_busy else self._engine_status
         )
+
+    # ---- the Remote engine's link ----
+
+    def set_remote_link(self, link) -> None:
+        """The connection to the paired computer (a RemoteLink) changed."""
+        self._remote_link = link
+        if link is not None:
+            self.link_glyph.set_link(link.state, busy=link.busy, replies=link.replies, beat=link.beat)
+            self.link_glyph.setToolTip(self._link_tooltip())
+        self._refresh_engine_status()
+
+    def _link_text(self) -> str:
+        link = self._remote_link
+        if link is None:
+            return ""
+        host = link.host or "the paired computer"
+        if link.state == "connected":
+            parts = [f"Connected to {host}", link.route]
+            if link.latency_ms is not None:
+                parts.append("<1 ms" if link.latency_ms < 1 else f"{link.latency_ms:.0f} ms")
+            return " · ".join(part for part in parts if part)
+        if link.state == "connecting":
+            return f"Connecting to {host}..."
+        if link.state == "unpaired":
+            return link.detail or "Pair with a host in Settings → Remote engine."
+        # Offline: the first sentence of why, then when it tries again.
+        reason = (link.detail or f"Can't reach {host}.").split(". ")[0].rstrip(".") + "."
+        if link.retry_at is not None:
+            seconds = max(0, round(link.retry_at - time.monotonic()))
+            return f"{reason} Trying again in {seconds} s."
+        return f"{reason} Click to try again."
+
+    def _link_tooltip(self) -> str:
+        link = self._remote_link
+        if link is None:
+            return ""
+        if link.state == "connected":
+            engine = link.engine_label or "Its engine"
+            where = f" at {link.address}" if link.address else ""
+            device = f" on {link.device.upper() if link.device == 'cuda' else link.device}" if link.device else ""
+            return f"{engine}{device}, served by {link.host}{where}."
+        if link.state == "offline":
+            return f"{link.detail}\nClick the link to try again now.".strip()
+        return link.detail
+
+    def _on_link_clicked(self) -> None:
+        if self._remote_link is not None and self._remote_link.state == "offline":
+            self.remote_retry_requested.emit()
+
+    # ---- host side: the paired computers this one serves ----
+
+    def set_remote_clients(self, clients) -> None:
+        """This computer's engine is serving ``clients`` (connected_clients() rows)."""
+        names = list(dict.fromkeys(str(c.get("name") or "a paired computer") for c in clients))
+        busy = any(c.get("busy") for c in clients)
+        if self._serving_busy and not busy:
+            self._served += 1
+        self._serving_busy = busy
+        if names:
+            who = names[0] if len(names) == 1 else f"{len(names)} computers"
+            self.serving_label.setText(f"Transcribing for {who}" if busy else f"Sharing this engine with {who}")
+            self.serving_glyph.set_link("connected", busy=busy, replies=self._served)
+            self.serving_row.setToolTip("\n".join(f"{name} is connected" for name in names))
+        self._show_serving_row(bool(names))
+
+    def _show_serving_row(self, show: bool) -> None:
+        if show == self._serving_shown:
+            return
+        self._serving_shown = show
+        row = self.serving_row
+        if show:
+            row.show()
+            run_max_height_animation(self._serving_anim, start=row.maximumHeight() if row.maximumHeight() < UNLIMITED_HEIGHT else 0,
+                                     end=row.sizeHint().height(),
+                                     on_finished=lambda: row.setMaximumHeight(UNLIMITED_HEIGHT))
+        else:
+            run_max_height_animation(self._serving_anim, start=row.height(), end=0,
+                                     on_finished=row.hide)
 
     def _apply_backend_status(self, status: EngineStatus):
         self.model_combo.set_status(status)
@@ -579,6 +738,7 @@ class TranscriptionTabBase(QWidget):
         Remote backend shows the model the paired computer runs.
         """
         remote = not visible and config.MODEL_VALUE_MAP.get(self.current_model) == "remote"
+        self._remote_shown = remote
         self.local_engine.setVisible(visible)
         self.api_model_field.setVisible(not visible and not remote)
         self.remote_model_field.setVisible(remote)
@@ -742,9 +902,10 @@ class TranscriptionTabBase(QWidget):
         audio_duration: float,
         file_size: int,
         cleanup_time: Optional[float] = None,
+        remote=None,
     ):
         self.stats_widget.set_stats(
-            transcription_time, audio_duration, file_size, cleanup_time
+            transcription_time, audio_duration, file_size, cleanup_time, remote=remote
         )
 
     def clear_transcription_stats(self):

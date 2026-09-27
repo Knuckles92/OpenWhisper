@@ -1,11 +1,24 @@
 """Local transcription with faster-whisper."""
 import logging
 from typing import Optional, Tuple
-from faster_whisper import WhisperModel
 from .base import TranscriptionBackend
 from config import config
 
 logger = logging.getLogger(__name__)
+
+# faster-whisper, and ctranslate2 under it, load when a model first does
+# rather than at startup, which measured 0.44 s: a session on another engine
+# (a remote host, Parakeet, the API) never needs them. Tests replace this.
+WhisperModel = None
+
+
+def _whisper_model_class():
+    global WhisperModel
+    if WhisperModel is None:
+        from faster_whisper import WhisperModel as model_class
+
+        WhisperModel = model_class
+    return WhisperModel
 
 # Substrings that identify a GPU-specific load failure worth retrying on the CPU:
 # a missing CUDA library ("Library cublas64_12.dll is not found or cannot be
@@ -53,7 +66,8 @@ class LocalWhisperBackend(TranscriptionBackend):
             settings = settings_manager.load_all_settings()
             model_name = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
         self.model_name = model_name
-        self.model: Optional[WhisperModel] = None
+        # A faster_whisper.WhisperModel once loaded.
+        self.model = None
         self._device: Optional[str] = None
         self._compute_type: Optional[str] = None
         self._override_device = device
@@ -218,7 +232,7 @@ class LocalWhisperBackend(TranscriptionBackend):
             )
 
             try:
-                self.model = WhisperModel(
+                self.model = _whisper_model_class()(
                     self.model_name,
                     device=self._device,
                     compute_type=self._compute_type,
@@ -338,7 +352,7 @@ class LocalWhisperBackend(TranscriptionBackend):
         self.gpu_fallback_note = note
         self.gpu_fallback_cause = cause
 
-        self.model = WhisperModel(
+        self.model = _whisper_model_class()(
             self.model_name,
             device=self._device,
             compute_type=self._compute_type,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import socket
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -52,6 +53,13 @@ from transcriber import (
 
 logger = logging.getLogger(__name__)
 
+#: How often the Remote engine's watch reads its connection. Reading sends
+#: nothing; websockets keeps the socket's state current on its own thread.
+REMOTE_WATCH_INTERVAL_MS = 1000
+#: Seconds before each automatic reconnect to an unreachable host; the last
+#: repeats until it answers.
+REMOTE_RETRY_DELAYS_S = (2, 5, 15, 30, 60)
+
 
 @dataclass
 class _ClientModelSwitch:
@@ -97,6 +105,16 @@ class ApplicationController(QObject):
     # (readout, engine is loaded and usable)
     device_info_update = pyqtSignal(str, bool)
     engine_busy_changed = pyqtSignal(bool)
+    # The Remote engine's link may read differently (emitted from any thread;
+    # the slot takes a fresh RemoteLink on the Qt thread).
+    remote_link_poke = pyqtSignal()
+    # The Remote engine settled: a background reconnect's restore_link()
+    # outcome, or "reload" when a reload of it finished.
+    remote_settled = pyqtSignal(str)
+    # Reconnect now (emitted from any thread; hotkeys start recordings off it).
+    remote_retry_requested = pyqtSignal()
+    # Host: the paired computers connected now, as connected_clients() lists them.
+    remote_clients_changed = pyqtSignal(list)
     # Hop streaming setup onto the Qt main thread after the first local load.
     streaming_setup_requested = pyqtSignal()
     # Consent for Hugging Face model downloads: emitted (possibly from worker
@@ -193,6 +211,8 @@ class ApplicationController(QObject):
         self._pending_streaming_text: str = ""
         self._transcription_start_time: Optional[float] = None
         self._transcription_elapsed: Optional[float] = None
+        # Where a remote engine's pass spent its time (a RemoteTiming).
+        self._remote_timing = None
 
         # Debounced, background whisper reload. The ~1s model swap (cleanup +
         # load) must not run on the UI thread, and rapid combo changes are
@@ -221,6 +241,22 @@ class ApplicationController(QObject):
         # Status for the next reload instead of "Reloading speech engine...",
         # such as which model a remote engine switch is loading.
         self._reload_note = ""
+
+        # The Remote engine's watch: a tick that reads the socket's state
+        # (nothing is sent) while Remote is selected, and a backed-off quiet
+        # reconnect when the host drops or can't be reached.
+        self._remote_watch = QTimer()
+        self._remote_watch.setInterval(REMOTE_WATCH_INTERVAL_MS)
+        self._remote_watch.timeout.connect(self._on_remote_watch)
+        self._remote_retry_timer = QTimer()
+        self._remote_retry_timer.setSingleShot(True)
+        self._remote_retry_timer.timeout.connect(self._retry_remote)
+        self._remote_retry_step = 0
+        self._remote_retry_at: Optional[float] = None
+        self._remote_restoring = False
+        self._remote_link = None
+        # device_info the watch last reported, so repeat failures stay quiet.
+        self._remote_reported = ""
 
         self._update_check_timer = QTimer()
         self._update_check_timer.setSingleShot(True)
@@ -264,7 +300,9 @@ class ApplicationController(QObject):
         for key in BACKENDS:
             self.transcription_backends[key] = LocalSpeechBackend(key)
         from transcriber.remote_backend import REMOTE_BACKEND, RemoteSpeechBackend
-        self.transcription_backends[REMOTE_BACKEND] = RemoteSpeechBackend()
+        remote = RemoteSpeechBackend()
+        remote.on_link_changed = self.remote_link_poke.emit
+        self.transcription_backends[REMOTE_BACKEND] = remote
         from services.remote_asr.service import RemoteEngineService
         # Serves whichever engine is selected here, when sharing is on, and
         # lets paired computers switch it to another model ready here.
@@ -274,6 +312,7 @@ class ApplicationController(QObject):
             switch_engine=self._switch_engine_for_client,
             engine_settled=self._engine_settled,
         )
+        self.remote_engine.add_listener(self._on_remote_host_event)
         self.ui_controller.remote_engine = self.remote_engine
         saved_model = settings_manager.load_model_selection()
         self._current_model_name = saved_model
@@ -298,7 +337,7 @@ class ApplicationController(QObject):
         self.ui_controller.on_upload_audio = self.upload_audio_file
         self.ui_controller.on_upload_audio_files = self.upload_audio_files
         self.ui_controller.on_upload_cancel = self.cancel
-        self.ui_controller.on_whisper_settings_changed = self.reload_whisper_model
+        self.ui_controller.on_whisper_settings_changed = self._on_local_engine_settings_changed
         self.ui_controller.on_audio_device_changed = self.change_audio_device
         self.ui_controller.on_streaming_settings_changed = self.reconfigure_streaming
         self.ui_controller.on_hf_policy_changed = self.on_hf_policy_changed
@@ -516,6 +555,9 @@ class ApplicationController(QObject):
         if remote:
             self._pending_streaming_setup = True
         self._flush_pending_streaming_setup()
+        if remote and selected is self.current_backend:
+            # Starts the link watch, and retries a host that didn't answer.
+            self.remote_settled.emit("reload")
 
     def _reload_whisper_worker(self) -> None:
         """Reload the local backend off the UI thread; report results via signals.
@@ -576,7 +618,9 @@ class ApplicationController(QObject):
         with self._engine_lock:
             released = False
             for backend in self.transcription_backends.values():
-                if getattr(backend, "model", None) is not None:
+                # A remote engine's weights are on the host, so closing its
+                # connection would free nothing here.
+                if getattr(backend, "model", None) is not None and not getattr(backend, "is_remote", False):
                     backend.cleanup()
                     released = True
             preview = getattr(self, "_streaming_backend", None)
@@ -639,12 +683,13 @@ class ApplicationController(QObject):
             if self._reload_in_flight:
                 return "Speech engine is still loading..."
             if getattr(backend, "is_remote", False):
-                # The host may be back (woke up, came into range): try again
-                # on every attempt rather than waiting for a manual reload.
-                self.reload_whisper_model()
-                if backend.last_error:
-                    return f"{backend.last_error} Trying again..."
-                return "Connecting to the remote engine..."
+                # The host may be back (woke up, came into range): try now
+                # rather than at the next scheduled retry.
+                self.retry_remote_now()
+                host = backend.host_name or "the remote engine"
+                if self._remote_restoring or not backend.last_error:
+                    return f"Connecting to {host}..."
+                return f"{backend.last_error} Trying again..."
             if backend.is_model_missing:
                 self.ensure_local_model_available()
             elif backend.should_cancel or not backend.last_error:
@@ -957,11 +1002,137 @@ class ApplicationController(QObject):
     def _on_remote_pairing_changed(self) -> None:
         """Reconnect the Remote engine after pairing or forgetting a host."""
         if self._current_model_name == "remote":
+            self._cancel_remote_retry()
             self.reload_whisper_model()
             return
         remote = self.transcription_backends.get("remote")
         if remote is not None:
             remote.cleanup()
+
+    def _on_local_engine_settings_changed(self) -> None:
+        """A local engine's model, device or quantization changed in Settings."""
+        if self._selected_remote() is not None:
+            # They apply to this computer's engines, which Remote isn't using.
+            return
+        self.reload_whisper_model()
+
+    # ---- remote engine: watching the connection ----
+
+    def _selected_remote(self):
+        """The Remote engine while it is the selected one, else None."""
+        backend = self.current_backend
+        return backend if getattr(backend, "is_remote", False) else None
+
+    def _watch_remote(self) -> None:
+        """Start the link watch while Remote is selected; its tick stops it after."""
+        if self._selected_remote() is not None and not self._remote_watch.isActive():
+            self._remote_watch.start()
+        self._publish_remote_link()
+
+    def _on_remote_watch(self) -> None:
+        remote = self._selected_remote()
+        if remote is None:
+            self._remote_watch.stop()
+            self._cancel_remote_retry()
+            self._remote_link = None
+            return
+        if remote.check_link():
+            # Closed between requests: say so now, not at the next recording.
+            self.device_info_update.emit(remote.device_info, False)
+            self._schedule_remote_retry()
+        self._publish_remote_link()
+
+    def _publish_remote_link(self) -> None:
+        """Hand the engine card a fresh RemoteLink when it reads differently."""
+        remote = self._selected_remote()
+        if remote is None:
+            return
+        from dataclasses import replace
+
+        link = replace(remote.link(), retry_at=self._remote_retry_at)
+        if link != self._remote_link:
+            self._remote_link = link
+            self.ui_controller.set_remote_link(link)
+
+    def _schedule_remote_retry(self) -> None:
+        """Try the host again after the next backoff delay, unless already due."""
+        remote = self._selected_remote()
+        if (remote is None or remote.is_available() or self._remote_restoring
+                or self._remote_retry_timer.isActive()):
+            return
+        if remote.link().state == "unpaired":
+            return
+        delays = REMOTE_RETRY_DELAYS_S
+        delay = delays[min(self._remote_retry_step, len(delays) - 1)]
+        self._remote_retry_step += 1
+        self._remote_retry_at = time.monotonic() + delay
+        self._remote_retry_timer.start(int(delay * 1000))
+        self._watch_remote()
+
+    def _cancel_remote_retry(self) -> None:
+        self._remote_retry_timer.stop()
+        self._remote_retry_at = None
+        self._remote_retry_step = 0
+
+    def retry_remote_now(self) -> None:
+        """Reconnect to the paired computer now. Safe from any thread."""
+        self.remote_retry_requested.emit()
+
+    def _retry_remote(self) -> None:
+        remote = self._selected_remote()
+        if remote is None or self._remote_restoring or self._reload_in_flight or self._reload_pending:
+            return
+        self._remote_retry_timer.stop()
+        self._remote_retry_at = None
+        if remote.is_available():
+            self._cancel_remote_retry()
+            self._publish_remote_link()
+            return
+        self._remote_restoring = True
+        self._publish_remote_link()
+        threading.Thread(
+            target=self._remote_restore_worker, args=(remote,),
+            name="remote-reconnect", daemon=True,
+        ).start()
+
+    def _remote_restore_worker(self, remote) -> None:
+        try:
+            outcome = remote.restore_link()
+        except Exception:
+            logger.exception("Remote engine reconnect failed")
+            outcome = "offline"
+        self.remote_settled.emit(outcome)
+
+    def _on_remote_settled(self, outcome: str) -> None:
+        """A reconnect attempt or a reload of the Remote engine ended (Qt thread)."""
+        if outcome != "reload":
+            self._remote_restoring = False
+        remote = self._selected_remote()
+        if remote is None:
+            return
+        available = remote.is_available()
+        if outcome != "reload" and (available or outcome == "changed"
+                                    or remote.device_info != self._remote_reported):
+            # A reload reports its own result; a quiet retry only when it
+            # changed something, so a host that stays away doesn't clear the
+            # status line every minute.
+            self.device_info_update.emit(remote.device_info, available)
+        self._remote_reported = remote.device_info
+        if available:
+            self._cancel_remote_retry()
+            if outcome != "reload":
+                # The preview may be waiting for a first connection, or be
+                # built for another engine than the host runs now.
+                self._pending_streaming_setup = True
+                self._flush_pending_streaming_setup()
+        elif outcome != "unpaired":
+            self._schedule_remote_retry()
+        self._watch_remote()
+
+    def _on_remote_host_event(self, kind: str) -> None:
+        """Host: which paired computers are connected, and busy (any thread)."""
+        if kind in ("clients", "activity", "state"):
+            self.remote_clients_changed.emit(self.remote_engine.connected_clients())
 
     def _prune_update_leftovers(self) -> None:
         """Collect the downloads and transactions an earlier update left behind."""
@@ -1405,8 +1576,11 @@ class ApplicationController(QObject):
         """
         from transcriber.optional_backend import LocalSpeechBackend
         from services.local_asr.catalog import RUNTIME_IDS
+        # A remote engine runs on the host, so nothing installed here changes it.
+        remote = self._selected_remote() is not None
         if success and component_id in RUNTIME_IDS and isinstance(self.current_backend, LocalSpeechBackend):
-            self.reload_whisper_model()
+            if not remote:
+                self.reload_whisper_model()
             return
         if not success or component_id != ComponentId.GPU_ACCEL:
             return
@@ -1431,6 +1605,8 @@ class ApplicationController(QObject):
             and getattr(backend, "device", None) == "cuda"
         ):
             return  # already on the GPU (e.g. a component update)
+        if remote:
+            return  # Local Whisper picks the GPU up when it next loads
 
         self.reload_whisper_model()
 
@@ -1510,7 +1686,9 @@ class ApplicationController(QObject):
         if success:
             self._prompt_for_model_runtime(model_name)
         if success and isinstance(self.current_backend, LocalSpeechBackend):
-            if self.current_backend.model_name == model_name:
+            # A remote engine's model_name is the host's, and downloading the
+            # same model here doesn't change what the host runs.
+            if self.current_backend.model_name == model_name and self._selected_remote() is None:
                 self.reload_whisper_model()
             return
         if not success or model_name != "tiny.en":
@@ -1933,6 +2111,11 @@ class ApplicationController(QObject):
         self.runtime_consent_requested.connect(self._prompt_for_model_runtime)
         self.remote_pairing_changed.connect(self._on_remote_pairing_changed)
         self.client_model_switch_requested.connect(self._on_client_model_switch)
+        self.remote_link_poke.connect(self._publish_remote_link)
+        self.remote_settled.connect(self._on_remote_settled)
+        self.remote_retry_requested.connect(self._retry_remote)
+        self.remote_clients_changed.connect(self.ui_controller.set_remote_clients)
+        self.ui_controller.on_remote_retry = self.retry_remote_now
         self.status_update.connect(self.ui_controller.set_status)
         self.device_info_update.connect(self.ui_controller.set_device_info)
         self.engine_busy_changed.connect(self.ui_controller.set_engine_busy)

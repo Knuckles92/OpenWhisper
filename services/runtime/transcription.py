@@ -96,7 +96,20 @@ class TranscriptionRuntime:
                 return False
             self._job_active = True
             self._cancel_requested.clear()
-            return True
+        self._rearm_remote_engine()
+        return True
+
+    def _rearm_remote_engine(self) -> None:
+        """Clear a remote engine's cancel once no job it was meant for is left.
+
+        A local engine is reloaded after a cancel, which clears the flag. A
+        remote one keeps its connection instead
+        (RemoteSpeechBackend.cancel_transcription), so the next recording or
+        job clears it; by then the canceled job has given up the slot.
+        """
+        backend = getattr(self.controller, "current_backend", None)
+        if getattr(backend, "is_remote", False) and backend.should_cancel:
+            backend.reset_cancel_flag()
 
     def _finish_job(self) -> None:
         with self._job_lock:
@@ -130,6 +143,8 @@ class TranscriptionRuntime:
             return False
         if self.controller.recorder.is_recording:
             return False
+        # Before the preview and early decoding look at the engine.
+        self._rearm_remote_engine()
         settings = settings_manager.load_all_settings() if profile_id else None
         profile = find_cleanup_profile(settings, profile_id) if profile_id else None
         if profile_id and profile is None:
@@ -858,11 +873,17 @@ class TranscriptionRuntime:
             self.controller.overlay_state_update.emit(OverlayState.TRANSCRIBING)
             self.controller.status_update.emit("Transcribing...")
             self.controller._transcription_start_time = time.time()
-            raw = self._incremental.transcribe(self.controller.current_backend, audio_path)
+            backend = self.controller.current_backend
+            # Windows decoded while recording aren't this pass's time, so
+            # only the requests from here on count toward the stats line.
+            mark = backend.timing_mark() if getattr(backend, "is_remote", False) else None
+            raw = self._incremental.transcribe(backend, audio_path)
             self.controller._transcription_elapsed = (
                 time.time() - self.controller._transcription_start_time
             )
             self.controller._transcription_start_time = None
+            if mark is not None:
+                self.controller._remote_timing = backend.timing_since(mark)
             self._complete_preview_fallback(audio_path, raw)
             self._raise_if_canceled()
             fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(raw)
@@ -997,6 +1018,8 @@ class TranscriptionRuntime:
         if transcription_time is None and self.controller._transcription_start_time is not None:
             transcription_time = time.time() - self.controller._transcription_start_time
             self.controller._transcription_start_time = None
+        remote_timing = getattr(self.controller, "_remote_timing", None)
+        self.controller._remote_timing = None
 
         cleanup_time = (
             cleanup_info.elapsed_s
@@ -1010,6 +1033,7 @@ class TranscriptionRuntime:
                 self.controller._pending_audio_duration or 0.0,
                 self.controller._pending_file_size or 0,
                 cleanup_time=cleanup_time,
+                remote=remote_timing,
             )
 
         source_name = getattr(self.controller, "_pending_source_name", None)
@@ -1200,6 +1224,7 @@ class TranscriptionRuntime:
         self.controller.overlay_state_update.emit(OverlayState.NONE)
         self.controller._transcription_start_time = None
         self.controller._transcription_elapsed = None
+        self.controller._remote_timing = None
         self.controller.ui_controller.discard_clipboard_prefetch()
         self._clear_pending_audio_metadata()
         self._finish_job()

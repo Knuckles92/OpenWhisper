@@ -27,6 +27,13 @@ FALLBACK_CONNECT_TIMEOUT_S = 2.5
 #: Waiting for ``ready``/``paired`` after the socket opens.
 HANDSHAKE_TIMEOUT_S = 10.0
 PROBE_TIMEOUT_S = 2.0
+#: A paired connection pings the host this often, and closes when a pong
+#: takes longer than the timeout (as websockets' own keepalive would).
+KEEPALIVE_INTERVAL_S = 20.0
+KEEPALIVE_TIMEOUT_S = 20.0
+#: How often a request waiting on the host checks for a cancel, which keeps
+#: the connection and so can't interrupt the read the way closing it did.
+_REQUEST_POLL_S = 0.05
 
 
 class RemoteEngineError(RuntimeError):
@@ -82,8 +89,10 @@ def _open(host: str, port: int, timeout: float):
             close_timeout=2,
             max_size=protocol.MAX_REPLY_BYTES,
             compression=None,
-            ping_interval=20,
-            ping_timeout=20,
+            # RemoteConnection keeps a paired connection alive itself (see
+            # _heartbeat); probes and pairing close within seconds.
+            ping_interval=None,
+            ping_timeout=None,
             logger=logging.getLogger("websockets.remote_engine"),
         )
     except InvalidStatus as exc:
@@ -227,6 +236,10 @@ class RemoteConnection:
     with a different certificate, which is what a laptop away from home
     sees at its home LAN address. The token is only ever sent after the
     pinned certificate matches, whichever address answered.
+
+    websockets reads close frames on its own thread, and ``_heartbeat``
+    pings every 20 s, so ``alive``, ``latency`` and ``beats`` describe the
+    socket between requests without anything more going over it.
     """
 
     #: The address that last worked for each host certificate, tried first
@@ -245,8 +258,13 @@ class RemoteConnection:
         self._lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._serial = 0
+        #: Requests up to this serial were given up on; their replies are skipped.
+        self._abandoned = 0
         self._closed = False
+        self._stopped = threading.Event()
         self._ws = None
+        self._rtt: Optional[float] = None
+        self._beats = 0
         self.ready: dict = {}
 
     @property
@@ -256,6 +274,45 @@ class RemoteConnection:
     @property
     def closed(self) -> bool:
         return self._closed
+
+    @property
+    def alive(self) -> bool:
+        """Open as far as this computer can tell, without sending anything.
+
+        A host that quits or stops sharing closes the socket at once; one
+        that sleeps or leaves the network is noticed when a keepalive ping
+        goes unanswered, 20 to 40 s later.
+        """
+        from websockets.protocol import State
+
+        ws = self._ws
+        return not self._closed and ws is not None and ws.state is State.OPEN
+
+    @property
+    def latency(self) -> Optional[float]:
+        """The last keepalive's round trip in seconds; None before one returns."""
+        return self._rtt
+
+    @property
+    def beats(self) -> int:
+        """Keepalive pongs so far: one right after connecting, then every 20 s."""
+        return self._beats
+
+    @property
+    def via_tailscale(self) -> bool:
+        """Whether the address that answered is on the tailnet.
+
+        Judged by the peer's IP rather than the name paired with, which may
+        be a MagicDNS name or a LAN host name.
+        """
+        from services.remote_asr.tailscale import is_tailscale_address
+
+        ws = self._ws
+        try:
+            peer = ws.remote_address[0] if ws is not None else self.host
+        except (AttributeError, IndexError, OSError, TypeError):
+            peer = self.host
+        return is_tailscale_address(peer)
 
     def _candidates(self) -> tuple:
         with self._last_good_lock:
@@ -320,9 +377,51 @@ class RemoteConnection:
             self._ws = ws
             self.host = host
         self.ready = reply
+        threading.Thread(
+            target=self._heartbeat, args=(ws,), name="remote-engine-keepalive", daemon=True,
+        ).start()
         return reply
 
+    def _heartbeat(self, ws) -> None:
+        """Ping now and every KEEPALIVE_INTERVAL_S, timing each pong.
+
+        This stands in for websockets' own keepalive, which times pongs with
+        time.monotonic(): on Windows before Python 3.13 that ticks every
+        15.6 ms, so a home network's round trip always read 0. A pong missing
+        for KEEPALIVE_TIMEOUT_S closes the connection, as websockets' would.
+        """
+        from websockets.protocol import State
+
+        while not self._stopped.is_set():
+            started = time.perf_counter()
+            try:
+                try:
+                    pong = ws.ping(ack_on_close=True)
+                except TypeError:  # websockets before ack_on_close
+                    pong = ws.ping()
+            except Exception:
+                return  # closed
+            answered = pong.wait(KEEPALIVE_TIMEOUT_S)
+            if self._stopped.is_set() or ws.state is not State.OPEN:
+                return
+            if not answered:
+                logger.info("Remote engine at %s missed a keepalive ping; closing", self.where)
+                self._mark_closed()
+                return
+            with self._state_lock:
+                self._rtt = time.perf_counter() - started
+                self._beats += 1
+            self._stopped.wait(KEEPALIVE_INTERVAL_S)
+
     def request(self, op: str, *, timeout: float = 180.0, audio=None, **fields) -> dict:
+        return self.request_timed(op, timeout=timeout, audio=audio, **fields)[0]
+
+    def request_timed(self, op: str, *, timeout: float = 180.0, audio=None,
+                      **fields) -> tuple[dict, Optional[float]]:
+        """``request``, plus the seconds the host says it spent on it.
+
+        The host's time is None from a host too old to report it.
+        """
         from websockets.exceptions import ConnectionClosed
 
         with self._lock:
@@ -341,6 +440,8 @@ class RemoteConnection:
                 ) from exc
             deadline = time.monotonic() + timeout
             while True:
+                if self._abandoned >= serial:
+                    raise RuntimeError("Transcription canceled")
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     self.close()
@@ -348,7 +449,7 @@ class RemoteConnection:
                         f"The remote engine on {self.where} timed out; the connection was closed."
                     )
                 try:
-                    raw = ws.recv(timeout=min(0.25, remaining))
+                    raw = ws.recv(timeout=min(_REQUEST_POLL_S, remaining))
                 except TimeoutError:
                     if self._closed:
                         raise RuntimeError("Transcription canceled")
@@ -366,6 +467,8 @@ class RemoteConnection:
                     reply = json.loads(raw)
                 except (TypeError, ValueError):
                     continue
+                # A reply to an abandoned request arrives late and is skipped
+                # here, by the next request, since its id is older.
                 if not isinstance(reply, dict) or reply.get("id") != serial:
                     continue
                 if reply.get("code") == "engine_changed":
@@ -374,12 +477,25 @@ class RemoteConnection:
                 if "error" in reply:
                     raise RuntimeError(str(reply["error"]))
                 result = reply.get("result")
-                return result if isinstance(result, dict) else {}
+                host_ms = reply.get("host_ms")
+                host_s = host_ms / 1000 if isinstance(host_ms, (int, float)) and host_ms >= 0 else None
+                return (result if isinstance(result, dict) else {}), host_s
+
+    def abandon(self) -> None:
+        """Stop waiting for the request in flight, but keep the connection.
+
+        What a cancel does: the host finishes that request either way, since
+        a disconnect doesn't interrupt a decode, so closing would only cost
+        the next dictation a reconnect.
+        """
+        with self._state_lock:
+            self._abandoned = self._serial
 
     def _mark_closed(self) -> None:
         with self._state_lock:
             self._closed = True
             ws, self._ws = self._ws, None
+        self._stopped.set()
         if ws is not None:
             _quiet_close(ws)
 

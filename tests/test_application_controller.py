@@ -56,7 +56,13 @@ class _QTimer:
     def setSingleShot(self, single_shot):
         self.single_shot = single_shot
 
-    def start(self, _interval):
+    def setInterval(self, _interval):
+        pass
+
+    def isActive(self):
+        return False
+
+    def start(self, _interval=None):
         pass
 
     def stop(self):
@@ -609,6 +615,12 @@ class DummyUIController:
         self.device_infos.append(device_info)
         self.device_ready_states.append(ready)
 
+    def set_remote_link(self, link):
+        self.remote_link = link
+
+    def set_remote_clients(self, clients):
+        self.remote_clients = clients
+
     def set_engine_busy(self, busy):
         self.engine_busy_states.append(busy)
         if not busy:
@@ -672,9 +684,11 @@ class DummyUIController:
         self.copied.append(text)
         return True
 
-    def set_transcription_stats(self, transcription_time, audio_duration, file_size, cleanup_time=None):
+    def set_transcription_stats(self, transcription_time, audio_duration, file_size, cleanup_time=None,
+                                remote=None):
         self.stats = (transcription_time, audio_duration, file_size)
         self.cleanup_time = cleanup_time
+        self.remote_timing = remote
 
     def refresh_history(self):
         self.refreshed_history = True

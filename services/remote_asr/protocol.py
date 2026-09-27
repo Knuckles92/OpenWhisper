@@ -10,7 +10,8 @@ local speech worker takes over stdin (services/local_asr/worker.py):
 ``models``, and ``select_model`` (``family``, ``model``) switches it and
 answers once the model has loaded; the client then reconnects. Hosts from
 before model switching send no ``models`` and answer ``select_model`` with
-an unknown-operation error.
+an unknown-operation error. A successful reply carries ``host_ms``, the time
+the host spent on the request, which older hosts leave out.
 
 A request frame is a 4-byte big-endian header length, the JSON header, then
 the audio as 16 kHz mono signed 16-bit little-endian PCM. Dictation audio is

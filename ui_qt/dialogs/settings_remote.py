@@ -695,5 +695,8 @@ class RemoteEngineSection(QObject):
             self._service.remove_device(device_id)
             self.refresh()
 
-    def _on_service_event(self, _kind: str) -> None:
-        self.refresh()
+    def _on_service_event(self, kind: str) -> None:
+        # "activity" fires around every request a paired computer makes, and
+        # nothing on this page shows it.
+        if kind != "activity":
+            self.refresh()

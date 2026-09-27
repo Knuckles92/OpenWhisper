@@ -147,6 +147,8 @@ class _Client:
     address: str
     connected_at: float
     ws: object = None
+    #: Decoding one of this client's requests right now.
+    busy: bool = False
 
 
 class SpeechHost:
@@ -290,9 +292,18 @@ class SpeechHost:
     def connected_clients(self) -> List[dict]:
         with self._lock:
             return [
-                {"device_id": c.device_id, "name": c.name, "address": c.address}
+                {"device_id": c.device_id, "name": c.name, "address": c.address,
+                 "busy": c.busy}
                 for c in self._clients.values()
             ]
+
+    def _set_busy(self, connection_id: str, busy: bool) -> None:
+        with self._lock:
+            client = self._clients.get(connection_id)
+            if client is None or client.busy == busy:
+                return
+            client.busy = busy
+        self._emit("activity", {"name": client.name, "busy": busy})
 
     def remove_device(self, device_id: str) -> bool:
         """Forget a device and drop its open connections."""
@@ -554,6 +565,10 @@ class SpeechHost:
         op = header.get("op")
         language = header.get("language")
         language = language if isinstance(language, str) else None
+        decodes = op in ("transcribe", "stream")
+        if decodes:
+            self._set_busy(connection_id, True)
+        started = time.perf_counter()
         try:
             if op == "transcribe":
                 result = current.transcribe(audio, language)
@@ -580,7 +595,13 @@ class SpeechHost:
                 raise ValueError(f"Unknown operation: {op!r}")
         except Exception as exc:
             return {"id": request_id, "error": str(exc) or type(exc).__name__}
-        return {"id": request_id, "result": result}
+        finally:
+            if decodes:
+                self._set_busy(connection_id, False)
+        # Time spent here, including any wait behind this computer's own
+        # dictation, so the client can tell it apart from the network's.
+        host_ms = round((time.perf_counter() - started) * 1000, 1)
+        return {"id": request_id, "result": result, "host_ms": host_ms}
 
     def _switch_model(self, request_id, header: dict, device_name: str) -> dict:
         """Load the model a client chose, as if it were picked on this computer.

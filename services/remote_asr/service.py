@@ -367,6 +367,16 @@ class RemoteEngineService:
         self._notify("devices")
         return removed
 
+    def connected_clients(self) -> List[dict]:
+        """The paired computers connected now, each with whether it's being served.
+
+        What ``host_state()["clients"]`` lists, without the rest of the state,
+        so it is cheap enough to ask on every ``activity`` event.
+        """
+        with self._lock:
+            host = self._host
+        return host.connected_clients() if host is not None and host.running else []
+
     def host_state(self) -> dict:
         from services.remote_asr.host import DeviceRegistry
 

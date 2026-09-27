@@ -1,10 +1,25 @@
 from typing import Optional
 
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
-from services.format_utils import format_audio_duration, format_file_size
+from services.format_utils import format_audio_duration, format_file_size, format_short_duration
+
+
+def remote_timing_text(remote) -> str:
+    """Where a remote engine's pass went, as "on jed · 31 ms network".
+
+    ``remote`` is a ``RemoteTiming`` or None. The network share is only shown
+    when the host timed every request (older hosts don't).
+    """
+    if remote is None or not remote.host:
+        return ""
+    text = f"on {remote.host}"
+    network = remote.network_s
+    if network is not None and remote.requests:
+        text += f" · {format_short_duration(network)} network"
+    return text
 
 
 class TranscriptionStatsWidget(QWidget):
@@ -27,7 +42,17 @@ class TranscriptionStatsWidget(QWidget):
             "Transcription Time",
             "--"
         )
-        main_layout.addWidget(self.transcription_time_widget)
+        # Which computer did the work, under the time, for a remote engine.
+        detail = QLabel()
+        detail.setObjectName("statsRemoteDetail")
+        detail.setFont(QFont("Segoe UI", 9))
+        detail.setStyleSheet("color: @accent;")
+        detail.hide()
+        self.transcription_time_widget.layout().addWidget(detail)
+        self.transcription_time_widget.detail_label = detail
+        # Top-aligned, so the labels and values stay in line and the detail
+        # hangs below the time.
+        main_layout.addWidget(self.transcription_time_widget, 0, Qt.AlignmentFlag.AlignTop)
 
         main_layout.addWidget(self._create_separator())
 
@@ -35,7 +60,7 @@ class TranscriptionStatsWidget(QWidget):
             "Audio Duration",
             "--"
         )
-        main_layout.addWidget(self.audio_duration_widget)
+        main_layout.addWidget(self.audio_duration_widget, 0, Qt.AlignmentFlag.AlignTop)
 
         main_layout.addWidget(self._create_separator())
 
@@ -43,7 +68,7 @@ class TranscriptionStatsWidget(QWidget):
             "File Size",
             "--"
         )
-        main_layout.addWidget(self.file_size_widget)
+        main_layout.addWidget(self.file_size_widget, 0, Qt.AlignmentFlag.AlignTop)
 
         main_layout.addStretch()
 
@@ -81,10 +106,14 @@ class TranscriptionStatsWidget(QWidget):
         audio_duration: float,
         file_size: int,
         cleanup_time: Optional[float] = None,
+        remote=None,
     ):
         self.transcription_time_widget.value_label.setText(
             format_audio_duration(transcription_time)
         )
+        detail = remote_timing_text(remote)
+        self.transcription_time_widget.detail_label.setText(detail)
+        self.transcription_time_widget.detail_label.setVisible(bool(detail))
         self.audio_duration_widget.value_label.setText(
             format_audio_duration(audio_duration)
         )
@@ -96,6 +125,8 @@ class TranscriptionStatsWidget(QWidget):
 
     def clear(self):
         self.transcription_time_widget.value_label.setText("--")
+        self.transcription_time_widget.detail_label.clear()
+        self.transcription_time_widget.detail_label.hide()
         self.audio_duration_widget.value_label.setText("--")
         self.file_size_widget.value_label.setText("--")
         self.hide()

@@ -46,6 +46,21 @@ def format_audio_duration(seconds: float) -> str:
     return f"{minutes}m {secs}s"
 
 
+def format_short_duration(seconds: float) -> str:
+    """Milliseconds below a second (``"31 ms"``), else ``format_audio_duration``.
+
+    For network round trips, where tenths of a second would round everything
+    on a home network to ``"0.0s"``.
+    """
+    try:
+        value = max(0.0, float(seconds))
+    except (TypeError, ValueError):
+        value = 0.0
+    if value < 1:
+        return f"{value * 1000:.0f} ms"
+    return format_audio_duration(value)
+
+
 def format_size_bytes(size_bytes: int) -> str:
     """Format advertised/download sizes with decimal units."""
     if size_bytes >= 1_000_000_000:

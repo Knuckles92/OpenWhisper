@@ -269,6 +269,8 @@ class MainWindow(QMainWindow):
     # The Remote backend's Model field chose one of the paired computer's
     # models: (family, model).
     remote_model_selected = pyqtSignal(str, str)
+    # The Remote engine's link was clicked while the host was out of reach.
+    remote_retry_requested = pyqtSignal()
     live_preview_changed = pyqtSignal()  # Live preview toggled from a tab footer
     settings_requested = pyqtSignal()
     #: A Settings destination key (or legacy alias) to open.
@@ -431,6 +433,7 @@ class MainWindow(QMainWindow):
             tab.model_changed.connect(self._on_model_changed)
             tab.engine_settings_changed.connect(self._on_engine_settings_changed)
             tab.remote_model_selected.connect(self.remote_model_selected)
+            tab.remote_retry_requested.connect(self.remote_retry_requested)
             tab.live_preview_changed.connect(self._on_live_preview_changed)
             tab.help_requested.connect(self.engine_help_requested)
             tab.engine_downloads_requested.connect(
@@ -848,6 +851,14 @@ class MainWindow(QMainWindow):
         for tab in self.transcription_tabs:
             tab.set_remote_models(choices)
 
+    def set_remote_link(self, link):
+        for tab in self.transcription_tabs:
+            tab.set_remote_link(link)
+
+    def set_remote_clients(self, clients):
+        for tab in self.transcription_tabs:
+            tab.set_remote_clients(clients)
+
     def set_transcript(self, text: str, raw=None):
         self.quick_record_tab.set_transcript(text, raw=raw)
 
@@ -869,9 +880,10 @@ class MainWindow(QMainWindow):
         audio_duration: float,
         file_size: int,
         cleanup_time: Optional[float] = None,
+        remote=None,
     ):
         self.quick_record_tab.set_transcription_stats(
-            transcription_time, audio_duration, file_size, cleanup_time
+            transcription_time, audio_duration, file_size, cleanup_time, remote=remote
         )
 
     def clear_transcription_stats(self):

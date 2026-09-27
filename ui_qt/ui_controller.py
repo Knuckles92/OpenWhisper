@@ -156,6 +156,8 @@ class UIController(QObject):
         # where a choice goes, as (family, model).
         self.get_remote_models: Optional[Callable] = None
         self.on_remote_model_selected: Optional[Callable[[str, str], None]] = None
+        # Reconnect to the paired computer now (the link was clicked).
+        self.on_remote_retry: Optional[Callable[[], None]] = None
         self.get_missing_local_runtime: Optional[Callable[[], Optional[str]]] = None
 
         self.on_component_install: Optional[Callable] = None
@@ -210,6 +212,7 @@ class UIController(QObject):
         self.main_window.model_changed.connect(self._on_model_changed)
         self.main_window.whisper_engine_changed.connect(self._on_whisper_engine_changed)
         self.main_window.remote_model_selected.connect(self._on_remote_model_selected)
+        self.main_window.remote_retry_requested.connect(self._on_remote_retry)
         self.main_window.live_preview_changed.connect(self._on_live_preview_changed)
         self.main_window.settings_requested.connect(self.open_settings_dialog)
         self.main_window.engine_help_requested.connect(self.open_engine_help_destination)
@@ -461,6 +464,18 @@ class UIController(QObject):
         if self.on_remote_model_selected:
             self.on_remote_model_selected(family, model)
 
+    def set_remote_link(self, link) -> None:
+        """The Remote engine's connection (a RemoteLink), for the engine card."""
+        self.main_window.set_remote_link(link)
+
+    def set_remote_clients(self, clients) -> None:
+        """Host: the paired computers connected to this one's engine now."""
+        self.main_window.set_remote_clients(clients)
+
+    def _on_remote_retry(self) -> None:
+        if self.on_remote_retry:
+            self.on_remote_retry()
+
     def set_engine_busy(self, busy: bool):
         """Disable/enable the inline local-engine combos during a reload.
 
@@ -482,14 +497,16 @@ class UIController(QObject):
         audio_duration: float,
         file_size: int,
         cleanup_time: Optional[float] = None,
+        remote=None,
     ):
+        """``remote`` is where a remote engine spent the time (a RemoteTiming)."""
         if self._transcription_source_tab == TabbedContentWidget.TAB_UPLOAD_FILE:
             self.main_window.upload_file_tab.set_transcription_stats(
-                transcription_time, audio_duration, file_size, cleanup_time
+                transcription_time, audio_duration, file_size, cleanup_time, remote=remote
             )
         else:
             self.main_window.set_transcription_stats(
-                transcription_time, audio_duration, file_size, cleanup_time
+                transcription_time, audio_duration, file_size, cleanup_time, remote=remote
             )
 
     def clear_transcription_stats(self):

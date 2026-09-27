@@ -217,7 +217,10 @@ class StreamingRuntime:
             if native:
                 # The engine keeps its own decoder state, so the chunk-duration
                 # setting (a window size) does not apply here.
-                self._warmup_native_stream(streaming_backend)
+                if not getattr(streaming_backend, "is_remote", False):
+                    # A remote host's first push is its own process's cost,
+                    # and waiting on the network here would block the Qt thread.
+                    self._warmup_native_stream(streaming_backend)
                 self.controller.streaming_transcriber = NativeStreamingTranscriber(
                     backend=streaming_backend,
                     update_interval_sec=config.STREAMING_NATIVE_UPDATE_SEC,

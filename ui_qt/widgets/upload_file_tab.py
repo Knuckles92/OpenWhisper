@@ -27,7 +27,7 @@ from services.batch_upload import (
     BatchResult,
     BatchUploadRequest,
 )
-from services.format_utils import format_audio_duration, format_sample_rate
+from services.format_utils import format_audio_duration, format_sample_rate, format_short_duration
 from services.runtime.transcription import EMPTY_ASR_MESSAGE
 from services.settings import (
     SettingsKey,
@@ -918,18 +918,31 @@ class FileInfoCard(QFrame):
         transcription_time: float,
         audio_duration: float,
         cleanup_time: Optional[float] = None,
+        remote=None,
     ):
-        """Show how long the job took, and how that compares to the audio."""
+        """Show how long the job took, and how that compares to the audio.
+
+        ``remote`` (a RemoteTiming) names the computer that did it.
+        """
         segments = [
             ("Transcribed in ", False),
             (format_audio_duration(transcription_time), True),
         ]
+        if remote is not None and remote.host:
+            segments.append((f" on {remote.host}", False))
         if transcription_time > 0 and audio_duration > 0:
             speed = audio_duration / transcription_time
             segments += [
                 ("  ·  ", False),
                 (f"{speed:.1f}×", True),
                 (" realtime", False),
+            ]
+        network = remote.network_s if remote is not None and remote.requests else None
+        if network is not None:
+            segments += [
+                ("  ·  ", False),
+                (format_short_duration(network), True),
+                (" network", False),
             ]
         if cleanup_time is not None and cleanup_time > 0:
             segments += [
@@ -1451,10 +1464,11 @@ class UploadFileTab(TranscriptionTabBase):
         audio_duration: float,
         file_size: int,
         cleanup_time: Optional[float] = None,
+        remote=None,
     ):
         """Report the result in the card; this tab never shows the stats strip."""
         self.file_info_card.set_result(
-            transcription_time, audio_duration, cleanup_time
+            transcription_time, audio_duration, cleanup_time, remote=remote
         )
 
     def clear_transcription_stats(self):
