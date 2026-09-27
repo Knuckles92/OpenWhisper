@@ -179,6 +179,10 @@ Dictate on a laptop while a desktop or home server with a GPU does the transcrip
 
 The host serves the engine selected on it. Traffic is encrypted, and only paired computers can connect; remove one from **Paired computers** to cut it off. Meeting Mode keeps using an engine on the computer running the meeting.
 
+**Manage models from a paired client:** on the host, enable **Allow paired computers to manage models** on the Remote engine page (off by default). On the client, click **Manage host models** to browse the host's speech model catalog, download a model there with progress, or activate a downloaded model whose runtime is ready. Activating a model changes the engine for the host and every connected client; downloading alone does not.
+
+This permission applies to all paired computers. Downloads use the host's network/storage and respect its download policy: choose **Always allow downloads** under **Settings → Downloads** on the host, or download models locally there instead. `HF_HUB_OFFLINE=1` still blocks downloads. Only bundled speech models are accepted, with one remote download at a time. Accepted downloads continue if the client disconnects or permission is disabled, as long as the host app keeps running. This first version does not remotely delete models, install runtimes, or change device/compute settings; configure those on the host. Both computers need a version supporting model management; existing remote dictation and downloaded-model selection remain unchanged.
+
 **With [Tailscale](https://tailscale.com/download)** on both computers, the laptop also works away from home. Computers on your tailnet that are sharing appear under **Computers on your tailnet**. If both are signed in to the same Tailscale account, click **Connect** and no code is needed; anyone else on your tailnet still uses a code. A computer paired at home over the LAN falls back to the host's Tailscale address when the LAN one is out of reach. The host can turn off code-free pairing with **Pair my Tailscale computers without a code**.
 
 ### AI cleanup and meeting intelligence

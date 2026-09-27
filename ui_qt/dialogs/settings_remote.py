@@ -122,10 +122,14 @@ class RemoteEngineSection(QObject):
         self.use_button = PrimaryButton("Use for dictation")
         self.use_button.setObjectName("remoteUseButton")
         self.use_button.clicked.connect(self._use_engine)
+        self.manage_button = Button("Manage host models")
+        self.manage_button.setObjectName("remoteManageModelsButton")
+        self.manage_button.clicked.connect(self._manage_models)
         self.forget_button = Button("Forget host")
         self.forget_button.setObjectName("remoteForgetButton")
         self.forget_button.clicked.connect(self._forget)
         paired_layout.addWidget(self.use_button)
+        paired_layout.addWidget(self.manage_button)
         paired_layout.addWidget(self.forget_button)
         paired_layout.addStretch(1)
         self.client_tile.add_body(self.paired_row)
@@ -197,6 +201,18 @@ class RemoteEngineSection(QObject):
         self.tailscale_tile.setObjectName("remoteTailscaleTile")
         self.tailscale_tile.checkbox.toggled.connect(self._on_tailscale_trust_toggled)
 
+        self.management_tile = SettingTile(
+            "Allow paired computers to manage models",
+            "Off by default. All paired computers can browse the speech model catalog "
+            "and download models onto this computer. Downloads use this computer's network "
+            "and storage and still require its Hugging Face download policy to allow them. "
+            "Turning this off blocks new requests; downloads already started continue. "
+            "Selecting already-downloaded models remains available without this setting.",
+            icon("server-blue.svg"),
+        )
+        self.management_tile.setObjectName("remoteModelManagementTile")
+        self.management_tile.checkbox.toggled.connect(self._on_model_management_toggled)
+
         self.port_spin = NoWheelSpinBox()
         self.port_spin.setObjectName("remotePortSpin")
         self.port_spin.setRange(1024, 65535)
@@ -258,7 +274,7 @@ class RemoteEngineSection(QObject):
         dialog._tile_group(
             layout,
             "Share this computer",
-            [self.share_tile, self.tailscale_tile, self.port_tile, self.devices_tile],
+            [self.share_tile, self.management_tile, self.tailscale_tile, self.port_tile, self.devices_tile],
             columns=1,
         )
         self._built = True
@@ -293,7 +309,7 @@ class RemoteEngineSection(QObject):
             return
         service = self._service
         for widget in (self.client_tile, self.tailnet_tile, self.share_tile,
-                       self.tailscale_tile, self.port_tile, self.devices_tile):
+                       self.management_tile, self.tailscale_tile, self.port_tile, self.devices_tile):
             widget.setEnabled(service is not None)
         if service is None:
             self.client_tile.set_description("The remote engine isn't available in this window.")
@@ -468,6 +484,12 @@ class RemoteEngineSection(QObject):
         blocked = self.port_spin.blockSignals(True)
         self.port_spin.setValue(int(state["port"] or protocol.DEFAULT_PORT))
         self.port_spin.blockSignals(blocked)
+
+        checkbox = self.management_tile.checkbox
+        blocked = checkbox.blockSignals(True)
+        checkbox.setChecked(state.get("model_management") is True)
+        self.management_tile._sync_checked_property(checkbox.isChecked())
+        checkbox.blockSignals(blocked)
 
         running = state["running"]
         where = protocol.format_address(state["address"] or state["host_name"], state["port"])
@@ -668,6 +690,18 @@ class RemoteEngineSection(QObject):
             if pairing is not None:
                 self._say(f"Dictation now uses {pairing.host_name}'s engine.")
 
+    def _manage_models(self) -> None:
+        if self._service is None:
+            return
+        pairing = self._service.client_pairing()
+        if pairing is None:
+            return
+        from ui_qt.dialogs.remote_models import RemoteModelsDialog
+
+        dialog = RemoteModelsDialog(self._service, pairing.host_name, self.client_tile.window())
+        dialog.exec()
+        dialog.deleteLater()
+
     def _forget(self) -> None:
         if self._service is not None:
             self._service.forget_host()
@@ -677,6 +711,10 @@ class RemoteEngineSection(QObject):
     def _on_share_toggled(self, checked: bool) -> None:
         if self._service is not None:
             self._service.set_host_enabled(checked)
+
+    def _on_model_management_toggled(self, checked: bool) -> None:
+        if self._service is not None:
+            self._service.set_model_management(checked)
 
     def _on_tailscale_trust_toggled(self, checked: bool) -> None:
         if self._service is not None:

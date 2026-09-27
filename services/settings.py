@@ -172,6 +172,8 @@ class SettingsKey:
     # stored as token digests.
     REMOTE_ENGINE_CLIENT: Final[str] = "remote_engine_client"
     REMOTE_HOST_ENABLED: Final[str] = "remote_host_enabled"
+    # Explicit host opt-in for catalog access and model downloads by paired devices.
+    REMOTE_HOST_MODEL_MANAGEMENT: Final[str] = "remote_host_model_management"
     REMOTE_HOST_PORT: Final[str] = "remote_host_port"
     REMOTE_HOST_DEVICES: Final[str] = "remote_host_devices"
     # Let computers signed in to the same Tailscale account pair without a code.

@@ -141,6 +141,13 @@ def host_enabled(settings: Optional[Dict[str, Any]] = None) -> bool:
     return _settings(settings).get(SettingsKey.REMOTE_HOST_ENABLED) is True
 
 
+def host_model_management(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """Off by default; pairing alone never grants model administration."""
+    from services.settings import SettingsKey
+
+    return _settings(settings).get(SettingsKey.REMOTE_HOST_MODEL_MANAGEMENT) is True
+
+
 def host_port(settings: Optional[Dict[str, Any]] = None) -> int:
     from services.settings import SettingsKey
 

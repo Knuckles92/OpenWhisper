@@ -102,6 +102,9 @@ class RemoteEngineService:
         self._tailscale: Optional[tailscale.TailscaleStatus] = None
         self._tailscale_at = 0.0
         self._tailscale_refreshing = False
+        from services.remote_asr.model_management import HostModelManager
+
+        self._model_manager = HostModelManager(lambda: self._notify("models"))
 
     # ---- listeners ----
 
@@ -261,8 +264,29 @@ class RemoteEngineService:
                 addresses=self._host_addresses,
                 models=self.host_models,
                 select_model=self.select_model if self._switch_engine is not None else None,
+                model_management=remote_settings.host_model_management,
+                manage_models=self.manage_host_models,
             )
         return self._host
+
+    def set_model_management(self, enabled: bool) -> None:
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_HOST_MODEL_MANAGEMENT, bool(enabled))
+        self._notify("state")
+
+    def manage_host_models(self, op: str, fields: dict, device_name: str) -> dict:
+        """Authenticated host operations; permission remains host-controlled."""
+        if not remote_settings.host_model_management():
+            raise RuntimeError("Model management is disabled on the host.")
+        if op == "model_catalog":
+            result = self._model_manager.catalog()
+            result["engine"] = self._engine().describe()
+            result["can_select"] = self._switch_engine is not None
+            return result
+        if op == "download_model":
+            return self._model_manager.download(fields.get("family"), fields.get("model"), device_name)
+        raise ValueError("Unknown model management operation.")
 
     def host_models(self) -> List[dict]:
         """What paired clients may switch to; none when switching isn't wired up."""
@@ -419,6 +443,7 @@ class RemoteEngineService:
             "engine": self._engine().describe() if running else None,
             "tailscale": self.tailscale_status(),
             "tailscale_trust": remote_settings.host_tailscale_trust(),
+            "model_management": remote_settings.host_model_management(),
         }
         if running:
             try:
@@ -460,6 +485,37 @@ class RemoteEngineService:
         if self.on_client_changed is not None:
             self.on_client_changed()
         return pairing
+
+    def remote_model_request(self, op: str, **fields) -> dict:
+        """One off-UI-thread management request, separate from dictation.
+
+        No automatic retry: a dropped reply may already have started a download
+        or switched the engine. A fresh catalog read reconciles that state.
+        """
+        from services.remote_asr.client import RemoteConnection, RemoteEngineError
+
+        if op not in ("model_catalog", "download_model", "select_model"):
+            raise ValueError("Unknown model management operation.")
+        pairing = self.client_pairing()
+        token = remote_settings.load_client_token()
+        if pairing is None or not token:
+            raise RemoteEngineError("Pair with a host before managing its models.")
+        connection = RemoteConnection(
+            pairing.host, pairing.port, token, pairing.fingerprint, alternates=pairing.alternates,
+        )
+        try:
+            ready = connection.connect()
+            capabilities = ready.get("capabilities")
+            if not isinstance(capabilities, dict) or "model_management" not in capabilities:
+                raise RemoteEngineError("Update OpenWhisper on the host to manage its models remotely.")
+            if capabilities.get("model_management") is not True:
+                raise RemoteEngineError(
+                    "Model management is disabled on the host. Enable it in Settings → Remote engine there."
+                )
+            return connection.request(op, timeout=SWITCH_TIMEOUT_S + 10 if op == "select_model" else 30,
+                                      **fields)
+        finally:
+            connection.close()
 
     def forget_host(self) -> None:
         remote_settings.forget_client_pairing()

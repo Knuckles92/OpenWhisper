@@ -186,6 +186,8 @@ class SpeechHost:
         addresses: Optional[Callable[[], List[str]]] = None,
         models: Optional[Callable[[], List[dict]]] = None,
         select_model: Optional[Callable[[str, str, str], dict]] = None,
+        model_management: Optional[Callable[[], bool]] = None,
+        manage_models: Optional[Callable[[str, dict, str], dict]] = None,
     ):
         self._engine_provider = engine_provider
         self.registry = registry
@@ -196,6 +198,8 @@ class SpeechHost:
         self._addresses = addresses or (lambda: [])
         self._models = models or (lambda: [])
         self._select_model = select_model
+        self._model_management = model_management or (lambda: False)
+        self._manage_models = manage_models
         self._lock = threading.Lock()
         self._server = None
         self._thread: Optional[threading.Thread] = None
@@ -443,6 +447,13 @@ class SpeechHost:
             logger.warning("Remote engine host couldn't list its models", exc_info=True)
             return []
 
+    def _can_manage_models(self) -> bool:
+        try:
+            return self._manage_models is not None and self._model_management() is True
+        except Exception:
+            logger.warning("Could not read model management permission", exc_info=True)
+            return False
+
     def _tailscale_pairing_owner(self) -> str:
         try:
             return str(self._tailscale_owner() or "")
@@ -547,6 +558,7 @@ class SpeechHost:
             "device": {"id": device["id"], "name": device["name"]},
             "engine": engine.describe(),
             "models": self._model_list(),
+            "capabilities": {"model_management": self._can_manage_models()},
         })
         connection_id = uuid.uuid4().hex[:8]
         with self._lock:
@@ -564,6 +576,11 @@ class SpeechHost:
             for frame in ws:
                 self._set_in_request(connection_id, True)
                 try:
+                    # Recheck revocation before accepting more work, including
+                    # requests already buffered when the device was removed.
+                    if self.registry.authenticate(message.get("token")) is None:
+                        ws.close(protocol.CLOSE_UNAUTHORIZED, "device removed")
+                        break
                     reply = self._dispatch(frame, engine, identity, connection_id, streams, device["name"])
                     self._send(ws, reply)
                 finally:
@@ -590,6 +607,8 @@ class SpeechHost:
         except protocol.ProtocolError as exc:
             return {"id": None, "error": str(exc), "code": "bad_request"}
         request_id = header.get("id")
+        if header.get("op") in ("model_catalog", "download_model"):
+            return self._manage_model_request(request_id, header, device_name)
         if header.get("op") == "select_model":
             # Asked for whatever this computer runs now, so a switch made
             # since this client connected doesn't turn it away.
@@ -641,6 +660,25 @@ class SpeechHost:
         # dictation, so the client can tell it apart from the network's.
         host_ms = round((time.perf_counter() - started) * 1000, 1)
         return {"id": request_id, "result": result, "host_ms": host_ms}
+
+    def _manage_model_request(self, request_id, header: dict, device_name: str) -> dict:
+        # Checked for EVERY request, not just hello: turning the setting off
+        # also denies already-connected clients. Existing model selection is
+        # deliberately unchanged and still works without this opt-in.
+        if not self._can_manage_models():
+            return {"id": request_id, "code": "forbidden", "error":
+                    "Model management is disabled on the host. Enable it in Settings → Remote engine there."}
+        op = header["op"]
+        fields = {"id", "op"} if op == "model_catalog" else {"id", "op", "family", "model"}
+        if set(header) - fields or (op == "download_model" and not all(
+            isinstance(header.get(key), str) and header[key] for key in ("family", "model")
+        )):
+            return {"id": request_id, "code": "bad_request", "error": "Invalid model management request."}
+        try:
+            result = self._manage_models(op, header, device_name)
+        except Exception as exc:
+            return {"id": request_id, "error": str(exc) or type(exc).__name__}
+        return {"id": request_id, "result": result}
 
     def _switch_model(self, request_id, header: dict, device_name: str) -> dict:
         """Load the model a client chose, as if it were picked on this computer.

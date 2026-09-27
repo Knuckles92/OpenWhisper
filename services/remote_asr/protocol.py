@@ -13,6 +13,16 @@ before model switching send no ``models`` and answer ``select_model`` with
 an unknown-operation error. A successful reply carries ``host_ms``, the time
 the host spent on the request, which older hosts leave out.
 
+Opt-in model management is advertised only to authenticated clients as
+``ready.capabilities.model_management`` (missing means unsupported).
+``model_catalog`` returns bundled models, cache/runtime readiness, the active
+engine and the last remote download's progress. ``download_model`` takes
+``family`` and ``model`` from that catalog and acknowledges a host-owned
+background download; poll ``model_catalog`` for completion. Neither operation
+installs runtimes, changes download policy or selects a model. Authorization
+is checked on every request. Accepted downloads continue after disconnect or
+permission changes. These additive operations keep protocol version 1.
+
 A request frame is a 4-byte big-endian header length, the JSON header, then
 the audio as 16 kHz mono signed 16-bit little-endian PCM. Dictation audio is
 recorded as 16-bit and resampled to 16-bit before it is decoded, so the

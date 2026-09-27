@@ -1155,6 +1155,8 @@ class ApplicationController(QObject):
         """Host: which paired computers are connected, and busy (any thread)."""
         if kind in ("clients", "activity", "state"):
             self.remote_clients_changed.emit(self.remote_engine.connected_clients())
+        if kind == "models":
+            self.model_cache_changed.emit()
 
     def _prune_update_leftovers(self) -> None:
         """Collect the downloads and transactions an earlier update left behind."""
