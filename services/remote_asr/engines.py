@@ -1,0 +1,173 @@
+"""What a host serves: a thin view of its selected transcription engine.
+
+``host_engine_for`` wraps the backend the host has selected. The optional
+engines (Parakeet, Nemotron, Qwen3-ASR, Moonshine) already take window
+decodes and stream pushes, so they pass straight through. Local Whisper has
+no worker; its loaded faster-whisper model decodes the window here and
+returns the same ``{text, segments}`` shape the worker does.
+"""
+from __future__ import annotations
+
+import threading
+from typing import Optional
+
+import numpy as np
+
+from config import config
+
+
+class HostEngine:
+    """The interface ``SpeechHost`` calls. Methods run on connection threads."""
+
+    #: Changes when the host switches engine or model; clients reconnect.
+    identity: tuple = ()
+
+    def describe(self) -> dict:
+        raise NotImplementedError
+
+    def transcribe(self, audio: np.ndarray, language: Optional[str]) -> dict:
+        raise NotImplementedError
+
+    def stream(self, session: str, audio: np.ndarray, language: Optional[str], finish: bool) -> dict:
+        raise RuntimeError("The host's engine has no live stream")
+
+    def cancel_stream(self, session: str) -> None:
+        return None
+
+
+class UnavailableEngine(HostEngine):
+    def __init__(self, reason: str):
+        self.reason = reason
+        self.identity = ("unavailable", reason)
+
+    def describe(self) -> dict:
+        return {"family": "", "model": "", "label": "", "device": "",
+                "streaming": False, "available": False, "status": self.reason}
+
+    def transcribe(self, audio, language):
+        raise RuntimeError(self.reason)
+
+
+class SpeechWorkerEngine(HostEngine):
+    """An optional engine's worker, shared with the host's own dictation.
+
+    Requests queue on the backend's decode lock, so a client's decode and the
+    host's own never run on the worker at once.
+    """
+
+    def __init__(self, backend):
+        self.backend = backend
+
+    @property
+    def identity(self) -> tuple:
+        return ("worker", self.backend.backend_id, self.backend.model_name)
+
+    def describe(self) -> dict:
+        from services.local_asr.catalog import MODELS
+
+        backend = self.backend
+        model = MODELS.get(backend.model_name)
+        return {
+            "family": backend.backend_id,
+            "model": backend.model_name,
+            "label": model.label if model else backend.name,
+            "device": backend.device,
+            "streaming": bool(model and model.streaming),
+            "available": backend.is_available(),
+            "status": backend.device_info,
+        }
+
+    def transcribe(self, audio, language):
+        return self.backend.recognize(audio, language)
+
+    def stream(self, session, audio, language, finish):
+        return {"events": self.backend.stream_audio(session, audio, language, finish=finish)}
+
+    def cancel_stream(self, session):
+        self.backend.cancel_stream(session)
+
+
+class WhisperEngine(HostEngine):
+    """Local Whisper's loaded model, decoding one window per request."""
+
+    def __init__(self, backend):
+        self.backend = backend
+        self._lock = threading.Lock()
+
+    @property
+    def identity(self) -> tuple:
+        return ("whisper", self._model_name())
+
+    def _model_name(self) -> str:
+        return self.backend.last_loaded_model or getattr(self.backend, "model_name", "") or ""
+
+    def describe(self) -> dict:
+        backend = self.backend
+        name = self._model_name()
+        return {
+            "family": "local_whisper",
+            "model": name,
+            "label": f"Whisper {name}".strip(),
+            "device": backend.device or "",
+            "streaming": False,
+            "available": backend.is_available(),
+            "status": backend.device_info,
+        }
+
+    def transcribe(self, audio, language):
+        model = self.backend.model
+        if model is None:
+            raise RuntimeError("Whisper is not loaded on the host")
+        options = {}
+        if config.FASTER_WHISPER_VAD_ENABLED:
+            options["vad_parameters"] = dict(
+                min_silence_duration_ms=config.FASTER_WHISPER_VAD_MIN_SILENCE_MS
+            )
+        with self._lock:
+            segments, _info = model.transcribe(
+                np.asarray(audio, dtype=np.float32),
+                language=whisper_language(language),
+                beam_size=config.FASTER_WHISPER_BEAM_SIZE,
+                vad_filter=config.FASTER_WHISPER_VAD_ENABLED,
+                **options,
+            )
+            # faster-whisper decodes while the generator is consumed.
+            parts = [
+                {"text": segment.text.strip(), "start": float(segment.start), "end": float(segment.end)}
+                for segment in segments
+            ]
+        text = " ".join(part["text"] for part in parts if part["text"]).strip()
+        return {"text": text, "segments": parts}
+
+
+def whisper_language(language: Optional[str]) -> Optional[str]:
+    """Whisper takes ISO 639-1 codes; ``auto`` or nothing means detect."""
+    if not language or language.lower() == "auto":
+        return None
+    return language.split("-", 1)[0].lower() or None
+
+
+def host_engine_for(backend) -> HostEngine:
+    """Wrap the host's selected backend for serving.
+
+    Callers keep the result for as long as the same backend stays selected:
+    ``WhisperEngine`` serializes decodes on its own lock.
+    """
+    if backend is None:
+        return UnavailableEngine("No transcription engine is selected on the host")
+    if getattr(backend, "is_remote", False):
+        return UnavailableEngine(
+            "The host is itself using a remote engine. Select a local engine there."
+        )
+    from transcriber.optional_backend import LocalSpeechBackend
+
+    if isinstance(backend, LocalSpeechBackend):
+        return SpeechWorkerEngine(backend)
+    from transcriber.local_backend import LocalWhisperBackend
+
+    if isinstance(backend, LocalWhisperBackend):
+        return WhisperEngine(backend)
+    return UnavailableEngine(
+        "The host's selected engine runs in the cloud and can't be shared. "
+        "Select a local engine there."
+    )

@@ -154,13 +154,26 @@ On Linux, hotkeys also reach the focused app. Native Wayland limits global hotke
 | Backend | Models | Platform / device | Workflows |
 | --- | --- | --- | --- |
 | Local Whisper | Standard Whisper sizes, turbo, Distil-Whisper | All platforms, CPU; NVIDIA CUDA on Windows/Linux | Dictation with preview, uploads, meetings |
-| Parakeet | TDT 0.6B v3 | Windows x64 CPU / NVIDIA GPU; Apple Silicon CPU | Dictation with preview, uploads, meeting chunks |
+| Parakeet | TDT 0.6B v3 | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU | Dictation with preview, uploads, meeting chunks |
 | Qwen3-ASR | 0.6B, 1.7B | Windows x64 CPU / NVIDIA GPU | Dictation, uploads |
-| Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 CPU / NVIDIA GPU | Dictation with preview, uploads, meetings with native preview |
+| Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 and Linux x86_64 CPU / NVIDIA GPU | Dictation with preview, uploads, meetings with native preview |
 | Moonshine | Streaming Small / Medium, English | Windows x64 CPU | Dictation, uploads, meetings with native preview |
 | OpenAI API | GPT-Transcribe, GPT-4o Transcribe, GPT-4o Mini Transcribe, Whisper | Cloud; API key and network required | Dictation, uploads |
+| Remote computer | Whichever engine the paired computer has selected | Another computer running OpenWhisper on your network | Dictation with that engine's preview, uploads |
 
 Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. macOS transcription uses CPU; see [GPU acceleration](#gpu-acceleration) for Windows and Linux.
+
+### Remote engine
+
+Dictate on a laptop while a desktop or home server with a GPU does the transcription. Both computers run OpenWhisper:
+
+1. On the computer with the engine, open **Settings → Dictation → Remote engine**, turn on **Share this computer's engine**, and click **Pair a device**. Allow OpenWhisper through the firewall if Windows asks.
+2. On the other computer, open the same page, enter the host's address (shown under the switch) and the six-digit code, and click **Pair**. Check that both screens show the same identity code.
+3. Click **Use for dictation**, or choose **Remote computer** as the recording engine.
+
+The host serves the engine selected on it. Traffic is encrypted, and only paired computers can connect; remove one from **Paired computers** to cut it off. Meeting Mode keeps using an engine on the computer running the meeting.
+
+**With [Tailscale](https://tailscale.com/download)** on both computers, the laptop also works away from home. Computers on your tailnet that are sharing appear under **Computers on your tailnet**. If both are signed in to the same Tailscale account, click **Connect** and no code is needed; anyone else on your tailnet still uses a code. A computer paired at home over the LAN falls back to the host's Tailscale address when the LAN one is out of reach. The host can turn off code-free pairing with **Pair my Tailscale computers without a code**.
 
 ### AI cleanup and meeting intelligence
 

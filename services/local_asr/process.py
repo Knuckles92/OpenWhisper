@@ -24,7 +24,9 @@ class SpeechProcess:
         environment = os.environ.copy()
         environment.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", PYTHONUTF8="1")
         command = [python, "-u", str(Path(__file__).with_name("worker.py"))]
-        if sys.platform == "darwin" and getattr(sys, "frozen", False):
+        # Off Windows the worker runs on the app's own interpreter; a frozen
+        # app has no python to hand a script to, so it relaunches itself.
+        if sys.platform != "win32" and getattr(sys, "frozen", False):
             command = [python, "--local-asr-worker"]
         self.process = subprocess.Popen(
             command,

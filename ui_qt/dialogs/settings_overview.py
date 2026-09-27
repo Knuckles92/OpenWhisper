@@ -254,7 +254,7 @@ class OverviewPage(QWidget):
         divider.setFixedWidth(1)
         row.addWidget(divider)
         self.cloud_title, self.cloud_list = self._where_half(
-            row, "Sent to a cloud provider, only when used", "warn"
+            row, "Leaves this computer, only when used", "warn"
         )
         return strip
 

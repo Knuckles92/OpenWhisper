@@ -144,6 +144,8 @@ class UIController(QObject):
         self.on_streaming_settings_changed: Optional[Callable] = None
         self.on_hf_policy_changed: Optional[Callable] = None
         self.on_api_keys_changed: Optional[Callable] = None
+        # RemoteEngineService, set by the application controller.
+        self.remote_engine = None
         self.on_model_download_requested: Optional[Callable] = None
         self.on_model_delete_requested: Optional[Callable] = None
         self.on_model_batch_download: Optional[Callable] = None
@@ -726,6 +728,7 @@ class UIController(QObject):
         dialog.on_recording_trigger_mode_changed = (
             self._on_settings_recording_trigger_mode_changed
         )
+        dialog.remote_section.bind(self.remote_engine, self.select_transcription_backend)
         models = dialog.models
         models.on_set_active_requested = self._on_manager_set_active
         models.on_backend_changed = self.select_transcription_backend

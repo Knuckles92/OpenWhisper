@@ -116,6 +116,7 @@ from ui_qt.dialogs.settings_destinations import (
     MEETING_VOICE,
     OVERVIEW,
     RECORDING,
+    REMOTE_ENGINE,
     RUNTIME,
     VOICE_MODEL,
     resolve_destination,
@@ -123,6 +124,7 @@ from ui_qt.dialogs.settings_destinations import (
 from ui_qt.dialogs.settings_downloads import DownloadsPage
 from ui_qt.dialogs.settings_models import ModelAssignments
 from ui_qt.dialogs.settings_overview import OverviewPage, OverviewSummary
+from ui_qt.dialogs.settings_remote import RemoteEngineSection
 from ui_qt.dialogs.settings_search import (
     PageSource,
     SearchEntry,
@@ -472,6 +474,7 @@ class SettingsDialog(QDialog):
         for group, items in (
             ("Dictation", (
                 (VOICE_MODEL, "Voice model", "microphone-blue.svg"),
+                (REMOTE_ENGINE, "Remote engine", "server-blue.svg"),
                 (RECORDING, "Recording", "microphone-blue.svg"),
                 (CLEANUP, "AI cleanup", "stack-purple.svg"),
                 (CLEANUP_RULES, "Learned rules", "stack-slate.svg"),
@@ -532,6 +535,7 @@ class SettingsDialog(QDialog):
             background_cache_scan=self._background_cache_scan,
         )
         self.overview = OverviewPage()
+        self.remote_section = RemoteEngineSection(self)
 
         self.stack = QStackedWidget()
         self.stack.setObjectName("modelManagerStack")
@@ -550,6 +554,13 @@ class SettingsDialog(QDialog):
             "The transcription engine used by Quick Record, hotkey dictation, "
             "and Upload File.",
             self.models.build_voice_page,
+        )
+        self._add_page(
+            REMOTE_ENGINE,
+            "Remote engine",
+            "Dictate with another computer's engine over your network or "
+            "Tailscale, or share this computer's engine with computers you pair.",
+            lambda layout: self.remote_section.build(self, layout, _design_icon),
         )
         self._add_page(
             RECORDING,
@@ -2294,6 +2305,8 @@ class SettingsDialog(QDialog):
             self.models.on_destination_shown(key)
             if key == OVERVIEW:
                 self._refresh_overview()
+            elif key == REMOTE_ENGINE:
+                self.remote_section.on_shown()
 
     # ---- search ----
 
@@ -2542,9 +2555,13 @@ class SettingsDialog(QDialog):
         meeting_remote = self._provider_is_remote(models.active_meeting_provider)
 
         local_items, cloud_items = [], []
-        (cloud_items if models.voice_is_remote() else local_items).append(
-            "Dictation voice"
-        )
+        if models.voice_is_remote() and not models.voice_is_cloud():
+            # A paired computer: audio leaves this one, but not for a cloud.
+            cloud_items.append(f"Dictation voice ({models.voice_detail().lower()})")
+        else:
+            (cloud_items if models.voice_is_remote() else local_items).append(
+                "Dictation voice"
+            )
         local_items.append("Meeting voice")
         if models.speaker_id_is_remote():
             cloud_items.append("Speaker labels (system audio after End)")
@@ -3066,8 +3083,10 @@ class SettingsDialog(QDialog):
     def _rule_transcribe_detail(self) -> str:
         """Where the dictation engine runs, named as the rail names it."""
         summary = self.models.voice_summary()
-        if self.models.voice_is_remote():
+        if self.models.voice_is_cloud():
             return f"Sent to OpenAI · {summary.split(' · ', 1)[-1]}"
+        if self.models.voice_is_remote():
+            return self.models.voice_detail()
         return f"On this computer · {summary}"
 
     @staticmethod

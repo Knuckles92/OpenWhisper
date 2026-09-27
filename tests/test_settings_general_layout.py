@@ -35,6 +35,7 @@ from ui_qt.dialogs.settings_dialog import (
     MEETING_VOICE,
     OVERVIEW,
     RECORDING,
+    REMOTE_ENGINE,
     RUNTIME,
     VOICE_MODEL,
     SettingsDialog,
@@ -62,6 +63,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 (
                     OVERVIEW,
                     VOICE_MODEL,
+                    REMOTE_ENGINE,
                     RECORDING,
                     CLEANUP,
                     CLEANUP_RULES,

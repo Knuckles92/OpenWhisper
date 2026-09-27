@@ -33,6 +33,11 @@ openpyxl>=3.1.0
 # Meeting Mode: dashboard web server (FastAPI + WebSocket over uvicorn)
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
+# Remote engine: the host serves its speech engine to paired computers over
+# a TLS WebSocket (websockets' threaded server and client). cryptography
+# creates the host's self-signed certificate, which clients pin at pairing.
+websockets>=13.0
+cryptography>=42.0
 # Meeting Mode: system-audio loopback capture backend
 # Windows fallback for WASAPI; production path on Linux (Pulse/PipeWire-Pulse).
 soundcard>=0.4.3 ; sys_platform == "win32" or sys_platform == "linux"

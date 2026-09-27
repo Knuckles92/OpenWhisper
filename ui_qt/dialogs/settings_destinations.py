@@ -10,6 +10,7 @@ OVERVIEW: Final[str] = "overview"
 
 # Dictation
 VOICE_MODEL: Final[str] = "voice_model"
+REMOTE_ENGINE: Final[str] = "remote_engine"
 RECORDING: Final[str] = "recording"
 CLEANUP: Final[str] = "cleanup"
 CLEANUP_RULES: Final[str] = "cleanup_rules"

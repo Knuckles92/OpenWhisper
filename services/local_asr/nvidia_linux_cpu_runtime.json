@@ -1,0 +1,16 @@
+{
+  "version": "0.1.0-linux-cpu",
+  "component_api": 1,
+  "platform": "linux_x86_64",
+  "install_bytes": 12238405,
+  "archives": [
+    {
+      "name": "nemo-speech-0.1.0-linux-x86_64-cpu.tar.gz",
+      "url": "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-linux-x86_64-cpu.tar.gz",
+      "sha256": "0f74131d631ad2c694cf0ec53490866bb6461147959589a69fb6fc231944065b",
+      "size_bytes": 4583913,
+      "extract": "nemo-tar",
+      "root": "nemo-speech-0.1.0-linux-x86_64-cpu"
+    }
+  ]
+}

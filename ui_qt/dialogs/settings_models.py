@@ -91,6 +91,10 @@ logger = logging.getLogger(__name__)
 _ENGINE_CAPTIONS = {
     "local_whisper": "Local faster-whisper on this computer.",
     "api": "OpenAI transcription. Enter your API key in Settings → API keys.",
+    "remote": (
+        "Another computer's engine, over your network. Pair with it in "
+        "Settings → Remote engine."
+    ),
 }
 
 #: Downloads filter value for the Whisper family.
@@ -1187,18 +1191,20 @@ class ModelAssignments(QObject):
         if is_speech:
             self.speech_controls.set_backend(backend)
         self.api_model_field.setVisible(backend == "api")
-        self.engine_inventory_title.setVisible(backend != "api")
-        self.engine_inventory_row.setVisible(backend != "api")
+        # Neither engine keeps anything on this computer.
+        on_this_computer = backend not in ("api", "remote")
+        self.engine_inventory_title.setVisible(on_this_computer)
+        self.engine_inventory_row.setVisible(on_this_computer)
 
     def _engine_filter(self) -> str:
         """Downloads backend filter for the selected recording engine."""
         backend = self.engine_combo.currentData() or WHISPER_FILTER
-        return "" if backend == "api" else backend
+        return "" if backend in ("api", "remote") else backend
 
     def _refresh_engine_inventory(self) -> None:
         """Say what the selected engine has on this computer."""
         backend = self.engine_combo.currentData() or WHISPER_FILTER
-        if backend == "api":
+        if backend in ("api", "remote"):
             self.engine_inventory_label.setText("")
             return
         try:
@@ -1424,6 +1430,9 @@ class ModelAssignments(QObject):
             return f"Local Whisper · {self.ondemand_whisper_picker.current_model()}"
         if engine_value == "api":
             return f"API · {self.api_model_combo.currentText()}"
+        if engine_value == "remote":
+            pairing = self._remote_pairing()
+            return f"Remote · {pairing.host_name}" if pairing else "Remote · not paired"
         return self.speech_controls.model_combo.currentText()
 
     def voice_detail(self) -> str:
@@ -1431,6 +1440,11 @@ class ModelAssignments(QObject):
         engine_value = self.engine_combo.currentData() or "local_whisper"
         if engine_value == "api":
             return "Sent to OpenAI for transcription"
+        if engine_value == "remote":
+            pairing = self._remote_pairing()
+            if pairing is None:
+                return "Pair with a host in Remote engine"
+            return f"Sent to {pairing.host_name} on your network"
         if engine_value == "local_whisper":
             device = self.device_combo.currentText() or "auto"
             return f"On this computer · {device}"
@@ -1438,7 +1452,20 @@ class ModelAssignments(QObject):
         return f"On this computer · {selected_device(engine_value, self._settings_snapshot())}"
 
     def voice_is_remote(self) -> bool:
+        """True when dictation audio leaves this computer."""
+        return (self.engine_combo.currentData() or "") in ("api", "remote")
+
+    def voice_is_cloud(self) -> bool:
         return (self.engine_combo.currentData() or "") == "api"
+
+    @staticmethod
+    def _remote_pairing():
+        from services.remote_asr.settings import load_client_pairing
+
+        try:
+            return load_client_pairing()
+        except Exception:
+            return None
 
     def text_summary(self) -> str:
         provider = profile_display_name(

@@ -463,8 +463,9 @@ def available_component_ids(
 
     GPU Acceleration remains Windows-only (native CUDA DLLs). The meeting
     agent is offered on Windows x64 and Linux x86_64/aarch64. Linux GPU users
-    still use ``requirements-gpu.txt``. Apple Silicon Macs offer the native
-    NVIDIA Speech CPU runtime.
+    still use ``requirements-gpu.txt`` for Local Whisper. Linux x86_64 offers
+    the native NVIDIA Speech CPU and CUDA runtimes; Apple Silicon Macs offer
+    the CPU one.
 
     Returns:
         Installable component identifiers, in display order.
@@ -480,7 +481,13 @@ def available_component_ids(
             ComponentId.SPEAKER_ID,
             *RUNTIME_IDS,
         )
-    elif tag in {PLATFORM_LINUX_X86_64, PLATFORM_LINUX_AARCH64}:
+    elif tag == PLATFORM_LINUX_X86_64:
+        candidates = (
+            ComponentId.MEETING_AGENT,
+            ComponentId.ASR_NVIDIA_CPU,
+            ComponentId.ASR_NVIDIA_CUDA,
+        )
+    elif tag == PLATFORM_LINUX_AARCH64:
         candidates = (ComponentId.MEETING_AGENT,)
     elif tag == "darwin_arm64":
         candidates = (ComponentId.ASR_NVIDIA_CPU,)
@@ -1321,17 +1328,34 @@ def _safe_extract_nemo_tar(
     target_dir: str,
     progress: ProgressCallback,
     cancel: threading.Event,
+    root: str = "nemo-speech",
 ) -> None:
-    # The upstream dylibs use relative symlinks. The data filter rejects links
-    # outside staging, special files and unsafe permissions before extraction.
+    """Extract a NeMo-Speech.cpp release under ``nemo-speech/``.
+
+    ``root`` is the archive's own top folder: ``nemo-speech`` on macOS, a
+    versioned name such as ``nemo-speech-0.1.0-linux-x86_64-cpu`` on Linux.
+    It is renamed to ``nemo-speech`` so the library path is the same for
+    every release.
+    """
+    # The upstream libraries use relative symlinks. The data filter rejects
+    # links outside staging, special files and unsafe permissions before
+    # extraction.
     with tarfile.open(archive_path, "r:gz") as archive:
         members = archive.getmembers()
         for index, member in enumerate(members):
             if cancel.is_set():
                 raise ComponentCanceled()
             parts = member.name.split("/")
-            if parts[0] != "nemo-speech" or ".." in parts:
+            if parts[0] != root or ".." in parts:
                 raise ComponentError(f"Archive contains an unsafe path: {member.name}")
+            if root != "nemo-speech":
+                member.name = "/".join(["nemo-speech", *parts[1:]])
+                if member.islnk():
+                    # Hard links name another member by its archive path.
+                    link = member.linkname.split("/")
+                    if link[0] != root or ".." in link:
+                        raise ComponentError(f"Archive contains an unsafe link: {member.linkname}")
+                    member.linkname = "/".join(["nemo-speech", *link[1:]])
             try:
                 archive.extract(member, target_dir, filter="data")
             except tarfile.FilterError as exc:
@@ -1345,9 +1369,15 @@ def _validate_component_payload(component_id: str, target_dir: str) -> None:
         validate_payload(target_dir)
         return
     if component_id in RUNTIME_IDS:
-        if current_platform_tag() == "darwin_arm64":
+        tag = current_platform_tag()
+        if tag == "darwin_arm64":
             library = os.path.join(target_dir, "nemo-speech", "lib", "libnemo_speech_asr_c.dylib")
             if component_id != ComponentId.ASR_NVIDIA_CPU or not os.path.isfile(library):
+                raise ComponentError("The speech runtime is missing required files.")
+            return
+        if tag == PLATFORM_LINUX_X86_64:
+            library = os.path.join(target_dir, "nemo-speech", "lib", "libnemo_speech_asr_c.so")
+            if not component_id.startswith("asr-nvidia") or not os.path.isfile(library):
                 raise ComponentError("The speech runtime is missing required files.")
             return
         required = ["python.exe", "python312.dll", "python312.zip"]
@@ -1551,7 +1581,13 @@ def _install_component(
                     member_name=str(archive.get("member") or ""),
                 )
             elif extract == "nemo-tar":
-                _safe_extract_nemo_tar(archive_path, staging, progress, cancel)
+                _safe_extract_nemo_tar(
+                    archive_path,
+                    staging,
+                    progress,
+                    cancel,
+                    root=str(archive.get("root") or "nemo-speech"),
+                )
             else:
                 _safe_extract(archive_path, staging, progress, cancel)
 

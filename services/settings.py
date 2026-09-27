@@ -133,6 +133,16 @@ class SettingsKey:
     MEETING_CONTEXT_FOLDER_PATH: Final[str] = "meeting_context_folder_path"
     MEETING_SERVER_BIND: Final[str] = "meeting_server_bind"
     MEETING_SERVER_PORT: Final[str] = "meeting_server_port"
+    # Remote engine (services/remote_asr). Client: the paired host's address,
+    # pinned certificate fingerprint and name (the token is in the OS
+    # credential store). Host: sharing switch, port, and paired devices,
+    # stored as token digests.
+    REMOTE_ENGINE_CLIENT: Final[str] = "remote_engine_client"
+    REMOTE_HOST_ENABLED: Final[str] = "remote_host_enabled"
+    REMOTE_HOST_PORT: Final[str] = "remote_host_port"
+    REMOTE_HOST_DEVICES: Final[str] = "remote_host_devices"
+    # Let computers signed in to the same Tailscale account pair without a code.
+    REMOTE_HOST_TAILSCALE_TRUST: Final[str] = "remote_host_tailscale_trust"
     # TypeSafe fast judgments. The master switch gates every remote judgment;
     # each feature has its own switch so one can be trialled at a time.
     TYPESAFE_ENABLED: Final[str] = "typesafe_enabled"

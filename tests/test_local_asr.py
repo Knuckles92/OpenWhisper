@@ -46,8 +46,96 @@ def test_every_optional_artifact_is_pinned_and_has_integrity_metadata():
             assert Path(f["name"]).name == f["name"]
     assert set(runtime_catalog()) == set(RUNTIME_IDS)
     for runtime in runtime_catalog().values():
-        for f in runtime["platforms"]["win_amd64"]["archives"]:
-            assert len(f["sha256"]) == 64 and f["size_bytes"] > 0
+        for platform, entry in runtime["platforms"].items():
+            assert entry["platform"] == platform
+            for f in entry["archives"]:
+                assert len(f["sha256"]) == 64 and f["size_bytes"] > 0
+                assert f["url"].startswith("https://github.com/") or platform == "win_amd64"
+
+
+def test_linux_x86_64_offers_only_the_native_nvidia_runtimes():
+    catalog = runtime_catalog()
+    linux = {key for key, runtime in catalog.items() if "linux_x86_64" in runtime["platforms"]}
+    assert linux == {"asr-nvidia-cpu", "asr-nvidia-cuda"}
+    for key, flavor in (("asr-nvidia-cpu", "cpu"), ("asr-nvidia-cuda", "cuda")):
+        (archive,) = catalog[key]["platforms"]["linux_x86_64"]["archives"]
+        assert archive["extract"] == "nemo-tar"
+        assert archive["root"] == f"nemo-speech-0.1.0-linux-x86_64-{flavor}"
+        assert archive["name"] == archive["root"] + ".tar.gz"
+        assert archive["url"].endswith("/v0.1.0/" + archive["name"])
+
+
+def test_linux_parakeet_offers_cpu_and_gpu_runtimes(monkeypatch):
+    monkeypatch.setattr(LocalSpeechBackend, "_settings", staticmethod(lambda: {}))
+    monkeypatch.setattr("services.components.current_platform_tag", lambda: "linux_x86_64")
+    monkeypatch.setattr("services.components.is_installed", lambda _: False)
+    backend = LocalSpeechBackend("parakeet", device="cuda")
+    backend.reload_model()
+    assert backend.runtime_component == "asr-nvidia-cuda"
+    assert "GPU runtime in Downloads" in backend.last_error
+    qwen = LocalSpeechBackend("qwen_asr", device="cpu")
+    qwen.reload_model()
+    assert "not available on this platform" in qwen.last_error
+
+
+def test_linux_worker_runs_on_the_apps_own_python(monkeypatch, tmp_path):
+    monkeypatch.setattr(LocalSpeechBackend, "_settings", staticmethod(lambda: {}))
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr("services.components.is_installed", lambda _: True)
+    monkeypatch.setattr("services.components.component_dir", lambda key: str(tmp_path / key))
+    monkeypatch.setattr(cache, "is_cached", lambda key: True)
+    monkeypatch.setattr(cache, "load_path", lambda key: str(tmp_path / "model.gguf"))
+    started = []
+
+    class FakeProcess:
+        def __init__(self, python):
+            started.append(python)
+            self.process = Mock(poll=Mock(return_value=None))
+
+        def request(self, op, **kwargs):
+            return {"device": kwargs["device"]}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("services.local_asr.process.SpeechProcess", FakeProcess)
+    backend = LocalSpeechBackend("parakeet", device="cpu")
+    backend.reload_model()
+    assert started == [sys.executable]
+    assert backend.is_available()
+
+
+def test_linux_recognizer_loads_the_release_library_after_system_libstdcxx(monkeypatch, tmp_path):
+    from services.local_asr import nvidia
+
+    loaded = []
+
+    def fake_cdll(name, mode=0):
+        loaded.append((name, mode))
+        if name.endswith("libnemo_speech_asr_c.so"):
+            raise OSError("stop after loading")
+        return object()
+
+    monkeypatch.setattr(nvidia.sys, "platform", "linux")
+    monkeypatch.setattr(nvidia.c, "CDLL", fake_cdll)
+    with pytest.raises(OSError, match="stop after loading"):
+        nvidia.NvidiaRecognizer(str(tmp_path), "model.gguf", "cpu")
+    library = str(tmp_path / "nemo-speech" / "lib" / "libnemo_speech_asr_c.so")
+    assert loaded == [("libstdc++.so.6", nvidia.c.RTLD_GLOBAL), (library, 0)]
+
+
+def test_linux_gpu_runtime_without_the_driver_says_so(monkeypatch, tmp_path):
+    from services.local_asr import nvidia
+
+    def fake_cdll(name, mode=0):
+        if name.endswith("libnemo_speech_asr_c.so"):
+            raise OSError("libcuda.so.1: cannot open shared object file: No such file or directory")
+        raise OSError("no system libstdc++")
+
+    monkeypatch.setattr(nvidia.sys, "platform", "linux")
+    monkeypatch.setattr(nvidia.c, "CDLL", fake_cdll)
+    with pytest.raises(RuntimeError, match="needs the NVIDIA driver"):
+        nvidia.NvidiaRecognizer(str(tmp_path), "model.gguf", "cuda")
 
 
 def test_settings_never_cross_model_families_or_change_whisper():
@@ -433,6 +521,22 @@ def test_packaged_worker_entry_does_not_start_ui():
     response = json.loads(completed.stdout)
     assert response['id'] == 1 and 'error' in response
     assert 'Starting OpenWhisper' not in completed.stderr
+
+
+def test_frozen_linux_worker_relaunches_app(monkeypatch):
+    import io
+    from services.local_asr.process import SpeechProcess
+    child = Mock(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO())
+    child.poll.return_value = 0
+    popen = Mock(return_value=child)
+    monkeypatch.setattr('services.local_asr.process.subprocess.Popen', popen)
+    monkeypatch.setattr(sys, 'platform', 'linux')
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    worker = SpeechProcess('/opt/openwhisper/OpenWhisper')
+    try:
+        assert popen.call_args.args[0] == ['/opt/openwhisper/OpenWhisper', '--local-asr-worker']
+    finally:
+        worker.close()
 
 
 def test_frozen_mac_worker_relaunches_app_without_python_flags(monkeypatch):

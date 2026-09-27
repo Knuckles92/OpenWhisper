@@ -136,6 +136,8 @@ class ApplicationController(QObject):
     update_check_finished = pyqtSignal(object, str, bool)
     update_download_progress = pyqtSignal(object, str, int, int)
     update_download_finished = pyqtSignal(object, object, str)
+    # The Remote engine's pairing changed (emitted from the pairing worker).
+    remote_pairing_changed = pyqtSignal()
 
     def __init__(self, ui_controller, local_backend: Optional[LocalWhisperBackend] = None):
         super().__init__()
@@ -237,6 +239,15 @@ class ApplicationController(QObject):
         from transcriber.optional_backend import LocalSpeechBackend
         for key in BACKENDS:
             self.transcription_backends[key] = LocalSpeechBackend(key)
+        from transcriber.remote_backend import REMOTE_BACKEND, RemoteSpeechBackend
+        self.transcription_backends[REMOTE_BACKEND] = RemoteSpeechBackend()
+        from services.remote_asr.service import RemoteEngineService
+        # Serves whichever engine is selected here, when sharing is on.
+        self.remote_engine = RemoteEngineService(
+            lambda: self.current_backend,
+            on_client_changed=self.remote_pairing_changed.emit,
+        )
+        self.ui_controller.remote_engine = self.remote_engine
         saved_model = settings_manager.load_model_selection()
         self._current_model_name = saved_model
         self.current_backend = self.transcription_backends.get(
@@ -410,7 +421,7 @@ class ApplicationController(QObject):
             from transcriber.optional_backend import LocalSpeechBackend
             from services.local_asr.catalog import BACKENDS
             selected = self.current_backend
-            for key in ("local_whisper", *BACKENDS):
+            for key in ("local_whisper", *BACKENDS, "remote"):
                 other = self.transcription_backends.get(key)
                 if other is not None and other is not selected:
                     other.cleanup()
@@ -454,7 +465,9 @@ class ApplicationController(QObject):
         self.engine_busy_changed.emit(False)
         # An engine a lease released is not missing its runtime.
         leased = restore or self._engine_released_for_lease
-        if unloaded and not selected.is_model_missing and not leased:
+        # A remote engine that can't connect has no local runtime to install.
+        remote = getattr(selected, "is_remote", False)
+        if unloaded and not selected.is_model_missing and not leased and not remote:
             self.runtime_consent_requested.emit(selected.model_name)
         # The preview shares this worker, so it can only be set up
         # once the load has settled.
@@ -581,6 +594,13 @@ class ApplicationController(QObject):
         if isinstance(backend, LocalSpeechBackend):
             if self._reload_in_flight:
                 return "Speech engine is still loading..."
+            if getattr(backend, "is_remote", False):
+                # The host may be back (woke up, came into range): try again
+                # on every attempt rather than waiting for a manual reload.
+                self.reload_whisper_model()
+                if backend.last_error:
+                    return f"{backend.last_error} Trying again..."
+                return "Connecting to the remote engine..."
             if backend.is_model_missing:
                 self.ensure_local_model_available()
             elif backend.should_cancel or not backend.last_error:
@@ -785,6 +805,23 @@ class ApplicationController(QObject):
         # Defer the GitHub metadata check so HF consent / recovery win the
         # first modal slot, and so a recording or meeting can start first.
         self._update_check_timer.start(config.UPDATE_CHECK_DELAY_MS)
+        # Share this computer's engine if Settings says so. Its own thread:
+        # a first run creates the TLS certificate, and the two executors can
+        # be busy for minutes with model loads and installs.
+        threading.Thread(
+            target=self.remote_engine.apply_host_settings,
+            name="remote-host-start",
+            daemon=True,
+        ).start()
+
+    def _on_remote_pairing_changed(self) -> None:
+        """Reconnect the Remote engine after pairing or forgetting a host."""
+        if self._current_model_name == "remote":
+            self.reload_whisper_model()
+            return
+        remote = self.transcription_backends.get("remote")
+        if remote is not None:
+            remote.cleanup()
 
     def _prune_update_leftovers(self) -> None:
         """Collect the downloads and transactions an earlier update left behind."""
@@ -1754,6 +1791,7 @@ class ApplicationController(QObject):
         self.large_file_detected.connect(self.ui_controller.show_large_file_state)
         self.hf_consent_requested.connect(self._on_hf_consent_requested)
         self.runtime_consent_requested.connect(self._prompt_for_model_runtime)
+        self.remote_pairing_changed.connect(self._on_remote_pairing_changed)
         self.status_update.connect(self.ui_controller.set_status)
         self.device_info_update.connect(self.ui_controller.set_device_info)
         self.engine_busy_changed.connect(self.ui_controller.set_engine_busy)
@@ -1912,6 +1950,11 @@ class ApplicationController(QObject):
             component_coordinator.cancel_all()
         except Exception as exc:
             logger.debug(f"Error cancelling component installs: {exc}")
+
+        try:
+            self.remote_engine.shutdown()
+        except Exception as exc:
+            logger.debug(f"Error stopping the remote engine host: {exc}")
 
         for executor in (self.executor, self.component_executor):
             try:

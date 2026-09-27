@@ -28,6 +28,9 @@ openwhisper.db
 # WAL journaling (enabled for Meeting Mode) keeps two sidecar files alongside it
 openwhisper.db-wal
 openwhisper.db-shm
+# Remote engine host identity (its private key must never be committed)
+remote_engine_host_cert.pem
+remote_engine_host_key.pem
 transcription_history.json
 transcription_history.json.bak
 meetings.json

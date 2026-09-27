@@ -19,7 +19,7 @@ files, or both). Copyright and license terms belong to their respective
 authors. This notice does not replace those terms.
 ## Optional speech runtimes and model weights
 
-The native NVIDIA Speech CPU runtime is also available for Apple Silicon macOS in the unreleased source integration; its upstream license files are retained in `nemo-speech/share/licenses`.
+The native NVIDIA Speech runtimes are also available for Linux x86_64 (CPU and CUDA) and, in the unreleased source integration, Apple Silicon macOS (CPU). These are NeMo-Speech.cpp's own release archives; the Linux CUDA archive includes NVIDIA's CUDA runtime and cuBLAS libraries. Their upstream license files are retained in `nemo-speech/share/licenses`.
 
 The additional Windows x64 backends are downloaded on demand; their model weights and SDKs are not part of the base application bundle. OpenWhisper's MIT license does not relicense these artifacts. Consult the linked upstream license and any notices retained in each downloaded archive before redistribution.
 
@@ -33,6 +33,6 @@ The additional Windows x64 backends are downloaded on demand; their model weight
 
 Each optional runtime includes a Python embedded distribution under the Python Software Foundation license. Qwen also includes PyTorch, Transformers, and their pinned wheel dependencies; Moonshine includes its native SDK and wheel dependencies. Package license files remain in the extracted runtime (including distribution metadata where supplied). NVIDIA CUDA libraries and other native dependencies retain their respective upstream terms. Model attribution identifies NVIDIA, the Qwen team, and Moonshine AI above; OpenWhisper uses their inference artifacts without retraining them.
 
-Exact versions, source URLs, hashes, and artifact sizes are recorded in [`services/local_asr/models.json`](services/local_asr/models.json) and the four `*runtime.json` manifests in that directory. Weight storage sizes and format choices are documented in [the local speech guide](docs/local-asr.md#download-and-disk-sizes).
+Exact versions, source URLs, hashes, and artifact sizes are recorded in [`services/local_asr/models.json`](services/local_asr/models.json) and the `*runtime.json` manifests in that directory. Weight storage sizes and format choices are documented in [the local speech guide](docs/local-asr.md#download-and-disk-sizes).
 
 The optional developer quality check uses a subset of [LibriSpeech](https://www.openslr.org/12), by Vassil Panayotov, Guoguo Chen, Daniel Povey, and Sanjeev Khudanpur, under CC BY 4.0, obtained via [Hugging Face's test subset](https://huggingface.co/datasets/hf-internal-testing/librispeech_asr_dummy). Its test preparation selects utterances and adds synthetic noise to a second copy. Those audio files are not bundled with the app. Benchmark provenance and limitations are recorded in [`docs/benchmarks/`](docs/benchmarks/).

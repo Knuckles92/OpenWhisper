@@ -114,7 +114,7 @@ is not required by the release builders.
 
 ## Local speech backends and models
 
-Local agents should read `AGENTS.md` when present (kept untracked by repository preference). Use [the model reference](docs/models.md) for exact supported IDs, and [the local speech guide](docs/local-asr.md) for user-visible behavior. The optional runtimes target Windows x64, with NVIDIA Speech CPU also packaged for Apple Silicon macOS in the unreleased source integration. Do not describe other upstream platform support as support provided by this integration.
+Local agents should read `AGENTS.md` when present (kept untracked by repository preference). Use [the model reference](docs/models.md) for exact supported IDs, and [the local speech guide](docs/local-asr.md) for user-visible behavior. The optional runtimes target Windows x64. NVIDIA Speech CPU and GPU are also packaged for Linux x86_64 (verified under Ubuntu 24.04 in WSL2 with CUDA), and NVIDIA Speech CPU for Apple Silicon macOS in the unreleased source integration. Do not describe other upstream platform support (Linux aarch64, Vulkan) as support provided by this integration.
 
 A backend or model change must keep these surfaces consistent:
 

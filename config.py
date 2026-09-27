@@ -26,10 +26,13 @@ def is_frozen() -> bool:
 def optional_speech_backends_supported(
     platform_name: str = None, machine: str = None
 ) -> bool:
-    """True where the optional local speech runtimes are packaged (Windows x64).
+    """True where every optional local speech runtime is packaged (Windows x64).
 
-    Mirrors ``services.components.current_platform_tag`` without importing it:
-    that module imports this one, so the check is repeated here.
+    That is where Parakeet is the default. Linux x86_64 and Apple Silicon
+    have only the NVIDIA runtimes, which are opt-in, so Local Whisper stays
+    their default. Mirrors ``services.components.current_platform_tag``
+    without importing it: that module imports this one, so the check is
+    repeated here.
     """
     host = platform_name or sys.platform
     arch = (machine if machine is not None else platform.machine()).strip().lower()
@@ -173,6 +176,8 @@ class AppConfig:
         'Local Whisper',
         'API',
         'Parakeet', 'Qwen3-ASR', 'Nemotron Streaming', 'Moonshine',
+        # A paired computer's engine (services/remote_asr).
+        'Remote computer',
     )
 
     MODEL_VALUE_MAP: Dict[str, str] = None
@@ -516,6 +521,7 @@ class AppConfig:
                 'API': 'api',
                 'Parakeet': 'parakeet', 'Qwen3-ASR': 'qwen_asr',
                 'Nemotron Streaming': 'nemotron', 'Moonshine': 'moonshine',
+                'Remote computer': 'remote',
             }
 
         if self.DEFAULT_BACKEND is None:

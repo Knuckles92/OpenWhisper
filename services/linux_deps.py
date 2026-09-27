@@ -214,7 +214,9 @@ def meeting_audio_remediation(
             title=title,
             explanation=explanation,
             commands=commands,
-            verification=("python -c \"import soundcard; print(soundcard.__version__)\"",),
+            # Not ``python -c "import soundcard"``: SoundCard names its Pulse
+            # client from sys.argv at import and raises IndexError under -c.
+            verification=("python -m pip show soundcard",),
         )
 
     if reason == "libpulse_missing":

@@ -1,0 +1,386 @@
+"""One object for both remote engine roles, owned by the app controller.
+
+Host: starts and stops ``SpeechHost`` from settings and serves whichever
+engine is selected on this computer. Client: pairs with a host and forgets
+it. The Settings page calls in here and listens for changes; nothing here
+imports Qt, so listeners are called on whatever thread the change happened
+(the page re-posts them to the UI thread).
+"""
+from __future__ import annotations
+
+import logging
+import os
+import socket
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import Callable, List, Optional, Tuple
+
+from services.remote_asr import protocol
+from services.remote_asr import settings as remote_settings
+from services.remote_asr import tailscale
+from services.remote_asr.engines import HostEngine, host_engine_for
+
+logger = logging.getLogger(__name__)
+
+Listener = Callable[[str], None]
+
+#: A cached ``tailscale status`` older than this is refreshed in the background.
+TAILSCALE_STATUS_MAX_AGE_S = 30.0
+#: Peers probed at once while looking for hosts on the tailnet.
+_PROBE_WORKERS = 12
+
+
+@dataclass(frozen=True)
+class TailnetHost:
+    """A computer on the tailnet that answered the remote engine probe."""
+
+    peer: tailscale.TailscalePeer
+    port: int
+    host_name: str
+    engine: dict
+    tailscale_pairing: bool
+    compatible: bool
+
+    @property
+    def address(self) -> str:
+        return protocol.format_address(self.peer.address, self.port)
+
+    @property
+    def can_pair_without_code(self) -> bool:
+        return self.compatible and self.tailscale_pairing and self.peer.mine
+
+
+@dataclass(frozen=True)
+class TailnetScan:
+    status: tailscale.TailscaleStatus
+    hosts: Tuple[TailnetHost, ...] = ()
+
+
+def _default_identity_dir() -> str:
+    from config import user_data_path
+    from services.remote_asr.tls import CERT_FILENAME
+
+    return os.path.dirname(os.path.abspath(user_data_path(CERT_FILENAME)))
+
+
+class RemoteEngineService:
+    def __init__(
+        self,
+        backend_provider: Callable[[], object],
+        *,
+        identity_dir: Optional[str] = None,
+        on_client_changed: Optional[Callable[[], None]] = None,
+        bind: str = "0.0.0.0",
+    ):
+        self._backend_provider = backend_provider
+        self._identity_dir = identity_dir
+        # Every interface, so other computers can connect. Tests pass
+        # 127.0.0.1, which also keeps Windows from asking about the firewall.
+        self._bind = bind
+        self.on_client_changed = on_client_changed
+        self._lock = threading.RLock()
+        self._host = None
+        self._host_error = ""
+        self._listeners: List[Listener] = []
+        self._engine_cache: tuple = (None, None)
+        self._tailscale: Optional[tailscale.TailscaleStatus] = None
+        self._tailscale_at = 0.0
+        self._tailscale_refreshing = False
+
+    # ---- listeners ----
+
+    def add_listener(self, listener: Listener) -> None:
+        with self._lock:
+            if listener not in self._listeners:
+                self._listeners.append(listener)
+
+    def remove_listener(self, listener: Listener) -> None:
+        with self._lock:
+            if listener in self._listeners:
+                self._listeners.remove(listener)
+
+    def _notify(self, kind: str) -> None:
+        with self._lock:
+            listeners = list(self._listeners)
+        for listener in listeners:
+            try:
+                listener(kind)
+            except Exception:
+                logger.debug("Remote engine listener raised", exc_info=True)
+
+    # ---- tailscale ----
+
+    def tailscale_status(self, *, refresh: bool = False) -> Optional[tailscale.TailscaleStatus]:
+        """The last known Tailscale status; None until the first check finishes.
+
+        Never blocks: a stale or missing status is refreshed on a background
+        thread and listeners hear "tailscale" when it lands. ``refresh``
+        forces that check.
+        """
+        with self._lock:
+            status = self._tailscale
+            stale = time.monotonic() - self._tailscale_at > TAILSCALE_STATUS_MAX_AGE_S
+            start = (refresh or stale or status is None) and not self._tailscale_refreshing
+            if start:
+                self._tailscale_refreshing = True
+        if start:
+            threading.Thread(
+                target=self._refresh_tailscale, name="remote-engine-tailscale", daemon=True
+            ).start()
+        return status
+
+    def _refresh_tailscale(self) -> tailscale.TailscaleStatus:
+        try:
+            status = tailscale.status()
+        finally:
+            with self._lock:
+                self._tailscale_refreshing = False
+        with self._lock:
+            changed = status != self._tailscale
+            self._tailscale = status
+            self._tailscale_at = time.monotonic()
+        if changed:
+            self._notify("tailscale")
+        return status
+
+    def _current_tailscale(self, max_age: float = 120.0) -> tailscale.TailscaleStatus:
+        """A status no older than ``max_age``, checking now if needed (blocks)."""
+        with self._lock:
+            status = self._tailscale
+            fresh = status is not None and time.monotonic() - self._tailscale_at <= max_age
+        return status if fresh else self._refresh_tailscale()
+
+    def _trusted_tailscale_owner(self) -> str:
+        """For the host: whose Tailscale computers may pair without a code."""
+        if not remote_settings.host_tailscale_trust():
+            return ""
+        status = self._current_tailscale()
+        return status.owner if status.running else ""
+
+    def _host_addresses(self) -> List[str]:
+        """Addresses a paired client can fall back on: LAN, then Tailscale."""
+        addresses = []
+        try:
+            from meeting.web.server import discover_lan_ipv4
+
+            lan = discover_lan_ipv4()
+            if lan and not tailscale.is_tailscale_address(lan):
+                addresses.append(lan)
+        except Exception:
+            logger.debug("LAN address lookup failed", exc_info=True)
+        status = self._current_tailscale()
+        if status.running and status.address:
+            addresses.append(status.address)
+        return addresses
+
+    def set_tailscale_trust(self, enabled: bool) -> None:
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_HOST_TAILSCALE_TRUST, bool(enabled))
+        self._notify("state")
+
+    def scan_tailnet(self, port: Optional[int] = None) -> TailnetScan:
+        """Find computers on the tailnet sharing their engine. Blocking.
+
+        Only the default port is probed; a host on another port is paired
+        by typing its address.
+        """
+        from services.remote_asr import client
+
+        port = port or protocol.DEFAULT_PORT
+        status = self._refresh_tailscale()
+        if not status.running:
+            return TailnetScan(status)
+        peers = [peer for peer in status.peers if peer.online and peer.is_desktop]
+
+        def probe(peer):
+            try:
+                result = client.probe_host(peer.address, port)
+            except client.RemoteEngineError:
+                return None
+            except Exception:
+                logger.debug("Probe of %s failed", peer.address, exc_info=True)
+                return None
+            return TailnetHost(
+                peer=peer,
+                port=port,
+                host_name=result.host_name,
+                engine=result.engine,
+                tailscale_pairing=result.tailscale_pairing,
+                compatible=result.compatible,
+            )
+
+        if not peers:
+            return TailnetScan(status)
+        with ThreadPoolExecutor(max_workers=min(_PROBE_WORKERS, len(peers))) as pool:
+            found = [host for host in pool.map(probe, peers) if host is not None]
+        return TailnetScan(status, tuple(found))
+
+    # ---- host ----
+
+    def _engine(self) -> HostEngine:
+        backend = self._backend_provider()
+        with self._lock:
+            cached_backend, cached = self._engine_cache
+            if cached is None or cached_backend is not backend:
+                cached = host_engine_for(backend)
+                self._engine_cache = (backend, cached)
+            return cached
+
+    def _ensure_host(self):
+        from services.remote_asr.host import DeviceRegistry, SpeechHost
+        from services.remote_asr.tls import ensure_host_identity
+
+        if self._host is None:
+            identity = ensure_host_identity(self._identity_dir or _default_identity_dir())
+            self._host = SpeechHost(
+                engine_provider=self._engine,
+                registry=DeviceRegistry(
+                    remote_settings.load_host_devices, remote_settings.save_host_devices
+                ),
+                identity=identity,
+                on_event=lambda kind, _detail: self._notify(kind),
+                tailscale_owner=self._trusted_tailscale_owner,
+                addresses=self._host_addresses,
+            )
+        return self._host
+
+    def apply_host_settings(self) -> None:
+        """Start or stop sharing to match settings. Errors land in host_state()."""
+        with self._lock:
+            enabled = remote_settings.host_enabled()
+            port = remote_settings.host_port()
+            host = self._host
+            if not enabled:
+                self._host_error = ""
+                if host is not None:
+                    host.stop()
+                self._notify("state")
+                return
+            try:
+                host = self._ensure_host()
+                if host.running and host.port != port:
+                    host.stop()
+                if not host.running:
+                    host.start(port, bind=self._bind)
+                self._host_error = ""
+            except OSError as exc:
+                self._host_error = (
+                    f"Couldn't listen on port {port} ({exc.strerror or exc}). "
+                    "Another program may be using it; choose a different port."
+                )
+                logger.warning("Remote engine host could not start: %s", exc)
+            except Exception as exc:
+                self._host_error = f"Couldn't start sharing: {exc}"
+                logger.exception("Remote engine host could not start")
+        self._notify("state")
+
+    def set_host_enabled(self, enabled: bool) -> None:
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_HOST_ENABLED, bool(enabled))
+        self.apply_host_settings()
+
+    def set_host_port(self, port: int) -> None:
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_HOST_PORT, int(port))
+        if remote_settings.host_enabled():
+            self.apply_host_settings()
+
+    def open_pairing(self) -> Optional[str]:
+        with self._lock:
+            host = self._host
+        if host is None or not host.running:
+            return None
+        return host.open_pairing()
+
+    def cancel_pairing(self) -> None:
+        with self._lock:
+            host = self._host
+        if host is not None:
+            host.close_pairing()
+
+    def remove_device(self, device_id: str) -> bool:
+        with self._lock:
+            host = self._host
+        if host is not None:
+            return host.remove_device(device_id)
+        from services.remote_asr.host import DeviceRegistry
+
+        removed = DeviceRegistry(
+            remote_settings.load_host_devices, remote_settings.save_host_devices
+        ).remove(device_id)
+        self._notify("devices")
+        return removed
+
+    def host_state(self) -> dict:
+        from services.remote_asr.host import DeviceRegistry
+
+        with self._lock:
+            host = self._host
+            error = self._host_error
+        running = host is not None and host.running
+        state = {
+            "enabled": remote_settings.host_enabled(),
+            "running": running,
+            "port": host.port if running else remote_settings.host_port(),
+            "error": error,
+            "host_name": socket.gethostname(),
+            "address": None,
+            "fingerprint": host.identity.fingerprint if host is not None else "",
+            "pairing": host.pairing_status() if running else None,
+            "clients": host.connected_clients() if running else [],
+            "devices": (host.registry if host is not None else DeviceRegistry(
+                remote_settings.load_host_devices, remote_settings.save_host_devices
+            )).list(),
+            "engine": self._engine().describe() if running else None,
+            "tailscale": self.tailscale_status(),
+            "tailscale_trust": remote_settings.host_tailscale_trust(),
+        }
+        if running:
+            try:
+                from meeting.web.server import discover_lan_ipv4
+
+                state["address"] = discover_lan_ipv4()
+            except Exception:
+                logger.debug("LAN address lookup failed", exc_info=True)
+        return state
+
+    def shutdown(self) -> None:
+        with self._lock:
+            host = self._host
+        if host is not None:
+            host.stop()
+
+    # ---- client ----
+
+    def client_pairing(self) -> Optional[remote_settings.ClientPairing]:
+        return remote_settings.load_client_pairing()
+
+    def pair(self, address: str, code: Optional[str], *,
+             tailscale: bool = False) -> remote_settings.ClientPairing:
+        """Pair with the host at ``address``. Blocking; run it off the UI thread.
+
+        ``tailscale=True`` pairs without a code, which the host allows only
+        for its owner's own Tailscale computers.
+        """
+        from services.remote_asr.client import pair_with_host
+
+        host, port = protocol.parse_address(address)
+        result = pair_with_host(host, port, code, socket.gethostname(), tailscale=tailscale)
+        pairing = remote_settings.save_client_pairing(host, port, result)
+        logger.info("Paired with remote engine host %s at %s (%s)",
+                    pairing.host_name, pairing.address, pairing.via)
+        self._notify("client")
+        if self.on_client_changed is not None:
+            self.on_client_changed()
+        return pairing
+
+    def forget_host(self) -> None:
+        remote_settings.forget_client_pairing()
+        self._notify("client")
+        if self.on_client_changed is not None:
+            self.on_client_changed()
