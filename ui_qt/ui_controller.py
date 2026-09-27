@@ -152,6 +152,10 @@ class UIController(QObject):
         self.on_model_batch_stop: Optional[Callable] = None
         self.on_dictation_transcribe: Optional[Callable] = None
         self.get_loaded_local_model: Optional[Callable] = None
+        # The Remote engine's Model field: what it shows (a RemoteModels) and
+        # where a choice goes, as (family, model).
+        self.get_remote_models: Optional[Callable] = None
+        self.on_remote_model_selected: Optional[Callable[[str, str], None]] = None
         self.get_missing_local_runtime: Optional[Callable[[], Optional[str]]] = None
 
         self.on_component_install: Optional[Callable] = None
@@ -205,6 +209,7 @@ class UIController(QObject):
         self.main_window.record_canceled.connect(self.cancel_recording)
         self.main_window.model_changed.connect(self._on_model_changed)
         self.main_window.whisper_engine_changed.connect(self._on_whisper_engine_changed)
+        self.main_window.remote_model_selected.connect(self._on_remote_model_selected)
         self.main_window.live_preview_changed.connect(self._on_live_preview_changed)
         self.main_window.settings_requested.connect(self.open_settings_dialog)
         self.main_window.engine_help_requested.connect(self.open_engine_help_destination)
@@ -442,6 +447,19 @@ class UIController(QObject):
 
     def set_device_info(self, device_info: str, ready: Optional[bool] = None):
         self.main_window.set_device_info(device_info, ready)
+        # Every engine switch and reload reports here, so the Remote backend's
+        # Model field follows what the host said it runs when it connected.
+        self.refresh_remote_models()
+
+    def refresh_remote_models(self) -> None:
+        """Show the paired computer's models, and which one it runs now."""
+        if self.get_remote_models is not None:
+            self.main_window.set_remote_models(self.get_remote_models())
+
+    def _on_remote_model_selected(self, family: str, model: str) -> None:
+        logger.info("Remote model chosen: %s/%s", family, model)
+        if self.on_remote_model_selected:
+            self.on_remote_model_selected(family, model)
 
     def set_engine_busy(self, busy: bool):
         """Disable/enable the inline local-engine combos during a reload.

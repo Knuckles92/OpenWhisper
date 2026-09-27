@@ -890,6 +890,30 @@ class TestApplicationController:
         assert controller._current_model_name == "local_whisper"
         assert controller.ui_controller.device_infos[-1] == "cpu"
 
+    def test_a_paired_computer_switches_this_one_to_another_model(self):
+        controller = self._create_controller()
+        # The main window selects a backend through its tabs, which report
+        # the change back as a model change.
+        controller.ui_controller.select_transcription_backend = controller.on_model_changed
+        controller.meeting_active = True
+        with pytest.raises(RuntimeError, match="running a meeting"):
+            controller._switch_engine_for_client("nemotron", "nemotron-3.5", "laptop")
+        assert controller._current_model_name == "local_whisper"
+        controller.meeting_active = False
+
+        controller._switch_engine_for_client("nemotron", "nemotron-3.5", "laptop")
+        assert controller._current_model_name == "nemotron"
+        assert self.settings.saved_model_selection == "nemotron"
+        assert self.settings.all_settings["local_asr_models"] == {"nemotron": "nemotron-3.5"}
+        assert controller.ui_controller.engine_controls_refreshes >= 1
+        # The reload is queued, so the host keeps its client waiting.
+        assert not controller._engine_settled()
+        controller._reload_timer.timeout.emit()
+        assert controller.ui_controller.statuses[-1] == "Switching to Nemotron 3.5 ASR 0.6B for laptop..."
+        assert controller._reload_in_flight and not controller._engine_settled()
+        controller._reload_in_flight = False
+        assert controller._engine_settled()
+
     def test_reload_whisper_model_runs_in_background_and_reports(self):
         controller = self._create_controller()
 

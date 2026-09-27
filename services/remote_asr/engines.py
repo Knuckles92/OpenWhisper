@@ -4,7 +4,8 @@
 engines (Parakeet, Nemotron, Qwen3-ASR, Moonshine) already take window
 decodes and stream pushes, so they pass straight through. Local Whisper has
 no worker; its loaded faster-whisper model decodes the window here and
-returns the same ``{text, segments}`` shape the worker does.
+returns the same ``{text, segments}`` shape the worker does. ``host_models``
+lists the models a paired computer may switch the host to.
 """
 from __future__ import annotations
 
@@ -145,6 +146,41 @@ def whisper_language(language: Optional[str]) -> Optional[str]:
     if not language or language.lower() == "auto":
         return None
     return language.split("-", 1)[0].lower() or None
+
+
+def host_models() -> list:
+    """The models a paired computer may switch this one to.
+
+    Only models that load without asking anything of the person at this
+    computer: downloaded, with the runtime installed for the device set here
+    for that engine. Each entry is ``{family, model, label}``, with labels
+    as ``describe()`` gives them, grouped by engine with Whisper last.
+    """
+    from services.components import is_installed
+    from services.hf_access import resolve_model_repo, scan_cached_models
+    from services.local_asr import cache
+    from services.local_asr.catalog import MODELS, WHISPER_BACKEND, resolve_runtime, selected_device
+    from services.settings import settings_manager
+
+    settings = settings_manager.load_all_settings()
+    runtime_ready: dict = {}
+    models = []
+    for key, model in MODELS.items():
+        if model.backend not in runtime_ready:
+            component, _device = resolve_runtime(
+                model.backend, selected_device(model.backend, settings)
+            )
+            runtime_ready[model.backend] = is_installed(component)
+        if runtime_ready[model.backend] and cache.is_cached(key):
+            models.append({"family": model.backend, "model": key, "label": model.label})
+    try:
+        cached = scan_cached_models(max_age_seconds=30.0)
+    except Exception:
+        cached = {}
+    for name in config.WHISPER_MODEL_CHOICES:
+        if name != "auto" and resolve_model_repo(name) in cached:
+            models.append({"family": WHISPER_BACKEND, "model": name, "label": f"Whisper {name}"})
+    return models
 
 
 def host_engine_for(backend) -> HostEngine:

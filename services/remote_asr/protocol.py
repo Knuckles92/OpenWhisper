@@ -5,7 +5,12 @@ One TLS WebSocket per client. The first message is a JSON text frame, either
 host's screen). After the host answers ``ready``, every request is a single
 binary frame and every reply a JSON text frame. The operations are those the
 local speech worker takes over stdin (services/local_asr/worker.py):
-``transcribe``, ``stream`` and ``cancel_stream``, plus ``describe``.
+``transcribe``, ``stream`` and ``cancel_stream``, plus ``describe`` and
+``select_model``. ``ready`` lists the models the host can switch to as
+``models``, and ``select_model`` (``family``, ``model``) switches it and
+answers once the model has loaded; the client then reconnects. Hosts from
+before model switching send no ``models`` and answer ``select_model`` with
+an unknown-operation error.
 
 A request frame is a 4-byte big-endian header length, the JSON header, then
 the audio as 16 kHz mono signed 16-bit little-endian PCM. Dictation audio is

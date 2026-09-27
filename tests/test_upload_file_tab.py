@@ -1505,3 +1505,138 @@ class TestApiModelField:
         manager.save_setting(SettingsKey.API_TRANSCRIPTION_MODEL, "whisper-1")
         first.choose_backend("API")
         assert first.api_model_combo.currentData() == second.api_model_combo.currentData() == "whisper-1"
+
+
+class TestRemoteModelField:
+    """The Remote backend's Model field offers the paired computer's models."""
+
+    PARAKEET = ("parakeet", "parakeet-v3", "Parakeet TDT 0.6B v3")
+    NEMOTRON = ("nemotron", "nemotron-3.5", "Nemotron 3.5 ASR 0.6B")
+    SMALL = ("local_whisper", "small", "Whisper small")
+    TURBO = ("local_whisper", "turbo", "Whisper turbo")
+
+    @pytest.fixture
+    def paired_with(self, monkeypatch):
+        from types import SimpleNamespace
+        from services.remote_asr import settings as remote_settings
+
+        state = {"pairing": SimpleNamespace(host_name="jed")}
+        monkeypatch.setattr(remote_settings, "load_client_pairing", lambda: state["pairing"])
+        return state
+
+    @staticmethod
+    def _choices(models, current=None, host="jed"):
+        from transcriber.remote_backend import HostModel, RemoteModels
+
+        return RemoteModels(
+            host=host,
+            models=None if models is None else tuple(HostModel(*entry) for entry in models),
+            current=HostModel(*current) if current else None,
+        )
+
+    @staticmethod
+    def _items(combo):
+        return [combo.itemText(i) for i in range(combo.count())]
+
+    def _remote_tab(self):
+        tab = UploadFileTab()
+        tab.show()
+        tab.choose_backend("Remote computer")
+        QApplication.processEvents()
+        return tab
+
+    def test_lists_the_hosts_models_by_engine_with_the_running_one_selected(self, paired_with):
+        tab = self._remote_tab()
+        assert tab.remote_model_field.isVisible()
+        assert not tab.api_model_field.isVisible()
+        assert not tab.local_engine.isVisible()
+        # Unlike the API, a remote engine has a connection for the dot to report.
+        assert tab.status_dot.isVisible()
+
+        combo = tab.remote_model_combo
+        tab.set_remote_models(self._choices(
+            [self.PARAKEET, self.NEMOTRON, self.SMALL, self.TURBO], current=self.SMALL,
+        ))
+        # One separator between engines; the two Whisper sizes stay together.
+        assert self._items(combo) == [
+            "Parakeet TDT 0.6B v3", "", "Nemotron 3.5 ASR 0.6B", "", "Whisper small", "Whisper turbo",
+        ]
+        assert combo.currentText() == "Whisper small"
+        assert combo.isEnabled()
+        assert "jed" in combo.toolTip()
+
+    def test_choosing_a_model_asks_to_switch_the_host(self, paired_with):
+        tab = self._remote_tab()
+        tab.set_remote_models(self._choices([self.PARAKEET, self.NEMOTRON], current=self.PARAKEET))
+        chosen = []
+        tab.remote_model_selected.connect(lambda family, model: chosen.append((family, model)))
+        combo = tab.remote_model_combo
+        combo.activated.emit(combo.findText("Parakeet TDT 0.6B v3"))
+        assert chosen == [], "the model it already runs is no switch"
+        combo.activated.emit(combo.findText("Nemotron 3.5 ASR 0.6B"))
+        assert chosen == [("nemotron", "nemotron-3.5")]
+        # Following what the host reports never asks for a switch.
+        tab.set_remote_models(self._choices([self.PARAKEET, self.NEMOTRON], current=self.NEMOTRON))
+        assert chosen == [("nemotron", "nemotron-3.5")]
+        assert combo.currentText() == "Nemotron 3.5 ASR 0.6B"
+
+    def test_locked_while_the_engine_reloads_or_a_recording_runs(self, paired_with):
+        tab = self._remote_tab()
+        tab.set_remote_models(self._choices([self.PARAKEET, self.NEMOTRON], current=self.PARAKEET))
+        combo = tab.remote_model_combo
+        tab.set_engine_busy(True)
+        assert not combo.isEnabled()
+        tab.set_engine_busy(False)
+        assert combo.isEnabled()
+        tab.set_backend_enabled(False)
+        assert not combo.isEnabled()
+        tab.set_backend_enabled(True)
+        assert combo.isEnabled()
+
+    def test_a_host_serving_nothing_usable_offers_its_models(self, paired_with):
+        tab = self._remote_tab()
+        tab.set_remote_models(self._choices([self.PARAKEET, self.SMALL]))
+        combo = tab.remote_model_combo
+        assert combo.currentText() == "Choose a model"
+        assert combo.isEnabled()
+
+    @pytest.mark.parametrize("choices, text, tip", [
+        ((None,), "Not connected", "once this computer connects"),
+        (([],), "No models ready", "no downloaded models"),
+        ((None, PARAKEET), "Parakeet TDT 0.6B v3", "Update OpenWhisper there"),
+        (([PARAKEET], PARAKEET), "Parakeet TDT 0.6B v3", "only downloaded model"),
+    ])
+    def test_nothing_to_choose_between_shows_why(self, paired_with, choices, text, tip):
+        tab = self._remote_tab()
+        tab.set_remote_models(self._choices(*choices))
+        combo = tab.remote_model_combo
+        assert self._items(combo) == [text]
+        assert not combo.isEnabled()
+        assert tip in combo.toolTip()
+
+    def test_before_the_first_report_it_names_the_pairing(self, paired_with):
+        tab = self._remote_tab()
+        assert self._items(tab.remote_model_combo) == ["Not connected"]
+        tab.set_engine_busy(True)
+        assert self._items(tab.remote_model_combo) == ["Connecting..."]
+        tab.set_engine_busy(False)
+        paired_with["pairing"] = None
+        tab.choose_backend("API")
+        tab.choose_backend("Remote computer")
+        assert self._items(tab.remote_model_combo) == ["Not paired"]
+
+        tab.choose_backend("API")
+        QApplication.processEvents()
+        assert tab.api_model_field.isVisible()
+        assert not tab.remote_model_field.isVisible()
+
+    def test_card_height_is_the_same_as_for_a_local_backend(self, paired_with):
+        tab = UploadFileTab()
+        tab.resize(605, 580)
+        tab.show()
+        QApplication.processEvents()
+        local_height = tab.engine_card.height()
+        tab.choose_backend("Remote computer")
+        tab.set_remote_models(self._choices([self.PARAKEET, self.NEMOTRON], current=self.PARAKEET))
+        QApplication.processEvents()
+        assert tab.engine_card.height() == local_height

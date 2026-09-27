@@ -161,6 +161,11 @@ class SpeechHost:
     other addresses this computer answers on (its LAN and Tailscale IPs);
     clients keep them to fall back on when the one they paired with is out
     of reach, such as a laptop away from home.
+
+    ``models`` lists what a client may switch this computer to (see
+    ``engines.host_models``), and ``select_model(family, model, device_name)``
+    switches it, returning the new engine's ``describe()`` once it has
+    loaded or raising with the reason it can't.
     """
 
     def __init__(
@@ -173,6 +178,8 @@ class SpeechHost:
         on_event: Optional[HostEvent] = None,
         tailscale_owner: Optional[Callable[[], str]] = None,
         addresses: Optional[Callable[[], List[str]]] = None,
+        models: Optional[Callable[[], List[dict]]] = None,
+        select_model: Optional[Callable[[str, str, str], dict]] = None,
     ):
         self._engine_provider = engine_provider
         self.registry = registry
@@ -181,6 +188,8 @@ class SpeechHost:
         self._on_event = on_event
         self._tailscale_owner = tailscale_owner or (lambda: "")
         self._addresses = addresses or (lambda: [])
+        self._models = models or (lambda: [])
+        self._select_model = select_model
         self._lock = threading.Lock()
         self._server = None
         self._thread: Optional[threading.Thread] = None
@@ -382,6 +391,13 @@ class SpeechHost:
             "addresses": addresses,
         }
 
+    def _model_list(self) -> List[dict]:
+        try:
+            return [dict(entry) for entry in self._models() if isinstance(entry, dict)]
+        except Exception:
+            logger.warning("Remote engine host couldn't list its models", exc_info=True)
+            return []
+
     def _tailscale_pairing_owner(self) -> str:
         try:
             return str(self._tailscale_owner() or "")
@@ -485,6 +501,7 @@ class SpeechHost:
             "host": self._host_info(),
             "device": {"id": device["id"], "name": device["name"]},
             "engine": engine.describe(),
+            "models": self._model_list(),
         })
         connection_id = uuid.uuid4().hex[:8]
         with self._lock:
@@ -499,7 +516,7 @@ class SpeechHost:
         streams: set = set()
         try:
             for frame in ws:
-                reply = self._dispatch(frame, engine, identity, connection_id, streams)
+                reply = self._dispatch(frame, engine, identity, connection_id, streams, device["name"])
                 self._send(ws, reply)
                 if reply.get("code") == "engine_changed":
                     ws.close(protocol.CLOSE_ENGINE_CHANGED, "engine changed")
@@ -517,12 +534,16 @@ class SpeechHost:
             self._emit("clients", {})
 
     def _dispatch(self, frame, engine: HostEngine, identity: tuple,
-                  connection_id: str, streams: set) -> dict:
+                  connection_id: str, streams: set, device_name: str = "") -> dict:
         try:
             header, audio = protocol.unpack_request(frame)
         except protocol.ProtocolError as exc:
             return {"id": None, "error": str(exc), "code": "bad_request"}
         request_id = header.get("id")
+        if header.get("op") == "select_model":
+            # Asked for whatever this computer runs now, so a switch made
+            # since this client connected doesn't turn it away.
+            return self._switch_model(request_id, header, device_name)
         current = self._engine()
         if current.identity != identity:
             return {
@@ -560,3 +581,22 @@ class SpeechHost:
         except Exception as exc:
             return {"id": request_id, "error": str(exc) or type(exc).__name__}
         return {"id": request_id, "result": result}
+
+    def _switch_model(self, request_id, header: dict, device_name: str) -> dict:
+        """Load the model a client chose, as if it were picked on this computer.
+
+        Blocks this connection until the load settles, which is what lets the
+        client show one "Switching…" state and then the engine it switched to.
+        """
+        family, model = header.get("family"), header.get("model")
+        if not isinstance(family, str) or not isinstance(model, str) or not model:
+            return {"id": request_id, "error": "Choose a model to switch to"}
+        if self._select_model is None:
+            return {"id": request_id,
+                    "error": f"{self.host_name} doesn't let paired computers change its model."}
+        try:
+            engine = self._select_model(family, model, device_name)
+        except Exception as exc:
+            return {"id": request_id, "error": str(exc) or type(exc).__name__}
+        self._emit("engine", {"family": family, "model": model, "by": device_name})
+        return {"id": request_id, "result": {"engine": engine, "models": self._model_list()}}

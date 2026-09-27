@@ -77,6 +77,7 @@ class TranscriptionTabBase(QWidget):
 
     model_changed = pyqtSignal(str)  # Model display name
     engine_settings_changed = pyqtSignal()  # Local engine chip changed
+    remote_model_selected = pyqtSignal(str, str)  # Paired computer's (family, model)
     help_requested = pyqtSignal(str)
     engine_downloads_requested = pyqtSignal()
     transcription_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
@@ -110,7 +111,13 @@ class TranscriptionTabBase(QWidget):
         self._model_downloads: set[str] = set()
         self._activity_state = OverlayState.NONE
         self._status_message = self.INITIAL_STATUS
-        self._local_engine_visible = True
+        # False for the API backend, which has no engine for the dot to report on.
+        self._engine_dot_visible = True
+        self._backend_enabled = True
+        # The paired computer's models (a RemoteModels); None until the
+        # controller first reports them.
+        self._remote_models = None
+        self._remote_selectable = False
         self._setup_ui()
         self._connect_signals()
         self.load_cleanup_setting()
@@ -189,6 +196,16 @@ class TranscriptionTabBase(QWidget):
         self.api_model_field.hide()
         self.refresh_api_model()
 
+        # The paired computer's own models. Choosing one switches that
+        # computer to it, just as choosing it there would.
+        self.remote_model_combo = engine_combo(())
+        self.remote_model_field = engine_field(
+            "Model", self.remote_model_combo,
+            "The model the paired computer transcribes with. Choosing another switches that computer to it, as if it were chosen there. Only models already downloaded there are listed.",
+            [("Open Settings → Remote engine", "remote_engine")], self.help_requested.emit,
+        )
+        self.remote_model_field.hide()
+
         self._field_row = QHBoxLayout()
         self._field_row.setContentsMargins(0, 0, 0, 0)
         self._field_row.setSpacing(10)
@@ -199,6 +216,7 @@ class TranscriptionTabBase(QWidget):
         ), stretch=2)
         self._field_row.addWidget(self.local_engine, stretch=4)
         self._field_row.addWidget(self.api_model_field, stretch=2)
+        self._field_row.addWidget(self.remote_model_field, stretch=2)
         self._field_filler_index = self._field_row.count()
         self._field_row.addStretch(0)
         engine_layout.addLayout(self._field_row)
@@ -319,6 +337,9 @@ class TranscriptionTabBase(QWidget):
     def _connect_signals(self):
         self.model_combo.currentTextChanged.connect(self._on_backend_changed)
         self.api_model_combo.currentIndexChanged.connect(self._on_api_model_changed)
+        # activated, not currentIndexChanged: only a person's choice switches
+        # the paired computer, never the field following what it reports.
+        self.remote_model_combo.activated.connect(self._on_remote_model_activated)
         self.local_engine.engine_settings_changed.connect(self.engine_settings_changed)
         self.local_engine.help_requested.connect(self.help_requested)
         self.cleanup_check.toggled.connect(self._on_cleanup_toggled)
@@ -411,11 +432,16 @@ class TranscriptionTabBase(QWidget):
         settings_manager.save_setting(SettingsKey.API_TRANSCRIPTION_MODEL, model)
         self.model_changed.emit(self.current_model)
 
+    @staticmethod
+    def _has_local_fields(display_name: str) -> bool:
+        """Whether the backend runs here, so its model, device and quant apply."""
+        return config.MODEL_VALUE_MAP.get(display_name) not in ("api", "remote")
+
     def _on_backend_changed(self, display_name: str):
         self.current_model = display_name
         self.refresh_api_model()
         self.local_engine.set_backend(config.MODEL_VALUE_MAP.get(display_name, "local_whisper"))
-        self.set_local_engine_visible(display_name != "API")
+        self.set_local_engine_visible(self._has_local_fields(display_name))
         self.model_changed.emit(display_name)
 
     def choose_backend(self, display_name: str):
@@ -442,12 +468,14 @@ class TranscriptionTabBase(QWidget):
         self.current_model = display_name
         self.refresh_api_model()
         self.local_engine.set_backend(config.MODEL_VALUE_MAP.get(display_name, "local_whisper"))
-        self.set_local_engine_visible(display_name != "API")
+        self.set_local_engine_visible(self._has_local_fields(display_name))
 
     def set_backend_enabled(self, enabled: bool):
         """Lock the backend choice, e.g. while recording."""
         self.model_combo.setEnabled(enabled)
         self.api_model_combo.setEnabled(enabled)
+        self._backend_enabled = enabled
+        self._sync_remote_model_enabled()
 
     def set_model_selection(self, model_value: str):
         """Select a backend by its internal value (e.g. ``local_whisper``)."""
@@ -478,6 +506,10 @@ class TranscriptionTabBase(QWidget):
     def set_engine_busy(self, busy: bool) -> None:
         self.local_engine.set_busy(busy)
         self._engine_busy = busy
+        if self.remote_model_combo.itemData(self.remote_model_combo.currentIndex()) is None:
+            # "Connecting..." and "Not connected" follow the reload.
+            self._show_remote_models()
+        self._sync_remote_model_enabled()
         if busy:
             self._status_message = "Loading speech engine..."
         elif self._status_message in (
@@ -532,7 +564,7 @@ class TranscriptionTabBase(QWidget):
         self.resolved_label.setAccessibleName(message or self.INITIAL_STATUS)
         self.status_dot.set_status(self._engine_status)
         self.status_dot.set_busy(busy)
-        self.status_dot.setVisible(self._local_engine_visible or busy)
+        self.status_dot.setVisible(self._engine_dot_visible or busy)
         self._apply_backend_status(
             EngineStatus.UNKNOWN if self._engine_busy else self._engine_status
         )
@@ -541,13 +573,103 @@ class TranscriptionTabBase(QWidget):
         self.model_combo.set_status(status)
 
     def set_local_engine_visible(self, visible: bool):
-        """Switch between local runtime fields and the API model field."""
+        """Switch between the local runtime fields and a single Model field.
+
+        Without local fields, the API backend offers its OpenAI models and the
+        Remote backend shows the model the paired computer runs.
+        """
+        remote = not visible and config.MODEL_VALUE_MAP.get(self.current_model) == "remote"
         self.local_engine.setVisible(visible)
-        self.api_model_field.setVisible(not visible)
+        self.api_model_field.setVisible(not visible and not remote)
+        self.remote_model_field.setVisible(remote)
+        if remote:
+            self._show_remote_models()
         self._field_row.setStretch(self._field_filler_index, 0 if visible else 2)
-        self._local_engine_visible = visible
+        # A remote engine is connected or it isn't; the API has no engine here.
+        self._engine_dot_visible = visible or remote
         self._refresh_engine_status()
-        self.model_combo.set_status_visible(visible)
+        self.model_combo.set_status_visible(self._engine_dot_visible)
+
+    def set_remote_models(self, choices) -> None:
+        """What the paired computer can run, and what it runs now (``RemoteModels``)."""
+        self._remote_models = choices
+        self._show_remote_models()
+
+    def _current_remote_models(self):
+        from transcriber.remote_backend import RemoteModels
+
+        if self._remote_models is not None:
+            return self._remote_models
+        # Before the controller reports: name the host, if there is one.
+        from services.remote_asr.settings import load_client_pairing
+
+        pairing = load_client_pairing()
+        return RemoteModels(host=pairing.host_name if pairing else "")
+
+    def _show_remote_models(self) -> None:
+        """Rebuild the Model field: the host's models, grouped by engine."""
+        state = self._current_remote_models()
+        host, models, current = state.host, state.models, state.current
+        combo = self.remote_model_combo
+        blocked = combo.blockSignals(True)
+        combo.clear()
+        selectable = False
+        others = [entry for entry in models or () if current is None or entry.key != current.key]
+        if not host:
+            combo.addItem("Not paired", None)
+            tip = "Pair with a computer in Settings → Remote engine."
+        elif others:
+            entries = list(models)
+            if current is not None and all(entry.key != current.key for entry in entries):
+                entries.insert(0, current)
+            if current is None:
+                combo.addItem("Choose a model", None)
+            previous = None
+            for entry in entries:
+                if previous is not None and entry.family != previous:
+                    combo.insertSeparator(combo.count())
+                previous = entry.family
+                combo.addItem(entry.label, entry)
+            if current is not None:
+                combo.setCurrentIndex(next(
+                    index for index in range(combo.count())
+                    if getattr(combo.itemData(index), "key", None) == current.key
+                ))
+                tip = f"{host} is running {current.label}. Choosing another model switches {host} to it."
+            else:
+                tip = f"{host} has no model this computer can use right now. Choose one to switch {host} to it."
+            selectable = True
+        elif current is not None:
+            combo.addItem(current.label, current)
+            tip = (
+                f"{host} is running {current.label}. Update OpenWhisper there to choose its model from here."
+                if models is None else
+                f"{host} is running {current.label}, its only downloaded model."
+            )
+        elif models is not None:
+            combo.addItem("No models ready", None)
+            tip = f"{host} has no downloaded models. Download one in OpenWhisper there."
+        else:
+            combo.addItem("Connecting..." if self._engine_busy else "Not connected", None)
+            tip = f"{host}'s models show here once this computer connects."
+        combo.blockSignals(blocked)
+        combo.setToolTip(tip)
+        self._remote_selectable = selectable
+        self._sync_remote_model_enabled()
+
+    def _sync_remote_model_enabled(self) -> None:
+        self.remote_model_combo.setEnabled(
+            self._remote_selectable and self._backend_enabled and not self._engine_busy
+        )
+
+    def _on_remote_model_activated(self, index: int) -> None:
+        choice = self.remote_model_combo.itemData(index)
+        if choice is None:
+            return
+        current = self._current_remote_models().current
+        if current is not None and current.key == choice.key:
+            return
+        self.remote_model_selected.emit(choice.family, choice.model)
 
     def _apply_transcription_stretch(self, collapsed: bool):
         if collapsed:

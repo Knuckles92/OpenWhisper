@@ -35,6 +35,8 @@ class StreamingRuntime:
     def __init__(self, controller: "ApplicationController"):
         self.controller = controller
         self._stopping = False
+        #: ``_engine_identity()`` when the current preview was set up.
+        self._configured_for: Optional[tuple] = None
 
     def setup_audio_level_callback(self) -> None:
         def audio_level_callback(level: float) -> None:
@@ -45,7 +47,19 @@ class StreamingRuntime:
         self.controller.recorder.set_audio_level_callback(callback)
 
     def setup_streaming(self) -> None:
+        if self.controller.streaming_transcriber is not None:
+            # A remote engine asks again after every reload, since the host
+            # may run a different engine than when this preview was built.
+            # A preview that still fits, or that a recording is using, stays.
+            if (self.controller.recorder.is_recording
+                    or self._configured_for == self._engine_identity()):
+                return
+            self._cleanup_streaming_resources()
         self._configure_streaming(initial_setup=True)
+
+    def _engine_identity(self) -> tuple:
+        backend = self.controller.current_backend
+        return (backend, getattr(backend, "backend_id", None), getattr(backend, "model_name", None))
 
     def reconfigure_streaming(self) -> None:
         """Reconfigure streaming transcriber based on current settings."""
@@ -174,6 +188,14 @@ class StreamingRuntime:
                 if streaming_backend is None:
                     self.controller._streaming_enabled = False
                     return
+            elif getattr(backend, "is_remote", False) and not backend.is_available():
+                # Until it connects, a remote engine has no family to check:
+                # the host says which engine it runs. The reload worker runs
+                # setup again once the connection settles.
+                logger.info("Streaming preview waits for the remote engine to connect")
+                self.controller._streaming_enabled = False
+                self.controller._pending_streaming_setup = True
+                return
             elif self._shares_preview_decoder(backend):
                 if not backend.is_available():
                     # The engine is still loading or waiting on a download; the
@@ -188,7 +210,7 @@ class StreamingRuntime:
             else:
                 logger.info("Streaming requested but not available for this backend")
                 if not initial_setup:
-                    self.controller.ui_controller.set_status(PREVIEW_UNAVAILABLE_STATUS)
+                    self.controller.ui_controller.set_status(self._unavailable_status(backend))
                 self.controller._streaming_enabled = False
                 return
 
@@ -200,6 +222,7 @@ class StreamingRuntime:
                     backend=streaming_backend,
                     update_interval_sec=config.STREAMING_NATIVE_UPDATE_SEC,
                 )
+                self._configured_for = self._engine_identity()
                 logger.info(
                     "Streaming preview follows %s's native stream "
                     f"(update_interval={config.STREAMING_NATIVE_UPDATE_SEC}s)",
@@ -215,6 +238,7 @@ class StreamingRuntime:
                 chunk_duration_sec=chunk_duration,
                 overlap_sec=config.STREAMING_OVERLAP_SEC,
             )
+            self._configured_for = self._engine_identity()
             logger.info(
                 f"Streaming transcription enabled (chunk_duration={chunk_duration}s)"
             )
@@ -223,6 +247,13 @@ class StreamingRuntime:
             self.controller._streaming_enabled = False
             if not initial_setup:
                 self.controller.ui_controller.set_status("Failed to reconfigure streaming")
+
+    @staticmethod
+    def _unavailable_status(backend) -> str:
+        host = getattr(backend, "host_name", "") if getattr(backend, "is_remote", False) else ""
+        if host:
+            return f"Live preview needs Parakeet or Nemotron Streaming on {host}"
+        return PREVIEW_UNAVAILABLE_STATUS
 
     @staticmethod
     def _shares_preview_decoder(backend) -> bool:
@@ -305,6 +336,7 @@ class StreamingRuntime:
             logger.warning(f"Streaming warmup failed (non-fatal): {exc}")
 
     def _cleanup_streaming_resources(self) -> None:
+        self._configured_for = None
         if self.controller.streaming_transcriber:
             try:
                 self.controller.streaming_transcriber.cleanup()

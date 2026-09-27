@@ -20,7 +20,7 @@ from typing import Callable, List, Optional, Tuple
 from services.remote_asr import protocol
 from services.remote_asr import settings as remote_settings
 from services.remote_asr import tailscale
-from services.remote_asr.engines import HostEngine, host_engine_for
+from services.remote_asr.engines import HostEngine, host_engine_for, host_models
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,10 @@ Listener = Callable[[str], None]
 
 #: A cached ``tailscale status`` older than this is refreshed in the background.
 TAILSCALE_STATUS_MAX_AGE_S = 30.0
+#: How long a client's model switch may take to load here before the host
+#: stops waiting. A cold large Whisper on CPU is the slow case.
+SWITCH_TIMEOUT_S = 240.0
+_SWITCH_POLL_S = 0.1
 #: Peers probed at once while looking for hosts on the tailnet.
 _PROBE_WORKERS = 12
 
@@ -66,6 +70,12 @@ def _default_identity_dir() -> str:
 
 
 class RemoteEngineService:
+    """``switch_engine(family, model, device_name)`` selects one of this
+    computer's models on its UI thread for a paired client, raising with the
+    reason when it can't right now; ``engine_settled()`` says when the load
+    that started has finished. Without them, clients can't change the model.
+    """
+
     def __init__(
         self,
         backend_provider: Callable[[], object],
@@ -73,8 +83,12 @@ class RemoteEngineService:
         identity_dir: Optional[str] = None,
         on_client_changed: Optional[Callable[[], None]] = None,
         bind: str = "0.0.0.0",
+        switch_engine: Optional[Callable[[str, str, str], None]] = None,
+        engine_settled: Optional[Callable[[], bool]] = None,
     ):
         self._backend_provider = backend_provider
+        self._switch_engine = switch_engine
+        self._engine_settled = engine_settled or (lambda: True)
         self._identity_dir = identity_dir
         # Every interface, so other computers can connect. Tests pass
         # 127.0.0.1, which also keeps Windows from asking about the firewall.
@@ -244,8 +258,45 @@ class RemoteEngineService:
                 on_event=lambda kind, _detail: self._notify(kind),
                 tailscale_owner=self._trusted_tailscale_owner,
                 addresses=self._host_addresses,
+                models=self.host_models,
+                select_model=self.select_model if self._switch_engine is not None else None,
             )
         return self._host
+
+    def host_models(self) -> List[dict]:
+        """What paired clients may switch to; none when switching isn't wired up."""
+        return host_models() if self._switch_engine is not None else []
+
+    def select_model(self, family: str, model: str, device_name: str) -> dict:
+        """Switch this computer to ``model`` for a paired client. Blocking.
+
+        Runs on the client's connection thread and returns the new engine's
+        ``describe()`` once it has loaded. Raises RuntimeError with a reason
+        the client shows as is.
+        """
+        name = socket.gethostname()
+        choice = next((entry for entry in self.host_models()
+                       if entry["family"] == family and entry["model"] == model), None)
+        if choice is None:
+            raise RuntimeError(f"{model} isn't ready on {name}. Download it there first.")
+        label = choice["label"]
+        current = self._engine().describe()
+        if current.get("available") and (current.get("family"), current.get("model")) == (family, model):
+            return current
+        # Raises with the reason when this computer can't switch right now.
+        self._switch_engine(family, model, device_name)
+        deadline = time.monotonic() + SWITCH_TIMEOUT_S
+        while not self._engine_settled():
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"{name} is still loading {label}. Try again in a moment.")
+            time.sleep(_SWITCH_POLL_S)
+        engine = self._engine().describe()
+        if not engine.get("available"):
+            raise RuntimeError(engine.get("status") or f"{name} couldn't load {label}.")
+        if (engine.get("family"), engine.get("model")) != (family, model):
+            raise RuntimeError(f"{name} switched to another model while loading {label}.")
+        logger.info("Switched to %s for paired computer %s", label, device_name)
+        return engine
 
     def apply_host_settings(self) -> None:
         """Start or stop sharing to match settings. Errors land in host_state()."""

@@ -266,6 +266,9 @@ class MainWindow(QMainWindow):
     record_canceled = pyqtSignal()
     model_changed = pyqtSignal(str)
     whisper_engine_changed = pyqtSignal()  # Local engine (model/device/quant) changed
+    # The Remote backend's Model field chose one of the paired computer's
+    # models: (family, model).
+    remote_model_selected = pyqtSignal(str, str)
     live_preview_changed = pyqtSignal()  # Live preview toggled from a tab footer
     settings_requested = pyqtSignal()
     #: A Settings destination key (or legacy alias) to open.
@@ -427,6 +430,7 @@ class MainWindow(QMainWindow):
         for tab in self.transcription_tabs:
             tab.model_changed.connect(self._on_model_changed)
             tab.engine_settings_changed.connect(self._on_engine_settings_changed)
+            tab.remote_model_selected.connect(self.remote_model_selected)
             tab.live_preview_changed.connect(self._on_live_preview_changed)
             tab.help_requested.connect(self.engine_help_requested)
             tab.engine_downloads_requested.connect(
@@ -839,6 +843,10 @@ class MainWindow(QMainWindow):
     def set_device_info(self, device_info: str, ready: Optional[bool] = None):
         for tab in self.transcription_tabs:
             tab.set_device_info(device_info, ready)
+
+    def set_remote_models(self, choices):
+        for tab in self.transcription_tabs:
+            tab.set_remote_models(choices)
 
     def set_transcript(self, text: str, raw=None):
         self.quick_record_tab.set_transcript(text, raw=raw)

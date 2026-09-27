@@ -596,6 +596,473 @@ def test_selecting_the_remote_engine_connects_and_warms_the_host(paired_backend,
     # Parakeet is a warmup engine, so the reload sent one throwaway decode.
     assert [call[0] for call in engine.calls] == ["transcribe"]
     assert not controller._reload_in_flight
+    # The host decides which engine this is, so the preview is set up again.
+    assert ("streaming_setup_requested",) in events
+
+
+def _preview_runtime(backend):
+    from unittest.mock import Mock
+    from services.runtime.streaming import StreamingRuntime
+
+    controller = SimpleNamespace(
+        current_backend=backend,
+        streaming_transcriber=None,
+        _streaming_backend=None,
+        _streaming_enabled=False,
+        _pending_streaming_setup=False,
+        recorder=SimpleNamespace(is_recording=False),
+        ui_controller=Mock(),
+    )
+    return StreamingRuntime(controller), controller
+
+
+def test_live_preview_waits_for_the_host_then_decodes_there(paired_backend, engine):
+    from services.settings import SettingsKey, settings_manager
+    from services.streaming_transcriber import StreamingTranscriber
+
+    settings_manager.save_setting(SettingsKey.STREAMING_ENABLED, True)
+    runtime, controller = _preview_runtime(paired_backend)
+    # Selecting the engine reconfigures the preview before the reload connects.
+    runtime.reconfigure_streaming()
+    assert controller.streaming_transcriber is None
+    assert controller._pending_streaming_setup
+    controller.ui_controller.set_status.assert_not_called()
+
+    paired_backend.reload_model()
+    controller._pending_streaming_setup = False
+    runtime.setup_streaming()
+    preview = controller.streaming_transcriber
+    assert isinstance(preview, StreamingTranscriber) and preview.backend is paired_backend
+    assert controller._streaming_enabled
+
+    preview.sample_rate = 16000
+    preview._process_incremental_chunk([_tone(16000 * 3)])
+    assert preview.preview_text.startswith("heard ")
+    assert [call[0] for call in engine.calls] == ["transcribe"]
+
+
+def test_a_remote_reload_keeps_a_fitting_preview_and_rebuilds_a_stale_one(paired_backend, engine):
+    from services.settings import SettingsKey, settings_manager
+
+    settings_manager.save_setting(SettingsKey.STREAMING_ENABLED, True)
+    runtime, controller = _preview_runtime(paired_backend)
+    paired_backend.reload_model()
+    runtime.setup_streaming()
+    first = controller.streaming_transcriber
+
+    paired_backend.reload_model()
+    runtime.setup_streaming()
+    assert controller.streaming_transcriber is first
+
+    engine.model = "parakeet-v2"
+    paired_backend.reload_model()
+    controller.recorder.is_recording = True
+    runtime.setup_streaming()
+    assert controller.streaming_transcriber is first, "a recording keeps its preview"
+    controller.recorder.is_recording = False
+    runtime.setup_streaming()
+    assert controller.streaming_transcriber is not first
+    assert controller.streaming_transcriber.backend is paired_backend
+
+
+def test_a_host_without_a_preview_engine_says_so(paired_backend, engine):
+    from services.settings import SettingsKey, settings_manager
+
+    settings_manager.save_setting(SettingsKey.STREAMING_ENABLED, True)
+    engine.family = "local_whisper"
+    runtime, controller = _preview_runtime(paired_backend)
+    paired_backend.reload_model()
+    runtime.reconfigure_streaming()
+    assert controller.streaming_transcriber is None
+    controller.ui_controller.set_status.assert_called_once_with(
+        "Live preview needs Parakeet or Nemotron Streaming on devbox"
+    )
+
+
+# ---- choosing the host's model ----
+
+_HOST_MODELS = [
+    {"family": "parakeet", "model": "parakeet-v3", "label": "Parakeet TDT 0.6B v3"},
+    {"family": "nemotron", "model": "nemotron-3.5", "label": "Nemotron 3.5 ASR 0.6B"},
+    {"family": "local_whisper", "model": "small", "label": "Whisper small"},
+]
+
+
+@pytest.fixture
+def switchable(host, engine):
+    """The host lists models and switches its fake engine the way the app does."""
+    chosen = []
+
+    def select(family, model, device_name):
+        chosen.append((family, model, device_name))
+        if model == "busy":
+            raise RuntimeError("devbox is transcribing right now. Try again in a moment.")
+        engine.family, engine.model = family, model
+        return engine.describe()
+
+    host._models = lambda: [dict(entry) for entry in _HOST_MODELS]
+    host._select_model = select
+    return chosen
+
+
+def test_ready_lists_the_models_the_host_can_switch_to(host, switchable):
+    connection = _connect(host, _pair(host))
+    try:
+        assert connection.ready["models"] == _HOST_MODELS
+    finally:
+        connection.close()
+
+
+def test_select_model_switches_the_host_and_answers_with_the_new_engine(host, engine, switchable):
+    connection = _connect(host, _pair(host))
+    try:
+        result = connection.request("select_model", family="nemotron", model="nemotron-3.5")
+        assert (result["engine"]["family"], result["engine"]["model"]) == ("nemotron", "nemotron-3.5")
+        assert result["models"] == _HOST_MODELS
+        assert switchable == [("nemotron", "nemotron-3.5", "laptop")]
+        # This connection was opened on the engine the host ran before.
+        with pytest.raises(RemoteConnectionLost):
+            connection.request("transcribe", audio=_tone(160))
+    finally:
+        connection.close()
+
+
+def test_select_model_follows_a_host_side_switch_and_passes_refusals_on(host, engine, switchable):
+    connection = _connect(host, _pair(host))
+    try:
+        engine.model = "switched-on-the-host"
+        with pytest.raises(RuntimeError, match="transcribing right now"):
+            connection.request("select_model", family="parakeet", model="busy")
+        assert not connection.closed
+        with pytest.raises(RuntimeError, match="Choose a model"):
+            connection.request("select_model", family="parakeet")
+    finally:
+        connection.close()
+
+
+def test_a_host_that_cannot_switch_lists_nothing_and_refuses(host):
+    connection = _connect(host, _pair(host))
+    try:
+        assert connection.ready["models"] == []
+        with pytest.raises(RuntimeError, match="doesn't let paired computers"):
+            connection.request("select_model", family="parakeet", model="parakeet-v3")
+    finally:
+        connection.close()
+
+
+def test_host_models_are_the_downloaded_ones_with_a_runtime_here(monkeypatch):
+    from services import components, hf_access
+    from services.local_asr import cache
+    from services.remote_asr.engines import host_models
+
+    monkeypatch.setattr(components, "is_installed", lambda component: component.startswith("asr-nvidia"))
+    monkeypatch.setattr(cache, "is_cached", lambda key: key in ("parakeet-v3", "qwen-0.6b"))
+    small = hf_access.resolve_model_repo("small")
+    monkeypatch.setattr(hf_access, "scan_cached_models", lambda max_age_seconds=0.0: {small: object()})
+    # Qwen is downloaded but its runtime isn't installed; Nemotron's runtime
+    # is, but its model isn't downloaded.
+    assert host_models() == [
+        {"family": "parakeet", "model": "parakeet-v3", "label": "Parakeet TDT 0.6B v3"},
+        {"family": "local_whisper", "model": "small", "label": "Whisper small"},
+    ]
+
+
+def _switching_service(monkeypatch, engine, load=None):
+    """A service whose switch loads on another thread, as the app's reload does."""
+    from services.remote_asr import service as service_module
+    from services.remote_asr.service import RemoteEngineService
+
+    monkeypatch.setattr(service_module, "host_models", lambda: [dict(e) for e in _HOST_MODELS])
+    monkeypatch.setattr(service_module, "_SWITCH_POLL_S", 0.01)
+    state = {"settled": True, "switches": [], "refuse": ""}
+
+    def finish(family, model):
+        time.sleep(0.05)
+        if load is not None:
+            load(family, model)
+        else:
+            engine.family, engine.model = family, model
+        state["settled"] = True
+
+    def switch(family, model, device_name):
+        state["switches"].append((family, model, device_name))
+        if state["refuse"]:
+            raise RuntimeError(state["refuse"])
+        state["settled"] = False
+        threading.Thread(target=finish, args=(family, model), daemon=True).start()
+
+    service = RemoteEngineService(
+        lambda: None, switch_engine=switch, engine_settled=lambda: state["settled"],
+    )
+    service._engine = lambda: engine
+    return service, state
+
+
+def test_service_answers_a_switch_once_the_new_model_has_loaded(monkeypatch, engine):
+    service, state = _switching_service(monkeypatch, engine)
+    described = service.select_model("nemotron", "nemotron-3.5", "laptop")
+    assert (described["family"], described["model"]) == ("nemotron", "nemotron-3.5")
+    assert state["switches"] == [("nemotron", "nemotron-3.5", "laptop")]
+    assert service.host_models() == _HOST_MODELS
+
+
+def test_service_refuses_what_isnt_ready_and_skips_what_already_runs(monkeypatch, engine):
+    service, state = _switching_service(monkeypatch, engine)
+    with pytest.raises(RuntimeError, match="isn't ready on"):
+        service.select_model("qwen_asr", "qwen-1.7b", "laptop")
+    assert service.select_model("parakeet", "parakeet-v3", "laptop")["model"] == "parakeet-v3"
+    assert state["switches"] == []
+
+
+def test_service_reports_a_refused_or_failed_switch(monkeypatch, engine):
+    def fail(family, model):
+        engine.family, engine.model, engine.available = family, model, False
+
+    service, state = _switching_service(monkeypatch, engine, load=fail)
+    with pytest.raises(RuntimeError, match="not loaded"):
+        service.select_model("local_whisper", "small", "laptop")
+    state["refuse"] = "devbox is running a meeting."
+    with pytest.raises(RuntimeError, match="running a meeting"):
+        service.select_model("parakeet", "parakeet-v3", "laptop")
+
+
+def test_a_service_without_a_switch_offers_no_models():
+    from services.remote_asr.service import RemoteEngineService
+
+    assert RemoteEngineService(lambda: None).host_models() == []
+
+
+def test_model_choices_follow_the_connection(paired_backend, switchable):
+    from transcriber.remote_backend import RemoteModels
+
+    assert paired_backend.model_choices() == RemoteModels(host="devbox")
+    paired_backend.reload_model()
+    choices = paired_backend.model_choices()
+    assert choices.host == "devbox"
+    assert [m.key for m in choices.models] == [(e["family"], e["model"]) for e in _HOST_MODELS]
+    assert choices.current.key == ("parakeet", "parakeet-v3")
+    paired_backend.cleanup()
+    assert paired_backend.model_choices().current is None
+
+
+def test_choosing_a_host_model_switches_the_host_and_reconnects_to_it(paired_backend, switchable):
+    backend = paired_backend
+    backend.reload_model()
+    assert backend.request_model("local_whisper", "small").label == "Whisper small"
+    backend.reload_model()
+    assert switchable == [("local_whisper", "small", "laptop")]
+    assert backend.is_available(), backend.last_error
+    assert (backend.backend_id, backend.model_name) == ("local_whisper", "small")
+    assert backend.current_model.key == ("local_whisper", "small")
+    assert backend.switch_error == ""
+    # The choice rides on one reload only.
+    backend.reload_model()
+    assert len(switchable) == 1
+
+
+def test_a_host_that_keeps_its_model_says_why(paired_backend, switchable):
+    backend = paired_backend
+    backend.request_model("parakeet", "busy")
+    backend.reload_model()
+    assert backend.is_available()
+    assert backend.model_name == "parakeet-v3"
+    assert backend.switch_error == "devbox is transcribing right now. Try again in a moment."
+
+
+def test_a_host_from_before_model_switching(paired_backend, host, monkeypatch):
+    send = SpeechHost._send
+
+    def old_send(ws, message):
+        if message.get("type") == "ready":
+            message = {key: value for key, value in message.items() if key != "models"}
+        send(ws, message)
+
+    monkeypatch.setattr(SpeechHost, "_send", staticmethod(old_send))
+    monkeypatch.setattr(host, "_switch_model", lambda request_id, header, device_name: {
+        "id": request_id, "error": "Unknown operation: 'select_model'",
+    })
+    backend = paired_backend
+    backend.reload_model()
+    choices = backend.model_choices()
+    assert choices.models is None and choices.current.key == ("parakeet", "parakeet-v3")
+    backend.request_model("nemotron", "nemotron-3.5")
+    backend.reload_model()
+    assert backend.is_available()
+    assert backend.switch_error == "Update OpenWhisper on devbox to choose its model from here."
+
+
+def test_the_models_are_forgotten_when_the_host_is_out_of_reach(paired_backend, host, switchable):
+    paired_backend.reload_model()
+    assert paired_backend.host_models
+    host.stop()
+    paired_backend.reload_model()
+    assert paired_backend.host_models is None
+    assert paired_backend.model_choices().current is None
+
+
+def test_cleanup_ends_a_switch_the_host_is_still_loading(paired_backend, host, engine, switchable):
+    started = threading.Event()
+
+    def slow(family, model, device_name):
+        started.set()
+        time.sleep(3)
+        return engine.describe()
+
+    host._select_model = slow
+    paired_backend.request_model("nemotron", "nemotron-3.5")
+    worker = threading.Thread(target=paired_backend.reload_model)
+    worker.start()
+    assert started.wait(5)
+    began = time.monotonic()
+    paired_backend.cleanup()
+    worker.join(5)
+    assert not worker.is_alive()
+    assert time.monotonic() - began < 2
+    assert not paired_backend.is_available()
+    assert paired_backend.last_error == ""
+
+
+def _client_controller(backend, events):
+    from unittest.mock import Mock
+    from services.application_controller import ApplicationController
+
+    controller = _controller(backend, events)
+    controller._reload_in_flight = False
+    controller._reload_note = ""
+    controller.ui_controller = Mock()
+    for name in ("select_remote_model", "remote_models"):
+        setattr(controller, name, getattr(ApplicationController, name).__get__(controller))
+    return controller
+
+
+def test_choosing_a_model_on_the_client_reloads_through_the_host(paired_backend, switchable):
+    events = []
+    controller = _client_controller(paired_backend, events)
+    controller._reload_worker()
+    assert controller.remote_models().current.key == ("parakeet", "parakeet-v3")
+    controller.select_remote_model("parakeet", "parakeet-v3")
+    controller.reload_whisper_model.assert_not_called()
+
+    controller.select_remote_model("local_whisper", "small")
+    controller.reload_whisper_model.assert_called_once()
+    assert controller._reload_note == "Switching devbox to Whisper small..."
+    controller._reload_worker()
+    assert switchable == [("local_whisper", "small", "laptop")]
+    assert controller.remote_models().current.key == ("local_whisper", "small")
+
+    controller.select_remote_model("parakeet", "busy")
+    controller._reload_worker()
+    assert ("status_update", "devbox is transcribing right now. Try again in a moment.") in events
+
+
+def test_the_client_wont_switch_the_host_mid_recording(paired_backend, switchable):
+    events = []
+    controller = _client_controller(paired_backend, events)
+    controller._reload_worker()
+    controller.recorder.is_recording = True
+    controller.select_remote_model("nemotron", "nemotron-3.5")
+    assert ("status_update", "Finish recording before changing the engine") in events
+    controller.ui_controller.refresh_remote_models.assert_called_once()
+    controller.reload_whisper_model.assert_not_called()
+    assert paired_backend._requested is None
+
+
+def _host_controller(current="parakeet"):
+    """The host's switch methods on a stand-in whose main window selects backends."""
+    from unittest.mock import Mock
+    from config import config
+    from services.application_controller import ApplicationController
+
+    controller = SimpleNamespace(
+        _current_model_name=current,
+        _reload_pending=False,
+        _reload_note="",
+        recorder=SimpleNamespace(is_recording=False),
+        meeting=False,
+        transcription_backends={},
+        ui_controller=Mock(),
+        reload_whisper_model=Mock(),
+    )
+    controller.is_meeting_active = lambda: controller.meeting
+    controller.is_transcribing = lambda: False
+
+    def select(display):
+        controller._current_model_name = config.MODEL_VALUE_MAP[display]
+
+    controller.ui_controller.select_transcription_backend.side_effect = select
+    for name in ("_switch_engine_to", "_switch_engine_for_client", "_on_client_model_switch"):
+        setattr(controller, name, getattr(ApplicationController, name).__get__(controller))
+    controller.client_model_switch_requested = SimpleNamespace(emit=controller._on_client_model_switch)
+    return controller
+
+
+def test_the_host_switches_as_if_the_model_were_picked_there():
+    from services.settings import SettingsKey, settings_manager
+
+    controller = _host_controller()
+    controller._switch_engine_for_client("nemotron", "nemotron-3.5", "laptop")
+    assert settings_manager.load_all_settings()[SettingsKey.LOCAL_ASR_MODELS]["nemotron"] == "nemotron-3.5"
+    controller.ui_controller.select_transcription_backend.assert_called_once_with("Nemotron Streaming")
+    controller.ui_controller.refresh_local_engine_controls.assert_called_once()
+    controller.reload_whisper_model.assert_called_once()
+    assert controller._reload_note == "Switching to Nemotron 3.5 ASR 0.6B for laptop..."
+
+
+def test_the_host_changes_whisper_size_without_changing_backend():
+    from services.settings import SettingsKey, settings_manager
+
+    controller = _host_controller(current="local_whisper")
+    controller._switch_engine_for_client("local_whisper", "small", "laptop")
+    assert settings_manager.load_all_settings()[SettingsKey.WHISPER_MODEL] == "small"
+    controller.ui_controller.select_transcription_backend.assert_not_called()
+    controller.reload_whisper_model.assert_called_once()
+
+
+def test_the_host_refuses_a_switch_while_busy_or_for_a_model_it_cant_run():
+    controller = _host_controller()
+    controller.meeting = True
+    with pytest.raises(RuntimeError, match="running a meeting"):
+        controller._switch_engine_for_client("nemotron", "nemotron-3.5", "laptop")
+    controller.meeting = False
+    controller.recorder.is_recording = True
+    with pytest.raises(RuntimeError, match="transcribing right now"):
+        controller._switch_engine_for_client("nemotron", "nemotron-3.5", "laptop")
+    controller.recorder.is_recording = False
+    with pytest.raises(RuntimeError, match="can't run"):
+        controller._switch_engine_for_client("parakeet", "nemotron-3.5", "laptop")
+    controller.ui_controller.select_transcription_backend.assert_not_called()
+    controller.reload_whisper_model.assert_not_called()
+
+
+def test_a_queued_reload_is_unsettled_until_it_starts_and_ends():
+    from unittest.mock import Mock
+    from services.application_controller import ApplicationController
+
+    events = []
+    controller = SimpleNamespace(
+        _reload_in_flight=False,
+        _reload_pending=False,
+        _reload_note="Switching to Whisper small for laptop...",
+        _reload_timer=Mock(),
+        recorder=SimpleNamespace(is_recording=False),
+        is_meeting_active=lambda: False,
+        is_transcribing=lambda: False,
+        executor=Mock(),
+        _reload_worker=Mock(),
+    )
+    for name in ("status_update", "engine_busy_changed"):
+        setattr(controller, name, _Signal(name, events))
+    for name in ("reload_whisper_model", "_do_reload_whisper_model", "_engine_settled"):
+        setattr(controller, name, getattr(ApplicationController, name).__get__(controller))
+    assert controller._engine_settled()
+    controller.reload_whisper_model()
+    assert not controller._engine_settled()
+    controller._do_reload_whisper_model()
+    assert not controller._engine_settled()
+    assert ("status_update", "Switching to Whisper small for laptop...") in events
+    assert controller._reload_note == ""
+    controller._reload_in_flight = False
+    assert controller._engine_settled()
 
 
 def test_readiness_retries_a_remote_engine_that_could_not_connect():

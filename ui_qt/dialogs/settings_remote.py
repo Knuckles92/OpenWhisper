@@ -169,7 +169,8 @@ class RemoteEngineSection(QObject):
         self.share_tile = SettingTile(
             "Share this computer's engine",
             "Paired computers can dictate with the engine selected on this "
-            "computer. The connection is encrypted and only computers you pair "
+            "computer, and switch it to any model downloaded here. The "
+            "connection is encrypted and only computers you pair "
             "can use it. Windows may ask once whether to allow OpenWhisper on "
             "private networks.",
             icon("server-blue.svg"),
