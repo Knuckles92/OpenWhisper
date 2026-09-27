@@ -44,11 +44,15 @@ def _paired_on(iso: str) -> str:
 
 
 def _engine_phrase(engine: dict) -> str:
+    """``Whisper turbo on cuda (int8_float32)``, as the main window's status says it."""
     label = str(engine.get("label") or "")
     if not label:
         return ""
     device = str(engine.get("device") or "")
-    return f"{label} on {device}" if device else label
+    compute = str(engine.get("compute_type") or "")
+    if not device:
+        return label
+    return f"{label} on {device} ({compute})" if compute else f"{label} on {device}"
 
 
 class RemoteEngineSection(QObject):
@@ -467,6 +471,8 @@ class RemoteEngineSection(QObject):
 
         running = state["running"]
         where = protocol.format_address(state["address"] or state["host_name"], state["port"])
+        if state.get("address_kind") == "vpn":
+            where += " (a VPN address; computers on your network may not reach it)"
         tailnet = state.get("tailscale")
         on_tailnet = tailnet is not None and tailnet.running and bool(tailnet.address)
         if on_tailnet:

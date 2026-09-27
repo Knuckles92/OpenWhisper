@@ -39,16 +39,23 @@ def log_cuda_preload_summary() -> None:
     if preloaded is None:
         return
 
+    from services.component_runtime import PRELOADED_LIBRARIES
+
     if preloaded:
         logging.info(
             "Preloaded %d CUDA library/libraries: %s",
             len(preloaded),
             ", ".join(sorted(preloaded)),
         )
+    elif PRELOADED_LIBRARIES:
+        logging.info(
+            "Preloaded GPU Acceleration's CUDA libraries: %s",
+            ", ".join(sorted(PRELOADED_LIBRARIES)),
+        )
     else:
         logging.info(
             "No NVIDIA CUDA libraries preloaded — local transcription will "
-            "use CPU (install requirements-gpu.txt for GPU acceleration)"
+            "use CPU (install GPU Acceleration from Downloads for GPU acceleration)"
         )
 
 

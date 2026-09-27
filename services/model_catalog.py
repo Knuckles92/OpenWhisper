@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Mapping, Tuple
 
+from services.gpu_info import memory_guidance
+
 
 OPENAI_MODEL_TABLE_URL: Final[str] = (
     "https://github.com/openai/whisper#available-models-and-languages"
@@ -63,7 +65,6 @@ def _standard_model(
     description: str,
     parameters: str,
     relative_speed: str,
-    required_vram: str,
     download_size_mb: int,
     best_for: str,
     limitations: Tuple[str, ...],
@@ -106,10 +107,10 @@ def _standard_model(
             f"{relative_speed} vs. large on an NVIDIA A100 for English "
             "transcription; real-world speed varies by hardware and audio."
         ),
-        memory_guidance=(
-            f"About {required_vram} VRAM in the upstream reference table; "
-            "faster-whisper usage varies with compute type and device."
-        ),
+        # Not OpenAI's reference table: that is PyTorch at float16 (turbo
+        # "6 GB"), while faster-whisper runs turbo in 1.4 GB at int8.
+        # Settings → Downloads says it for this computer's GPU instead.
+        memory_guidance=memory_guidance(model_name),
         download_size_mb=download_size_mb,
         runtime_format=RUNTIME_FORMAT,
         license=LICENSE,
@@ -149,10 +150,7 @@ def _distilled_model(
             f"{relative_latency} published relative latency vs. Whisper "
             "large-v3; results depend on hardware, decoding, and audio."
         ),
-        memory_guidance=(
-            "Smaller distilled checkpoint; actual RAM and VRAM usage depends "
-            "on faster-whisper compute type and device."
-        ),
+        memory_guidance=memory_guidance(model_name),
         download_size_mb=download_size_mb,
         runtime_format=RUNTIME_FORMAT,
         license=LICENSE,
@@ -168,7 +166,6 @@ _CATALOG = {
         description="The smallest multilingual Whisper model, optimized for very fast transcription and minimal resource use.",
         parameters="39 million",
         relative_speed="~10x",
-        required_vram="1 GB",
         download_size_mb=76,
         best_for="Fast drafts, lightweight devices, and workflows where responsiveness matters more than maximum accuracy.",
         limitations=(
@@ -181,7 +178,6 @@ _CATALOG = {
         description="The English-only tiny Whisper model, tuned for fast and lightweight English transcription.",
         parameters="39 million",
         relative_speed="~10x",
-        required_vram="1 GB",
         download_size_mb=76,
         best_for="Quick English drafts on resource-constrained systems.",
         limitations=(
@@ -194,7 +190,6 @@ _CATALOG = {
         description="A compact multilingual model that improves accuracy over tiny while remaining suitable for CPU use.",
         parameters="74 million",
         relative_speed="~7x",
-        required_vram="1 GB",
         download_size_mb=145,
         best_for="General-purpose multilingual transcription on CPUs and modest hardware.",
         limitations=(
@@ -207,7 +202,6 @@ _CATALOG = {
         description="An English-only compact model offering a practical balance of CPU speed and transcription quality.",
         parameters="74 million",
         relative_speed="~7x",
-        required_vram="1 GB",
         download_size_mb=145,
         best_for="Everyday English dictation and transcription on CPU-focused systems.",
         limitations=(
@@ -220,7 +214,6 @@ _CATALOG = {
         description="A mid-sized multilingual Whisper model with a stronger accuracy and speed balance than tiny or base.",
         parameters="244 million",
         relative_speed="~4x",
-        required_vram="2 GB",
         download_size_mb=484,
         best_for="Higher-quality multilingual transcription where moderate compute use is acceptable.",
         limitations=(
@@ -233,7 +226,6 @@ _CATALOG = {
         description="The English-only small model, providing stronger recognition than compact variants at moderate cost.",
         parameters="244 million",
         relative_speed="~4x",
-        required_vram="2 GB",
         download_size_mb=484,
         best_for="Reliable English transcription when base-class accuracy is not sufficient.",
         limitations=(
@@ -246,7 +238,6 @@ _CATALOG = {
         description="A high-accuracy multilingual model that approaches large-model quality with lower resource requirements.",
         parameters="769 million",
         relative_speed="~2x",
-        required_vram="5 GB",
         download_size_mb=1530,
         best_for="Accuracy-focused multilingual transcription and translation on capable hardware.",
         limitations=(
@@ -259,7 +250,6 @@ _CATALOG = {
         description="The high-capacity English-only medium model for accuracy-focused transcription.",
         parameters="769 million",
         relative_speed="~2x",
-        required_vram="5 GB",
         download_size_mb=1530,
         best_for="High-quality English transcription on systems with ample memory or GPU acceleration.",
         limitations=(
@@ -272,7 +262,6 @@ _CATALOG = {
         description="The first-generation full-size multilingual Whisper checkpoint, retained for compatibility and comparison.",
         parameters="1.55 billion",
         relative_speed="1x",
-        required_vram="10 GB",
         download_size_mb=3090,
         best_for="Reproducing workflows that specifically depend on the original large checkpoint.",
         limitations=(
@@ -285,7 +274,6 @@ _CATALOG = {
         description="The second-generation full-size multilingual Whisper model with improvements over large-v1.",
         parameters="1.55 billion",
         relative_speed="1x",
-        required_vram="10 GB",
         download_size_mb=3090,
         best_for="High-accuracy multilingual transcription when compatibility with the v2 checkpoint matters.",
         limitations=(
@@ -298,7 +286,6 @@ _CATALOG = {
         description="The third-generation full-size multilingual Whisper model and the most capable standard checkpoint in this catalog.",
         parameters="1.55 billion",
         relative_speed="1x",
-        required_vram="10 GB",
         download_size_mb=3090,
         best_for="Maximum multilingual transcription and translation quality when compute resources permit.",
         limitations=(
@@ -311,7 +298,6 @@ _CATALOG = {
         description="An optimized large-v3 variant designed for much faster multilingual transcription with minimal accuracy loss.",
         parameters="809 million",
         relative_speed="~8x",
-        required_vram="6 GB",
         download_size_mb=1620,
         best_for="Fast, high-quality multilingual transcription on a GPU; OpenWhisper's automatic GPU choice.",
         limitations=(

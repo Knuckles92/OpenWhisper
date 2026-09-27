@@ -149,6 +149,10 @@ class _Client:
     ws: object = None
     #: Decoding one of this client's requests right now.
     busy: bool = False
+    #: The engine this client was told about in ``ready``.
+    engine_identity: tuple = ()
+    #: Handling any request of this client's, a model switch included.
+    in_request: bool = False
 
 
 class SpeechHost:
@@ -304,6 +308,36 @@ class SpeechHost:
                 return
             client.busy = busy
         self._emit("activity", {"name": client.name, "busy": busy})
+
+    def _set_in_request(self, connection_id: str, value: bool) -> None:
+        with self._lock:
+            client = self._clients.get(connection_id)
+            if client is not None:
+                client.in_request = value
+
+    def engine_changed(self) -> int:
+        """Tell idle clients the engine changed, by closing their connections.
+
+        A client otherwise learns at its next request, so its window kept
+        naming the engine it connected to (Parakeet) after this host moved
+        to Whisper turbo. Its link watch notices the close within a second
+        and reconnects, and ``ready`` names the new engine. A client in the
+        middle of a request is left alone; that request's reply tells it.
+        Blocking (each close waits for the handshake), so not on the UI
+        thread. Returns how many connections were closed.
+        """
+        current = self._engine().identity
+        with self._lock:
+            stale = [c.ws for c in self._clients.values()
+                     if c.engine_identity != current and not c.in_request]
+        for ws in stale:
+            try:
+                ws.close(protocol.CLOSE_ENGINE_CHANGED, "engine changed")
+            except Exception:
+                logger.debug("Could not close a client on an engine change", exc_info=True)
+        if stale:
+            logger.info("Engine changed; told %d paired computer(s) to reconnect", len(stale))
+        return len(stale)
 
     def remove_device(self, device_id: str) -> bool:
         """Forget a device and drop its open connections."""
@@ -521,14 +555,19 @@ class SpeechHost:
                 ws.close(1001, "host stopped sharing")
                 return
             self._clients[connection_id] = _Client(
-                device["id"], device["name"], address, time.monotonic(), ws
+                device["id"], device["name"], address, time.monotonic(), ws,
+                engine_identity=identity,
             )
         self._emit("clients", {})
         streams: set = set()
         try:
             for frame in ws:
-                reply = self._dispatch(frame, engine, identity, connection_id, streams, device["name"])
-                self._send(ws, reply)
+                self._set_in_request(connection_id, True)
+                try:
+                    reply = self._dispatch(frame, engine, identity, connection_id, streams, device["name"])
+                    self._send(ws, reply)
+                finally:
+                    self._set_in_request(connection_id, False)
                 if reply.get("code") == "engine_changed":
                     ws.close(protocol.CLOSE_ENGINE_CHANGED, "engine changed")
                     break

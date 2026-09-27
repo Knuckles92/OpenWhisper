@@ -960,7 +960,32 @@ class SettingsDialog(QDialog):
 
         show_accessibility_setup(self)
 
+    def _fit_to_screen(self) -> None:
+        """Shrink the window to fit the screen it opens on, when it doesn't.
+
+        DEFAULT_SIZE is 1315x814, but a 1920x1080 laptop panel at 150% is
+        1280x720 with a bar across the top: the window was cut off on the
+        right, and Hyprland, which places windows itself, centred it above
+        the top edge (y=-34). QDialog centres a dialog over its parent and
+        keeps its corner on screen, but never shrinks it.
+        """
+        parent = self.parentWidget()
+        screen = (parent.screen() if parent is not None else None) or self.screen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        margin = 32  # Wayland reports the whole output, bars included
+        room = QSize(max(1, available.width() - 2 * margin),
+                     max(1, available.height() - 2 * margin))
+        self.setMinimumSize(self.MINIMUM_SIZE.boundedTo(room))
+        fitted = self.size().boundedTo(room)
+        if fitted != self.size():
+            self.resize(fitted)
+
     def showEvent(self, event):
+        if not event.spontaneous():
+            # Before QDialog's own showEvent, which centres by the size.
+            self._fit_to_screen()
         super().showEvent(event)
         if hasattr(self, "_accessibility_timer"):
             self._refresh_accessibility_status()

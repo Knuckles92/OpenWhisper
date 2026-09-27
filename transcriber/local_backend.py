@@ -35,6 +35,13 @@ _GPU_LIBRARY_MARKERS = (
     "cublas", "cudnn", "cudart", "libcu", "is not found", "cannot be loaded",
 )
 
+# Windows and Linux x86_64 both offer the component; a source install can
+# use the pip wheels instead.
+_INSTALL_CUDA_ADVICE = (
+    "Install GPU Acceleration from Downloads (a source install can use "
+    "requirements-gpu.txt instead) to restore GPU acceleration."
+)
+
 
 class GpuFallbackCause:
     """Why a GPU load fell back to the CPU.
@@ -156,27 +163,32 @@ class LocalWhisperBackend(TranscriptionBackend):
 
         model = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
 
-        has_cuda = False
         if device == "auto" or compute_type == "auto" or model == "auto":
             has_cuda = self._cuda_is_available()
-
-            if has_cuda:
-                detected_device = "cuda"
-                detected_compute = "float16"
-                detected_model = "turbo"
-                logger.info("CUDA detected - using GPU acceleration with float16 and turbo model")
-            else:
-                detected_device = "cpu"
-                detected_compute = "int8"
-                detected_model = "base"
-                logger.info("No CUDA available - using CPU with int8 quantization and base model")
-
             if device == "auto":
-                device = detected_device
-            if compute_type == "auto":
-                compute_type = detected_compute
-            if model == "auto":
-                model = detected_model
+                device = "cuda" if has_cuda else "cpu"
+
+            if device == "cuda":
+                # Decided from what this card supports and holds, and said
+                # before loading. It used to announce float16 on every card
+                # and then fall back, so a Pascal card's log claimed float16
+                # while it ran int8_float32.
+                from services import gpu_info
+
+                gpu = gpu_info.nvidia_gpu()
+                supported = self._get_supported_compute_types("cuda")
+                model, compute_type = gpu_info.plan_cuda(
+                    model, compute_type, supported, gpu.total_mib if gpu else None
+                )
+                logger.info(gpu_info.describe_plan(model, compute_type, gpu, supported))
+            else:
+                if compute_type == "auto":
+                    compute_type = "int8"
+                if model == "auto":
+                    # A CUDA device kept on the CPU (chosen, or after a GPU
+                    # fallback) keeps turbo, so a later fix needs no download.
+                    model = "turbo" if has_cuda else "base"
+                logger.info(f"Using CPU for Local Whisper: {model} at {compute_type}")
 
         # Validate int8 in particular: CPUs without AVX2 may reject it.
         compute_type = self._select_best_compute_type(device, compute_type)
@@ -281,8 +293,7 @@ class LocalWhisperBackend(TranscriptionBackend):
 
         logger.warning(
             "A CUDA device is present but its libraries could not be loaded; "
-            "using CPU. Install the GPU component (Windows) or "
-            "requirements-gpu.txt (Linux) to restore GPU acceleration."
+            f"using CPU. {_INSTALL_CUDA_ADVICE}"
         )
         self.gpu_fallback_reason = "CUDA libraries (cuBLAS) could not be loaded"
         self.gpu_fallback_note = "GPU unavailable, using CPU"
@@ -304,8 +315,7 @@ class LocalWhisperBackend(TranscriptionBackend):
 
         if any(marker in text for marker in _GPU_LIBRARY_MARKERS):
             return (
-                "Install the GPU component (Windows) or requirements-gpu.txt "
-                "(Linux) to restore GPU acceleration.",
+                _INSTALL_CUDA_ADVICE,
                 "GPU unavailable, using CPU",
                 GpuFallbackCause.MISSING_LIBRARIES,
             )
@@ -499,6 +509,11 @@ class LocalWhisperBackend(TranscriptionBackend):
         an "auto" or "cuda" selection lands here as "cpu" after a GPU fallback.
         """
         return self._device
+
+    @property
+    def compute_type(self) -> Optional[str]:
+        """Compute type the engine actually loaded with, e.g. "int8_float32"."""
+        return self._compute_type
 
     @property
     def last_loaded_model(self) -> Optional[str]:

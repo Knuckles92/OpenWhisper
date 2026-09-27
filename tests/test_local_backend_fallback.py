@@ -295,3 +295,82 @@ def test_cpu_load_failure_still_reports_unavailable(stub_backend):
 
     assert backend.is_available() is False
     assert backend.gpu_fallback_reason is None
+
+
+@pytest.fixture
+def hardware(monkeypatch):
+    """Drive the real _detect_hardware against a fake card and settings."""
+    from services import gpu_info
+    from services.settings import SettingsKey, settings_manager
+
+    def install(settings, *, cuda=True, supported=frozenset({"float32", "int8", "int8_float32"}),
+                gpu=gpu_info.NvidiaGpu("NVIDIA GeForce GTX 1050 Ti", 4096, (6, 1))):
+        values = {
+            SettingsKey.WHISPER_DEVICE: "auto",
+            SettingsKey.WHISPER_COMPUTE_TYPE: "auto",
+            SettingsKey.WHISPER_MODEL: "auto",
+            **settings,
+        }
+        monkeypatch.setattr(settings_manager, "load_all_settings", lambda: dict(values))
+        monkeypatch.setattr(module.LocalWhisperBackend, "_cuda_is_available", lambda self: cuda)
+        monkeypatch.setattr(
+            module.LocalWhisperBackend, "_get_supported_compute_types",
+            lambda self, device: set(supported) if device == "cuda" else {"int8", "float32"},
+        )
+        monkeypatch.setattr(gpu_info, "nvidia_gpu", lambda: gpu)
+        monkeypatch.setattr(gpu_info.sys, "platform", "linux")
+        return module.LocalWhisperBackend(model_name="auto", load=False)
+
+    return install
+
+
+def test_auto_on_a_pascal_card_says_int8_float32_before_loading(hardware, caplog):
+    """The GTX 1050 Ti log said float16, then fell back to int8_float32."""
+    backend = hardware({})
+
+    with caplog.at_level("INFO", logger=module.__name__):
+        assert backend._detect_hardware() == ("cuda", "int8_float32", "turbo")
+
+    text = caplog.text
+    assert "turbo at int8_float32" in text and "no float16" in text
+    assert "float16 and turbo" not in text
+    assert "Falling back" not in text
+
+
+def test_auto_with_float16_keeps_float16(hardware):
+    backend = hardware({}, supported={"float16", "int8_float16", "int8_float32", "int8", "float32"},
+                       gpu=None)
+
+    assert backend._detect_hardware() == ("cuda", "float16", "turbo")
+
+
+def test_a_chosen_model_keeps_its_name_and_gets_a_fitting_compute_type(hardware):
+    from services import gpu_info
+
+    backend = hardware(
+        {"whisper_model": "large-v3"},
+        supported={"float16", "int8_float16", "int8_float32", "int8", "float32"},
+        gpu=gpu_info.NvidiaGpu("NVIDIA GeForce GTX 1650", 4096, (7, 5)),
+    )
+
+    assert backend._detect_hardware() == ("cuda", "int8_float16", "large-v3")
+
+
+def test_cpu_device_with_a_cuda_card_keeps_turbo(hardware):
+    """Moving the device back after a GPU fix must not need another download."""
+    backend = hardware({"whisper_device": "cpu"})
+
+    assert backend._detect_hardware() == ("cpu", "int8", "turbo")
+
+
+def test_no_cuda_is_base_on_the_cpu(hardware):
+    backend = hardware({}, cuda=False)
+
+    assert backend._detect_hardware() == ("cpu", "int8", "base")
+
+
+def test_compute_type_is_public_for_the_remote_host(stub_backend):
+    stub_backend()
+    backend = module.LocalWhisperBackend(model_name="turbo")
+
+    assert backend.compute_type == backend._compute_type == "float16"

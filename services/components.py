@@ -86,6 +86,54 @@ _BUILTIN_GPU_ARCHIVES: Final[Tuple[dict, ...]] = (
     },
 )
 
+# The same CUDA 12.9 releases as the Windows wheels, so GPU_COMPONENT_VERSION
+# names both. Digests and sizes from PyPI's JSON API (2026-09-26); the .so files
+# they extract total 1,083,186,880 bytes, measured from the identical wheels
+# installed by requirements-gpu.txt on an Arch x86_64 machine.
+_BUILTIN_GPU_ARCHIVES_LINUX: Final[Tuple[dict, ...]] = (
+    {
+        "name": "nvidia_cublas_cu12-12.9.2.10-py3-none-manylinux_2_27_x86_64.whl",
+        "url": (
+            "https://files.pythonhosted.org/packages/cb/c0/"
+            "0a517bfe63ccd3b92eb254d264e28fca3c7cab75d07daea315250fb1bf73/"
+            "nvidia_cublas_cu12-12.9.2.10-py3-none-manylinux_2_27_x86_64.whl"
+        ),
+        "sha256": "e4f53a8ca8c5d6e8c492d0d0a3d565ecb59a751b19cfdaa4f6da0ab2104c1702",
+        "size_bytes": 581_240_110,
+        "extract": "nvidia-wheel",
+    },
+    {
+        "name": (
+            "nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-manylinux2010_x86_64."
+            "manylinux_2_12_x86_64.whl"
+        ),
+        "url": (
+            "https://files.pythonhosted.org/packages/b8/85/"
+            "e4af82cc9202023862090bfca4ea827d533329e925c758f0cde964cb54b7/"
+            "nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-manylinux2010_x86_64."
+            "manylinux_2_12_x86_64.whl"
+        ),
+        "sha256": "210cf05005a447e29214e9ce50851e83fc5f4358df8b453155d5e1918094dcb4",
+        "size_bytes": 89_568_129,
+        "extract": "nvidia-wheel",
+    },
+    {
+        "name": (
+            "nvidia_cuda_runtime_cu12-12.9.79-py3-none-manylinux2014_x86_64."
+            "manylinux_2_17_x86_64.whl"
+        ),
+        "url": (
+            "https://files.pythonhosted.org/packages/bc/46/"
+            "a92db19b8309581092a3add7e6fceb4c301a3fd233969856a8cbf042cd3c/"
+            "nvidia_cuda_runtime_cu12-12.9.79-py3-none-manylinux2014_x86_64."
+            "manylinux_2_17_x86_64.whl"
+        ),
+        "sha256": "25bba2dfb01d48a9b59ca474a1ac43c6ebf7011f1b0b8cc44f54eb6ac48a96c3",
+        "size_bytes": 3_493_179,
+        "extract": "nvidia-wheel",
+    },
+)
+
 # TODO(meeting-mode): placeholder digest — replace with the real SHA-256 pinned
 # at release time once the speaker-id payload is published.
 _PLACEHOLDER_SHA256: Final[str] = "0" * 64
@@ -274,6 +322,14 @@ _BUILTIN_CATALOG_RAW: Final[dict] = {
                     "install_bytes": 959_060_480,
                     "archives": _BUILTIN_GPU_ARCHIVES,
                 },
+                PLATFORM_LINUX_X86_64: {
+                    "version": GPU_COMPONENT_VERSION,
+                    "component_api": COMPONENT_API,
+                    "platform": PLATFORM_LINUX_X86_64,
+                    # Sum of the .so files the three archives above extract.
+                    "install_bytes": 1_083_186_880,
+                    "archives": _BUILTIN_GPU_ARCHIVES_LINUX,
+                },
             },
         },
         "meeting-agent": {
@@ -312,10 +368,12 @@ _REQUIRED_GPU_DLLS: Final[Tuple[str, ...]] = (
     "cublas64_12.dll",
 )
 
-# Linux equivalents. Delivered by pip wheels (requirements-gpu.txt) rather than
-# by a component, so they are only ever probed, never installed from here.
+# Linux equivalents, from the GPU component on x86_64 or from the pip wheels
+# (requirements-gpu.txt). Both are loaded by absolute path before CTranslate2
+# asks for them by name; see component_runtime.preload_shared_libraries.
 _REQUIRED_GPU_SHARED_OBJECTS: Final[Tuple[str, ...]] = (
     "libcublas.so.12",
+    "libcublasLt.so.12",
 )
 
 _USER_AGENT: Final[str] = f"OpenWhisper/{__version__}"
@@ -461,11 +519,10 @@ def available_component_ids(
 ) -> Tuple[str, ...]:
     """Components that can be installed on this platform.
 
-    GPU Acceleration remains Windows-only (native CUDA DLLs). The meeting
-    agent is offered on Windows x64 and Linux x86_64/aarch64. Linux GPU users
-    still use ``requirements-gpu.txt`` for Local Whisper. Linux x86_64 offers
-    the native NVIDIA Speech CPU and CUDA runtimes; Apple Silicon Macs offer
-    the CPU one.
+    GPU Acceleration (the CUDA libraries Local Whisper loads) is offered on
+    Windows x64 and Linux x86_64. The meeting agent is offered on Windows x64
+    and Linux x86_64/aarch64. Linux x86_64 also offers the native NVIDIA
+    Speech CPU and CUDA runtimes; Apple Silicon Macs offer the CPU one.
 
     Returns:
         Installable component identifiers, in display order.
@@ -483,6 +540,7 @@ def available_component_ids(
         )
     elif tag == PLATFORM_LINUX_X86_64:
         candidates = (
+            ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
             ComponentId.ASR_NVIDIA_CPU,
             ComponentId.ASR_NVIDIA_CUDA,
@@ -1142,11 +1200,14 @@ def _safe_extract_nvidia_wheel(
     progress: ProgressCallback,
     cancel: threading.Event,
 ) -> None:
-    """Extract only native NVIDIA DLLs from an official PyPI wheel.
+    """Extract only the native NVIDIA libraries from an official PyPI wheel.
 
-    The managed component uses a flat ``bin`` directory so it can be added to
-    the native loader search path with one registration. The wheel's Python
-    package metadata and import shims are not needed by CTranslate2.
+    Windows wheels keep DLLs in ``nvidia/<package>/bin``, Linux wheels keep
+    shared objects in ``nvidia/<package>/lib``. The component flattens them
+    into one ``bin`` or ``lib`` directory: one registration on the Windows
+    loader path, and on Linux every library's ``$ORIGIN`` RUNPATH still finds
+    its siblings (libcublas needs libcublasLt). The wheel's Python package
+    metadata and import shims are not needed by CTranslate2.
 
     Args:
         archive_path: Verified NVIDIA wheel downloaded from PyPI.
@@ -1156,39 +1217,47 @@ def _safe_extract_nvidia_wheel(
 
     Raises:
         ComponentCanceled: The cancel event was set.
-        ComponentError: The wheel contains unsafe paths or no NVIDIA DLLs.
+        ComponentError: The wheel contains unsafe paths or no NVIDIA libraries.
     """
     with zipfile.ZipFile(archive_path) as archive:
-        dll_members = []
+        library_members = []
         for member in archive.infolist():
             name = member.filename.replace(chr(92), "/")
             if name.startswith("/") or ".." in name.split("/"):
                 raise ComponentError(f"Archive contains an unsafe path: {name}")
-            parts = name.split("/")
-            if (
-                len(parts) >= 4
-                and parts[0].lower() == "nvidia"
-                and parts[-2].lower() == "bin"
-                and parts[-1].lower().endswith(".dll")
-            ):
-                dll_members.append(member)
+            folder = _nvidia_library_folder(name)
+            if folder:
+                library_members.append((member, folder))
 
-        if not dll_members:
+        if not library_members:
             raise ComponentError(
                 "The NVIDIA package did not contain the expected CUDA libraries."
             )
 
-        bin_dir = os.path.join(target_dir, "bin")
-        os.makedirs(bin_dir, exist_ok=True)
-        for index, member in enumerate(dll_members):
+        for index, (member, folder) in enumerate(library_members):
             if cancel.is_set():
                 raise ComponentCanceled()
+            library_dir = os.path.join(target_dir, folder)
+            os.makedirs(library_dir, exist_ok=True)
             destination = os.path.join(
-                bin_dir, member.filename.replace(chr(92), "/").split("/")[-1]
+                library_dir, member.filename.replace(chr(92), "/").split("/")[-1]
             )
             with archive.open(member) as source, open(destination, "wb") as out:
                 shutil.copyfileobj(source, out)
-            progress(InstallPhase.EXTRACTING, index + 1, len(dll_members))
+            progress(InstallPhase.EXTRACTING, index + 1, len(library_members))
+
+
+def _nvidia_library_folder(name: str) -> str:
+    """``bin`` for a wheel's DLL, ``lib`` for its shared object, else ""."""
+    parts = name.split("/")
+    if len(parts) < 4 or parts[0].lower() != "nvidia":
+        return ""
+    folder, filename = parts[-2].lower(), parts[-1].lower()
+    if folder == "bin" and filename.endswith(".dll"):
+        return "bin"
+    if folder == "lib" and (filename.endswith(".so") or ".so." in filename):
+        return "lib"
+    return ""
 
 
 def _safe_extract_node_exe(
@@ -1395,13 +1464,15 @@ def _validate_component_payload(component_id: str, target_dir: str) -> None:
             output.write("python312.zip\n.\nimport site\n")
         return
     if component_id == ComponentId.GPU_ACCEL:
-        bin_dir = os.path.join(target_dir, "bin")
+        linux = current_platform_tag() == PLATFORM_LINUX_X86_64
+        library_dir = os.path.join(target_dir, "lib" if linux else "bin")
+        required = _REQUIRED_GPU_SHARED_OBJECTS if linux else _REQUIRED_GPU_DLLS
         try:
-            names = {name.casefold() for name in os.listdir(bin_dir)}
+            names = {name.casefold() for name in os.listdir(library_dir)}
         except OSError as exc:
             raise ComponentError("The GPU component has no library folder.") from exc
 
-        missing = [name for name in _REQUIRED_GPU_DLLS if name.casefold() not in names]
+        missing = [name for name in required if name.casefold() not in names]
         if missing:
             raise ComponentError(
                 "The GPU component is missing required libraries: "

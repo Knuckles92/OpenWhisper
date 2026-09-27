@@ -177,11 +177,12 @@ class RemoteEngineService:
         """Addresses a paired client can fall back on: LAN, then Tailscale."""
         addresses = []
         try:
-            from meeting.web.server import discover_lan_ipv4
+            from services.lan_address import LAN, best_lan_address
 
-            lan = discover_lan_ipv4()
-            if lan and not tailscale.is_tailscale_address(lan):
-                addresses.append(lan)
+            # Not a VPN's address: the computers at home can't reach it.
+            lan = best_lan_address()
+            if lan is not None and lan.kind == LAN:
+                addresses.append(lan.address)
         except Exception:
             logger.debug("LAN address lookup failed", exc_info=True)
         status = self._current_tailscale()
@@ -367,6 +368,22 @@ class RemoteEngineService:
         self._notify("devices")
         return removed
 
+    def engine_changed(self) -> None:
+        """This computer's engine may have changed (it just finished loading).
+
+        Refreshes the share line, and has the host tell connected clients
+        still on the old engine, on a background thread since each close
+        waits for its handshake. A no-op for clients already on this engine.
+        """
+        self._notify("engine")
+        with self._lock:
+            host = self._host
+        if host is None or not host.running:
+            return
+        threading.Thread(
+            target=host.engine_changed, name="remote-engine-changed", daemon=True
+        ).start()
+
     def connected_clients(self) -> List[dict]:
         """The paired computers connected now, each with whether it's being served.
 
@@ -391,6 +408,8 @@ class RemoteEngineService:
             "error": error,
             "host_name": socket.gethostname(),
             "address": None,
+            # "lan", or "vpn" when a VPN's is the only address there is.
+            "address_kind": None,
             "fingerprint": host.identity.fingerprint if host is not None else "",
             "pairing": host.pairing_status() if running else None,
             "clients": host.connected_clients() if running else [],
@@ -403,9 +422,11 @@ class RemoteEngineService:
         }
         if running:
             try:
-                from meeting.web.server import discover_lan_ipv4
+                from services.lan_address import best_lan_address
 
-                state["address"] = discover_lan_ipv4()
+                lan = best_lan_address()
+                if lan is not None:
+                    state["address"], state["address_kind"] = lan.address, lan.kind
             except Exception:
                 logger.debug("LAN address lookup failed", exc_info=True)
         return state

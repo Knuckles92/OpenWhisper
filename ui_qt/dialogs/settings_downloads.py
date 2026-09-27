@@ -751,6 +751,12 @@ class DownloadsPage(QWidget):
         self.inspector_repo_button.setText("Hugging Face ↗" if "huggingface.co/" in details.repository_url else "Repository ↗")
         self.inspector_repo_button.setToolTip(details.repository_url)
         self.inspector_origin_button.setToolTip(details.origin_url)
+        memory = details.memory_guidance
+        if details.model_name not in MODELS:
+            # For this computer's card: the compute type it will really run.
+            from services import gpu_info
+
+            memory = gpu_info.memory_guidance(details.model_name, gpu_info.nvidia_gpu()) or memory
 
         rows = (
             ("Origin", details.origin_name),
@@ -761,7 +767,7 @@ class DownloadsPage(QWidget):
             ("Tasks", details.task_support),
             ("Parameters", details.parameter_count),
             ("Published speed", details.relative_performance),
-            ("Memory guidance", details.memory_guidance),
+            ("Memory guidance", memory),
             ("Download size", details.download_size),
             ("Local format", details.runtime_format),
             ("License", details.license),
