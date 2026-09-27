@@ -29,7 +29,6 @@ from ui_qt.utils.collapse_animation import (
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.markdown_render import PREVIEW_STYLE, render_markdown
 from ui_qt.widgets.cards import HeaderCard
-from ui_qt.widgets.buttons import Button
 from ui_qt.widgets.downloads_label import DownloadsLabel
 from ui_qt.widgets.engine_field import (
     EngineStatus,
@@ -41,6 +40,7 @@ from ui_qt.widgets.stats_display import TranscriptionStatsWidget
 from ui_qt.widgets.local_engine_controls import LocalEngineControls
 from ui_qt.widgets.remote_link import RemoteLinkGlyph
 from ui_qt.widgets.remote_engine_controls import RemoteEngineControls
+from ui_qt.widgets.remote_model_notice import RemoteModelNotice
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
@@ -266,15 +266,10 @@ class TranscriptionTabBase(QWidget):
         self.remote_runtime_label.hide()
         engine_layout.addWidget(self.remote_runtime_label)
 
-        self.remote_management_row = QWidget()
-        remote_management = QHBoxLayout(self.remote_management_row)
-        remote_management.setContentsMargins(0, 0, 0, 0)
-        self.remote_dependency_label = WrappedLabel("")
-        self.remote_dependency_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.remote_manage_button = Button("Manage host models")
+        self.remote_management_row = RemoteModelNotice()
+        self.remote_dependency_label = self.remote_management_row.detail_label
+        self.remote_manage_button = self.remote_management_row.manage_button
         self.remote_manage_button.clicked.connect(lambda: self.help_requested.emit("remote_models"))
-        remote_management.addWidget(self.remote_dependency_label, stretch=1)
-        remote_management.addWidget(self.remote_manage_button)
         self.remote_management_row.hide()
         engine_layout.addWidget(self.remote_management_row)
 
@@ -851,10 +846,7 @@ class TranscriptionTabBase(QWidget):
         self.remote_engine.set_state(choices)
         dependencies = (getattr(choices, "runtime", None) or {}).get("dependencies", [])
         missing = [item["label"] for item in dependencies if item.get("installable")]
-        self.remote_dependency_label.setText(
-            "Available to install on host: " + ", ".join(missing) if missing else
-            "Browse models, set up CPU or GPU, and manage downloads on the host."
-        )
+        self.remote_management_row.set_available(missing)
         self._show_remote_models()
         # The host's engine decides whether the Remote engine can preview.
         self._sync_live_preview()
