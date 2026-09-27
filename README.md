@@ -165,6 +165,10 @@ Local model weights and optional runtimes are separate downloads. **Settings →
 
 ### Remote engine
 
+<p align="center">
+  <img width="880" alt="Remote engine: Quick Record on a laptop using a desktop's Parakeet engine, and the desktop's sharing settings with a pairing code and the connected laptop" src="docs/screenshots/remote-engine.png" />
+</p>
+
 Dictate on a laptop while a desktop or home server with a GPU does the transcription. Both computers run OpenWhisper:
 
 1. On the computer with the engine, open **Settings → Dictation → Remote engine**, turn on **Share this computer's engine**, and click **Pair a device**. Allow OpenWhisper through the firewall if Windows asks.
