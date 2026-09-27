@@ -15,7 +15,7 @@ Use a [packaged release](#install) with bundled Python and dependencies, or [run
 </p>
 
 <p align="center">
-  <img width="880" alt="Settings Overview: models in use, what stays local, and storage" src="docs/screenshots/01-settings-overview.png" />
+  <img width="880" alt="Remote engine: Quick Record on a laptop using a desktop's Parakeet engine, and the desktop's sharing settings with a pairing code and the connected laptop" src="docs/screenshots/remote-engine.png" />
 </p>
 
 ## What it does
@@ -167,10 +167,6 @@ Local model weights and optional runtimes are separate downloads. **Settings →
 
 ### Remote engine
 
-<p align="center">
-  <img width="880" alt="Remote engine: Quick Record on a laptop using a desktop's Parakeet engine, and the desktop's sharing settings with a pairing code and the connected laptop" src="docs/screenshots/remote-engine.png" />
-</p>
-
 Dictate on a laptop while a desktop or home server with a GPU does the transcription. Both computers run OpenWhisper:
 
 1. On the computer with the engine, open **Settings → Dictation → Remote engine**, turn on **Share this computer's engine**, and click **Pair a device**. Allow OpenWhisper through the firewall if Windows asks.
@@ -209,6 +205,10 @@ Downloaded speech models load from the local cache without network metadata chec
 
 <details>
 <summary>More screenshots</summary>
+
+<p align="center">
+  <img width="880" alt="Settings Overview: models in use, what stays local, and storage" src="docs/screenshots/01-settings-overview.png" />
+</p>
 
 <p align="center">
   <img width="480" alt="Meeting Mode after a call: finalization steps complete and the report ready" src="docs/screenshots/02-meeting-mode-ready.png" />
