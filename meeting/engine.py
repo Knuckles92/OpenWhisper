@@ -90,6 +90,7 @@ class MeetingEngineOptions:
     cloud_enabled: bool = False
     mic_device_id: Optional[int] = None
     asr_model: str = 'auto'
+    asr_remote: Optional[Dict[str, Any]] = None
     asr_language: str = 'auto'
     llm_provider: str = 'openrouter'
     llm_model: str = ''
@@ -292,6 +293,7 @@ class MeetingEngine:
             "capture": capture,
             "finalization": dict(finalization),
             "live_highlights_status": highlights,
+            "speech": self.store.with_state(lambda s: dict(s.speech)),
         }
         listener_payload = dict(payload)
         if note:
@@ -486,6 +488,8 @@ class MeetingEngine:
                 guest_token=guest_token,
                 cloud_enabled=self.options.cloud_enabled,
                 asr_model=self.options.asr_model,
+                asr_remote_json=(json.dumps(self.options.asr_remote)
+                                 if self.options.asr_remote is not None else None),
                 agent_provider=self.options.llm_provider,
                 agent_model=self.options.llm_model,
                 agent_endpoint_json=(
@@ -2259,12 +2263,19 @@ class MeetingEngine:
                 # no-reference quality gate is proven trustworthy.
                 enable_revisions=False,
                 term_rules=self._active_term_rules,
+                **({"remote": self.options.asr_remote,
+                    "on_connection_status": self._on_asr_connection_status}
+                   if self.options.asr_remote is not None else {}),
             )
         except Exception as exc:
             logger.exception("Meeting ASR engine unavailable")
             self._emit("error", {"code": "asr_unavailable", "message": str(exc)})
+            if self.options.asr_remote is not None:
+                raise
             return
         if not getattr(asr, "is_available", True):
+            if self.options.asr_remote is not None:
+                raise RuntimeError(asr.last_error or "The remote speech engine is unavailable.")
             logger.error("Meeting ASR model %r is not available; "
                          "chunks will stay pending", self.options.asr_model)
             self._emit("error", {
@@ -2273,8 +2284,16 @@ class MeetingEngine:
                            "audio is recorded and can be transcribed later.",
             })
             return
-        asr.start(self._on_chunk_result)
         self._asr = asr
+        if self.options.asr_remote is not None:
+            route = dict(asr._backend.route, language=language)
+            self.options.asr_remote = route
+            self.options.asr_model = route["model"]
+            self.repository.update_meeting(
+                self.meeting_id, asr_model=route["model"], asr_remote_json=json.dumps(route)
+            )
+            self._on_asr_connection_status(f"Transcribing on {route['host_name']}", True)
+        asr.start(self._on_chunk_result)
         self._preview_frontiers = {}
         start_preview = getattr(asr, "start_preview", None)
         if callable(start_preview):
@@ -2287,6 +2306,16 @@ class MeetingEngine:
                 logger.exception("requeue_pending failed")
         else:
             logger.debug("ASR engine exposes no requeue_pending; skipping")
+
+    def _on_asr_connection_status(self, message: str, connected: bool) -> None:
+        if self.store is None:
+            return
+        route = self.options.asr_remote or {}
+        self.store.update_runtime_fields(speech={
+            "source": "remote", "host": route.get("host_name", ""),
+            "model": route.get("model", ""), "connected": connected, "message": message,
+        })
+        self._emit_status(note=message)
 
     def _on_speech_preview(self, payload) -> None:
         frontier = getattr(self, "_preview_frontiers", {}).get(payload["channel"], -1)

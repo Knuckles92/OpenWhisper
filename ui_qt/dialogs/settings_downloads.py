@@ -1024,6 +1024,9 @@ class DownloadsPage(QWidget):
         if selected_backend in BACKENDS:
             active_model = selected_model(selected_backend, settings)
         meeting_model = resolve_meeting_whisper_model(settings)
+        from services.settings import resolve_meeting_asr_source
+        if resolve_meeting_asr_source(settings) == "remote":
+            meeting_model = ""  # Local downloads are not serving meeting speech.
         loaded_model = self._get_loaded_model() if self._get_loaded_model else None
         dictation_resolved = active_model
         if active_model == "auto" and loaded_model:

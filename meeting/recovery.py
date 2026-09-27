@@ -574,11 +574,15 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
     engine = None
     leased = False
     try:
+        from meeting.asr.remote import saved_remote_route
+        remote = saved_remote_route(meeting)
         if total:
             from meeting.asr.engine import MeetingAsrEngine
             from meeting.corrections import repository_term_rules
 
-            leased = acquire_model_lease(model_lease)
+            leased = acquire_model_lease(model_lease) if remote is None else False
+            if remote is not None:
+                asr_language = remote.get("language") or asr_language
             language = (asr_language or "auto").strip().lower()
             engine = MeetingAsrEngine(
                 model_name,
@@ -588,6 +592,7 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
                 # Corrections offered during the meeting keep priming the
                 # decoder when leftover chunks are transcribed afterwards.
                 term_rules=repository_term_rules(repository, meeting_id),
+                **({"remote": remote} if remote is not None else {}),
             )
             if not getattr(engine, "is_available", False):
                 logger.error("ASR model %r unavailable; cannot finalize %s",

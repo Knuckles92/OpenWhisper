@@ -35,6 +35,15 @@ const state = (extra = {}) => ({
 });
 const me = {id: 'me', display_name: 'Dylan Fiori', kind: 'me', name_source: 'human', is_provisional: false, created_at: '', updated_at: ''};
 
+test('readiness reports remote speech separately from capture and AI insights', async () => {
+  const container = await mount({state: state({speech: {source: 'remote', host: 'devbox',
+    connected: false, model: 'base', message: 'offline'}}), isHost: true, onSendOp: async () => true});
+  const checks = [...container.querySelectorAll('.pf-check')].map(row => row.textContent);
+  assert.ok(checks.some(t => /Remote speech.*Reconnecting/.test(t)));
+  assert.ok(checks.some(t => /Microphone.*Detected/.test(t)));
+  assert.ok(checks.some(t => /AI insights.*Online/.test(t)));
+});
+
 test('readiness reflects real capture state and asks for a brief when none is set', async () => {
   const container = await mount({state: state(), isHost: true, onSendOp: async () => true, participants: [me]});
   assert.match(container.querySelector('.pf-headline').textContent, /What should this meeting capture\?/);

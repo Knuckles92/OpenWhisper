@@ -439,9 +439,15 @@ def rerun_redecode(
             from meeting.asr.offline import transcribe_meeting_sessions
             from transcriber.local_backend import LocalWhisperBackend
 
-            leased = acquire_model_lease(model_lease)
+            from meeting.asr.remote import MeetingRemoteBackend, saved_remote_route
+            remote = saved_remote_route(meeting)
+            leased = acquire_model_lease(model_lease) if remote is None else False
             from services.local_asr.catalog import MODELS
-            if asr_model_name in MODELS:
+            if remote is not None:
+                backend = MeetingRemoteBackend(remote)
+                backend.reload_model()
+                language = remote.get("language") or language
+            elif asr_model_name in MODELS:
                 from transcriber.optional_backend import LocalSpeechBackend
                 backend = LocalSpeechBackend(MODELS[asr_model_name].backend, model_name=asr_model_name)
                 backend.reload_model()
@@ -455,7 +461,7 @@ def rerun_redecode(
                         "The Whisper model is not available yet. "
                         "Approve the download and retry."
                         if missing else
-                        "The Whisper model failed to load."
+                        getattr(backend, "last_error", "") or "The speech model failed to load."
                     ),
                 }
             decoded = list(transcribe_meeting_sessions(

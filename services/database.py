@@ -16,7 +16,7 @@ from services.models import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 class DatabaseManager:
@@ -310,6 +310,13 @@ class DatabaseManager:
             except Exception as e:
                 logger.error("Migration v11->v12 failed: %s", e)
                 raise
+
+        if from_version < 13:
+            columns = {row[1] for row in conn.execute(
+                text("PRAGMA table_info(meeting_sessions)")
+            ).fetchall()}
+            if columns and "asr_remote_json" not in columns:
+                conn.execute(text("ALTER TABLE meeting_sessions ADD COLUMN asr_remote_json TEXT"))
 
         conn.execute(text("UPDATE schema_version SET version = :v"), {"v": SCHEMA_VERSION})
         logger.info(f"Database migrated to schema version {SCHEMA_VERSION}")

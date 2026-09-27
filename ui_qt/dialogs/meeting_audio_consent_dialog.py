@@ -2,7 +2,7 @@
 
 Shown when the user switches Speaker identification to OpenAI in Settings.
 Explains that the loopback (Others) recording leaves the machine after the
-meeting; microphone audio and live transcription stay local.
+meeting. Remote speech is configured separately in Voice & speakers.
 """
 import logging
 from typing import Final
@@ -49,8 +49,10 @@ class MeetingAudioConsentDialog(QDialog):
             "voices — to OpenAI after the meeting ends. OpenAI labels "
             "who spoke when. The local transcript text is kept; only "
             "speaker labels change.\n\n"
-            "Your microphone recording and live transcription stay on "
-            "this computer. This is separate from AI insights, "
+            "This speaker pass does not send microphone audio to OpenAI. "
+            "Remote speech, if selected in Voice & speakers, sends microphone "
+            "and system audio to your paired computer during transcription. "
+            "This is separate from AI insights, "
             "which sends transcript text and dashboard state but not "
             "audio.\n\n"
             "An OpenAI API key is required. You can switch back to "

@@ -558,7 +558,7 @@ class SettingsDialog(QDialog):
         self._add_page(
             REMOTE_ENGINE,
             "Remote engine",
-            "Dictate with another computer's engine over your network or "
+            "Transcribe dictation and meetings with another computer's engine over your network or "
             "Tailscale, or share this computer's engine with computers you pair.",
             lambda layout: self.remote_section.build(self, layout, _design_icon),
         )
@@ -591,8 +591,8 @@ class SettingsDialog(QDialog):
         self._add_page(
             MEETING_VOICE,
             "Meeting voice & speakers",
-            "Meetings load their own speech model for live captions and the "
-            "optional end-of-meeting re-decode.",
+            "Choose local or remote speech for live captions and the optional "
+            "end-of-meeting re-transcription. Applies to your next meeting.",
             self.models.build_meeting_voice_page,
         )
         self._add_page(
@@ -2587,7 +2587,10 @@ class SettingsDialog(QDialog):
             (cloud_items if models.voice_is_remote() else local_items).append(
                 "Dictation voice"
             )
-        local_items.append("Meeting voice")
+        if models.meeting_source_combo.currentData() == "remote":
+            cloud_items.append("Meeting voice (audio sent to paired computer)")
+        else:
+            local_items.append("Meeting voice")
         if models.speaker_id_is_remote():
             cloud_items.append("Speaker labels (system audio after End)")
         cleanup_item = f"AI cleanup ({'on' if cleanup_on else 'off'})"

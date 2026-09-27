@@ -3,7 +3,7 @@
 Shown before the first meeting with AI insights on (and again from the AI
 insights switch while consent has not been given). Explains exactly where
 transcript text and dashboard state go — the selected text endpoint, which may
-be remote or on this computer — and what never leaves: audio.
+be remote or on this computer. Speech audio routing is configured separately.
 """
 import logging
 from typing import Final, Optional
@@ -113,8 +113,10 @@ class MeetingConsentDialog(QDialog):
             "action items, and questions updated on the dashboard while you "
             "talk.\n\n"
             f"{location}\n\n"
-            "AI insights do not upload audio. Recording and "
-            "transcription stay local. Speaker identification is a "
+            "AI insights do not upload audio. Recordings are saved here. "
+            "If Remote computer is selected for meeting speech, microphone and "
+            "system audio are sent to your paired host for transcription. "
+            "Speaker identification is a "
             "separate setting and, if enabled, uploads the system-audio "
             "recording after the meeting.\n\n"
             "Past-meeting recall is also off by default. If you later "

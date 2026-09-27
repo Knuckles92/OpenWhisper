@@ -77,6 +77,10 @@ export default function PreFlight({
   const rows: Array<{ label: string; state: Readiness; detail: string }> = [
     { label: 'Microphone', state: capture?.mic_available ? 'ready' : 'warn', detail: capture?.mic_available ? 'Detected' : 'Not detected' },
     { label: 'System audio', state: capture?.loopback_available ? 'ready' : 'off', detail: capture?.loopback_available ? 'Capturing' : 'Not captured' },
+    ...(state.speech?.source === 'remote' ? [{
+      label: 'Remote speech', state: (state.speech.connected ? 'ready' : 'warn') as Readiness,
+      detail: state.speech.connected ? state.speech.host : 'Reconnecting · audio saved here',
+    }] : []),
     { label: 'AI insights', state: cloud[0], detail: cloud[1] },
     { label: 'Speaker separation', state: state.diarization_available ? 'ready' : 'off', detail: state.diarization_available ? 'Available' : 'Me / Others only' },
   ];

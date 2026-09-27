@@ -42,6 +42,7 @@ from services.settings import (
     resolve_meeting_server_port,
     resolve_meeting_speaker_id_backend,
     resolve_meeting_whisper_model,
+    resolve_meeting_asr_source,
     settings_manager,
 )
 
@@ -597,7 +598,8 @@ class MeetingRuntime:
             )
             return
         loading = getattr(self.controller, "local_whisper_loading_message", None)
-        message = loading() if callable(loading) else None
+        message = (loading() if callable(loading)
+                   and resolve_meeting_asr_source() != "remote" else None)
         if message:
             self.controller.meeting_status_update.emit(message)
             return
@@ -780,7 +782,8 @@ class MeetingRuntime:
             # this thread: dictation is already refused for the whole meeting,
             # and cleanup()'s ~1s of CUDA teardown is hidden behind the
             # "Starting meeting..." status.
-            self.controller.release_local_engine()
+            if getattr(options, "asr_remote", None) is None:
+                self.controller.release_local_engine()
             result = engine.start()
             if not (result.get("host_url") or result.get("url")):
                 abort = getattr(engine, "_abort_start", None)
@@ -877,6 +880,10 @@ class MeetingRuntime:
         from meeting.engine import MeetingEngineOptions
 
         settings = settings_manager.load_all_settings()
+        remote = None
+        if not demo and resolve_meeting_asr_source(settings) == "remote":
+            from meeting.asr.remote import remote_route
+            remote = remote_route(settings)
         agent_kind = resolve_meeting_agent_core(settings)
         payload_dir = meeting_agent_payload_dir(agent_kind)
         if agent_kind == MeetingAgentCore.PI and payload_dir is None:
@@ -901,6 +908,7 @@ class MeetingRuntime:
             cloud_enabled=cloud,
             mic_device_id=settings_manager.load_audio_input_device(),
             asr_model=resolve_meeting_whisper_model(settings),
+            asr_remote=remote,
             asr_language=resolve_meeting_language(settings),
             llm_provider=resolve_meeting_llm_provider(settings),
             llm_model=resolve_meeting_llm_model(settings),
@@ -1704,6 +1712,8 @@ class MeetingRuntime:
                 status = payload.get("status", "")
                 finalization = payload.get("finalization")
                 state_payload: Dict[str, Any] = {}
+                if isinstance(payload.get("speech"), dict):
+                    state_payload["speech"] = dict(payload["speech"])
                 if status:
                     state_payload["status"] = str(status)
                     # Pause/resume can come from the dashboard, which only

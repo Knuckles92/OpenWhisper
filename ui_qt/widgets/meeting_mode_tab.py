@@ -91,7 +91,7 @@ def ai_insights_tooltip() -> str:
         "On: send transcript text to the AI model chosen\n"
         "in Settings for live insights and a final report.\n"
         "Off: keep the recording and transcript only.\n"
-        "Audio stays on this PC either way."
+        "Audio routing is set separately in Voice & speakers."
     )
 
 
@@ -385,6 +385,10 @@ class MeetingModeTab(QWidget):
         self.platform_hint.setAccessibleName("Meeting platform notice")
         self.platform_hint.setVisible(meeting_audio_shows_platform_warning())
         intro_card.layout.addWidget(self.platform_hint)
+        self.speech_destination = WrappedLabel("")
+        self.speech_destination.setObjectName("meetingSpeechDestination")
+        self.speech_destination.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        intro_card.layout.addWidget(self.speech_destination)
         content_layout.addWidget(intro_card)
 
         # Active session card. It comes before the AI insights panel so the
@@ -762,8 +766,8 @@ class MeetingModeTab(QWidget):
         )
         self.cloud_checkbox.setAccessibleDescription(
             "When checked, transcript text goes to the AI model chosen in "
-            "Settings for live insights and a final report. Audio stays on "
-            "this computer."
+            "Settings for live insights and a final report. Speech audio routing "
+            "is configured separately in Voice & speakers."
         )
         self.cloud_checkbox.setToolTip(ai_insights_tooltip())
         # Show or hide the brief first, so it has already changed by the time
@@ -899,6 +903,15 @@ class MeetingModeTab(QWidget):
         """
         if self._active:
             return
+        from services.settings import resolve_meeting_asr_source
+        from services.remote_asr.settings import load_client_pairing
+        if resolve_meeting_asr_source() == "remote":
+            pairing = load_client_pairing()
+            host = pairing.host_name if pairing else "a host (not paired yet)"
+            speech = f"Remote speech · microphone and system audio sent to {host}. Recordings saved here."
+        else:
+            speech = "Speech recognition runs on this computer."
+        self.speech_destination.setText(speech)
         where, privacy = ai_insights_destination()
         line = f"{where} — {privacy}."
         if line == self.ai_destination.text():
@@ -1017,6 +1030,14 @@ class MeetingModeTab(QWidget):
             # Blocked signals skip the toggled slots, so the brief (for
             # instance after a declined consent dialog) syncs here instead.
             self._sync_brief_availability()
+
+        speech = payload.get("speech")
+        if isinstance(speech, dict) and speech.get("source") == "remote":
+            self.speech_destination.setText(
+                f"Remote speech · {speech.get('host', '')} · {speech.get('model', '')}. "
+                + ("Audio sent to this host; recordings saved here."
+                   if speech.get("connected") else str(speech.get("message") or "Reconnecting…"))
+            )
 
         if "elapsed_s" in payload:
             try:

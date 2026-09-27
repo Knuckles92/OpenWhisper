@@ -37,6 +37,8 @@ class TestAudioConsentDialog(_QtTestCase):
         assert "system-audio" in text
         assert "OpenAI" in text
         assert "Others" in text
+        assert "Remote speech" in text
+        assert "microphone recording and live transcription stay" not in text
 
 
 class TestCloudConsentCopy(_QtTestCase):
@@ -47,6 +49,7 @@ class TestCloudConsentCopy(_QtTestCase):
         assert "Your audio never leaves this computer" not in text
         assert "AI insights do not upload audio" in text
         assert "Past-meeting recall" in text
+        assert "Remote computer" in text
 
     def test_cloud_consent_names_local_endpoint(self):
         dialog = MeetingConsentDialog(

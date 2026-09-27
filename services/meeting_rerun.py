@@ -43,10 +43,12 @@ def rerun_options(
         settings_manager,
     )
     from services.text_llm import snapshot_from_meeting
+    from meeting.asr.remote import saved_remote_route
 
     if settings is None:
         settings = settings_manager.load_all_settings()
     meeting = meeting or {}
+    remote = saved_remote_route(meeting)
     provider = meeting.get("agent_provider") or resolve_meeting_llm_provider(settings)
     agent_core_kind = resolve_meeting_agent_core(settings)
     try:
@@ -68,7 +70,8 @@ def rerun_options(
         "asr_model_name": str(
             meeting.get("asr_model") or resolve_meeting_whisper_model(settings)
         ),
-        "language": resolve_meeting_language(settings),
+        "language": (remote.get("language", "auto") if remote is not None
+                     else resolve_meeting_language(settings)),
         "speaker_api_key": speaker_api_key,
         "redecode_coverage_guard": resolve_meeting_redecode_coverage_guard(settings),
     }

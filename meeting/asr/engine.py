@@ -1,7 +1,7 @@
 """Background ASR engine for Meeting Mode.
 
-``MeetingAsrEngine`` owns a dedicated faster-whisper instance (separate from
-the dictation backend) and a single daemon worker that consumes an unbounded
+``MeetingAsrEngine`` owns a dedicated speech backend (local weights or a paired
+remote connection, separate from dictation) and a single daemon worker that consumes an unbounded
 queue of spooled chunks — durability first: chunks are never dropped, failures
 are retried up to :data:`MAX_ATTEMPTS` times, and anything still unfinished
 survives in the database (``asr_status``) for startup recovery via
@@ -93,6 +93,8 @@ class MeetingAsrEngine:
         language: Optional[str] = None,
         enable_revisions: bool = False,
         term_rules: Optional[Callable[[], Dict[str, str]]] = None,
+        remote: Optional[Dict[str, Any]] = None,
+        on_connection_status: Optional[Callable[[str, bool], None]] = None,
     ) -> None:
         """Load a dedicated Whisper model for one meeting.
 
@@ -111,6 +113,9 @@ class MeetingAsrEngine:
                 term corrections (misheard term -> replacement). They correct
                 the decoder's context prompt and prime it with the right
                 spellings so one misheard name stops repeating.
+            remote: Non-secret paired host/model snapshot, or None for local ASR.
+            on_connection_status: Receives (message, connected) when the remote
+                connection changes; capture remains independent of the network.
         """
         self.meeting_id = meeting_id
         self._repository = repository
@@ -120,12 +125,20 @@ class MeetingAsrEngine:
         self._backend = None
         self._preview = None
         self.is_available = False
+        self.last_error = ""
+        self._connection_status = on_connection_status
+        self._last_connection_status = None
+        self._stop_event = threading.Event()
 
         try:
             from transcriber.local_backend import LocalWhisperBackend
 
             from services.local_asr.catalog import MODELS
-            if model_name in MODELS:
+            if remote is not None:
+                from meeting.asr.remote import MeetingRemoteBackend
+                backend = MeetingRemoteBackend(remote)
+                backend.reload_model()
+            elif model_name in MODELS:
                 from transcriber.optional_backend import LocalSpeechBackend
                 backend = LocalSpeechBackend(MODELS[model_name].backend, model_name=model_name)
                 backend.reload_model()
@@ -138,12 +151,17 @@ class MeetingAsrEngine:
                     "Meeting ASR engine ready: %s", getattr(backend, "name", model_name)
                 )
             else:
+                self.last_error = getattr(backend, "last_error", "") or "Speech engine unavailable"
+                cleanup = getattr(backend, "cleanup", None)
+                if callable(cleanup):
+                    cleanup()
                 logger.error(
                     "Meeting ASR model '%s' failed to load "
                     "(missing=%s); engine unavailable",
                     model_name, getattr(backend, "is_model_missing", "?"),
                 )
-        except Exception:
+        except Exception as exc:
+            self.last_error = str(exc)
             logger.exception(
                 "Meeting ASR backend construction failed for model '%s'; "
                 "engine unavailable", model_name,
@@ -192,6 +210,7 @@ class MeetingAsrEngine:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stopping = False
+        self._stop_event.clear()
         self._thread = threading.Thread(
             target=self._worker, name="meeting-asr", daemon=True
         )
@@ -203,7 +222,9 @@ class MeetingAsrEngine:
         if not isinstance(self._backend, LocalSpeechBackend) or self._preview is not None:
             return
         from meeting.asr.preview import MeetingSpeechPreview, WindowSpeechPreview
-        model = MODELS[self._backend.model_name]
+        model = MODELS.get(self._backend.model_name)
+        if model is None:
+            return  # Whisper has durable chunks, but no native preview.
         preview_type = (MeetingSpeechPreview if model.streaming else
                         WindowSpeechPreview if model.backend == "parakeet" else None)
         if preview_type is not None:
@@ -316,8 +337,13 @@ class MeetingAsrEngine:
 
     def stop(self) -> None:
         """Stop the worker and release the model."""
-        self.stop_preview()
         self._stopping = True
+        self._stop_event.set()
+        if getattr(self._backend, "is_remote", False):
+            # Interrupt network waits before joining either worker.
+            self._backend.cancel_transcription()
+            self._backend.cleanup()
+        self.stop_preview()
         thread = self._thread
         if thread is not None and thread.is_alive():
             self._queue.put(_STOP)
@@ -414,6 +440,25 @@ class MeetingAsrEngine:
             True when the chunk was re-enqueued for another attempt, False
             when it finished (done, gave up, or engine unavailable).
         """
+        remote = getattr(self._backend, "is_remote", False)
+        if remote:
+            # Keep the oldest durable chunk in place while disconnected. New
+            # capture continues spooling; network failures spend no decode budget.
+            from meeting.asr.remote import RemoteMeetingUnavailable
+            while not self._stopping:
+                try:
+                    self._backend.ensure_ready()
+                    self._report_connection(f"Transcribing on {self._backend.host_name}", True)
+                    break
+                except RemoteMeetingUnavailable as exc:
+                    self._set_status(chunk.chunk_id, "pending", str(exc))
+                    self._report_connection(
+                        f"{exc} Audio is saved locally; retrying the remote connection.", False
+                    )
+                    self._stop_event.wait(5.0)
+            if self._stopping:
+                self._set_status(chunk.chunk_id, "pending")
+                return False
         if self._backend is None or not self._backend.is_available():
             # Leave asr_attempts untouched ('processing' is what increments
             # it), so the chunk stays recoverable once a model is available.
@@ -445,6 +490,15 @@ class MeetingAsrEngine:
             self._attempts.pop(chunk.chunk_id, None)
             return False
         except Exception as e:
+            if remote:
+                from meeting.asr.remote import RemoteMeetingUnavailable
+                if isinstance(e, RemoteMeetingUnavailable):
+                    self._set_status(chunk.chunk_id, "pending", str(e))
+                    self._attempts[chunk.chunk_id] = attempts - 1
+                    if not self._stopping:
+                        self.enqueue(chunk)
+                        return True
+                    return False
             logger.exception(
                 "Transcription failed for chunk %s (attempt %d/%d)",
                 chunk.chunk_id, attempts, MAX_ATTEMPTS,
@@ -458,6 +512,16 @@ class MeetingAsrEngine:
                 "Giving up on chunk %s after %d attempt(s)", chunk.chunk_id, attempts
             )
             return False
+
+    def _report_connection(self, message: str, connected: bool) -> None:
+        if (message, connected) == self._last_connection_status:
+            return
+        self._last_connection_status = (message, connected)
+        if self._connection_status is not None:
+            try:
+                self._connection_status(message, connected)
+            except Exception:
+                logger.exception("Could not report remote speech status")
 
     def _beam_size_for_backlog(self) -> int:
         with self._idle_cond:

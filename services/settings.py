@@ -111,6 +111,7 @@ class SettingsKey:
     LOCAL_ASR_DEVICES: Final[str] = "local_asr_devices"
     LOCAL_ASR_LANGUAGE: Final[str] = "local_asr_language"
     MEETING_ASR_MODEL: Final[str] = "meeting_asr_model"
+    MEETING_ASR_SOURCE: Final[str] = "meeting_asr_source"  # local | remote
     WHISPER_MODEL: Final[str] = "whisper_model"
     WHISPER_DEVICE: Final[str] = "whisper_device"
     WHISPER_COMPUTE_TYPE: Final[str] = "whisper_compute_type"
@@ -916,6 +917,13 @@ def resolve_transcript_batch_custom_combine(
         SettingsKey.TRANSCRIPT_BATCH_CUSTOM_COMBINE,
         config.TRANSCRIPT_BATCH_CUSTOM_COMBINE,
     )
+
+
+def resolve_meeting_asr_source(settings: Optional[Dict[str, Any]] = None) -> str:
+    """Speech location is independent of the dictation engine and AI insights."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    return "remote" if settings.get(SettingsKey.MEETING_ASR_SOURCE) == "remote" else "local"
 
 
 def resolve_meeting_whisper_model(

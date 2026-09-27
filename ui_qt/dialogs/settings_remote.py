@@ -116,7 +116,7 @@ class RemoteEngineSection(QObject):
         self.client_tile.add_body(self.pair_row)
 
         self.paired_row = QWidget()
-        paired_layout = QHBoxLayout(self.paired_row)
+        paired_layout = QVBoxLayout(self.paired_row)
         paired_layout.setContentsMargins(0, 0, 0, 0)
         paired_layout.setSpacing(8)
         self.use_button = PrimaryButton("Use for dictation")
@@ -128,10 +128,24 @@ class RemoteEngineSection(QObject):
         self.forget_button = Button("Forget host")
         self.forget_button.setObjectName("remoteForgetButton")
         self.forget_button.clicked.connect(self._forget)
-        paired_layout.addWidget(self.use_button)
-        paired_layout.addWidget(self.manage_button)
-        paired_layout.addWidget(self.forget_button)
-        paired_layout.addStretch(1)
+        use_row = QHBoxLayout()
+        use_row.addWidget(self.use_button)
+        self.meeting_use_button = Button("Use for meetings")
+        self.meeting_use_button.setObjectName("remoteUseForMeetingsButton")
+        def use_for_meetings():
+            from ui_qt.dialogs.settings_destinations import MEETING_VOICE
+            combo = dialog.models.meeting_source_combo
+            combo.setCurrentIndex(combo.findData("remote"))
+            dialog.select_destination(MEETING_VOICE)
+        self.meeting_use_button.clicked.connect(use_for_meetings)
+        use_row.addWidget(self.meeting_use_button)
+        use_row.addStretch(1)
+        paired_layout.addLayout(use_row)
+        manage_row = QHBoxLayout()
+        manage_row.addWidget(self.manage_button)
+        manage_row.addWidget(self.forget_button)
+        manage_row.addStretch(1)
+        paired_layout.addLayout(manage_row)
         self.client_tile.add_body(self.paired_row)
 
         self.client_message = WrappedLabel("")
@@ -166,7 +180,7 @@ class RemoteEngineSection(QObject):
             [self.client_tile, self.tailnet_tile],
             columns=1,
             intro=(
-                "Dictate here while a faster computer does the transcription, on "
+                "Dictate or record meetings here while a faster computer does the transcription, on "
                 "your network or anywhere over Tailscale. On that computer, turn "
                 "on sharing below; then pick it from your tailnet, or enter its "
                 "address and pairing code."
@@ -176,7 +190,7 @@ class RemoteEngineSection(QObject):
         # Host: share the engine selected on this computer.
         self.share_tile = SettingTile(
             "Share this computer's engine",
-            "Paired computers can dictate with the engine selected on this "
+            "Paired computers can dictate or transcribe meetings with the engine selected on this "
             "computer, and switch it to any model downloaded here. The "
             "connection is encrypted and only computers you pair "
             "can use it. Windows may ask once whether to allow OpenWhisper on "

@@ -471,6 +471,7 @@ class TestTextModelPicker(_DialogTestCase):
         assert picker.provider == "custom_abcd1234"
         assert picker.provider_url.toolTip() == "http://127.0.0.1:1234/v1"
         assert picker.provider_requirement.text() == "No API key required"
+
         picker.model_combo.setCurrentText("other-local")
         dialog._activate_text_model("custom_abcd1234")
         assert values[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] == "custom_abcd1234"
@@ -1022,3 +1023,41 @@ class TestNewTextProviders(_DialogTestCase):
         assert picker.edit_endpoint_button.isEnabled()
         assert not picker.delete_endpoint_button.isEnabled()
         assert picker.provider_requirement.text() == "No API key required"
+
+def test_meeting_remote_source_is_independent_and_preserves_local_model():
+    settings = _FakeSettings({SettingsKey.SELECTED_MODEL: "local_whisper",
+                              SettingsKey.MEETING_WHISPER_MODEL: "tiny"})
+    with _isolated_settings(settings):
+        host = _Host(lambda: "base")
+        models = host.models
+        models.refresh()
+        assert models.meeting_source_combo.currentData() == "local"
+        assert not models.meeting_local_model_field.isHidden()
+        models.meeting_source_combo.setCurrentIndex(models.meeting_source_combo.findData("remote"))
+        assert models.meeting_local_model_field.isHidden()
+        assert not models.meeting_remote_controls.isHidden()
+        assert "Microphone and system audio are sent" in models.meeting_runtime_label.text()
+        assert settings.values[SettingsKey.SELECTED_MODEL] == "local_whisper"
+        assert settings.values[SettingsKey.MEETING_WHISPER_MODEL] == "tiny"
+        reopened = _Host(lambda: "base")
+        reopened.models.refresh()
+        assert reopened.models.meeting_source_combo.currentData() == "remote"
+        reopened.models.meeting_source_combo.setCurrentIndex(0)
+        assert reopened.models.meeting_whisper_picker.current_model() == "tiny"
+
+
+def test_meeting_remote_settings_link_and_unpaired_connection_check(monkeypatch):
+    from ui_qt.dialogs.settings_destinations import REMOTE_ENGINE
+    from tests.test_remote_engine import _wait_for
+    settings = _FakeSettings({SettingsKey.MEETING_ASR_SOURCE: "remote"})
+    with _isolated_settings(settings):
+        host = _Host(lambda: None)
+        selected = []
+        host.select_destination = selected.append
+        host.models.refresh()
+        host.models._open_meeting_remote_settings()
+        assert selected == [REMOTE_ENGINE]
+        host.models._test_meeting_remote()
+        assert _wait_for(lambda: (QApplication.processEvents() or True)
+                         and host.models.meeting_remote_test.isEnabled())
+        assert "Pair a computer" in host.models.meeting_remote_status.text()

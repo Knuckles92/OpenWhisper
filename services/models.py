@@ -111,6 +111,8 @@ class MeetingSession(Base):
     guest_token: Mapped[str] = mapped_column(String, nullable=False)
     cloud_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     asr_model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Non-secret paired host/model snapshot. NULL means local speech.
+    asr_remote_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     agent_provider: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     agent_model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     # Non-secret OpenAI-compatible endpoint snapshot (JSON object).

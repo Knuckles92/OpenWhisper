@@ -69,11 +69,11 @@ class TestSchema:
         manager = DatabaseManager(db_path=db_path)
         try:
             from sqlalchemy import inspect, text
-            assert SCHEMA_VERSION == 12
+            assert SCHEMA_VERSION == 13
             with manager.engine.connect() as c:
                 version = c.execute(
                     text("SELECT version FROM schema_version")).scalar()
-            assert version == 12
+            assert version == 13
             assert "meeting_sessions" in inspect(manager.engine).get_table_names()
         finally:
             manager.close()

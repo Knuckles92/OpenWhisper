@@ -224,7 +224,7 @@ class TestDatabaseManager:
             assert "cleanup_provider" in columns
             assert "cleanup_model" in columns
             assert "source_name" in columns
-            assert version == SCHEMA_VERSION == 12
+            assert version == SCHEMA_VERSION == 13
         finally:
             manager.close()
 
@@ -295,7 +295,7 @@ class TestDatabaseManager:
             assert "cleanup_provider" in columns
             assert "cleanup_model" in columns
             assert "source_name" in columns
-            assert version == SCHEMA_VERSION == 12
+            assert version == SCHEMA_VERSION == 13
         finally:
             manager.close()
 
@@ -363,7 +363,7 @@ class TestDatabaseManager:
                 ).scalar_one()
 
             assert "source_name" in columns
-            assert version == SCHEMA_VERSION == 12
+            assert version == SCHEMA_VERSION == 13
         finally:
             manager.close()
 
@@ -422,7 +422,7 @@ class TestDatabaseManager:
                 ).scalar_one()
 
             assert "agent_endpoint_json" in columns
-            assert version == SCHEMA_VERSION == 12
+            assert version == SCHEMA_VERSION == 13
         finally:
             manager.close()
 

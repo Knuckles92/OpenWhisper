@@ -226,6 +226,40 @@ def test_start_releases_the_dictation_engine_before_loading_its_own(
     assert controller.meeting_active is True
 
 
+def test_remote_meeting_start_does_not_release_local_dictation_model(runtime, monkeypatch):
+    from types import SimpleNamespace
+    rt, controller = runtime
+    engine = MagicMock()
+    engine.start.return_value = {"host_url": "http://127.0.0.1:8765/host"}
+    monkeypatch.setattr("meeting.engine.MeetingEngine", lambda *a, **kw: engine)
+    monkeypatch.setattr(rt, "_build_options", lambda *a, **kw: SimpleNamespace(asr_remote={"host_name": "devbox"}))
+    monkeypatch.setattr(rt, "_refresh_past_meetings", lambda: None)
+    monkeypatch.setitem(_RUNTIME_GLOBALS, "speaker_model_path", lambda: "/cached/model")
+    rt._starting = True
+    rt._start_worker(False)
+    assert controller.meeting_active
+    assert "release" not in controller.engine_lease
+
+
+def test_remote_meeting_does_not_wait_for_unrelated_local_whisper_load(runtime, monkeypatch):
+    rt, controller = runtime
+    controller.local_whisper_loading_message = lambda: "Still loading"
+    monkeypatch.setitem(_RUNTIME_GLOBALS, "resolve_meeting_asr_source", lambda: "remote")
+    launched = _record_launch(rt, monkeypatch)
+    rt.start_meeting(cloud_enabled=False)
+    assert launched
+
+
+def test_remote_connection_status_reaches_desktop(runtime):
+    rt, controller = runtime
+    payloads = []
+    controller.meeting_state_changed.connect(payloads.append)
+    speech = {"source": "remote", "host": "devbox", "model": "base", "connected": False,
+              "message": "Host offline; audio saved locally."}
+    rt._on_engine_event("status", {"status": "active", "speech": speech})
+    assert payloads[-1]["speech"] == speech
+
+
 def test_nonfatal_engine_error_is_deferred_during_start(runtime):
     rt, controller = runtime
     errors = []

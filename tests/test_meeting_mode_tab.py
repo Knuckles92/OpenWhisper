@@ -578,7 +578,7 @@ class TestMeetingModeTabState(unittest.TestCase):
         tooltip = self.tab.cloud_checkbox.toolTip()
         self.assertIn("On:", tooltip)
         self.assertIn("Off:", tooltip)
-        self.assertIn("Audio stays on this PC", tooltip)
+        self.assertIn("Audio routing", tooltip)
         self.assertGreater(len(tooltip.splitlines()), 1)
         self.assertLessEqual(max(map(len, tooltip.splitlines())), 52)
 
@@ -586,6 +586,15 @@ class TestMeetingModeTabState(unittest.TestCase):
         """The switch says what it produces; the model line says where."""
         self.assertEqual(self.tab.cloud_checkbox.text(), "AI insights")
         self.assertTrue(self.tab.ai_destination.text())
+
+    def test_remote_speech_status_names_actual_host_and_connection(self):
+        speech = {"source": "remote", "host": "devbox", "model": "base", "connected": False,
+                  "message": "Reconnecting; audio saved locally."}
+        self.tab.set_meeting_state({"active": True, "status": "active", "speech": speech})
+        self.assertIn("devbox", self.tab.speech_destination.text())
+        self.assertIn("Reconnecting", self.tab.speech_destination.text())
+        self.tab.set_meeting_state({"speech": {**speech, "connected": True}})
+        self.assertNotIn("Reconnecting", self.tab.speech_destination.text())
 
     def test_ai_details_show_only_while_setting_up(self):
         """Idle explains AI insights; otherwise only the switch remains."""

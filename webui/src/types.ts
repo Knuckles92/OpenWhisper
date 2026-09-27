@@ -216,6 +216,7 @@ export interface MeetingStateDoc {
   cloud_enabled: boolean;
   intelligence_online: boolean;
   diarization_available: boolean;
+  speech?: { source: 'remote'; host: string; model: string; connected: boolean; message: string };
   title: string;
   /** The host's standing brief. Legacy snapshots omit it. */
   intent?: MeetingIntent;
@@ -490,6 +491,7 @@ export interface StatusMsg {
   status?: string;
   intelligence_online?: boolean;
   diarization_available?: boolean;
+  speech?: MeetingStateDoc['speech'];
   capture?: MeetingStateDoc['capture'];
   finalization?: FinalizationState | null;
 }

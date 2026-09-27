@@ -50,6 +50,20 @@ const headerProps = extra => ({
   transcriptLoadError: null, onRetryTranscript() {}, ...extra,
 });
 
+test('remote speech shows its host and outage without claiming capture stopped', async () => {
+  const speech = {source: 'remote', host: 'devbox', model: 'base', connected: false,
+    message: 'Host offline. Audio is saved locally; retrying the remote connection.'};
+  const state = {...meetingState('m_current', 'Current meeting'), status: 'active', speech};
+  await mount(HeaderBar, headerProps({state, meetingEnded: false, showHistory: false}));
+  assert.match(container.textContent, /Remote speech · devbox/);
+  assert.match(container.textContent, /Audio is saved locally/);
+  assert.match(container.textContent, /Mic \+ system audio/);
+  await rerender(HeaderBar, headerProps({
+    state: {...state, speech: {...speech, connected: true}}, meetingEnded: false, showHistory: false,
+  }));
+  assert.doesNotMatch(container.textContent, /Host offline/);
+});
+
 test('the history header opens the selected meeting instead of leaving for this dashboard', async () => {
   const pressed = [];
   await mount(HeaderBar, headerProps({

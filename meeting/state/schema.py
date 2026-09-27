@@ -629,6 +629,7 @@ class MeetingState:
     cloud_enabled: bool = False
     intelligence_online: bool = False
     diarization_available: bool = False
+    speech: Dict[str, Any] = field(default_factory=dict)
     title: str = ""
     #: The host's standing brief for this meeting (may be empty).
     intent: MeetingIntent = field(default_factory=MeetingIntent)
@@ -683,6 +684,7 @@ class MeetingState:
             "cloud_enabled": self.cloud_enabled,
             "intelligence_online": self.intelligence_online,
             "diarization_available": self.diarization_available,
+            "speech": dict(self.speech),
             "title": self.title,
             "intent": self.intent.to_dict(),
             "topic": self.topic.to_dict(),
@@ -727,6 +729,7 @@ class MeetingState:
             cloud_enabled=cloud_enabled,
             intelligence_online=bool(d.get("intelligence_online", False)),
             diarization_available=bool(d.get("diarization_available", False)),
+            speech=dict(d.get("speech") or {}),
             title=d.get("title", ""),
             intent=MeetingIntent.from_dict(d.get("intent") or {}),
             topic=TopicState.from_dict(d.get("topic") or {}),

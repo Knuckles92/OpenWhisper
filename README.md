@@ -161,7 +161,7 @@ On Linux, hotkeys also reach the focused app. Native Wayland limits global hotke
 | Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 and Linux x86_64 CPU / NVIDIA GPU | Dictation with preview, uploads, meetings with native preview |
 | Moonshine | Streaming Small / Medium, English | Windows x64 CPU | Dictation, uploads, meetings with native preview |
 | OpenAI API | GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027 | Cloud; API key and network required | Dictation, uploads |
-| Remote computer | Whichever engine the paired computer has selected | Another computer running OpenWhisper on your network | Dictation with that engine's preview, uploads |
+| Remote computer | Whichever engine the paired computer has selected | Another computer running OpenWhisper on your network | Dictation with that engine's preview, uploads, meetings with a supported host model |
 
 Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. macOS transcription uses CPU; see [GPU acceleration](#gpu-acceleration) for Windows and Linux.
 
@@ -177,7 +177,13 @@ Dictate on a laptop while a desktop or home server with a GPU does the transcrip
 2. On the other computer, open the same page, enter the host's address (shown under the switch) and the six-digit code, and click **Pair**. Check that both screens show the same identity code.
 3. Click **Use for dictation**, or choose **Remote computer** as the recording engine.
 
-The host serves the engine selected on it. Traffic is encrypted, and only paired computers can connect; remove one from **Paired computers** to cut it off. Meeting Mode keeps using an engine on the computer running the meeting.
+The host serves the engine selected on it. Traffic is encrypted, and only paired computers can connect; remove one from **Paired computers** to cut it off.
+
+For meetings, choose **Settings → Meeting Mode → Voice & speakers → Speech engine → Remote computer**, or **Use for meetings** on the Remote engine page. This choice is independent of dictation; **This computer** remains the default and remembers your local meeting model. **Test connection** checks pairing, availability, and meeting support without sending audio. **Configure remote engine → Manage host models** lets you select the host's model and device; those choices affect every connected client. Supported meeting hosts run Whisper, Parakeet, Nemotron, or Moonshine. Native live previews follow the supported host model; Whisper updates through completed meeting chunks. The meeting's **Spoken language** is sent with its audio.
+
+Microphone and system-audio capture, recordings, transcripts, and on-device speaker identification remain on the computer running the meeting. In remote mode, speech audio is sent to the paired host for recognition, including the optional after-meeting re-transcription pass. AI insights and cloud speaker identification keep their separate settings. Keep both computers awake and the host's selected engine available throughout the meeting.
+
+A remote meeting checks its host before recording starts. If the connection drops later, capture continues to local disk, the dashboard shows the outage, and transcription retries automatically. End waits for pending transcription within its normal time budget; unfinished audio remains recoverable from Past Meetings. Recovery and re-transcription reuse the saved host identity, model, and language. If the host changes models, restore the original model to continue. Audio is never silently rerouted to a different paired computer or a local model.
 
 The **Remote computer** engine card in Quick Record and Upload shows the host's model, **Device** (Auto, CPU, or NVIDIA GPU), and Whisper **Quant** setting or the optional engine's **Language**. Choices reflect the host's hardware and installed runtimes. Changes apply to the host and connected clients, and wait while its engine reloads. The card separately shows the device and precision actually running, GPU name and total VRAM when reported, and connection route/latency. Both computers need an updated version for runtime controls; older hosts show read-only runtime details.
 

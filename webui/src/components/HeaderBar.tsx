@@ -281,6 +281,11 @@ export default function HeaderBar({
                 </span>
               )}
               {meetingLive && capture && <span className="cb-capture">{capture}</span>}
+              {state.speech?.source === 'remote' && (
+                <span className="cb-capture" title={`Speech model: ${state.speech.model}. Recordings saved on the meeting computer.`}>
+                  Remote speech · {state.speech.host}
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -581,6 +586,9 @@ export default function HeaderBar({
         <div className="banner warning" role="status">
           {state.capture.message}
         </div>
+      )}
+      {!showHistory && (meetingLive || meetingEnding) && state.speech?.source === 'remote' && !state.speech.connected && (
+        <div className="banner warning" role="status">{state.speech.message}</div>
       )}
 
       {lastError && (
