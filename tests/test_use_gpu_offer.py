@@ -50,7 +50,9 @@ def machine(monkeypatch):
     monkeypatch.setattr("services.components.gpu_runtime_available", lambda: False)
     monkeypatch.setattr("services.hf_access.is_model_cached", lambda name: False)
     monkeypatch.setattr(gpu_setup, "nvidia_gpu", lambda: GTX_1050_TI)
+    # Both halves of the platform tag, or an arm64 Mac becomes linux_aarch64.
     monkeypatch.setattr(gpu_info.sys, "platform", "linux")
+    monkeypatch.setattr("services.components.platform_module.machine", lambda: "x86_64")
     monkeypatch.setattr(module, "is_hf_hub_offline_env_set", lambda: False)
 
 

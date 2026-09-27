@@ -729,8 +729,10 @@ def test_safe_extract_nvidia_wheel_flattens_only_dlls(tmp_path):
     assert not (out / "nvidia").exists()
 
 
-def test_validate_gpu_payload_rejects_missing_core_dlls(tmp_path):
+def test_validate_gpu_payload_rejects_missing_core_dlls(tmp_path, monkeypatch):
     """cuBLAS is the one library CTranslate2 cannot run on the GPU without."""
+    # The Windows layout; test_linux_gpu_component.py covers Linux's lib/.
+    monkeypatch.setattr(components, "current_platform_tag", lambda *a, **k: "win_amd64")
     (tmp_path / "bin").mkdir()
     (tmp_path / "bin" / "cudart64_12.dll").write_bytes(b"runtime")
 
@@ -965,12 +967,13 @@ def test_install_component_rejects_meeting_agent_missing_bundle(
         )
 
 
-def test_validate_gpu_payload_does_not_require_cudnn(tmp_path):
+def test_validate_gpu_payload_does_not_require_cudnn(tmp_path, monkeypatch):
     """CTranslate2 4.8 never loads cuDNN, so a payload without it is valid.
 
     Guards the ~740 MB saving: reintroducing a cuDNN requirement here would
     silently make every published component fail verification.
     """
+    monkeypatch.setattr(components, "current_platform_tag", lambda *a, **k: "win_amd64")
     (tmp_path / "bin").mkdir()
     (tmp_path / "bin" / "cublas64_12.dll").write_bytes(b"cublas")
 
