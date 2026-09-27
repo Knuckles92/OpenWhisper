@@ -217,7 +217,7 @@ during the run to confirm the monitor carries what you hear.
 - Unknown package families never receive automatic `apt`/`dnf`/`pacman` install
   lines; use the generic guidance and your distro docs.
 - Flatpak/sandboxed installs are out of scope for this guide.
-- NVIDIA CUDA on Linux is separate (`requirements-gpu.txt`) and is not required
+- NVIDIA CUDA on Linux is separate (GPU Acceleration in Downloads, or `requirements-gpu.txt`) and is not required
   for Meeting Mode capture.
 - ARM64 Meeting Mode is functional (CPU/cloud transcription) once attestation
   passes; CUDA is not promised on ARM64.

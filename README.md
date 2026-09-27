@@ -117,7 +117,9 @@ Contributors can use `uv sync` and `uv run python main.py` without activating a 
 
 ## GPU acceleration
 
-For Local Whisper, install **GPU Acceleration** from **Downloads → Components** on Windows. Windows/Linux source installs can run `python -m pip install -r requirements-gpu.txt` in the activated virtual environment. Both need an NVIDIA driver providing CUDA 12 (525+); the CUDA Toolkit is not required. macOS uses CPU.
+For Local Whisper, install **GPU Acceleration** from **Downloads → Components** on Windows or Linux x86_64. When Local Whisper finds an NVIDIA GPU without these libraries, it offers **Use this GPU**, which installs them, downloads the model the card should run, and loads it on the GPU. Source installs can instead run `python -m pip install -r requirements-gpu.txt` in the activated virtual environment. Both need an NVIDIA driver providing CUDA 12 (525+); the CUDA Toolkit is not required. macOS uses CPU.
+
+On **Auto**, Local Whisper picks the compute type the card supports and has room for: float16 on RTX cards, int8_float32 on GTX 10-series and older cards, which have no float16. The log names the choice before loading, and **Downloads** gives each model's memory estimate for this computer's GPU. For example, turbo needs about 1.4 GB on a 4 GB GTX 1050 Ti.
 
 Other speech engines use their own runtimes from Downloads. The Meeting Intelligence Agent is also a separate component, available on Windows and Linux.
 

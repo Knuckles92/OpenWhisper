@@ -350,7 +350,11 @@ class TestSettingsGeneralLayout(unittest.TestCase):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
         try:
-            dialog.show()
+            # The offscreen test screen (800x800) is smaller than the default
+            # size, and fitting it is test_window_fit_and_title_bar.py's job;
+            # this one checks the pages at the sizes it sets.
+            with patch.object(SettingsDialog, "_fit_to_screen", lambda self: None):
+                dialog.show()
             for _ in range(8):
                 self.app.processEvents()
             self.assertEqual(dialog.size(), SettingsDialog.DEFAULT_SIZE)
@@ -427,7 +431,10 @@ class TestSettingsGeneralLayout(unittest.TestCase):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
         try:
-            dialog.show()
+            # Fitting the 800x800 offscreen screen would lower the minimum
+            # width below the 940 px these layouts are designed down to.
+            with patch.object(SettingsDialog, "_fit_to_screen", lambda self: None):
+                dialog.show()
             for scale in (100, 115, 130, 100):
                 apply_ui_font_scale(scale, app=self.app, theme_manager=manager)
                 for width in (980, 800, 1100):

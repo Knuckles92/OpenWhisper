@@ -7,27 +7,33 @@ from services.gpu_setup import GpuSetupPlan
 from ui_qt.widgets import Button, PrimaryButton
 
 
+def _size(text: str) -> str:
+    """Keep "1.08 GB" on one line."""
+    return text.replace(" ", " ")
+
+
 def plan_steps(plan: GpuSetupPlan) -> list:
     """The offer's bullet points, in the order they happen."""
     steps = []
     if plan.install_component:
         steps.append(
             f"Install GPU Acceleration (NVIDIA's CUDA libraries): "
-            f"{format_size_bytes(plan.component_download_bytes)} download, "
-            f"{format_size_bytes(plan.component_install_bytes)} on disk."
+            f"{_size(format_size_bytes(plan.component_download_bytes))} download, "
+            f"{_size(format_size_bytes(plan.component_install_bytes))} on disk."
         )
     if plan.switches_model:
         steps.append(f"Switch Local Whisper from {plan.previous_model} to {plan.model}.")
     if plan.model_download_bytes:
         steps.append(
-            f"Download Whisper {plan.model}: {format_size_bytes(plan.model_download_bytes)}."
+            f"Download Whisper {plan.model}: "
+            f"{_size(format_size_bytes(plan.model_download_bytes))}."
         )
     run = f"Run {plan.model} on the GPU at {plan.compute_type}"
     if plan.estimate_mib and plan.gpu is not None:
-        run += (f", about {format_gb(plan.estimate_mib)} of its "
-                f"{format_gb(plan.gpu.total_mib)}")
+        run += (f", about {_size(format_gb(plan.estimate_mib))} of its "
+                f"{_size(format_gb(plan.gpu.total_mib))}")
     elif plan.estimate_mib:
-        run += f", about {format_gb(plan.estimate_mib)} of GPU memory"
+        run += f", about {_size(format_gb(plan.estimate_mib))} of GPU memory"
     run += "."
     if not plan.supports_float16:
         run += " This GPU has no float16, so it runs int8, which also halves the memory."

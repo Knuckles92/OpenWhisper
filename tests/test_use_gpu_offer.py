@@ -129,7 +129,8 @@ def test_the_dialog_lists_all_three_steps(settings, machine):
     from ui_qt.dialogs.use_gpu_dialog import UseGpuDialog, plan_steps
 
     plan = gpu_setup.plan_gpu_setup(settings.load_all_settings(), PASCAL)
-    steps = plan_steps(plan)
+    # Sizes keep their number and unit together with no-break spaces.
+    steps = [step.replace(" ", " ") for step in plan_steps(plan)]
 
     assert "GPU Acceleration" in steps[0] and "674 MB" in steps[0]
     assert "Whisper turbo" in steps[1] and "1.62 GB" in steps[1]
