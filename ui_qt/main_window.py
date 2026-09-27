@@ -274,6 +274,7 @@ class MainWindow(QMainWindow):
     # The Remote backend's Model field chose one of the paired computer's
     # models: (family, model).
     remote_model_selected = pyqtSignal(str, str)
+    remote_runtime_selected = pyqtSignal(str, str, dict)
     # The Remote engine's link was clicked while the host was out of reach.
     remote_retry_requested = pyqtSignal()
     live_preview_changed = pyqtSignal()  # Live preview toggled from a tab footer
@@ -438,6 +439,7 @@ class MainWindow(QMainWindow):
             tab.model_changed.connect(self._on_model_changed)
             tab.engine_settings_changed.connect(self._on_engine_settings_changed)
             tab.remote_model_selected.connect(self.remote_model_selected)
+            tab.remote_runtime_selected.connect(self.remote_runtime_selected)
             tab.remote_retry_requested.connect(self.remote_retry_requested)
             tab.live_preview_changed.connect(self._on_live_preview_changed)
             tab.help_requested.connect(self.engine_help_requested)

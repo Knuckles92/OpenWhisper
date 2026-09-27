@@ -67,6 +67,10 @@ class RemoteLink:
     engine_label: str = ""
     device: str = ""
     address: str = ""
+    compute_type: str = ""
+    runtime_status: str = ""
+    gpu_name: str = ""
+    gpu_memory_mib: int = 0
 
 
 @dataclass(frozen=True)
@@ -111,6 +115,8 @@ class RemoteModels:
     models: Optional[tuple] = None
     #: What it serves this computer now, while connected.
     current: Optional[HostModel] = None
+    runtime: Optional[dict] = None
+    engine: Optional[dict] = None
 
 
 def parse_host_models(raw) -> Optional[tuple]:
@@ -160,6 +166,8 @@ class RemoteSpeechBackend(LocalSpeechBackend):
         #: Why the host kept its model when the last reload asked it to switch.
         self.switch_error = ""
         self._requested: Optional[HostModel] = None
+        self._requested_runtime: Optional[dict] = None
+        self.runtime: Optional[dict] = None
         #: A connection still handshaking or switching, closed by cleanup.
         self._pending = None
         #: Called (on any thread) whenever ``link()`` may read differently.
@@ -198,8 +206,11 @@ class RemoteSpeechBackend(LocalSpeechBackend):
                 if pairing is not None and not self.host_name:
                     self.host_name = pairing.host_name
                 host = self.host_name
+        gpu = (self.runtime or {}).get("gpu") or {}
         common = dict(host=host, busy=busy, replies=replies, engine_label=label,
-                      device=self.device)
+                      device=self.device, compute_type=str(self.engine.get("compute_type") or ""),
+                      runtime_status=str(self.engine.get("status") or ""),
+                      gpu_name=str(gpu.get("name") or ""), gpu_memory_mib=gpu.get("total_mib") or 0)
         if process is not None and self.model is not None and process.alive:
             latency = process.latency
             return RemoteLink(
@@ -275,7 +286,9 @@ class RemoteSpeechBackend(LocalSpeechBackend):
         pairing = load_client_pairing()
         if pairing is None:
             return RemoteModels()
-        return RemoteModels(pairing.host_name, self.host_models, self.current_model)
+        available = self.is_available()
+        return RemoteModels(pairing.host_name, self.host_models, self.current_model,
+                            self.runtime if available else None, dict(self.engine) if available else None)
 
     def request_model(self, family: str, model: str) -> HostModel:
         """Have the next reload switch the host to ``model``; returns the choice."""
@@ -285,7 +298,21 @@ class RemoteSpeechBackend(LocalSpeechBackend):
         )
         with self._state_lock:
             self._requested = choice
+            self._requested_runtime = None
         return choice
+
+    def request_runtime(self, family: str, model: str, changes: dict) -> None:
+        current = self.current_model
+        if current is None or current.key != (family, model):
+            raise ValueError("The host changed engines. Reconnect before changing its runtime.")
+        if not self.runtime or not self.runtime.get("can_configure"):
+            raise ValueError("Update OpenWhisper on the host to change its runtime from here.")
+        with self._state_lock:
+            self._requested = current
+            self._requested_runtime = dict(changes)
+
+    def request_language(self) -> str:
+        return (self.runtime or {}).get("selected", {}).get("language") or super().request_language()
 
     @property
     def is_model_missing(self) -> bool:
@@ -300,6 +327,9 @@ class RemoteSpeechBackend(LocalSpeechBackend):
     def device_info(self) -> str:
         if self.is_available():
             device = self.engine.get("device")
+            compute = self.engine.get("compute_type")
+            if device and compute:
+                device = f"{device} ({compute})"
             return f"{self.name} | {device}" if device else self.name
         return self.last_error or "Remote engine is not connected"
 
@@ -318,6 +348,7 @@ class RemoteSpeechBackend(LocalSpeechBackend):
             self.reset_cancel_flag()
             generation = self._generation
             requested, self._requested = self._requested, None
+            runtime, self._requested_runtime = self._requested_runtime, None
         self.switch_error = ""
         pairing = load_client_pairing()
         self._unpaired = pairing is None
@@ -339,8 +370,8 @@ class RemoteSpeechBackend(LocalSpeechBackend):
         self._set_connecting(True)
         try:
             connection, ready = self._connect(pairing, token, generation)
-            if requested is not None and not _serves(ready, requested):
-                connection, ready = self._switch_host(connection, pairing, token, requested, generation)
+            if requested is not None and (runtime is not None or not _serves(ready, requested)):
+                connection, ready = self._switch_host(connection, pairing, token, requested, generation, runtime)
         except RemoteEngineError as exc:
             with self._state_lock:
                 if generation == self._generation:
@@ -440,6 +471,8 @@ class RemoteSpeechBackend(LocalSpeechBackend):
                 self._process = connection
                 self.model = SpeechDecoder(self)
                 self.engine = engine
+                self.device = str(engine.get("device") or "")
+                self._adopt_runtime(ready)
                 self.host_models = parse_host_models(ready.get("models"))
                 self.last_error = ""
                 outcome = "connected"
@@ -465,7 +498,7 @@ class RemoteSpeechBackend(LocalSpeechBackend):
                 self._pending = connection
         return connection, connection.connect()
 
-    def _switch_host(self, connection, pairing, token, requested: HostModel, generation):
+    def _switch_host(self, connection, pairing, token, requested: HostModel, generation, runtime=None):
         """Ask the host to load ``requested``, then reconnect to what it runs.
 
         The host answers once the load has settled. Whether it switched or
@@ -479,9 +512,13 @@ class RemoteSpeechBackend(LocalSpeechBackend):
         host = host or pairing.host_name
         logger.info("Asking %s to switch to %s", host, requested.label)
         try:
+            if runtime is not None and (connection.ready.get("capabilities") or {}).get("engine_controls") is not True:
+                raise RuntimeError(f"Update OpenWhisper on {host} to change its runtime from here.")
             connection.request(
-                "select_model", family=requested.family, model=requested.model,
+                "configure_runtime" if runtime is not None else "select_model",
+                family=requested.family, model=requested.model,
                 timeout=SWITCH_REQUEST_TIMEOUT_S,
+                **({"settings": runtime} if runtime is not None else {}),
             )
         except RemoteEngineError:
             raise
@@ -525,12 +562,20 @@ class RemoteSpeechBackend(LocalSpeechBackend):
         # reload, for another round trip.
         return False
 
+    def _adopt_runtime(self, ready: dict) -> None:
+        runtime = ready.get("runtime")
+        capabilities = ready.get("capabilities")
+        self.runtime = ({**runtime, "can_configure": isinstance(capabilities, dict)
+                         and capabilities.get("engine_controls") is True}
+                        if isinstance(runtime, dict) and runtime else None)
+
     def _adopt(self, pairing, connection, ready: dict) -> None:
         """Take a fresh connection's engine as ours. Caller holds the state lock."""
         engine = ready.get("engine") if isinstance(ready.get("engine"), dict) else {}
         host = ready.get("host") if isinstance(ready.get("host"), dict) else {}
         self._pairing = pairing
         self.engine = engine
+        self._adopt_runtime(ready)
         self.host_models = parse_host_models(ready.get("models"))
         self.host_name = str(host.get("name") or pairing.host_name)
         self.backend_id = str(engine.get("family") or REMOTE_BACKEND)
@@ -627,6 +672,10 @@ class RemoteSpeechBackend(LocalSpeechBackend):
                 connection.close()
                 return self._process is not None
             self._process = connection
+            self.engine = engine
+            self.device = str(engine.get("device") or "")
+            self._adopt_runtime(ready)
+            self.host_models = parse_host_models(ready.get("models"))
         logger.info("Remote engine reconnected to %s", connection.where)
         return True
 

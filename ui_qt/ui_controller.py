@@ -156,6 +156,7 @@ class UIController(QObject):
         # where a choice goes, as (family, model).
         self.get_remote_models: Optional[Callable] = None
         self.on_remote_model_selected: Optional[Callable[[str, str], None]] = None
+        self.on_remote_runtime_selected: Optional[Callable] = None
         # Reconnect to the paired computer now (the link was clicked).
         self.on_remote_retry: Optional[Callable[[], None]] = None
         self.get_missing_local_runtime: Optional[Callable[[], Optional[str]]] = None
@@ -212,6 +213,7 @@ class UIController(QObject):
         self.main_window.model_changed.connect(self._on_model_changed)
         self.main_window.whisper_engine_changed.connect(self._on_whisper_engine_changed)
         self.main_window.remote_model_selected.connect(self._on_remote_model_selected)
+        self.main_window.remote_runtime_selected.connect(self._on_remote_runtime_selected)
         self.main_window.remote_retry_requested.connect(self._on_remote_retry)
         self.main_window.live_preview_changed.connect(self._on_live_preview_changed)
         self.main_window.settings_requested.connect(self.open_settings_dialog)
@@ -463,6 +465,10 @@ class UIController(QObject):
         logger.info("Remote model chosen: %s/%s", family, model)
         if self.on_remote_model_selected:
             self.on_remote_model_selected(family, model)
+
+    def _on_remote_runtime_selected(self, family: str, model: str, changes: dict) -> None:
+        if self.on_remote_runtime_selected:
+            self.on_remote_runtime_selected(family, model, changes)
 
     def set_remote_link(self, link) -> None:
         """The Remote engine's connection (a RemoteLink), for the engine card."""

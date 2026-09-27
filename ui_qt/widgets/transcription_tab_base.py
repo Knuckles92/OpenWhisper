@@ -39,11 +39,19 @@ from ui_qt.widgets.engine_field import (
 from ui_qt.widgets.stats_display import TranscriptionStatsWidget
 from ui_qt.widgets.local_engine_controls import LocalEngineControls
 from ui_qt.widgets.remote_link import RemoteLinkGlyph
+from ui_qt.widgets.remote_engine_controls import RemoteEngineControls
+from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
 
 #: Engine-wide busy lines the Remote engine's link replaces with its own.
 _LINK_SAYS_IT_BETTER = ("Loading speech engine...", "Reloading speech engine...")
+
+_LIVE_PREVIEW_TIP = (
+    "Show draft text near your cursor as you speak.\n"
+    "The final transcript may change after you stop.\n"
+    "Uses extra processing; requires a supported backend."
+)
 
 
 class TranscriptPane(QFrame):
@@ -88,6 +96,7 @@ class TranscriptionTabBase(QWidget):
     model_changed = pyqtSignal(str)  # Model display name
     engine_settings_changed = pyqtSignal()  # Local engine chip changed
     remote_model_selected = pyqtSignal(str, str)  # Paired computer's (family, model)
+    remote_runtime_selected = pyqtSignal(str, str, dict)
     remote_retry_requested = pyqtSignal()  # The link was clicked while offline
     help_requested = pyqtSignal(str)
     engine_downloads_requested = pyqtSignal()
@@ -138,6 +147,10 @@ class TranscriptionTabBase(QWidget):
         self._serving_busy = False
         self._served = 0
         self._serving_shown = False
+        # The saved Live preview choice. The checkbox shows it only while the
+        # selected engine can preview, and a recording locks it.
+        self._live_preview_wanted = False
+        self._live_preview_locked = False
         self._setup_ui()
         self._connect_signals()
         self.load_cleanup_setting()
@@ -225,6 +238,10 @@ class TranscriptionTabBase(QWidget):
             [("Open Settings → Remote engine", "remote_engine")], self.help_requested.emit,
         )
         self.remote_model_field.hide()
+        self.remote_engine = RemoteEngineControls()
+        self.remote_engine.hide()
+        self.remote_engine.runtime_selected.connect(self.remote_runtime_selected)
+        self.remote_engine.help_requested.connect(self.help_requested)
 
         self._field_row = QHBoxLayout()
         self._field_row.setContentsMargins(0, 0, 0, 0)
@@ -237,9 +254,16 @@ class TranscriptionTabBase(QWidget):
         self._field_row.addWidget(self.local_engine, stretch=4)
         self._field_row.addWidget(self.api_model_field, stretch=2)
         self._field_row.addWidget(self.remote_model_field, stretch=2)
+        self._field_row.addWidget(self.remote_engine, stretch=2)
         self._field_filler_index = self._field_row.count()
         self._field_row.addStretch(0)
         engine_layout.addLayout(self._field_row)
+
+        self.remote_runtime_label = WrappedLabel("")
+        self.remote_runtime_label.setObjectName("engineResolvedLabel")
+        self.remote_runtime_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.remote_runtime_label.hide()
+        engine_layout.addWidget(self.remote_runtime_label)
 
         self.status_dot = StatusDot(diameter=16)
         # Stands in for the dot while Remote is selected.
@@ -265,11 +289,7 @@ class TranscriptionTabBase(QWidget):
 
         self.live_preview_check = QCheckBox("Live preview")
         self.live_preview_check.setObjectName("engineLivePreviewCheck")
-        self.live_preview_check.setToolTip(
-            "Show draft text near your cursor as you speak.\n"
-            "The final transcript may change after you stop.\n"
-            "Uses extra processing; requires a supported backend."
-        )
+        self.live_preview_check.setToolTip(_LIVE_PREVIEW_TIP)
         if not self.LIVE_PREVIEW_CONTROL:
             self.live_preview_check.hide()
 
@@ -424,6 +444,7 @@ class TranscriptionTabBase(QWidget):
             logger.error("Couldn't save live preview setting: %s", exc)
             self.load_live_preview_setting()
             return
+        self._live_preview_wanted = bool(checked)
         self.live_preview_changed.emit()
 
     def load_live_preview_setting(self):
@@ -431,9 +452,45 @@ class TranscriptionTabBase(QWidget):
             SettingsKey.STREAMING_ENABLED,
             config.STREAMING_ENABLED,
         )
-        self.live_preview_check.blockSignals(True)
-        self.live_preview_check.setChecked(bool(enabled))
-        self.live_preview_check.blockSignals(False)
+        self._live_preview_wanted = bool(enabled)
+        self._sync_live_preview()
+
+    def set_live_preview_locked(self, locked: bool) -> None:
+        """Lock the toggle, e.g. while recording, without unlocking it early."""
+        self._live_preview_locked = locked
+        self._sync_live_preview()
+
+    def live_preview_unavailable_reason(self) -> str:
+        """Why the selected engine can't preview, or "" when it can."""
+        from services.runtime.streaming import preview_unavailable_reason
+
+        backend = config.MODEL_VALUE_MAP.get(self.current_model, "local_whisper")
+        models = self._remote_models
+        current = models.current if models is not None else None
+        return preview_unavailable_reason(
+            backend,
+            host=models.host if models is not None else "",
+            host_family=current.family if current is not None else None,
+        )
+
+    def _sync_live_preview(self) -> None:
+        """Show the saved choice, or grayed out and unchecked with why.
+
+        An engine that can't preview doesn't change the saved choice, so it
+        comes back as it was when the engine switches to one that can.
+        """
+        reason = self.live_preview_unavailable_reason()
+        check = self.live_preview_check
+        blocked = check.blockSignals(True)
+        check.setChecked(self._live_preview_wanted and not reason)
+        check.blockSignals(blocked)
+        check.setEnabled(not reason and not self._live_preview_locked)
+        if not reason:
+            check.setToolTip(_LIVE_PREVIEW_TIP)
+        elif self._live_preview_wanted:
+            check.setToolTip(f"{reason}.\nIt turns back on when you switch to one.")
+        else:
+            check.setToolTip(f"{reason}.\nSwitch to one to use it.")
 
     def _on_version_toggled(self, checked: bool):
         if not checked:
@@ -658,7 +715,26 @@ class TranscriptionTabBase(QWidget):
         if link is not None:
             self.link_glyph.set_link(link.state, busy=link.busy, replies=link.replies, beat=link.beat)
             self.link_glyph.setToolTip(self._link_tooltip())
+        self._sync_remote_model_enabled()
+        self._show_remote_runtime()
         self._refresh_engine_status()
+
+    def _show_remote_runtime(self) -> None:
+        link = self._remote_link
+        show = self._remote_shown and link is not None and link.state == "connected"
+        self.remote_runtime_label.setVisible(show)
+        if not show:
+            return
+        device = {"cuda": "NVIDIA GPU", "cpu": "CPU"}.get(link.device, link.device)
+        parts = [f"Running on {link.host}: {device or 'device not reported'}"]
+        if link.compute_type:
+            parts.append(link.compute_type)
+        if link.gpu_name and link.device == "cuda":
+            parts.append(link.gpu_name)
+            if link.gpu_memory_mib:
+                parts.append(f"{link.gpu_memory_mib / 1024:g} GB VRAM")
+        self.remote_runtime_label.setText(" · ".join(parts))
+        self.remote_runtime_label.setToolTip(link.runtime_status or self._link_tooltip())
 
     def _link_text(self) -> str:
         link = self._remote_link
@@ -689,7 +765,9 @@ class TranscriptionTabBase(QWidget):
             engine = link.engine_label or "Its engine"
             where = f" at {link.address}" if link.address else ""
             device = f" on {link.device.upper() if link.device == 'cuda' else link.device}" if link.device else ""
-            return f"{engine}{device}, served by {link.host}{where}."
+            compute = f" ({link.compute_type})" if link.compute_type else ""
+            detail = f"\n{link.runtime_status}" if link.runtime_status else ""
+            return f"{engine}{device}{compute}, served by {link.host}{where}.{detail}"
         if link.state == "offline":
             return f"{link.detail}\nClick the link to try again now.".strip()
         return link.detail
@@ -742,18 +820,24 @@ class TranscriptionTabBase(QWidget):
         self.local_engine.setVisible(visible)
         self.api_model_field.setVisible(not visible and not remote)
         self.remote_model_field.setVisible(remote)
+        self.remote_engine.setVisible(remote)
+        self._show_remote_runtime()
         if remote:
             self._show_remote_models()
-        self._field_row.setStretch(self._field_filler_index, 0 if visible else 2)
+        self._field_row.setStretch(self._field_filler_index, 0 if visible or remote else 2)
         # A remote engine is connected or it isn't; the API has no engine here.
         self._engine_dot_visible = visible or remote
         self._refresh_engine_status()
         self.model_combo.set_status_visible(self._engine_dot_visible)
+        self._sync_live_preview()
 
     def set_remote_models(self, choices) -> None:
         """What the paired computer can run, and what it runs now (``RemoteModels``)."""
         self._remote_models = choices
+        self.remote_engine.set_state(choices)
         self._show_remote_models()
+        # The host's engine decides whether the Remote engine can preview.
+        self._sync_live_preview()
 
     def _current_remote_models(self):
         from transcriber.remote_backend import RemoteModels
@@ -821,6 +905,8 @@ class TranscriptionTabBase(QWidget):
         self.remote_model_combo.setEnabled(
             self._remote_selectable and self._backend_enabled and not self._engine_busy
         )
+        disconnected = self._remote_link is not None and self._remote_link.state != "connected"
+        self.remote_engine.set_locked(not self._backend_enabled or self._engine_busy or disconnected)
 
     def _on_remote_model_activated(self, index: int) -> None:
         choice = self.remote_model_combo.itemData(index)

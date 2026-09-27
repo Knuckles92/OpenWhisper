@@ -1175,12 +1175,12 @@ class ModelAssignments(QObject):
         compute = settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, "auto")
         if self.device_combo.findText(str(device)) < 0:
             device = "auto"
-        if self.compute_combo.findText(str(compute)) < 0:
-            compute = "auto"
         blocker = self.device_combo.blockSignals(True)
         self.device_combo.setCurrentText(str(device))
         self.device_combo.blockSignals(blocker)
         blocker = self.compute_combo.blockSignals(True)
+        if self.compute_combo.findText(str(compute)) < 0:
+            self.compute_combo.addItem(str(compute))
         self.compute_combo.setCurrentText(str(compute))
         self.compute_combo.blockSignals(blocker)
         self._refresh_meeting_runtime_label()

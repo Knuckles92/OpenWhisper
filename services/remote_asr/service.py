@@ -85,9 +85,12 @@ class RemoteEngineService:
         bind: str = "0.0.0.0",
         switch_engine: Optional[Callable[[str, str, str], None]] = None,
         engine_settled: Optional[Callable[[], bool]] = None,
+        configure_engine: Optional[Callable[[str, str, dict, str], None]] = None,
     ):
         self._backend_provider = backend_provider
         self._switch_engine = switch_engine
+        self._configure_engine = configure_engine
+        self._runtime_lock = threading.Lock()
         self._engine_settled = engine_settled or (lambda: True)
         self._identity_dir = identity_dir
         # Every interface, so other computers can connect. Tests pass
@@ -266,6 +269,8 @@ class RemoteEngineService:
                 select_model=self.select_model if self._switch_engine is not None else None,
                 model_management=remote_settings.host_model_management,
                 manage_models=self.manage_host_models,
+                runtime=self.runtime_state,
+                configure_runtime=self.configure_runtime if self._configure_engine is not None else None,
             )
         return self._host
 
@@ -291,6 +296,38 @@ class RemoteEngineService:
     def host_models(self) -> List[dict]:
         """What paired clients may switch to; none when switching isn't wired up."""
         return host_models() if self._switch_engine is not None else []
+
+    def runtime_state(self) -> dict:
+        from services.remote_asr.runtime import runtime_state
+
+        return runtime_state(self._engine().describe())
+
+    def configure_runtime(self, family: str, model: str, changes: dict, device_name: str) -> dict:
+        """Apply bounded runtime choices to the current host engine, then await load."""
+        from services.remote_asr.runtime import validate_runtime
+
+        if self._configure_engine is None:
+            raise RuntimeError("The host doesn't support remote runtime controls.")
+        if not self._runtime_lock.acquire(blocking=False):
+            raise RuntimeError("The host is changing its runtime. Try again in a moment.")
+        try:
+            if not self._engine_settled():
+                raise RuntimeError("The host is loading its engine. Try again in a moment.")
+            validate_runtime(self._engine().describe(), family, model, changes)
+            self._configure_engine(family, model, changes, device_name)
+            deadline = time.monotonic() + SWITCH_TIMEOUT_S
+            while not self._engine_settled():
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("The host is still loading its runtime. Reconnect in a moment.")
+                time.sleep(_SWITCH_POLL_S)
+            engine = self._engine().describe()
+            if not engine.get("available"):
+                raise RuntimeError(engine.get("status") or "The host couldn't load this runtime.")
+            if (engine.get("family"), engine.get("model")) != (family, model):
+                raise RuntimeError("The host switched models while changing its runtime.")
+            return engine
+        finally:
+            self._runtime_lock.release()
 
     def select_model(self, family: str, model: str, device_name: str) -> dict:
         """Switch this computer to ``model`` for a paired client. Blocking.

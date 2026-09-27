@@ -188,6 +188,8 @@ class SpeechHost:
         select_model: Optional[Callable[[str, str, str], dict]] = None,
         model_management: Optional[Callable[[], bool]] = None,
         manage_models: Optional[Callable[[str, dict, str], dict]] = None,
+        runtime: Optional[Callable[[], dict]] = None,
+        configure_runtime: Optional[Callable[[str, str, dict, str], dict]] = None,
     ):
         self._engine_provider = engine_provider
         self.registry = registry
@@ -200,6 +202,8 @@ class SpeechHost:
         self._select_model = select_model
         self._model_management = model_management or (lambda: False)
         self._manage_models = manage_models
+        self._runtime = runtime or (lambda: {})
+        self._configure_runtime = configure_runtime
         self._lock = threading.Lock()
         self._server = None
         self._thread: Optional[threading.Thread] = None
@@ -558,7 +562,9 @@ class SpeechHost:
             "device": {"id": device["id"], "name": device["name"]},
             "engine": engine.describe(),
             "models": self._model_list(),
-            "capabilities": {"model_management": self._can_manage_models()},
+            "runtime": self._runtime(),
+            "capabilities": {"model_management": self._can_manage_models(),
+                             "engine_controls": self._configure_runtime is not None},
         })
         connection_id = uuid.uuid4().hex[:8]
         with self._lock:
@@ -607,6 +613,8 @@ class SpeechHost:
         except protocol.ProtocolError as exc:
             return {"id": None, "error": str(exc), "code": "bad_request"}
         request_id = header.get("id")
+        if header.get("op") == "configure_runtime":
+            return self._configure_runtime_request(request_id, header, device_name)
         if header.get("op") in ("model_catalog", "download_model"):
             return self._manage_model_request(request_id, header, device_name)
         if header.get("op") == "select_model":
@@ -679,6 +687,20 @@ class SpeechHost:
         except Exception as exc:
             return {"id": request_id, "error": str(exc) or type(exc).__name__}
         return {"id": request_id, "result": result}
+
+    def _configure_runtime_request(self, request_id, header: dict, device_name: str) -> dict:
+        if self._configure_runtime is None:
+            return {"id": request_id, "error": "Update OpenWhisper on the host to change its runtime."}
+        if (set(header) - {"id", "op", "family", "model", "settings"}
+                or not all(isinstance(header.get(key), str) and header[key] for key in ("family", "model"))
+                or not isinstance(header.get("settings"), dict)):
+            return {"id": request_id, "code": "bad_request", "error": "Invalid runtime request."}
+        try:
+            engine = self._configure_runtime(header["family"], header["model"], header["settings"], device_name)
+        except Exception as exc:
+            return {"id": request_id, "error": str(exc) or type(exc).__name__}
+        self._emit("engine", {"by": device_name})
+        return {"id": request_id, "result": {"engine": engine, "runtime": self._runtime()}}
 
     def _switch_model(self, request_id, header: dict, device_name: str) -> dict:
         """Load the model a client chose, as if it were picked on this computer.

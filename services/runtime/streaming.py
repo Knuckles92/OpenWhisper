@@ -27,6 +27,23 @@ logger = logging.getLogger(__name__)
 PREVIEW_UNAVAILABLE_STATUS = (
     "Live preview needs Local Whisper, Parakeet, or Nemotron Streaming"
 )
+REMOTE_PREVIEW_UNAVAILABLE_STATUS = "Live preview needs Parakeet or Nemotron Streaming on {host}"
+
+
+def preview_unavailable_reason(backend_key: str, host: str = "", host_family: Optional[str] = None) -> str:
+    """Why the dictation preview can't run on an engine, or "" when it can.
+
+    ``backend_key`` is a ``config.MODEL_VALUE_MAP`` value. The Remote engine
+    previews with whatever the host runs, so ``host_family`` decides; until
+    it connects that isn't known, and setup checks again once it is.
+    """
+    if backend_key == "remote":
+        if host_family is None or host_family in config.STREAMING_PREVIEW_BACKENDS:
+            return ""
+        return REMOTE_PREVIEW_UNAVAILABLE_STATUS.format(host=host or "the paired computer")
+    if backend_key == "local_whisper" or backend_key in config.STREAMING_PREVIEW_BACKENDS:
+        return ""
+    return PREVIEW_UNAVAILABLE_STATUS
 
 
 class StreamingRuntime:
@@ -255,7 +272,7 @@ class StreamingRuntime:
     def _unavailable_status(backend) -> str:
         host = getattr(backend, "host_name", "") if getattr(backend, "is_remote", False) else ""
         if host:
-            return f"Live preview needs Parakeet or Nemotron Streaming on {host}"
+            return REMOTE_PREVIEW_UNAVAILABLE_STATUS.format(host=host)
         return PREVIEW_UNAVAILABLE_STATUS
 
     @staticmethod

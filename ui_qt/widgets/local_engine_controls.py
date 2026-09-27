@@ -150,6 +150,10 @@ class LocalEngineControls(QWidget):
             (self.compute_combo, compute or "auto"),
         ):
             combo.blockSignals(True)
+            # A paired client can select any precision supported by this
+            # host, including mixed types beyond the short default menu.
+            if combo is self.compute_combo and combo.findText(value) < 0:
+                combo.addItem(value)
             combo.setCurrentText(value)
             combo.blockSignals(False)
 

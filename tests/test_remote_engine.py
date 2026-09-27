@@ -979,6 +979,12 @@ def test_a_host_without_a_preview_engine_says_so(paired_backend, engine):
     controller.ui_controller.set_status.assert_called_once_with(
         "Live preview needs Parakeet or Nemotron Streaming on devbox"
     )
+    # The engine card grays out Live preview with the same words.
+    from services.runtime.streaming import preview_unavailable_reason
+
+    assert preview_unavailable_reason("remote", "devbox", "local_whisper") == (
+        controller.ui_controller.set_status.call_args.args[0]
+    )
 
 
 # ---- choosing the host's model ----

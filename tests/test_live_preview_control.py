@@ -125,6 +125,85 @@ class TestPersistence:
         assert emitted == []
 
 
+def _remote_models(family, host="jed"):
+    from transcriber.remote_backend import HostModel, RemoteModels
+
+    current = HostModel(family, "model", "Model") if family else None
+    return RemoteModels(host=host, models=(), current=current)
+
+
+class TestEngineSupport:
+    """An engine that can't preview grays the box out without losing the choice."""
+
+    def _tab(self, manager):
+        with patch("ui_qt.widgets.transcription_tab_base.settings_manager", manager):
+            return QuickRecordTab()
+
+    def test_api_grays_out_unchecked_and_says_why(self):
+        manager = _settings({SettingsKey.STREAMING_ENABLED: True})
+        tab = self._tab(manager)
+        tab.set_backend("API")
+        check = tab.live_preview_check
+        assert not check.isEnabled()
+        assert not check.isChecked()
+        assert check.toolTip().startswith(
+            "Live preview needs Local Whisper, Parakeet, or Nemotron Streaming."
+        )
+        assert "turns back on" in check.toolTip()
+        manager.update_settings.assert_not_called()
+
+    def test_switching_back_restores_the_saved_choice(self):
+        tab = self._tab(_settings({SettingsKey.STREAMING_ENABLED: True}))
+        tab.set_backend("Moonshine")
+        assert not tab.live_preview_check.isChecked()
+        tab.set_backend("Parakeet")
+        assert tab.live_preview_check.isEnabled()
+        assert tab.live_preview_check.isChecked()
+        assert tab.live_preview_check.toolTip().startswith("Show draft text")
+
+    def test_saved_off_says_how_to_use_it_instead(self):
+        tab = self._tab(_settings({SettingsKey.STREAMING_ENABLED: False}))
+        tab.set_backend("API")
+        assert "Switch to one to use it" in tab.live_preview_check.toolTip()
+
+    def test_remote_host_without_a_preview_engine_names_the_host(self):
+        tab = self._tab(_settings({SettingsKey.STREAMING_ENABLED: True}))
+        tab.set_backend("Remote computer")
+        tab.set_remote_models(_remote_models("local_whisper"))
+        check = tab.live_preview_check
+        assert not check.isEnabled()
+        assert not check.isChecked()
+        assert check.toolTip().startswith(
+            "Live preview needs Parakeet or Nemotron Streaming on jed."
+        )
+
+    def test_remote_host_switching_to_parakeet_turns_it_back_on(self):
+        tab = self._tab(_settings({SettingsKey.STREAMING_ENABLED: True}))
+        tab.set_backend("Remote computer")
+        tab.set_remote_models(_remote_models("local_whisper"))
+        tab.set_remote_models(_remote_models("parakeet"))
+        assert tab.live_preview_check.isEnabled()
+        assert tab.live_preview_check.isChecked()
+
+    def test_remote_not_connected_yet_keeps_the_choice(self):
+        # The host decides once it connects; graying out until then would
+        # flicker on every start.
+        tab = self._tab(_settings({SettingsKey.STREAMING_ENABLED: True}))
+        tab.set_backend("Remote computer")
+        tab.set_remote_models(_remote_models(None))
+        assert tab.live_preview_check.isEnabled()
+        assert tab.live_preview_check.isChecked()
+
+    def test_ending_a_recording_does_not_unlock_an_engine_that_cannot_preview(self):
+        tab = self._tab(_settings({SettingsKey.STREAMING_ENABLED: True}))
+        tab.set_backend("API")
+        tab.is_recording = True
+        tab._update_recording_state()
+        tab.is_recording = False
+        tab._update_recording_state()
+        assert not tab.live_preview_check.isEnabled()
+
+
 class TestMainWindowRelay:
     def _main_window(self):
         from ui_qt.main_window import MainWindow

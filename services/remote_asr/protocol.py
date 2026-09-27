@@ -23,6 +23,16 @@ installs runtimes, changes download policy or selects a model. Authorization
 is checked on every request. Accepted downloads continue after disconnect or
 permission changes. These additive operations keep protocol version 1.
 
+Runtime controls are advertised to paired clients as
+``ready.capabilities.engine_controls``. ``ready.runtime`` describes the host's
+saved device, supported devices and precisions, optional language choices, and
+GPU name/memory; ``ready.engine`` describes what is actually running.
+``configure_runtime`` takes the current ``family`` and ``model`` plus a bounded
+``settings`` object (device, compute_type, or language). It follows the same
+paired-client authorization as model selection, rejects stale engine choices,
+and answers after the host reloads. The client reconnects to authoritative
+state, including CPU fallback. Older hosts have no editable runtime controls.
+
 A request frame is a 4-byte big-endian header length, the JSON header, then
 the audio as 16 kHz mono signed 16-bit little-endian PCM. Dictation audio is
 recorded as 16-bit and resampled to 16-bit before it is decoded, so the

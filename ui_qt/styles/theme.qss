@@ -1755,6 +1755,25 @@ QCheckBox#engineLivePreviewCheck::indicator:hover {
     border-color: @accent;
 }
 
+/* Grayed out while recording, or while the engine can't run a live preview.
+   After the hover rule so a disabled box doesn't light up under the cursor. */
+QCheckBox#engineCleanupCheck:disabled,
+QCheckBox#engineLivePreviewCheck:disabled {
+    color: @text-muted;
+}
+
+QCheckBox#engineCleanupCheck::indicator:disabled,
+QCheckBox#engineLivePreviewCheck::indicator:disabled {
+    background-color: transparent;
+    border-color: @border;
+}
+
+QCheckBox#engineCleanupCheck::indicator:checked:disabled,
+QCheckBox#engineLivePreviewCheck::indicator:checked:disabled {
+    background-color: @accent-muted;
+    border-color: @accent-muted;
+}
+
 /* Content Tab Bar */
 QTabBar#contentTabBar::tab {
     background-color: transparent;

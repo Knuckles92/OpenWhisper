@@ -31,7 +31,8 @@ class RemoteModelsDialog(QDialog):
         note = WrappedLabel(
             f"These models are stored on {host_name}, not this computer. "
             "Downloads use the host's network and disk space and continue if you close this window. "
-            "Runtime installation and device settings must still be configured on the host."
+            "Choose the device and precision in the main window's Remote computer controls. "
+            "Runtime installation is managed on the host."
         )
         note.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(note)
