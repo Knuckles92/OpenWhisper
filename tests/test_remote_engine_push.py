@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from services.remote_asr import protocol, tailscale
+from services.remote_asr import tailscale
 from services.remote_asr.client import RemoteConnection, pair_with_host
 from services.remote_asr.engines import HostEngine, SpeechWorkerEngine, WhisperEngine
 from services.remote_asr.host import DeviceRegistry, SpeechHost
