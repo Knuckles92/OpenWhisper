@@ -113,6 +113,9 @@ class ApplicationController(QObject):
     remote_settled = pyqtSignal(str)
     # Reconnect now (emitted from any thread; hotkeys start recordings off it).
     remote_retry_requested = pyqtSignal()
+    # Arm the engine reload's debounce timer (emitted from any thread; hotkeys
+    # and transcription workers ask for reloads off the Qt thread).
+    reload_debounce_requested = pyqtSignal()
     # Host: the paired computers connected now, as connected_clients() lists them.
     remote_clients_changed = pyqtSignal(list)
     # Hop streaming setup onto the Qt main thread after the first local load.
@@ -231,9 +234,7 @@ class ApplicationController(QObject):
         # finish then restarts it. Guarded with _reload_in_flight's handoff.
         self._restore_after_reload = False
         self._reload_handoff_lock = threading.Lock()
-        self._reload_timer = QTimer()
-        self._reload_timer.setSingleShot(True)
-        self._reload_timer.timeout.connect(self._do_reload_whisper_model)
+        self._setup_reload_timer()
         # True from a reload request until its timer either starts the reload
         # or drops it, so another thread can tell a settled engine from one
         # about to reload (the timer itself is only safe to read on this one).
@@ -421,7 +422,7 @@ class ApplicationController(QObject):
         Called by both the Settings dialog and the inline main-GUI engine
         controls. Rapid changes (e.g. flipping device then quant) are coalesced
         into a single reload, and the request is refused while a recording or
-        transcription is in progress.
+        transcription is in progress. Safe from any thread.
         """
         if self.is_meeting_active():
             logger.info("Ignoring whisper reload: a meeting is in progress")
@@ -436,6 +437,17 @@ class ApplicationController(QObject):
             return
 
         self._reload_pending = True
+        self.reload_debounce_requested.emit()
+
+    def _setup_reload_timer(self) -> None:
+        self._reload_timer = QTimer()
+        self._reload_timer.setSingleShot(True)
+        self._reload_timer.timeout.connect(self._do_reload_whisper_model)
+        # A QTimer started off its own thread never runs, so requests arm it
+        # through a signal: at once on the Qt thread, queued from any other.
+        self.reload_debounce_requested.connect(self._arm_reload_timer)
+
+    def _arm_reload_timer(self) -> None:
         self._reload_timer.start(config.WHISPER_RELOAD_DEBOUNCE_MS)
 
     def _do_reload_whisper_model(self) -> None:

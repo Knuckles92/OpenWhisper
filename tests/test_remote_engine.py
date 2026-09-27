@@ -1352,7 +1352,7 @@ def test_a_queued_reload_is_unsettled_until_it_starts_and_ends():
         executor=Mock(),
         _reload_worker=Mock(),
     )
-    for name in ("status_update", "engine_busy_changed"):
+    for name in ("status_update", "engine_busy_changed", "reload_debounce_requested"):
         setattr(controller, name, _Signal(name, events))
     for name in ("reload_whisper_model", "_do_reload_whisper_model", "_engine_settled"):
         setattr(controller, name, getattr(ApplicationController, name).__get__(controller))
