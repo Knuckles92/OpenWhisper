@@ -198,7 +198,9 @@ def test_built_in_catalog_ships_no_cudnn_wheel():
 
 def test_available_component_ids_by_platform():
     """Windows and Linux x86_64 offer GPU+agent; Linux adds the NVIDIA speech runtimes."""
-    with patch.object(components.sys, "platform", "linux"), patch.object(
+    with patch("services.gpu_info.nvidia_gpu", return_value=None), patch.object(
+        components.sys, "platform", "linux"
+    ), patch.object(
         components.platform_module, "machine", return_value="x86_64"
     ):
         assert components.available_component_ids() == (
@@ -230,11 +232,35 @@ def test_available_component_ids_by_platform():
     with patch.object(components.sys, "platform", "win32"), patch.object(
         components.platform_module, "machine", return_value="AMD64"
     ):
+        # NVIDIA publishes the Vulkan speech runtime for Linux only.
         assert components.available_component_ids() == (
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
-            *components.RUNTIME_IDS,
+            *(key for key in components.RUNTIME_IDS if key != ComponentId.ASR_NVIDIA_VULKAN),
         )
+
+
+def test_linux_offers_the_vulkan_speech_runtime_only_where_it_is_needed(monkeypatch):
+    from services import gpu_info
+
+    installed = set()
+    monkeypatch.setattr(components, "current_platform_tag", lambda *args: components.PLATFORM_LINUX_X86_64)
+    monkeypatch.setattr(components, "is_installed", lambda key: key in installed)
+    for gpu in (None, gpu_info.NvidiaGpu("NVIDIA GeForce RTX 2060", 6144, (7, 5))):
+        monkeypatch.setattr(gpu_info, "nvidia_gpu", lambda gpu=gpu: gpu)
+        assert ComponentId.ASR_NVIDIA_VULKAN not in components.available_component_ids()
+    monkeypatch.setattr(
+        gpu_info, "nvidia_gpu", lambda: gpu_info.NvidiaGpu("NVIDIA GeForce GTX 1050 Ti", 4096, (6, 1))
+    )
+    assert components.available_component_ids()[-3:] == (
+        ComponentId.ASR_NVIDIA_CPU,
+        ComponentId.ASR_NVIDIA_CUDA,
+        ComponentId.ASR_NVIDIA_VULKAN,
+    )
+    # Once installed it stays listed, so it can be removed after a GPU upgrade.
+    installed.add(ComponentId.ASR_NVIDIA_VULKAN)
+    monkeypatch.setattr(gpu_info, "nvidia_gpu", lambda: None)
+    assert ComponentId.ASR_NVIDIA_VULKAN in components.available_component_ids()
 
 
 def test_meeting_agent_catalog_is_published():

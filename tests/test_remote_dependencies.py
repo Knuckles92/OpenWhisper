@@ -216,12 +216,37 @@ def test_install_rejects_missing_or_older_gpu_and_unsupported_platform(
     monkeypatch.setattr(
         gpu_info, "nvidia_gpu", lambda: gpu_info.NvidiaGpu("GTX 1050 Ti", 4096, (6, 1))
     )
+    # Without a Vulkan release for the host's platform, older GPUs stay on CPU.
+    monkeypatch.setattr(components, "current_platform_tag", lambda: "win_amd64")
     with pytest.raises(RuntimeError, match="Turing"):
         installer.install("nemotron", "nemotron-3.5", "cuda", "laptop")
+    monkeypatch.setattr(components, "current_platform_tag", lambda: "linux_x86_64")
     assert dependency_options("local_whisper")[1]["installable"]
     with pytest.raises(RuntimeError, match="platform"):
         installer.install("qwen_asr", "qwen-0.6b", "cpu", "laptop")
     assert not runtimes.calls
+
+
+def test_older_gpu_linux_host_installs_the_vulkan_runtime(runtimes, monkeypatch):
+    monkeypatch.setattr(
+        gpu_info,
+        "nvidia_gpu",
+        lambda: gpu_info.NvidiaGpu("NVIDIA GeForce GTX 1050 Ti", 4096, (6, 1)),
+    )
+    for family in ("parakeet", "nemotron"):
+        _cpu, gpu = dependency_options(family)
+        assert (gpu["device"], gpu["component"], gpu["label"]) == (
+            "cuda", "asr-nvidia-vulkan", "NVIDIA Speech GPU (Vulkan)"
+        )
+        assert gpu["installable"] and not gpu["reason"]
+        assert gpu["download_bytes"] == 18_014_113
+    finished = threading.Event()
+    installer = HostRuntimeInstaller(finished.set)
+    installer.install("nemotron", "nemotron-3.5", "cuda", "laptop")
+    assert finished.wait(2) and installer.job()["state"] == "complete"
+    assert [key for key, _entry in runtimes.calls] == ["asr-nvidia-vulkan"]
+    _cpu, gpu = dependency_options("nemotron")
+    assert gpu["ready"] and not gpu["installable"]
 
 
 def test_local_install_claim_prevents_duplicate_remote_install(runtimes):

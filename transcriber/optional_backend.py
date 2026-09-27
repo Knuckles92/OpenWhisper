@@ -125,6 +125,8 @@ class LocalSpeechBackend(TranscriptionBackend):
                 self.device = result["device"]
                 self.model = SpeechDecoder(self)
                 self.last_error = ""
+            if result.get("gpu"):
+                logger.info("%s is running on %s through Vulkan", self.name, result["gpu"])
         except Exception as exc:
             process.close()
             with self._state_lock:

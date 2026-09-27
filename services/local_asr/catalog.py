@@ -36,7 +36,11 @@ BACKENDS = {
 #: Backend id of the built-in faster-whisper family, which is not in MODELS.
 WHISPER_BACKEND = "local_whisper"
 DEFAULT_MODELS = {key: next(m.key for m in MODELS.values() if m.backend == key) for key in BACKENDS}
-RUNTIME_IDS = ("asr-nvidia-cpu", "asr-nvidia-cuda", "asr-qwen", "asr-moonshine")
+RUNTIME_IDS = ("asr-nvidia-cpu", "asr-nvidia-cuda", "asr-nvidia-vulkan", "asr-qwen", "asr-moonshine")
+#: NVIDIA's CUDA release of NeMo-Speech.cpp runs on Turing and newer. Older
+#: NVIDIA GPUs, such as the GTX 10 series, run its Vulkan release instead.
+CUDA_MIN_COMPUTE_CAPABILITY = (7, 5)
+NVIDIA_VULKAN_RUNTIME = "asr-nvidia-vulkan"
 
 
 def backend_of(model_name: str) -> str:
@@ -60,12 +64,30 @@ def selected_device(backend: str, settings: dict) -> str:
     return device if device in ("auto", "cpu", "cuda") and backend != "moonshine" else ("cpu" if backend == "moonshine" else "auto")
 
 
+def nvidia_gpu_runtime() -> str:
+    """The NVIDIA Speech GPU runtime for this computer's card.
+
+    The "cuda" device means the NVIDIA GPU. It runs on the CUDA release,
+    except on a card older than Turing where this platform has the Vulkan
+    release. A card of unknown compute capability keeps CUDA.
+    """
+    from services.components import component_is_published
+    from services.gpu_info import nvidia_gpu
+
+    gpu = nvidia_gpu()
+    capability = gpu.compute_capability if gpu is not None else None
+    if (capability is not None and capability < CUDA_MIN_COMPUTE_CAPABILITY
+            and component_is_published(NVIDIA_VULKAN_RUNTIME)):
+        return NVIDIA_VULKAN_RUNTIME
+    return "asr-nvidia-cuda"
+
+
 def runtime_id(backend: str, device: str) -> str:
     if backend == "qwen_asr":
         return "asr-qwen"
     if backend == "moonshine":
         return "asr-moonshine"
-    return "asr-nvidia-cuda" if device == "cuda" else "asr-nvidia-cpu"
+    return nvidia_gpu_runtime() if device == "cuda" else "asr-nvidia-cpu"
 
 
 def resolve_runtime(backend: str, requested: str) -> tuple[str, str]:
@@ -78,6 +100,10 @@ def resolve_runtime(backend: str, requested: str) -> tuple[str, str]:
             device = "cuda" if ctranslate2.get_cuda_device_count() else "cpu"
         except Exception:
             device = "cpu"
+        # The Vulkan runtime needs no CUDA libraries, only the card, which
+        # CTranslate2 can't count without them.
+        if device == "cpu" and backend in ("parakeet", "nemotron") and runtime_id(backend, "cuda") == NVIDIA_VULKAN_RUNTIME:
+            device = "cuda"
     component = runtime_id(backend, device)
     # Explicit CUDA must never silently fall back to CPU.
     if requested == "auto" and not is_installed(component) and backend in ("parakeet", "nemotron"):
@@ -106,7 +132,8 @@ def runtime_catalog() -> dict:
         ("asr-nvidia-cpu", "darwin_arm64", "nvidia_macos_runtime.json"),
         ("asr-nvidia-cpu", "linux_x86_64", "nvidia_linux_cpu_runtime.json"),
         ("asr-nvidia-cuda", "linux_x86_64", "nvidia_linux_cuda_runtime.json"),
+        (NVIDIA_VULKAN_RUNTIME, "linux_x86_64", "nvidia_linux_vulkan_runtime.json"),
     ):
         with Path(__file__).with_name(filename).open(encoding="utf-8") as stream:
-            entries[key]["platforms"][platform] = json.load(stream)
+            entries.setdefault(key, {"platforms": {}})["platforms"][platform] = json.load(stream)
     return entries

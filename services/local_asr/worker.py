@@ -54,6 +54,8 @@ def main():
                 else:
                     raise ValueError("Unknown speech backend")
                 result = {"device": device}
+                if getattr(engine, "gpu_name", ""):
+                    result["gpu"] = engine.gpu_name
             elif op in ("transcribe", "stream"):
                 if engine is None:
                     raise RuntimeError("No model loaded")

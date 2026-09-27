@@ -1,0 +1,16 @@
+{
+  "version": "0.1.0-linux-vulkan",
+  "component_api": 1,
+  "platform": "linux_x86_64",
+  "install_bytes": 57650736,
+  "archives": [
+    {
+      "name": "nemo-speech-0.1.0-linux-x86_64-vulkan.tar.gz",
+      "url": "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-linux-x86_64-vulkan.tar.gz",
+      "sha256": "ce7b7c3c8771cb7450b26e6d4bd8fb2c5e35bcd9fe0076387f35052e9b9523ae",
+      "size_bytes": 18014113,
+      "extract": "nemo-tar",
+      "root": "nemo-speech-0.1.0-linux-x86_64-vulkan"
+    }
+  ]
+}

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from services.local_asr.catalog import (
     BACKENDS,
+    NVIDIA_VULKAN_RUNTIME,
     WHISPER_BACKEND,
     runtime_id,
     selected_device,
@@ -44,6 +45,9 @@ def runtime_state(engine: dict) -> dict:
         }
         compute_types["auto"] = compute_types.get("cuda" if cuda else "cpu", ["auto"])
     else:
+        # The Vulkan runtime needs only the card, not the CUDA libraries
+        # CTranslate2 counts it with.
+        cuda = cuda or runtime_id(family, "cuda") == NVIDIA_VULKAN_RUNTIME
         devices = [device for device in ("cpu", "cuda")
                    if (device != "cuda" or (family != "moonshine" and cuda))
                    and is_installed(runtime_id(family, device))]

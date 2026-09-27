@@ -56,8 +56,9 @@ def test_every_optional_artifact_is_pinned_and_has_integrity_metadata():
 def test_linux_x86_64_offers_only_the_native_nvidia_runtimes():
     catalog = runtime_catalog()
     linux = {key for key, runtime in catalog.items() if "linux_x86_64" in runtime["platforms"]}
-    assert linux == {"asr-nvidia-cpu", "asr-nvidia-cuda"}
-    for key, flavor in (("asr-nvidia-cpu", "cpu"), ("asr-nvidia-cuda", "cuda")):
+    assert linux == {"asr-nvidia-cpu", "asr-nvidia-cuda", "asr-nvidia-vulkan"}
+    assert set(catalog["asr-nvidia-vulkan"]["platforms"]) == {"linux_x86_64"}
+    for key, flavor in (("asr-nvidia-cpu", "cpu"), ("asr-nvidia-cuda", "cuda"), ("asr-nvidia-vulkan", "vulkan")):
         (archive,) = catalog[key]["platforms"]["linux_x86_64"]["archives"]
         assert archive["extract"] == "nemo-tar"
         assert archive["root"] == f"nemo-speech-0.1.0-linux-x86_64-{flavor}"
@@ -68,6 +69,7 @@ def test_linux_x86_64_offers_only_the_native_nvidia_runtimes():
 def test_linux_parakeet_offers_cpu_and_gpu_runtimes(monkeypatch):
     monkeypatch.setattr(LocalSpeechBackend, "_settings", staticmethod(lambda: {}))
     monkeypatch.setattr("services.components.current_platform_tag", lambda: "linux_x86_64")
+    monkeypatch.setattr("services.gpu_info.nvidia_gpu", lambda: None)
     monkeypatch.setattr("services.components.is_installed", lambda _: False)
     backend = LocalSpeechBackend("parakeet", device="cuda")
     backend.reload_model()
@@ -76,6 +78,104 @@ def test_linux_parakeet_offers_cpu_and_gpu_runtimes(monkeypatch):
     qwen = LocalSpeechBackend("qwen_asr", device="cpu")
     qwen.reload_model()
     assert "not available on this platform" in qwen.last_error
+
+
+def test_only_pre_turing_gpus_run_the_vulkan_runtime(monkeypatch):
+    from services import gpu_info
+    from services.local_asr.catalog import runtime_id
+
+    monkeypatch.setattr("services.components.current_platform_tag", lambda: "linux_x86_64")
+    for gpu, expected in (
+        (None, "asr-nvidia-cuda"),
+        (gpu_info.NvidiaGpu("NVIDIA GeForce RTX 2060", 6144, (7, 5)), "asr-nvidia-cuda"),
+        (gpu_info.NvidiaGpu("NVIDIA GeForce GTX 1050 Ti", 4096, None), "asr-nvidia-cuda"),
+        (gpu_info.NvidiaGpu("NVIDIA GeForce GTX 1050 Ti", 4096, (6, 1)), "asr-nvidia-vulkan"),
+    ):
+        monkeypatch.setattr(gpu_info, "nvidia_gpu", lambda gpu=gpu: gpu)
+        assert runtime_id("parakeet", "cuda") == runtime_id("nemotron", "cuda") == expected
+        assert runtime_id("parakeet", "cpu") == "asr-nvidia-cpu"
+        assert runtime_id("qwen_asr", "cuda") == "asr-qwen"
+    # Without a Vulkan release for the platform, the card keeps CUDA.
+    monkeypatch.setattr("services.components.current_platform_tag", lambda: "win_amd64")
+    assert runtime_id("parakeet", "cuda") == "asr-nvidia-cuda"
+
+
+def test_auto_uses_the_vulkan_runtime_only_once_installed(monkeypatch):
+    from services import gpu_info
+    from services.local_asr.catalog import resolve_runtime
+
+    installed = {"asr-nvidia-cpu"}
+    monkeypatch.setattr("services.components.current_platform_tag", lambda: "linux_x86_64")
+    monkeypatch.setattr("services.components.is_installed", lambda key: key in installed)
+    # No GPU Acceleration: CTranslate2 can't count the card, Vulkan doesn't need it to.
+    monkeypatch.setattr("ctranslate2.get_cuda_device_count", lambda: 0)
+    monkeypatch.setattr(gpu_info, "nvidia_gpu", lambda: gpu_info.NvidiaGpu("GTX 1050 Ti", 4096, (6, 1)))
+    assert resolve_runtime("parakeet", "auto") == ("asr-nvidia-cpu", "cpu")
+    assert resolve_runtime("parakeet", "cuda") == ("asr-nvidia-vulkan", "cuda")
+    installed.add("asr-nvidia-vulkan")
+    assert resolve_runtime("nemotron", "auto") == ("asr-nvidia-vulkan", "cuda")
+    assert resolve_runtime("nemotron", "cpu") == ("asr-nvidia-cpu", "cpu")
+    # A Turing card keeps choosing exactly as before.
+    installed.add("asr-nvidia-cuda")
+    monkeypatch.setattr(gpu_info, "nvidia_gpu", lambda: gpu_info.NvidiaGpu("RTX 2060", 6144, (7, 5)))
+    assert resolve_runtime("parakeet", "auto") == ("asr-nvidia-cpu", "cpu")
+    monkeypatch.setattr("ctranslate2.get_cuda_device_count", lambda: 1)
+    assert resolve_runtime("parakeet", "auto") == ("asr-nvidia-cuda", "cuda")
+
+
+def test_vulkan_runs_on_the_nvidia_card_not_the_integrated_gpu():
+    from services.local_asr.nvidia import nvidia_device_index
+
+    assert nvidia_device_index(["Intel(R) UHD Graphics 630 (CFL GT2)", "NVIDIA GeForce GTX 1050 Ti"]) == 1
+    assert nvidia_device_index(["GeForce GTX 1060 6GB"]) == 0
+    with pytest.raises(RuntimeError, match="no NVIDIA GPU"):
+        nvidia_device_index(["Intel(R) UHD Graphics 630 (CFL GT2)"])
+
+
+def test_linux_vulkan_runtime_passes_the_nvidia_cards_index(monkeypatch, tmp_path):
+    from services.local_asr import nvidia
+
+    lib_dir = tmp_path / "nemo-speech" / "lib"
+    lib_dir.mkdir(parents=True)
+    (lib_dir / "libggml-vulkan.so").touch()
+    # ggml lists the laptop's integrated GPU first, then the CPU, then the card.
+    devices = [(nvidia._GGML_DEVICE_IGPU, b"Intel(R) UHD Graphics 630 (CFL GT2)"),
+               (0, b"Intel(R) Core(TM) i5-9300H CPU"),
+               (nvidia._GGML_DEVICE_GPU, b"NVIDIA GeForce GTX 1050 Ti")]
+    requested = []
+
+    def create(config, _handle):
+        requested.append(nvidia.BackendConfig.from_address(config.backend).gpu)
+        raise OSError("stop after create")
+
+    ggml = SimpleNamespace(
+        ggml_backend_dev_count=lambda: len(devices),
+        ggml_backend_dev_get=lambda i: i,
+        ggml_backend_dev_type=lambda i: devices[i][0],
+        ggml_backend_dev_description=lambda i: devices[i][1],
+    )
+
+    class Speech:
+        def __getattr__(self, name):
+            return create if name == "nemo_speech_asr_create" else (lambda *args: None)
+
+    def fake_cdll(name, mode=0):
+        if name == str(lib_dir / "libggml.so"):
+            return ggml
+        if name.endswith("libnemo_speech_asr_c.so"):
+            return Speech()
+        raise OSError("no system libstdc++")
+
+    monkeypatch.setattr(nvidia.sys, "platform", "linux")
+    monkeypatch.setattr(nvidia.c, "CDLL", fake_cdll)
+    monkeypatch.setattr(nvidia.c, "byref", lambda value: value)
+    with pytest.raises(OSError, match="stop after create"):
+        nvidia.NvidiaRecognizer(str(tmp_path), "model.gguf", "cuda")
+    # The CUDA release, without ggml-vulkan, keeps asking for the first GPU.
+    (lib_dir / "libggml-vulkan.so").unlink()
+    with pytest.raises(OSError, match="stop after create"):
+        nvidia.NvidiaRecognizer(str(tmp_path), "model.gguf", "cuda")
+    assert requested == [1, 0]
 
 
 def test_linux_worker_runs_on_the_apps_own_python(monkeypatch, tmp_path):

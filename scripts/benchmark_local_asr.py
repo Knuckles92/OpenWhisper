@@ -61,6 +61,7 @@ def run(args):
         if args.test_root:
             root = args.test_root.resolve()
             mapping = {"asr-nvidia-cpu": "nemo-cpu", "asr-nvidia-cuda": "nemo-cuda",
+                       "asr-nvidia-vulkan": "nemo-vulkan",
                        "asr-qwen": "qwen-runtime", "asr-moonshine": "moonshine-runtime"}
             context.enter_context(patch.object(cache, "local_app_dir", return_value=str(root/"test-app")))
             context.enter_context(patch("services.components.component_dir", side_effect=lambda key: str(root/mapping[key])))

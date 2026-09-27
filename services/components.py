@@ -393,6 +393,7 @@ class ComponentId:
     SPEAKER_ID: Final[str] = "speaker-id"
     ASR_NVIDIA_CPU: Final[str] = "asr-nvidia-cpu"
     ASR_NVIDIA_CUDA: Final[str] = "asr-nvidia-cuda"
+    ASR_NVIDIA_VULKAN: Final[str] = "asr-nvidia-vulkan"
     ASR_QWEN: Final[str] = "asr-qwen"
     ASR_MOONSHINE: Final[str] = "asr-moonshine"
 
@@ -522,7 +523,9 @@ def available_component_ids(
     GPU Acceleration (the CUDA libraries Local Whisper loads) is offered on
     Windows x64 and Linux x86_64. The meeting agent is offered on Windows x64
     and Linux x86_64/aarch64. Linux x86_64 also offers the native NVIDIA
-    Speech CPU and CUDA runtimes; Apple Silicon Macs offer the CPU one.
+    Speech CPU and CUDA runtimes, and the Vulkan one to a computer whose
+    NVIDIA GPU is older than Turing (or that already has it); Apple Silicon
+    Macs offer the CPU one.
 
     Returns:
         Installable component identifiers, in display order.
@@ -539,12 +542,17 @@ def available_component_ids(
             *RUNTIME_IDS,
         )
     elif tag == PLATFORM_LINUX_X86_64:
+        from services.local_asr.catalog import nvidia_gpu_runtime
+
         candidates = (
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
             ComponentId.ASR_NVIDIA_CPU,
             ComponentId.ASR_NVIDIA_CUDA,
         )
+        if (is_installed(ComponentId.ASR_NVIDIA_VULKAN)
+                or nvidia_gpu_runtime() == ComponentId.ASR_NVIDIA_VULKAN):
+            candidates += (ComponentId.ASR_NVIDIA_VULKAN,)
     elif tag == PLATFORM_LINUX_AARCH64:
         candidates = (ComponentId.MEETING_AGENT,)
     elif tag == "darwin_arm64":

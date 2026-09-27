@@ -229,6 +229,7 @@ _CATALOG: dict[str, ComponentDetails] = {
 for _id, _name, _source, _license, _description in (
     ("asr-nvidia-cpu", "NVIDIA Speech CPU", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0; Python PSF", "CPU runtime shared by Parakeet and Nemotron."),
     ("asr-nvidia-cuda", "NVIDIA Speech GPU", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0; NVIDIA CUDA; Python PSF", "NVIDIA GPU runtime shared by Parakeet and Nemotron."),
+    ("asr-nvidia-vulkan", "NVIDIA Speech GPU (Vulkan)", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0", "Vulkan GPU runtime shared by Parakeet and Nemotron, for NVIDIA GPUs older than Turing, such as the GTX 10 series."),
     ("asr-qwen", "Qwen3-ASR runtime", "https://github.com/QwenLM/Qwen3-ASR", "Apache-2.0 and bundled dependency licenses", "Isolated Python, PyTorch CUDA 12.4, and Qwen3-ASR. Also supports CPU."),
     ("asr-moonshine", "Moonshine runtime", "https://github.com/moonshine-ai/moonshine", "MIT and bundled dependency licenses", "Isolated Moonshine Voice runtime for CPU transcription."),
 ):
@@ -241,9 +242,14 @@ for _id, _name, _source, _license, _description in (
         requires=(
             "Windows x64, Linux x86_64 (glibc 2.31+), or Apple Silicon macOS" if _id == "asr-nvidia-cpu"
             else "Windows x64 or Linux x86_64 (glibc 2.31+), and an NVIDIA GPU (Turing or newer) with its driver" if _id == "asr-nvidia-cuda"
+            else "Linux x86_64 (glibc 2.31+), and an NVIDIA GPU older than Turing with its driver and the Vulkan loader" if _id == "asr-nvidia-vulkan"
             else "Windows x64"
         ),
-        payload="Verified native libraries; portable Python on Windows" if _id.startswith("asr-nvidia") else "Portable Python 3.12 and verified runtime binaries",
+        payload=(
+            "Verified native libraries" if _id == "asr-nvidia-vulkan"
+            else "Verified native libraries; portable Python on Windows" if _id.startswith("asr-nvidia")
+            else "Portable Python 3.12 and verified runtime binaries"
+        ),
         local_format="Isolated worker process", license=_license,
         best_for=_description, limitations=("Model weights are a separate download.",),
         compact_tags="Local speech", source_note=_SOURCE_NOTE, source_urls=(_source, "https://www.python.org/downloads/release/python-31210/"),

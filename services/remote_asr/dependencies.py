@@ -18,7 +18,12 @@ def dependency_options(family: str) -> list[dict]:
         is_installed,
     )
     from services.gpu_info import nvidia_gpu
-    from services.local_asr.catalog import BACKENDS, WHISPER_BACKEND, runtime_id
+    from services.local_asr.catalog import (
+        BACKENDS,
+        CUDA_MIN_COMPUTE_CAPABILITY,
+        WHISPER_BACKEND,
+        runtime_id,
+    )
 
     if family not in (*BACKENDS, WHISPER_BACKEND):
         return []
@@ -41,10 +46,10 @@ def dependency_options(family: str) -> list[dict]:
         elif device == "cuda" and gpu is None:
             reason = "No NVIDIA GPU detected on the host. Check its NVIDIA driver, or use CPU."
         elif (
-            device == "cuda"
-            and family in ("parakeet", "nemotron")
+            # Older cards get the Vulkan runtime where the host has one.
+            component == ComponentId.ASR_NVIDIA_CUDA
             and gpu.compute_capability is not None
-            and gpu.compute_capability < (7, 5)
+            and gpu.compute_capability < CUDA_MIN_COMPUTE_CAPABILITY
         ):
             reason = "This speech GPU runtime requires an NVIDIA Turing or newer GPU. Use CPU on this host."
         elif installed and not ready:

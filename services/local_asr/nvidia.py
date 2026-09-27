@@ -51,12 +51,60 @@ def _load_linux(runtime: str, device: str):
                 "The GPU speech runtime needs the NVIDIA driver (libcuda.so.1 was "
                 "not found). Install the NVIDIA driver, or choose CPU."
             ) from exc
+        if device == "cuda" and "libvulkan.so" in str(exc):
+            raise RuntimeError(
+                "The Vulkan speech runtime needs the Vulkan loader (libvulkan.so.1 "
+                "was not found). Install it and the NVIDIA driver, or choose CPU."
+            ) from exc
         raise
+
+
+# ggml_backend_dev_type values in the ggml NeMo-Speech.cpp 0.1.0 pins.
+_GGML_DEVICE_GPU = 1
+_GGML_DEVICE_IGPU = 2
+# Vulkan device names; drivers before about 2021 left out the "NVIDIA" prefix.
+_NVIDIA_NAMES = ("nvidia", "geforce", "quadro", "tesla", "titan")
+
+
+def nvidia_device_index(descriptions) -> int:
+    """NeMo's gpu index of the first NVIDIA device among its GPU descriptions."""
+    for index, description in enumerate(descriptions):
+        if any(name in description.lower() for name in _NVIDIA_NAMES):
+            return index
+    raise RuntimeError(
+        "The Vulkan speech runtime found no NVIDIA GPU. Check the NVIDIA driver, "
+        "or choose CPU."
+    )
+
+
+def _vulkan_gpu_index(lib_dir: Path) -> tuple[int, str]:
+    """The NVIDIA card's index among the Vulkan runtime's GPUs, and its name.
+
+    NeMo numbers dedicated and integrated GPUs together, in ggml's order, and
+    a laptop's integrated GPU often comes first, so index 0 would run the
+    model there. Listing the devices doesn't initialize them, so NeMo's own
+    Vulkan settings still apply when it does.
+    """
+    ggml = c.CDLL(str(lib_dir / "libggml.so"))
+    ggml.ggml_backend_dev_count.argtypes, ggml.ggml_backend_dev_count.restype = [], c.c_size_t
+    ggml.ggml_backend_dev_get.argtypes, ggml.ggml_backend_dev_get.restype = [c.c_size_t], c.c_void_p
+    ggml.ggml_backend_dev_type.argtypes, ggml.ggml_backend_dev_type.restype = [c.c_void_p], c.c_int
+    ggml.ggml_backend_dev_description.argtypes, ggml.ggml_backend_dev_description.restype = [c.c_void_p], c.c_char_p
+    descriptions = []
+    for i in range(ggml.ggml_backend_dev_count()):
+        device = ggml.ggml_backend_dev_get(i)
+        if ggml.ggml_backend_dev_type(device) in (_GGML_DEVICE_GPU, _GGML_DEVICE_IGPU):
+            descriptions.append((ggml.ggml_backend_dev_description(device) or b"").decode("utf-8", "replace"))
+    index = nvidia_device_index(descriptions)
+    return index, descriptions[index]
 
 
 class NvidiaRecognizer:
     def __init__(self, runtime: str, model_path: str, device: str):
         self._dll_dir = None
+        #: The GPU the Vulkan runtime chose, for the log; "" otherwise.
+        self.gpu_name = ""
+        gpu = 0
         if sys.platform == "darwin":
             if device != "cpu":
                 raise RuntimeError("The Mac speech runtime supports CPU only.")
@@ -64,13 +112,16 @@ class NvidiaRecognizer:
             self.lib = c.CDLL(str(library))
         elif sys.platform.startswith("linux"):
             self.lib = _load_linux(runtime, device)
+            lib_dir = Path(runtime) / "nemo-speech" / "lib"
+            if device == "cuda" and (lib_dir / "libggml-vulkan.so").exists():
+                gpu, self.gpu_name = _vulkan_gpu_index(lib_dir)
         else:
             bin_dir = Path(runtime) / "bin"
             self._dll_dir = os.add_dll_directory(str(bin_dir))
             library = bin_dir / "nemo_speech_asr_c.dll"
             self.lib = c.CDLL(str(library))
         self._bind()
-        backend = BackendConfig(c.sizeof(BackendConfig), 0 if device == "cuda" else -1)
+        backend = BackendConfig(c.sizeof(BackendConfig), gpu if device == "cuda" else -1)
         model = ModelConfig(c.sizeof(ModelConfig), model_path.encode("utf-8"), None)
         config = RecognizerConfig()
         config.size = c.sizeof(config)

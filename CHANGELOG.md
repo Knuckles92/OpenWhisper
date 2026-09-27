@@ -8,6 +8,13 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+### Added
+- **Parakeet and Nemotron on older NVIDIA GPUs on Linux** — a Linux x86_64 computer whose NVIDIA GPU is older than Turing, such as a GTX 10 series card, can now run Parakeet and Nemotron on the GPU. NVIDIA's CUDA release of NeMo-Speech.cpp needs Turing or newer, so these cards could only use the CPU, and a remote host with one refused GPU setup. **Settings → Downloads** on these computers now offers **NVIDIA Speech GPU (Vulkan)**: NVIDIA's own NeMo-Speech.cpp 0.1.0 Vulkan release, pinned by size and SHA-256 (18 MB to download, 58 MB installed). A remote host with such a card offers it as its GPU runtime. Choosing the GPU, or Auto once it's installed, runs on it. It needs the NVIDIA driver and the Vulkan loader, not GPU Acceleration's CUDA libraries.
+  - The runtime selects the NVIDIA card. On a laptop, the Intel iGPU is listed as the first Vulkan device, and the model would have run there, slower than on the CPU.
+  - Measured on a GTX 1050 Ti (4 GB) with an i5-9300H, for a 22.6-second dictation: Parakeet decoded it in 1.2 s on the GPU and 5.1 s on the CPU; Nemotron in 3.6 s and 10.2 s, and its live preview step took 26 ms instead of 86 ms. Peak GPU memory was 1.35 GB. On a 90-second recording the GPU and CPU transcripts differed by 1 word of 221 (Parakeet) and 5 of 194 (Nemotron, mostly "um" and "uh"), plus some punctuation.
+
+  Computers with a Turing or newer GPU, without an NVIDIA GPU, or on Windows or macOS see no change, and nothing is installed without asking.
+
 ### Changed
 - **The OpenAI SDK loads when a session uses it** — the `openai` package now loads when the app first needs an OpenAI-compatible client instead of at startup. Importing the app's startup code went from 1.28 s to 0.60 s on the development PC (median of five fresh starts), with about 28 MB less memory in use. A session on Local Whisper, Parakeet, Nemotron, or a remote engine never loads it unless it uses AI cleanup, even with API keys saved: the OpenAI transcription engine and AI cleanup now create their clients when first needed rather than at launch. When the OpenAI engine is selected, or AI cleanup can run (it is on, a cleanup profile has a shortcut, or Quick Record uses a profile), the package loads in the background once the window is open, so the first dictation doesn't wait for it. Opening Settings or the Meeting Mode dashboard no longer loads it either; AI insights load it when a meeting first uses them.
 
