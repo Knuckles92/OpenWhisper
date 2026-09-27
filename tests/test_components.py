@@ -197,12 +197,14 @@ def test_built_in_catalog_ships_no_cudnn_wheel():
 
 
 def test_available_component_ids_by_platform():
-    """Windows keeps GPU+agent; Linux offers only the meeting agent."""
+    """Windows keeps GPU+agent; Linux x86_64 adds the NVIDIA speech runtimes."""
     with patch.object(components.sys, "platform", "linux"), patch.object(
         components.platform_module, "machine", return_value="x86_64"
     ):
         assert components.available_component_ids() == (
             ComponentId.MEETING_AGENT,
+            ComponentId.ASR_NVIDIA_CPU,
+            ComponentId.ASR_NVIDIA_CUDA,
         )
 
     with patch.object(components.sys, "platform", "linux"), patch.object(
@@ -1175,6 +1177,74 @@ def test_mac_archive_preserves_only_safe_library_links(tmp_path, target):
     else:
         with pytest.raises(ComponentError):
             extract()
+
+
+def _linux_release(archive_path, root, extra=()):
+    """A NeMo-Speech.cpp Linux release in miniature: versioned top folder, soname links."""
+    with tarfile.open(archive_path, 'w:gz') as archive:
+        def add(name, data=b'', kind=tarfile.REGTYPE, linkname=''):
+            info = tarfile.TarInfo(name)
+            info.type = kind
+            info.linkname = linkname
+            info.size = len(data) if kind == tarfile.REGTYPE else 0
+            archive.addfile(info, io.BytesIO(data) if kind == tarfile.REGTYPE else None)
+
+        add(f'{root}/lib/libnemo_speech_asr_c.so.1', b'real')
+        add(f'{root}/lib/libnemo_speech_asr_c.so', kind=tarfile.SYMTYPE,
+            linkname='libnemo_speech_asr_c.so.1')
+        add(f'{root}/lib/libggml.so.0.12.0', b'ggml')
+        add(f'{root}/lib/libggml.so.0', kind=tarfile.SYMTYPE, linkname='libggml.so.0.12.0')
+        add(f'{root}/share/licenses/LICENSE', b'Apache-2.0')
+        for name, kind, linkname in extra:
+            add(name, kind=kind, linkname=linkname)
+
+
+def test_linux_release_folder_is_renamed_to_nemo_speech(tmp_path):
+    root = 'nemo-speech-0.1.0-linux-x86_64-cpu'
+    archive_path = tmp_path / 'native.tar.gz'
+    _linux_release(archive_path, root, extra=[
+        (f'{root}/lib/libhard.so', tarfile.LNKTYPE, f'{root}/lib/libggml.so.0.12.0'),
+    ])
+    destination = tmp_path / 'out'
+    destination.mkdir()
+    components._safe_extract_nemo_tar(
+        str(archive_path), str(destination), lambda *args: None, threading.Event(), root=root,
+    )
+    lib = destination / 'nemo-speech' / 'lib'
+    assert (lib / 'libnemo_speech_asr_c.so').read_bytes() == b'real'
+    assert (lib / 'libggml.so.0').read_bytes() == b'ggml'
+    assert (lib / 'libhard.so').read_bytes() == b'ggml'
+    assert not (destination / root).exists()
+    monkey = patch.object(components, "current_platform_tag", return_value="linux_x86_64")
+    with monkey:
+        components._validate_component_payload(ComponentId.ASR_NVIDIA_CPU, str(destination))
+        with pytest.raises(ComponentError):
+            components._validate_component_payload("asr-qwen", str(destination))
+
+
+@pytest.mark.parametrize('name, kind, linkname', [
+    ('nemo-speech-0.1.0-linux-x86_64-cuda/lib/x.so', tarfile.REGTYPE, ''),  # another release's folder
+    ('nemo-speech/lib/x.so', tarfile.REGTYPE, ''),
+    ('nemo-speech-0.1.0-linux-x86_64-cpu/../escape', tarfile.REGTYPE, ''),
+    ('nemo-speech-0.1.0-linux-x86_64-cpu/lib/hard', tarfile.LNKTYPE, '/etc/passwd'),
+    ('nemo-speech-0.1.0-linux-x86_64-cpu/lib/soft', tarfile.SYMTYPE, '../../../escape'),
+])
+def test_linux_release_rejects_anything_outside_its_folder(tmp_path, name, kind, linkname):
+    root = 'nemo-speech-0.1.0-linux-x86_64-cpu'
+    archive_path = tmp_path / 'native.tar.gz'
+    _linux_release(archive_path, root, extra=[(name, kind, linkname)])
+    destination = tmp_path / 'out'
+    destination.mkdir()
+    with pytest.raises(ComponentError):
+        components._safe_extract_nemo_tar(
+            str(archive_path), str(destination), lambda *args: None, threading.Event(), root=root,
+        )
+
+
+def test_linux_runtime_needs_the_shared_library(tmp_path):
+    with patch.object(components, "current_platform_tag", return_value="linux_x86_64"):
+        with pytest.raises(ComponentError, match="missing required files"):
+            components._validate_component_payload(ComponentId.ASR_NVIDIA_CUDA, str(tmp_path))
 
 
 def test_installed_size_does_not_count_dylib_aliases_twice(component_root):

@@ -33,6 +33,27 @@ class Options(c.Structure):
     ]
 
 
+def _load_linux(runtime: str, device: str):
+    # RUNPATH=$ORIGIN finds the rest of the release (ggml, and for CUDA its
+    # own cudart and cuBLAS) beside this library. The release also bundles
+    # an older libstdc++; loading the system's first keeps one copy per
+    # process, the newer, which the release's libraries accept.
+    try:
+        c.CDLL("libstdc++.so.6", mode=c.RTLD_GLOBAL)
+    except OSError:
+        pass
+    library = Path(runtime) / "nemo-speech" / "lib" / "libnemo_speech_asr_c.so"
+    try:
+        return c.CDLL(str(library))
+    except OSError as exc:
+        if device == "cuda" and "libcuda.so" in str(exc):
+            raise RuntimeError(
+                "The GPU speech runtime needs the NVIDIA driver (libcuda.so.1 was "
+                "not found). Install the NVIDIA driver, or choose CPU."
+            ) from exc
+        raise
+
+
 class NvidiaRecognizer:
     def __init__(self, runtime: str, model_path: str, device: str):
         self._dll_dir = None
@@ -40,11 +61,14 @@ class NvidiaRecognizer:
             if device != "cpu":
                 raise RuntimeError("The Mac speech runtime supports CPU only.")
             library = Path(runtime) / "nemo-speech" / "lib" / "libnemo_speech_asr_c.dylib"
+            self.lib = c.CDLL(str(library))
+        elif sys.platform.startswith("linux"):
+            self.lib = _load_linux(runtime, device)
         else:
             bin_dir = Path(runtime) / "bin"
             self._dll_dir = os.add_dll_directory(str(bin_dir))
             library = bin_dir / "nemo_speech_asr_c.dll"
-        self.lib = c.CDLL(str(library))
+            self.lib = c.CDLL(str(library))
         self._bind()
         backend = BackendConfig(c.sizeof(BackendConfig), 0 if device == "cuda" else -1)
         model = ModelConfig(c.sizeof(ModelConfig), model_path.encode("utf-8"), None)

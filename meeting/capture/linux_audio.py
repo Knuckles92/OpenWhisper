@@ -4,6 +4,17 @@ Resolves the default PulseAudio / PipeWire-Pulse monitor source through
 SoundCard and classifies failures into stable remediation keys. Never raises
 into callers; returns a frozen capability result usable by the engine, the
 pre-start dialog, and diagnostic scripts.
+
+This module is also the only way Linux code reaches SoundCard
+(:func:`load_soundcard`, :func:`open_monitor_recorder`). SoundCard's
+PulseAudio backend connects once, at import, and has three behaviors the
+capture path must not inherit:
+
+- it never reconnects, so after the audio server restarts every query fails;
+- a query on that dead connection aborts the whole process inside libpulse
+  (``pa_operation_unref(NULL)``);
+- its record streams may be moved by the server, so unplugging the active
+  output silently re-routes the "Others" channel onto the microphone.
 """
 from __future__ import annotations
 
@@ -12,6 +23,8 @@ import platform as platform_module
 import shutil
 import subprocess
 import sys
+import threading
+import weakref
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Sequence
 
@@ -36,9 +49,25 @@ SERVER_UNKNOWN = "unknown"
 
 _LIBPULSE_SONAMES = ("libpulse.so.0", "libpulse.so", "pulse")
 _PROBE_SAMPLERATE = 48000
-_PROBE_FRAMES = 512
 _PROBE_TIMEOUT_S = 1.5
 _COMMAND_TIMEOUT_S = 2.0
+
+#: Frames per PulseAudio fragment requested for monitor recording. Left to
+#: the server (SoundCard's default), a monitor delivers about a second of
+#: audio per wakeup; 100 ms keeps delivery close to real time.
+MONITOR_BLOCKSIZE = 4800
+
+#: Serializes SoundCard imports and reconnects across capture threads.
+_SOUNDCARD_LOCK = threading.Lock()
+
+#: Longest a caller waits on another thread's SoundCard import. A connect
+#: that takes this long means the server is not answering.
+_SOUNDCARD_LOCK_TIMEOUT_S = 5.0
+
+#: Pinned recorder class per SoundCard backend module (one per reconnect).
+_PINNED_RECORDERS: "weakref.WeakKeyDictionary[Any, Any]" = (
+    weakref.WeakKeyDictionary()
+)
 
 
 @dataclass(frozen=True)
@@ -131,6 +160,241 @@ def _libpulse_available(
     return False
 
 
+def _pulse_backend(soundcard_module: Any) -> Any:
+    """SoundCard's PulseAudio backend module, or None (fakes, other OSes)."""
+    backend = getattr(soundcard_module, "pulseaudio", None)
+    if backend is None or getattr(backend, "_pulse", None) is None:
+        return None
+    return backend
+
+
+def soundcard_connection_alive(soundcard_module: Any) -> Optional[bool]:
+    """Whether SoundCard's PulseAudio context is still connected.
+
+    Reading the context state is safe on a dead connection; the queries that
+    wait on a PulseAudio operation are not (see :func:`_harden_backend`).
+
+    Returns:
+        None when ``soundcard_module`` exposes no PulseAudio backend.
+    """
+    backend = _pulse_backend(soundcard_module)
+    if backend is None:
+        return None
+    try:
+        pulse = backend._pulse
+        state = pulse._pa_context_get_state(pulse.context)
+        return state == backend._pa.PA_CONTEXT_READY
+    except Exception:
+        return False
+
+
+def _harden_backend(backend: Any) -> None:
+    """Make SoundCard's queries fail softly once its connection is dead.
+
+    Every SoundCard query unrefs the ``pa_operation`` it waited on. On a dead
+    context libpulse returns no operation, and ``pa_operation_unref(NULL)``
+    asserts and aborts the process -- the capture watchdog's next poll would
+    kill OpenWhisper after an audio-server restart. An instance attribute
+    shadows the class wrapper, so NULL is skipped and the query just comes
+    back empty, which callers already treat as a failed lookup.
+    """
+    pulse = backend._pulse
+    if getattr(pulse, "_openwhisper_hardened", False):
+        return
+    try:
+        unref = pulse._pa_operation_unref
+        null = backend._ffi.NULL
+    except Exception:
+        return
+
+    def _unref_if_operation(operation: Any) -> None:
+        if operation == null:
+            return
+        unref(operation)
+
+    pulse._pa_operation_unref = _unref_if_operation
+    pulse._openwhisper_hardened = True
+
+
+def _forget_soundcard() -> None:
+    for name in [
+        key for key in sys.modules
+        if key == "soundcard" or key.startswith("soundcard.")
+    ]:
+        sys.modules.pop(name, None)
+
+
+def _release_failed_connection(exc: BaseException) -> None:
+    """Stop the mainloop thread a failed SoundCard import leaves running.
+
+    SoundCard starts a libpulse mainloop thread before asserting that its
+    context connected. When the assert fails the half-built connection is
+    unreachable except through the traceback, and without this every retry
+    while no server runs would leak one native thread.
+    """
+    tb = exc.__traceback__
+    while tb is not None:
+        frame = tb.tb_frame
+        candidate = frame.f_locals.get("self")
+        pa = frame.f_globals.get("_pa")
+        if (
+            type(candidate).__name__ == "_PulseAudio"
+            and pa is not None
+            and getattr(candidate, "mainloop", None) is not None
+        ):
+            try:
+                pa.pa_threaded_mainloop_stop(candidate.mainloop)
+                pa.pa_context_disconnect(candidate.context)
+                pa.pa_context_unref(candidate.context)
+                pa.pa_threaded_mainloop_free(candidate.mainloop)
+            except Exception:
+                logger.debug(
+                    "Could not release a failed PulseAudio connection",
+                    exc_info=True,
+                )
+            return
+        tb = tb.tb_next
+
+
+def _import_soundcard() -> Any:
+    try:
+        import soundcard
+    except ImportError as exc:
+        raise RuntimeError(REASON_SOUNDCARD_MISSING) from exc
+    except OSError as exc:
+        # cffi could not dlopen the Pulse client library.
+        raise RuntimeError(REASON_LIBPULSE_MISSING) from exc
+    except AssertionError as exc:
+        # SoundCard asserts at import that its context connected: no server
+        # answered. The package itself is fine.
+        _release_failed_connection(exc)
+        _forget_soundcard()
+        raise RuntimeError(REASON_AUDIO_SERVER_UNAVAILABLE) from exc
+    except Exception as exc:
+        _forget_soundcard()
+        raise RuntimeError(REASON_UNKNOWN_FAILURE) from exc
+    return soundcard
+
+
+def load_soundcard() -> Any:
+    """Import SoundCard with a live PulseAudio connection.
+
+    Reconnects when the cached connection died (the audio server restarted),
+    which is what lets capture recover and Retry detection succeed without
+    restarting OpenWhisper. Every Linux SoundCard call site goes through here.
+
+    Raises:
+        RuntimeError: With a stable reason code as the message.
+    """
+    if not _SOUNDCARD_LOCK.acquire(timeout=_SOUNDCARD_LOCK_TIMEOUT_S):
+        raise RuntimeError(REASON_AUDIO_SERVER_UNAVAILABLE)
+    try:
+        module = _import_soundcard()
+        if soundcard_connection_alive(module) is False:
+            logger.warning(
+                "PulseAudio connection lost; reconnecting SoundCard"
+            )
+            backend = _pulse_backend(module)
+            if backend is not None:
+                _harden_backend(backend)  # threads may still hold the old one
+            _forget_soundcard()
+            module = _import_soundcard()
+            if soundcard_connection_alive(module) is False:
+                raise RuntimeError(REASON_AUDIO_SERVER_UNAVAILABLE)
+        backend = _pulse_backend(module)
+        if backend is not None:
+            _harden_backend(backend)
+        return module
+    finally:
+        _SOUNDCARD_LOCK.release()
+
+
+def _pinned_recorder_type(soundcard_module: Any) -> Any:
+    """SoundCard recorder class whose stream the server may not move.
+
+    Without ``PA_STREAM_DONT_MOVE``, unplugging the active output makes the
+    server rescue the monitor stream onto the default source -- a
+    microphone -- and "Others" keeps recording, now the user's voice. Pinned,
+    the stream fails instead and the capture watchdog reopens the new default
+    output's monitor. Returns None when SoundCard's internals differ from the
+    ones this was written against, in which case the stock recorder is used.
+    """
+    backend = _pulse_backend(soundcard_module)
+    if backend is None:
+        return None
+    cached = _PINNED_RECORDERS.get(backend)
+    if cached is not None:
+        return cached
+    try:
+        base = backend._Recorder
+        pulse = backend._pulse
+        ffi = backend._ffi
+        flags = (backend._pa.PA_STREAM_ADJUST_LATENCY
+                 | backend._pa.PA_STREAM_DONT_MOVE)
+    except AttributeError:
+        return None
+    if not callable(getattr(base, "_connect_stream", None)):
+        return None
+
+    class _PinnedRecorder(base):
+        # Mirrors SoundCard 0.4.x ``_Recorder._connect_stream`` plus the flag.
+        def _connect_stream(self, bufattr):
+            pulse._pa_stream_connect_record(
+                self.stream, self._id.encode(), bufattr, flags
+            )
+
+            @ffi.callback("pa_stream_request_cb_t")
+            def read_callback(stream, nbytes, userdata):
+                self._record_event.set()
+
+            self._callback = read_callback
+            pulse._pa_stream_set_read_callback(
+                self.stream, read_callback, ffi.NULL
+            )
+
+    _PINNED_RECORDERS[backend] = _PinnedRecorder
+    return _PinnedRecorder
+
+
+def open_monitor_recorder(
+    soundcard_module: Any,
+    monitor: Any,
+    *,
+    samplerate: int,
+    channels: int,
+) -> Any:
+    """Recorder context manager for a validated monitor.
+
+    Requests ``MONITOR_BLOCKSIZE`` fragments and, when SoundCard allows it,
+    pins the stream to this monitor (see :func:`_pinned_recorder_type`).
+    """
+    pinned = _pinned_recorder_type(soundcard_module)
+    if pinned is not None:
+        return pinned(
+            _device_id(monitor), samplerate, channels, MONITOR_BLOCKSIZE
+        )
+    return monitor.recorder(
+        samplerate=samplerate, channels=channels, blocksize=MONITOR_BLOCKSIZE
+    )
+
+
+def default_sink_id(soundcard_module: Any = None) -> str:
+    """Current default sink id; cheap enough for the 1s capture watchdog.
+
+    Raises:
+        RuntimeError: With a stable reason code as the message.
+    """
+    module = soundcard_module or load_soundcard()
+    try:
+        speaker = module.default_speaker()
+    except Exception as exc:
+        raise RuntimeError(REASON_DEFAULT_SINK_MISSING) from exc
+    sink_id = _device_id(speaker) if speaker is not None else ""
+    if not sink_id:
+        raise RuntimeError(REASON_DEFAULT_SINK_MISSING)
+    return sink_id
+
+
 def _run_text(command: Sequence[str], timeout: float = _COMMAND_TIMEOUT_S) -> str:
     try:
         completed = subprocess.run(
@@ -170,8 +434,35 @@ def _unit_active(unit: str) -> Optional[bool]:
     return None
 
 
-def detect_linux_audio_server() -> str:
-    """Best-effort classification of the active Pulse-compatible server."""
+def _soundcard_server_kind(soundcard_module: Any) -> Optional[str]:
+    """Server kind from SoundCard's own connection, or None when unknown.
+
+    A live SoundCard connection is proof that a Pulse-compatible server
+    answered, so this needs neither ``pactl`` nor systemd user units, which
+    many working setups lack (autospawned Pulse, WSLg, containers).
+    pipewire-pulse names itself "PulseAudio (on PipeWire x.y.z)".
+    """
+    backend = _pulse_backend(soundcard_module)
+    if backend is None or soundcard_connection_alive(soundcard_module) is not True:
+        return None
+    try:
+        name = str(backend._pulse.server_info.get("server name") or "")
+    except Exception:
+        return None
+    if not name:
+        return None
+    return SERVER_PIPEWIRE_PULSE if "pipewire" in name.lower() else SERVER_PULSE
+
+
+def detect_linux_audio_server(soundcard_module: Any = None) -> str:
+    """Best-effort classification of the active Pulse-compatible server.
+
+    Prefers the server SoundCard is connected to; falls back to ``pactl`` and
+    systemd user units only when that connection cannot say.
+    """
+    from_connection = _soundcard_server_kind(soundcard_module)
+    if from_connection is not None:
+        return from_connection
     info = _run_text(["pactl", "info"])
     lowered = info.lower()
     if "pipewire" in lowered:
@@ -342,10 +633,7 @@ def resolve_linux_monitor(
         RuntimeError: With a stable reason code as the message.
     """
     if soundcard_module is None:
-        try:
-            import soundcard as soundcard_module
-        except Exception as exc:
-            raise RuntimeError(REASON_SOUNDCARD_MISSING) from exc
+        soundcard_module = load_soundcard()
 
     try:
         speaker = soundcard_module.default_speaker()
@@ -394,7 +682,7 @@ def resolve_linux_monitor(
         raise RuntimeError(REASON_MONITOR_SOURCE_MISSING)
     stable_monitor_id = expected_monitor
 
-    kind = server_kind or detect_linux_audio_server()
+    kind = server_kind or detect_linux_audio_server(soundcard_module)
     if kind == SERVER_UNKNOWN:
         kind = SERVER_PULSE
     return LinuxMonitorSelection(
@@ -438,25 +726,21 @@ def _verify_monitor_open_once(
         lookup_id,
     }:
         raise RuntimeError(REASON_MONITOR_OPEN_FAILED)
-    recorder = monitor.recorder(
-        samplerate=_PROBE_SAMPLERATE,
-        channels=min(2, max(1, selection.channels)),
-    )
     try:
-        entered = recorder.__enter__()
-        try:
-            data = entered.record(numframes=_PROBE_FRAMES)
-        finally:
-            recorder.__exit__(None, None, None)
+        recorder = open_monitor_recorder(
+            soundcard_module,
+            monitor,
+            samplerate=_PROBE_SAMPLERATE,
+            channels=min(2, max(1, selection.channels)),
+        )
+        # Entering means the server accepted a record stream on exactly this
+        # monitor. Audio is not awaited: an idle sink's monitor can take ~2s
+        # to deliver its first fragment, and the capture source's start
+        # verifies delivery with a bound sized for that.
+        recorder.__enter__()
+        recorder.__exit__(None, None, None)
     except Exception as exc:
         raise RuntimeError(REASON_MONITOR_OPEN_FAILED) from exc
-    if data is None:
-        raise RuntimeError(REASON_MONITOR_OPEN_FAILED)
-    import numpy as np
-
-    arr = np.asarray(data)
-    if arr.size <= 0:
-        raise RuntimeError(REASON_MONITOR_OPEN_FAILED)
 
 
 def _verify_monitor_open(
@@ -465,7 +749,7 @@ def _verify_monitor_open(
     *,
     timeout_s: float = _PROBE_TIMEOUT_S,
 ) -> None:
-    """Open/read the monitor with a hard timeout; classify stalls as open failure.
+    """Open the monitor with a hard timeout; classify stalls as open failure.
 
     Uses a daemon worker so a wedged SoundCard/libpulse call cannot keep the
     process alive at exit. ``future.cancel()`` cannot stop a running callable,
@@ -497,6 +781,21 @@ def _verify_monitor_open(
         if isinstance(exc, RuntimeError):
             raise exc
         raise RuntimeError(REASON_MONITOR_OPEN_FAILED) from exc
+
+
+def _server_unavailable_capability() -> LinuxAudioCapability:
+    """No Pulse-compatible server answered; name the likely missing piece."""
+    pipewire = _unit_active("pipewire")
+    pipewire_pulse = _unit_active("pipewire-pulse")
+    if pipewire is True and pipewire_pulse is not True:
+        return _capability(
+            REASON_PIPEWIRE_PULSE_MISSING,
+            server_kind=SERVER_UNAVAILABLE,
+        )
+    return _capability(
+        REASON_AUDIO_SERVER_UNAVAILABLE,
+        server_kind=SERVER_UNAVAILABLE,
+    )
 
 
 def probe_linux_audio(
@@ -532,26 +831,20 @@ def probe_linux_audio(
 
         if soundcard_module is None:
             try:
-                import soundcard as soundcard_module
-            except Exception as exc:
+                soundcard_module = load_soundcard()
+            except RuntimeError as exc:
+                reason = str(exc) or REASON_UNKNOWN_FAILURE
+                if reason == REASON_AUDIO_SERVER_UNAVAILABLE:
+                    return _server_unavailable_capability()
+                cause = exc.__cause__
                 return _capability(
-                    REASON_SOUNDCARD_MISSING,
-                    detail=type(exc).__name__,
+                    reason,
+                    detail=type(cause).__name__ if cause is not None else "",
                 )
 
-        server_kind = detect_linux_audio_server()
+        server_kind = detect_linux_audio_server(soundcard_module)
         if server_kind == SERVER_UNAVAILABLE:
-            pipewire = _unit_active("pipewire")
-            pipewire_pulse = _unit_active("pipewire-pulse")
-            if pipewire is True and pipewire_pulse is not True:
-                return _capability(
-                    REASON_PIPEWIRE_PULSE_MISSING,
-                    server_kind=SERVER_UNAVAILABLE,
-                )
-            return _capability(
-                REASON_AUDIO_SERVER_UNAVAILABLE,
-                server_kind=SERVER_UNAVAILABLE,
-            )
+            return _server_unavailable_capability()
 
         try:
             selection = resolve_linux_monitor(

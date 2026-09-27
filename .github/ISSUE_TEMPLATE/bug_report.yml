@@ -19,7 +19,7 @@ body:
     id: platform
     attributes:
       label: Operating system and hardware
-      description: Include OS/version, CPU, and GPU/VRAM if relevant. The additional speech runtimes currently require Windows x64.
+      description: Include OS/version, CPU, and GPU/VRAM if relevant. Parakeet and Nemotron run on Windows x64 and Linux x86_64 (Parakeet also on Apple Silicon CPU); Qwen3-ASR and Moonshine require Windows x64.
   - type: dropdown
     id: backend
     attributes:
@@ -32,6 +32,7 @@ body:
         - Qwen3-ASR
         - Nemotron Streaming
         - Moonshine
+        - Remote computer
   - type: input
     id: model
     attributes:

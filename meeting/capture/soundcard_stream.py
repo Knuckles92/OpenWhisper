@@ -6,12 +6,20 @@ through PulseAudio or PipeWire-Pulse monitor sources. A daemon thread records
 the default speaker's loopback stream at 48 kHz and emits mono int16
 ``CaptureBlock`` values with the same surface as ``SdCaptureSource``.
 
+On Linux, SoundCard is reached only through ``meeting.capture.linux_audio``,
+which reconnects after audio-server restarts and pins the record stream to
+the chosen monitor. Linux blocks are stamped by sample count
+(:class:`_SampleClock`): PulseAudio delivers monitor audio in fragments, and
+stamping each block at delivery collapses a fragment's blocks onto one
+instant, which the spool then trims as overlap.
+
 ``soundcard`` is imported lazily inside methods so this module (and the
 capture package) imports cleanly when the library is not installed.
 """
 from __future__ import annotations
 
 import logging
+import math
 import sys
 import threading
 import time
@@ -33,15 +41,70 @@ BLOCK_FRAMES = 1024
 _MAX_LOGGED_CALLBACK_ERRORS = 5
 
 #: ``start()`` waits at most this long for the first valid block (or a
-#: terminal open failure). Kept short so engine watchdog retries still fit
-#: the ≤12s restoration bound (poll + retry spacing + start wait).
-_START_TIMEOUT_S = 2.0
+#: terminal open failure). An idle PulseAudio sink runs at its maximum
+#: latency until a stream asks for less, so its monitor's first fragment can
+#: take about 2s (measured on PulseAudio 17). Engine watchdog retries still
+#: fit the ≤12s restoration bound (poll + retry spacing + start wait).
+_START_TIMEOUT_S = 4.0
 
 #: How long a freshly started stream may go without its first block.
-_FIRST_BLOCK_GRACE_S = 2.0
+_FIRST_BLOCK_GRACE_S = _START_TIMEOUT_S
 
 #: How long a running stream may go without a block before it is judged dead.
 _STALL_TIMEOUT_S = 3.0
+
+#: Sample-clock window. Must exceed the longest delivery burst so that it
+#: always holds the least-delayed block.
+_CLOCK_WINDOW_S = 2.0
+
+#: A lag every block in a window shares beyond this means frames were lost
+#: upstream; the clock skips ahead and the spool fills the gap with silence.
+_CLOCK_RESYNC_S = 0.15
+
+#: A single lag this large is a dropout on its own; skip ahead at once.
+_CLOCK_JUMP_S = 2.5
+
+
+class _SampleClock:
+    """Stamps blocks by sample count instead of by delivery time.
+
+    The stream origin is the tightest bound the deliveries allow: a block
+    cannot arrive before its last frame was captured, so
+    ``now - frames_through_block / rate`` bounds the origin from above, and
+    the minimum over blocks settles on the least-delayed delivery. Blocks are
+    then contiguous no matter how the backend batches them.
+    """
+
+    def __init__(self, rate: int) -> None:
+        self._rate = float(rate)
+        self._origin: Optional[float] = None
+        self._frames = 0
+        self._window_start = 0.0
+        self._window_min_lag = math.inf
+
+    def stamp(self, n_frames: int, now: float) -> float:
+        """Monotonic time of the first of ``n_frames`` delivered at ``now``."""
+        end = self._frames + int(n_frames)
+        bound = now - end / self._rate
+        if self._origin is None or bound < self._origin:
+            if self._origin is None:
+                self._window_start = now
+            self._origin = bound
+        lag = bound - self._origin
+        if lag >= _CLOCK_JUMP_S:
+            self._origin = bound
+            self._window_start = now
+            self._window_min_lag = math.inf
+        else:
+            self._window_min_lag = min(self._window_min_lag, lag)
+            if now - self._window_start >= _CLOCK_WINDOW_S:
+                if self._window_min_lag > _CLOCK_RESYNC_S:
+                    self._origin += self._window_min_lag
+                self._window_start = now
+                self._window_min_lag = math.inf
+        stamp = self._origin + self._frames / self._rate
+        self._frames = end
+        return stamp
 
 
 class SoundcardLoopbackSource:
@@ -61,6 +124,7 @@ class SoundcardLoopbackSource:
         self._callback_errors = 0
         self._settled = threading.Event()
         self._failure: Optional[str] = None
+        self._clock: Optional[_SampleClock] = None
 
     @staticmethod
     def available() -> bool:
@@ -100,6 +164,12 @@ class SoundcardLoopbackSource:
         self._last_block_mono = 0.0
         self._callback_errors = 0
         self._failure = None
+        # The fragment bursts were measured on PulseAudio; the Windows
+        # fallback keeps its delivery-time stamps.
+        self._clock = (
+            _SampleClock(SAMPLERATE) if sys.platform.startswith("linux")
+            else None
+        )
         self._settled.clear()
         self._thread = threading.Thread(
             target=self._run, name="meeting-sc-loopback", daemon=True
@@ -140,9 +210,10 @@ class SoundcardLoopbackSource:
         """Whether this source still records the current default speaker."""
         try:
             if sys.platform.startswith("linux"):
-                from meeting.capture.linux_audio import resolve_linux_monitor
-                selection = resolve_linux_monitor()
-                return selection.sink_id == str(self.device_id)
+                # Polled every watchdog tick: one server query, no monitor
+                # resolution and no pactl/systemctl subprocesses.
+                from meeting.capture.linux_audio import default_sink_id
+                return default_sink_id() == str(self.device_id)
             import soundcard as sc
             speaker = sc.default_speaker()
             speaker_id = str(getattr(speaker, "id", None) or speaker.name)
@@ -158,15 +229,19 @@ class SoundcardLoopbackSource:
     def _run(self) -> None:
         if sys.platform.startswith("win"):
             _coinitialize()
+        linux = sys.platform.startswith("linux")
         monitor = None
+        sc: Any = None
         sink_label = ""
         monitor_label = ""
         server_kind = "unknown"
         try:
-            import soundcard as sc
-
-            if sys.platform.startswith("linux"):
-                from meeting.capture.linux_audio import resolve_linux_monitor
+            if linux:
+                from meeting.capture.linux_audio import (
+                    load_soundcard,
+                    resolve_linux_monitor,
+                )
+                sc = load_soundcard()
                 selection = self._selection or resolve_linux_monitor(sc)
                 self.device_id = selection.sink_id
                 sink_label = selection.sink_name or selection.sink_id
@@ -206,6 +281,8 @@ class SoundcardLoopbackSource:
                 }:
                     raise RuntimeError("selected Linux monitor identity mismatch")
             else:
+                import soundcard as sc
+
                 speaker = sc.default_speaker()
                 self.device_id = str(getattr(speaker, "id", None) or speaker.name)
                 sink_label = str(speaker.name)
@@ -223,7 +300,17 @@ class SoundcardLoopbackSource:
 
         try:
             channels = max(1, int(getattr(monitor, "channels", 2) or 2))
-            with monitor.recorder(samplerate=SAMPLERATE, channels=min(2, channels)) as recorder:
+            if linux:
+                from meeting.capture.linux_audio import open_monitor_recorder
+                recorder_cm = open_monitor_recorder(
+                    sc, monitor, samplerate=SAMPLERATE,
+                    channels=min(2, channels),
+                )
+            else:
+                recorder_cm = monitor.recorder(
+                    samplerate=SAMPLERATE, channels=min(2, channels)
+                )
+            with recorder_cm as recorder:
                 self._recorder_opened = True
                 logger.info(
                     "Soundcard loopback capture opened "
@@ -255,9 +342,14 @@ class SoundcardLoopbackSource:
             frames = np.clip(arr * 32767.0, -32768.0, 32767.0).astype(np.int16)
             if frames.size <= 0:
                 return
-            # Stamp the first frame: the block just finished being captured.
-            t_mono = time.monotonic() - frames.size / float(SAMPLERATE)
-            self._last_block_mono = time.monotonic()
+            now = time.monotonic()
+            clock = self._clock
+            if clock is not None:
+                t_mono = clock.stamp(frames.size, now)
+            else:
+                # The block just finished being captured.
+                t_mono = now - frames.size / float(SAMPLERATE)
+            self._last_block_mono = now
             if not self._active:
                 self._active = True
                 self._settled.set()

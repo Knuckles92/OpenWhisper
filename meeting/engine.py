@@ -67,7 +67,7 @@ AGENT_ACTIVITY_HISTORY = 50
 #: long think or a burst of tool calls cannot flood the socket.
 AGENT_ACTIVITY_MIN_INTERVAL_S = 1.0
 # Poll frequently enough that failure detection + SoundCard first-block wait
-# (``_START_TIMEOUT_S`` ≈ 2.5s) still fit the ≤12s restoration bound.
+# (``_START_TIMEOUT_S`` = 4s) still fit the ≤12s restoration bound.
 CAPTURE_WATCHDOG_INTERVAL_S = 1.0
 CAPTURE_RETRY_INTERVAL_S = 3.0
 #: Worst-case budget from a failed source until a successful restart attempt

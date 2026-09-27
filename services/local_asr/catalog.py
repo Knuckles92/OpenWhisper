@@ -100,6 +100,13 @@ def runtime_catalog() -> dict:
     for key, filename in (("asr-qwen", "qwen_runtime.json"), ("asr-moonshine", "moonshine_runtime.json"), ("asr-nvidia-cpu", "nvidia_cpu_runtime.json"), ("asr-nvidia-cuda", "nvidia_cuda_runtime.json")):
         with Path(__file__).with_name(filename).open(encoding="utf-8-sig") as stream:
             entries[key] = {"platforms": {"win_amd64": json.load(stream)}}
-    with Path(__file__).with_name("nvidia_macos_runtime.json").open(encoding="utf-8") as stream:
-        entries["asr-nvidia-cpu"]["platforms"]["darwin_arm64"] = json.load(stream)
+    # macOS and Linux runtimes are only NeMo-Speech.cpp's native libraries;
+    # the app's own interpreter runs the worker there.
+    for key, platform, filename in (
+        ("asr-nvidia-cpu", "darwin_arm64", "nvidia_macos_runtime.json"),
+        ("asr-nvidia-cpu", "linux_x86_64", "nvidia_linux_cpu_runtime.json"),
+        ("asr-nvidia-cuda", "linux_x86_64", "nvidia_linux_cuda_runtime.json"),
+    ):
+        with Path(__file__).with_name(filename).open(encoding="utf-8") as stream:
+            entries[key]["platforms"][platform] = json.load(stream)
     return entries

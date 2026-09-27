@@ -109,7 +109,9 @@ class LocalSpeechBackend(TranscriptionBackend):
         with self._state_lock:
             if generation != self._generation:
                 return
-            python = sys.executable if sys.platform == "darwin" else str(Path(component_dir(component)) / "python.exe")
+            # Windows runtimes carry an embedded Python; the macOS and Linux
+            # ones are only the native speech library, run by the app's own.
+            python = str(Path(component_dir(component)) / "python.exe") if sys.platform == "win32" else sys.executable
             process = SpeechProcess(python)
             self._process = process
         try:
@@ -210,6 +212,16 @@ class LocalSpeechBackend(TranscriptionBackend):
 
     def _recognize(self, audio: np.ndarray, language=None) -> dict:
         return self._request_audio("transcribe", audio, language)
+
+    def recognize(self, audio: np.ndarray, language=None) -> dict:
+        """One window's raw worker result, ``{text, segments}``.
+
+        What a remote engine host serves for a client's window decode. It
+        queues on the decode lock with this computer's own dictation and
+        preview, so the worker only ever sees one request at a time.
+        """
+        with self._decode_lock:
+            return self._recognize(np.asarray(audio, dtype=np.float32), language)
 
     def request_language(self) -> str:
         """The language a request made without one asks the worker for."""

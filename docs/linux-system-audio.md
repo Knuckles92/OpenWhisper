@@ -21,6 +21,23 @@ nonstandard monitor name, OpenWhisper optionally uses `pactl` to prove the exact
 `Monitor of` association; it never guesses from a fuzzy name or accepts another
 sink's monitor.
 
+The audio server itself is identified from SoundCard's own connection
+(pipewire-pulse reports itself as "PulseAudio (on PipeWire …)"), so neither
+`pactl` nor systemd user services are needed on a working desktop. They are
+consulted only to explain a server that did not answer.
+
+## What capture handles on its own
+
+- **Output unplugged or switched.** The monitor recording is pinned to the
+  output it started on. When that output disappears, PulseAudio would
+  otherwise move the recording to the default *microphone*; pinned, it stops,
+  and OpenWhisper reopens the new default output's monitor within a few
+  seconds.
+- **Audio server restarted mid-meeting.** OpenWhisper reconnects on the next
+  capture retry, and **Retry detection** works without restarting the app.
+- **Idle output.** An output with nothing playing can take about two seconds
+  to deliver its first audio; capture start allows for that.
+
 ## Diagnostic keys
 
 Every readiness failure carries a stable key. The in-app dialog and this guide
@@ -71,8 +88,11 @@ matching monitor source. Silence alone is not a failure.
 
 ```bash
 python -m pip install 'soundcard>=0.4.3'
-python -c "import soundcard; print(soundcard.__version__)"
+python -m pip show soundcard
 ```
+
+Avoid `python -c "import soundcard"` as a check: SoundCard names its audio
+client from the command line at import and fails with `IndexError` under `-c`.
 
 ### `libpulse_missing`
 
@@ -188,6 +208,9 @@ python scripts/probe_linux_loopback.py
 ```
 
 `probe_linux_loopback.py` exits 0 only when dual-channel capture is ready.
+Add `--capture 30` to also record 30 seconds through the production capture
+path; it fails if audio stops arriving or its timeline breaks. Play something
+during the run to confirm the monitor carries what you hear.
 
 ## Distro caveats
 
