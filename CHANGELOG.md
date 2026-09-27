@@ -8,6 +8,9 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+### Changed
+- **The OpenAI SDK loads when a session uses it** — the `openai` package now loads when the app first needs an OpenAI-compatible client instead of at startup. Importing the app's startup code went from 1.28 s to 0.60 s on the development PC (median of five fresh starts), with about 28 MB less memory in use. A session on Local Whisper, Parakeet, Nemotron, or a remote engine never loads it unless it uses AI cleanup, even with API keys saved: the OpenAI transcription engine and AI cleanup now create their clients when first needed rather than at launch. When the OpenAI engine is selected, or AI cleanup can run (it is on, a cleanup profile has a shortcut, or Quick Record uses a profile), the package loads in the background once the window is open, so the first dictation doesn't wait for it. Opening Settings or the Meeting Mode dashboard no longer loads it either; AI insights load it when a meeting first uses them.
+
 ## [2.6.09] - 2026-09-27
 
 ### Added
@@ -499,14 +502,12 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 - **Inline Local-Engine Controls** - Model/device/quantization controls in the main window with debounced engine reloads
 - **Hotkey Watchdog** - Detects sleep/resume gaps and re-registers keyboard hooks automatically
 - **History Search** - Debounced search box filtering transcription history by text or timestamp
+- **`requirements-gpu.txt`** - Opt-in NVIDIA CUDA wheels (cuDNN 9, cuBLAS, CUDA 12 runtime) so GPU acceleration works without installing the CUDA Toolkit.
 
 ### Fixed
 - **Cleanup model dropdown type-to-filter** - Settings → Cleanup → General model picker now filters its own dropdown as you type (case-insensitive substring match) instead of appending characters to the current model id with no filtering
 - **GPU transcription "cublas64_12.dll is not found" on Windows** - CTranslate2 loads CUDA libraries via `LoadLibrary`, which consults `PATH`, but the DLL dirs were only registered with `os.add_dll_directory` (ignored by that loader). Startup now also prepends the NVIDIA wheel `bin` dirs to `PATH`.
 - **GPU never auto-detected** - Hardware detection used `import torch`, which is not a dependency, so `device: auto` always fell back to CPU on GPU machines. Detection now uses CTranslate2's `get_cuda_device_count()`.
-
-### Added
-- **`requirements-gpu.txt`** - Opt-in NVIDIA CUDA wheels (cuDNN 9, cuBLAS, CUDA 12 runtime) so GPU acceleration works without installing the CUDA Toolkit.
 
 ### Changed
 - **User data location in installed builds** - Settings, the history database, logs, and saved recordings resolve to `%LOCALAPPDATA%\OpenWhisper` when running from the installer, since the install directory must be treated as read-only. Running from source is unchanged: paths stay relative to the working directory

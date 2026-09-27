@@ -77,6 +77,21 @@ def find_cleanup_profile(settings: dict, profile_id: str) -> CleanupProfile | No
     )
 
 
+def cleanup_may_run(settings: dict) -> bool:
+    """Whether a recording can reach AI cleanup with these settings.
+
+    Standard dictation cleans up when cleanup is on; a profile always does,
+    and is reached from its shortcut or the Quick Record tab's choice.
+    """
+    if settings.get(
+        SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, config.TRANSCRIPT_CLEANUP_ENABLED
+    ):
+        return True
+    if settings.get(SettingsKey.QUICK_RECORD_PROFILE):
+        return True
+    return any(profile.hotkey for profile in load_cleanup_profiles(settings))
+
+
 def normalize_hotkey(hotkey: str) -> str:
     return format_hotkey(*parse_hotkey(hotkey.replace("kp_", "kp ")))
 
