@@ -1,12 +1,9 @@
 import logging
-from pathlib import Path
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QLabel
 from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSignal
-from PyQt6.QtGui import QIcon
 
-from config import bundle_root
-
+from ui_qt.utils.icons import tabler_icon
 from ui_qt.widgets.cards import ControlPanel
 from ui_qt.widgets.buttons import SuccessButton, DangerButton, WarningButton
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
@@ -41,9 +38,8 @@ class QuickRecordTab(TranscriptionTabBase):
 
         self._partial_buffer = []
 
-        icons = Path(bundle_root()) / "ui_qt" / "assets" / "tabler"
-        self._copy_icon = QIcon(str(icons / "copy-gray.svg"))
-        self._copied_icon = QIcon(str(icons / "check-green.svg"))
+        self._copy_icon = tabler_icon("copy-gray.svg")
+        self._copied_icon = tabler_icon("check-green.svg")
         self.copy_button = QPushButton()
         self.collapsed_copy_button = QPushButton("Copy")
         for button in (self.copy_button, self.collapsed_copy_button):

@@ -3,11 +3,10 @@ import logging
 import os
 import threading
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable, Optional
 
 from PyQt6.QtCore import QMimeData, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QFont, QIcon, QMouseEvent, QPixmap
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QFont, QMouseEvent
 from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -19,7 +18,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import bundle_root
 from services.audio_processor import AudioFilePreview, audio_processor
 from services.batch_upload import (
     BatchItem,
@@ -37,6 +35,8 @@ from services.settings import (
     settings_manager,
 )
 from ui_qt.overlay_state import OverlayState
+from ui_qt.utils.icons import tabler_icon as _tabler_icon
+from ui_qt.utils.icons import tabler_pixmap as _tabler_pixmap
 from ui_qt.widgets.buttons import Button, PrimaryButton
 from ui_qt.widgets.decode_label import DecodeLabel
 from ui_qt.widgets.eliding_label import ElidingLabel
@@ -85,15 +85,6 @@ _ROW_STATE_TEXT = {
     "done": "Done",
     "failed": "Failed",
 }
-
-
-def _tabler_pixmap(name: str, size: int) -> QPixmap:
-    path = Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / name
-    return QIcon(str(path)).pixmap(QSize(size, size))
-
-
-def _tabler_icon(name: str) -> QIcon:
-    return QIcon(str(Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / name))
 
 
 def _repolish(widget: QWidget, prop: str, value: str) -> None:

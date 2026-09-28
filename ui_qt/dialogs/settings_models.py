@@ -14,11 +14,9 @@ with its own settings (AI cleanup, the Overview).
 import logging
 import sys
 import threading
-from pathlib import Path
 from typing import Callable, Dict, Optional
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
-from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
@@ -30,7 +28,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import bundle_root, config
+from config import config
 from services.components import (
     ComponentId,
     ComponentState,
@@ -84,6 +82,7 @@ from ui_qt.dialogs.settings_destinations import (
     RUNTIME,
     VOICE_MODEL,
 )
+from ui_qt.utils.icons import design_icon as _design_icon
 from ui_qt.widgets import Button, ElidingComboBox, InfoTile
 from ui_qt.widgets.local_model_picker import LocalModelPicker
 from ui_qt.widgets.nav_rail import NavRail
@@ -103,14 +102,6 @@ _ENGINE_CAPTIONS = {
 
 #: Downloads filter value for the Whisper family.
 WHISPER_FILTER = "local_whisper"
-
-
-def _design_icon(filename: str) -> QIcon:
-    path = Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / filename
-    icon = QIcon(str(path))
-    # Preserve the semantic icon color for disabled current-state buttons.
-    icon.addPixmap(icon.pixmap(24, 24), QIcon.Mode.Disabled, QIcon.State.Off)
-    return icon
 
 
 def _display_name_for_backend(model_value: str) -> str:
