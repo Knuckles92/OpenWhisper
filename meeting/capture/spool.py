@@ -681,7 +681,7 @@ def resolve_session_wav(
 
 
 class SpoolWriter:
-    """Chunked WAV spool for one channel of a meeting (``ChunkSpool``).
+    """Chunked WAV spool for one channel of a meeting.
 
     ``feed()`` is audio-thread safe and never blocks; a daemon writer thread
     does the buffering, cutting, resampling, writing and registration.

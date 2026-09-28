@@ -19,13 +19,12 @@ from meeting.export.transcript_txt import (
     format_clock,
     format_meeting_date,
     format_mmss,
-    parse_iso,
     participant_names,
     resolve_title,
     transcript_lines,
 )
 from meeting.highlights import PULSE_LABELS
-from meeting.time_utils import as_local_time, meeting_duration_s
+from meeting.time_utils import as_local_time, meeting_duration_s, parse_meeting_time
 
 logger = logging.getLogger(__name__)
 
@@ -332,7 +331,7 @@ def _live_note_lines(items: List[Dict[str, Any]]) -> List[str]:
         start_s = (item.get("data") or {}).get("start_s")
         if isinstance(start_s, (int, float)) and not isinstance(start_s, bool) and math.isfinite(start_s):
             return float(start_s)
-        created = parse_iso(item.get("created_at"))
+        created = parse_meeting_time(item.get("created_at"))
         return created.timestamp() if created else 0.0
 
     lines: List[str] = []

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from meeting.time_utils import (
     as_local_time,
     elapsed_seconds,
+    meeting_duration_s,
     parse_meeting_time,
     utc_now_iso,
 )
@@ -47,3 +48,13 @@ def test_elapsed_seconds_handles_aware_and_legacy_pairs():
         "2026-08-20T09:55:00",
         "2026-08-20T09:55:40",
     ) == 40
+
+
+def test_meeting_duration_counts_a_running_meeting_up_to_now():
+    started = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    live = {"started_at": started, "ended_at": None, "paused_total_s": 60}
+
+    assert 535 <= meeting_duration_s(live, running=True) <= 545
+    assert meeting_duration_s(live) is None
+    ended = dict(live, ended_at="2026-08-20T16:55:40Z", started_at="2026-08-20T16:50:00Z")
+    assert meeting_duration_s(ended, running=True) == 340 - 60

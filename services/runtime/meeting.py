@@ -8,7 +8,6 @@ even when Meeting Mode dependencies are unavailable.
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
@@ -194,25 +193,10 @@ class MeetingRuntime:
         stored ``card_deferred`` flag is left alone so the next startup stays idle.
         """
         meeting_id = str(meeting.get("id") or "")
-        raw = meeting.get("state_json")
-        data: Dict[str, Any] = {}
-        if raw:
-            try:
-                parsed = json.loads(raw)
-            except (TypeError, ValueError):
-                parsed = {}
-            if isinstance(parsed, dict):
-                data = parsed
         try:
-            from meeting.state.schema import FinalizationState
+            from meeting.stored import finalization_from_meeting_row
 
-            fin = FinalizationState.normalize_historical(
-                data.get("finalization"),
-                cloud_enabled=bool(
-                    data.get("cloud_enabled", meeting.get("cloud_enabled"))
-                ),
-                meeting_status=str(meeting.get("status") or "ended"),
-            )
+            fin = finalization_from_meeting_row(meeting)
         except Exception:
             logger.exception(
                 "Could not coerce finalization for meeting %s", meeting_id
@@ -275,7 +259,8 @@ class MeetingRuntime:
         return fields
 
     def _persist_card_deferred(self, meeting_id: str, deferred: bool) -> bool:
-        from meeting.state.schema import FinalizationState, MeetingState
+        from meeting.state.schema import FinalizationState
+        from meeting.stored import load_state
 
         engine = self._engine
         if getattr(engine, "meeting_id", None) != meeting_id:
@@ -310,19 +295,9 @@ class MeetingRuntime:
             meeting = repo.get_meeting(meeting_id)
             if meeting is None:
                 return False
-            raw = meeting.get("state_json")
-            data: Dict[str, Any] = {}
-            if raw:
-                parsed = json.loads(raw) if isinstance(raw, str) else raw
-                if isinstance(parsed, dict):
-                    data = parsed
-            data.setdefault("meeting_id", meeting_id)
-            data.setdefault("status", meeting.get("status") or "ended")
-            data.setdefault(
-                "cloud_enabled", bool(meeting.get("cloud_enabled", False))
-            )
-            data.setdefault("title", meeting.get("title") or "")
-            state = MeetingState.from_dict(data)
+            # No live store owns this meeting, so anything the snapshot
+            # still marks as running was interrupted.
+            state = load_state(meeting, meeting_id, historical=True)
             state.finalization.card_deferred = bool(deferred)
             repo.persist_state(meeting_id, state.to_dict())
             return True
@@ -1030,31 +1005,6 @@ class MeetingRuntime:
             {"active": True, "paused": False, "status": "ending"}
         )
 
-    def cancel_meeting(self) -> None:
-        engine = self._engine
-        if engine is None:
-            return
-        self.controller.meeting_status_update.emit("Canceling meeting...")
-        threading.Thread(
-            target=self._cancel_worker, name="meeting-cancel", daemon=True
-        ).start()
-
-    def _cancel_worker(self) -> None:
-        try:
-            engine = self._engine
-            if engine is not None:
-                engine.cancel()
-            self._shutdown_engine()
-        except Exception as exc:
-            logger.error(f"Failed to cancel meeting: {exc}")
-        finally:
-            self.controller.meeting_active = False
-            self.controller.restore_local_engine()
-            self.controller.meeting_status_update.emit("Meeting canceled")
-            self.controller.meeting_state_changed.emit(
-                {"active": False, "status": "canceled"}
-            )
-
     def retry_insights(self) -> None:
         self.retry_finalization("failed")
 
@@ -1569,12 +1519,9 @@ class MeetingRuntime:
                     "That meeting no longer exists"
                 )
                 return None
-            raw = meeting.get("state_json")
-            state: Dict[str, Any] = {}
-            if raw:
-                parsed = json.loads(raw) if isinstance(raw, str) else raw
-                if isinstance(parsed, dict):
-                    state = parsed
+            from meeting.stored import stored_state_dict
+
+            state = stored_state_dict(meeting)
             segments = list(repo.get_segments(target_id) or [])
             if not any(str(segment.get("text") or "").strip() for segment in segments):
                 self.controller.meeting_status_update.emit("No transcript to copy")

@@ -62,11 +62,10 @@ class FakeAsr:
     instances = []
 
     def __init__(self, model, meeting_id, repository, language=None,
-                 enable_revisions=True, term_rules=None):
+                 term_rules=None):
         self.model = model
         self.meeting_id = meeting_id
         self.language = language
-        self.enable_revisions = enable_revisions
         self.term_rules = term_rules
         self.is_available = True
         self.on_segments = None
@@ -541,7 +540,6 @@ class TestIntelligenceHealth:
 
         assert fakes.cores == []
         assert fakes.schedulers == []
-        assert fakes.asr[0].enable_revisions is False
         assert engine.store.with_state(lambda s: s.intelligence_online) is False
 
     def test_asr_receives_pinned_meeting_language(self, make_engine, fakes):
@@ -724,17 +722,6 @@ class TestEndLifecycle:
         assert events_of(engine, "asr_released")[-1]["meeting_id"] == (
             engine.meeting_id
         )
-
-    def test_cancel_also_announces_the_released_model(
-            self, make_engine, repo, fakes):
-        """A canceled meeting must not strand the released dictation engine."""
-        engine = make_engine(cloud_enabled=False)
-        engine.start()
-
-        engine.cancel()
-
-        assert events_of(engine, "asr_released")
-        assert FakeAsr.instances[-1].stops == 1
 
     def test_end_event_precedes_slow_consolidation(
             self, make_engine, repo, fakes):

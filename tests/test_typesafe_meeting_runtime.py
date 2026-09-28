@@ -174,7 +174,6 @@ def test_later_transcript_starts_pulses_radar_and_citations(runtime, initial, mo
     rows[0]["end_s"] = 60
     runtime.repo.commit_chunk_transcription.return_value = (rows, True)
     monkeypatch.setattr(engine, "_assign_speakers", Mock())
-    monkeypatch.setattr(engine, "_maybe_revise_transcript", Mock())
     chunk = SimpleNamespace(chunk_id=1, start_s=0, duration_s=60, channel="mic")
     engine._on_chunk_result(chunk, [])
     signals, verifier = engine._live_signals, engine._citation_verifier
