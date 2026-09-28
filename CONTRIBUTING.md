@@ -114,7 +114,7 @@ is not required by the release builders.
 
 ## Local speech backends and models
 
-Local agents should read `AGENTS.md` when present (kept untracked by repository preference). Use [the model reference](docs/models.md) for exact supported IDs, and [the local speech guide](docs/local-asr.md) for user-visible behavior. The optional runtimes target Windows x64. NVIDIA Speech CPU and GPU are also packaged for Linux x86_64 (verified under Ubuntu 24.04 in WSL2 with CUDA), and NVIDIA Speech CPU for Apple Silicon macOS. Do not describe other upstream platform support (Linux aarch64, Vulkan) as support provided by this integration.
+Local agents should read `AGENTS.md` when present (kept untracked by repository preference). Use [Speech models](README.md#speech-models) for exact supported IDs and user-visible behavior. The optional runtimes target Windows x64. NVIDIA Speech CPU and GPU are also packaged for Linux x86_64 (verified under Ubuntu 24.04 in WSL2 with CUDA), and NVIDIA Speech CPU for Apple Silicon macOS. Do not describe other upstream platform support (Linux aarch64, Vulkan) as support provided by this integration.
 
 A backend or model change must keep these surfaces consistent:
 
@@ -125,7 +125,7 @@ A backend or model change must keep these surfaces consistent:
 | Isolated runtime and dependency versions | `services/local_asr/*runtime.json`; component version, archive pins, and measured extracted size |
 | UI technical profiles and optional component descriptions | `services/model_catalog.py`, `services/component_catalog.py` |
 | Worker inference and lifecycle | `transcriber/optional_backend.py`, `services/local_asr/`, controller engine lease and readiness |
-| User and developer docs | README, `docs/models.md`, `docs/local-asr.md`, `docs/whisper-gpu.md`, `docs/packaging.md`, AGENTS, CHANGELOG, `THIRD_PARTY_NOTICES.md` |
+| User and developer docs | README (Speech models, GPU acceleration), AGENTS, CHANGELOG, `THIRD_PARTY_NOTICES.md` |
 | GitHub-facing material | README, `.github/ISSUE_TEMPLATE/bug_report.yml`, repository About description, and the next release's notes |
 
 Do not install optional SDKs into the base app requirements. Test the exact pinned runtime through the normal component installer, with its embedded Python and local model paths. Preserve archive license metadata. If a dependency or runtime changes, update its version and measured install size so updates and disk checks remain accurate. Keep model/runtime downloads separate and respect the existing model-download policy and hard offline override.
