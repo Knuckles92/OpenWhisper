@@ -21,7 +21,12 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set
 
-from meeting.finalization import POLISH_MAX_SEGMENTS, POLISH_TIMEOUT_S, polish_blocks
+from meeting.finalization import (
+    POLISH_MAX_SEGMENTS,
+    POLISH_TIMEOUT_S,
+    polish_blocks,
+    run_agent_call,
+)
 from meeting.interfaces import AgentResult, CheckpointPayload
 
 logger = logging.getLogger(__name__)
@@ -849,6 +854,32 @@ class CheckpointScheduler:
             except Exception:
                 logger.exception("Scheduler on_health callback raised")
 
+    def _stop_inflight_checkpoint(self) -> bool:
+        """Let a rolling checkpoint still in flight finish, or cancel it.
+
+        Two agent runs sharing one core would interleave tool calls and
+        corrupt a final pass; a stale rolling checkpoint is far less damaging
+        than that, so a final pass starts only once the worker is gone.
+
+        Returns:
+            True when no rolling checkpoint is running any more.
+        """
+        thread = self._thread
+        if thread is None or not thread.is_alive():
+            return True
+        thread.join(timeout=_CONSOLIDATION_JOIN_S)
+        if thread.is_alive():
+            logger.warning(
+                "In-flight checkpoint still running; canceling before the "
+                "final pass"
+            )
+            try:
+                self._agent.cancel()
+            except Exception:
+                logger.exception("Agent cancel raised")
+            thread.join(timeout=_CONSOLIDATION_JOIN_S)
+        return not thread.is_alive()
+
     def _revoke_agent_writes(self) -> None:
         """Close the engine agent-write gate before a terminal consolidation."""
         revoke = getattr(self._engine, "revoke_agent_writes", None)
@@ -890,37 +921,19 @@ class CheckpointScheduler:
         """
         self._consolidating = True
         self.stop()
-        thread = self._thread
-        if thread is not None and thread.is_alive():
-            # A periodic checkpoint may still be in flight; give it a moment,
-            # then cancel it so consolidation is not raced.
-            thread.join(timeout=_CONSOLIDATION_JOIN_S)
-            if thread.is_alive():
-                logger.warning(
-                    "In-flight checkpoint still running; canceling before "
-                    "consolidation"
-                )
-                try:
-                    self._agent.cancel()
-                except Exception:
-                    logger.exception("Agent cancel raised")
-                thread.join(timeout=_CONSOLIDATION_JOIN_S)
-            if thread.is_alive():
-                # Two agent runs sharing one core would interleave tool calls
-                # and corrupt the final pass; a stale rolling checkpoint is far
-                # less damaging than that.
-                logger.error(
-                    "Checkpoint worker did not stop; skipping the consolidation "
-                    "pass to avoid two concurrent agent runs"
-                )
-                self._revoke_agent_writes()
-                return ConsolidationOutcome(
-                    status="failed",
-                    message=(
-                        "Final insights were skipped because a previous "
-                        "checkpoint was still running."
-                    ),
-                )
+        if not self._stop_inflight_checkpoint():
+            logger.error(
+                "Checkpoint worker did not stop; skipping the consolidation "
+                "pass to avoid two concurrent agent runs"
+            )
+            self._revoke_agent_writes()
+            return ConsolidationOutcome(
+                status="failed",
+                message=(
+                    "Final insights were skipped because a previous "
+                    "checkpoint was still running."
+                ),
+            )
 
         if not self._agent.is_healthy():
             logger.warning("Agent core unhealthy; skipping consolidation pass")
@@ -970,38 +983,27 @@ class CheckpointScheduler:
             "Running consolidation %s over %d segments (timeout %.0fs)",
             payload.request_id, len(segments), timeout_s,
         )
-        result_box: Dict[str, AgentResult] = {}
 
-        def _worker() -> None:
-            try:
-                result_box["result"] = self._agent.consolidate(payload)
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.exception("Agent consolidate raised")
-                result_box["result"] = AgentResult(ok=False, error=str(exc))
-
-        worker = threading.Thread(
-            target=_worker, name="meeting-consolidation", daemon=True,
-        )
-        worker.start()
-        try:
-            worker.join(timeout_s)
-        finally:
+        def _detach_progress() -> None:
             if callable(setter):
                 setter(None)
-        if worker.is_alive():
-            logger.warning(
-                "Consolidation timed out after %.0fs; canceling", timeout_s,
-            )
-            # Revoke before cancel so a worker that ignores cancel cannot land
-            # late mutations after the timeout decision.
-            self._revoke_agent_writes()
-            try:
-                self._agent.cancel()
-            except Exception:
-                logger.exception("Agent cancel raised")
-            worker.join(timeout=5.0)
 
-        result = result_box.get("result")
+        def _on_timeout() -> None:
+            # Mute progress, then revoke before cancel, so a worker that
+            # ignores cancel can neither report nor land late mutations.
+            _detach_progress()
+            self._revoke_agent_writes()
+
+        try:
+            result = run_agent_call(
+                lambda: self._agent.consolidate(payload),
+                cancel=self._agent.cancel,
+                timeout_s=timeout_s,
+                name="meeting-consolidation",
+                on_timeout=_on_timeout,
+            )
+        finally:
+            _detach_progress()
         if result is None:
             logger.warning("Consolidation produced no result (timed out)")
             outcome = ConsolidationOutcome(
@@ -1066,26 +1068,17 @@ class CheckpointScheduler:
         """
         self._consolidating = True
         self.stop()
-        thread = self._thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=_CONSOLIDATION_JOIN_S)
-            if thread.is_alive():
-                try:
-                    self._agent.cancel()
-                except Exception:
-                    logger.exception("Agent cancel raised before final polish")
-                thread.join(timeout=_CONSOLIDATION_JOIN_S)
-            if thread.is_alive():
-                logger.error(
-                    "Checkpoint worker did not stop; skipping final polish"
-                )
-                return ConsolidationOutcome(
-                    status="failed",
-                    message=(
-                        "Transcript cleanup was skipped because a previous "
-                        "checkpoint was still running."
-                    ),
-                )
+        if not self._stop_inflight_checkpoint():
+            logger.error(
+                "Checkpoint worker did not stop; skipping final polish"
+            )
+            return ConsolidationOutcome(
+                status="failed",
+                message=(
+                    "Transcript cleanup was skipped because a previous "
+                    "checkpoint was still running."
+                ),
+            )
 
         if not self._agent.is_healthy():
             return ConsolidationOutcome(
@@ -1131,44 +1124,27 @@ class CheckpointScheduler:
                     status="failed",
                     message="Meeting state was unavailable for transcript cleanup.",
                 )
-            result_box: Dict[str, AgentResult] = {}
-
-            def _worker(bound_payload: CheckpointPayload = payload) -> None:
-                try:
-                    result_box["result"] = self._agent.checkpoint(bound_payload)
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.exception("Agent final polish raised")
-                    result_box["result"] = AgentResult(ok=False, error=str(exc))
-
-            worker = threading.Thread(
-                target=_worker, name="meeting-final-polish", daemon=True,
-            )
             started = self._monotonic()
             logger.info(
                 "Final polish started meeting_id=%s request_id=%s block=%s/%s segments=%s timeout_s=%s",
                 payload.state_snapshot.get("meeting_id", "unknown"), payload.request_id,
                 idx, total_blocks, len(block), timeout_s,
             )
-            worker.start()
-            worker.join(timeout=timeout_s)
-            if worker.is_alive():
+            result = run_agent_call(
+                lambda bound=payload: self._agent.checkpoint(bound),
+                cancel=self._agent.cancel,
+                timeout_s=timeout_s,
+                name="meeting-final-polish",
+            )
+            if result is None:
                 logger.warning(
-                    "Final polish timed out request_id=%s block=%s/%s elapsed_s=%.2f timeout_s=%s; canceling",
+                    "Final polish timed out request_id=%s block=%s/%s elapsed_s=%.2f timeout_s=%s; canceled",
                     payload.request_id, idx, total_blocks, self._monotonic() - started, timeout_s,
                 )
-                try:
-                    self._agent.cancel()
-                except Exception:
-                    logger.exception("Agent cancel raised")
-                worker.join(timeout=5.0)
                 last_error = (
                     f"Transcript cleanup timed out after {timeout_s:g}s "
                     f"on block {idx}/{total_blocks}. Request ID: {payload.request_id}."
                 )
-                break
-            result = result_box.get("result")
-            if result is None:
-                last_error = "Transcript cleanup produced no result."
                 break
             if not result.ok:
                 last_error = result.error or "transcript cleanup failed"

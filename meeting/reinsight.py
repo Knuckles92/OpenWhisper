@@ -16,12 +16,12 @@ No Qt imports; this package stays standalone-extractable.
 from __future__ import annotations
 
 import logging
-import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
 from meeting.agent.base import create_agent_core
 from meeting.agent.prompts import build_system_prompt
+from meeting.finalization import run_agent_call
 from meeting.interfaces import AgentConfig, AgentResult, CheckpointPayload, OpResult
 from meeting.state.repair import repair_meeting_state
 from meeting.state.store import MeetingStateStore
@@ -135,29 +135,13 @@ def _consolidate(core: Any, payload: CheckpointPayload,
     Returns:
         The agent's result, or a failed ``AgentResult`` on timeout or raise.
     """
-    box: Dict[str, AgentResult] = {}
-
-    def worker() -> None:
-        try:
-            box["result"] = core.consolidate(payload)
-        except Exception as exc:
-            logger.exception("Agent consolidate raised during insight re-run")
-            box["result"] = AgentResult(ok=False, error=str(exc))
-
-    thread = threading.Thread(target=worker, name="meeting-reinsight",
-                              daemon=True)
-    thread.start()
-    thread.join(timeout_s)
-    if thread.is_alive():
-        logger.warning("Insight re-run timed out after %.0fs; canceling",
-                       timeout_s)
-        try:
-            core.cancel()
-        except Exception:
-            logger.exception("Agent cancel raised during insight re-run")
-        thread.join(timeout=5.0)
-        return AgentResult(ok=False, error=f"timed out after {timeout_s:.0f}s")
-    return box.get("result") or AgentResult(ok=False, error="no result")
+    result = run_agent_call(
+        lambda: core.consolidate(payload),
+        cancel=core.cancel, timeout_s=timeout_s, name="meeting-reinsight",
+    )
+    return result or AgentResult(
+        ok=False, error=f"timed out after {timeout_s:.0f}s",
+    )
 
 
 def rerun_insights(repository: Any, meeting_id: str, *, provider: str,

@@ -28,6 +28,7 @@ from meeting.finalization import (
     SpeakerPassGate,
     failed_steps_message,
     make_step as _make_step,
+    run_agent_call,
     speaker_pass_gate,
     summary_stats,
 )
@@ -585,28 +586,13 @@ def rerun_redecode(
 
 def _run_checkpoint(core: Any, payload: CheckpointPayload,
                     timeout_s: float) -> AgentResult:
-    box: Dict[str, AgentResult] = {}
-
-    def worker() -> None:
-        try:
-            box["result"] = core.checkpoint(payload)
-        except Exception as exc:
-            logger.exception("Agent polish raised during finalization retry")
-            box["result"] = AgentResult(ok=False, error=str(exc))
-
-    thread = threading.Thread(target=worker, name="meeting-repolish",
-                              daemon=True)
-    thread.start()
-    thread.join(timeout_s)
-    if thread.is_alive():
-        logger.warning("Polish retry timed out after %.0fs; canceling", timeout_s)
-        try:
-            core.cancel()
-        except Exception:
-            logger.exception("Agent cancel raised during polish retry")
-        thread.join(timeout=5.0)
-        return AgentResult(ok=False, error=f"timed out after {timeout_s:.0f}s")
-    return box.get("result") or AgentResult(ok=False, error="no result")
+    result = run_agent_call(
+        lambda: core.checkpoint(payload),
+        cancel=core.cancel, timeout_s=timeout_s, name="meeting-repolish",
+    )
+    return result or AgentResult(
+        ok=False, error=f"timed out after {timeout_s:.0f}s",
+    )
 
 
 def rerun_polish(

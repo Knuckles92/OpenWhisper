@@ -1,13 +1,70 @@
 """Shared presentation of live and retried finalization steps."""
 import logging
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Optional
 
+from meeting.interfaces import AgentResult
 from services import openai_retirement
 
 logger = logging.getLogger(__name__)
+
+#: How long a canceled agent call gets to unwind before it is abandoned.
+CANCEL_GRACE_S = 5.0
+
+
+def run_agent_call(
+    call: Callable[[], AgentResult],
+    *,
+    cancel: Callable[[], None],
+    timeout_s: float,
+    name: str,
+    on_timeout: Optional[Callable[[], None]] = None,
+) -> Optional[AgentResult]:
+    """Run one blocking agent call on a daemon thread, bounded by a timeout.
+
+    Every post-meeting agent pass (live and retried polish, consolidation)
+    goes through here, so a hung call is canceled the same way everywhere.
+
+    Args:
+        call: The blocking agent call, e.g. ``lambda: core.consolidate(p)``.
+        cancel: Cancels the agent's in-flight request.
+        timeout_s: Seconds to wait before canceling.
+        name: Worker thread name, also used in log lines.
+        on_timeout: Runs before ``cancel`` on timeout, e.g. to revoke agent
+            writes so a worker that ignores cancel cannot land them.
+
+    Returns:
+        The call's result (a failed one when it raised), or None on timeout.
+    """
+    box: dict[str, AgentResult] = {}
+
+    def worker() -> None:
+        try:
+            box["result"] = call()
+        except Exception as exc:
+            logger.exception("Agent call %s raised", name)
+            box["result"] = AgentResult(ok=False, error=str(exc))
+
+    thread = threading.Thread(target=worker, name=name, daemon=True)
+    thread.start()
+    thread.join(timeout_s)
+    if not thread.is_alive():
+        return box.get("result") or AgentResult(ok=False, error="no result")
+    logger.warning("%s timed out after %.0fs; canceling", name, timeout_s)
+    if on_timeout is not None:
+        try:
+            on_timeout()
+        except Exception:
+            logger.exception("Timeout handler for %s raised", name)
+    try:
+        cancel()
+    except Exception:
+        logger.exception("Agent cancel raised after %s timed out", name)
+    thread.join(timeout=CANCEL_GRACE_S)
+    return None
 
 # Shared per-block budget for transcript cleanup, including provider tool rounds.
 POLISH_TIMEOUT_S = 180.0
