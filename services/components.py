@@ -134,8 +134,7 @@ _BUILTIN_GPU_ARCHIVES_LINUX: Final[Tuple[dict, ...]] = (
     },
 )
 
-# TODO(meeting-mode): placeholder digest — replace with the real SHA-256 pinned
-# at release time once the speaker-id payload is published.
+# An all-zero digest marks an archive that is not published yet.
 _PLACEHOLDER_SHA256: Final[str] = "0" * 64
 
 # Version of the meeting-agent payload (portable Node LTS + the built
@@ -148,9 +147,6 @@ MEETING_AGENT_RELEASE_TAG: Final[str] = "v2.6.01"
 PLATFORM_WIN_AMD64: Final[str] = "win_amd64"
 PLATFORM_LINUX_X86_64: Final[str] = "linux_x86_64"
 PLATFORM_LINUX_AARCH64: Final[str] = "linux_aarch64"
-
-# Version of the speaker-id payload (WeSpeaker-family ONNX embedding model).
-SPEAKER_ID_COMPONENT_VERSION: Final[str] = "wespeaker-v1"
 
 # Official WeSpeaker ResNet34-LM ONNX (~26.5 MB). Input is Kaldi 80-dim
 # fbank [1, T, 80] — the same tensor ``meeting.diarize.embedder`` builds.
@@ -259,19 +255,6 @@ _BUILTIN_MEETING_AGENT_ARCHIVES: Final[Tuple[dict, ...]] = tuple(
     _BUILTIN_MEETING_AGENT_BY_PLATFORM[PLATFORM_WIN_AMD64]["archives"]
 )
 
-_BUILTIN_SPEAKER_ID_ARCHIVES: Final[Tuple[dict, ...]] = (
-    {
-        "name": f"speaker-id-win_amd64-{SPEAKER_ID_COMPONENT_VERSION}.zip",
-        "url": (
-            "https://openwhisper.fiorilabs.tech/components/"
-            f"speaker-id-win_amd64-{SPEAKER_ID_COMPONENT_VERSION}.zip"
-        ),
-        "sha256": _PLACEHOLDER_SHA256,
-        "size_bytes": 28_000_000,
-        "extract": "zip",
-    },
-)
-
 # Version of the gpu-accel payload. Derived from the CUDA libraries it carries,
 # NOT from the application version: the payload is unchanged by an app release,
 # and an app-derived version would report "update available" after every release.
@@ -335,19 +318,6 @@ _BUILTIN_CATALOG_RAW: Final[dict] = {
         "meeting-agent": {
             "platforms": dict(_BUILTIN_MEETING_AGENT_BY_PLATFORM),
         },
-        "speaker-id": {
-            "platforms": {
-                PLATFORM_WIN_AMD64: {
-                    "published": False,
-                    "version": SPEAKER_ID_COMPONENT_VERSION,
-                    "component_api": COMPONENT_API,
-                    "platform": PLATFORM_WIN_AMD64,
-                    # TODO(meeting-mode): measure once the payload exists.
-                    "install_bytes": 30_000_000,
-                    "archives": _BUILTIN_SPEAKER_ID_ARCHIVES,
-                },
-            },
-        },
     },
 }
 
@@ -390,7 +360,6 @@ class ComponentId:
     GPU_ACCEL: Final[str] = "gpu-accel"
     MEETING_AGENT: Final[str] = "meeting-agent"
     MEETING_AGENT_OPENCODE: Final[str] = "meeting-agent-opencode"
-    SPEAKER_ID: Final[str] = "speaker-id"
     ASR_NVIDIA_CPU: Final[str] = "asr-nvidia-cpu"
     ASR_NVIDIA_CUDA: Final[str] = "asr-nvidia-cuda"
     ASR_NVIDIA_VULKAN: Final[str] = "asr-nvidia-vulkan"
@@ -538,7 +507,6 @@ def available_component_ids(
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
             ComponentId.MEETING_AGENT_OPENCODE,
-            ComponentId.SPEAKER_ID,
             *RUNTIME_IDS,
         )
     elif tag == PLATFORM_LINUX_X86_64:
@@ -755,16 +723,6 @@ def _env_speaker_model_path() -> Optional[str]:
     return None
 
 
-def _installed_speaker_model_path() -> Optional[str]:
-    if not is_installed(ComponentId.SPEAKER_ID):
-        return None
-    found = _first_onnx_file(component_dir(ComponentId.SPEAKER_ID))
-    if found:
-        return found
-    logger.warning("speaker-id component is installed but contains no .onnx model")
-    return None
-
-
 def _source_speaker_model_path() -> Optional[str]:
     if is_frozen():
         return None
@@ -776,11 +734,9 @@ def speaker_model_path() -> Optional[str]:
 
     Resolution order:
         1. ``OPENWHISPER_SPEAKER_MODEL`` (file or directory containing ``.onnx``)
-        2. Installed ``speaker-id`` component (usable even while unpublished,
-           matching :func:`meeting_agent_payload_dir`)
-        3. Per-user cache written by :func:`ensure_speaker_model`
-        4. Source-tree ``models/speaker-id`` when not frozen
-        5. ``None`` — callers download via :func:`ensure_speaker_model` or
+        2. Per-user cache written by :func:`ensure_speaker_model`
+        3. Source-tree ``models/speaker-id`` when not frozen
+        4. ``None`` — callers download via :func:`ensure_speaker_model` or
            fall back to channel-level Me/Others labels
 
     Returns:
@@ -788,7 +744,6 @@ def speaker_model_path() -> Optional[str]:
     """
     return (
         _env_speaker_model_path()
-        or _installed_speaker_model_path()
         or _first_onnx_file(speaker_model_cache_dir())
         or _source_speaker_model_path()
     )

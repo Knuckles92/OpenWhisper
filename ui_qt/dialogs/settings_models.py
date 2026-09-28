@@ -32,11 +32,10 @@ from PyQt6.QtWidgets import (
 
 from config import bundle_root, config
 from services.components import (
-    ComponentId,
-    ComponentState,
     component_coordinator,
     current_platform_tag,
     meeting_agent_payload_dir,
+    speaker_model_path,
 )
 from services import openai_retirement
 from services.hf_access import (
@@ -1384,24 +1383,19 @@ class ModelAssignments(QObject):
                 "February 26, 2027; after that, on-device labels are used."
             )
             return
-        try:
-            info = component_coordinator.describe(ComponentId.SPEAKER_ID)
-            installed = info.state in (
-                ComponentState.INSTALLED,
-                ComponentState.UPDATE_AVAILABLE,
-                ComponentState.EXTERNAL,
-            )
-        except Exception:
-            installed = False
-        if installed:
+        # The model is not a Downloads component: the first meeting that
+        # needs it fetches it into a per-user cache (ensure_speaker_model).
+        if speaker_model_path():
             self.speaker_id_status.setText(
-                "On-device WeSpeaker (voxceleb_resnet34_LM.onnx) is available."
+                "On-device WeSpeaker (voxceleb_resnet34_LM.onnx) is ready on "
+                "this computer."
             )
         else:
             self.speaker_id_status.setText(
-                "On-device WeSpeaker (voxceleb_resnet34_LM.onnx). Install "
-                "Speaker Identification from Downloads if live labels are "
-                "missing."
+                "On-device WeSpeaker (voxceleb_resnet34_LM.onnx, about 26 MB) "
+                "downloads from Hugging Face when your next meeting starts. "
+                "If Hugging Face access is set to Never connect, meetings use "
+                "Me/Others channel labels instead."
             )
 
     # ---- refresh ----

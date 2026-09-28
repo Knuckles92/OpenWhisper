@@ -473,16 +473,6 @@ def test_install_component_rejects_foreign_platform_before_download(
     assert called == []
 
 
-def test_unpublished_speaker_id_is_never_offered(component_root):
-    """Placeholder speaker-id URLs/digests must stay unreachable."""
-    with patch.object(components.sys, "platform", "win32"), patch.object(
-        components, "_source_speaker_model_path", return_value=None
-    ):
-        assert components.component_is_published(ComponentId.SPEAKER_ID) is False
-        assert ComponentId.SPEAKER_ID not in components.available_component_ids()
-        assert components.speaker_model_path() is None
-
-
 def test_meeting_agent_payload_dir_uses_installed_bundle(component_root):
     """A staged install with bundle.cjs is usable even when unpublished."""
     target = _make_installed(
@@ -531,17 +521,9 @@ def test_source_sidecar_payload_ignored_when_frozen(component_root, tmp_path):
         assert components.meeting_agent_payload_dir() is None
 
 
-def test_speaker_model_path_uses_unpublished_install(component_root):
-    """A staged speaker-id tree is usable even while the catalog is unpublished."""
-    target = _make_installed(
-        component_root,
-        ComponentId.SPEAKER_ID,
-        {"version": "wespeaker-v1", "component_api": 1, "platform": "win_amd64"},
-    )
-    model = target / "voxceleb_resnet34_LM.onnx"
-    model.write_bytes(b"onnx")
+def test_speaker_model_path_is_none_without_a_local_model(component_root):
     with patch.object(components, "_source_speaker_model_path", return_value=None):
-        assert components.speaker_model_path() == str(model)
+        assert components.speaker_model_path() is None
 
 
 def test_speaker_model_path_honors_env_file(component_root, tmp_path, monkeypatch):
