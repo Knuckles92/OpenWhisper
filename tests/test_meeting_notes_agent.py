@@ -641,3 +641,24 @@ def test_checkpoint_prompt_reads_report_views():
     assert "Populate the timeline card" not in prompt
     assert "professional minutes" not in prompt
     assert "Make decisions and action items complete" in prompt
+
+
+def test_state_render_lists_open_questions_oldest_first():
+    from meeting.agent.prompts import render_state_compact
+
+    rendered = render_state_compact({"questions": [
+        {"id": "q_2", "text": "Who owns QA?", "status": "open", "asked_at": "2"},
+        {"id": "q_1", "text": "Budget?", "status": "open", "asked_at": "1",
+         "suggested_answer": "$500", "suggested_confidence": 0.5},
+        {"id": "q_3", "text": "Settled", "status": "resolved", "asked_at": "0"},
+    ]})
+    block = rendered[rendered.index("Open questions (2/7):"):]
+    assert block.index("[q_1]") < block.index("[q_2]")
+    assert "(confidence 0.50): $500" in block
+    assert "q_3" not in block
+    assert "You may open 5 more question(s)." in block
+    assert "confidence >= 0.8" in block
+    assert render_state_compact({}).rstrip().endswith(
+        "over asking new ones."
+    )
+    assert "Open questions: none." in render_state_compact({})
