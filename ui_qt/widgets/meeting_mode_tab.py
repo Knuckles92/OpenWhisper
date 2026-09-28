@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
 
 from meeting.platform import meeting_mode_supported, meeting_unsupported_os_name
 from meeting.time_utils import format_meeting_identity_meta
-from services.settings import SettingsKey, settings_manager
+from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
 from ui_qt.widgets.buttons import Button, DangerButton, SuccessButton
 from ui_qt.widgets.cards import Card
 from ui_qt.widgets.eliding_label import ElidingLabel
@@ -243,7 +243,7 @@ class MeetingModeTab(QWidget):
 
         self._setup_ui()
         self.set_developer_mode(
-            bool(settings_manager.get(SettingsKey.DEVELOPER_MODE, False))
+            bool(settings_manager.get(SettingsKey.DEVELOPER_MODE, SETTING_DEFAULTS[SettingsKey.DEVELOPER_MODE]))
         )
         self._apply_layout_state()
 
@@ -766,7 +766,7 @@ class MeetingModeTab(QWidget):
         self.cloud_checkbox = QCheckBox("AI insights")
         self.cloud_checkbox.setObjectName("meetingAiInsightsCheckbox")
         self.cloud_checkbox.setChecked(
-            bool(settings_manager.get(SettingsKey.MEETING_CLOUD_LAST_ENABLED, False))
+            bool(settings_manager.get(SettingsKey.MEETING_CLOUD_LAST_ENABLED, SETTING_DEFAULTS[SettingsKey.MEETING_CLOUD_LAST_ENABLED]))
         )
         self.cloud_checkbox.setAccessibleDescription(
             "When checked, transcript text goes to the AI model chosen in "
