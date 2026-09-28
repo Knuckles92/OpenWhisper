@@ -16,6 +16,8 @@ from typing import Callable, Dict, Final, Optional, Set, Tuple
 # Re-exported: callers have long imported format_size_bytes from here, and it
 # is used throughout this module's own messages.
 from services.format_utils import format_size_bytes
+# Re-exported for the Downloads rows; the catalog owns the sizes.
+from services.model_catalog import MODEL_DOWNLOAD_SIZE_MB, format_download_mb
 from services.settings import (
     HuggingFaceAccessPolicy,
     is_hf_hub_offline_env_set,
@@ -30,39 +32,6 @@ _cache_scan_in_progress = False
 _cache_scan_epoch = 0
 _cached_model_snapshot: Optional[Dict[str, "CachedModelInfo"]] = None
 _cached_model_snapshot_at = 0.0
-
-
-# Approximate download sizes (MB) for the CTranslate2 model repositories,
-# bundled so the consent dialog never contacts Hugging Face just to show an
-# estimate. Keys are canonical faster-whisper model names.
-MODEL_DOWNLOAD_SIZE_MB: Final[Dict[str, int]] = {
-    "tiny": 76,
-    "tiny.en": 76,
-    "base": 145,
-    "base.en": 145,
-    "small": 484,
-    "small.en": 484,
-    "medium": 1530,
-    "medium.en": 1530,
-    "large-v1": 3090,
-    "large-v2": 3090,
-    "large-v3": 3090,
-    "large": 3090,
-    "large-v3-turbo": 1620,
-    "turbo": 1620,
-    "distil-large-v2": 1510,
-    "distil-large-v3": 1510,
-    "distil-large-v3.5": 1510,
-    "distil-medium.en": 790,
-    "distil-small.en": 330,
-}
-
-
-from services.local_asr.catalog import MODELS as _SPEECH_MODELS, artifacts as _speech_artifacts
-MODEL_DOWNLOAD_SIZE_MB.update({
-    key: round(sum(f["size_bytes"] for f in _speech_artifacts(key)["files"])/1_000_000)
-    for key in _SPEECH_MODELS
-})
 
 
 class AccessDecision:
@@ -99,14 +68,8 @@ def resolve_model_repo(model_name: str) -> str:
 
 def format_download_size(model_name: str) -> Optional[str]:
     """Return the bundled approximate download size, if known."""
-    from services.local_asr.catalog import MODELS, artifacts
-    size_mb = (sum(f["size_bytes"] for f in artifacts(model_name)["files"])/1_000_000
-               if model_name in MODELS else MODEL_DOWNLOAD_SIZE_MB.get(model_name))
-    if size_mb is None:
-        return None
-    if size_mb >= 1000:
-        return f"~{size_mb / 1000:.1f} GB"
-    return f"~{size_mb:.0f} MB"
+    size_mb = MODEL_DOWNLOAD_SIZE_MB.get(model_name)
+    return None if size_mb is None else format_download_mb(size_mb)
 
 
 def is_model_cached(model_name: str) -> bool:

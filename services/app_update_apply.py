@@ -6,7 +6,6 @@ import this module. Qt, settings, and GitHub live in ``app_update.py``.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -59,6 +58,11 @@ from services.update_contract import (
     updates_root,
     validate_transaction_id,
 )
+from services.verified_files import (
+    free_space_shortfall,
+    retry_while_locked,
+    sha256_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +78,6 @@ _PARENT_WAIT_S = 120
 _HEALTH_WAIT_S = 180
 _SETUP_LAUNCH_WAIT_S = 120
 _ERROR_LIMIT = 2000
-# Access denied, sharing violation, lock violation.
-_LOCK_WINERRORS = frozenset({5, 32, 33})
 _LOCK_WAIT_S = 60.0
 _CLEANUP_LOCK_WAIT_S = 300.0
 _LOCK_POLL_S = 0.25
@@ -264,14 +266,7 @@ class UpdateJournal:
 
 
 def file_sha256(path: str) -> str:
-    def read() -> str:
-        digest = hashlib.sha256()
-        with open(path, "rb") as handle:
-            for block in iter(lambda: handle.read(_CHUNK_BYTES), b""):
-                digest.update(block)
-        return digest.hexdigest()
-
-    return _retry_while_locked(path, read)
+    return _retry_while_locked(path, lambda: sha256_file(path))
 
 
 def write_json_atomic(path: str, payload: Dict) -> None:
@@ -306,16 +301,7 @@ def _retry_while_locked(what: str, action, *, timeout_s: float = _LOCK_WAIT_S):
     access denial on the install directory, and each one used to fail an entire
     update within a second of the app closing.
     """
-    deadline = time.monotonic() + timeout_s
-    while True:
-        try:
-            return action()
-        except OSError as exc:
-            locked = getattr(exc, "winerror", None) in _LOCK_WINERRORS
-            if not locked or time.monotonic() >= deadline:
-                raise
-            logger.info("%s is locked (%s); retrying", what, exc)
-            time.sleep(_LOCK_POLL_S)
+    return retry_while_locked(what, action, timeout_s=timeout_s, poll_s=_LOCK_POLL_S)
 
 
 def updater_log_path(appdata: Optional[str] = None) -> str:
@@ -860,12 +846,9 @@ def tree_size_bytes(root: str) -> int:
 
 
 def check_free_space(path: str, required_bytes: int) -> None:
-    if required_bytes <= 0:
-        return
-    os.makedirs(path, exist_ok=True)
-    free = shutil.disk_usage(path).free
-    needed = int(required_bytes * _SPACE_MARGIN)
-    if free < needed:
+    shortfall = free_space_shortfall(path, required_bytes, _SPACE_MARGIN)
+    if shortfall:
+        needed, free = shortfall
         raise UpdateApplyError(
             f"Not enough disk space: {needed} bytes needed, {free} free."
         )

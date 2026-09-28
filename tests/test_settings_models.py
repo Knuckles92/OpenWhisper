@@ -681,15 +681,23 @@ class TestMeetingDestinations(_DialogTestCase):
             MeetingSpeakerIdBackend.OFF
         )
 
-    def test_speaker_id_status_points_at_downloads_when_not_installed(self):
+    def test_speaker_id_status_explains_first_meeting_download(self):
+        """No Downloads row exists: the first meeting fetches the model."""
+        dialog, _values = self._make_meeting_dialog()
+        with patch.object(dialog_module, "speaker_model_path", return_value=None):
+            dialog.refresh_component_state()
+        status = dialog.speaker_id_status.text()
+        assert "Hugging Face" in status
+        assert "next meeting" in status
+        assert "Downloads" not in status
+
+    def test_speaker_id_status_reports_a_cached_model(self):
         dialog, _values = self._make_meeting_dialog()
         with patch.object(
-            dialog_module.component_coordinator,
-            "describe",
-            side_effect=RuntimeError("unavailable"),
+            dialog_module, "speaker_model_path", return_value="C:/cache/model.onnx"
         ):
             dialog.refresh_component_state()
-        assert "Downloads" in dialog.speaker_id_status.text()
+        assert "is ready" in dialog.speaker_id_status.text()
 
     def test_refresh_component_state_enables_pi_after_install(self):
         with patch.object(

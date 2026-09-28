@@ -13,6 +13,7 @@ from config import config
 from services.hotkey_manager import HotkeyManager, USE_PYNPUT_BACKEND
 from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
 from services.settings import (
+    SETTING_DEFAULTS,
     RecordingTriggerMode,
     SettingsKey,
     resolve_recording_trigger_mode,
@@ -258,13 +259,21 @@ class HotkeyRuntime:
         else:
             self.controller.stop_recording()
 
+    @staticmethod
+    def _auto_paste_enabled() -> bool:
+        key = SettingsKey.AUTO_PASTE
+        return bool(settings_manager.get(key, SETTING_DEFAULTS[key]))
+
+    @staticmethod
+    def _accessibility_intro_seen() -> bool:
+        key = SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN
+        return bool(settings_manager.get(key, SETTING_DEFAULTS[key]))
+
     def _check_autopaste_permission(self) -> None:
         """Offer optional setup once, remembering dismissal across launches."""
         if sys.platform != "darwin" or not USE_PYNPUT_BACKEND:
             return
-        if not settings_manager.get(SettingsKey.AUTO_PASTE, True):
-            return
-        if settings_manager.get(SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN, False):
+        if not self._auto_paste_enabled() or self._accessibility_intro_seen():
             return
         if is_accessibility_trusted():
             return
@@ -274,8 +283,8 @@ class HotkeyRuntime:
         # Preferences or trust may change before this deferred call runs.
         if (
             is_accessibility_trusted()
-            or not settings_manager.get(SettingsKey.AUTO_PASTE, True)
-            or settings_manager.get(SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN, False)
+            or not self._auto_paste_enabled()
+            or self._accessibility_intro_seen()
         ):
             return
         from ui_qt.dialogs.accessibility_dialog import show_accessibility_setup

@@ -4,7 +4,11 @@ from dataclasses import asdict, dataclass
 
 from config import config
 from services.hotkey_manager import format_hotkey, parse_hotkey
-from services.settings import SettingsKey, compose_transcript_cleanup_prompt
+from services.settings import (
+    SettingsKey,
+    compose_transcript_cleanup_prompt,
+    setting_value,
+)
 
 
 @dataclass(frozen=True)
@@ -83,9 +87,7 @@ def cleanup_may_run(settings: dict) -> bool:
     Standard dictation cleans up when cleanup is on; a profile always does,
     and is reached from its shortcut or the Quick Record tab's choice.
     """
-    if settings.get(
-        SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, config.TRANSCRIPT_CLEANUP_ENABLED
-    ):
+    if setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings):
         return True
     if settings.get(SettingsKey.QUICK_RECORD_PROFILE):
         return True

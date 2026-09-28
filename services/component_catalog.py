@@ -15,10 +15,6 @@ NVIDIA_CUBLAS_URL: Final[str] = "https://developer.nvidia.com/cublas"
 NVIDIA_PYPI_URL: Final[str] = "https://pypi.org/project/nvidia-cublas-cu12/"
 PI_HOME_URL: Final[str] = "https://pi.dev"
 NODEJS_URL: Final[str] = "https://nodejs.org"
-WESPEAKER_REPO_URL: Final[str] = "https://github.com/wenet-e2e/wespeaker"
-WESPEAKER_MODEL_URL: Final[str] = (
-    "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM"
-)
 
 
 @dataclass(frozen=True)
@@ -184,45 +180,6 @@ _CATALOG: dict[str, ComponentDetails] = {
         compact_tags="OpenCode v2 · Beta",
         source_note=_SOURCE_NOTE,
         source_urls=("https://opencode.ai/v2/docs/build/sdk/", "https://bun.sh"),
-    ),
-    "speaker-id": ComponentDetails(
-        component_id="speaker-id",
-        display_name="Speaker Identification",
-        summary=(
-            "Speaker-embedding model (WeSpeaker ONNX) that separates remote "
-            "voices into individual speakers during Meeting Mode."
-        ),
-        description=(
-            "A WeSpeaker ResNet34-LM ONNX speaker-embedding model. During "
-            "Meeting Mode it embeds remote voices so the Other channel can "
-            "be split into individual speakers. This payload is listed but "
-            "not offered in Downloads until the archive is published."
-        ),
-        origin_name="WeSpeaker",
-        origin_url=WESPEAKER_REPO_URL,
-        origin_label="Original ↗",
-        source_name="Wespeaker/wespeaker-voxceleb-resnet34-LM",
-        source_url=WESPEAKER_MODEL_URL,
-        source_label="Hugging Face ↗",
-        maintainer="WeSpeaker (model); OpenWhisper (Meeting Mode integration)",
-        family="Speaker embeddings",
-        requires="Meeting Mode. Local ONNX runtime.",
-        payload="WeSpeaker ResNet34-LM ONNX embedding model",
-        local_format="ONNX model file in the component folder",
-        license="Apache-2.0 (WeSpeaker)",
-        best_for=(
-            "Meetings with several remote speakers where Me/Others channel "
-            "labels are not enough."
-        ),
-        limitations=(
-            "Not published in this build — the row stays hidden until the "
-            "pinned archive is ready.",
-            "Adds a local ONNX model of about 26 MB.",
-            "Labels are embeddings, not guaranteed identities.",
-        ),
-        compact_tags="ONNX",
-        source_note=_SOURCE_NOTE,
-        source_urls=(WESPEAKER_MODEL_URL, WESPEAKER_REPO_URL),
     ),
 }
 
