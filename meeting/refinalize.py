@@ -26,6 +26,7 @@ from meeting.finalization import (
     STEP_ORDER,
     failed_steps_message,
     make_step as _make_step,
+    speaker_pass_gate,
     summary_stats,
 )
 from meeting.interfaces import (
@@ -390,6 +391,7 @@ def rerun_redecode(
     progress_cb: Optional[Callable[[str, int, int], None]] = None,
     model_lease: Optional[ModelLease] = None,
     redecode_coverage_guard: bool = False,
+    speaker_id_backend: str = "local",
 ) -> Dict[str, Any]:
     """Re-decode session audio and replace the stored draft transcript.
 
@@ -409,6 +411,8 @@ def rerun_redecode(
             Whisper load. The app passes its dictation-engine lease here so
             only one model is ever resident; ``meeting`` itself stays
             independent of the services layer.
+        speaker_id_backend: ``off`` leaves system audio unlabeled, as a live
+            meeting with speaker identification off does.
 
     Returns:
         ``{ok, error}``. Failures are reported here, not raised, except
@@ -502,7 +506,8 @@ def rerun_redecode(
             "error": sparse_redecode_detail(new_words, old_words),
         }
     _assign_mic_speakers(decoded, _me_participant_id(store))
-    _try_diarize(decoded, store, repository, meeting_id, spool_dir, chunks)
+    if speaker_id_backend != "off":
+        _try_diarize(decoded, store, repository, meeting_id, spool_dir, chunks)
     replace = getattr(repository, "replace_final_transcript", None)
     if not callable(replace):
         return {"ok": False, "error": "Transcript replace is unavailable."}
@@ -708,6 +713,8 @@ def rerun_finalization(
     asr_model_name: str = "auto",
     language: Optional[str] = None,
     transcribe_fn: Optional[TranscribeFn] = None,
+    speaker_id_backend: str = "local",
+    speaker_audio_consent: bool = False,
     speaker_api_key: Optional[str] = None,
     speaker_transcribe_fn: Optional[TranscribeFn] = None,
     progress_cb: Optional[ProgressCb] = None,
@@ -730,8 +737,13 @@ def rerun_finalization(
         asr_model_name: Whisper model used for redecode.
         language: Optional ASR language pin.
         transcribe_fn: Injectable offline decoder (tests).
+        speaker_id_backend: Current speaker-identification setting. ``off``
+            also skips re-diarizing a redecoded transcript.
+        speaker_audio_consent: Whether the user approved uploading meeting
+            audio. The speaker step skips without it.
         speaker_api_key: OpenAI key for speaker identification.
-        speaker_transcribe_fn: Injectable speaker decoder (tests).
+        speaker_transcribe_fn: Injectable speaker decoder (tests); stands in
+            for the key, never for the backend or consent.
         progress_cb: Receives each persisted finalization snapshot.
 
     Returns:
@@ -799,6 +811,7 @@ def rerun_finalization(
                 progress_cb=_offline_progress,
                 model_lease=model_lease,
                 redecode_coverage_guard=redecode_coverage_guard,
+                speaker_id_backend=speaker_id_backend,
             )
             if result.get("ok"):
                 _set_step(
@@ -812,10 +825,13 @@ def rerun_finalization(
                     last_error,
                 )
         elif step_id == "speaker_id":
-            _running(
-                "speaker_id",
-                "Uploading system audio for speaker labels…",
-                "Identifying speakers…",
+            gate = speaker_pass_gate(
+                backend=speaker_id_backend,
+                consent=speaker_audio_consent,
+                find_key=(
+                    None if speaker_transcribe_fn is not None
+                    else lambda: speaker_api_key
+                ),
             )
 
             def _speaker_progress(detail: str, curr: int, total: int) -> None:
@@ -825,15 +841,21 @@ def rerun_finalization(
                     f"Identifying speakers (window {curr}/{total})…",
                 )
 
-            if not speaker_api_key and speaker_transcribe_fn is None:
-                last_error = "No OpenAI API key is configured."
-                _set_step(steps, "speaker_id", "failed", last_error)
+            if not gate.ok:
+                # As at live End: a refused pass is skipped, not failed, and
+                # no audio leaves this computer.
+                _set_step(steps, "speaker_id", "completed", gate.reason)
             else:
+                _running(
+                    "speaker_id",
+                    "Uploading system audio for speaker labels…",
+                    "Identifying speakers…",
+                )
                 try:
                     result = rerun_speakers(
                         repository,
                         meeting_id,
-                        api_key=speaker_api_key or "",
+                        api_key=gate.api_key,
                         store=store,
                         spool_dir=meeting.get("spool_dir") or "",
                         transcribe_fn=speaker_transcribe_fn,
@@ -849,6 +871,12 @@ def rerun_finalization(
                         steps, "speaker_id", "completed",
                         f"Updated {count} speaker label"
                         f"{'' if count == 1 else 's'}",
+                    )
+                elif result.get("retired"):
+                    # OpenAI retired the model early: on-device labels stand.
+                    _set_step(
+                        steps, "speaker_id", "completed",
+                        result.get("error") or "Speaker identification skipped.",
                     )
                 else:
                     last_error = (

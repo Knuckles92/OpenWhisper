@@ -649,30 +649,11 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                     "identification"
                 ),
             )
-        try:
-            from services.settings import (
-                resolve_meeting_audio_upload_consent,
-                resolve_meeting_speaker_id_backend,
-            )
-            from services.transcript_cleanup import find_api_key
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        if resolve_meeting_speaker_id_backend() != "openai":
-            raise HTTPException(
-                status_code=400,
-                detail="speaker identification is not set to OpenAI",
-            )
-        if not resolve_meeting_audio_upload_consent():
-            raise HTTPException(
-                status_code=400,
-                detail="audio-upload consent has not been given",
-            )
-        api_key = find_api_key("openai") or ""
-        if not api_key:
-            raise HTTPException(
-                status_code=400,
-                detail="no OpenAI API key is configured",
-            )
+        from services.meeting_rerun import resolve_speaker_pass
+
+        gate = await asyncio.to_thread(resolve_speaker_pass)
+        if not gate.ok:
+            raise HTTPException(status_code=400, detail=gate.reason)
         if meeting_id in insights_running:
             raise HTTPException(
                 status_code=409,
@@ -692,7 +673,7 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                 insights_executor,
                 functools.partial(
                     rerun_speakers, repository, meeting_id,
-                    api_key=api_key, store=store,
+                    api_key=gate.api_key, store=store,
                     spool_dir=meeting.get("spool_dir"),
                 ),
             )

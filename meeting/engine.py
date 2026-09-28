@@ -28,6 +28,7 @@ from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Tuple
 from meeting.clock import MeetingClock
 from meeting.finalization import (
     POLISH_TIMEOUT_S, make_step, failed_steps_message, sparse_redecode_detail,
+    speaker_pass_gate,
 )
 from meeting.interfaces import (
     CHANNEL_LOOPBACK,
@@ -942,12 +943,13 @@ class MeetingEngine:
             speaker_skipped = False
             speaker_error = ""
             if will_speaker_id:
-                _update_step(
-                    "speaker_id",
-                    "running",
-                    "Uploading system audio for speaker labels…",
-                    message="Identifying speakers…",
-                )
+                def _announce_upload() -> None:
+                    _update_step(
+                        "speaker_id",
+                        "running",
+                        "Uploading system audio for speaker labels…",
+                        message="Identifying speakers…",
+                    )
 
                 def _speaker_progress(detail: str, curr: int, total: int) -> None:
                     _update_step(
@@ -962,6 +964,7 @@ class MeetingEngine:
                 try:
                     speaker_result = self._run_cloud_speaker_pass(
                         progress_cb=_speaker_progress,
+                        on_start=_announce_upload,
                     )
                 except Exception:
                     logger.exception("Cloud speaker identification failed")
@@ -1220,55 +1223,54 @@ class MeetingEngine:
         *,
         progress_cb: Optional[Callable[[str, int, int], None]] = None,
         transcribe_fn: Optional[Callable[..., Any]] = None,
+        on_start: Optional[Callable[[], None]] = None,
     ) -> Dict[str, Any]:
         """Upload loopback audio and relabel speakers. Never raises.
+
+        Args:
+            progress_cb: Optional ``cb(detail, current, total)``.
+            transcribe_fn: Injectable decoder (tests); stands in for the key.
+            on_start: Called once the gate allows the upload, before it.
 
         Returns:
             ``{ok, skipped, applied, error}``. ``skipped`` is True when the
             backend, consent, or API key is missing, or OpenAI has retired
             the diarization model.
         """
-        if self.options.speaker_id_backend != "openai":
+        def _openai_key() -> str:
+            from services.transcript_cleanup import find_api_key
+
+            return find_api_key("openai") or ""
+
+        gate = speaker_pass_gate(
+            backend=self.options.speaker_id_backend,
+            consent=self.options.speaker_id_audio_consent,
+            find_key=None if transcribe_fn is not None else _openai_key,
+        )
+        if not gate.ok:
             return {
                 "ok": False, "skipped": True, "applied": 0,
-                "error": "Speaker identification is not set to OpenAI.",
-            }
-        if not self.options.speaker_id_audio_consent:
-            return {
-                "ok": False, "skipped": True, "applied": 0,
-                "error": "Audio-upload consent has not been given.",
+                "error": gate.reason,
             }
         if not self.meeting_id or self.store is None:
             return {
                 "ok": False, "skipped": False, "applied": 0,
                 "error": "Meeting is not ready for speaker identification.",
             }
-        api_key = ""
-        if transcribe_fn is None:
-            try:
-                from services.transcript_cleanup import find_api_key
-
-                api_key = find_api_key("openai") or ""
-            except Exception:
-                logger.exception("Could not resolve the OpenAI API key")
-                api_key = ""
-            if not api_key:
-                return {
-                    "ok": False, "skipped": True, "applied": 0,
-                    "error": "No OpenAI API key is configured.",
-                }
         try:
-            from meeting.diarize.cloud_pass import run_cloud_speaker_pass
+            from meeting.diarize import cloud_pass
         except Exception as exc:
             logger.exception("Cloud speaker pass unavailable")
             return {
                 "ok": False, "skipped": False, "applied": 0, "error": str(exc),
             }
+        if on_start is not None:
+            on_start()
         spool_dir = self._spool_dir or ""
         try:
-            result = run_cloud_speaker_pass(
+            result = cloud_pass.run_cloud_speaker_pass(
                 self.repository, self.meeting_id, self.store, spool_dir,
-                api_key=api_key,
+                api_key=gate.api_key,
                 transcribe_fn=transcribe_fn,
                 progress_cb=progress_cb,
             )

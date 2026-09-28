@@ -18,6 +18,12 @@ import pytest
 
 from meeting.interfaces import AgentResult, SpooledChunk, TranscriptSegment
 
+# Load the real diarize package before the ``fakes`` fixture shadows its
+# clustering module: importing ``meeting.diarize.*`` afterwards would run the
+# package ``__init__`` against the fake and fail, but only when this file runs
+# on its own.
+import meeting.diarize.cloud_pass  # noqa: F401,E402
+
 # Fakes
 
 class FakeSource:
@@ -1511,12 +1517,13 @@ class TestCloudSpeakerStep:
         from services import openai_retirement
 
         message = openai_retirement.SPEAKER_MODEL_RETIRED_MESSAGE
-        cloud_pass = types.ModuleType("meeting.diarize.cloud_pass")
-        cloud_pass.run_cloud_speaker_pass = lambda *args, **kwargs: {
-            "ok": False, "retired": True, "applied": 0, "created": 0,
-            "error": message,
-        }
-        monkeypatch.setitem(sys.modules, "meeting.diarize.cloud_pass", cloud_pass)
+        monkeypatch.setattr(
+            "meeting.diarize.cloud_pass.run_cloud_speaker_pass",
+            lambda *args, **kwargs: {
+                "ok": False, "retired": True, "applied": 0, "created": 0,
+                "error": message,
+            },
+        )
         engine = make_engine(
             cloud_enabled=False,
             speaker_id_backend="openai",
@@ -1529,6 +1536,36 @@ class TestCloudSpeakerStep:
         assert result["ok"] is False
         assert result["skipped"] is True
         assert result["error"] == message
+
+    @pytest.mark.parametrize("backend,consent,reason", [
+        ("openai", False, "consent"),
+        ("local", True, "not set to OpenAI"),
+    ])
+    def test_refused_gate_never_uploads_or_claims_to(
+            self, make_engine, monkeypatch, backend, consent, reason):
+        uploads = []
+        monkeypatch.setattr(
+            "meeting.diarize.cloud_pass.run_cloud_speaker_pass",
+            lambda *args, **kwargs: uploads.append(kwargs) or {"ok": True},
+        )
+        monkeypatch.setattr(
+            "services.transcript_cleanup.find_api_key", lambda provider: "sk-test",
+        )
+        engine = make_engine(
+            cloud_enabled=False,
+            speaker_id_backend=backend,
+            speaker_id_audio_consent=consent,
+        )
+        engine.start()
+        announced = []
+        result = engine._run_cloud_speaker_pass(
+            on_start=lambda: announced.append(True),
+        )
+
+        assert uploads == []
+        assert announced == []
+        assert result["skipped"] is True
+        assert reason in result["error"]
 
 def test_engine_module_has_no_dead_recent_text_api():
     """The unused topic-shift buffer is gone (the scheduler reads the DB)."""

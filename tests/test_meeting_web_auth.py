@@ -494,7 +494,7 @@ class TestRerunSpeakers:
         )
         r = tc.post("/api/meetings/m_test/respeakers", params={"token": HOST_TOKEN})
         assert r.status_code == 400
-        assert r.json()["detail"] == "speaker identification is not set to OpenAI"
+        assert r.json()["detail"] == "Speaker identification is not set to OpenAI."
 
     def test_missing_audio_consent_is_400(self, client, monkeypatch):
         tc = self._ended(client)
@@ -508,7 +508,7 @@ class TestRerunSpeakers:
         )
         r = tc.post("/api/meetings/m_test/respeakers", params={"token": HOST_TOKEN})
         assert r.status_code == 400
-        assert r.json()["detail"] == "audio-upload consent has not been given"
+        assert r.json()["detail"] == "Audio-upload consent has not been given."
 
     def test_missing_openai_key_is_400(self, client, monkeypatch):
         tc = self._ended(client)
@@ -526,7 +526,7 @@ class TestRerunSpeakers:
         )
         r = tc.post("/api/meetings/m_test/respeakers", params={"token": HOST_TOKEN})
         assert r.status_code == 400
-        assert r.json()["detail"] == "no OpenAI API key is configured"
+        assert r.json()["detail"] == "No OpenAI API key is configured."
 
     def test_unknown_meeting_is_404(self, client):
         tc = self._ended(client)

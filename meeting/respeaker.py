@@ -12,7 +12,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, Optional
 
-from meeting.diarize.cloud_pass import DEFAULT_MODEL, run_cloud_speaker_pass
+from meeting.diarize import cloud_pass
+from meeting.diarize.cloud_pass import DEFAULT_MODEL
 from meeting.state.store import MeetingStateStore
 from meeting.stored import open_store as _open_store
 
@@ -48,8 +49,9 @@ def rerun_speakers(
         progress_cb: Optional progress callback.
 
     Returns:
-        ``{ok, state, applied, created, error}``. Failures are reported
-        here, not raised, except unknown-meeting ``ValueError``.
+        ``{ok, state, applied, created, windows, retired, error}``. Failures
+        are reported here, not raised, except unknown-meeting ``ValueError``.
+        ``retired`` means OpenAI no longer serves the model.
 
     Raises:
         ValueError: When the meeting is unknown.
@@ -60,7 +62,7 @@ def rerun_speakers(
     if store is None:
         store = _open_store(repository, meeting_id, meeting)
     resolved_spool = spool_dir or meeting.get("spool_dir") or ""
-    result = run_cloud_speaker_pass(
+    result = cloud_pass.run_cloud_speaker_pass(
         repository, meeting_id, store, resolved_spool,
         api_key=api_key, model=model,
         transcribe_fn=transcribe_fn, progress_cb=progress_cb,
@@ -75,5 +77,6 @@ def rerun_speakers(
         "applied": int(result.get("applied") or 0),
         "created": int(result.get("created") or 0),
         "windows": int(result.get("windows") or 0),
+        "retired": bool(result.get("retired")),
         "error": result.get("error"),
     }

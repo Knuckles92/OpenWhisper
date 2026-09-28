@@ -1,6 +1,13 @@
 """Shared presentation of live and retried finalization steps."""
-from collections.abc import Sequence
-from typing import Any
+import logging
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from datetime import date
+from typing import Any, Optional
+
+from services import openai_retirement
+
+logger = logging.getLogger(__name__)
 
 # Shared per-block budget for transcript cleanup, including provider tool rounds.
 POLISH_TIMEOUT_S = 180.0
@@ -122,6 +129,68 @@ STEP_DETAILS = {
     ),
     "finalize": "Saving final transcript and consolidating meeting state",
 }
+
+
+NOT_OPENAI_REASON = "Speaker identification is not set to OpenAI."
+NO_CONSENT_REASON = "Audio-upload consent has not been given."
+NO_KEY_REASON = "No OpenAI API key is configured."
+
+
+@dataclass(frozen=True)
+class SpeakerPassGate:
+    """Whether the OpenAI speaker pass may upload a meeting's system audio.
+
+    Attributes:
+        ok: True only when every condition holds.
+        reason: Why the pass is refused; empty when ``ok``.
+        offered: The user chose OpenAI labels and OpenAI still serves them,
+            so a refusal is one they can fix (consent or key).
+        api_key: The key to upload with; empty unless ``ok``.
+    """
+    ok: bool
+    reason: str = ""
+    offered: bool = False
+    api_key: str = field(default="", repr=False)
+
+
+def speaker_pass_gate(
+    *,
+    backend: str,
+    consent: bool,
+    find_key: Optional[Callable[[], Optional[str]]] = None,
+    today: Optional[date] = None,
+) -> SpeakerPassGate:
+    """The one eligibility check for every OpenAI speaker pass.
+
+    Live End, the dashboard's re-run, and the desktop retry all call this, so
+    none of them can upload system audio the others would refuse. A refused
+    pass is skipped, never failed.
+
+    Args:
+        backend: The speaker-identification backend (``off``, ``local``,
+            ``openai``).
+        consent: Whether the user approved uploading meeting audio.
+        find_key: Returns the OpenAI key. Called only when every other check
+            passes. ``None`` means no key is needed (an injected decoder).
+        today: Pins the retirement date check (tests).
+    """
+    if backend != "openai":
+        return SpeakerPassGate(ok=False, reason=NOT_OPENAI_REASON)
+    if openai_retirement.retired(today):
+        return SpeakerPassGate(
+            ok=False, reason=openai_retirement.SPEAKER_MODEL_RETIRED_MESSAGE,
+        )
+    if not consent:
+        return SpeakerPassGate(ok=False, reason=NO_CONSENT_REASON, offered=True)
+    api_key = ""
+    if find_key is not None:
+        try:
+            api_key = find_key() or ""
+        except Exception:
+            logger.exception("Could not resolve the OpenAI API key")
+        if not api_key:
+            return SpeakerPassGate(ok=False, reason=NO_KEY_REASON, offered=True)
+    return SpeakerPassGate(ok=True, offered=True, api_key=api_key)
 
 
 def make_step(step_id: str, status: str = "pending") -> dict[str, Any]:

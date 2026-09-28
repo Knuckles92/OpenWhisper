@@ -1072,6 +1072,14 @@ class MeetingRuntime:
                 meeting, then the Past Meetings card, then the newest meeting.
         """
         step_key = str(from_step or "failed").strip() or "failed"
+        if step_key == "speaker_id":
+            # The retry skips a refused speaker pass anyway; refusing here
+            # also spares re-running the steps after it for nothing.
+            reason = self._speaker_rerun_fields()["speaker_rerun_reason"]
+            if reason:
+                logger.info("Speaker re-run refused: %s", reason)
+                self.controller.meeting_status_update.emit(reason)
+                return
         with self._lock:
             if (
                 self._starting
@@ -1979,7 +1987,30 @@ class MeetingRuntime:
                     "Could not read meeting status for content summary"
                 )
         summary["meeting_status"] = str((row or {}).get("status") or "")
+        summary.update(self._speaker_rerun_fields())
         return summary
+
+    @staticmethod
+    def _speaker_rerun_fields() -> Dict[str, Any]:
+        """Whether Re-run speakers may upload system audio right now.
+
+        Only the button's look depends on this; the retry applies the same
+        gate before anything is uploaded.
+        """
+        try:
+            from services.meeting_rerun import resolve_speaker_pass
+
+            gate = resolve_speaker_pass()
+        except Exception:
+            logger.exception("Could not check whether speakers can be re-run")
+            return {
+                "speaker_rerun_offered": False,
+                "speaker_rerun_reason": "Speaker identification is unavailable.",
+            }
+        return {
+            "speaker_rerun_offered": gate.offered,
+            "speaker_rerun_reason": "" if gate.ok else gate.reason,
+        }
 
     def cleanup(self) -> None:
         """Release the meeting engine on application shutdown.
