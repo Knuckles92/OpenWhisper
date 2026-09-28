@@ -33,11 +33,8 @@ from meeting.refinalize import FinalizationBusyError, rerun_finalization
 from meeting.respeaker import rerun_speakers
 from meeting.persist.data_lifecycle import delete_meeting_data
 from meeting.state.custom_reports import MAX_REQUEST_CHARS
-from meeting.state.schema import (
-    FinalizationState,
-    MeetingState,
-    compact_finalization_list_fields,
-)
+from meeting.state.schema import MeetingState, parse_state_json
+from meeting.stored import compact_finalization_list_fields, load_state, open_store
 from meeting.time_utils import elapsed_seconds, seconds_since
 from meeting.web.auth import resolve_role
 from meeting.web.ws import WsHub
@@ -150,13 +147,10 @@ def _meeting_digest(meeting: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     Never raises: a missing or corrupt snapshot just omits the digest.
     """
-    raw = meeting.get("state_json")
-    if not raw:
+    state = parse_state_json(meeting.get("state_json"))
+    if state is None:
         return None
     try:
-        state = json.loads(raw) if isinstance(raw, str) else raw
-        if not isinstance(state, dict):
-            return None
         cards = state.get("cards") if isinstance(state.get("cards"), dict) else {}
 
         def live_count(key: str) -> int:
@@ -336,41 +330,8 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         }
 
     def _stored_state(meeting_id: str, meeting: Dict[str, Any]) -> Dict[str, Any]:
-        """Parse a meeting row's persisted state document (blocking)."""
-        try:
-            raw = json.loads(meeting.get("state_json") or "{}")
-            if not isinstance(raw, dict):
-                raise ValueError("state_json is not an object")
-            raw.setdefault("meeting_id", meeting_id)
-            raw.setdefault("title", str(meeting.get("title") or ""))
-            raw.setdefault("status", str(meeting.get("status") or "ended"))
-            raw.setdefault(
-                "cloud_enabled", bool(meeting.get("cloud_enabled", False))
-            )
-            # Non-live REST snapshots must not expose interrupted in-flight work.
-            raw["finalization"] = FinalizationState.normalize_historical(
-                raw.get("finalization"),
-                cloud_enabled=bool(raw.get("cloud_enabled", False)),
-                meeting_status=str(raw.get("status") or "ended"),
-            ).to_dict()
-            if (raw.get("insight_review") or {}).get("status") == "running":
-                raw["insight_review"].update(status="unavailable", message="Review was interrupted. Retry when ready.")
-            # A report whose worker died with the process is not still being
-            # written; showing it as running would also block every retry.
-            for report in raw.get("custom_reports") or []:
-                if isinstance(report, dict) and report.get("status") == "running":
-                    report.update(
-                        status="failed",
-                        message="This report was interrupted. Ask for it again.",
-                    )
-            return MeetingState.from_dict(raw).to_dict()
-        except (KeyError, TypeError, ValueError):
-            logger.exception("Corrupt state_json for meeting %s", meeting_id)
-            return MeetingState(
-                meeting_id=meeting_id,
-                title=str(meeting.get("title") or ""),
-                status=str(meeting.get("status") or "ended"),
-            ).to_dict()
+        """A past meeting's persisted state document (blocking)."""
+        return load_state(meeting, meeting_id, historical=True).to_dict()
 
     async def _state_for(meeting_id: str,
                          meeting: Dict[str, Any]) -> Dict[str, Any]:
@@ -541,15 +502,12 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail="unknown meeting")
-        from meeting.state.store import MeetingStateStore, repository_segment_lookup
         from meeting.insight_review import start_review
         store = getattr(engine, "store", None) if getattr(engine, "meeting_id", None) == meeting_id else None
         if store is None:
             if meeting_id not in review_stores:
-                review_stores[meeting_id] = MeetingStateStore(
-                    MeetingState.from_dict(_stored_state(meeting_id, meeting)), repository=repository,
-                    segment_exists=lambda sid: repository.segment_exists(meeting_id, sid),
-                    segment_lookup=repository_segment_lookup(repository, meeting_id))
+                review_stores[meeting_id] = open_store(
+                    repository, meeting_id, meeting, historical=True)
             store = review_stores[meeting_id]
         if meeting_id in insights_running:
             raise HTTPException(status_code=409, detail="A meeting update is already running")
@@ -795,15 +753,8 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         if store is not None and getattr(engine, "meeting_id", None) == meeting_id:
             return store
         if meeting_id not in review_stores:
-            from meeting.state.store import MeetingStateStore, repository_segment_lookup
-
-            review_stores[meeting_id] = MeetingStateStore(
-                MeetingState.from_dict(_stored_state(meeting_id, meeting)),
-                repository=repository,
-                segment_exists=lambda sid: repository.segment_exists(
-                    meeting_id, sid
-                ),
-                segment_lookup=repository_segment_lookup(repository, meeting_id),
+            review_stores[meeting_id] = open_store(
+                repository, meeting_id, meeting, historical=True
             )
         return review_stores[meeting_id]
 

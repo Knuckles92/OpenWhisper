@@ -16,6 +16,7 @@ from sqlalchemy.orm import object_session
 from meeting.corrections import correct_text, term_rules
 
 from meeting.interfaces import OpResult, TranscriptSegment
+from meeting.state.schema import parse_state_json
 from meeting.time_utils import utc_now_iso
 from services.models import (
     MeetingAudioChunk,
@@ -96,7 +97,7 @@ def _segment_to_dict(row: MeetingSegment) -> Dict[str, Any]:
         if row.meeting_id not in cache:
             meeting = session.get(MeetingSession, row.meeting_id)
             cache[row.meeting_id] = term_rules(
-                json.loads(meeting.state_json or "{}") if meeting else {}
+                (parse_state_json(meeting.state_json) or {}) if meeting else {}
             )
         rules = cache[row.meeting_id]
     return {
@@ -231,12 +232,11 @@ class SqlMeetingRepository:
             row = session.get(MeetingSession, meeting_id)
             if row is None:
                 raise ValueError(f"unknown meeting '{meeting_id}'")
-            state: Dict[str, Any] = {}
-            if row.state_json:
-                try:
-                    state = json.loads(row.state_json)
-                except (TypeError, ValueError):
+            state = parse_state_json(row.state_json)
+            if state is None:
+                if row.state_json:
                     logger.warning("Replacing corrupt state for meeting %s", meeting_id)
+                state = {}
             state["meeting_id"] = meeting_id
             state["title"] = clean_title
             row.title = clean_title
@@ -895,12 +895,9 @@ class SqlMeetingRepository:
                 ))
                 stored_ids.append(seg.segment_id)
 
-            if meeting is not None and meeting.state_json:
-                try:
-                    state = json.loads(meeting.state_json)
-                except (TypeError, ValueError):
-                    state = None
-                if isinstance(state, dict):
+            if meeting is not None:
+                state = parse_state_json(meeting.state_json)
+                if state is not None:
                     _remap_state_evidence(
                         state, id_map, old_items, new_items,
                         frozenset(retained),

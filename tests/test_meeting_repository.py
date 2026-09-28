@@ -295,6 +295,13 @@ class TestSegments:
         assert seg["speaker_participant_id"] is None
         assert seg["speaker_pinned"] is True
 
+    def test_unreadable_state_does_not_block_transcript_reads(self, repo):
+        make_meeting(repo)
+        repo.add_segments([make_segment("m_test1", "sg_1", 0.0, 2.0, "first")])
+        repo.update_meeting("m_test1", state_json="{not json")
+
+        assert [s["text"] for s in repo.get_segments("m_test1")] == ["first"]
+
     def test_keyset_paging_handles_equal_timestamps(self, repo):
         make_meeting(repo)
         repo.add_segments([
