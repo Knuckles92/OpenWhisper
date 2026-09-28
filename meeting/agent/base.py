@@ -77,24 +77,28 @@ def create_agent_core(kind: str, payload_dir: Optional[str] = None) -> AgentCore
     """Create the meeting-intelligence agent core.
 
     Args:
-        kind: Pi or OpenCode for a managed sidecar; Direct for the in-process agent.
+        kind: ``pi`` for the bundled sidecar, ``direct`` for the in-process
+            agent, or an installed agent (``claude_code``, ``codex``,
+            ``opencode``) that runs on the user's own agent setup.
         payload_dir: Directory holding the sidecar payload (``bundle.cjs``
             and optionally a portable ``node.exe``). Required for ``pi``.
 
     Returns:
         An ``AgentCore`` implementation. When ``pi`` is requested but the
         sidecar bundle is missing, falls back to the direct agent with a
-        logged warning rather than failing the meeting.
+        logged warning rather than failing the meeting. An installed agent
+        never falls back: it needs no API key, and the direct agent would.
     """
     # Imported lazily to avoid import cycles and keep optional dependencies
     # (the openai SDK) out of the factory's import path.
-    from meeting.agent.openrouter_direct import DirectOpenRouterAgent
+    from services.settings import MeetingAgentCore
 
-    if kind == "opencode":
-        if not payload_dir:
-            raise RuntimeError("Install OpenCode v2 from Downloads to enable meeting intelligence.")
-        from meeting.agent.opencode_sidecar import OpenCodeSidecarAgent
-        return OpenCodeSidecarAgent(payload_dir)
+    if kind in MeetingAgentCore.INSTALLED:
+        from meeting.agent.installed.core import InstalledAgentCore
+
+        return InstalledAgentCore(kind)
+
+    from meeting.agent.openrouter_direct import DirectOpenRouterAgent
 
     if kind == "pi":
         bundle_path = (
