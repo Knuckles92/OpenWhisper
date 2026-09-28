@@ -443,7 +443,7 @@ class TestMeetingSettings:
     def test_defaults_come_from_config(self):
         assert self.resolve_whisper_model({}) == config.MEETING_WHISPER_MODEL
         assert self.resolve_language({}) == config.MEETING_LANGUAGE
-        assert self.resolve_provider({}) == config.MEETING_LLM_PROVIDER
+        assert self.resolve_provider({}) == "openrouter"
         assert self.resolve_llm_model({}) == config.MEETING_LLM_MODEL
         assert self.resolve_agent_core({}) == config.MEETING_AGENT_CORE
         assert config.MEETING_AGENT_CORE == self.agent_cores.PI
@@ -543,7 +543,7 @@ class TestMeetingSettings:
         }
         assert self.resolve_whisper_model(saved) == config.MEETING_WHISPER_MODEL
         assert self.resolve_language(saved) == config.MEETING_LANGUAGE
-        assert self.resolve_provider(saved) == config.MEETING_LLM_PROVIDER
+        assert self.resolve_provider(saved) == "openrouter"
         assert self.resolve_llm_model(saved) == config.MEETING_LLM_MODEL
         assert self.resolve_agent_core(saved) == config.MEETING_AGENT_CORE
         assert self.resolve_speaker_id(saved) == config.MEETING_SPEAKER_ID_BACKEND
@@ -597,7 +597,7 @@ class TestMeetingSettings:
             self.keys.MEETING_LLM_PROVIDER: "custom_missing",
             self.keys.TRANSCRIPT_CLEANUP_PROVIDER: "custom_missing",
         }
-        assert self.resolve_provider(settings) == config.MEETING_LLM_PROVIDER
+        assert self.resolve_provider(settings) == "openrouter"
         assert resolve_transcript_cleanup_provider(settings) == config.TRANSCRIPT_CLEANUP_PROVIDER
 
     def test_text_llm_assignment_is_a_pair(self):
