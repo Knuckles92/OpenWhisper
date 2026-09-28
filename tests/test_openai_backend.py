@@ -39,7 +39,7 @@ class FakeTranscriptions:
 
 def make_backend(transcriptions):
     backend = OpenAIBackend.__new__(OpenAIBackend)
-    backend.model_type = "api_whisper"
+    backend.model_type = "whisper-1"
     backend.api_key = "sk-test"
     backend.is_transcribing = False
     backend.should_cancel = False

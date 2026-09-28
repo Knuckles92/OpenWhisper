@@ -8,7 +8,6 @@ from config import config
 from services import openai_retirement
 from services.credentials import resolve_credential
 from services.settings import (
-    LEGACY_API_MODELS,
     resolve_api_transcription_model,
     serving_api_model,
     settings_manager,
@@ -71,8 +70,6 @@ class OpenAIBackend(TranscriptionBackend):
     def _get_api_model_name(self) -> str:
         if self.model_type == "api":
             return resolve_api_transcription_model(settings_manager.load_all_settings())
-        if self.model_type in LEGACY_API_MODELS:
-            return serving_api_model(LEGACY_API_MODELS[self.model_type])
         if self.model_type in config.API_MODEL_CHOICES:
             return serving_api_model(self.model_type)
         raise ValueError(f"Unknown API transcription model: {self.model_type}")
@@ -220,11 +217,6 @@ class OpenAIBackend(TranscriptionBackend):
             raise
         finally:
             self.is_transcribing = False
-
-    def change_model_type(self, model_type: str):
-        """Change the model used for subsequent requests."""
-        self.model_type = model_type
-        logger.info(f"Model type changed to: {model_type}")
 
     def cleanup(self):
         """Clean up OpenAI client resources."""
