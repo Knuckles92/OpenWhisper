@@ -168,11 +168,9 @@ def compare_texts(original: str, transcribed: str) -> Tuple[float, str]:
 def run_large_file_workflow(audio_file: str, original_text: str):
     """Test the production large-file transcription path and validate accuracy.
 
-    Mirrors the dispatch logic in services/runtime/transcription.py
-    (_submit_transcription_job): only backends that opt in via
-    requires_file_splitting=True go through split + transcribe_chunks. The
-    local backend opts out (faster-whisper handles long audio natively), so
-    its production path is a single transcribe() call on the original file.
+    Only the OpenAI backend splits a file over the upload limit, inside its
+    own transcribe(); faster-whisper handles long audio natively, so the
+    production path here is a single transcribe() call on the original file.
     """
     logger.info("")
     logger.info("=" * 60)
@@ -195,40 +193,14 @@ def run_large_file_workflow(audio_file: str, original_text: str):
         backend.cleanup()
         raise unittest.SkipTest("Installed local Whisper model required")
 
-    should_split = backend.requires_file_splitting
-    logger.info(f"   Backend.requires_file_splitting = {should_split}")
-
-    chunk_files = []
     try:
-        if should_split:
-            logger.info("\n3. Splitting audio file (backend requires splitting)...")
-
-            def progress(msg):
-                logger.info(f"   {msg}")
-
-            chunk_files = audio_processor.split_audio_file(audio_file, progress)
-            if not chunk_files:
-                logger.error("❌ Failed to split audio file")
-                return False
-
-            logger.info(f"✅ Created {len(chunk_files)} chunks")
-            for i, chunk_file in enumerate(chunk_files):
-                size_mb = os.path.getsize(chunk_file) / (1024 * 1024)
-                logger.info(f"   Chunk {i+1}: {size_mb:.2f} MB")
-
-            logger.info("\n4. Transcribing chunks via transcribe_chunks()...")
-            transcribed_text = backend.transcribe_chunks(chunk_files)
-        else:
-            logger.info("\n3. Backend handles large files natively - skipping split")
-            logger.info("   (Production passes the original file straight to transcribe())")
-
-            logger.info("\n4. Transcribing original file via transcribe()...")
-            transcribed_text = backend.transcribe(audio_file)
+        logger.info("\n3. Transcribing original file via transcribe()...")
+        transcribed_text = backend.transcribe(audio_file)
 
         logger.info(f"✅ Transcription complete: {len(transcribed_text)} characters")
         logger.info(f"   Preview: {transcribed_text[:150]}...")
 
-        logger.info("\n5. Validating transcription accuracy...")
+        logger.info("\n4. Validating transcription accuracy...")
         similarity, analysis = compare_texts(original_text, transcribed_text)
         logger.info(f"   {analysis}")
 
@@ -254,11 +226,6 @@ def run_large_file_workflow(audio_file: str, original_text: str):
         return False
     finally:
         backend.cleanup()
-        if chunk_files:
-            try:
-                audio_processor.cleanup_temp_files()
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup temp files: {cleanup_error}")
 
     logger.info("")
     logger.info("=" * 60)

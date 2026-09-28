@@ -1,10 +1,16 @@
 """Base transcription backend interface."""
 from abc import ABC, abstractmethod
-from typing import List
+from typing import Callable, Optional
 
 
 class TranscriptionBackend(ABC):
     """Abstract base class for transcription backends."""
+
+    #: Status of the steps inside one long ``transcribe`` call, such as
+    #: splitting a large file and uploading its chunks: ``(message,
+    #: transcribing)``, where ``transcribing`` is True from the step that
+    #: starts the transcription proper. Set by the application controller.
+    on_progress: Optional[Callable[[str, bool], None]] = None
 
     def __init__(self):
         self.is_transcribing = False
@@ -28,24 +34,18 @@ class TranscriptionBackend(ABC):
         """Reset the cancellation flag."""
         self.should_cancel = False
 
-    @property
-    def requires_file_splitting(self) -> bool:
-        """Return whether large inputs must be split; defaults conservatively."""
-        return True
+    def large_file_size_mb(self, audio_path: str) -> Optional[float]:
+        """Return the file's size in MiB if ``transcribe`` will split it.
 
-    def transcribe_chunks(self, chunk_files: List[str]) -> str:
-        """Transcribe chunks sequentially and combine their text."""
-        from services.audio_processor import audio_processor
+        None, the default, means the file is transcribed in one pass whatever
+        its size; only a backend with an upload limit splits.
+        """
+        return None
 
-        transcriptions = []
-        for chunk_file in chunk_files:
-            if self.should_cancel:
-                raise Exception("Transcription canceled")
-
-            chunk_text = self.transcribe(chunk_file)
-            transcriptions.append(chunk_text)
-
-        return audio_processor.combine_transcriptions(transcriptions)
+    def _report_progress(self, message: str, transcribing: bool = False) -> None:
+        callback = self.on_progress
+        if callback is not None:
+            callback(message, transcribing)
 
     def cleanup(self):
         """Release backend resources."""

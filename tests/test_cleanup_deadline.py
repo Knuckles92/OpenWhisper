@@ -167,8 +167,7 @@ def test_cancel_during_a_stalled_cleanup_frees_the_dictation(tmp_path, monkeypat
     controller._pending_audio_path = None
     controller.recorder.is_recording = False
     controller.current_backend = SimpleNamespace(
-        is_available=lambda: True, requires_file_splitting=False,
-        is_transcribing=False, transcribe=lambda _path: "um private text")
+        is_available=lambda: True, is_transcribing=False, transcribe=lambda _path: "um private text")
     monkeypatch.setattr(transcription.settings_manager, "load_all_settings",
                         lambda: {"transcript_cleanup_enabled": True})
     runtime = transcription.TranscriptionRuntime(controller)
