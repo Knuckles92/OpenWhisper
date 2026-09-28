@@ -24,6 +24,7 @@ from services.settings import (
     TranscriptCleanupProvider,
     default_transcript_cleanup_model,
 )
+from tests.fakes.settings import InMemorySettings
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as dialog_module
@@ -87,39 +88,6 @@ def _cached(repo_id, size_bytes):
 
 BASE_REPO = "Systran/faster-whisper-base"
 TINY_REPO = "Systran/faster-whisper-tiny"
-
-
-class _FakeSettings:
-    """In-memory settings store that matches the Model Manager call surface."""
-
-    def __init__(self, values):
-        self.values = values
-
-    def get(self, key, default=None):
-        return self.values.get(key, default)
-
-    def save_setting(self, key, value):
-        self.values[key] = value
-
-    def load_all_settings(self):
-        return dict(self.values)
-
-    def save_all_settings(self, settings):
-        self.values.clear()
-        self.values.update(settings)
-
-    def update_settings(self, updates, *, remove=()):
-        self.values.update(updates)
-        for key in remove:
-            self.values.pop(key, None)
-        return dict(self.values)
-
-    def mutate_settings(self, mutator):
-        result = mutator(self.values)
-        return result
-
-    def load_model_selection(self):
-        return self.values.get(SettingsKey.SELECTED_MODEL, "local_whisper")
 
 
 def _isolated_settings(isolated):
@@ -194,7 +162,7 @@ class _DialogTestCase:
         api_keys=None,
     ):
         values = self._settings_values(active_model, extra_settings)
-        fake_settings = _FakeSettings(values)
+        fake_settings = InMemorySettings(values)
         patchers = [
             patch.object(
                 dialog_module, "scan_cached_models", return_value=cached or {}
@@ -1033,7 +1001,7 @@ class TestNewTextProviders(_DialogTestCase):
         assert picker.provider_requirement.text() == "No API key required"
 
 def test_meeting_remote_source_is_independent_and_preserves_local_model():
-    settings = _FakeSettings({SettingsKey.SELECTED_MODEL: "local_whisper",
+    settings = InMemorySettings({SettingsKey.SELECTED_MODEL: "local_whisper",
                               SettingsKey.MEETING_WHISPER_MODEL: "tiny"})
     with _isolated_settings(settings):
         host = _Host(lambda: "base")
@@ -1057,7 +1025,7 @@ def test_meeting_remote_source_is_independent_and_preserves_local_model():
 def test_meeting_remote_settings_link_and_unpaired_connection_check(monkeypatch):
     from ui_qt.dialogs.settings_destinations import REMOTE_ENGINE
     from tests.test_remote_engine import _wait_for
-    settings = _FakeSettings({SettingsKey.MEETING_ASR_SOURCE: "remote"})
+    settings = InMemorySettings({SettingsKey.MEETING_ASR_SOURCE: "remote"})
     with _isolated_settings(settings):
         host = _Host(lambda: None)
         selected = []

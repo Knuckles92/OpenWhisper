@@ -18,6 +18,7 @@ from PyQt6.QtCore import QEventLoop, QMimeData, QTimer
 from services.runtime import transcription
 from services.runtime.transcription import TranscriptionRuntime
 from services.settings import SettingsKey
+from tests.fakes.settings import InMemorySettings
 from ui_qt.clipboard import ClipboardSnapshot, TemporaryClipboard
 
 
@@ -25,17 +26,6 @@ def _pump(ms=30):
     loop = QEventLoop()
     QTimer.singleShot(ms, loop.quit)
     loop.exec()
-
-
-class FakeSettings:
-    def __init__(self):
-        self.values = {SettingsKey.AUTO_PASTE: True, SettingsKey.COPY_CLIPBOARD: True}
-
-    def load_all_settings(self):
-        return dict(self.values)
-
-    def get(self, key, default=None):
-        return self.values.get(key, default)
 
 
 class FakeHistory:
@@ -152,7 +142,9 @@ def _harness(monkeypatch, ui_factory=FakeUI):
     events = []
     ui = ui_factory(events)
     history = FakeHistory(events)
-    settings = FakeSettings()
+    settings = InMemorySettings(
+        {SettingsKey.AUTO_PASTE: True, SettingsKey.COPY_CLIPBOARD: True}
+    )
     paste = Mock(side_effect=lambda: events.append("paste"))
     monkeypatch.setattr(transcription, "history_manager", history)
     monkeypatch.setattr(transcription, "settings_manager", settings)
