@@ -23,7 +23,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 from meeting.clock import MeetingClock
 from meeting.finalization import (
@@ -1304,10 +1304,16 @@ class MeetingEngine:
                 new_words, old_words,
             )
             return False
-        try:
-            self._assign_speakers_from_session(decoded, spool_dir, chunks)
-        except Exception:
-            logger.exception("Offline speaker assignment failed")
+        from meeting.refinalize import (
+            assign_session_speakers,
+            reload_store,
+            strip_unevidenced_proposed,
+        )
+
+        assign_session_speakers(
+            decoded, me_id=self._me_participant_id, diarizer=self._diarizer,
+            spool_dir=spool_dir, chunks=chunks,
+        )
         replace = getattr(self.repository, "replace_final_transcript", None)
         if not callable(replace):
             return False
@@ -1322,24 +1328,9 @@ class MeetingEngine:
                 mark_done(self.meeting_id)
             except Exception:
                 logger.exception("Could not mark chunks done after offline ASR")
-        self._reload_store_from_repository()
-        # The re-decode replaced every segment id; the repository remapped
-        # evidence anchors onto the new transcript where an overlap match
-        # exists. Proposed items that kept at least one live anchor stay on
-        # the dashboard — their content is grounded in the actual meeting and
-        # the final consolidation reconciles it. Only ghost-anchored items are
-        # stripped. live_notes is deliberately kept whole: it provides
-        # structured context for the final consolidation pass (and preserves
-        # meeting notes when final report is off).
-        from meeting.state.schema import CARD_KEYS
-
-        self._strip_proposed_cards(
-            cards=tuple(
-                key for key in CARD_KEYS
-                if key not in ("user_notes", "live_notes")
-            ),
-            keep_evidenced=True,
-        )
+        if self.store is not None:
+            reload_store(self.store, self.repository, self.meeting_id)
+            strip_unevidenced_proposed(self.store)
         # The end-of-capture repair ran against the draft transcript; timeline
         # coverage and summary fallbacks are rebuilt from the final one.
         if self.store is not None:
@@ -1357,108 +1348,6 @@ class MeetingEngine:
             len(rows), len(deleted),
         )
         return True
-
-    def _reload_store_from_repository(self) -> None:
-        """Reload live state after the repository rewrote evidence ids."""
-        if self.store is None or not self.meeting_id:
-            return
-        try:
-            meeting = self.repository.get_meeting(self.meeting_id)
-        except Exception:
-            logger.exception("Could not reload meeting after transcript replace")
-            return
-        raw = (meeting or {}).get("state_json") or ""
-        if not raw:
-            return
-        try:
-            data = json.loads(raw)
-        except (TypeError, ValueError):
-            logger.warning("Corrupt state_json after transcript replace")
-            return
-        try:
-            self.store.replace_document(MeetingState.from_dict(data))
-        except Exception:
-            logger.exception("Could not replace live meeting state document")
-
-    def _strip_proposed_cards(
-        self,
-        cards: Optional[Iterable[str]] = None,
-        keep_evidenced: bool = False,
-    ) -> None:
-        """Remove agent-only proposed cards so consolidation starts clean.
-
-        Args:
-            cards: Card keys to strip; defaults to every card except the
-                human-only ``user_notes``.
-            keep_evidenced: Skip proposed items that still carry at least one
-                evidence anchor (used after the offline re-decode, where the
-                repository remapped surviving anchors onto the new transcript
-                and consolidation should reconcile grounded live items rather
-                than rebuild from scratch).
-        """
-        if self.store is None:
-            return
-        from meeting.state.schema import CARD_KEYS, CardItem
-
-        keys = tuple(cards) if cards is not None else CARD_KEYS
-        snapshot = self.store.snapshot()
-        ops: List[Dict[str, Any]] = []
-        cards_snapshot = snapshot.get("cards") or {}
-        for key in keys:
-            if key == "user_notes":
-                continue
-            for item in cards_snapshot.get(key) or []:
-                if not isinstance(item, dict):
-                    continue
-                if item.get("status") != "proposed" or CardItem.from_dict(item).protected:
-                    continue
-                if keep_evidenced and (item.get("evidence") or []):
-                    continue
-                ops.append({
-                    "op": "remove_item",
-                    "id": item.get("id"),
-                    "base_revision": item.get("revision", 1),
-                })
-        if not ops:
-            return
-        try:
-            self.store.apply("system", "finalization", ops)
-        except Exception:
-            logger.exception("Could not strip proposed cards before report")
-
-    def _assign_speakers_from_session(
-        self,
-        segments: List[TranscriptSegment],
-        spool_dir: str,
-        chunks: List[Dict[str, Any]],
-    ) -> None:
-        """Assign Me/diarizer labels using session audio instead of chunks."""
-        try:
-            from meeting.asr.offline import load_channel_session
-            from meeting.diarize.assign import assign_from_frames, refresh_labels
-        except Exception:
-            logger.exception(
-                "Offline speaker helpers unavailable; skipping diarization"
-            )
-            return
-
-        by_channel: Dict[str, List[TranscriptSegment]] = {}
-        for seg in segments:
-            if seg.channel == CHANNEL_MIC:
-                seg.speaker_participant_id = self._me_participant_id
-                seg.speaker_source = "channel"
-            elif seg.channel == CHANNEL_LOOPBACK:
-                by_channel.setdefault(seg.channel, []).append(seg)
-        if not by_channel or self._diarizer is None:
-            return
-        for channel, channel_segments in by_channel.items():
-            frames, rate, origin = load_channel_session(spool_dir, channel, chunks)
-            if frames is None or frames.size == 0:
-                continue
-            labeled = assign_from_frames(
-                self._diarizer, channel_segments, frames, rate, origin,
-            )
-            refresh_labels(self._diarizer, labeled)
 
     def _finish_failed_end(
         self,

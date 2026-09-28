@@ -952,6 +952,57 @@ class TestEndLifecycle:
         fin = engine.store.with_state(lambda s: s.finalization.to_dict())
         assert fin["status"] == "disabled"
 
+    def test_redecode_labels_speakers_with_the_meetings_own_diarizer(
+            self, make_engine, repo, fakes, monkeypatch):
+        created = []
+        fakes.modules["meeting.diarize.clustering"].create_diarizer = (
+            lambda *args, **kwargs: created.append(args) or fakes.diarizer
+        )
+        monkeypatch.setattr(
+            "meeting.asr.offline.load_channel_session",
+            lambda spool_dir, channel, chunks=None: (
+                np.zeros(16000 * 4, dtype=np.int16), 16000, 0.0,
+            ),
+        )
+        engine = make_engine(cloud_enabled=False, end_redecode=True)
+        engine.start()
+        meeting_id = engine.meeting_id
+        fakes.diarizer.next_participant = "p_guest"
+        fakes.asr[0].offline_segments = [
+            TranscriptSegment(
+                segment_id="sg_mic", meeting_id=meeting_id, chunk_id=None,
+                channel="mic", start_s=0.0, end_s=1.0, text="from me",
+            ),
+            TranscriptSegment(
+                segment_id="sg_sys", meeting_id=meeting_id, chunk_id=None,
+                channel="loopback", start_s=1.0, end_s=2.0, text="from them",
+            ),
+        ]
+
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+
+        rows = {row["id"]: row for row in repo.get_segments(meeting_id)}
+        assert rows["sg_mic"]["speaker_participant_id"] == engine._me_participant_id
+        assert rows["sg_sys"]["speaker_participant_id"] == "p_guest"
+        assert fakes.diarizer.assigned == ["sg_sys"]
+        assert len(created) == 1  # the live one; End never builds another
+        redecode_steps = [
+            step
+            for payload in events_of(engine, "status")
+            for step in (payload.get("finalization") or {}).get("steps") or []
+            if step["id"] == "redecode"
+        ]
+        assert redecode_steps[-1] == {
+            "id": "redecode", "name": "Audio Re-transcription",
+            "status": "completed",
+            "detail": "High-accuracy re-decoding complete",
+        }
+        segment_events = events_of(engine, "segments")
+        assert segment_events and {
+            row["id"] for row in segment_events[-1]["items"]
+        } == {"sg_mic", "sg_sys"}
+
     def test_cloud_on_polishes_draft_without_offline_replace(
             self, make_engine, repo, fakes):
         engine = make_engine(cloud_enabled=True)

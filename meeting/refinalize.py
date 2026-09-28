@@ -32,6 +32,7 @@ from meeting.finalization import (
     summary_stats,
 )
 from meeting.interfaces import (
+    CHANNEL_LOOPBACK,
     CHANNEL_MIC,
     AgentConfig,
     AgentResult,
@@ -82,9 +83,13 @@ __all__ = [
 ]
 
 
-def _reload_store(store: MeetingStateStore, repository: Any,
-                  meeting_id: str) -> None:
-    """Reload the in-memory document after an out-of-band SQLite write."""
+def reload_store(store: MeetingStateStore, repository: Any,
+                 meeting_id: str) -> None:
+    """Reload the in-memory document after an out-of-band SQLite write.
+
+    A transcript replace rewrites evidence ids in ``state_json`` directly, so
+    the store must pick those up before anything else writes through it.
+    """
     try:
         meeting = repository.get_meeting(meeting_id)
     except Exception:
@@ -96,6 +101,11 @@ def _reload_store(store: MeetingStateStore, repository: Any,
         return
     try:
         data = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.warning("Corrupt state_json for %s after a pipeline write",
+                       meeting_id)
+        return
+    try:
         store.replace_document(MeetingState.from_dict(data))
     except Exception:
         logger.exception("Could not replace stored meeting state for %s",
@@ -116,8 +126,16 @@ def _me_participant_id(store: MeetingStateStore) -> Optional[str]:
     return None
 
 
-def _strip_unevidenced_proposed(store: MeetingStateStore) -> None:
-    """Drop ghost-anchored proposed cards after a transcript replace."""
+def strip_unevidenced_proposed(store: MeetingStateStore) -> None:
+    """Drop ghost-anchored proposed cards after a transcript replace.
+
+    The re-decode replaced every segment id; the repository remapped
+    evidence onto the new transcript where an overlap match exists. Proposed
+    items that kept an anchor stay, since their content is grounded in the
+    meeting and consolidation reconciles it. ``live_notes`` stays whole: it
+    gives the final consolidation structured context, and keeps meeting
+    notes when the final report is off. Human-touched items are protected.
+    """
     snapshot = store.snapshot()
     ops: List[Dict[str, Any]] = []
     cards_snapshot = snapshot.get("cards") or {}
@@ -144,59 +162,64 @@ def _strip_unevidenced_proposed(store: MeetingStateStore) -> None:
         logger.exception("Could not strip unevidenced proposed cards")
 
 
-def _assign_mic_speakers(
+def assign_session_speakers(
     segments: Sequence[TranscriptSegment],
+    *,
     me_id: Optional[str],
-) -> None:
-    if not me_id:
-        return
-    for seg in segments:
-        if getattr(seg, "channel", None) == CHANNEL_MIC:
-            seg.speaker_participant_id = me_id
-            seg.speaker_source = "channel"
-
-
-def _try_diarize(
-    segments: List[TranscriptSegment],
-    store: MeetingStateStore,
-    repository: Any,
-    meeting_id: str,
+    diarizer: Any,
     spool_dir: str,
     chunks: List[Dict[str, Any]],
 ) -> None:
-    """Best-effort loopback diarization; never raises to the caller."""
+    """Label re-decoded segments: Me on the mic, the diarizer on system audio.
+
+    System audio is labeled from the whole session recording rather than
+    chunk by chunk. Never raises.
+
+    Args:
+        segments: Fresh segments; labels are set in place.
+        me_id: The meeting's "me" participant.
+        diarizer: Labels system audio; ``None`` leaves it channel-labeled.
+        spool_dir: Directory holding the session audio.
+        chunks: Registered chunk rows for the concat fallback.
+    """
+    loopback = []
+    for seg in segments:
+        if seg.channel == CHANNEL_MIC and me_id:
+            seg.speaker_participant_id = me_id
+            seg.speaker_source = "channel"
+        elif seg.channel == CHANNEL_LOOPBACK:
+            loopback.append(seg)
+    if diarizer is None or not loopback:
+        return
     try:
         from meeting.asr.offline import load_channel_session
         from meeting.diarize.assign import assign_from_frames, refresh_labels
-        from meeting.diarize.clustering import create_diarizer
-        from meeting.interfaces import CHANNEL_LOOPBACK
-        from services.components import speaker_model_path
+
+        frames, rate, origin = load_channel_session(
+            spool_dir, CHANNEL_LOOPBACK, chunks,
+        )
+        if frames is None or getattr(frames, "size", 0) == 0:
+            return
+        labeled = assign_from_frames(diarizer, loopback, frames, rate, origin)
+        refresh_labels(diarizer, labeled)
     except Exception:
-        logger.exception("Offline speaker helpers unavailable")
-        return
+        logger.exception("Offline speaker assignment failed")
+
+
+def _new_offline_diarizer(
+    store: MeetingStateStore, repository: Any, meeting_id: str,
+) -> Any:
+    """A fresh diarizer for a stored meeting, or None when unavailable."""
     try:
-        diarizer = create_diarizer(
+        from meeting.diarize.clustering import create_diarizer
+        from services.components import speaker_model_path
+
+        return create_diarizer(
             speaker_model_path(), store, repository, meeting_id,
         )
     except Exception:
         logger.exception("Could not create a diarizer for redecode retry")
-        return
-    if diarizer is None:
-        return
-    loopback = [seg for seg in segments if seg.channel == CHANNEL_LOOPBACK]
-    if not loopback:
-        return
-    try:
-        frames, rate, origin = load_channel_session(
-            spool_dir, CHANNEL_LOOPBACK, chunks,
-        )
-    except Exception:
-        logger.exception("Could not load loopback audio for diarization")
-        return
-    if frames is None or getattr(frames, "size", 0) == 0:
-        return
-    labeled = assign_from_frames(diarizer, loopback, frames, rate, origin)
-    refresh_labels(diarizer, labeled)
+        return None
 
 
 def _word_count(rows: Sequence[Any]) -> int:
@@ -509,9 +532,15 @@ def rerun_redecode(
             "ok": False,
             "error": sparse_redecode_detail(new_words, old_words),
         }
-    _assign_mic_speakers(decoded, _me_participant_id(store))
-    if speaker_id_backend != "off":
-        _try_diarize(decoded, store, repository, meeting_id, spool_dir, chunks)
+    diarizer = None
+    if speaker_id_backend != "off" and any(
+        seg.channel == CHANNEL_LOOPBACK for seg in decoded
+    ):
+        diarizer = _new_offline_diarizer(store, repository, meeting_id)
+    assign_session_speakers(
+        decoded, me_id=_me_participant_id(store), diarizer=diarizer,
+        spool_dir=spool_dir, chunks=chunks,
+    )
     replace = getattr(repository, "replace_final_transcript", None)
     if not callable(replace):
         return {"ok": False, "error": "Transcript replace is unavailable."}
@@ -526,8 +555,8 @@ def rerun_redecode(
             mark_done(meeting_id)
         except Exception:
             logger.exception("Could not mark chunks done after redecode retry")
-    _reload_store(store, repository, meeting_id)
-    _strip_unevidenced_proposed(store)
+    reload_store(store, repository, meeting_id)
+    strip_unevidenced_proposed(store)
     try:
         from meeting.state.repair import repair_meeting_state
 
