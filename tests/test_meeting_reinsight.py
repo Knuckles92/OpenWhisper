@@ -222,6 +222,29 @@ class TestFailure:
         assert "no core" in result["error"]
         assert result["applied"] == 0
 
+    @pytest.mark.parametrize("pass_name", ["insights", "polish"])
+    def test_core_that_fails_to_start_is_still_shut_down(
+            self, repo, monkeypatch, pass_name):
+        """A half-started sidecar must not outlive the request."""
+        from meeting.refinalize import rerun_polish
+
+        make_meeting(repo)
+        add_transcript(repo, "m_rerun")
+
+        class BrokenCore(FakeAgentCore):
+            def initialize(self, cfg, tools):
+                raise RuntimeError("sidecar handshake failed")
+
+        core = BrokenCore()
+        install_core(monkeypatch, core)
+        rerun = rerun_insights if pass_name == "insights" else rerun_polish
+
+        result = rerun(repo, "m_rerun", provider="openrouter", model="m")
+
+        assert result["ok"] is False
+        assert "handshake failed" in result["error"]
+        assert core.shutdown_calls == 1
+
 
 class TestReadTools:
     def test_offline_host_exposes_context_folder_search(
@@ -249,3 +272,22 @@ class TestReadTools:
         assert result["ok"] is True
         assert seen.get("disabled") is True
         assert seen.get("hits") == []
+
+    def test_offline_host_checks_evidence_like_a_live_one(
+        self, repo, monkeypatch,
+    ):
+        """The agent's evidence repair sees stored segments on a re-run too."""
+        make_meeting(repo)
+        add_transcript(repo, "m_rerun")
+        seen = {}
+
+        class Core(FakeAgentCore):
+            def consolidate(self, payload):
+                seen["known"] = self.tools.segment_exists("sg_1")
+                seen["unknown"] = self.tools.segment_exists("sg_missing")
+                return super().consolidate(payload)
+
+        install_core(monkeypatch, Core())
+        rerun_insights(repo, "m_rerun", provider="openrouter", model="m")
+
+        assert seen == {"known": True, "unknown": False}

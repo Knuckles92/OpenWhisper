@@ -57,6 +57,7 @@ logger = logging.getLogger(__name__)
 #: final consolidation round-trip) and cleanup runs after the window and tray
 #: are gone, so a longer wait would only hang an invisible process.
 SHUTDOWN_JOIN_TIMEOUT_S = 5.0
+RETRY_BUSY_MESSAGE = "Post-meeting steps are already running for this meeting."
 
 
 def _with_history_target(url: str, meeting_id: str, *, view: str = "") -> str:
@@ -1025,7 +1026,17 @@ class MeetingRuntime:
             meeting_id: Meeting to retry; defaults to the current engine's
                 meeting, then the Past Meetings card, then the newest meeting.
         """
+        from meeting.refinalize import FinalizationBusyError, is_running
+
         step_key = str(from_step or "failed").strip() or "failed"
+        if step_key == "speaker_id":
+            # The retry skips a refused speaker pass anyway; refusing here
+            # also spares re-running the steps after it for nothing.
+            reason = self._speaker_rerun_fields()["speaker_rerun_reason"]
+            if reason:
+                logger.info("Speaker re-run refused: %s", reason)
+                self.controller.meeting_status_update.emit(reason)
+                return
         with self._lock:
             if (
                 self._starting
@@ -1056,6 +1067,11 @@ class MeetingRuntime:
                 self.controller.meeting_status_update.emit(
                     "This meeting is still finishing in the background."
                 )
+                return
+            if is_running(meeting_id):
+                # The dashboard (or recovery) holds the one-run claim; a
+                # second run would only fail and overwrite its progress.
+                self.controller.meeting_status_update.emit(RETRY_BUSY_MESSAGE)
                 return
             self._card_meeting_id = meeting_id
             self._background_ready = False
@@ -1091,6 +1107,7 @@ class MeetingRuntime:
                 "status": status,
                 "message": message,
             }
+            publish_engine = engine
             try:
                 from meeting.refinalize import rerun_finalization
                 from services.meeting_rerun import rerun_options
@@ -1141,6 +1158,12 @@ class MeetingRuntime:
                 )
                 finalization["status"] = status
                 finalization["message"] = message
+            except FinalizationBusyError:
+                # Claimed by another run after the check above: leave its
+                # progress alone and show what it has stored so far.
+                message = RETRY_BUSY_MESSAGE
+                finalization = self._stored_finalization(meeting_id)
+                publish_engine = None
             except Exception as exc:
                 logger.exception(
                     "Retry finalization worker raised for meeting %s", meeting_id
@@ -1164,13 +1187,32 @@ class MeetingRuntime:
                 self._finalizing = False
                 self._finalization = finalization
                 self._card_meeting_id = meeting_id
-            self._publish_finalization(meeting_id, finalization, engine=engine)
+            self._publish_finalization(
+                meeting_id, finalization, engine=publish_engine,
+            )
             self.controller.meeting_status_update.emit(message)
             self._refresh_past_meetings()
 
         threading.Thread(
             target=_worker, name="meeting-retry-finalization", daemon=True
         ).start()
+
+    def _stored_finalization(self, meeting_id: str) -> Dict[str, Any]:
+        """The finalization persisted for ``meeting_id`` right now."""
+        from meeting.state.schema import FinalizationState
+        from meeting.stored import stored_state_dict
+
+        try:
+            meeting = self._repository().get_meeting(meeting_id) or {}
+            data = stored_state_dict(meeting)
+            return FinalizationState.coerce(
+                data.get("finalization"),
+                cloud_enabled=bool(data.get("cloud_enabled")),
+                meeting_status=str(meeting.get("status") or "ended"),
+            ).to_dict()
+        except Exception:
+            logger.exception("Could not read stored finalization for %s", meeting_id)
+            return {"status": "running", "message": RETRY_BUSY_MESSAGE}
 
     def _publish_finalization(
         self,
@@ -1186,16 +1228,7 @@ class MeetingRuntime:
             and getattr(engine, "meeting_id", None) == meeting_id
         ):
             try:
-                engine._set_finalization(
-                    str(payload.get("status") or "running"),
-                    str(payload.get("message") or ""),
-                    stage=str(payload.get("stage") or ""),
-                    current_step=int(payload.get("current_step") or 0),
-                    total_steps=int(payload.get("total_steps") or 0),
-                    step_details=str(payload.get("step_details") or ""),
-                    steps=list(payload.get("steps") or []),
-                    summary_stats=dict(payload.get("summary_stats") or {}),
-                )
+                engine.publish_finalization(payload)
                 return
             except Exception:
                 logger.exception(
@@ -1804,24 +1837,16 @@ class MeetingRuntime:
         finalization: Dict[str, Any],
         state_payload: Dict[str, Any],
     ) -> None:
-        status = str(finalization.get("status") or "")
-        message = str(finalization.get("message") or "")
+        from meeting.state.schema import FinalizationState
+
         meeting_id = getattr(self._engine, "meeting_id", None)
-        normalized = {
-            "status": status,
-            "message": message,
-            "stage": str(finalization.get("stage") or ""),
-            "current_step": int(finalization.get("current_step") or 0),
-            "total_steps": int(finalization.get("total_steps") or 0),
-            "step_details": str(finalization.get("step_details") or ""),
-            "steps": list(finalization.get("steps") or []),
-            "summary_stats": dict(finalization.get("summary_stats") or {}),
-            "card_deferred": bool(finalization.get("card_deferred", False)),
-            "content_summary": dict(
-                finalization.get("content_summary")
-                or self._meeting_content_summary(meeting_id)
-            ),
-        }
+        normalized = FinalizationState.coerce(finalization).to_dict()
+        normalized["content_summary"] = dict(
+            finalization.get("content_summary")
+            or self._meeting_content_summary(meeting_id)
+        )
+        status = normalized["status"]
+        message = normalized["message"]
         terminal = status in {
             "completed", "disabled", "unavailable", "failed",
         }
@@ -1933,7 +1958,30 @@ class MeetingRuntime:
                     "Could not read meeting status for content summary"
                 )
         summary["meeting_status"] = str((row or {}).get("status") or "")
+        summary.update(self._speaker_rerun_fields())
         return summary
+
+    @staticmethod
+    def _speaker_rerun_fields() -> Dict[str, Any]:
+        """Whether Re-run speakers may upload system audio right now.
+
+        Only the button's look depends on this; the retry applies the same
+        gate before anything is uploaded.
+        """
+        try:
+            from services.meeting_rerun import resolve_speaker_pass
+
+            gate = resolve_speaker_pass()
+        except Exception:
+            logger.exception("Could not check whether speakers can be re-run")
+            return {
+                "speaker_rerun_offered": False,
+                "speaker_rerun_reason": "Speaker identification is unavailable.",
+            }
+        return {
+            "speaker_rerun_offered": gate.offered,
+            "speaker_rerun_reason": "" if gate.ok else gate.reason,
+        }
 
     def cleanup(self) -> None:
         """Release the meeting engine on application shutdown.

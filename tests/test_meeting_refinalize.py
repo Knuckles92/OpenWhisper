@@ -458,7 +458,14 @@ class TestStepSelection:
 
         assert len(core.polish_payloads) == 2
         assert result["ok"] is False
-        assert result["error"] == "polish failed"
+        # The same detail live End reports: which block, and its request id.
+        from meeting.finalization import polish_blocks
+
+        total = len(polish_blocks(repo.get_segments("m_retry")))
+        assert result["error"] == (
+            f"polish failed (block 2/{total}; request ID: "
+            f"{core.polish_payloads[1].request_id})"
+        )
 
 
 class TestProtection:
@@ -546,7 +553,7 @@ class TestEndpointSnapshot:
         assert core.cfg.endpoint["profile_id"] == "custom_abcd1234"
 
     def test_old_row_reconstructs_builtin_endpoint(self):
-        from meeting.refinalize import _meeting_endpoint
+        from meeting.stored import meeting_endpoint as _meeting_endpoint
 
         snapshot = _meeting_endpoint({"agent_provider": "openai"})
         assert snapshot["profile_id"] == "openai"
@@ -715,3 +722,144 @@ class TestRedecodeReleasesModel:
         assert result["ok"] is False
         assert "not available" in result["error"]
         assert released == ["base"]
+
+
+SPEAKER_STEPS = [
+    {
+        "id": "speaker_id",
+        "name": "Speaker Identification",
+        "status": "failed",
+        "detail": "api down",
+    },
+    {
+        "id": "finalize",
+        "name": "State Finalization",
+        "status": "completed",
+        "detail": "Done",
+    },
+]
+
+
+def record_uploads(monkeypatch):
+    uploads = []
+
+    def fake_pass(*args, **kwargs):
+        uploads.append(kwargs)
+        return {"ok": True, "applied": 2, "created": 0, "windows": 1}
+
+    monkeypatch.setattr(
+        "meeting.diarize.cloud_pass.run_cloud_speaker_pass", fake_pass,
+    )
+    return uploads
+
+
+class TestSpeakerGate:
+    """The retry uploads system audio only when live End would."""
+
+    @pytest.mark.parametrize("backend,consent,reason", [
+        ("openai", False, "consent"),
+        ("local", True, "not set to OpenAI"),
+        ("off", True, "not set to OpenAI"),
+    ])
+    def test_refused_pass_is_skipped_without_uploading(
+            self, repo, monkeypatch, backend, consent, reason):
+        make_meeting(
+            repo, cloud_enabled=False,
+            state_json=seeded_state("m_retry", SPEAKER_STEPS, cloud_enabled=False),
+        )
+        add_transcript(repo, "m_retry")
+        uploads = record_uploads(monkeypatch)
+        snapshots = []
+
+        result = rerun_finalization(
+            repo, "m_retry",
+            from_step="speaker_id",
+            provider="openrouter", model="m",
+            speaker_id_backend=backend,
+            speaker_audio_consent=consent,
+            speaker_api_key="sk-test",
+            progress_cb=snapshots.append,
+        )
+
+        assert uploads == []
+        speaker = next(
+            step for step in result["finalization"]["steps"]
+            if step["id"] == "speaker_id"
+        )
+        assert speaker["status"] == "completed"
+        assert reason in speaker["detail"]
+        assert result["ok"] is True
+        assert not any(
+            "Uploading" in str(snap.get("step_details") or "")
+            for snap in snapshots
+        )
+
+    def test_missing_key_is_skipped_like_live_end(self, repo, monkeypatch):
+        make_meeting(
+            repo, cloud_enabled=False,
+            state_json=seeded_state("m_retry", SPEAKER_STEPS, cloud_enabled=False),
+        )
+        add_transcript(repo, "m_retry")
+        uploads = record_uploads(monkeypatch)
+
+        result = rerun_finalization(
+            repo, "m_retry",
+            from_step="speaker_id",
+            provider="openrouter", model="m",
+            speaker_id_backend="openai",
+            speaker_audio_consent=True,
+            speaker_api_key="",
+        )
+
+        assert uploads == []
+        speaker = next(
+            step for step in result["finalization"]["steps"]
+            if step["id"] == "speaker_id"
+        )
+        assert speaker["status"] == "completed"
+        assert speaker["detail"] == "No OpenAI API key is configured."
+        assert result["ok"] is True
+
+    def test_eligible_pass_uploads_with_the_key(self, repo, monkeypatch):
+        make_meeting(
+            repo, cloud_enabled=False,
+            state_json=seeded_state("m_retry", SPEAKER_STEPS, cloud_enabled=False),
+        )
+        add_transcript(repo, "m_retry")
+        uploads = record_uploads(monkeypatch)
+
+        result = rerun_finalization(
+            repo, "m_retry",
+            from_step="speaker_id",
+            provider="openrouter", model="m",
+            speaker_id_backend="openai",
+            speaker_audio_consent=True,
+            speaker_api_key="sk-test",
+        )
+
+        assert [call["api_key"] for call in uploads] == ["sk-test"]
+        speaker = next(
+            step for step in result["finalization"]["steps"]
+            if step["id"] == "speaker_id"
+        )
+        assert speaker["status"] == "completed"
+        assert speaker["detail"] == "Updated 2 speaker labels"
+
+
+class TestRedecodeSpeakerLabels:
+    def test_off_backend_does_not_rediarize(self, repo, monkeypatch):
+        make_meeting(repo, state_json=seeded_state("m_retry", DEFAULT_STEPS))
+        add_transcript(repo, "m_retry")
+        created = []
+        monkeypatch.setattr(
+            "meeting.diarize.clustering.create_diarizer",
+            lambda *args, **kwargs: created.append(args),
+        )
+
+        result = rerun_redecode(
+            repo, "m_retry", transcribe_fn=rich_decode,
+            speaker_id_backend="off",
+        )
+
+        assert result["ok"] is True
+        assert created == []

@@ -1191,23 +1191,16 @@ def test_spoken_note_is_marked_protected_in_the_agent_context():
     assert "author_type=system author_id=voice_command protected" in rendered
 
 
-def test_live_and_offline_finalization_cleanup_preserve_spoken_notes():
-    from meeting.engine import MeetingEngine
-    from meeting.refinalize import _strip_unevidenced_proposed
+def test_redecode_cleanup_preserves_spoken_notes():
+    from meeting.refinalize import strip_unevidenced_proposed
     from meeting.state.schema import CardItem
-    for cleanup in ("live", "offline"):
-        state = MeetingState(meeting_id="spoken-finalization")
-        state.cards["key_points"] = [
-            CardItem(id="spoken", card="key_points", text="Budget A needs $1,000.",
-                     author_type="system", author_id="voice_command"),
-            CardItem(id="automatic", card="key_points", text="An obsolete draft."),
-        ]
-        store = MeetingStateStore(state)
-        if cleanup == "live":
-            engine = MeetingEngine.__new__(MeetingEngine)
-            engine.store = store
-            engine._strip_proposed_cards()
-        else:
-            _strip_unevidenced_proposed(store)
-        statuses = {i["id"]: i["status"] for i in store.snapshot()["cards"]["key_points"]}
-        assert statuses == {"spoken": "proposed", "automatic": "removed"}
+    state = MeetingState(meeting_id="spoken-finalization")
+    state.cards["key_points"] = [
+        CardItem(id="spoken", card="key_points", text="Budget A needs $1,000.",
+                 author_type="system", author_id="voice_command"),
+        CardItem(id="automatic", card="key_points", text="An obsolete draft."),
+    ]
+    store = MeetingStateStore(state)
+    strip_unevidenced_proposed(store)
+    statuses = {i["id"]: i["status"] for i in store.snapshot()["cards"]["key_points"]}
+    assert statuses == {"spoken": "proposed", "automatic": "removed"}

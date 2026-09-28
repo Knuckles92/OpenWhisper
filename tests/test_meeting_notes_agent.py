@@ -463,18 +463,16 @@ class TestSharedNotesFilter:
         assert live_note_ids({"cards": {}}) == frozenset()
 
 
-class TestEngineNotesStrip:
-    """Proposed notes are stripped only when consolidation rebuilds them."""
+class TestRedecodeStrip:
+    """A re-decode keeps the notes page and every grounded proposed item."""
 
-    def _engine(self):
-        from meeting.engine import MeetingEngine, MeetingEngineOptions
+    def _store(self):
+        from meeting.state.schema import CardItem
+        from meeting.state.store import MeetingStateStore
 
-        engine = MeetingEngine(MeetingEngineOptions(), repository=object())
         state = MeetingState(meeting_id="m_strip")
 
         def _add(card, item_id, status="proposed", pinned=False):
-            from meeting.state.schema import CardItem
-
             state.cards[card].append(CardItem(
                 id=item_id, card=card, text=f"text {item_id}",
                 status=status, pinned=pinned,
@@ -485,42 +483,19 @@ class TestEngineNotesStrip:
         _add("live_notes", "it_note_pin", pinned=True)
         _add("key_points", "it_key_prop")
         _add("key_points", "it_key_edit", status="confirmed")
-
-        from meeting.state.store import MeetingStateStore
-
-        engine.store = MeetingStateStore(state)
-        return engine, state
+        return MeetingStateStore(state)
 
     def _statuses(self, state, card):
         # The store applies copy-on-write, so read post-strip state through it.
-        live = [
-            item for item in state["cards"].get(card, [])
-        ]
-        return {item["id"]: item["status"] for item in live}
-
-    def test_notes_only_strip_removes_only_unprotected_notes(self):
-        engine, state = self._engine()
-        engine._strip_proposed_cards(cards=("live_notes",))
-        snap = engine.store.snapshot()
-        assert self._statuses(snap, "live_notes") == {
-            "it_note_prop": "removed",
-            "it_note_edit": "edited",
-            "it_note_pin": "proposed",
-        }
-        # Other cards untouched by a notes-only strip.
-        assert self._statuses(snap, "key_points") == {
-            "it_key_prop": "proposed", "it_key_edit": "confirmed",
-        }
+        return {item["id"]: item["status"] for item in state["cards"].get(card, [])}
 
     def test_redecode_strip_keeps_live_notes(self):
-        from meeting.state.schema import CARD_KEYS
+        from meeting.refinalize import strip_unevidenced_proposed
 
-        engine, state = self._engine()
-        engine._strip_proposed_cards(cards=tuple(
-            key for key in CARD_KEYS if key not in ("user_notes", "live_notes")
-        ))
+        store = self._store()
+        strip_unevidenced_proposed(store)
         # The notes page survives the re-decode strip entirely...
-        snap = engine.store.snapshot()
+        snap = store.snapshot()
         assert self._statuses(snap, "live_notes") == {
             "it_note_prop": "proposed",
             "it_note_edit": "edited",
@@ -531,23 +506,10 @@ class TestEngineNotesStrip:
             "it_key_prop": "removed", "it_key_edit": "confirmed",
         }
 
-    def test_default_strip_covers_all_cards_but_user_notes(self):
-        engine, state = self._engine()
-        engine._strip_proposed_cards()
-        snap = engine.store.snapshot()
-        assert self._statuses(snap, "live_notes") == {
-            "it_note_prop": "removed",
-            "it_note_edit": "edited",
-            "it_note_pin": "proposed",
-        }
-        assert self._statuses(snap, "key_points") == {
-            "it_key_prop": "removed", "it_key_edit": "confirmed",
-        }
-
     def test_redecode_strip_keeps_evidenced_proposed_items(self):
-        from meeting.state.schema import CARD_KEYS, CardItem, MeetingState
+        from meeting.refinalize import strip_unevidenced_proposed
+        from meeting.state.schema import CardItem
         from meeting.state.store import MeetingStateStore
-        from meeting.engine import MeetingEngine, MeetingEngineOptions
 
         state = MeetingState(meeting_id="m_redecode")
         state.cards["key_points"].extend([
@@ -567,23 +529,14 @@ class TestEngineNotesStrip:
         state.cards["live_notes"].append(CardItem(
             id="it_note_ghost", card="live_notes", text="note", evidence=[],
         ))
-        engine = MeetingEngine(
-            MeetingEngineOptions(), repository=object(),
-        )
-        engine.store = MeetingStateStore(state)
-        engine._strip_proposed_cards(
-            cards=tuple(
-                key for key in CARD_KEYS
-                if key not in ("user_notes", "live_notes")
-            ),
-            keep_evidenced=True,
-        )
-        assert self._statuses(engine.store.snapshot(), "key_points") == {
+        store = MeetingStateStore(state)
+        strip_unevidenced_proposed(store)
+        assert self._statuses(store.snapshot(), "key_points") == {
             "it_key_alive": "proposed",
             "it_key_ghost": "removed",
             "it_key_edit": "edited",
         }
-        assert self._statuses(engine.store.snapshot(), "live_notes") == {
+        assert self._statuses(store.snapshot(), "live_notes") == {
             "it_note_ghost": "proposed",
         }
 

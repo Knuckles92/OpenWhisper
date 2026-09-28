@@ -231,6 +231,10 @@ class MeetingModeTab(QWidget):
         self._meeting_id: Optional[str] = None
         self._has_dashboard = False
         self._can_rerun_speakers = False
+        # Whether settings allow the OpenAI speaker pass: not offered hides
+        # Re-run speakers, a reason disables it with that reason as the tip.
+        self._speaker_rerun_offered = True
+        self._speaker_rerun_reason = ""
         self._developer_mode = False
 
         self._elapsed_timer = QTimer(self)
@@ -1328,6 +1332,12 @@ class MeetingModeTab(QWidget):
         self._can_rerun_speakers = bool(
             content.get("can_rerun_speakers", False)
         )
+        self._speaker_rerun_offered = bool(
+            content.get("speaker_rerun_offered", True)
+        )
+        self._speaker_rerun_reason = str(
+            content.get("speaker_rerun_reason") or ""
+        )
         no_report = empty_meeting or meeting_failed or status == "running"
         self.finalization_report_button.setEnabled(not no_report)
         if empty_meeting or meeting_failed:
@@ -1392,12 +1402,9 @@ class MeetingModeTab(QWidget):
             else "This meeting, transcript, and audio stay in Past Meetings. "
                  "Nothing is deleted."
         )
-        speaker_tip = (
-            "Re-run speaker identification"
-            if self._can_rerun_speakers
-            else "No system-audio recording is available for speaker identification"
+        self.finalization_retry_speakers_button.setToolTip(
+            self._speaker_rerun_tip()
         )
-        self.finalization_retry_speakers_button.setToolTip(speaker_tip)
 
         if status == "running":
             tone = "neutral"
@@ -1450,10 +1457,10 @@ class MeetingModeTab(QWidget):
                 self.finalization_step_badge.show()
                 self.finalization_retry_button.hide()
                 self.finalization_retry_speakers_button.setVisible(
-                    not has_speaker_step
+                    not has_speaker_step and self._speaker_rerun_offered
                 )
                 self.finalization_retry_speakers_button.setEnabled(
-                    self._can_rerun_speakers
+                    self._speaker_rerun_allowed()
                 )
                 self._set_incomplete_actions_visible(False)
                 self._set_done_visible(True)
@@ -1480,10 +1487,10 @@ class MeetingModeTab(QWidget):
                 self.finalization_retry_button.show()
                 self.finalization_retry_button.setEnabled(True)
                 self.finalization_retry_speakers_button.setVisible(
-                    not has_speaker_step
+                    not has_speaker_step and self._speaker_rerun_offered
                 )
                 self.finalization_retry_speakers_button.setEnabled(
-                    self._can_rerun_speakers
+                    self._speaker_rerun_allowed()
                 )
                 self._set_incomplete_actions_visible(True)
                 self._set_done_visible(False)
@@ -1510,9 +1517,11 @@ class MeetingModeTab(QWidget):
                 self.finalization_detail.hide()
                 self.finalization_steps_widget.hide()
                 self.finalization_retry_button.hide()
-                self.finalization_retry_speakers_button.show()
+                self.finalization_retry_speakers_button.setVisible(
+                    self._speaker_rerun_offered
+                )
                 self.finalization_retry_speakers_button.setEnabled(
-                    self._can_rerun_speakers
+                    self._speaker_rerun_allowed()
                 )
                 self._set_incomplete_actions_visible(False)
                 self._set_done_visible(True)
@@ -1525,6 +1534,19 @@ class MeetingModeTab(QWidget):
                 style.unpolish(widget)
                 style.polish(widget)
         self.finalization_card.update()
+
+    def _speaker_rerun_allowed(self) -> bool:
+        """Whether a speaker re-run could label anything right now."""
+        return self._can_rerun_speakers and not self._speaker_rerun_reason
+
+    def _speaker_rerun_tip(self) -> str:
+        """Tooltip for the speaker re-run controls, naming what blocks them."""
+        if not self._can_rerun_speakers:
+            return (
+                "No system-audio recording is available for speaker "
+                "identification"
+            )
+        return self._speaker_rerun_reason or "Re-run speaker identification"
 
     def _populate_steps(
         self,
@@ -1625,12 +1647,9 @@ class MeetingModeTab(QWidget):
                         self.retry_step_requested.emit(sid)
                     )
                 )
-                if step_id == "speaker_id" and not self._can_rerun_speakers:
+                if step_id == "speaker_id" and not self._speaker_rerun_allowed():
                     action.setEnabled(False)
-                    action.setToolTip(
-                        "No system-audio recording is available for speaker "
-                        "identification"
-                    )
+                    action.setToolTip(self._speaker_rerun_tip())
                 row_layout.addWidget(action)
 
             self.finalization_steps_layout.addWidget(row)
