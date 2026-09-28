@@ -19,7 +19,7 @@ import uuid
 from collections import deque
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from meeting.finalization import (
     POLISH_MAX_SEGMENTS,
@@ -187,9 +187,6 @@ class CheckpointScheduler:
         self._notes_sent_starts: Dict[str, float] = {}
         self._notes_max_sent_start_s = -1.0
         self._note_requests = deque()
-        #: Ids whose text changed in place since delivery; the worker un-marks
-        #: them before its next fetch so the revised wording is re-sent.
-        self._revised_ids: Set[str] = set()
 
     def start(self) -> None:
         """Start the worker thread. Idempotent."""
@@ -243,20 +240,6 @@ class CheckpointScheduler:
             self._pending_segments += int(count)
         self._wake.set()
 
-    def notify_revised(self, segment_ids: Iterable[str]) -> None:
-        """Re-deliver segments whose text was rewritten under the same id.
-
-        Args:
-            segment_ids: Ids of rows the ASR revise pass stored or updated.
-        """
-        ids = {str(seg_id) for seg_id in segment_ids if seg_id}
-        if not ids:
-            return
-        with self._lock:
-            self._revised_ids.update(ids)
-            self._pending_segments += len(ids)
-        self._wake.set()
-
     def seed_sent_segments(self, segments: List[Dict[str, Any]]) -> None:
         """Mark a meeting-to-date transcript as already delivered.
 
@@ -281,15 +264,6 @@ class CheckpointScheduler:
             for seg_id, start_s in self._notes_sent_starts.items()
             if start_s > prune_cursor
         }
-
-    def _forget_revised(self) -> None:
-        """Un-mark revised ids so the next fetch treats them as new (worker)."""
-        with self._lock:
-            ids = self._revised_ids
-            self._revised_ids = set()
-        for seg_id in ids:
-            self._sent_starts.pop(seg_id, None)
-            self._notes_sent_starts.pop(seg_id, None)
 
     def request_note_adjustment(self, text: str) -> Future:
         """Queue an explicit request on the same worker as periodic passes."""
@@ -552,7 +526,6 @@ class CheckpointScheduler:
         # Mark the fire time at the start of the run so work that becomes due
         # while the checkpoint executes fires immediately after completion.
         self._last_fire_mono = self._monotonic()
-        self._forget_revised()
 
         try:
             fetched = self._engine.get_transcript(
@@ -716,7 +689,6 @@ class CheckpointScheduler:
             return
         if not self._agent.is_healthy():
             return
-        self._forget_revised()
         # Same late-arrival window logic as card checkpoints: re-read a
         # window behind the newest consumed segment, drop already-sent ids.
         if not guidance and self._notes_max_sent_start_s >= 0.0:
