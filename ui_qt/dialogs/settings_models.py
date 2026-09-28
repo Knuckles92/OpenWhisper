@@ -120,8 +120,14 @@ def agent_core_label(core: str) -> str:
     if core == MeetingAgentCore.PI:
         return "Pi (sidecar)"
     if core == MeetingAgentCore.OPENCODE:
-        return "OpenCode v2 (beta)"
+        return "OpenCode v2"
     return "Direct (no sidecar)"
+
+
+def _opencode_in_downloads() -> bool:
+    """Whether Downloads offers the OpenCode component on this platform."""
+    from services.components import component_is_published
+    return component_is_published(ComponentId.MEETING_AGENT_OPENCODE)
 
 
 def speaker_id_label(backend: str) -> str:
@@ -488,7 +494,9 @@ class ModelAssignments(QObject):
         self.meeting_model_tile = InfoTile(
             "Chat model",
             "Runs live cards, the note taker, polish, summaries, and the final "
-            "report. Install Pi or OpenCode from Downloads.",
+            "report. "
+            + ("Install Pi or OpenCode from Downloads." if _opencode_in_downloads()
+               else "Install Pi from Downloads."),
             _design_icon("box-blue.svg"),
         )
         self.meeting_model_tile.add_body(self.meeting_model_picker)
@@ -539,10 +547,13 @@ class ModelAssignments(QObject):
 
     def _opencode_label(self) -> str:
         if self._opencode_payload_available:
-            return "OpenCode v2 (beta)"
-        if current_platform_tag() != "win_amd64":
-            return "OpenCode v2 (beta — Windows x64 only)"
-        return "OpenCode v2 (beta — install from Downloads)"
+            return "OpenCode v2"
+        from services.opencode_component import SUPPORTED_PLATFORMS
+        if current_platform_tag() not in SUPPORTED_PLATFORMS:
+            return "OpenCode v2 (Windows and Linux only)"
+        if not _opencode_in_downloads():
+            return "OpenCode v2 (not in Downloads yet)"
+        return "OpenCode v2 (install from Downloads)"
 
     # ---- navigation hooks ----
 
@@ -1376,7 +1387,7 @@ class ModelAssignments(QObject):
     # ---- refresh ----
 
     def _sync_pi_core_availability(self, settings: Optional[dict] = None) -> None:
-        """Refresh the Pi combo after a meeting-agent install or remove.
+        """Refresh the Pi and OpenCode items after a component install or remove.
 
         Settings is non-modal and cached, so ``_pi_payload_available`` cannot
         stay as the value computed in ``__init__``.

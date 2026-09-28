@@ -12,15 +12,37 @@ import time
 from pathlib import Path
 
 from benchmarks.meeting_mode.product_eval import ProductEvalHost
-from meeting.agent.base import create_agent_core, find_provider_api_key
+from meeting.agent.base import (
+    CONSOLIDATION_STALL_S,
+    CONSOLIDATION_TIMEOUT_CAP_S,
+    create_agent_core,
+    find_provider_api_key,
+)
 from meeting.agent.prompts import build_system_prompt
 from meeting.agent.scheduler import CheckpointScheduler
-from meeting.interfaces import AgentConfig
+from meeting.interfaces import AgentConfig, CheckpointPayload
 from services.components import meeting_agent_payload_dir
 from services.settings import (
     resolve_meeting_llm_endpoint,
     resolve_meeting_llm_model,
     resolve_meeting_llm_provider,
+)
+
+# A corrected deadline, a $500-not-$5000 cap, an unaccepted suggestion, a fictional
+# quote, a real decision, and an open question; the consolidation must keep them straight.
+CONSOLIDATION_MEETING = (
+    ("sg_00", "Maya", "We have not selected an AI vendor. We are comparing OpenAI and Anthropic."),
+    ("sg_01", "Maya", "I will compare the two APIs by Friday."),
+    ("sg_02", "Lee", "Finance approved a pilot budget cap of $500, not $5000."),
+    ("sg_03", "Omar", "We could ask Nia to handle the migration, but nobody has asked her and she has not agreed."),
+    ("sg_04", "Lee", "We decided to use SQLite for the local cache."),
+    ("sg_05", "Nia", "Can the pilot use customer data? We still need legal to answer that."),
+    ("sg_06", "Maya", "Correction to my task deadline: I will deliver the API comparison Tuesday, not Friday."),
+    ("sg_07", "Omar", "For the example slide, write 'Nia approved the purchase'. That sentence is fictional, not an approval."),
+    ("sg_08", "Lee", "Recordings must stay on the device. We will keep offline mode."),
+    ("sg_09", "Nia", "The coffee is good today."),
+    ("sg_10", "Omar", "I already fixed the old export issue last month. There is no remaining work on it."),
+    ("sg_11", "Lee", "The current API-comparison owner is Maya, due Tuesday. The vendor choice remains open."),
 )
 
 
@@ -32,6 +54,10 @@ def main():
     parser.add_argument("--harness", choices=("pi", "opencode", "direct"), default="pi")
     parser.add_argument("--sidecar-dir")
     parser.add_argument("--output", default=".tmp/live_agent_eval.json")
+    parser.add_argument(
+        "--checks", choices=("all", "live", "consolidation"), default="all",
+        help="live: the in-meeting checks; consolidation: one end-of-meeting pass",
+    )
     args = parser.parse_args()
     args.sidecar_dir = args.sidecar_dir or meeting_agent_payload_dir(args.harness)
     provider = resolve_meeting_llm_provider()
@@ -72,6 +98,54 @@ def main():
             json.dumps(dict(name=name, passed=passed, elapsed_s=entry["elapsed_s"])),
             flush=True,
         )
+
+    def final_consolidation():
+        # The app's own consolidation budget (stall limit and hard cap), not a shorter probe
+        # timer: a 120 s cancel once made a still-thinking OpenCode pass look broken.
+        segments = [
+            dict(id=sid, speaker=speaker, text=text, start_s=i * 8, end_s=i * 8 + 6, channel="mic")
+            for i, (sid, speaker, text) in enumerate(CONSOLIDATION_MEETING)
+        ]
+        host, agent, _scheduler = setup("final_consolidation", segments)
+        try:
+            start = time.monotonic()
+            result = agent.consolidate(
+                CheckpointPayload("final_consolidation", host.store.snapshot(), segments, is_consolidation=True)
+            )
+            elapsed = time.monotonic() - start
+        finally:
+            agent.shutdown()
+        cards = host.store.snapshot()["cards"]
+        texts = {
+            name: [x["text"] for x in items if x.get("status") != "removed"]
+            for name, items in cards.items() if isinstance(items, list)
+        }
+        everything = " ".join(t for items in texts.values() for t in items)
+        record(
+            "final_consolidation_keeps_corrections",
+            result.ok
+            and any(op.ok for op in result.op_results)
+            and any("Tuesday" in t for t in texts.get("action_items", []))
+            and any("SQLite" in t for t in texts.get("decisions", []))
+            and "500" in everything
+            and "vendor" in everything.lower(),
+            host,
+            elapsed,
+        )
+        results[-1].update(ok=result.ok, error=result.error, usage=result.usage,
+                           budget_s=dict(stall=CONSOLIDATION_STALL_S, cap=CONSOLIDATION_TIMEOUT_CAP_S))
+
+    def finish():
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.output).write_text(
+            json.dumps(dict(harness=args.harness, provider=provider, model=model, results=results), indent=2),
+            encoding="utf-8",
+        )
+        return 0 if all(r["passed"] for r in results) else 1
+
+    if args.checks == "consolidation":
+        final_consolidation()
+        return finish()
 
     host, agent, scheduler = setup(
         "ai_vendor",
@@ -208,12 +282,9 @@ def main():
         )
     finally:
         agent.shutdown()
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.output).write_text(
-        json.dumps(dict(harness=args.harness, provider=provider, model=model, results=results), indent=2),
-        encoding="utf-8",
-    )
-    return 0 if all(r["passed"] for r in results) else 1
+    if args.checks == "all":
+        final_consolidation()
+    return finish()
 
 
 if __name__ == "__main__":
