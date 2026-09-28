@@ -92,8 +92,9 @@ Optional synthetic product regression (uses the configured provider and incurs m
 
     python -m benchmarks.meeting_mode.live_agent_eval --harness opencode --sidecar-dir sidecar-opencode/dist --output .tmp/opencode_live_agent_eval.json
 
-This script contains invented meeting text and never reads recorded meetings. Release only after
-reviewing its results.
+It ends with one end-of-meeting consolidation under the app's own budget (300 s without
+activity, 900 s cap); `--checks consolidation` runs only that pass. This script contains
+invented meeting text and never reads recorded meetings. Release only after reviewing its results.
 
 ## Publishing a component version
 
