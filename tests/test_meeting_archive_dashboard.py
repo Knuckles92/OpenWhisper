@@ -134,17 +134,13 @@ def test_archive_adapter_rotates_links_and_stops_server():
     assert server.stopped is True
 
 
-def test_archive_adapter_serves_an_authenticated_session(tmp_path):
+def test_archive_adapter_serves_an_authenticated_session(tmp_path, repo):
     from fastapi.testclient import TestClient
 
-    from meeting.persist.repository import SqlMeetingRepository
     from meeting.web.server import MeetingWebServer
-    from services.database import DatabaseManager
 
-    database = DatabaseManager(db_path=str(tmp_path / "archive.db"))
-    repository = SqlMeetingRepository(db=database)
     meeting = _meeting()
-    repository.create_meeting(
+    repo.create_meeting(
         id=meeting["id"],
         title=meeting["title"],
         status=meeting["status"],
@@ -158,11 +154,11 @@ def test_archive_adapter_serves_an_authenticated_session(tmp_path):
         state_seq=meeting["state_seq"],
     )
     archive = ArchivedMeetingDashboard(
-        repository,
-        repository.get_meeting("m_archive"),
+        repo,
+        repo.get_meeting("m_archive"),
         spool_root=str(tmp_path),
     )
-    server = MeetingWebServer(archive, repository)
+    server = MeetingWebServer(archive, repo)
     archive.attach_server(server)
     try:
         with TestClient(server.app) as client:
@@ -176,7 +172,6 @@ def test_archive_adapter_serves_an_authenticated_session(tmp_path):
         assert payload["state"]["status"] == "ended"
     finally:
         archive.shutdown()
-        database.close()
 
 
 def test_runtime_reuses_dashboard_and_opens_selected_history():

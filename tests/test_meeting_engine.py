@@ -232,19 +232,7 @@ class FakeScheduler:
             message="Final insights are ready.",
         )
 
-# Fixtures
-
-@pytest.fixture
-def db(tmp_path):
-    from services.database import DatabaseManager
-    manager = DatabaseManager(db_path=str(tmp_path / "test.db"))
-    yield manager
-    manager.close()
-
-@pytest.fixture
-def repo(db):
-    from meeting.persist.repository import SqlMeetingRepository
-    return SqlMeetingRepository(db=db)
+# Fixtures (``db`` and ``repo`` come from conftest)
 
 @pytest.fixture
 def fakes(monkeypatch):
