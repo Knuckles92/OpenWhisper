@@ -108,10 +108,14 @@ def ai_insights_destination(
 
     Returns:
         ``(where, privacy)``, e.g. ``("OpenRouter · deepseek-v4.1-flash",
-        "sends transcript text, never audio")``.
+        "sends transcript text, never audio")`` or, for an installed agent,
+        ``("Claude Code · Haiku", "your agent receives transcript text, never
+        audio")``.
     """
     try:
         from services.settings import (
+            MeetingAgentCore,
+            resolve_meeting_agent_core,
             resolve_meeting_llm_model,
             resolve_meeting_llm_profile,
             resolve_typesafe_enabled,
@@ -119,6 +123,9 @@ def ai_insights_destination(
 
         if settings is None:
             settings = settings_manager.load_all_settings()
+        core = resolve_meeting_agent_core(settings)
+        if core in MeetingAgentCore.INSTALLED:
+            return installed_agent_destination(core, settings)
         profile = resolve_meeting_llm_profile(settings)
         model = resolve_meeting_llm_model(settings)
         typesafe = resolve_typesafe_enabled(settings)
@@ -148,6 +155,32 @@ def ai_insights_destination(
     if short_model:
         where = f"{where} · {short_model}"
     return where, privacy
+
+
+def installed_agent_destination(
+    agent_id: str, settings: Dict[str, Any],
+) -> Tuple[str, str]:
+    """The AI insights line for a coding agent the user installed.
+
+    Reads only the cached scan, so the idle tab never waits on the agent's
+    command line. Before any scan it names the choice without a verdict.
+    """
+    from services.installed_agents import AGENT_SPECS, cached_scan, describe_choice
+    from services.settings import resolve_meeting_agent_model
+
+    spec = AGENT_SPECS[agent_id]
+    elsewhere = "choose another agent in Settings → Meeting Mode → Intelligence"
+    scan = cached_scan()
+    if scan is not None:
+        agent = scan.get(agent_id)
+        if agent is None:
+            return f"{spec.name} not found", elsewhere
+        if agent.problem:
+            return f"{spec.name} needs an update", f"update it, or {elsewhere}"
+        if agent.signed_in is False:
+            return f"{spec.name} isn't signed in", f"sign in, or {elsewhere}"
+    where = describe_choice(agent_id, resolve_meeting_agent_model(agent_id, settings))
+    return where, "your agent receives transcript text, never audio"
 
 
 def meeting_audio_shows_platform_warning(platform: Optional[str] = None) -> bool:

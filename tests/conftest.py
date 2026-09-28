@@ -183,6 +183,27 @@ def _isolated_credential_store():
 
 
 @pytest.fixture(autouse=True)
+def _no_installed_agent_probes():
+    """Keep Settings from running the user's real coding agents.
+
+    Opening Meeting Mode → Intelligence scans for Claude Code, Codex, and
+    OpenCode by running their command lines. Here the scan finds nothing
+    unless a test patches ``ui_qt.widgets.agent_picker`` itself.
+    """
+    from services.installed_agents import AGENT_ORDER, AGENT_SPECS, AgentModel
+    from ui_qt.widgets import agent_picker
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(agent_picker, "scan_installed_agents",
+                        lambda refresh=False: dict.fromkeys(AGENT_ORDER))
+        patcher.setattr(agent_picker, "cached_agents", lambda: None)
+        patcher.setattr(agent_picker, "list_agent_models", lambda agent: [
+            AgentModel("", f"{AGENT_SPECS[agent.id].name} default")
+        ])
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _before_openai_transcription_shutdown():
     """Pin the OpenAI retirement clock to before 2027-02-26.
 
