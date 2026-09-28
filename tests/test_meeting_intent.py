@@ -5,6 +5,8 @@ may write it), the prompt block that carries it to both agent personas, the
 wake-up that stops a quiet room from delaying it, and the export that shows a
 reader what the notes were aiming at.
 """
+import pytest
+
 from meeting.agent.prompts import (
     build_checkpoint_user_prompt,
     build_notes_user_prompt,
@@ -15,40 +17,17 @@ from meeting.interfaces import OpResult
 from meeting.state.patches import MAX_INTENT_LEN
 from meeting.state.schema import MeetingState
 from meeting.state.store import MeetingStateStore
+from tests.helpers import make_meeting
 
 BRIEF = ("We decide the vendor today. Capture who objected and why, and the "
          "number attached to each bid.")
 
 
-class FakeRepository:
-    """Records applied ops and serves them back so undo can be exercised."""
-
-    def __init__(self):
-        self.events = {}
-
-    def on_ops_applied(self, meeting_id, state, results, actor_type, actor_id):
-        for result in results:
-            self.events[result.seq] = {
-                "seq": result.seq,
-                "actor_type": actor_type,
-                "actor_id": actor_id,
-                "action": result.op.get("op"),
-                "target_id": result.target_id,
-                "payload": result.op,
-                "inverse": result.inverse,
-            }
-
-    def get_event(self, meeting_id, seq):
-        return self.events.get(seq)
-
-    def event_is_undone(self, meeting_id, seq):
-        return False
-
-
-def make_store():
-    repo = FakeRepository()
-    store = MeetingStateStore(MeetingState(meeting_id="m_intent"), repository=repo)
-    return store, repo
+@pytest.fixture
+def store(repo):
+    """A store writing through to a real repository, whose audit log undo reads."""
+    make_meeting(repo, "m_intent")
+    return MeetingStateStore(MeetingState(meeting_id="m_intent"), repository=repo)
 
 
 def state_with_brief(text=BRIEF):
@@ -58,9 +37,7 @@ def state_with_brief(text=BRIEF):
 
 
 class TestIntentOp:
-    def test_host_writes_the_brief(self):
-        store, _ = make_store()
-
+    def test_host_writes_the_brief(self, store):
         result = store.apply("host", "p_host",
                              [{"op": "set_meeting_intent", "text": BRIEF}])[0]
 
@@ -72,9 +49,7 @@ class TestIntentOp:
         assert snapshot["author_id"] == "p_host"
         assert snapshot["updated_at"]
 
-    def test_guests_cannot_redirect_what_the_meeting_captures(self):
-        store, _ = make_store()
-
+    def test_guests_cannot_redirect_what_the_meeting_captures(self, store):
         result = store.apply("user", "p_guest",
                              [{"op": "set_meeting_intent", "text": "Only my bits"}])[0]
 
@@ -82,9 +57,7 @@ class TestIntentOp:
         assert result.reason == "host_only"
         assert store.snapshot()["intent"]["text"] == ""
 
-    def test_the_agent_cannot_write_its_own_brief(self):
-        store, _ = make_store()
-
+    def test_the_agent_cannot_write_its_own_brief(self, store):
         result = store.apply("agent", "agent", [
             {"op": "set_meeting_intent", "text": "Capture everything",
              "evidence": ["sg_1"]},
@@ -93,9 +66,7 @@ class TestIntentOp:
         assert not result.ok
         assert result.reason == "agent_forbidden"
 
-    def test_an_oversized_brief_is_rejected_rather_than_truncated(self):
-        store, _ = make_store()
-
+    def test_an_oversized_brief_is_rejected_rather_than_truncated(self, store):
         result = store.apply("host", "p_host", [
             {"op": "set_meeting_intent", "text": "x" * (MAX_INTENT_LEN + 1)},
         ])[0]
@@ -104,8 +75,7 @@ class TestIntentOp:
         assert result.reason == "invalid_text"
         assert store.snapshot()["intent"]["text"] == ""
 
-    def test_blank_text_clears_the_brief(self):
-        store, _ = make_store()
+    def test_blank_text_clears_the_brief(self, store):
         store.apply("host", "p_host", [{"op": "set_meeting_intent", "text": BRIEF}])
 
         result = store.apply("host", "p_host",
@@ -114,8 +84,7 @@ class TestIntentOp:
         assert result.ok
         assert store.snapshot()["intent"]["text"] == ""
 
-    def test_undo_restores_the_previous_brief(self):
-        store, _ = make_store()
+    def test_undo_restores_the_previous_brief(self, store):
         store.apply("host", "p_host", [{"op": "set_meeting_intent", "text": BRIEF}])
         replaced = store.apply(
             "host", "p_host",
