@@ -2,8 +2,10 @@
 
 Shown before the first meeting with AI insights on (and again from the AI
 insights switch while consent has not been given). Explains exactly where
-transcript text and dashboard state go — the selected text endpoint, which may
-be remote or on this computer. Speech audio routing is configured separately.
+transcript text and dashboard state go: the selected text endpoint, which may
+be remote or on this computer, or the coding agent the user chose to run AI
+insights, which sends them to its own provider under the user's sign-in.
+Speech audio routing is configured separately.
 """
 import logging
 from typing import Final, Optional
@@ -15,6 +17,22 @@ from ui_qt.widgets import Button, PrimaryButton
 logger = logging.getLogger(__name__)
 
 
+def _chosen_agent() -> str:
+    """The installed agent that runs AI insights, or "" for the built-in engine."""
+    try:
+        from services.settings import (
+            MeetingAgentCore,
+            resolve_meeting_agent_core,
+            settings_manager,
+        )
+
+        core = resolve_meeting_agent_core(settings_manager.load_all_settings())
+    except Exception:
+        logger.debug("Could not read who runs AI insights", exc_info=True)
+        return ""
+    return core if core in MeetingAgentCore.INSTALLED else ""
+
+
 class MeetingConsentDialog(QDialog):
     RESULT_CANCEL: Final[str] = "cancel"
     RESULT_ENABLE: Final[str] = "enable"
@@ -24,6 +42,7 @@ class MeetingConsentDialog(QDialog):
         parent=None,
         destination: Optional[str] = None,
         remote: Optional[bool] = None,
+        agent_id: Optional[str] = None,
     ):
         """Initialize the consent dialog.
 
@@ -33,13 +52,24 @@ class MeetingConsentDialog(QDialog):
                 the current meeting profile when omitted.
             remote: Whether transcript text would leave this machine.
                 Resolved from the current meeting profile when omitted.
+            agent_id: The installed agent that runs AI insights ("" for
+                OpenWhisper's built-in engine). Read from settings when
+                omitted. When an agent runs them, the dialog names it and
+                ``destination``/``remote``, which describe the built-in
+                engine's endpoint, do not apply.
         """
         super().__init__(parent)
         self.setObjectName("meetingConsentDialog")
         self.result_action = self.RESULT_CANCEL
-        self.destination, self.remote = self._resolve_destination(
-            destination, remote
-        )
+        self.agent_id = _chosen_agent() if agent_id is None else agent_id
+        if self.agent_id:
+            from services.installed_agents import AGENT_SPECS
+
+            self.destination, self.remote = AGENT_SPECS[self.agent_id].name, True
+        else:
+            self.destination, self.remote = self._resolve_destination(
+                destination, remote
+            )
 
         self.setWindowTitle("Turn On AI Insights")
         self.setAccessibleName("Turn on AI insights for meetings")
@@ -82,6 +112,35 @@ class MeetingConsentDialog(QDialog):
             remote = True if remote is None else remote
         return destination, bool(remote)
 
+    def _location_text(self) -> str:
+        """Where transcript text goes, for the chosen engine."""
+        if self.agent_id:
+            name = self.destination
+            return (
+                f"To do this, the meeting transcript text and the dashboard "
+                f"state are sent to {name} on this computer, the coding agent "
+                "chosen in Settings → Meeting Mode → Intelligence. It runs them "
+                "through its own sign-in and model provider, so transcript "
+                "text leaves this computer the way its other requests do.\n\n"
+                f"{name} gets OpenWhisper's meeting tools and nothing else: no "
+                "files, no shell."
+            )
+        if self.remote:
+            return (
+                f"To do this, the meeting transcript text and the dashboard "
+                f"state are sent to {self.destination}, using the model "
+                f"chosen in Settings → Meeting Mode → Intelligence.\n\n"
+                "That destination is remote, so transcript text leaves this "
+                "computer."
+            )
+        return (
+            f"To do this, the meeting transcript text and the dashboard "
+            f"state are sent to {self.destination}, using the model "
+            f"chosen in Settings → Meeting Mode → Intelligence.\n\n"
+            "That destination is on this computer, so transcript text "
+            "does not leave this machine."
+        )
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -91,28 +150,11 @@ class MeetingConsentDialog(QDialog):
         title.setObjectName("headerLabel")
         layout.addWidget(title)
 
-        if self.remote:
-            location = (
-                f"To do this, the meeting transcript text and the dashboard "
-                f"state are sent to {self.destination}, using the model "
-                f"chosen in Settings → Meeting Mode → Intelligence.\n\n"
-                "That destination is remote, so transcript text leaves this "
-                "computer."
-            )
-        else:
-            location = (
-                f"To do this, the meeting transcript text and the dashboard "
-                f"state are sent to {self.destination}, using the model "
-                f"chosen in Settings → Meeting Mode → Intelligence.\n\n"
-                "That destination is on this computer, so transcript text "
-                "does not leave this machine."
-            )
-
         body = QLabel(
             "AI insights keep the meeting's topic, key points, decisions, "
             "action items, and questions updated on the dashboard while you "
             "talk.\n\n"
-            f"{location}\n\n"
+            f"{self._location_text()}\n\n"
             "AI insights do not upload audio. Recordings are saved here. "
             "If Remote computer is selected for meeting speech, microphone and "
             "system audio are sent to your paired host for transcription. "
