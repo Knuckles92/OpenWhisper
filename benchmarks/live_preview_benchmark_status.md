@@ -16,9 +16,7 @@ The dictation preview now shares the loaded **Parakeet** or **Nemotron** engine
 when one of them is the dictation backend (`config.STREAMING_PREVIEW_BACKENDS`,
 `services/runtime/streaming.py`). No second model is loaded for the preview.
 Local Whisper keeps its dedicated tiny.en preview. Qwen and Moonshine have no
-dictation preview. The user-facing summary and the decision are in
-[docs/local-asr.md](../docs/local-asr.md#live-preview-check); the trimmed
-measured results are in
+dictation preview. The trimmed measured results are in
 [docs/benchmarks/live-preview-windows-2026-09-04.json](../docs/benchmarks/live-preview-windows-2026-09-04.json).
 
 The measured production preview path was also exercised live: the threaded
