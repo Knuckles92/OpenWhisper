@@ -94,7 +94,8 @@ class MeetingEngineOptions:
     llm_provider: str = 'openrouter'
     llm_model: str = ''
     llm_endpoint: Optional[Dict[str, Any]] = None
-    agent_core_kind: str = 'pi'   # 'pi' | 'direct' | 'opencode'
+    #: 'pi' | 'direct', or an installed agent: 'claude_code' | 'codex' | 'opencode'
+    agent_core_kind: str = 'pi'
     sidecar_payload_dir: Optional[str] = None
     diarization_model_path: Optional[str] = None
     speaker_id_backend: str = 'local'  # 'off' | 'local' | 'openai'
