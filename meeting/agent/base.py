@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 # Re-exported for convenience so agent implementations and the engine can do
 # ``from meeting.agent.base import AgentCore, AgentToolHost``.
@@ -36,6 +36,7 @@ __all__ = [
     "CONSOLIDATION_TIMEOUT_CAP_S",
     "create_agent_core",
     "find_provider_api_key",
+    "merge_usage",
 ]
 
 
@@ -53,6 +54,23 @@ def find_provider_api_key(provider: str, endpoint: Optional[Any] = None) -> Opti
     from services.text_llm import profile_from_agent_config, resolve_api_key
 
     return resolve_api_key(profile_from_agent_config(provider, endpoint))
+
+
+def merge_usage(total: Dict[str, Any], usage: Any) -> None:
+    """Add one model response's token usage to a running ``total``.
+
+    Args:
+        total: Accumulator; gains ``prompt_tokens``, ``completion_tokens``,
+            ``total_tokens`` and a ``requests`` count.
+        usage: The response's usage object, or None when it reported none.
+    """
+    if usage is None:
+        return
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = getattr(usage, key, None)
+        if isinstance(value, int):
+            total[key] = total.get(key, 0) + value
+    total["requests"] = total.get("requests", 0) + 1
 
 
 def create_agent_core(kind: str, payload_dir: Optional[str] = None) -> AgentCore:

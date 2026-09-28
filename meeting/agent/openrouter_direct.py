@@ -16,6 +16,7 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from config import config
+from meeting.agent.base import merge_usage
 from meeting.agent.prompts import (
     JSON_FALLBACK_INSTRUCTIONS,
     build_checkpoint_user_prompt,
@@ -30,6 +31,7 @@ from meeting.agent.tool_policy import (
     run_tool,
     tool_result_text,
 )
+from meeting.context_folder import context_folder_enabled
 from meeting.finalization import POLISH_TIMEOUT_S
 from meeting.interfaces import (
     AgentConfig,
@@ -38,6 +40,7 @@ from meeting.interfaces import (
     CheckpointPayload,
     OpResult,
 )
+from meeting.recall import past_recall_enabled
 from meeting.state.patches import RESOLVE_CONFIDENCE, SUGGEST_CONFIDENCE
 from meeting.state.schema import CARD_KEYS
 
@@ -311,26 +314,6 @@ _NOOP_TOOL = {
 }
 
 
-def _past_recall_enabled() -> bool:
-    """True when the user has opted in to past-meeting recall."""
-    try:
-        from services.settings import resolve_meeting_past_recall_enabled
-
-        return bool(resolve_meeting_past_recall_enabled())
-    except Exception:
-        return False
-
-
-def _context_folder_enabled() -> bool:
-    """True when the user has opted in to knowledge-folder search."""
-    try:
-        from services.settings import resolve_meeting_context_folder_enabled
-
-        return bool(resolve_meeting_context_folder_enabled())
-    except Exception:
-        return False
-
-
 class DirectOpenRouterAgent:
     """``AgentCore`` implementation calling OpenRouter/OpenAI directly."""
 
@@ -508,16 +491,6 @@ class DirectOpenRouterAgent:
         text = str(exc).lower()
         return "response_format" in text or "json_object" in text
 
-    @staticmethod
-    def _merge_usage(total: Dict[str, Any], usage: Any) -> None:
-        if usage is None:
-            return
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
-            value = getattr(usage, key, None)
-            if isinstance(value, int):
-                total[key] = total.get(key, 0) + value
-        total["requests"] = total.get("requests", 0) + 1
-
     def _run_pass(self, payload: CheckpointPayload, timeout_s: float) -> AgentResult:
         if not self.is_healthy():
             return AgentResult(ok=False, error="agent_unavailable")
@@ -547,7 +520,7 @@ class DirectOpenRouterAgent:
             else _MAX_TOOL_ROUNDS
         )
         if (
-            (_past_recall_enabled() or _context_folder_enabled())
+            (past_recall_enabled() or context_folder_enabled())
             and max_rounds < _MAX_TOOL_ROUNDS_WITH_RECALL
         ):
             max_rounds = _MAX_TOOL_ROUNDS_WITH_RECALL
@@ -596,7 +569,7 @@ class DirectOpenRouterAgent:
                 return AgentResult(
                     ok=False, op_results=op_results, error=error, usage=usage,
                 )
-            self._merge_usage(usage, getattr(response, "usage", None))
+            merge_usage(usage, getattr(response, "usage", None))
 
             tool_calls = response.tool_calls
             if not tool_calls:
@@ -691,7 +664,7 @@ class DirectOpenRouterAgent:
                     continue
                 error = "canceled" if self._cancel_event.is_set() else str(exc)
                 return AgentResult(ok=False, error=error, usage=usage)
-            self._merge_usage(usage, getattr(response, "usage", None))
+            merge_usage(usage, getattr(response, "usage", None))
 
             content = response.text
             try:
