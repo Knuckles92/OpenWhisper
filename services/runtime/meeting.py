@@ -23,6 +23,7 @@ from services.components import (
     speaker_model_path,
 )
 from services.settings import (
+    SETTING_DEFAULTS,
     MeetingAgentCore,
     MeetingSpeakerIdBackend,
     SettingsKey,
@@ -663,7 +664,10 @@ class MeetingRuntime:
 
         if cloud_enabled is None:
             cloud = bool(
-                settings_manager.get(SettingsKey.MEETING_CLOUD_LAST_ENABLED, False)
+                settings_manager.get(
+                    SettingsKey.MEETING_CLOUD_LAST_ENABLED,
+                    SETTING_DEFAULTS[SettingsKey.MEETING_CLOUD_LAST_ENABLED],
+                )
             )
         else:
             cloud = bool(cloud_enabled)
@@ -1487,7 +1491,10 @@ class MeetingRuntime:
 
     def _cloud_consent_given(self) -> bool:
         return bool(
-            settings_manager.get(SettingsKey.MEETING_CLOUD_CONSENT_GIVEN, False)
+            settings_manager.get(
+                SettingsKey.MEETING_CLOUD_CONSENT_GIVEN,
+                SETTING_DEFAULTS[SettingsKey.MEETING_CLOUD_CONSENT_GIVEN],
+            )
         )
 
     def finalize_recovered(self, meeting_id: str) -> None:

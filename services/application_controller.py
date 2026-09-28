@@ -43,7 +43,13 @@ from services.runtime import (
     StreamingRuntime,
     TranscriptionRuntime,
 )
-from services.settings import HuggingFaceAccessPolicy, SettingsKey, settings_manager
+from services.settings import (
+    SETTING_DEFAULTS,
+    HuggingFaceAccessPolicy,
+    SettingsKey,
+    setting_value,
+    settings_manager,
+)
 from transcriber import (
     GpuFallbackCause,
     LocalWhisperBackend,
@@ -1746,7 +1752,7 @@ class ApplicationController(QObject):
             return  # activation failed; the restart message already covers it
 
         device = settings_manager.get(
-            SettingsKey.WHISPER_DEVICE, config.FASTER_WHISPER_DEVICE
+            SettingsKey.WHISPER_DEVICE, SETTING_DEFAULTS[SettingsKey.WHISPER_DEVICE]
         )
         if device == "cpu":
             logger.info(
@@ -1780,7 +1786,7 @@ class ApplicationController(QObject):
             return
 
         device = settings_manager.get(
-            SettingsKey.WHISPER_DEVICE, config.FASTER_WHISPER_DEVICE
+            SettingsKey.WHISPER_DEVICE, SETTING_DEFAULTS[SettingsKey.WHISPER_DEVICE]
         )
         if device != "cpu":
             logger.info(
@@ -1802,7 +1808,10 @@ class ApplicationController(QObject):
             and backend is self.transcription_backends.get("local_whisper")
             and getattr(backend, "gpu_fallback_cause", None) == GpuFallbackCause.MISSING_LIBRARIES
             and ComponentId.GPU_ACCEL in available_component_ids()
-            and not settings_manager.get(SettingsKey.WHISPER_GPU_OFFER_DECLINED, False)
+            and not settings_manager.get(
+                SettingsKey.WHISPER_GPU_OFFER_DECLINED,
+                SETTING_DEFAULTS[SettingsKey.WHISPER_GPU_OFFER_DECLINED],
+            )
         )
 
     def _offer_gpu_setup(self, backend) -> None:
@@ -1928,7 +1937,7 @@ class ApplicationController(QObject):
         if not is_model_cached("tiny.en"):
             return
         settings = settings_manager.load_all_settings()
-        if settings.get(SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED):
+        if setting_value(SettingsKey.STREAMING_ENABLED, settings):
             self.streaming_runtime.reconfigure_streaming()
 
     def _start_hf_model_task(self, model_name: str, load_into_engine: bool = True) -> None:

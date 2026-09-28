@@ -48,7 +48,7 @@ class HostModelManager:
             selected_device,
         )
         from services.remote_asr.dependencies import dependency_options
-        from services.settings import settings_manager
+        from services.settings import SettingsKey, setting_value, settings_manager
 
         settings = settings_manager.load_all_settings()
         runtimes = {WHISPER_BACKEND: True}
@@ -66,7 +66,7 @@ class HostModelManager:
                 runtime_ready=runtimes[family],
                 download_size=format_download_size(model) or "",
                 dependencies=dependencies[family],
-                selected_device=(settings.get("whisper_device", "auto") if family == WHISPER_BACKEND
+                selected_device=(setting_value(SettingsKey.WHISPER_DEVICE, settings) if family == WHISPER_BACKEND
                                  else selected_device(family, settings)),
             )
         return {"models": models, "download": self.job()}
