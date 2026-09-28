@@ -1352,6 +1352,8 @@ class AgentPicker(QWidget):
         return self.long_model_combo if self._long_list else self.short_model_combo
 
     def _show_model_card(self, agent: Optional[InstalledAgent]) -> None:
+        # The field hides with the card so Settings search skips it too.
+        self.model_field.setVisible(agent is not None)
         if agent is None:
             self._shown_models_for = ""
             self.model_card.hide()
