@@ -1537,6 +1537,38 @@ class TestCloudSpeakerStep:
         assert result["skipped"] is True
         assert result["error"] == message
 
+    def test_eligible_end_uploads_once_and_reports_labels(
+            self, make_engine, monkeypatch):
+        uploads = []
+        monkeypatch.setattr(
+            "meeting.diarize.cloud_pass.run_cloud_speaker_pass",
+            lambda *args, **kwargs: uploads.append(kwargs) or {
+                "ok": True, "applied": 2, "created": 1, "windows": 1,
+            },
+        )
+        monkeypatch.setattr(
+            "services.transcript_cleanup.find_api_key", lambda provider: "sk-test",
+        )
+        engine = make_engine(
+            cloud_enabled=False,
+            speaker_id_backend="openai",
+            speaker_id_audio_consent=True,
+        )
+        engine.start()
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+
+        assert [call["api_key"] for call in uploads] == ["sk-test"]
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        steps = {step["id"]: step for step in fin["steps"]}
+        assert steps["speaker_id"]["status"] == "completed"
+        assert steps["speaker_id"]["detail"] == "Updated 2 speaker labels"
+        assert fin["status"] == "completed"
+        assert fin["message"] == (
+            "Speaker identification finished. "
+            "AI insights are off for this meeting."
+        )
+
     @pytest.mark.parametrize("backend,consent,reason", [
         ("openai", False, "consent"),
         ("local", True, "not set to OpenAI"),

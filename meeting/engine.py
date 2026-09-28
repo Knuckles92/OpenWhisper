@@ -972,23 +972,12 @@ class MeetingEngine:
                         "ok": False, "skipped": False,
                         "error": "Speaker identification failed.",
                     }
+                from meeting.refinalize import speaker_step_outcome
+
                 speaker_ok = bool(speaker_result.get("ok"))
                 speaker_skipped = bool(speaker_result.get("skipped"))
                 speaker_error = str(speaker_result.get("error") or "")
-                if speaker_ok:
-                    applied = int(speaker_result.get("applied") or 0)
-                    detail = (
-                        f"Updated {applied} speaker label"
-                        f"{'' if applied == 1 else 's'}"
-                    )
-                    step_status = "completed"
-                elif speaker_skipped:
-                    detail = speaker_error or "Speaker identification skipped."
-                    step_status = "completed"
-                else:
-                    detail = speaker_error or "Speaker identification failed."
-                    step_status = "failed"
-                _update_step("speaker_id", step_status, detail)
+                _update_step("speaker_id", *speaker_step_outcome(speaker_result))
 
             if run_cloud and not complete and not offline_ok:
                 run_cloud = False
@@ -1233,9 +1222,9 @@ class MeetingEngine:
             on_start: Called once the gate allows the upload, before it.
 
         Returns:
-            ``{ok, skipped, applied, error}``. ``skipped`` is True when the
-            backend, consent, or API key is missing, or OpenAI has retired
-            the diarization model.
+            ``refinalize.run_speaker_pass``'s result. ``skipped`` is True
+            when the backend, consent, or API key is missing, or OpenAI has
+            retired the diarization model.
         """
         def _openai_key() -> str:
             from services.transcript_cleanup import find_api_key
@@ -1247,46 +1236,25 @@ class MeetingEngine:
             consent=self.options.speaker_id_audio_consent,
             find_key=None if transcribe_fn is not None else _openai_key,
         )
-        if not gate.ok:
-            return {
-                "ok": False, "skipped": True, "applied": 0,
-                "error": gate.reason,
-            }
-        if not self.meeting_id or self.store is None:
+        if gate.ok and (not self.meeting_id or self.store is None):
             return {
                 "ok": False, "skipped": False, "applied": 0,
                 "error": "Meeting is not ready for speaker identification.",
             }
         try:
-            from meeting.diarize import cloud_pass
+            from meeting.refinalize import run_speaker_pass
         except Exception as exc:
             logger.exception("Cloud speaker pass unavailable")
             return {
                 "ok": False, "skipped": False, "applied": 0, "error": str(exc),
             }
-        if on_start is not None:
-            on_start()
-        spool_dir = self._spool_dir or ""
-        try:
-            result = cloud_pass.run_cloud_speaker_pass(
-                self.repository, self.meeting_id, self.store, spool_dir,
-                api_key=gate.api_key,
-                transcribe_fn=transcribe_fn,
-                progress_cb=progress_cb,
-            )
-        except Exception as exc:
-            logger.exception("Cloud speaker pass raised")
-            return {
-                "ok": False, "skipped": False, "applied": 0, "error": str(exc),
-            }
-        return {
-            "ok": bool(result.get("ok")),
-            # OpenAI retired the model early: on-device labels stand.
-            "skipped": bool(result.get("retired")),
-            "applied": int(result.get("applied") or 0),
-            "created": int(result.get("created") or 0),
-            "error": result.get("error"),
-        }
+        return run_speaker_pass(
+            self.repository, self.meeting_id, self.store, self._spool_dir or "",
+            gate=gate,
+            transcribe_fn=transcribe_fn,
+            progress_cb=progress_cb,
+            on_start=on_start,
+        )
 
     def _run_offline_final_pass(
         self,
