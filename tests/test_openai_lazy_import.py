@@ -87,6 +87,7 @@ class TestApiBackendClient:
     def test_first_request_builds_it_once(self, built, monkeypatch):
         backend = OpenAIBackend("api", api_key="sk-test")
         monkeypatch.setattr(backend, "_get_api_model_name", lambda: "gpt-transcribe")
+        monkeypatch.setattr(backend, "large_file_size_mb", lambda _path: None)
         monkeypatch.setattr(
             backend, "_transcribe_file", lambda _path, _model: backend.client.api_key
         )
