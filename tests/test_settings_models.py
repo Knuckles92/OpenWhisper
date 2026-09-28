@@ -739,6 +739,30 @@ class TestMeetingDestinations(_DialogTestCase):
         assert combo.model().item(index).isEnabled()
         assert combo.currentData() == MeetingAgentCore.OPENCODE
 
+    def test_opencode_label_says_why_it_is_unavailable(self):
+        with patch.object(dialog_module, "meeting_agent_payload_dir", return_value=None):
+            dialog, _values = self._make_meeting_dialog()
+        combo = dialog.meeting_agent_core_combo
+        index = combo.findData(MeetingAgentCore.OPENCODE)
+        published = "services.components.component_is_published"
+        for tag, offered, label in (
+            ("darwin_arm64", False, "OpenCode v2 (Windows and Linux only)"),
+            ("linux_aarch64", False, "OpenCode v2 (not in Downloads yet)"),
+            ("win_amd64", True, "OpenCode v2 (install from Downloads)"),
+        ):
+            with patch.object(dialog_module, "current_platform_tag", return_value=tag), \
+                    patch(published, return_value=offered), \
+                    patch.object(dialog_module, "meeting_agent_payload_dir", return_value=None):
+                dialog.refresh_component_state()
+            assert combo.itemText(index) == label
+            assert not combo.model().item(index).isEnabled()
+        with patch.object(dialog_module, "meeting_agent_payload_dir",
+                          side_effect=lambda kind="pi": "/opt/opencode" if kind == "opencode" else None):
+            dialog.refresh_component_state()
+        assert combo.itemText(index) == "OpenCode v2"
+        assert combo.model().item(index).isEnabled()
+        assert "beta" not in dialog_module.agent_core_label(MeetingAgentCore.OPENCODE)
+
 
 class TestSharedRuntime(_DialogTestCase):
     """Device and quantization are shared, and say so on both surfaces."""

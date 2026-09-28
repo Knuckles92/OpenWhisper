@@ -91,7 +91,7 @@ def create_agent_core(kind: str, payload_dir: Optional[str] = None) -> AgentCore
 
     if kind == "opencode":
         if not payload_dir:
-            raise RuntimeError("Install OpenCode v2 (beta) from Downloads to enable meeting intelligence.")
+            raise RuntimeError("Install OpenCode v2 from Downloads to enable meeting intelligence.")
         from meeting.agent.opencode_sidecar import OpenCodeSidecarAgent
         return OpenCodeSidecarAgent(payload_dir)
 

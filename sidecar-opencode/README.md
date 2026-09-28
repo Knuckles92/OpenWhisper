@@ -1,7 +1,8 @@
 # OpenCode v2 meeting harness
 
 OpenWhisper embeds the OpenCode SDK in a supervised Bun sidecar. Pi remains the default.
-Select **OpenCode v2 (beta)** in Models → Meeting after installing its separate Downloads component.
+Select **OpenCode v2** as the agent core in Models → Meeting after installing its separate
+Downloads component.
 Payloads are built for Windows x64, Linux x86_64, and Linux aarch64 (glibc), the platforms
 where Bun and every native SDK dependency ship prebuilt; macOS is not offered, as with Pi.
 Provider, model, credentials, and cloud consent come from the existing OpenWhisper settings.

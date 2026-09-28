@@ -155,12 +155,18 @@ _CATALOG: dict[str, ComponentDetails] = {
     ),
     "meeting-agent-opencode": ComponentDetails(
         component_id="meeting-agent-opencode",
-        display_name="OpenCode v2 (beta)",
-        summary="An optional meeting intelligence engine using your selected text provider and model.",
+        display_name="OpenCode v2",
+        summary=(
+            "An alternative meeting agent core, built on the OpenCode v2 SDK, that uses "
+            "your selected text provider and model."
+        ),
         description=(
-            "OpenCode maintains meeting cards, notes, questions, and final reports. "
-            "It uses the provider and credentials configured in OpenWhisper. "
-            "Only the meeting tools are exposed to the model."
+            "A portable Bun runtime plus the OpenCode v2 SDK, embedded in a supervised "
+            "sidecar. Selected as the agent core in Models → Meeting, it maintains meeting "
+            "cards, notes, questions, and final reports. It uses the provider, model, and "
+            "credentials configured in OpenWhisper, and needs no OpenCode account or CLI. "
+            "Only the five meeting tools are exposed to the model; OpenCode's own shell, "
+            "file, and web tools are removed. Pi remains the default agent core."
         ),
         origin_name="OpenCode",
         origin_url="https://opencode.ai/v2/docs/build/sdk/",
@@ -170,18 +176,21 @@ _CATALOG: dict[str, ComponentDetails] = {
         source_label="GitHub ↗",
         maintainer="OpenWhisper (integration); OpenCode (SDK); Bun (runtime)",
         family="Meeting intelligence",
-        requires="Windows x64 and a configured text model with tool support.",
+        requires="A configured text model with tool support. Used by Meeting Mode.",
         payload="Portable Bun runtime, OpenCode v2 SDK, and the meeting sidecar",
         local_format="A self-contained component folder",
         license="Bun and OpenCode MIT; dependency notices included in the download",
-        best_for="Trying OpenCode's agent loop for meeting intelligence.",
+        best_for="Meeting Mode with OpenCode's agent loop instead of Pi's.",
         limitations=(
-            "OpenCode v2 is beta; the app uses a tested SDK and runtime version.",
-            "Windows x64 only in this release.",
-            "If the engine fails, recording continues and meeting intelligence is marked unavailable.",
+            "The app pins a tested OpenCode SDK and Bun version; updates arrive as new "
+            "component versions.",
+            "Offered on Windows x64 and Linux x86_64/aarch64. macOS is not supported.",
+            "Larger than the Pi agent: up to 130 MB to download and 470 MB installed.",
+            "If the engine fails, recording continues and meeting intelligence is marked "
+            "unavailable; it does not switch to another agent core.",
             "Finish active meeting and report jobs before updating or removing this component.",
         ),
-        compact_tags="OpenCode v2 · Beta",
+        compact_tags="OpenCode v2 agent",
         source_note=_SOURCE_NOTE,
         source_urls=("https://opencode.ai/v2/docs/build/sdk/", "https://bun.sh"),
     ),

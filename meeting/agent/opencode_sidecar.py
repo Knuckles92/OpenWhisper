@@ -49,7 +49,7 @@ class OpenCodeSidecarAgent(SidecarAgent):
         from services.opencode_component import runtime_name
         runtime = os.path.join(self._payload_dir, runtime_name())
         if not os.path.isfile(runtime) or not os.path.isfile(self._bundle_path()):
-            raise RuntimeError("OpenCode runtime is missing. Install OpenCode v2 (beta) from Downloads.")
+            raise RuntimeError("OpenCode runtime is missing. Install OpenCode v2 from Downloads.")
         return [runtime, "--no-install", self._bundle_path()]
 
     def _validate_hello(self, params: dict[str, Any]) -> bool:
