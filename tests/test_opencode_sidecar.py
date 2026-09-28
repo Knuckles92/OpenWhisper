@@ -15,7 +15,7 @@ from meeting.interfaces import AgentConfig, CheckpointPayload, OpResult
 from services import components
 from services.component_leases import acquire_component, component_mutation
 from services.opencode_catalog import SDK_VERSION, BUN_VERSION
-from services.opencode_component import isolated_environment, runnable
+from services.opencode_component import SUPPORTED_PLATFORMS, isolated_environment, runnable, runtime_name
 
 
 def test_factory_does_not_fall_back_when_opencode_missing():
@@ -49,13 +49,16 @@ def test_environment_has_no_ambient_cli_config_preloads_or_provider_keys(tmp_pat
         "BUN_OPTIONS": "--preload evil.js", "NODE_OPTIONS": "--require evil.js",
         "OPENCODE_CONFIG_CONTENT": "ambient", "ANTHROPIC_API_KEY": "unrelated",
         "OPENWHISPER_LLM_API_KEY": "selected", "OPENWHISPER_SIDECAR_TOKEN": "token",
-        "HTTPS_PROXY": "proxy",
+        "HTTPS_PROXY": "proxy", "LANG": "C.UTF-8",
+        "LD_PRELOAD": "evil.so", "LD_LIBRARY_PATH": "/opt/OpenWhisper/_internal", "TMPDIR": "/tmp",
     }, str(tmp_path))
     assert env["OPENWHISPER_LLM_API_KEY"] == "selected"
     assert env["HTTPS_PROXY"] == "proxy"
-    assert not ({"BUN_OPTIONS", "NODE_OPTIONS", "OPENCODE_CONFIG_CONTENT", "ANTHROPIC_API_KEY"} & env.keys())
+    assert env["LANG"] == "C.UTF-8"
+    assert not ({"BUN_OPTIONS", "NODE_OPTIONS", "OPENCODE_CONFIG_CONTENT", "ANTHROPIC_API_KEY",
+                 "LD_PRELOAD", "LD_LIBRARY_PATH"} & env.keys())
     assert env["HOME"] == env["USERPROFILE"] == str(tmp_path)
-    for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "TMP", "TEMP"):
+    for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "TMP", "TEMP", "TMPDIR"):
         assert Path(env[name]).is_relative_to(tmp_path)
         assert Path(env[name]).is_dir()
 
@@ -162,14 +165,67 @@ def test_question_operations_are_reported_to_scheduler(authorized_agent):
     assert agent._checkpoint_op_results["active"][0].op["op"] == "ask_question"
 
 
-def test_payload_resolution_is_platform_gated_and_does_not_hide_broken_install(monkeypatch, tmp_path):
-    monkeypatch.setattr(components, "current_platform_tag", lambda: "linux_x86_64")
-    assert components.meeting_agent_payload_dir("opencode") is None
-    monkeypatch.setattr(components, "current_platform_tag", lambda: "win_amd64")
+@pytest.mark.parametrize("platform", ["win_amd64", "linux_x86_64", "linux_aarch64"])
+def test_payload_resolution_does_not_hide_broken_install(monkeypatch, tmp_path, platform):
+    monkeypatch.setattr(components, "current_platform_tag", lambda: platform)
     monkeypatch.setattr(components, "is_installed", lambda _: True)
     monkeypatch.setattr(components, "read_manifest", lambda _: None)
     monkeypatch.setattr(components, "component_dir", lambda _: str(tmp_path))
     assert components.meeting_agent_payload_dir("opencode") is None
+
+
+def test_payload_resolution_and_initialize_are_platform_gated(monkeypatch):
+    monkeypatch.setattr(components, "current_platform_tag", lambda: "darwin_arm64")
+    monkeypatch.setattr(components, "is_installed", Mock(side_effect=AssertionError("not consulted")))
+    assert components.meeting_agent_payload_dir("opencode") is None
+    agent = OpenCodeSidecarAgent("payload")
+    with pytest.raises(RuntimeError, match="Windows x64 and Linux"):
+        agent.initialize(AgentConfig("m", "openrouter", "test", "key", "charter"), Mock())
+    assert agent._runtime_root is None
+
+
+def test_catalog_offers_every_supported_platform_only_once_pinned():
+    from services.opencode_catalog import COMPONENT_VERSION, RELEASE_TAG
+    component = components.ComponentId.MEETING_AGENT_OPENCODE
+    assert set(SUPPORTED_PLATFORMS) == {"win_amd64", "linux_x86_64", "linux_aarch64"}
+    for platform in SUPPORTED_PLATFORMS:
+        entry = components.catalog_entry_for_platform(component, platform_tag=platform)
+        assert entry["platform"] == platform and entry["version"] == COMPONENT_VERSION
+        (archive,) = entry["archives"]
+        assert archive["name"] == f"meeting-agent-opencode-{platform}-{COMPONENT_VERSION}.zip"
+        assert archive["url"].endswith(f"/releases/download/{RELEASE_TAG}/{archive['name']}")
+        if not entry["published"]:
+            assert not components.component_is_published(component, platform_tag=platform)
+            assert component not in components.available_component_ids(platform)
+        else:
+            assert components.component_is_published(component, platform_tag=platform)
+            assert component in components.available_component_ids(platform)
+
+
+def test_runtime_name_and_posix_executable_restore(tmp_path):
+    from services.opencode_component import restore_executable_bits
+    assert runtime_name(True) == "bun.exe" and runtime_name(False) == "bun"
+    (tmp_path / "bun").write_bytes(b"runtime")
+    files = {"bun": "digest", "main.mjs": "digest"}
+    restore_executable_bits(tmp_path, {"files": files}, windows=True)  # Windows keeps no modes.
+    for bad in ({"files": files}, {"files": files, "executables": ["main.mjs"]},
+                {"files": files, "executables": ["bun", "../escape"]}):
+        with pytest.raises(ValueError):
+            restore_executable_bits(tmp_path, bad, windows=False)
+    restore_executable_bits(tmp_path, {"files": files, "executables": ["bun"]}, windows=False)
+
+
+def test_payload_built_for_another_platform_is_rejected(monkeypatch, tmp_path):
+    from services.opencode_component import validate_payload
+    (tmp_path / "payload.json").write_text(json.dumps({
+        "schema": 1, "sdk_version": SDK_VERSION, "bun_version": BUN_VERSION,
+        "platform": "linux_aarch64", "files": {}}))
+    for package in ("sdk", "core", "plugin"):
+        (tmp_path / "node_modules/@opencode" / package).mkdir(parents=True)
+        (tmp_path / "node_modules/@opencode" / package / "package.json").write_text(json.dumps({"version": SDK_VERSION}))
+    monkeypatch.setattr(components, "current_platform_tag", lambda: "linux_x86_64")
+    with pytest.raises(components.ComponentError, match="incomplete or has incompatible"):
+        validate_payload(str(tmp_path))
 
 
 def test_payload_validation_rejects_incomplete_tree(tmp_path):
@@ -182,8 +238,8 @@ def test_payload_validation_rejects_incomplete_tree(tmp_path):
 def test_python_supervisor_with_packaged_sdk_all_meeting_passes():
     """Real Python RPC -> Bun -> embedded SDK -> mock provider -> real state store."""
     payload = Path(os.environ.get("OPENWHISPER_TEST_OPENCODE_PAYLOAD", "sidecar-opencode/dist")).resolve()
-    if components.current_platform_tag() != "win_amd64" or not runnable(str(payload)):
-        pytest.skip("Build the Windows OpenCode payload to run SDK integration")
+    if components.current_platform_tag() not in SUPPORTED_PLATFORMS or not runnable(str(payload)):
+        pytest.skip("Build this platform's OpenCode payload to run SDK integration")
     from benchmarks.meeting_mode.product_eval import ProductEvalHost
     from meeting.agent.prompts import build_system_prompt
     segments = [dict(id="sg_1", start_s=1, end_s=4, text="Budget is five hundred.", channel="mic")]
@@ -283,3 +339,28 @@ def test_timeout_preserves_real_operations_and_revokes_late_tools(authorized_age
     agent._handle_tool_request({"id": 8, "method": "tool.patch_state", "params": {
         "request_id": "timeout", "ops": [op]}})
     assert agent._tools.apply_agent_ops.call_count == before
+
+
+def test_pin_tool_copies_measured_pins_into_the_catalog(tmp_path):
+    import importlib.util
+    import runpy
+    from services import opencode_catalog
+    from services.opencode_catalog import COMPONENT_VERSION, archive_name
+    build = runpy.run_path(str(Path(__file__).resolve().parent.parent / "scripts/build_opencode_component.py"))
+    catalog = tmp_path / "opencode_catalog.py"
+    catalog.write_text(Path(opencode_catalog.__file__).read_text(encoding="utf-8"), encoding="utf-8")
+    name = archive_name("linux_x86_64")
+    (tmp_path / name).write_bytes(b"synthetic archive")
+    pins = {"published": True, "sha256": build["sha256"](tmp_path / name), "size_bytes": 17, "install_bytes": 1234}
+    built = tmp_path / (name + ".catalog.json")
+    built.write_text(json.dumps({"platform": "linux_x86_64", "version": COMPONENT_VERSION, "name": name, "pins": pins}))
+    build["pin_catalog"]([built], catalog)
+    build["pin_catalog"]([built], catalog)  # Re-pinning replaces the same entry.
+    spec = importlib.util.spec_from_file_location("pinned_catalog", catalog)
+    pinned = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pinned)
+    assert pinned.ARCHIVES["linux_x86_64"] == pins
+    assert pinned.ARCHIVES["win_amd64"] == opencode_catalog.ARCHIVES["win_amd64"]
+    (tmp_path / name).write_bytes(b"tampered")
+    with pytest.raises(SystemExit, match="does not match"):
+        build["pin_catalog"]([built], catalog)

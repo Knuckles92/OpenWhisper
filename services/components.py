@@ -521,8 +521,8 @@ def available_component_ids(
     """Components that can be installed on this platform.
 
     GPU Acceleration (the CUDA libraries Local Whisper loads) is offered on
-    Windows x64 and Linux x86_64. The meeting agent is offered on Windows x64
-    and Linux x86_64/aarch64. Linux x86_64 also offers the native NVIDIA
+    Windows x64 and Linux x86_64. The Pi and OpenCode meeting agents are
+    offered on Windows x64 and Linux x86_64/aarch64. Linux x86_64 also offers the native NVIDIA
     Speech CPU and CUDA runtimes, and the Vulkan one to a computer whose
     NVIDIA GPU is older than Turing (or that already has it); Apple Silicon
     Macs offer the CPU one.
@@ -547,6 +547,7 @@ def available_component_ids(
         candidates = (
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
+            ComponentId.MEETING_AGENT_OPENCODE,
             ComponentId.ASR_NVIDIA_CPU,
             ComponentId.ASR_NVIDIA_CUDA,
         )
@@ -554,7 +555,7 @@ def available_component_ids(
                 or nvidia_gpu_runtime() == ComponentId.ASR_NVIDIA_VULKAN):
             candidates += (ComponentId.ASR_NVIDIA_VULKAN,)
     elif tag == PLATFORM_LINUX_AARCH64:
-        candidates = (ComponentId.MEETING_AGENT,)
+        candidates = (ComponentId.MEETING_AGENT, ComponentId.MEETING_AGENT_OPENCODE)
     elif tag == "darwin_arm64":
         candidates = (ComponentId.ASR_NVIDIA_CPU,)
     else:

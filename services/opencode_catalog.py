@@ -11,6 +11,8 @@ RELEASE_URL = f"https://github.com/Knuckles92/OpenWhisper/releases/download/{REL
 _PLACEHOLDER = {"published": False, "sha256": "0" * 64, "size_bytes": 0, "install_bytes": 0}
 ARCHIVES = {
     "win_amd64": dict(_PLACEHOLDER),
+    "linux_x86_64": dict(_PLACEHOLDER),
+    "linux_aarch64": dict(_PLACEHOLDER),
 }
 
 

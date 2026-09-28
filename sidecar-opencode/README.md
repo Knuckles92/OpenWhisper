@@ -2,8 +2,9 @@
 
 OpenWhisper embeds the OpenCode SDK in a supervised Bun sidecar. Pi remains the default.
 Select **OpenCode v2 (beta)** in Models → Meeting after installing its separate Downloads component.
-This first payload supports Windows x64. Provider, model, credentials, and cloud consent come
-from the existing OpenWhisper settings.
+Payloads are built for Windows x64, Linux x86_64, and Linux aarch64 (glibc), the platforms
+where Bun and every native SDK dependency ship prebuilt; macOS is not offered, as with Pi.
+Provider, model, credentials, and cloud consent come from the existing OpenWhisper settings.
 
 The SDK is embedded, as Pi's SDK is embedded in its Node sidecar. No globally installed CLI,
 external OpenCode server, or OpenCode login is involved. The V2 SDK uses an in-memory HTTP
@@ -49,8 +50,8 @@ Exact pins are an OpenWhisper release/testing policy; neither SDK requires appli
 versions permanently. Upstream publishes 2.0.x patches often; move only after the checks below pass.
 
 Update both SDK package declarations and bun.lock, src/versions.ts, and
-services/opencode_catalog.py together. Update Bun's version, official archive hash, and CI pin
-when changing the runtime. Bump the component version for any shipped code or dependency change.
+services/opencode_catalog.py together. Update Bun's version, its official archive hashes
+(BUN_ARCHIVES in scripts/build_opencode_component.py), and the CI pins when changing the runtime. Bump the component version for any shipped code or dependency change.
 Keep Pi's component and dependency versions independent.
 
 ## Checks and packaging
@@ -61,19 +62,24 @@ From this directory, with Bun 1.3.14:
     bun run typecheck
     bun test
 
-From the repository root:
+From the repository root, on each target platform (the self-test runs the payload natively):
 
     python scripts/build_component.py meeting-agent-opencode
     python -m pytest tests/test_opencode_sidecar.py
 
-The builder downloads the SHA-256-pinned official Bun baseline archive, installs production
+The builder needs only the Python standard library. It downloads this platform's SHA-256-pinned
+official Bun archive (baseline x64 builds, for CPUs without AVX2), installs production
 dependencies into an empty staging tree with a frozen lockfile and disabled install scripts,
-builds the runner, and emits an inventory, dependency list, and license notices. It runs the
-offline SDK self-test before producing dist/components/*.zip and sidecar-opencode/dist.
-The complete production dependency tree is included; Bun runs with --no-install.
+drops the unused node_modules/.bin command shims (symlinks on Linux), builds the runner, and
+emits an inventory, dependency list, and license notices. It runs the offline SDK self-test
+before producing dist/components/*.zip and sidecar-opencode/dist. The complete production
+dependency tree is included; Bun runs with --no-install. CI builds and verifies all three
+payloads (the aarch64 one on a native Arm runner) and uploads them as workflow artifacts.
 
-Installer verification hashes every inventoried file and runs the same self-test from an empty
-working directory with isolated configuration. The self-test uses an in-process loopback mock
+Zip extraction drops POSIX modes, so Linux payloads list their executables in payload.json and
+the installer restores them. Installer verification then checks the payload's platform, hashes
+every inventoried file, and runs the same self-test from an empty working directory with
+isolated configuration. The self-test uses an in-process loopback mock
 provider, exercises actual SDK tool calls, checks the exact tool allowlist and system charter,
 and proves consecutive passes do not inherit history. It makes no external model calls.
 
@@ -87,7 +93,21 @@ Optional synthetic product regression (uses the configured provider and incurs m
     python -m benchmarks.meeting_mode.live_agent_eval --harness opencode --sidecar-dir sidecar-opencode/dist --output .tmp/opencode_live_agent_eval.json
 
 This script contains invented meeting text and never reads recorded meetings. Release only after
-reviewing its results. Publish the immutable component archive under the component release tag,
-then copy its measured archive size, installed size, and SHA-256 from the emitted .catalog.json
-into services/opencode_catalog.py. Mark the entry published only when the download URL works.
-Do not overwrite a published archive; use a new component version.
+reviewing its results.
+
+## Publishing a component version
+
+1. Build each platform's archive from the commit that will ship (main.mjs bundles the shared
+   sidecar/src runner, so rebuild after any change there). CI artifacts from that commit work too.
+2. Create the release under the component tag, not an app version, and keep it off "Latest",
+   which the app updater reads:
+
+       gh release create component-opencode-2.0.18-1 --repo Knuckles92/OpenWhisper --latest=false --title "OpenCode meeting agent component 2.0.18-1" --notes "OpenCode SDK 2.0.18 with Bun 1.3.14 for OpenWhisper's meeting agent."
+       gh release upload component-opencode-2.0.18-1 --repo Knuckles92/OpenWhisper dist/components/meeting-agent-opencode-*.zip
+
+3. Download each asset back and compare its SHA-256 with the .catalog.json beside the build.
+4. Pin the verified platforms, which also marks them published:
+
+       python scripts/build_opencode_component.py --pin dist/components/meeting-agent-opencode-*.zip.catalog.json
+
+Never overwrite a published archive; bump COMPONENT_VERSION and RELEASE_TAG instead.
