@@ -149,47 +149,6 @@ _CATALOG: dict[str, ComponentDetails] = {
         source_note=_SOURCE_NOTE,
         source_urls=(PI_HOME_URL, NODEJS_URL),
     ),
-    "meeting-agent-opencode": ComponentDetails(
-        component_id="meeting-agent-opencode",
-        display_name="OpenCode v2",
-        summary=(
-            "An alternative meeting agent core, built on the OpenCode v2 SDK, that uses "
-            "your selected text provider and model."
-        ),
-        description=(
-            "A portable Bun runtime plus the OpenCode v2 SDK, embedded in a supervised "
-            "sidecar. Selected as the agent core in Models → Meeting, it maintains meeting "
-            "cards, notes, questions, and final reports. It uses the provider, model, and "
-            "credentials configured in OpenWhisper, and needs no OpenCode account or CLI. "
-            "Only the five meeting tools are exposed to the model; OpenCode's own shell, "
-            "file, and web tools are removed. Pi remains the default agent core."
-        ),
-        origin_name="OpenCode",
-        origin_url="https://opencode.ai/v2/docs/build/sdk/",
-        origin_label="OpenCode ↗",
-        source_name="OpenWhisper component release",
-        source_url="https://github.com/Knuckles92/OpenWhisper/releases",
-        source_label="GitHub ↗",
-        maintainer="OpenWhisper (integration); OpenCode (SDK); Bun (runtime)",
-        family="Meeting intelligence",
-        requires="A configured text model with tool support. Used by Meeting Mode.",
-        payload="Portable Bun runtime, OpenCode v2 SDK, and the meeting sidecar",
-        local_format="A self-contained component folder",
-        license="Bun and OpenCode MIT; dependency notices included in the download",
-        best_for="Meeting Mode with OpenCode's agent loop instead of Pi's.",
-        limitations=(
-            "The app pins a tested OpenCode SDK and Bun version; updates arrive as new "
-            "component versions.",
-            "Offered on Windows x64 and Linux x86_64/aarch64. macOS is not supported.",
-            "Larger than the Pi agent: up to 130 MB to download and 470 MB installed.",
-            "If the engine fails, recording continues and meeting intelligence is marked "
-            "unavailable; it does not switch to another agent core.",
-            "Finish active meeting and report jobs before updating or removing this component.",
-        ),
-        compact_tags="OpenCode v2 agent",
-        source_note=_SOURCE_NOTE,
-        source_urls=("https://opencode.ai/v2/docs/build/sdk/", "https://bun.sh"),
-    ),
 }
 
 for _id, _name, _source, _license, _description in (
