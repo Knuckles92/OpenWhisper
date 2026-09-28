@@ -5,8 +5,6 @@ from __future__ import annotations
 import re
 from types import SimpleNamespace
 
-from meeting.agent.openrouter_direct import DirectOpenRouterAgent
-from meeting.agent.pi_sidecar import PiSidecarAgent
 from meeting.agent.prompts import (
     _CONSOLIDATION_STEPS,
     build_checkpoint_user_prompt,
@@ -16,6 +14,7 @@ from meeting.agent.prompts import (
     build_system_prompt,
 )
 from meeting.agent.scheduler import CheckpointScheduler
+from meeting.agent.tool_policy import PASS_NOTES, ToolScope, run_tool
 from meeting.interfaces import AgentResult, OpResult
 from meeting.state.patches import OpContext, apply_ops, filter_notes_ops, live_note_ids
 from meeting.state.schema import CARD_KEYS, MeetingState
@@ -162,18 +161,12 @@ class _Tools:
         return OpResult(ok=True, op={"op": "resolve_question"})
 
 
-class TestDirectAgentNotesMode:
-    def test_direct_agent_declares_notes_support(self):
-        assert DirectOpenRouterAgent.supports_notes_pass is True
-
-    def test_notes_mode_filters_to_live_notes_ops(self):
+class TestNotesToolScope:
+    def test_notes_scope_rejects_everything_but_live_notes_ops(self):
         tools = _Tools()
-        agent = DirectOpenRouterAgent()
-        agent._tools = tools
-        agent._notes_mode = True
-        agent._notes_item_ids = frozenset({"it_note1"})
+        scope = ToolScope(pass_kind=PASS_NOTES, note_ids=frozenset({"it_note1"}))
 
-        results = agent._dispatch_tool_call("patch_state", {"ops": [
+        _, results = run_tool(tools, "patch_state", {"ops": [
             {
                 "op": "add_item", "card": "live_notes",
                 "text": "new block", "evidence": ["sg_1"],
@@ -193,15 +186,18 @@ class TestDirectAgentNotesMode:
             {
                 "op": "set_topic", "text": "must not apply", "evidence": ["sg_1"],
             },
-        ]})
-        question = agent._dispatch_tool_call("ask_question", {
+        ]}, scope)
+        question, question_results = run_tool(tools, "ask_question", {
             "text": "must not apply", "evidence": ["sg_1"],
-        })
+        }, scope)
 
         assert [op["op"] for op in tools.ops] == ["add_item", "update_item"]
         assert tools.ops[0]["card"] == "live_notes"
-        assert len(results) == 2
-        assert question == []
+        assert [r.reason for r in results] == [
+            None, "notes_only", None, "notes_only", "notes_only",
+        ]
+        assert question["reason"] == "notes_only"
+        assert [r.ok for r in question_results] == [False]
 
 
 class TestNotesPatchOps:
@@ -315,19 +311,15 @@ class FakeAgent:
 
 
 class TestSchedulerNotesPass:
-    def test_notes_pass_fires_only_for_supporting_cores(self):
-        for supports in (True, False):
-            agent = FakeAgent()
-            if supports:
-                agent.supports_notes_pass = True
-            sched = CheckpointScheduler(FakeEngine([_seg("sg_1", 10.0)]), agent)
-            sched._successful_checkpoints = 6
-            sched._maybe_fire_notes()
-            assert len(agent.calls) == (1 if supports else 0)
+    def test_notes_pass_fires_for_any_core(self):
+        agent = FakeAgent()
+        sched = CheckpointScheduler(FakeEngine([_seg("sg_1", 10.0)]), agent)
+        sched._successful_checkpoints = 6
+        sched._maybe_fire_notes()
+        assert len(agent.calls) == 1
 
     def test_notes_payload_carries_flag_and_consumes_segments(self):
         agent = FakeAgent()
-        agent.supports_notes_pass = True
         sched = CheckpointScheduler(
             FakeEngine([_seg("sg_1", 10.0), _seg("sg_2", 20.0)]), agent,
         )
@@ -349,7 +341,6 @@ class TestSchedulerNotesPass:
 
     def test_notes_seed_after_first_checkpoint(self):
         agent = FakeAgent()
-        agent.supports_notes_pass = True
         sched = CheckpointScheduler(FakeEngine([_seg("sg_1", 10.0)]), agent)
         sched._successful_checkpoints = 1
         sched._maybe_fire_notes()
@@ -358,7 +349,6 @@ class TestSchedulerNotesPass:
 
     def test_failed_notes_pass_leaves_segments_for_retry(self):
         agent = FakeAgent(fail_times=1)
-        agent.supports_notes_pass = True
         sched = CheckpointScheduler(FakeEngine([_seg("sg_1", 10.0)]), agent)
         sched._successful_checkpoints = 2
 
@@ -378,7 +368,6 @@ class TestSchedulerNotesPass:
 
     def test_notes_pass_skipped_without_new_segments(self):
         agent = FakeAgent()
-        agent.supports_notes_pass = True
         sched = CheckpointScheduler(FakeEngine([]), agent)
         sched._successful_checkpoints = 5
         sched._maybe_fire_notes()
@@ -472,10 +461,6 @@ class TestSharedNotesFilter:
         assert live_note_ids(state) == frozenset({"it_a", "it_b", "it_c"})
         assert live_note_ids({}) == frozenset()
         assert live_note_ids({"cards": {}}) == frozenset()
-
-    def test_both_agent_cores_declare_notes_support(self):
-        assert DirectOpenRouterAgent.supports_notes_pass is True
-        assert PiSidecarAgent.supports_notes_pass is True
 
 
 class TestEngineNotesStrip:
@@ -656,3 +641,24 @@ def test_checkpoint_prompt_reads_report_views():
     assert "Populate the timeline card" not in prompt
     assert "professional minutes" not in prompt
     assert "Make decisions and action items complete" in prompt
+
+
+def test_state_render_lists_open_questions_oldest_first():
+    from meeting.agent.prompts import render_state_compact
+
+    rendered = render_state_compact({"questions": [
+        {"id": "q_2", "text": "Who owns QA?", "status": "open", "asked_at": "2"},
+        {"id": "q_1", "text": "Budget?", "status": "open", "asked_at": "1",
+         "suggested_answer": "$500", "suggested_confidence": 0.5},
+        {"id": "q_3", "text": "Settled", "status": "resolved", "asked_at": "0"},
+    ]})
+    block = rendered[rendered.index("Open questions (2/7):"):]
+    assert block.index("[q_1]") < block.index("[q_2]")
+    assert "(confidence 0.50): $500" in block
+    assert "q_3" not in block
+    assert "You may open 5 more question(s)." in block
+    assert "confidence >= 0.8" in block
+    assert render_state_compact({}).rstrip().endswith(
+        "over asking new ones."
+    )
+    assert "Open questions: none." in render_state_compact({})

@@ -158,7 +158,6 @@ def test_production_replay_waits_for_arrivals_runs_first_notes_and_keeps_correct
     from meeting.agent import openrouter_direct
     calls = []
     class Agent:
-        supports_notes_pass = True
         def initialize(self, cfg, host): self.host = host
         def is_healthy(self): return True
         def shutdown(self): pass

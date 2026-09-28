@@ -450,15 +450,15 @@ class TestGeneration:
     def test_past_meeting_recall_is_offered_only_when_it_is_enabled(self, monkeypatch):
         import meeting.custom_report as module
 
-        monkeypatch.setattr(module, "_past_recall_enabled", lambda: False)
-        monkeypatch.setattr(module, "_context_files_enabled", lambda: False)
+        monkeypatch.setattr(module, "past_recall_enabled", lambda: False)
+        monkeypatch.setattr(module, "context_folder_enabled", lambda: False)
         result, seen = self._run(monkeypatch, [_turn("# Brief\n\nbody")], repository=object())
         names = {tool["function"]["name"] for tool in seen[0]["tools"]}
         assert names == {"search_transcript", "read_transcript"}
         assert result["sources"]["past_meetings"] is False
 
-        monkeypatch.setattr(module, "_past_recall_enabled", lambda: True)
-        monkeypatch.setattr(module, "_context_files_enabled", lambda: True)
+        monkeypatch.setattr(module, "past_recall_enabled", lambda: True)
+        monkeypatch.setattr(module, "context_folder_enabled", lambda: True)
         result, seen = self._run(monkeypatch, [_turn("# Brief\n\nbody")], repository=object())
         names = {tool["function"]["name"] for tool in seen[0]["tools"]}
         assert "search_past_meetings" in names and "search_context_files" in names

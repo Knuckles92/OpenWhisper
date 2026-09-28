@@ -57,8 +57,9 @@ test("real Pi SDK and runner: tools, scoped requests, history reset, provider er
     } else notifications.push(message);
   });
   child.once("exit", code => { for (const p of pending.values()) p.reject(new Error("child exit "+code+" "+stderr)); });
-  const checkpoint = (id:string) => rpc("checkpoint", {request_id:id,state:{cards:{},topic:{}},
-    new_segments:[{id:"sg_"+id,start_s:0,end_s:1,text:"Transcript "+id}]});
+  const checkpoint = (id:string, extra:any = {}) => rpc("checkpoint", {request_id:id,state:{cards:{},topic:{}},
+    new_segments:[{id:"sg_"+id,start_s:0,end_s:1,text:"Transcript "+id}],
+    user_prompt:"HOST_PROMPT Transcript "+id, ...extra});
   try {
     await rpc("initialize", {meeting_id:"synthetic", provider:"local", kind:"openrouter", model:"deepseek-v4-synthetic",
       base_url:"http://127.0.0.1:"+address.port+"/v1", system_prompt:"MEETING_HOST_PROMPT",
@@ -73,12 +74,18 @@ test("real Pi SDK and runner: tools, scoped requests, history reset, provider er
     const names = requests[0].tools.map((t:any)=>t.function.name).sort();
     assert.ok(names.includes("patch_state"));
     assert.ok(!names.some((name:string)=>["bash","read","write","edit"].includes(name)));
-    assert.match(JSON.stringify(requests[0].messages), /MEETING_HOST_PROMPT/);
+    assert.match(JSON.stringify(requests[0].messages), /MEETING_HOST_PROMPT\\n\\nHOST_PROMPT Transcript first/);
     assert.ok(requests[1].messages.some((m:any)=>m.role==="tool"));
     assert.ok(requests[1].messages.some((m:any)=>m.role==="assistant" && m.reasoning_content==="Synthetic reasoning"));
     mode = "plain";
-    await checkpoint("second");
-    assert.doesNotMatch(JSON.stringify(requests.at(-1).messages), /Transcript first/);
+    await checkpoint("second", {is_notes:true, system_prompt:"NOTE_TAKER_PROMPT"});
+    const notesRequest = JSON.stringify(requests.at(-1).messages);
+    assert.doesNotMatch(notesRequest, /Transcript first/);
+    assert.match(notesRequest, /NOTE_TAKER_PROMPT\\n\\nHOST_PROMPT Transcript second/);
+    assert.doesNotMatch(notesRequest, /MEETING_HOST_PROMPT/);
+    const sentBefore = requests.length;
+    await assert.rejects(checkpoint("no-prompt", {user_prompt: undefined}), /host prompt/);
+    assert.equal(requests.length, sentBefore);
     mode = "error";
     await assert.rejects(checkpoint("failed"), /synthetic invalid key|401/);
     mode = "hold";

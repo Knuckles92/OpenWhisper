@@ -32,7 +32,6 @@ def test_adjustment_replaces_automatic_append_instructions():
 
 def test_request_runs_without_new_speech_and_preserves_watermarks():
     agent = FakeAgent()
-    agent.supports_notes_pass = True
     engine = FakeEngine([_seg("sg_old", 10)])
     scheduler = CheckpointScheduler(engine, agent)
     scheduler.start()
@@ -53,7 +52,6 @@ def test_request_runs_without_new_speech_and_preserves_watermarks():
 def test_requests_are_serial_and_queued_request_is_settled_on_stop():
     entered, release = threading.Event(), threading.Event()
     agent = FakeAgent()
-    agent.supports_notes_pass = True
     def checkpoint(payload):
         entered.set()
         release.wait(timeout=3)
@@ -79,7 +77,6 @@ def test_requests_are_serial_and_queued_request_is_settled_on_stop():
 
 def test_agent_failure_reaches_requester():
     agent = FakeAgent(fail_times=1)
-    agent.supports_notes_pass = True
     scheduler = CheckpointScheduler(FakeEngine([]), agent)
     scheduler.start()
     try:
