@@ -5,8 +5,6 @@ from __future__ import annotations
 import re
 from types import SimpleNamespace
 
-from meeting.agent.openrouter_direct import DirectOpenRouterAgent
-from meeting.agent.pi_sidecar import PiSidecarAgent
 from meeting.agent.prompts import (
     _CONSOLIDATION_STEPS,
     build_checkpoint_user_prompt,
@@ -163,10 +161,7 @@ class _Tools:
         return OpResult(ok=True, op={"op": "resolve_question"})
 
 
-class TestDirectAgentNotesMode:
-    def test_direct_agent_declares_notes_support(self):
-        assert DirectOpenRouterAgent.supports_notes_pass is True
-
+class TestNotesToolScope:
     def test_notes_scope_rejects_everything_but_live_notes_ops(self):
         tools = _Tools()
         scope = ToolScope(pass_kind=PASS_NOTES, note_ids=frozenset({"it_note1"}))
@@ -316,19 +311,15 @@ class FakeAgent:
 
 
 class TestSchedulerNotesPass:
-    def test_notes_pass_fires_only_for_supporting_cores(self):
-        for supports in (True, False):
-            agent = FakeAgent()
-            if supports:
-                agent.supports_notes_pass = True
-            sched = CheckpointScheduler(FakeEngine([_seg("sg_1", 10.0)]), agent)
-            sched._successful_checkpoints = 6
-            sched._maybe_fire_notes()
-            assert len(agent.calls) == (1 if supports else 0)
+    def test_notes_pass_fires_for_any_core(self):
+        agent = FakeAgent()
+        sched = CheckpointScheduler(FakeEngine([_seg("sg_1", 10.0)]), agent)
+        sched._successful_checkpoints = 6
+        sched._maybe_fire_notes()
+        assert len(agent.calls) == 1
 
     def test_notes_payload_carries_flag_and_consumes_segments(self):
         agent = FakeAgent()
-        agent.supports_notes_pass = True
         sched = CheckpointScheduler(
             FakeEngine([_seg("sg_1", 10.0), _seg("sg_2", 20.0)]), agent,
         )
@@ -350,7 +341,6 @@ class TestSchedulerNotesPass:
 
     def test_notes_seed_after_first_checkpoint(self):
         agent = FakeAgent()
-        agent.supports_notes_pass = True
         sched = CheckpointScheduler(FakeEngine([_seg("sg_1", 10.0)]), agent)
         sched._successful_checkpoints = 1
         sched._maybe_fire_notes()
@@ -359,7 +349,6 @@ class TestSchedulerNotesPass:
 
     def test_failed_notes_pass_leaves_segments_for_retry(self):
         agent = FakeAgent(fail_times=1)
-        agent.supports_notes_pass = True
         sched = CheckpointScheduler(FakeEngine([_seg("sg_1", 10.0)]), agent)
         sched._successful_checkpoints = 2
 
@@ -379,7 +368,6 @@ class TestSchedulerNotesPass:
 
     def test_notes_pass_skipped_without_new_segments(self):
         agent = FakeAgent()
-        agent.supports_notes_pass = True
         sched = CheckpointScheduler(FakeEngine([]), agent)
         sched._successful_checkpoints = 5
         sched._maybe_fire_notes()
@@ -473,10 +461,6 @@ class TestSharedNotesFilter:
         assert live_note_ids(state) == frozenset({"it_a", "it_b", "it_c"})
         assert live_note_ids({}) == frozenset()
         assert live_note_ids({"cards": {}}) == frozenset()
-
-    def test_both_agent_cores_declare_notes_support(self):
-        assert DirectOpenRouterAgent.supports_notes_pass is True
-        assert PiSidecarAgent.supports_notes_pass is True
 
 
 class TestEngineNotesStrip:

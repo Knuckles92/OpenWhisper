@@ -997,9 +997,6 @@ _NOTES_STATE = {
 
 
 class TestNotesPass:
-    def test_sidecar_declares_notes_support(self):
-        assert PiSidecarAgent.supports_notes_pass is True
-
     def test_notes_flag_and_persona_prompt_reach_the_sidecar(self, stub_dir):
         payload_dir, stub = stub_dir
         agent = PiSidecarAgent(str(payload_dir))

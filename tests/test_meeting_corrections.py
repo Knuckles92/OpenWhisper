@@ -198,9 +198,10 @@ class TestSchedulerGuidancePass:
             deadline = time.monotonic() + 3.0
             while not agent.calls and time.monotonic() < deadline:
                 time.sleep(0.02)
-            assert len(agent.calls) == 1
-            payload = agent.calls[0]
-            assert not payload.is_notes and not payload.is_consolidation
+            card_calls = [call for call in agent.calls if not call.is_notes]
+            assert len(card_calls) == 1
+            payload = card_calls[0]
+            assert not payload.is_consolidation
             sent = [seg["id"] for seg in payload.new_segments]
             assert len(sent) == _GUIDANCE_MAX_SEGMENTS
             assert sent[-1] == f"sg_{_GUIDANCE_MAX_SEGMENTS + 4}"
@@ -219,7 +220,7 @@ class TestSchedulerGuidancePass:
         assert scheduler._guidance_pending is True
         scheduler._retry_not_before = 0.0
         scheduler._fire()
-        assert len(agent.calls) == 2
+        assert len([call for call in agent.calls if not call.is_notes]) == 2
         assert scheduler._guidance_pending is False
 
 

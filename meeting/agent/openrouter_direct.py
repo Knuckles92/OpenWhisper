@@ -332,16 +332,7 @@ def _context_folder_enabled() -> bool:
 
 
 class DirectOpenRouterAgent:
-    """``AgentCore`` implementation calling OpenRouter/OpenAI directly.
-
-    Attributes:
-        supports_notes_pass: The direct core runs the dedicated note-taker
-            pass (its own persona prompt, ``live_notes`` ops only). The
-            scheduler probes this flag before firing a notes pass, so agent
-            cores without note-taker support simply never see one.
-    """
-
-    supports_notes_pass = True
+    """``AgentCore`` implementation calling OpenRouter/OpenAI directly."""
 
     def __init__(self) -> None:
         self._cfg: Optional[AgentConfig] = None

@@ -307,16 +307,11 @@ def _coerce_count(value: Any) -> int:
 class SidecarAgent:
     """``AgentCore`` implementation that drives the Node Pi sidecar over stdio.
 
-    Attributes:
-        supports_notes_pass: This core runs the dedicated note-taker pass.
-            Notes checkpoints carry the note-taker system prompt to the
-            bundle, and their tool calls are filtered to ``live_notes`` ops
-            both here (tool bridge) and in the bundle — so even a bundle
-            that predates ``is_notes`` cannot mutate anything but the notes
-            page during a notes pass.
+    Every tool call is answered through :mod:`meeting.agent.tool_policy`
+    under the authority of the checkpoint it names, so a notes pass can only
+    change the notes page and a polish pass only transcript text.
     """
 
-    supports_notes_pass = True
     #: Tool calls always need an active request id. This flag additionally
     #: drops progress notifications that do not name an active request.
     require_request_scope = False
