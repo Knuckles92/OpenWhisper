@@ -146,6 +146,7 @@ from ui_qt.widgets import (
     SettingTile,
     WrappedLabel,
 )
+from ui_qt.widgets.buttons import fit_compact_button
 from ui_qt.widgets.hotkey_capture import HotkeyCaptureInput, HotkeyCaptureThread
 from ui_qt.widgets.cleanup_profiles_panel import CleanupProfilesPanel
 from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
@@ -662,7 +663,7 @@ class SettingsDialog(QDialog):
         footer.addWidget(self.message_label, stretch=1)
         close_btn = Button("Close")
         close_btn.setObjectName("modelManagerCloseButton")
-        self._compact_button(close_btn, 110)
+        fit_compact_button(close_btn, 110)
         close_btn.clicked.connect(self.close)
         footer.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignBottom)
         layout.addLayout(footer)
@@ -748,17 +749,6 @@ class SettingsDialog(QDialog):
         label = WrappedLabel(text)
         label.setObjectName("infoLabel")
         return label
-
-    @staticmethod
-    def _compact_button(button: Button, width: int) -> None:
-        button.set_base_minimum_size(width, 34)
-        button.ensurePolished()
-        height = max(34, button.sizeHint().height())
-        button.setMinimumHeight(height)
-        button.setMaximumHeight(height)
-        fitted = max(width, button.minimumWidth(), button.sizeHint().width())
-        button.setMinimumWidth(fitted)
-        button.setMaximumWidth(fitted)
 
     @staticmethod
     def _section_title(layout: QVBoxLayout, title: str) -> QLabel:
@@ -1169,11 +1159,11 @@ class SettingsDialog(QDialog):
         cleanup_btn_row.setContentsMargins(0, 0, 0, 0)
         cleanup_btn_row.setSpacing(8)
         self.cleanup_prompt_edit_btn = Button("Open editor…")
-        self._compact_button(self.cleanup_prompt_edit_btn, 120)
+        fit_compact_button(self.cleanup_prompt_edit_btn, 120)
         self.cleanup_prompt_edit_btn.clicked.connect(self._open_cleanup_prompt_editor)
         cleanup_btn_row.addWidget(self.cleanup_prompt_edit_btn)
         self.cleanup_prompt_reset_btn = Button("Reset to default")
-        self._compact_button(self.cleanup_prompt_reset_btn, 140)
+        fit_compact_button(self.cleanup_prompt_reset_btn, 140)
         self.cleanup_prompt_reset_btn.clicked.connect(self._reset_cleanup_prompt)
         cleanup_btn_row.addWidget(self.cleanup_prompt_reset_btn)
         cleanup_btn_row.addStretch()
@@ -1755,15 +1745,15 @@ class SettingsDialog(QDialog):
         buttons.setSpacing(8)
         self.api_key_save_button = PrimaryButton("Save key")
         self.api_key_save_button.setObjectName("apiKeySaveButton")
-        self._compact_button(self.api_key_save_button, 120)
+        fit_compact_button(self.api_key_save_button, 120)
         self.api_key_save_button.clicked.connect(self._save_api_key)
         self.api_key_test_button = Button("Test")
         self.api_key_test_button.setObjectName("apiKeyTestButton")
-        self._compact_button(self.api_key_test_button, 90)
+        fit_compact_button(self.api_key_test_button, 90)
         self.api_key_test_button.clicked.connect(self._test_api_key)
         self.api_key_remove_button = DangerButton("Remove saved key")
         self.api_key_remove_button.setObjectName("apiKeyRemoveButton")
-        self._compact_button(self.api_key_remove_button, 160)
+        fit_compact_button(self.api_key_remove_button, 160)
         self.api_key_remove_button.clicked.connect(self._remove_api_key)
         buttons.addWidget(self.api_key_save_button)
         buttons.addWidget(self.api_key_test_button)
@@ -2152,7 +2142,7 @@ class SettingsDialog(QDialog):
         actions.addStretch()
         reset_button = Button("Reset to defaults")
         reset_button.setObjectName("hotkeyResetButton")
-        self._compact_button(reset_button, 150)
+        fit_compact_button(reset_button, 150)
         reset_button.clicked.connect(self._confirm_reset_hotkeys)
         actions.addWidget(reset_button)
         layout.addLayout(actions)
@@ -2240,7 +2230,7 @@ class SettingsDialog(QDialog):
         if optional:
             clear_button = Button("Clear")
             clear_button.setObjectName("hotkeyClearButton")
-            self._compact_button(clear_button, 68)
+            fit_compact_button(clear_button, 68)
             clear_button.clicked.connect(self._clear_meeting_hotkey)
             self.clear_meeting_hotkey_button = clear_button
             row.addWidget(clear_button, alignment=Qt.AlignmentFlag.AlignVCenter)

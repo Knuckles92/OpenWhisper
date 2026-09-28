@@ -54,6 +54,7 @@ from services.settings import (
 from ui_qt.dialogs.component_details_dialog import ComponentDetailsDialog
 from ui_qt.utils.app_icon import app_icon
 from ui_qt.widgets import Button, ElidingComboBox, ElidingLabel, PrimaryButton
+from ui_qt.widgets.buttons import fit_compact_button
 from ui_qt.widgets.component_row_widget import ComponentRowWidget
 from ui_qt.widgets.model_row_widget import ModelRowWidget
 from ui_qt.widgets.wrapped_label import WrappedLabel
@@ -138,11 +139,11 @@ class BatchDownloadDialog(QDialog):
         buttons.setSpacing(8)
         buttons.addStretch()
         cancel_button = Button("Cancel")
-        DownloadsPage._compact_button(cancel_button, 100)
+        fit_compact_button(cancel_button, 100)
         cancel_button.clicked.connect(self.reject)
         buttons.addWidget(cancel_button)
         download_button = PrimaryButton(f"Download {count} {noun}\u2026")
-        DownloadsPage._compact_button(download_button, 0)
+        fit_compact_button(download_button, 0)
         download_button.clicked.connect(self.accept)
         buttons.addWidget(download_button)
         layout.addLayout(buttons)
@@ -222,7 +223,7 @@ class DownloadsPage(QWidget):
 
         self.download_all_button = Button("Download all…")
         self.download_all_button.setObjectName("downloadsToolButton")
-        self._compact_button(self.download_all_button, 0)
+        fit_compact_button(self.download_all_button, 0)
         self.download_all_button.setToolTip(
             "Queue every model that is not downloaded yet"
         )
@@ -231,7 +232,7 @@ class DownloadsPage(QWidget):
 
         open_folder_btn = Button("Open folder")
         open_folder_btn.setObjectName("downloadsToolButton")
-        self._compact_button(open_folder_btn, 110)
+        fit_compact_button(open_folder_btn, 110)
         open_folder_btn.setToolTip(
             "Open the folder where downloaded models are stored"
         )
@@ -270,7 +271,7 @@ class DownloadsPage(QWidget):
         self.message_row.addWidget(self.message_label, stretch=1)
         self.stop_batch_button = Button("Stop after current")
         self.stop_batch_button.setObjectName("downloadsToolButton")
-        self._compact_button(self.stop_batch_button, 0)
+        fit_compact_button(self.stop_batch_button, 0)
         self.stop_batch_button.setToolTip(
             "Finish the model now downloading, then stop the queue"
         )
@@ -361,13 +362,13 @@ class DownloadsPage(QWidget):
 
         self.select_all_button = Button("Select all")
         self.select_all_button.setObjectName("downloadsFlatButton")
-        self._compact_button(self.select_all_button, 0)
+        fit_compact_button(self.select_all_button, 0)
         self.select_all_button.clicked.connect(self._on_select_all_clicked)
         bar_layout.addWidget(self.select_all_button)
 
         self.clear_selection_button = Button("Clear")
         self.clear_selection_button.setObjectName("downloadsFlatButton")
-        self._compact_button(self.clear_selection_button, 0)
+        fit_compact_button(self.clear_selection_button, 0)
         self.clear_selection_button.clicked.connect(self._on_clear_selection_clicked)
         bar_layout.addWidget(self.clear_selection_button)
 
@@ -376,7 +377,7 @@ class DownloadsPage(QWidget):
         bar_layout.addWidget(self.selection_summary, stretch=1)
 
         self.download_selected_button = PrimaryButton("Download selected")
-        self._compact_button(self.download_selected_button, 0)
+        fit_compact_button(self.download_selected_button, 0)
         self.download_selected_button.clicked.connect(
             self._on_download_selected_clicked
         )
@@ -622,13 +623,13 @@ class DownloadsPage(QWidget):
         actions.setSpacing(8)
         self.inspector_repo_button = Button("Hugging Face ↗")
         self.inspector_repo_button.setObjectName("downloadsRepoButton")
-        self._compact_button(self.inspector_repo_button, 0)
+        fit_compact_button(self.inspector_repo_button, 0)
         self.inspector_repo_button.clicked.connect(self._open_repository)
         actions.addWidget(self.inspector_repo_button, stretch=1)
 
         self.inspector_origin_button = Button("Original ↗")
         self.inspector_origin_button.setObjectName("downloadsOriginButton")
-        self._compact_button(self.inspector_origin_button, 0)
+        fit_compact_button(self.inspector_origin_button, 0)
         self.inspector_origin_button.clicked.connect(self._open_origin)
         actions.addWidget(self.inspector_origin_button, stretch=1)
         outer.addLayout(actions)
@@ -678,26 +679,6 @@ class DownloadsPage(QWidget):
             layout.addWidget(row)
 
         return strip
-
-    @staticmethod
-    def _compact_button(button: Button, width: int) -> None:
-        """Size a shared button for this window's compact chrome.
-
-        Treats the given size as a floor, never a cap below what the polished
-        label needs, so descenders and the link arrow are not clipped.
-        """
-        button.set_base_minimum_size(width, 34)
-        button.ensurePolished()
-        height = max(34, button.sizeHint().height())
-        button.setMinimumHeight(height)
-        button.setMaximumHeight(height)
-        if width:
-            fitted = max(width, button.minimumWidth(), button.sizeHint().width())
-            button.setMinimumWidth(fitted)
-            button.setMaximumWidth(fitted)
-        else:
-            button.setMinimumWidth(0)
-            button.setMaximumWidth(16777215)
 
     # ---- inspector ----
 
