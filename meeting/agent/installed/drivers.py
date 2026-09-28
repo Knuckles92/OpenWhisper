@@ -801,6 +801,9 @@ class OpenCodeDriver:
             }}},
         }
 
+    def _argv(self) -> List[str]:
+        return [self.agent.path, "acp"]
+
     def _spawn(self) -> None:
         self._ready = False
         self._commands_updated.clear()
@@ -814,7 +817,7 @@ class OpenCodeDriver:
             "OPENCODE_DISABLE_FILEWATCHER": "1",
         })
         conn = AcpConnection(
-            [self.agent.path, "acp"], env=env, cwd=agent_workspace_dir(),
+            self._argv(), env=env, cwd=agent_workspace_dir(),
             on_notification=self._on_notification, on_request=self._on_request,
         )
         try:
