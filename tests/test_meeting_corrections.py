@@ -24,7 +24,7 @@ from tests.test_meeting_engine import (  # noqa: F401  (fixtures)
     make_engine,
 )
 from tests.test_meeting_notes_agent import FakeAgent, FakeEngine, _seg
-from tests.test_meeting_repository import make_meeting, make_segment
+from tests.helpers import make_meeting, make_segment
 
 
 def _note(selected, replacement, *, kind="term_correction", text="", **overrides):

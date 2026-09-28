@@ -10,7 +10,7 @@ from meeting.export.json_export import export_json
 from meeting.export.markdown import export_markdown
 from meeting.export.transcript_txt import export_transcript_txt, format_meeting_date, resolve_title
 from tests.test_meeting_export import _fixture
-from tests.test_meeting_repository import make_meeting, make_segment
+from tests.helpers import make_meeting, make_segment
 from tests.test_meeting_web_auth import client  # noqa: F401 -- shared endpoint fixture
 
 

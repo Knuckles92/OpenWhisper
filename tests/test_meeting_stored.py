@@ -3,7 +3,7 @@ import json
 
 from meeting.state.schema import MeetingState
 from meeting.stored import load_state, open_store, stored_state_dict
-from tests.test_meeting_repository import make_meeting, make_segment
+from tests.helpers import make_meeting, make_segment
 
 
 def _row(state, **fields):
