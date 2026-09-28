@@ -387,3 +387,28 @@ class TestLayout:
         assert tiles[0].y() == tiles[1].y() < tiles[2].y() == tiles[3].y()
         assert picker.grid.height() >= tiles[3].geometry().bottom() - 8
         picker.close()
+
+    def test_a_long_problem_grows_its_row_instead_of_overlapping(self):
+        old = InstalledAgent(
+            OPENCODE, "opencode", "1.4.2",
+            problem="OpenWhisper needs OpenCode 2.0.0 or newer. Run `opencode upgrade`.",
+        )
+        with patch.object(agent_picker, "cached_agents",
+                          return_value={CLAUDE_CODE: CLAUDE, CODEX: CODEX_AGENT, OPENCODE: old}):
+            picker = AgentPicker()
+        # Just wide enough for one row: the text wraps more than it would at
+        # the label's preferred width.
+        picker.resize(4 * picker.grid.MIN_CARD + 3 * picker.grid.GAP + 10, 400)
+        picker.show()
+        _pump_until(lambda: False, timeout=0.1)
+        assert picker.grid.columns() == 4
+        tile = picker.tiles[OPENCODE]
+        detail = tile.detail_label
+        assert detail.heightForWidth(detail.width()) > detail.fontMetrics().height()
+        assert tile.name_label.geometry().bottom() < detail.geometry().top()
+        assert detail.geometry().bottom() <= tile.card_rect().bottom()
+        assert detail.height() >= detail.heightForWidth(detail.width())
+        # Every tile in the row takes the tallest one's height.
+        heights = {picker.tiles[a].height() for a in (CLAUDE_CODE, CODEX, OPENCODE, BUILTIN)}
+        assert len(heights) == 1
+        picker.close()

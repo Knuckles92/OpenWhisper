@@ -854,6 +854,7 @@ class TestMeetingAgentChoice(_DialogTestCase):
         assert picker.model_card.isHidden()
         assert dialog.meeting_model_tile.isHidden()
         assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.OPENCODE
+        assert dialog.rail.value(MEETING_TEXT) == "OpenCode · not installed"
 
     def test_opening_intelligence_uses_the_cached_scan(self):
         dialog, _values = self._make_agent_dialog(MeetingAgentCore.DIRECT)
@@ -1036,6 +1037,20 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                 assert page.isAncestorOf(dialog.models.meeting_agent_core_combo)
                 assert page.isAncestorOf(dialog.meeting_past_recall_tile)
                 assert not hasattr(dialog, "open_meeting_model_manager_btn")
+                # Who runs AI insights comes first, above the chat model.
+                picker = dialog.meeting_agent_picker
+                assert page.isAncestorOf(picker)
+                assert picker.y() < dialog.meeting_model_tile.y()
+                entries = [
+                    entry for entry in dialog._search_index()
+                    if entry.title == "Who runs AI insights"
+                ]
+                assert len(entries) == 1
+                assert entries[0].target is picker
+                assert entries[0].destination == MEETING_INTELLIGENCE
+                assert "claude code" in entries[0].keywords
+                heading, subtitle = dialog._headings[MEETING_INTELLIGENCE]
+                assert "coding agent" in subtitle and "built-in engine" in subtitle
 
 
 class TestApiModelSelection(_DialogTestCase):

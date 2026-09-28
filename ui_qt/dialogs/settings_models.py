@@ -1660,6 +1660,16 @@ class ModelAssignments(QObject):
         settings = self._settings_snapshot()
         core = resolve_meeting_agent_core(settings)
         if core in MeetingAgentCore.INSTALLED:
+            scanned = self.meeting_agent_picker.agents()
+            if scanned is not None:
+                name = installed_agents.AGENT_SPECS[core].name
+                agent = scanned.get(core)
+                if agent is None:
+                    return f"{name} · not installed"
+                if agent.problem:
+                    return f"{name} · update needed"
+                if agent.signed_in is False:
+                    return f"{name} · sign in needed"
             return installed_agents.describe_choice(
                 core, resolve_meeting_agent_model(core, settings)
             )

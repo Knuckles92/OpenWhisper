@@ -92,7 +92,9 @@ ARRIVAL_MS: Final[int] = 380
 _SHIMMER_FADE_MS: Final[int] = 160
 _HOVER_MS: Final[int] = 140
 _LIFT_MS: Final[int] = 220
-_SHIMMER_PERIOD_MS: Final[float] = 1500.0
+_SHIMMER_PERIOD_MS: Final[float] = 1300.0
+#: Where the band starts, so a scan shorter than one sweep still shows it.
+_SHIMMER_START: Final[float] = 0.3
 #: Each tile's shimmer trails its left neighbour's, so the row ripples.
 _SHIMMER_OFFSET_MS: Final[float] = 140.0
 _TICK_MS: Final[int] = 16
@@ -556,7 +558,6 @@ class AgentTile(QWidget):
 
         self._layout = QVBoxLayout(self)
         self._layout.setSpacing(5)
-        self._layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 4)
         top.setSpacing(8)
@@ -584,6 +585,11 @@ class AgentTile(QWidget):
         self.link.clicked.connect(self._open_install_page)
         self.link.hide()
         self._layout.addWidget(self.link, alignment=Qt.AlignmentFlag.AlignLeft)
+        # Content sits at the top of a row's tallest tile. The grid places
+        # tiles by hand, so this stretch never makes a page layout expand
+        # (a layout alignment would squeeze wrapped text to the preferred
+        # width's height instead).
+        self._layout.addStretch(1)
         self._apply_margins()
 
         self._hover_anim = self._animation(_HOVER_MS, self._on_hover_value)
@@ -691,8 +697,15 @@ class AgentTile(QWidget):
         """Where the shimmer band is, 0 to 1."""
         if not self._clock.isValid():
             return 0.0
-        elapsed = self._clock.elapsed() + _SHIMMER_PERIOD_MS - self._shimmer_offset
+        elapsed = (self._clock.elapsed() + (1.0 + _SHIMMER_START) * _SHIMMER_PERIOD_MS
+                   - self._shimmer_offset)
         return (elapsed % _SHIMMER_PERIOD_MS) / _SHIMMER_PERIOD_MS
+
+    def scan_breath(self) -> float:
+        """0 to 1 and back once per sweep: the mark and border glow with it."""
+        if self._shimmer <= 0.0:
+            return 0.0
+        return (0.5 - 0.5 * math.cos(2.0 * math.pi * self.scan_phase())) * self._shimmer
 
     # ---- internals ----
 
@@ -771,9 +784,7 @@ class AgentTile(QWidget):
         """Mark colour: the result's warmth, plus a breath while scanning."""
         t = _ease_out(self._arrival / 0.75)
         warm = self._warm_from + (self._warm_to - self._warm_from) * t
-        if self._shimmer > 0.0:
-            pulse = 0.5 - 0.5 * math.cos(2.0 * math.pi * self.scan_phase())
-            warm = max(warm, 0.24 * pulse * self._shimmer)
+        warm = max(warm, 0.3 * self.scan_breath())
         self.mark.set_warmth(warm)
         missing_to = 1.0 if self._state.tone == MISSING else 0.0
         self.mark.set_missing(self._missing_from + (missing_to - self._missing_from) * t)
@@ -875,6 +886,8 @@ class AgentTile(QWidget):
                 "slate-border-subtle" if tone == MISSING else "slate-border"
             )
             border = _mix(border, _alpha(accent, 0.6), self._warmth() * 0.45)
+            # While the scan looks, the edge breathes the agent's colour.
+            border = _mix(border, _alpha(accent, 0.7), self.scan_breath() * 0.5)
             border = _mix(border, token_color("slate-border-hover"), hover)
             painter.setPen(QPen(border, 1.0))
             painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -907,9 +920,10 @@ class AgentTile(QWidget):
     def _paint_shimmer(self, painter: QPainter, path: QPainterPath, card: QRectF,
                        accent: QColor) -> None:
         """A soft band of the agent's colour sweeping across the card."""
-        center = -0.3 + 1.6 * _ease_in_out(self.scan_phase())
-        band = 0.3
-        peak = (0.16 if _dark() else 0.12) * self._shimmer
+        # Linear, and never fully off the card, so there is no dead moment.
+        center = -0.15 + 1.3 * self.scan_phase()
+        band = 0.32
+        peak = (0.22 if _dark() else 0.14) * self._shimmer
 
         def at(position: float) -> QColor:
             strength = max(0.0, 1.0 - abs(position - center) / band)
