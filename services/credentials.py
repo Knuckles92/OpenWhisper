@@ -359,6 +359,20 @@ def credential_source(name: str) -> str:
     return CredentialSource.NONE
 
 
+def dotenv_injected_names() -> set[str]:
+    """Environment variables whose value came from OpenWhisper's ``.env``.
+
+    ``load_dotenv`` copies the file into ``os.environ``, so a program started
+    from here would inherit keys the user gave OpenWhisper alone. A variable
+    whose value differs from the file's was exported by the user and is left
+    out, as it would reach that program anyway.
+    """
+    return {
+        name for name, value in _dotenv_values().items()
+        if value and os.environ.get(name) == value
+    }
+
+
 def environment_shadowed(name: str) -> bool:
     """True when a saved key hides a value that the environment also provides."""
     if not name or not _store.get(name):
