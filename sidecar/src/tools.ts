@@ -22,17 +22,6 @@ export interface OpCounters {
   rejected: number;
 }
 
-/**
- * @deprecated Pass restrictions are enforced by the host, which answers an
- * off-pass op with a polish_only/notes_only rejection. Accepted and ignored so
- * existing callers keep compiling.
- */
-export interface ToolPolicy {
-  polishOnly: boolean;
-  notesOnly: boolean;
-  noteIds: ReadonlySet<string>;
-}
-
 const PATCH_STATE_DESCRIPTION = `Apply targeted state-patch operations to the live meeting state document. Every op is validated by the host; results are returned per-op (ok, reason, target_id, seq, current_revision) so a rejected op never blocks the rest of the batch.
 
 Allowed ops (each op is an object with an "op" key):
@@ -72,7 +61,6 @@ function summarize(results: Array<{ ok?: boolean; reason?: string | null }>): st
 export function createMeetingTools(
   rpc: Pick<RpcEndpoint, "request" | "log">,
   counters: OpCounters,
-  _policy?: ToolPolicy,
 ): MeetingToolDef[] {
   const opSchema = {
     type: "object" as const,

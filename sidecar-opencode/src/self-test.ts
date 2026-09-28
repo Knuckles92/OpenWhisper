@@ -38,7 +38,7 @@ try {
         applied += params.ops.length;
         return { results: params.ops.map(() => ({ ok: true })) };
       },
-    }, counters, { notesOnly: false, polishOnly: false, noteIds: new Set() }),
+    }, counters),
   });
   for (let i = 0; i < 2; i++) {
     const result = await session.runTurn("Update the meeting.", { requestId: "test-" + i, systemPrompt: "Synthetic host charter." });
