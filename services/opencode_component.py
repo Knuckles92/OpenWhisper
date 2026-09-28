@@ -23,7 +23,7 @@ _ALLOWED_ENV = {
     "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
     "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
     "OPENWHISPER_SIDECAR_TOKEN", "OPENWHISPER_LLM_API_KEY",
-    "OPENWHISPER_LLM_BASE_URL", "PI_MODEL",
+    "OPENWHISPER_LLM_BASE_URL",
 }
 
 
@@ -142,7 +142,7 @@ def validate_payload(target_dir: str) -> None:
             # The installer self-test may contact only its own loopback mock.
             for key in list(env):
                 if key.upper() in {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
-                                   "OPENWHISPER_LLM_API_KEY", "OPENWHISPER_LLM_BASE_URL", "PI_MODEL"}:
+                                   "OPENWHISPER_LLM_API_KEY", "OPENWHISPER_LLM_BASE_URL"}:
                     del env[key]
             env["NO_PROXY"] = "127.0.0.1,localhost"
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
