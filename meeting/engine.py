@@ -48,15 +48,13 @@ logger = logging.getLogger(__name__)
 HEARTBEAT_INTERVAL_S = 10.0
 #: ASR drain budget for a normal, user-initiated end.
 END_DRAIN_TIMEOUT_S = 300.0
-#: Cap on the forced end-of-meeting ASR polish so consolidation can start.
-END_REVISE_TIMEOUT_S = 20.0
 #: Shorter drain budget when the whole app is shutting down.
 SHUTDOWN_DRAIN_TIMEOUT_S = 30.0
 #: Worst-case wait for the post-end consolidation pass (hard wall). The
 #: sidecar fails earlier if Pi emits no ``subscribe`` progress for
 #: ``CONSOLIDATION_STALL_S``. Used for shutdown join, not the live stall.
 CONSOLIDATION_TIMEOUT_S = 900.0
-#: How long end/cancel waits for an in-flight ``start()`` to finish before
+#: How long end waits for an in-flight ``start()`` to finish before
 #: unwinding a partially built pipeline anyway.
 START_WAIT_TIMEOUT_S = 120.0
 #: Guest display names are clamped to this length.
@@ -121,7 +119,7 @@ class MeetingEngine:
     """Single-meeting orchestrator.
 
     Lifecycle: construct → ``start()`` → (``pause()``/``resume()``/
-    ``set_cloud_enabled()`` while live) → ``end()`` or ``cancel()`` →
+    ``set_cloud_enabled()`` while live) → ``end()`` →
     ``shutdown()`` on app exit. ``end()`` returns immediately and finalizes on
     a worker thread; the web server stays up serving the final state until
     ``shutdown()``.
@@ -148,7 +146,7 @@ class MeetingEngine:
 
         self._lifecycle_lock = threading.RLock()
         self._active = False
-        # True for the whole of start(); end/cancel wait it out rather than
+        # True for the whole of start(); end waits it out rather than
         # tearing down a pipeline that is still being built.
         self._starting = False
         self._start_thread_id: Optional[int] = None
@@ -464,7 +462,7 @@ class MeetingEngine:
             logger.exception("Ephemeral finalization emit failed")
 
     def is_active(self) -> bool:
-        """True from a successful ``start()`` until end/cancel completes."""
+        """True from a successful ``start()`` until ``end()`` completes."""
         return self._active
 
     def start(self) -> Dict[str, Any]:
@@ -646,7 +644,7 @@ class MeetingEngine:
     def pause(self) -> None:
         """Freeze the meeting clock and mark the meeting paused."""
         with self._lifecycle_lock:
-            # Reject once end/cancel has claimed the session so we cannot
+            # Reject once end has claimed the session so we cannot
             # overwrite a terminal status with "paused".
             if (not self._active or self._end_thread is not None
                     or self.store is None):
@@ -682,8 +680,8 @@ class MeetingEngine:
     def _await_start(self, timeout_s: float = START_WAIT_TIMEOUT_S) -> None:
         """Block until an in-flight ``start()`` has finished.
 
-        ``start()`` claims the session before it builds anything, so an end or
-        cancel arriving in that window would otherwise unwind a half-built
+        ``start()`` claims the session before it builds anything, so an end
+        arriving in that window would otherwise unwind a half-built
         pipeline while ``start()`` kept bringing capture, ASR, the server, and
         the agent up for an already-finished meeting.
 
@@ -725,19 +723,6 @@ class MeetingEngine:
             except Exception:
                 logger.exception("ASR drain failed at meeting end")
                 drained = False
-            # Flush deferred rolling revises before consolidation sees the
-            # transcript, while the Whisper model is still loaded — but
-            # bound the wait so a long polish queue cannot delay insights.
-            run_pending = getattr(self._asr, "run_pending_revises", None)
-            if drained and callable(run_pending):
-                revise_deadline = time.monotonic() + END_REVISE_TIMEOUT_S
-                try:
-                    for outcome in run_pending(
-                        force=True, deadline_mono=revise_deadline,
-                    ):
-                        self._publish_revise_result(outcome)
-                except Exception:
-                    logger.exception("End-of-meeting ASR revise flush failed")
         return drained
 
     def _finalization_summary_stats(self) -> Dict[str, Any]:
@@ -1395,61 +1380,6 @@ class MeetingEngine:
                 "status": status, "error": str(exc),
             })
 
-    def cancel(self) -> None:
-        """Discard the session fast: no drain, no consolidation.
-
-        The meeting row is marked ``failed``; spooled audio and any
-        already-transcribed segments are kept on disk/DB (nothing deleted).
-        """
-        self._await_start()
-        with self._lifecycle_lock:
-            if not self._active or self._end_thread is not None:
-                return
-            self._active = False
-        # Stop agent mutations before teardown so in-flight tools cannot land.
-        self.revoke_agent_writes()
-        self._stop_capture()
-        scheduler = self._scheduler
-        self._scheduler = None
-        if scheduler is not None:
-            try:
-                scheduler.stop()
-            except Exception:
-                logger.exception("Scheduler stop failed during cancel")
-        if self._agent_core is not None:
-            try:
-                self._agent_core.cancel()
-            except Exception:
-                logger.exception("Agent cancel failed")
-        self._shutdown_agent_core()
-        self._stop_asr("cancel")
-        # After ASR is down: releases each spool's writer thread and leaves
-        # the last partial chunk on disk as a recoverable pending row.
-        self._flush_spools()
-        self.clock.pause()
-        self._stop_heartbeat()
-        try:
-            self.repository.update_meeting(
-                self.meeting_id, status="failed", ended_at=now_iso(),
-                paused_total_s=self.clock.paused_total_s(),
-            )
-        except Exception:
-            logger.exception("Failed to persist canceled status")
-        if self.store is not None:
-            self.store.update_runtime_fields(status="failed")
-            self._set_finalization(
-                "unavailable",
-                "Meeting was canceled before final insights could run.",
-                emit=False,
-            )
-        self._broadcast({"type": "meeting_ended", "status": "failed"})
-        self._emit_status()
-        self._emit("ended", {
-            "meeting_id": self.meeting_id,
-            "canceled": True,
-            "status": "failed",
-        })
-
     def wait_for_end(self) -> None:
         """Wait for the end worker without interrupting its remaining passes."""
         with self._lifecycle_lock:
@@ -2095,11 +2025,6 @@ class MeetingEngine:
                 self.meeting_id,
                 self.repository,
                 language=None if language == "auto" else language,
-                # Real-meeting evaluation found rolling rewrites improved some
-                # meetings but degraded others by up to 4.9 absolute WER.
-                # A durable record must prefer the stable draft until a
-                # no-reference quality gate is proven trustworthy.
-                enable_revisions=False,
                 term_rules=self._active_term_rules,
                 **({"remote": self.options.asr_remote,
                     "on_connection_status": self._on_asr_connection_status}
@@ -2201,91 +2126,6 @@ class MeetingEngine:
         signals = getattr(self, "_live_signals", None)
         if signals is not None:
             signals.observe(rows, frontier=frontier)
-        self._maybe_revise_transcript(chunk)
-
-    def _maybe_revise_transcript(self, chunk: SpooledChunk) -> None:
-        """Schedule and run a bounded rolling re-decode for recent audio."""
-        asr = self._asr
-        if asr is None:
-            return
-        frontier = float(chunk.start_s) + float(chunk.duration_s)
-        schedule = getattr(asr, "schedule_revise", None)
-        run_pending = getattr(asr, "run_pending_revises", None)
-        if not callable(schedule) or not callable(run_pending):
-            return
-        try:
-            schedule(chunk.channel, frontier)
-            # A rolling re-decode must never jump ahead of even one queued
-            # draft chunk; the ASR engine also enforces this internally.
-            if getattr(asr, "backlog_depth", lambda: 0)() > 0:
-                return
-            for outcome in run_pending():
-                self._publish_revise_result(outcome)
-        except Exception:
-            logger.exception("Rolling transcript revise failed")
-
-    def _publish_revise_result(self, outcome: Dict[str, Any]) -> None:
-        """Assign speakers for new revise rows and broadcast upserts/removals."""
-        items = list(outcome.get("items") or [])
-        removed_ids = list(outcome.get("removed_ids") or [])
-        if not items and not removed_ids:
-            return
-
-        # Re-run speaker assignment for rows that still lack a participant.
-        needing = []
-        for row in items:
-            if row.get("speaker_participant_id") or row.get("speaker_pinned"):
-                continue
-            needing.append(TranscriptSegment(
-                segment_id=row["id"],
-                meeting_id=self.meeting_id,
-                chunk_id=row.get("chunk_id"),
-                channel=row.get("channel") or CHANNEL_MIC,
-                start_s=float(row.get("start_s") or 0.0),
-                end_s=float(row.get("end_s") or 0.0),
-                text=row.get("text") or "",
-            ))
-        if needing:
-            try:
-                self._assign_speakers(needing)
-            except Exception:
-                logger.exception("Speaker assignment failed for revise batch")
-            for seg in needing:
-                if not seg.speaker_participant_id:
-                    continue
-                try:
-                    self.repository.update_segment_speaker(
-                        self.meeting_id,
-                        seg.segment_id,
-                        seg.speaker_participant_id,
-                        seg.speaker_source,
-                        False,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to persist revise speaker for %s", seg.segment_id
-                    )
-                for row in items:
-                    if row.get("id") == seg.segment_id:
-                        row["speaker_participant_id"] = seg.speaker_participant_id
-                        row["speaker_source"] = seg.speaker_source
-                        break
-
-        verifier = getattr(self, "_citation_verifier", None)
-        if verifier is not None:
-            verifier.invalidate([r["id"] for r in items] + removed_ids)
-        signals = getattr(self, "_live_signals", None)
-        if signals is not None:
-            signals.observe(items)
-        payload = {"items": items, "removed_ids": removed_ids}
-        self._emit("segments", payload)
-        self._broadcast({"type": "segments", **payload})
-        scheduler = self._scheduler
-        if scheduler is not None and items:
-            try:
-                scheduler.notify_revised([row.get("id") for row in items])
-            except Exception:
-                logger.exception("Scheduler notify failed after revise")
 
     def _assign_speakers(self, segments: List[TranscriptSegment]) -> None:
         """Mic segments become 'Me'; loopback segments go to the diarizer."""

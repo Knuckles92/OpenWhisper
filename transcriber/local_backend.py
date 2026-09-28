@@ -555,15 +555,3 @@ class LocalWhisperBackend(TranscriptionBackend):
                 info += f" — {self.gpu_fallback_note}"
             return info
         return "Not initialized"
-
-    @property
-    def requires_file_splitting(self) -> bool:
-        """Return False because faster-whisper streams arbitrarily long audio.
-
-        Load-bearing: the base class defaults to True, so removing this
-        override would route large files into the split path and transcribe
-        them through ``TranscriptionBackend.transcribe_chunks`` instead of one
-        streaming pass. This class deliberately has no ``transcribe_chunks``
-        of its own for that reason.
-        """
-        return False

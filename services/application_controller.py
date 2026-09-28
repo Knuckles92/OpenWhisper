@@ -311,7 +311,10 @@ class ApplicationController(QObject):
         self.transcription_backends["local_whisper"] = (
             local_backend if local_backend is not None else LocalWhisperBackend()
         )
-        self.transcription_backends["api"] = OpenAIBackend("api")
+        api = OpenAIBackend("api")
+        # Splitting a file over the upload limit reports its steps.
+        api.on_progress = self.transcription_runtime.report_backend_progress
+        self.transcription_backends["api"] = api
 
         from services.local_asr.catalog import BACKENDS
         from transcriber.optional_backend import LocalSpeechBackend

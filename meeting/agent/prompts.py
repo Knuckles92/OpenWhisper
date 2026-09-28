@@ -12,7 +12,6 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-from meeting.agent.question_engine import build_question_guidance
 from meeting.state.patches import (
     MAX_EVIDENCE_REFS,
     MAX_OPEN_QUESTIONS,
@@ -702,6 +701,47 @@ def select_spotlight_items(
     return picks
 
 
+def _question_guidance(state: Dict[str, Any]) -> str:
+    """Render the open-question inbox so the model can target its ids.
+
+    Lists every open question (oldest first) with any pending suggested
+    answer, then the remaining capacity and the confidence thresholds.
+    """
+    questions = sorted(
+        (q for q in (state.get("questions") or []) if q.get("status") == "open"),
+        key=lambda q: q.get("asked_at") or "",
+    )
+    lines: List[str] = []
+    if not questions:
+        lines.append("Open questions: none.")
+    else:
+        lines.append(f"Open questions ({len(questions)}/{MAX_OPEN_QUESTIONS}):")
+        for question in questions:
+            line = f"- [{question['id']}] {question.get('text', '')}"
+            suggested = question.get("suggested_answer")
+            if suggested:
+                confidence = question.get("suggested_confidence")
+                confidence_txt = (
+                    f"{confidence:.2f}"
+                    if isinstance(confidence, (int, float)) else "?"
+                )
+                line += (
+                    f" — unconfirmed suggested answer (confidence "
+                    f"{confidence_txt}): {suggested}"
+                )
+            lines.append(line)
+    capacity = max(0, MAX_OPEN_QUESTIONS - len(questions))
+    lines.append(
+        f"You may open {capacity} more question(s). "
+        f"resolve_question with confidence >= {RESOLVE_CONFIDENCE:g} marks a "
+        f"question answered from audio; {SUGGEST_CONFIDENCE:g}-"
+        f"{RESOLVE_CONFIDENCE:g} records a greyed suggestion; lower is "
+        f"rejected. Prefer firming up questions that already have suggested "
+        f"answers over asking new ones."
+    )
+    return "\n".join(lines)
+
+
 def render_state_compact(state: Dict[str, Any]) -> str:
     """Render a state snapshot compactly for the checkpoint user prompt.
 
@@ -765,7 +805,7 @@ def render_state_compact(state: Dict[str, Any]) -> str:
             lines.append("- (empty)")
 
     lines.append("")
-    lines.append(build_question_guidance(state))
+    lines.append(_question_guidance(state))
     return "\n".join(lines)
 
 

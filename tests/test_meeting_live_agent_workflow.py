@@ -12,7 +12,6 @@ from tests.test_meeting_notes_agent import FakeAgent, FakeEngine, _seg
 
 def test_guidance_revisits_consumed_notes_without_new_speech():
     agent = FakeAgent()
-    agent.supports_notes_pass = True
     engine = FakeEngine([_seg("sg_old", 1, "Anthropic makes Claude.")])
     scheduler = CheckpointScheduler(engine, agent)
     scheduler._fire()
@@ -56,7 +55,7 @@ def test_first_cleanup_runs_during_silence(monkeypatch):
         assert cleaned.wait(2), (
             "A short meeting must not need six checkpoints to get cleanup"
         )
-        assert len([p for p in agent.calls if not p.is_polish]) == 1
+        assert len([p for p in agent.calls if not (p.is_polish or p.is_notes)]) == 1
         time.sleep(0.04)
         assert len([p for p in agent.calls if p.is_polish]) == 1
     finally:
@@ -65,7 +64,6 @@ def test_first_cleanup_runs_during_silence(monkeypatch):
 
 def test_user_request_precedes_follow_on_background_passes():
     agent = FakeAgent()
-    agent.supports_notes_pass = True
     scheduler = CheckpointScheduler(FakeEngine([_seg("sg_1", 1)]), agent)
     scheduler._successful_checkpoints = 5
     request = Future()
@@ -131,7 +129,6 @@ def test_failed_notes_retry_in_silence_and_do_not_spin(monkeypatch):
     monkeypatch.setattr(module, "_NOTES_MIN_INTERVAL_S", 0.08)
     finished = threading.Event()
     agent = FakeAgent()
-    agent.supports_notes_pass = True
     attempts = []
 
     def checkpoint(payload):
@@ -161,7 +158,6 @@ def test_notes_backlog_keeps_earliest_unprocessed_segments(monkeypatch):
 
     monkeypatch.setattr(module, "_NOTES_MAX_SEGMENTS", 2)
     agent = FakeAgent()
-    agent.supports_notes_pass = True
     scheduler = CheckpointScheduler(
         FakeEngine([_seg(f"sg_{i}", i * 200) for i in range(5)]), agent
     )
@@ -196,13 +192,13 @@ def test_sidecar_retains_transcript_revision_operations_and_shared_prompt(
 
     def rpc(method, params, **kwargs):
         assert "REVIEW EXISTING NOTES NOW" in params["user_prompt"]
-        assert "REVIEW EXISTING NOTES NOW" in params["system_prompt"]
-        assert "No new speech" in params["state"]["note_adjustment_request"]
+        assert "note_adjustment_request" not in params["state"]
         agent._handle_tool_request(
             {
                 "id": 1,
                 "method": "tool.patch_state",
                 "params": {
+                    "request_id": params["request_id"],
                     "ops": [
                         {
                             "op": "add_item",
@@ -251,6 +247,7 @@ def test_sidecar_returns_actual_polish_revision(monkeypatch, tmp_path):
                 "id": 1,
                 "method": "tool.patch_state",
                 "params": {
+                    "request_id": params["request_id"],
                     "ops": [
                         {
                             "op": "revise_segment_text",
@@ -276,7 +273,6 @@ def test_guidance_review_does_not_skip_unprocessed_note_backlog(monkeypatch):
 
     monkeypatch.setattr(module, "_NOTES_MAX_SEGMENTS", 2)
     agent = FakeAgent()
-    agent.supports_notes_pass = True
     scheduler = CheckpointScheduler(
         FakeEngine([_seg(f"sg_{i}", i * 200) for i in range(5)]), agent
     )

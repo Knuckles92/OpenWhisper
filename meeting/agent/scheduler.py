@@ -297,8 +297,7 @@ class CheckpointScheduler:
             raise ValueError("Enter a note request of 1 to 4000 characters.")
         with self._lock:
             if (self._consolidating or self._stop_event.is_set()
-                    or self._thread is None or not self._thread.is_alive()
-                    or not getattr(self._agent, "supports_notes_pass", False)):
+                    or self._thread is None or not self._thread.is_alive()):
                 raise RuntimeError("The note agent is not available.")
             if len(self._note_requests) >= 4:
                 raise RuntimeError("The note agent already has several requests queued.")
@@ -693,16 +692,11 @@ class CheckpointScheduler:
     def _maybe_fire_notes(self) -> None:
         """Run the dedicated note-taker pass when due.
 
-        Only agent cores that declare ``supports_notes_pass`` see notes
-        payloads (both shipped cores implement it: the direct core in
-        process, the Pi sidecar via its bundle). Failures are logged and
-        never counted toward checkpoint health — the notes page simply
-        catches up on the next pass, because a failed batch's segments are
-        not marked as consumed.
+        Failures are logged and never counted toward checkpoint health — the
+        notes page simply catches up on the next pass, because a failed
+        batch's segments are not marked as consumed.
         """
         if self._consolidating or self._stop_event.is_set():
-            return
-        if not getattr(self._agent, "supports_notes_pass", False):
             return
         if self._interactive_pending():
             return

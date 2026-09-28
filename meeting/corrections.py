@@ -13,6 +13,8 @@ import logging
 import re
 from typing import Any, Callable, Dict, Iterable, List
 
+from meeting.state.schema import parse_state_json
+
 logger = logging.getLogger(__name__)
 
 #: Longest ``selected_text`` / ``replacement`` a term correction may carry.
@@ -90,7 +92,9 @@ def repository_term_rules(repository: Any, meeting_id: str) -> Callable[[], Dict
                 return {}
             seq = meeting.get("state_seq")
             if seq != cache["seq"]:
-                cache["rules"] = term_rules(json.loads(meeting.get("state_json") or "{}"))
+                cache["rules"] = term_rules(
+                    parse_state_json(meeting.get("state_json")) or {}
+                )
                 cache["seq"] = seq
         except Exception:
             logger.exception("Could not load term corrections for %s", meeting_id)

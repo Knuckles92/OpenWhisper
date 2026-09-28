@@ -112,5 +112,4 @@ def test_reference_overlap_stats_counts_both_speakers():
 def test_benchmark_defaults_to_stable_production_profile():
     args = _parse_args([])
 
-    assert args.enable_revisions is False
     assert args.draft_prompt_words == DRAFT_PROMPT_WORDS

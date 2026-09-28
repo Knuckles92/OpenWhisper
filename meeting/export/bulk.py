@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from meeting.export.json_export import FORMAT_VERSION, export_json
 from meeting.export.markdown import export_markdown
 from meeting.export.transcript_txt import export_transcript_txt, resolve_title
+from meeting.stored import stored_state_dict
 from meeting.time_utils import as_local_time
 
 logger = logging.getLogger(__name__)
@@ -104,12 +105,7 @@ def collect_meeting_export(
     meeting = repository.get_meeting(meeting_id)
     if meeting is None:
         return None
-    raw = meeting.get("state_json")
-    if isinstance(raw, dict):
-        state = raw
-    else:
-        parsed = _loads_or_none(raw)
-        state = parsed if isinstance(parsed, dict) else {}
+    state = stored_state_dict(meeting)
     segments = list(repository.get_segments(meeting_id) or [])
     return {"meeting": meeting, "state": state, "segments": segments}
 
@@ -253,10 +249,3 @@ def meeting_file_stem(meeting: Dict[str, Any], state: Dict[str, Any]) -> str:
     slug = re.sub(r"[^\w\-.]", "", slug).strip("-._")
     slug = slug[:_FILE_STEM_MAX_TITLE].rstrip("-._")
     return f"{stamp}_{slug}" if slug else stamp
-
-
-def _loads_or_none(raw: str) -> Optional[Any]:
-    try:
-        return json.loads(raw)
-    except (TypeError, ValueError):
-        return None

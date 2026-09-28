@@ -4,14 +4,11 @@ import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import numpy as np
-
 from meeting.agent.prompts import (
     build_checkpoint_user_prompt,
     build_notes_user_prompt,
 )
 from meeting.agent.scheduler import _GUIDANCE_MAX_SEGMENTS, CheckpointScheduler
-from meeting.asr.revise import build_initial_prompt
 from meeting.corrections import (
     correct_text,
     guidance_prompt,
@@ -21,7 +18,6 @@ from meeting.corrections import (
     vocabulary_hint,
     vocabulary_terms,
 )
-import meeting.asr.engine as asr_engine
 from tests.test_meeting_asr import FakeRepository, _chunk, _make_engine
 from tests.test_meeting_engine import (  # noqa: F401  (fixtures)
     fakes,
@@ -101,13 +97,6 @@ class TestVocabulary:
         many = {str(i): f"Term{i}" for i in range(40)}
         assert len(vocabulary_terms(many)) == 12
         assert len(", ".join(vocabulary_terms({"a": "x" * 100, "b": "y" * 100}))) <= 160
-
-    def test_initial_prompt_leads_with_vocabulary_after_truncation(self):
-        prior = [{"text": "word " * 100}]
-        prompt = build_initial_prompt(prior, vocabulary=["Anthropic", "Claude"])
-        assert prompt.startswith("Anthropic, Claude. word")
-        assert len(prompt) <= len("Anthropic, Claude. ") + 224
-        assert build_initial_prompt(prior) == build_initial_prompt(prior, vocabulary=["", " "])
 
 
 class TestGuidancePrompt:
@@ -198,9 +187,10 @@ class TestSchedulerGuidancePass:
             deadline = time.monotonic() + 3.0
             while not agent.calls and time.monotonic() < deadline:
                 time.sleep(0.02)
-            assert len(agent.calls) == 1
-            payload = agent.calls[0]
-            assert not payload.is_notes and not payload.is_consolidation
+            card_calls = [call for call in agent.calls if not call.is_notes]
+            assert len(card_calls) == 1
+            payload = card_calls[0]
+            assert not payload.is_consolidation
             sent = [seg["id"] for seg in payload.new_segments]
             assert len(sent) == _GUIDANCE_MAX_SEGMENTS
             assert sent[-1] == f"sg_{_GUIDANCE_MAX_SEGMENTS + 4}"
@@ -219,7 +209,7 @@ class TestSchedulerGuidancePass:
         assert scheduler._guidance_pending is True
         scheduler._retry_not_before = 0.0
         scheduler._fire()
-        assert len(agent.calls) == 2
+        assert len([call for call in agent.calls if not call.is_notes]) == 2
         assert scheduler._guidance_pending is False
 
 
@@ -276,32 +266,3 @@ class TestAsrPriming:
         engine._term_rules = boom
         engine._draft_context[("m_test", "mic")] = ["Entropic"]
         assert engine._draft_prompt(_chunk(tmp_path)) == "Entropic"
-
-    def test_revise_window_primes_whisper_with_vocabulary(self):
-        model = MagicMock()
-        model.transcribe.return_value = ([], SimpleNamespace())
-        backend = SimpleNamespace(is_available=lambda: True, model=model, cleanup=lambda: None)
-        repo = FakeRepository()
-        # The revise window trails the frontier by 45 s, so this row (ending
-        # at 2 s) precedes the decode window and qualifies as prompt context.
-        chunk = {"id": 1, "channel": "mic", "start_s": 0.0, "duration_s": 60.0,
-                 "seq": 0, "file_path": "", "asr_status": "done"}
-        repo.get_segments_in_range = lambda *args, **kwargs: []
-        repo.get_audio_chunks = lambda meeting_id: [chunk]
-        # Rows read from the repository already carry the correction.
-        repo.get_segments = lambda meeting_id, after_start_s=-1.0: [
-            {"channel": "mic", "end_s": 2.0, "text": "Anthropic said hello"},
-        ]
-        engine = _make_engine(repo, backend)
-        engine._term_rules = lambda: {"entropic": "Anthropic"}
-        original = asr_engine.stitch_window_audio
-        asr_engine.stitch_window_audio = (
-            lambda *args, **kwargs: (np.zeros(16000, dtype=np.float32), 0.0)
-        )
-        try:
-            engine.revise_window("mic", frontier_s=60.0)
-        finally:
-            asr_engine.stitch_window_audio = original
-        assert model.transcribe.call_args.kwargs["initial_prompt"] == (
-            "Anthropic. Anthropic said hello"
-        )

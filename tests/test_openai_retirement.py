@@ -207,7 +207,7 @@ class TestTranscriptionRetry:
     def test_explicit_retiring_model_type_maps_after_shutdown(self, after_shutdown):
         backend = self._backend(SimpleNamespace(), "whisper-1")
         assert backend._get_api_model_name() == "gpt-transcribe"
-        backend.model_type = "api_gpt4o"
+        backend.model_type = "gpt-4o-transcribe"
         assert backend._get_api_model_name() == "gpt-transcribe"
 
 

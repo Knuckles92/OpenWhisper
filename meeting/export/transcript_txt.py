@@ -15,7 +15,6 @@ the module extractable with the rest of the ``meeting`` package.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from meeting.time_utils import as_local_time
@@ -25,25 +24,6 @@ logger = logging.getLogger(__name__)
 #: Fallback speaker labels when a segment has no resolvable participant.
 FALLBACK_SPEAKER_MIC = "Me"
 FALLBACK_SPEAKER_LOOPBACK = "Others"
-
-
-def parse_iso(value: Any) -> Optional[datetime]:
-    """Parse an ISO-8601 timestamp, returning None on any failure.
-
-    Args:
-        value: Raw timestamp value — usually ``datetime.isoformat()`` output
-            stored by the repository; may be None or malformed.
-
-    Returns:
-        The parsed ``datetime``, or None when ``value`` is missing or is not
-        a valid ISO-8601 string.
-    """
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None
 
 
 def format_clock(seconds: float) -> str:

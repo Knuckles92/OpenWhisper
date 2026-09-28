@@ -679,7 +679,7 @@ class TestUploadFileTab:
         return tab
 
     @staticmethod
-    def _preview_for(path):
+    def _preview_for(path, engine_splits=False):
         return _preview(file_path=path, file_name=os.path.basename(path))
 
     def _tab_with_files(self, tmp_path, names=("a.wav", "b.wav"), saved=None):
@@ -1640,3 +1640,89 @@ class TestRemoteModelField:
         tab.set_remote_models(self._choices([self.PARAKEET, self.NEMOTRON], current=self.PARAKEET))
         QApplication.processEvents()
         assert tab.engine_card.height() == local_height
+
+
+class TestChunkCountFollowsTheEngine:
+    """Only the OpenAI API splits a file over its upload limit, so only it
+    gets a chunk count, and only it pays for the decode that finds one."""
+
+    @pytest.fixture
+    def long_wav(self, tmp_path, monkeypatch):
+        from tests.test_audio_processor import write_wav
+
+        monkeypatch.setattr(config, "MAX_FILE_SIZE_MB", 0.05)
+        return write_wav(tmp_path / "long.wav", seconds=3.0)
+
+    @pytest.fixture
+    def decodes(self, monkeypatch):
+        from services.audio_processor import audio_processor
+
+        decoded = []
+        original = audio_processor._load_audio_metadata
+        monkeypatch.setattr(
+            audio_processor, "_load_audio_metadata",
+            lambda path: decoded.append(path) or original(path),
+        )
+        return decoded
+
+    @staticmethod
+    def _tab(backend, paths):
+        with _isolated_settings():
+            tab = UploadFileTab()
+        tab.set_backend(backend)
+        with _inline_threads():
+            tab._on_files_selected(paths, 0)
+        return tab
+
+    def test_local_engine_takes_a_large_file_in_one_pass_without_decoding(
+        self, long_wav, decodes
+    ):
+        tab = self._tab("Local Whisper", [long_wav])
+        label = tab.file_info_card.chunk_label
+
+        assert label.text() == "One pass"
+        assert label.property("tone") == "ok"
+        assert decodes == []
+        assert tab.file_info_card.transcribe_btn.isEnabled()
+
+    def test_api_counts_the_chunks_and_an_engine_switch_rereads(
+        self, long_wav, decodes
+    ):
+        tab = self._tab("API", [long_wav])
+        label = tab.file_info_card.chunk_label
+
+        assert label.text().endswith(" chunks")
+        assert label.property("tone") == "warn"
+        assert decodes == [long_wav]
+
+        with _inline_threads():
+            tab.set_backend("Parakeet")
+        assert label.text() == "One pass"
+        assert decodes == [long_wav]
+
+        with _inline_threads():
+            tab.choose_backend("API")
+        assert label.text().endswith(" chunks")
+        assert decodes == [long_wav, long_wav]
+
+    def test_a_reread_keeps_finished_rows_and_skips_small_files(
+        self, long_wav, decodes, tmp_path
+    ):
+        from tests.test_audio_processor import write_wav
+
+        short = write_wav(tmp_path / "short.wav", seconds=0.2)
+        tab = self._tab("Local Whisper", [long_wav, short])
+        for item in tab._items:
+            item.state = "done"
+        tab._render()
+        previews = [item.preview for item in tab._items]
+
+        with _inline_threads():
+            tab.set_backend("API")
+
+        rows = tab.file_info_card.queue.rows()
+        assert rows[0].chunk_chip.text().endswith(" chunks")
+        assert rows[1].chunk_chip.text() == "One pass"
+        assert [row.state for row in rows] == ["done", "done"]
+        assert tab._items[1].preview is previews[1], "a small file is not re-read"
+        assert decodes == [long_wav]

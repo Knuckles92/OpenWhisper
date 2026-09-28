@@ -16,14 +16,22 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from config import config
-from meeting.agent.base import find_provider_api_key
-from meeting.agent.evidence import repair_evidence_ids
+from meeting.agent.base import merge_usage
 from meeting.agent.prompts import (
     JSON_FALLBACK_INSTRUCTIONS,
     build_checkpoint_user_prompt,
     build_note_taker_system_prompt,
     build_notes_user_prompt,
 )
+from meeting.agent.tool_policy import (
+    PASS_REJECTIONS,
+    ToolScope,
+    apply_patch_ops,
+    op_results_payload,
+    run_tool,
+    tool_result_text,
+)
+from meeting.context_folder import context_folder_enabled
 from meeting.finalization import POLISH_TIMEOUT_S
 from meeting.interfaces import (
     AgentConfig,
@@ -32,10 +40,18 @@ from meeting.interfaces import (
     CheckpointPayload,
     OpResult,
 )
-from meeting.state.patches import filter_notes_ops, live_note_ids
+from meeting.recall import past_recall_enabled
+from meeting.state.patches import RESOLVE_CONFIDENCE, SUGGEST_CONFIDENCE
 from meeting.state.schema import CARD_KEYS
 
 from services.text_generation import generate
+from services.text_llm import (
+    NEW_PROFILE_IDS,
+    profile_from_agent_config,
+    provider_headers,
+    resolve_api_key,
+)
+from services.text_model_catalog import model_spec
 
 logger = logging.getLogger(__name__)
 
@@ -71,13 +87,10 @@ _MAX_TOOL_ROUNDS_WITH_RECALL = 3
 #: especially benefits from less paraphrase drift between runs.
 _TEMPERATURE = 0.0
 
-_DEFAULT_BASE_URLS = {"openrouter": "https://openrouter.ai/api/v1"}
 _DEFAULT_MODELS = {
     "openrouter": config.MEETING_LLM_MODEL,
     "openai": "gpt-4o-mini",
 }
-# OpenRouter attributes traffic to the app via this optional header.
-_OPENROUTER_HEADERS = {"X-Title": "OpenWhisper"}
 
 #: Ops the model may put inside patch_state. ask_question/resolve_question
 #: have dedicated tools, so they are steered out of this enum (the tool host
@@ -88,7 +101,6 @@ _PATCH_STATE_OPS = (
     "upsert_participant", "suggest_participant_name",
     "revise_segment_text",
 )
-_POLISH_ONLY_OPS = frozenset({"revise_segment_text"})
 _AGENT_CARDS = [key for key in CARD_KEYS if key != "user_notes"]
 
 _EVIDENCE_SCHEMA = {
@@ -202,7 +214,8 @@ _RESOLVE_QUESTION_TOOL = {
         "name": "resolve_question",
         "description": (
             "Answer an open inbox question from meeting audio. Confidence >= "
-            "0.8 resolves it; 0.4-0.8 stores a greyed suggestion; lower is "
+            f"{RESOLVE_CONFIDENCE:g} resolves it; {SUGGEST_CONFIDENCE:g}-"
+            f"{RESOLVE_CONFIDENCE:g} stores a greyed suggestion; lower is "
             "rejected. Report confidence honestly."
         ),
         "parameters": {
@@ -286,8 +299,6 @@ _SEARCH_CONTEXT_FILES_TOOL = {
     },
 }
 
-_READ_TOOLS = frozenset({"search_past_meetings", "search_context_files"})
-
 _TOOLS = [
     _PATCH_STATE_TOOL, _ASK_QUESTION_TOOL, _RESOLVE_QUESTION_TOOL,
     _SEARCH_PAST_MEETINGS_TOOL, _SEARCH_CONTEXT_FILES_TOOL,
@@ -303,52 +314,8 @@ _NOOP_TOOL = {
 }
 
 
-def _past_recall_enabled() -> bool:
-    """True when the user has opted in to past-meeting recall."""
-    try:
-        from services.settings import resolve_meeting_past_recall_enabled
-
-        return bool(resolve_meeting_past_recall_enabled())
-    except Exception:
-        return False
-
-
-def _context_folder_enabled() -> bool:
-    """True when the user has opted in to knowledge-folder search."""
-    try:
-        from services.settings import resolve_meeting_context_folder_enabled
-
-        return bool(resolve_meeting_context_folder_enabled())
-    except Exception:
-        return False
-
-
-def _op_results_payload(results: List[OpResult]) -> Dict[str, Any]:
-    return {
-        "results": [
-            {
-                "ok": r.ok,
-                "reason": r.reason,
-                "target_id": r.target_id,
-                "seq": r.seq,
-                "current_revision": r.current_revision,
-            }
-            for r in results
-        ]
-    }
-
-
 class DirectOpenRouterAgent:
-    """``AgentCore`` implementation calling OpenRouter/OpenAI directly.
-
-    Attributes:
-        supports_notes_pass: The direct core runs the dedicated note-taker
-            pass (its own persona prompt, ``live_notes`` ops only). The
-            scheduler probes this flag before firing a notes pass, so agent
-            cores without note-taker support simply never see one.
-    """
-
-    supports_notes_pass = True
+    """``AgentCore`` implementation calling OpenRouter/OpenAI directly."""
 
     def __init__(self) -> None:
         self._cfg: Optional[AgentConfig] = None
@@ -361,12 +328,7 @@ class DirectOpenRouterAgent:
         self._model: str = ""
         self._json_mode = False
         self._use_json_response_format = True
-        self._profile_kind: str = ""
         self._profile = None
-        self._polish_mode = False
-        self._notes_mode = False
-        self._notes_item_ids: Optional[frozenset] = None
-        self._citable_ids: List[str] = []
         self._fatal = False
         self._shut_down = False
         self._cancel_event = threading.Event()
@@ -382,25 +344,11 @@ class DirectOpenRouterAgent:
         self._tools = tools
         self._fatal = False
         self._shut_down = False
-        profile = self._resolve_profile(cfg)
+        profile = profile_from_agent_config(cfg.provider, cfg.endpoint)
         self._profile = profile
-        self._profile_kind = profile.kind if profile is not None else cfg.provider
-        self._api_key = cfg.api_key or (
-            self._resolve_profile_key(profile, cfg.provider)
-        )
-        self._base_url = (
-            profile.base_url if profile is not None
-            else self._provider_base_url(cfg.provider)
-        )
-        self._headers = (
-            dict(_OPENROUTER_HEADERS)
-            if (profile is not None and profile.kind == "openrouter")
-            or cfg.provider == "openrouter"
-            else None
-        )
-        if profile is not None:
-            from services.text_llm import provider_headers
-            self._headers = provider_headers(profile, cfg.meeting_id)
+        self._api_key = cfg.api_key or resolve_api_key(profile)
+        self._base_url = profile.base_url
+        self._headers = provider_headers(profile, cfg.meeting_id)
         self._use_json_response_format = True
         self._model = self._resolve_model(cfg)
 
@@ -414,9 +362,7 @@ class DirectOpenRouterAgent:
             )
             return
 
-        if profile is not None:
-            from services.text_model_catalog import model_spec
-            model_spec(profile, self._model)
+        model_spec(profile, self._model)
         client = self._ensure_client()
         if client is not None:
             self._probe_tool_support(client)
@@ -466,45 +412,6 @@ class DirectOpenRouterAgent:
         self.cancel()
 
     @staticmethod
-    def _resolve_profile(cfg: AgentConfig):
-        try:
-            from services.text_llm import profile_from_agent_config
-
-            return profile_from_agent_config(cfg.provider, cfg.endpoint)
-        except ImportError:
-            return None
-
-    @staticmethod
-    def _resolve_profile_key(profile: Any, provider: str) -> Optional[str]:
-        if profile is not None:
-            try:
-                from services.text_llm import resolve_api_key
-
-                return resolve_api_key(profile)
-            except Exception:
-                pass
-        return find_provider_api_key(provider)
-
-    @staticmethod
-    def _provider_base_url(provider: str) -> Optional[str]:
-        try:
-            from services.text_llm import get_profile
-
-            profile = get_profile(provider)
-            if profile is not None:
-                return profile.base_url
-        except Exception:
-            pass
-        if provider == "openrouter":
-            try:
-                from config import config
-
-                return config.OPENROUTER_BASE_URL
-            except Exception:
-                return _DEFAULT_BASE_URLS["openrouter"]
-        return None
-
-    @staticmethod
     def _resolve_model(cfg: AgentConfig) -> str:
         if cfg.model:
             return cfg.model
@@ -541,9 +448,7 @@ class DirectOpenRouterAgent:
             return self._client
 
     def _probe_tool_support(self, client: Any) -> None:
-        new_provider = self._profile is not None and self._profile.kind in (
-            "ollama", "groq", "opencode_go", "opencode_zen",
-        )
+        new_provider = self._profile.kind in NEW_PROFILE_IDS
         try:
             result = generate(
                 client.with_options(timeout=_PROBE_TIMEOUT_S), self._profile,
@@ -586,16 +491,6 @@ class DirectOpenRouterAgent:
         text = str(exc).lower()
         return "response_format" in text or "json_object" in text
 
-    @staticmethod
-    def _merge_usage(total: Dict[str, Any], usage: Any) -> None:
-        if usage is None:
-            return
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
-            value = getattr(usage, key, None)
-            if isinstance(value, int):
-                total[key] = total.get(key, 0) + value
-        total["requests"] = total.get("requests", 0) + 1
-
     def _run_pass(self, payload: CheckpointPayload, timeout_s: float) -> AgentResult:
         if not self.is_healthy():
             return AgentResult(ok=False, error="agent_unavailable")
@@ -606,8 +501,7 @@ class DirectOpenRouterAgent:
         if client is None:
             return AgentResult(ok=False, error="client_unavailable")
 
-        is_notes = bool(getattr(payload, "is_notes", False))
-        if is_notes:
+        if payload.is_notes:
             system_prompt = build_note_taker_system_prompt()
             user_prompt = build_notes_user_prompt(
                 payload.state_snapshot,
@@ -619,133 +513,31 @@ class DirectOpenRouterAgent:
                 payload.state_snapshot,
                 payload.new_segments,
                 payload.is_consolidation,
-                is_polish=bool(getattr(payload, "is_polish", False)),
+                is_polish=payload.is_polish,
             )
         max_rounds = (
             _MAX_CONSOLIDATION_TOOL_ROUNDS if payload.is_consolidation
             else _MAX_TOOL_ROUNDS
         )
         if (
-            (_past_recall_enabled() or _context_folder_enabled())
+            (past_recall_enabled() or context_folder_enabled())
             and max_rounds < _MAX_TOOL_ROUNDS_WITH_RECALL
         ):
             max_rounds = _MAX_TOOL_ROUNDS_WITH_RECALL
-        self._polish_mode = bool(getattr(payload, "is_polish", False))
-        self._notes_mode = is_notes
-        self._notes_item_ids = (
-            live_note_ids(payload.state_snapshot) if is_notes else None
-        )
-        self._citable_ids = [
-            str(seg.get("id"))
-            for seg in ((payload.new_segments or [])
-                            + (payload.state_snapshot.get("recent_transcript_context") or []))
-            if isinstance(seg, dict) and seg.get("id")
-        ]
+        scope = ToolScope.for_payload(payload)
         self._pass_deadline = time.monotonic() + timeout_s
-        try:
-            if self._json_mode:
-                return self._run_json_mode(
-                    client, system_prompt, user_prompt, timeout_s
-                )
-            return self._run_tool_mode(
-                client, system_prompt, user_prompt, timeout_s, max_rounds=max_rounds,
+        if self._json_mode:
+            return self._run_json_mode(
+                client, system_prompt, user_prompt, timeout_s, scope=scope,
             )
-        finally:
-            self._polish_mode = False
-            self._notes_mode = False
-            self._notes_item_ids = None
-            self._citable_ids = []
-
-    def _repair_ops(self, ops: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        tools = self._tools
-        exists = getattr(tools, "segment_exists", None)
-        if not callable(exists) or not self._citable_ids:
-            return ops
-        repaired, count = repair_evidence_ids(ops, self._citable_ids, exists)
-        if count:
-            logger.info("Repaired %d mistyped evidence id(s)", count)
-        return repaired
-
-    def _repair_evidence_list(self, evidence: List[str]) -> List[str]:
-        ops = self._repair_ops([{"op": "ask_question",
-                                 "evidence": evidence}])
-        return ops[0].get("evidence") or evidence
-
-    def _dispatch_read_tool(self, name: str, args: Dict[str, Any]) -> str:
-        if name == "search_past_meetings":
-            search = getattr(self._tools, "search_past_meetings", None)
-            if not callable(search):
-                return json.dumps({
-                    "ok": False,
-                    "disabled": True,
-                    "text": "Past-meeting recall is not available.",
-                    "hits": [],
-                })
-            meeting_id = str(args.get("meeting_id") or "").strip() or None
-            result = search(
-                query=str(args.get("query") or ""),
-                meeting_id=meeting_id,
-                limit=args.get("limit", 10),
-            )
-            if isinstance(result, dict):
-                return str(result.get("text") or json.dumps(result))
-            return str(result or "")
-        if name == "search_context_files":
-            search = getattr(self._tools, "search_context_files", None)
-            if not callable(search):
-                return json.dumps({
-                    "ok": False,
-                    "disabled": True,
-                    "text": "Knowledge-folder search is not available.",
-                    "hits": [],
-                })
-            relative_path = str(args.get("relative_path") or "").strip() or None
-            result = search(
-                query=str(args.get("query") or ""),
-                relative_path=relative_path,
-                limit=args.get("limit", 10),
-            )
-            if isinstance(result, dict):
-                return str(result.get("text") or json.dumps(result))
-            return str(result or "")
-        raise ValueError(f"unknown read tool: {name}")
-
-    def _dispatch_tool_call(self, name: str, args: Dict[str, Any]) -> List[OpResult]:
-        tools = self._tools
-        assert tools is not None
-        if name == "patch_state":
-            ops = args.get("ops")
-            if not isinstance(ops, list):
-                raise ValueError("'ops' must be a list of op objects")
-            if self._polish_mode:
-                ops = [
-                    op for op in ops
-                    if isinstance(op, dict) and op.get("op") in _POLISH_ONLY_OPS
-                ]
-            elif self._notes_mode:
-                ops = filter_notes_ops(ops, self._notes_item_ids)
-            ops = self._repair_ops(ops)
-            return tools.apply_agent_ops(ops)
-        if (
-            self._polish_mode or self._notes_mode
-        ) and name in ("ask_question", "resolve_question"):
-            return []
-        if name == "ask_question":
-            return [tools.ask_question(
-                str(args.get("text") or ""),
-                self._repair_evidence_list(list(args.get("evidence") or [])),
-            )]
-        if name == "resolve_question":
-            return [tools.resolve_question(
-                str(args.get("question_id") or ""),
-                str(args.get("answer_text") or ""),
-                float(args.get("confidence") or 0.0),
-                self._repair_evidence_list(list(args.get("evidence") or [])),
-            )]
-        raise ValueError(f"unknown tool: {name}")
+        return self._run_tool_mode(
+            client, system_prompt, user_prompt, timeout_s,
+            max_rounds=max_rounds, scope=scope,
+        )
 
     def _run_tool_mode(self, client: Any, system_prompt: str, user_prompt: str,
                        timeout_s: float, max_rounds: int = _MAX_TOOL_ROUNDS,
+                       scope: ToolScope = ToolScope(),
                        ) -> AgentResult:
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -777,7 +569,7 @@ class DirectOpenRouterAgent:
                 return AgentResult(
                     ok=False, op_results=op_results, error=error, usage=usage,
                 )
-            self._merge_usage(usage, getattr(response, "usage", None))
+            merge_usage(usage, getattr(response, "usage", None))
 
             tool_calls = response.tool_calls
             if not tool_calls:
@@ -794,16 +586,11 @@ class DirectOpenRouterAgent:
                     args = json.loads(call.function.arguments or "{}")
                     if not isinstance(args, dict):
                         raise ValueError("tool arguments must be a JSON object")
-                    if call.function.name in _READ_TOOLS:
-                        content = self._dispatch_read_tool(
-                            call.function.name, args,
-                        )
-                    else:
-                        results = self._dispatch_tool_call(
-                            call.function.name, args,
-                        )
-                        op_results.extend(results)
-                        content = json.dumps(_op_results_payload(results))
+                    result, results = run_tool(
+                        self._tools, call.function.name, args, scope,
+                    )
+                    op_results.extend(results)
+                    content = tool_result_text(call.function.name, result)
                 except json.JSONDecodeError as exc:
                     logger.warning(
                         "Tool call %s produced malformed JSON: %s",
@@ -833,7 +620,8 @@ class DirectOpenRouterAgent:
         return AgentResult(ok=True, op_results=op_results, usage=usage)
 
     def _run_json_mode(self, client: Any, system_prompt: str, user_prompt: str,
-                       timeout_s: float) -> AgentResult:
+                       timeout_s: float, scope: ToolScope = ToolScope(),
+                       ) -> AgentResult:
         """Fallback for models without tool support: one ops-JSON object."""
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -876,7 +664,7 @@ class DirectOpenRouterAgent:
                     continue
                 error = "canceled" if self._cancel_event.is_set() else str(exc)
                 return AgentResult(ok=False, error=error, usage=usage)
-            self._merge_usage(usage, getattr(response, "usage", None))
+            merge_usage(usage, getattr(response, "usage", None))
 
             content = response.text
             try:
@@ -905,24 +693,21 @@ class DirectOpenRouterAgent:
                 )
 
             assert self._tools is not None
-            if self._polish_mode:
-                ops = [
-                    op for op in ops
-                    if isinstance(op, dict) and op.get("op") in _POLISH_ONLY_OPS
-                ]
-            elif self._notes_mode:
-                ops = filter_notes_ops(ops, self._notes_item_ids)
-            ops = self._repair_ops(ops)
-            op_results = self._tools.apply_agent_ops(ops) if ops else []
+            op_results = apply_patch_ops(self._tools, ops, scope)
             all_results.extend(op_results)
-            rejected = [r for r in op_results if not r.ok]
+            # Ops outside the pass's job are reported, but neither worth a
+            # repair round nor a failed pass on their own.
+            rejected = [
+                r for r in op_results
+                if not r.ok and r.reason not in PASS_REJECTIONS
+            ]
             repairable = [r for r in rejected if r.reason not in {
                 "human_edited", "human_named", "agent_writes_revoked",
             }]
             if repairable and attempt < 2:
                 messages.append(response.assistant_message)
                 messages.append({"role": "user", "content": (
-                    "Operation results: " + json.dumps(_op_results_payload(op_results))
+                    "Operation results: " + json.dumps(op_results_payload(op_results))
                     + "\nCorrect the rejected operations using these reasons and current "
                     "revisions. Do not repeat successful operations or retry protected "
                     "human items. Emit only the remaining warranted changes as "

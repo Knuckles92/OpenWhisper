@@ -65,6 +65,8 @@ class FakeEngine:
 class FakeAgent:
     def __init__(self, block_s=0.0, fail_times=0, fail_error="forced"):
         self.calls = []
+        #: Note-taker passes run beside the card checkpoints under test.
+        self.notes_calls = []
         self.block_s = block_s
         self.fail_times = fail_times
         self.fail_error = fail_error
@@ -74,6 +76,9 @@ class FakeAgent:
         self._release.set()
 
     def checkpoint(self, payload):
+        if payload.is_notes:
+            self.notes_calls.append(payload)
+            return AgentResult(ok=True)
         self.calls.append(payload)
         self._entered.set()
         if self.block_s > 0:
@@ -144,7 +149,6 @@ class TestInitialContext:
         engine = FakeEngine(segments, clock_s=119.9)
         engine.store = FakeStore({"cards": {}, "topic": {}, "rolling_summary": ""})
         agent = FakeAgent()
-        agent.supports_notes_pass = True
         sched = CheckpointScheduler(engine, agent)
         sched.notify_segments(len(segments))
         if guidance:
@@ -163,7 +167,7 @@ class TestInitialContext:
         assert [seg["id"] for seg in agent.calls[0].new_segments] == [
             seg["id"] for seg in segments
         ]
-        assert any(call.is_notes for call in agent.calls)
+        assert agent.notes_calls
 
     def test_background_notes_and_polish_wait_even_without_pending_speech(self):
         sched = CheckpointScheduler(FakeEngine(clock_s=30.0), FakeAgent())

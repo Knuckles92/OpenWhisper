@@ -15,12 +15,13 @@ import pytest
 
 from meeting.agent import sidecar as pi_mod
 from meeting.agent.pi_sidecar import PiSidecarAgent
+from meeting.agent.tool_policy import pass_kind_for
 from meeting.interfaces import AgentConfig, CheckpointPayload, OpResult
 
 
 #: Minimal NDJSON sidecar stub (Python). Speaks hello from env token, answers
 #: initialize/checkpoint/ping/shutdown. Optional SIDECAR_STUB_MODE=
-#: bad_token|crash_after_init|die_silently|slow|slow_progress.
+#: bad_token|pi1_hello|crash_after_init|die_silently|slow|slow_progress.
 _STUB_SOURCE = textwrap.dedent(r"""
 import json, os, sys, time, threading
 
@@ -35,10 +36,13 @@ if mode == "die_silently":
     # Dies before writing a byte, exactly like a bundle that cannot load.
     sys.exit(3)
 hello_token = "wrong-token" if mode == "bad_token" else token
+hello = {"token": hello_token, "protocol": 1, "pi_version": "stub-1"}
+if mode != "pi1_hello":
+    hello.update(host_prompt=1, request_scoped_tools=1)
 sys.stdout.write(json.dumps({
     "jsonrpc": "2.0",
     "method": "hello",
-    "params": {"token": hello_token, "protocol": 1, "pi_version": "stub-1"},
+    "params": hello,
 }) + "\n")
 sys.stdout.flush()
 
@@ -104,7 +108,7 @@ def run_slow_checkpoint(req_id, params):
                        "usage": {"totalTokens": 1}},
         })
 
-if mode == "bad_token":
+if mode in ("bad_token", "pi1_hello"):
     time.sleep(30)
     sys.exit(0)
 
@@ -153,7 +157,7 @@ for line in sys.stdin:
             # reject the question with notes_only.
             tool_req = {
                 "jsonrpc": "2.0", "id": 999, "method": "tool.patch_state",
-                "params": {"ops": [
+                "params": {"request_id": params.get("request_id"), "ops": [
                     {"op": "add_item", "card": "key_points",
                      "text": "must not apply", "evidence": ["sg_1"]},
                     {"op": "add_item", "card": "live_notes",
@@ -180,7 +184,7 @@ for line in sys.stdin:
                     break
             q_req = {
                 "jsonrpc": "2.0", "id": 998, "method": "tool.ask_question",
-                "params": {"text": "must not ask", "evidence": ["sg_1"]},
+                "params": {"request_id": params.get("request_id"), "text": "must not ask", "evidence": ["sg_1"]},
             }
             sys.stdout.write(json.dumps(q_req) + "\n")
             sys.stdout.flush()
@@ -207,7 +211,7 @@ for line in sys.stdin:
             tool_req = {
                 "jsonrpc": "2.0", "id": 996,
                 "method": "tool.search_context_files",
-                "params": {"query": "roadmap", "relative_path": "plan.md",
+                "params": {"request_id": params.get("request_id"), "query": "roadmap", "relative_path": "plan.md",
                            "limit": 5},
             }
             sys.stdout.write(json.dumps(tool_req) + "\n")
@@ -230,7 +234,7 @@ for line in sys.stdin:
             tool_req = {
                 "jsonrpc": "2.0", "id": 997,
                 "method": "tool.search_past_meetings",
-                "params": {"query": "budget", "limit": 5},
+                "params": {"request_id": params.get("request_id"), "query": "budget", "limit": 5},
             }
             sys.stdout.write(json.dumps(tool_req) + "\n")
             sys.stdout.flush()
@@ -361,6 +365,37 @@ class TestSidecarHandshake:
             agent.initialize(_cfg(), FakeTools())
         assert agent._hello_ok is False
         agent.shutdown()
+
+    def test_pi1_bundle_asks_for_an_update(self, stub_dir):
+        """A bundle without host prompts and scoped tools is out of date."""
+        payload_dir, stub = stub_dir
+        agent = PiSidecarAgent(str(payload_dir))
+        _patch_cmd(agent, stub, env_extra={"SIDECAR_STUB_MODE": "pi1_hello"})
+        with pytest.raises(RuntimeError, match="Update it from Downloads"):
+            agent.initialize(_cfg(), FakeTools())
+        assert agent._hello_ok is False
+        assert agent._fatal is True
+        agent.shutdown()
+
+    def test_hello_requires_host_prompt_and_scoped_tools(self, tmp_path):
+        agent = PiSidecarAgent(str(tmp_path))
+        agent._token = "t" * 8
+        base = {"token": "t" * 8, "protocol": 1, "pi_version": "stub"}
+        for extra, ok in (
+            ({}, False),
+            ({"host_prompt": 1}, False),
+            ({"request_scoped_tools": 1}, False),
+            ({"host_prompt": 1, "request_scoped_tools": 1}, True),
+        ):
+            agent._handle_notification("hello", {**base, **extra})
+            assert agent._hello_ok is ok
+            assert agent._hello_outdated is (not ok)
+        agent._handle_notification("hello", {
+            **base, "token": "x" * 8, "host_prompt": 1,
+            "request_scoped_tools": 1,
+        })
+        assert agent._hello_ok is False
+        assert agent._hello_outdated is False
 
     def test_missing_api_key_is_fatal(self, stub_dir):
         payload_dir, stub = stub_dir
@@ -642,10 +677,15 @@ class TestCheckpointResults:
 
 
 def _track_pass(agent, payload):
-    """Mirror ``_run_checkpoint`` pass-kind bookkeeping without an RPC."""
+    """Mirror ``_run_checkpoint`` request bookkeeping without an RPC."""
     with agent._lock:
-        agent._pass_kind = pi_mod._pass_kind_for(payload)
-        agent._pass_kinds[payload.request_id] = agent._pass_kind
+        agent._active_request_ids.add(payload.request_id)
+        agent._checkpoint_op_results[payload.request_id] = []
+        agent._request_contexts[payload.request_id] = {
+            "pass": pass_kind_for(payload),
+            "notes_ids": frozenset(),
+            "evidence": [],
+        }
 
 
 class TestAgentActivity:
@@ -714,7 +754,7 @@ class TestAgentActivity:
             new_segments=[],
         )
         _track_pass(agent, payload)
-        assert agent._pass_kind == "cards"
+        assert agent._current_pass_kind(payload.request_id) == "cards"
         agent._handle_notification("progress", {
             "request_id": payload.request_id,
         })
@@ -747,11 +787,12 @@ class TestAgentActivity:
             wrote.set()
 
         agent._write_msg = fake_write
+        scope = {"request_id": payload.request_id}
         requests = (
-            ("tool.patch_state", {"ops": [{"op": "add_item"}]}),
-            ("tool.ask_question", {"text": "why?", "evidence": []}),
+            ("tool.patch_state", {**scope, "ops": [{"op": "add_item"}]}),
+            ("tool.ask_question", {**scope, "text": "why?", "evidence": []}),
             ("tool.resolve_question", {
-                "question_id": "q1", "answer_text": "yes",
+                **scope, "question_id": "q1", "answer_text": "yes",
                 "confidence": 0.5, "evidence": [],
             }),
         )
@@ -781,7 +822,26 @@ class TestToolBridgeThreading:
         agent._tools = tools
         agent._initialized = True
         agent._ensure_tool_executor()
+        _track_pass(agent, CheckpointPayload(
+            request_id="req-1", state_snapshot={}, new_segments=[],
+        ))
         return agent
+
+    def test_unscoped_tool_call_cannot_write(self, tmp_path):
+        """Tool calls without an active request id are refused."""
+        tools = _RecordingTools()
+        agent = self._agent(tmp_path, tools)
+        writes = []
+        agent._write_msg = writes.append
+        try:
+            agent._handle_tool_request({
+                "jsonrpc": "2.0", "id": "sc-1", "method": "tool.patch_state",
+                "params": {"ops": [{"op": "set_topic", "text": "x"}]},
+            })
+        finally:
+            agent.shutdown()
+        assert tools.ops == []
+        assert writes[0]["error"]["code"] == -32600
 
     def test_tool_requests_run_on_the_tool_worker(self, tmp_path):
         agent = self._agent(tmp_path, FakeTools())
@@ -797,7 +857,7 @@ class TestToolBridgeThreading:
         try:
             agent._dispatch_inbound(
                 {"jsonrpc": "2.0", "id": "sc-1", "method": "tool.patch_state",
-                 "params": {"ops": [{"op": "add_item"}]}},
+                 "params": {"request_id": "req-1", "ops": [{"op": "add_item"}]}},
                 generation=agent._restart_generation,
             )
             assert sent.wait(5.0)
@@ -823,7 +883,7 @@ class TestToolBridgeThreading:
             started = time.monotonic()
             agent._dispatch_inbound(
                 {"jsonrpc": "2.0", "id": "sc-1", "method": "tool.patch_state",
-                 "params": {"ops": [{"op": "add_item"}]}},
+                 "params": {"request_id": "req-1", "ops": [{"op": "add_item"}]}},
                 generation=agent._restart_generation,
             )
             # The reader returned immediately even though the store is busy.
@@ -937,9 +997,6 @@ _NOTES_STATE = {
 
 
 class TestNotesPass:
-    def test_sidecar_declares_notes_support(self):
-        assert PiSidecarAgent.supports_notes_pass is True
-
     def test_notes_flag_and_persona_prompt_reach_the_sidecar(self, stub_dir):
         payload_dir, stub = stub_dir
         agent = PiSidecarAgent(str(payload_dir))
@@ -1238,14 +1295,14 @@ class TestResolveNodeCmd:
             agent._resolve_node_cmd()
 
 
-# Sidecar createMeetingTools polishOnly gate (TypeScript via esbuild runner).
+# Sidecar TypeScript tests: meeting tools, text providers and the real Pi runner.
 
 SIDECAR_ROOT = Path(__file__).resolve().parents[1] / "sidecar"
 RUNNER = SIDECAR_ROOT / "scripts" / "run-tools-test.mjs"
 
 
-def test_polish_only_write_filter():
-    """policy.polishOnly must be the write gate on the Pi tool path."""
+def test_sidecar_typescript_suite():
+    """The Node tests pass: tools forward to the host, the runner needs user_prompt."""
     if not RUNNER.is_file():
         pytest.fail(f"missing {RUNNER}")
     esbuild = SIDECAR_ROOT / "node_modules" / "esbuild"

@@ -299,7 +299,7 @@ def test_missing_runtime_does_not_import_optional_packages(monkeypatch):
     assert not backend.is_available()
     assert "runtime" in backend.device_info
     assert "qwen_asr" not in sys.modules
-    assert not backend.requires_file_splitting
+    assert backend.large_file_size_mb("long-meeting.wav") is None
 
 
 def test_auto_can_use_cpu_runtime_but_explicit_cuda_cannot(monkeypatch):

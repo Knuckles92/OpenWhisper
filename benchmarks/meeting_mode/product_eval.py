@@ -481,7 +481,7 @@ def build_redecode_id_map(
     new_segments: Sequence[Dict[str, Any]],
 ) -> Dict[str, str]:
     """Greedy IoU ``old_id -> new_id`` map, like the repository's replace."""
-    from meeting.asr.revise import MIN_MATCH_IOU, interval_iou
+    from meeting.persist.repository import MIN_MATCH_IOU, interval_iou
 
     pairs: List[Tuple[float, str, str]] = []
     for old in old_segments:

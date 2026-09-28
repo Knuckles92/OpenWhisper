@@ -4,15 +4,18 @@
  * Protocol (NDJSON JSON-RPC 2.0 over stdio; stdout is protocol-only):
  *  - FIRST line out: {"jsonrpc":"2.0","method":"hello","params":
  *      {"token":<OPENWHISPER_SIDECAR_TOKEN>,"protocol":1,"pi_version":"..."}}
+ *      The hello also announces host_prompt:1 and request_scoped_tools:1;
+ *      the host refuses a bundle without them.
  *  - Inbound requests: initialize {meeting_id, provider, model, system_prompt,
  *                    base_url?, api_key_env?, kind?}
- *      | checkpoint {request_id, state, new_segments, is_consolidation,
- *                    is_polish, is_notes, system_prompt?}  (a notes
- *                    checkpoint carries the note-taker system_prompt)
+ *      | checkpoint {request_id, user_prompt, system_prompt?, ...}  (the host
+ *                    writes the whole prompt; a notes checkpoint carries the
+ *                    note-taker system_prompt in place of the initialize one)
  *      | cancel {request_id} | ping {} | status {} | shutdown {}
  *  - Outbound tool-bridge requests: tool.patch_state / tool.ask_question /
  *      tool.resolve_question / tool.search_past_meetings /
- *      tool.search_context_files (see tools.ts).
+ *      tool.search_context_files (see tools.ts), each carrying the active
+ *      checkpoint's request_id.
  *  - Outbound notifications: log {level, msg} | progress {request_id, event,
  *      streaming} (Pi session hooks; host uses these to reset a stall timer).
  *
@@ -22,7 +25,7 @@
  * queued one.
  */
 import { RpcEndpoint } from "./rpc";
-import { createMeetingTools, OpCounters, ToolPolicy } from "./tools";
+import { createMeetingTools, OpCounters } from "./tools";
 import type { CreateSessionOptions, HarnessSession } from "./session";
 
 export interface HarnessAdapter {
@@ -32,8 +35,6 @@ export interface HarnessAdapter {
 }
 
 const PROTOCOL_VERSION = 1;
-
-const MAX_TOPIC_HISTORY = 5;
 
 interface CheckpointResponse {
   applied: number;
@@ -55,11 +56,7 @@ export function startSidecar(adapter: HarnessAdapter): void {
     process.stderr.write("fatal: OPENWHISPER_SIDECAR_TOKEN is not set\n");
     process.exit(1);
   }
-  const apiKey =
-    process.env.OPENWHISPER_LLM_API_KEY ||
-    process.env.OPENROUTER_API_KEY ||
-    "dummy";
-  const envModel = process.env.PI_MODEL;
+  const apiKey = process.env.OPENWHISPER_LLM_API_KEY || "dummy";
 
   const rpc = new RpcEndpoint();
 
@@ -73,11 +70,6 @@ export function startSidecar(adapter: HarnessAdapter): void {
   let checkpointChain: Promise<unknown> = Promise.resolve();
   const canceledRequests = new Set<string>();
   const counters: OpCounters = { applied: 0, rejected: 0 };
-  const toolPolicy: ToolPolicy = {
-    polishOnly: false,
-    notesOnly: false,
-    noteIds: new Set<string>(),
-  };
   let lastProgressAt = 0;
 
   function emitProgress(info: { type: string; delta?: string; toolName?: string }): void {
@@ -100,12 +92,12 @@ export function startSidecar(adapter: HarnessAdapter): void {
 
   rpc.onRequest("initialize", async (params) => {
     const provider = String(params?.provider || "openrouter");
-    const modelId = String(params?.model || envModel || "");
+    const modelId = String(params?.model || "");
     const baseUrl = String(params?.base_url || process.env.OPENWHISPER_LLM_BASE_URL || "");
     const kind = String(params?.kind || provider);
     systemPrompt = String(params?.system_prompt ?? "");
     if (!modelId) {
-      throw new Error("no model configured (initialize.model and PI_MODEL are both empty)");
+      throw new Error("no model configured (initialize.model is empty)");
     }
     if (session) {
       await session.dispose();
@@ -128,7 +120,7 @@ export function startSidecar(adapter: HarnessAdapter): void {
           }
           return rpc.request(method, { ...(params as object), request_id: requestId }, timeout);
         },
-      }, counters, toolPolicy),
+      }, counters),
       log: (level, msg) => rpc.log(level, msg),
       onEvent: emitProgress,
     });
@@ -181,11 +173,6 @@ export function startSidecar(adapter: HarnessAdapter): void {
     activeRequestId = requestId;
     counters.applied = 0;
     counters.rejected = 0;
-    const isPolish = Boolean(params?.is_polish);
-    const isNotes = Boolean(params?.is_notes);
-    toolPolicy.polishOnly = isPolish;
-    toolPolicy.notesOnly = isNotes;
-    toolPolicy.noteIds = liveNoteIds(params?.state);
     rpc.log(
       "info",
       `${checkpointKind(params)} ${requestId} started ` +
@@ -193,13 +180,12 @@ export function startSidecar(adapter: HarnessAdapter): void {
         `queue_wait=${queueWaitMs}ms)`,
     );
     try {
-      if (adapter.harness === "opencode" && typeof params.user_prompt !== "string") {
-        throw new Error("OpenCode requires the current host prompt protocol");
+      if (typeof params?.user_prompt !== "string") {
+        throw new Error("checkpoint is missing the host prompt (user_prompt)");
       }
-      const turn = await session.runTurn(
-        adapter.harness === "opencode" ? params.user_prompt : buildCheckpointPrompt(systemPrompt, params),
-        { requestId, systemPrompt: String(params.system_prompt ?? systemPrompt) },
-      );
+      // A notes pass swaps in the note-taker charter for this run only.
+      const charter = typeof params.system_prompt === "string" ? params.system_prompt : systemPrompt;
+      const turn = await session.runTurn(params.user_prompt, { requestId, systemPrompt: charter });
       const response: CheckpointResponse = {
         applied: counters.applied,
         rejected: counters.rejected,
@@ -214,9 +200,6 @@ export function startSidecar(adapter: HarnessAdapter): void {
       );
       return response;
     } finally {
-      toolPolicy.polishOnly = false;
-      toolPolicy.notesOnly = false;
-      toolPolicy.noteIds = new Set<string>();
       canceledRequests.delete(requestId);
       activeRequestId = null;
     }
@@ -277,258 +260,3 @@ export function startSidecar(adapter: HarnessAdapter): void {
 
   rpc.start();
 }
-
-/**
- * Trim a raw state snapshot down to what the model actually needs.
- *
- * The raw snapshot grows monotonically over a long meeting — `topic.history`
- * gains an entry on every set_topic, removed card items are soft-deleted (never
- * dropped) and resolved/dismissed questions accumulate — so embedding it
- * verbatim on every checkpoint eventually blows the context window. The
- * projection keeps live content only: non-removed items, open questions, and
- * the last few topic-history entries.
- */
-function projectStateForPrompt(state: any): any {
-  if (!state || typeof state !== "object") return state ?? {};
-  const projected: Record<string, any> = { ...state };
-
-  const topic = state.topic;
-  if (topic && typeof topic === "object") {
-    const history = Array.isArray(topic.history) ? topic.history : [];
-    projected.topic = {
-      ...topic,
-      history: history.slice(-MAX_TOPIC_HISTORY),
-    };
-  }
-
-  const cards = state.cards;
-  if (cards && typeof cards === "object") {
-    const liveCards: Record<string, any[]> = {};
-    for (const [card, items] of Object.entries(cards)) {
-      liveCards[card] = (Array.isArray(items) ? items : []).filter(
-        (item: any) => item?.status !== "removed",
-      );
-    }
-    projected.cards = liveCards;
-  }
-
-  const questions = state.questions;
-  if (questions && typeof questions === "object") {
-    const openQuestions: Record<string, any> = {};
-    for (const [qid, question] of Object.entries(questions as Record<string, any>)) {
-      if (question?.status === "open") openQuestions[qid] = question;
-    }
-    projected.questions = openQuestions;
-  }
-
-  return projected;
-}
-
-function liveNoteIds(state: any): Set<string> {
-  const ids = new Set<string>();
-  const blocks = state?.cards?.live_notes;
-  if (Array.isArray(blocks)) {
-    for (const item of blocks) {
-      if (item?.status !== "removed" && typeof item?.id === "string") {
-        ids.add(item.id);
-      }
-    }
-  }
-  return ids;
-}
-
-/**
- * Bounded projection for note-taker passes: only the notes page matters.
- */
-function notesPageProjection(state: any): any {
-  const cards = state?.cards ?? {};
-  const blocks = Array.isArray(cards.live_notes)
-    ? cards.live_notes.filter((item: any) => item?.status !== "removed")
-    : [];
-  return {
-    topic: state?.topic ?? {},
-    rolling_summary: state?.rolling_summary ?? "",
-    live_notes: blocks,
-    user_notes: Array.isArray(cards.user_notes)
-      ? cards.user_notes.filter((item: any) => item?.status !== "removed")
-      : [],
-  };
-}
-
-/**
- * Compose the user message for one checkpoint run.
- *
- * The system prompt from `initialize` is prepended to the checkpoint content
- * (state snapshot, new transcript segments, consolidation flag) as a single
- * user message; the session's tool calls do the actual state mutation. Notes
- * passes carry their own note-taker system prompt from the host, which
- * replaces the copilot charter for that run.
- */
-function buildCheckpointPrompt(systemPrompt: string, params: any): string {
-  // The host owns prompt policy for both backends. Retain the legacy renderer
-  // for older hosts, while current hosts provide the same prompt as direct mode.
-  if (typeof params?.user_prompt === "string" && params.user_prompt.trim()) {
-    const charter = params?.is_notes && typeof params?.system_prompt === "string"
-      ? params.system_prompt : systemPrompt;
-    return `${charter}\n\n${params.user_prompt}`;
-  }
-  const isConsolidation = Boolean(params?.is_consolidation);
-  const isPolish = Boolean(params?.is_polish);
-  const isNotes = Boolean(params?.is_notes);
-  const effectiveSystem =
-    isNotes &&
-    typeof params?.system_prompt === "string" &&
-    params.system_prompt.trim()
-      ? params.system_prompt
-      : systemPrompt;
-  if (isNotes) {
-    return buildNotesPrompt(effectiveSystem, params);
-  }
-
-  const state = projectStateForPrompt(params?.state ?? {});
-  const segments = Array.isArray(params?.new_segments) ? params.new_segments : [];
-
-  const parts: string[] = [];
-  if (typeof params?.human_guidance === "string") parts.push(params.human_guidance, "");
-  if (effectiveSystem) {
-    parts.push(effectiveSystem, "");
-  }
-  if (isPolish) {
-    parts.push(
-      "## Transcript polish pass",
-      "Your only job this round is cleaning clear speech-to-text errors in the",
-      "transcript below. Emit ONLY revise_segment_text operations. Keep meaning",
-      "faithful; do not invent content, change speakers, merge/split segments,",
-      "or touch cards, topic, summary, participants, or questions. Every revision",
-      "must cite the same segment_id as evidence. Leave uncertain text unchanged.",
-    );
-  } else if (isConsolidation) {
-    const views: string[] = Array.isArray(params?.state?.report_views)
-      ? params.state.report_views
-      : ["ribbon", "brief", "signal"];
-    const wantRibbon = views.includes("ribbon");
-    parts.push(
-      "## Final consolidation pass",
-      "The meeting has ended. The transcript below is the COMPLETE final transcript,",
-      "and the dashboard state above includes the meeting notes (live_notes and",
-      "user_notes) taken throughout the discussion.",
-      "Finalize the dashboard as the durable record, actively taking into account",
-      "the meeting notes alongside the complete final transcript:",
-      "- Synthesize the meeting notes and transcript into the final topic and",
-      "  a comprehensive rolling summary covering framing, major discussion points,",
-      "  examples, decisions, and closing thesis.",
-      "- Capture concrete key points, decisions, and action items (with owners)",
-      "  cross-referencing commitments in the notes and transcript.",
-    );
-    if (wantRibbon) {
-      parts.push(
-        "- Populate the timeline with chronological story beats (using data.start_s).",
-      );
-    }
-    parts.push("- Capture blockers on the risks card.");
-    if (wantRibbon) {
-      parts.push(
-        "- Reconcile the live_notes page against this COMPLETE final transcript:",
-        "  preserve accurate blocks, fix blocks that later discussion superseded,",
-        "  contradicted, or clarified; merge fragments; give every block a concise",
-        "  data.heading and chronological data.start_s; and remove redundant blocks.",
-        "  If live_notes is empty but the meeting had speech, write the full notes",
-        "  page from the complete transcript. Human-edited, confirmed, or pinned",
-        "  blocks stay exactly as written — put corrections in a new block beside them.",
-      );
-    }
-    parts.push(
-      "- Keep every evidence link valid (only reference segment ids that exist).",
-    );
-  } else {
-    parts.push(
-      "## Rolling checkpoint",
-      "New transcript segments have arrived since your last update. Participants",
-      "are watching this live — do not wait for the meeting to end. Update the",
-      "meeting state via your tools now:",
-      "- If topic or rolling_summary is empty and the new segments contain real",
-      "  speech, you MUST set_topic and set_rolling_summary immediately.",
-      "- If key_points is empty and the speech has a concrete claim, example, or",
-      "  plan, you MUST add at least one key_point.",
-      "- Also capture new decisions, action items, risks, and timeline entries",
-      "  when warranted; keep topic/summary current as discussion moves.",
-      "- Ask or resolve inbox questions when warranted.",
-      "Cite supporting segment ids as evidence on everything you add or change.",
-      "Only skip tools when the dashboard already reflects this new speech.",
-    );
-  }
-  parts.push(
-    "",
-    "### Current meeting state (JSON)",
-    "```json",
-    JSON.stringify(state, null, 2),
-    "```",
-    "",
-    isConsolidation || isPolish
-      ? "### Complete final transcript (JSON segments)"
-      : "### New transcript segments (JSON)",
-    "```json",
-    JSON.stringify(segments, null, 2),
-    "```",
-    "",
-    "Make all state changes through your tools now. Rejected ops return a reason",
-    "(e.g. revision_mismatch with the current revision, human_edited) — correct",
-    "and retry within this run when it makes sense. When you are done, reply",
-    "with one short plain-text sentence summarizing what changed.",
-  );
-  return parts.join("\n");
-}
-
-function buildNotesPrompt(systemPrompt: string, params: any): string {
-  const page = notesPageProjection(params?.state ?? {});
-  const segments = Array.isArray(params?.new_segments) ? params.new_segments : [];
-
-  const parts: string[] = [];
-  if (typeof params?.human_guidance === "string") parts.push(params.human_guidance, "");
-  if (systemPrompt) {
-    parts.push(systemPrompt, "");
-  }
-  parts.push(
-    "## NOTE-TAKER PASS",
-    "Extend the notes page from the new transcript segments:",
-    "- If the newest block is still about the same subject, extend or refine it",
-    "  with update_item (correct base_revision; keep its data.heading and",
-    "  data.start_s).",
-    "- Otherwise add a new block: fresh data.heading, data.start_s from the",
-    "  earliest covering segment, and a concise professional body.",
-    "- Cite evidence segment ids (sg_...) on every operation.",
-    "- Never rewrite or remove human-touched blocks (edited, confirmed, pinned).",
-    "A pass with meaningful new speech and zero operations is a failure — the",
-    "notes page must keep up with the meeting.",
-    "",
-    "### Current notes page (JSON)",
-    "```json",
-    JSON.stringify(page, null, 2),
-    "```",
-    "",
-    "### New transcript segments (JSON)",
-    "```json",
-    JSON.stringify(segments, null, 2),
-    "```",
-    "",
-    "Make all changes through your tools now. Rejected ops return a reason —",
-    "duplicate_item means you should have updated the existing block instead;",
-    "human_edited means start a fresh block beside it. When you are done, reply",
-    "with one short plain-text sentence summarizing what changed.",
-  );
-  if (params?.state?.note_adjustment_request) {
-    parts.push(
-      "",
-      "## NOTE ADJUSTMENT REQUEST",
-      String(params.state.note_adjustment_request),
-      "Apply this request to the existing AI notes now. No new speech is required.",
-      "For this pass, the request takes precedence over the default newest-block",
-      "and prose-style instructions above. You may revise older AI blocks.",
-      "Use the supplied meeting transcript as evidence; preserve factual meaning.",
-      "Only change live_notes; preserve human-touched blocks.",
-      "Do not claim a change unless your tools applied it.",
-    );
-  }
-  return parts.join("\n");
-}
-

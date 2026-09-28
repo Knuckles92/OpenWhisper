@@ -394,8 +394,6 @@ class ComponentId:
     ASR_NVIDIA_CPU: Final[str] = "asr-nvidia-cpu"
     ASR_NVIDIA_CUDA: Final[str] = "asr-nvidia-cuda"
     ASR_NVIDIA_VULKAN: Final[str] = "asr-nvidia-vulkan"
-    ASR_QWEN: Final[str] = "asr-qwen"
-    ASR_MOONSHINE: Final[str] = "asr-moonshine"
 
 
 class ComponentState:

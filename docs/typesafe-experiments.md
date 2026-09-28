@@ -172,29 +172,26 @@ From the repository root in PowerShell:
 python -m benchmarks.typesafe_experiments
 python -m benchmarks.typesafe_experiments --live --split dev --output benchmarks/typesafe_results/dev-rerun.json
 python -m benchmarks.typesafe_experiments --live --split holdout --output benchmarks/typesafe_results/holdout-rerun.json
-python -m benchmarks.typesafe_batch_probe --live --output benchmarks/typesafe_results/batch-rerun.json
-python -m pytest tests/test_typesafe_experiments.py -q
 ```
 
-Without `--live`, scripts only validate/describe inputs. Existing result paths
-are refused so reruns cannot silently replace the evidence. The per-case harness
-allows one bounded retry for retryable HTTP statuses; the batch probe stops and
-saves a sanitized error on failure.
+Without `--live`, the script only validates/describes inputs. Existing result
+paths are refused so reruns cannot silently replace the evidence. The per-case
+harness allows one bounded retry for retryable HTTP statuses.
 
 Raw responses are kept locally under `benchmarks/typesafe_results/` and ignored
 by Git. The original runs used `dev.json`, `holdout.json`, and `batch.json`;
 these files are not included in a fresh checkout. The commands above produce
-new measurements, while this report retains the recorded results.
+new measurements, while this report retains the recorded results. The batch
+harness (`typesafe_batch_probe.py`) and its offline tests were later removed
+as a one-off probe.
 
 - [Fixtures](../benchmarks/typesafe_cases.py)
 - [Per-case harness](../benchmarks/typesafe_experiments.py)
-- [Batch harness](../benchmarks/typesafe_batch_probe.py)
-- [Offline measurement-contract tests](../tests/test_typesafe_experiments.py)
 
-Validation: eight offline tests passed; Ruff `--select F` passed for all added
-Python files. Pytest reported an existing cache-directory permission warning;
-test execution and results were unaffected. Production behavior was not changed,
-so the full application suite was not run.
+Validation at the time: eight offline tests passed; Ruff `--select F` passed
+for all added Python files. Pytest reported an existing cache-directory
+permission warning; test execution and results were unaffected. Production
+behavior was not changed, so the full application suite was not run.
 
 
 Extended follow-up: [API benchmark and joint LLM experiments](typesafe-api-benchmark.md) compares the configured models, actual meeting engines, bounded verification, repair, confidence routing and retrieval.

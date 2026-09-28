@@ -7,9 +7,8 @@ selection or install/download anything. Cloud transcription is outside this
 local preview comparison.
 
 The September 4, 2026 results and the decision they informed (the dictation
-preview shares the loaded Parakeet or Nemotron engine) are summarized in
-[the local speech guide](../docs/local-asr.md#live-preview-check); the run
-record is [live_preview_benchmark_status.md](live_preview_benchmark_status.md).
+preview shares the loaded Parakeet or Nemotron engine) are summarized in the
+run record [live_preview_benchmark_status.md](live_preview_benchmark_status.md).
 
 ## Run
 
@@ -22,7 +21,7 @@ python -m benchmarks.live_preview .tmp/live-preview/corpus/manifest.json --outpu
 ```
 
 The preparation script reuses the clean/noisy manifest described in
-[the local speech guide](../docs/local-asr.md) and the downloaded
+[live_preview_benchmark_status.md](live_preview_benchmark_status.md) and the downloaded
 [AMI meeting corpus](meeting_mode/README.md). It selects the centered 30 seconds
 of each of the ten curated meetings, without consulting model outputs. Reference
 words belong to an excerpt when their midpoint is inside it. It adds six seconds

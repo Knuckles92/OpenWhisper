@@ -8,8 +8,9 @@
  * the model can self-correct within the same run or at the next checkpoint.
  *
  * This is the sidecar's ENTIRE authority surface: no shell, no filesystem,
- * no network tools exist — meeting-state-only authority is structural, and
- * Python validates every op again regardless.
+ * no network tools exist — meeting-state-only authority is structural. The
+ * host decides everything else: which ops a polish or notes pass may make,
+ * question limits and confidence thresholds, and every op's validity.
  */
 import type { RpcEndpoint } from "./rpc";
 import type { MeetingToolDef } from "./session";
@@ -21,10 +22,13 @@ export interface OpCounters {
   rejected: number;
 }
 
+/**
+ * @deprecated Pass restrictions are enforced by the host, which answers an
+ * off-pass op with a polish_only/notes_only rejection. Accepted and ignored so
+ * existing callers keep compiling.
+ */
 export interface ToolPolicy {
   polishOnly: boolean;
-  /** Notes pass: only live_notes item ops may pass (add_item with
-   *  card=live_notes, or update/remove targeting a known note block). */
   notesOnly: boolean;
   noteIds: ReadonlySet<string>;
 }
@@ -43,9 +47,9 @@ Allowed ops (each op is an object with an "op" key):
 
 Evidence is a list of transcript segment ids (sg_...) that support the claim; unknown ids are rejected. Items a human pinned, edited, or confirmed — and humans' participant names — can never be overwritten; such ops are rejected with reason "human_edited"/"human_named".`;
 
-const ASK_QUESTION_DESCRIPTION = `Add a question to the meeting's quiet question inbox (it never interrupts anyone; participants answer or dismiss it when they choose). Use it for genuine open points the meeting has not settled — missing owners, unresolved decisions, ambiguous commitments. At most 7 questions may be open at once; extras are rejected with reason "question_limit".`;
+const ASK_QUESTION_DESCRIPTION = `Add a question to the meeting's quiet question inbox (it never interrupts anyone; participants answer or dismiss it when they choose). Use it for genuine open points the meeting has not settled — missing owners, unresolved decisions, ambiguous commitments. The host caps how many questions may be open at once; extras are rejected with reason "question_limit".`;
 
-const RESOLVE_QUESTION_DESCRIPTION = `Resolve an open inbox question from transcript evidence. confidence >= 0.8 marks it resolved with an "answered from audio" badge; 0.4 to 0.8 records a greyed suggested answer instead; below 0.4 is rejected with reason "low_confidence". evidence must list the transcript segment ids (sg_...) containing the answer.`;
+const RESOLVE_QUESTION_DESCRIPTION = `Resolve an open inbox question from transcript evidence. Report confidence honestly: the host's thresholds (stated in your instructions) decide whether the question is marked resolved with an "answered from audio" badge, records a greyed suggested answer, or is rejected with reason "low_confidence". evidence must list the transcript segment ids (sg_...) containing the answer.`;
 
 const SEARCH_PAST_MEETINGS_DESCRIPTION = `Search earlier OpenWhisper meetings for names, decisions, or phrasing that help the current pass. Read-only: it never changes the dashboard or transcript.
 
@@ -68,7 +72,7 @@ function summarize(results: Array<{ ok?: boolean; reason?: string | null }>): st
 export function createMeetingTools(
   rpc: Pick<RpcEndpoint, "request" | "log">,
   counters: OpCounters,
-  policy: ToolPolicy,
+  _policy?: ToolPolicy,
 ): MeetingToolDef[] {
   const opSchema = {
     type: "object" as const,
@@ -103,40 +107,11 @@ export function createMeetingTools(
       additionalProperties: false,
     },
     execute: async (params) => {
-      const requestedOps: any[] = Array.isArray(params.ops) ? params.ops : [];
-      const notesAllowed = (op: any): boolean =>
-        op?.op === "add_item" && op?.card === "live_notes";
-      const notesTargetsKnown = (op: any): boolean =>
-        (op?.op === "update_item" || op?.op === "remove_item") &&
-        policy.noteIds.has(String(op?.id ?? ""));
-      let allowedOps = requestedOps;
-      let policyRejectedResults: Array<{ ok: false; reason: string }> = [];
-      if (policy.polishOnly) {
-        allowedOps = requestedOps.filter((op) => op?.op === "revise_segment_text");
-        policyRejectedResults = requestedOps
-          .filter((op) => op?.op !== "revise_segment_text")
-          .map(() => ({ ok: false, reason: "polish_only" }));
-      } else if (policy.notesOnly) {
-        allowedOps = requestedOps.filter(
-          (op) => notesAllowed(op) || notesTargetsKnown(op),
-        );
-        policyRejectedResults = requestedOps
-          .filter((op) => !(notesAllowed(op) || notesTargetsKnown(op)))
-          .map(() => ({ ok: false, reason: "notes_only" }));
-      }
-      const policyRejected = policyRejectedResults.length;
-      if (policyRejected) counters.rejected += policyRejected;
+      const ops: any[] = Array.isArray(params.ops) ? params.ops : [];
       try {
-        if (!allowedOps.length && policyRejected) {
-          const response = { results: policyRejectedResults };
-          return {
-            text: `${summarize(response.results)}\n${JSON.stringify(response)}`,
-            details: response,
-          };
-        }
         const response = await rpc.request(
           "tool.patch_state",
-          { ops: allowedOps },
+          { ops },
           TOOL_RPC_TIMEOUT_MS,
         );
         const results: any[] = Array.isArray(response?.results) ? response.results : [];
@@ -144,14 +119,12 @@ export function createMeetingTools(
           if (r && r.ok) counters.applied += 1;
           else counters.rejected += 1;
         }
-        const combinedResults = [...results, ...policyRejectedResults];
-        const combinedResponse = { ...response, results: combinedResults };
         return {
-          text: `${summarize(combinedResults)}\n${JSON.stringify(combinedResponse)}`,
-          details: combinedResponse,
+          text: `${summarize(results)}\n${JSON.stringify(response)}`,
+          details: response,
         };
       } catch (err) {
-        counters.rejected += allowedOps.length || 1;
+        counters.rejected += ops.length || 1;
         const message = err instanceof Error ? err.message : String(err);
         rpc.log("error", `patch_state bridge failed: ${message}`);
         return {
@@ -181,14 +154,6 @@ export function createMeetingTools(
       additionalProperties: false,
     },
     execute: async (params) => {
-      if (policy.polishOnly) {
-        counters.rejected += 1;
-        return { text: "Rejected: polish_only", details: { reason: "polish_only" } };
-      }
-      if (policy.notesOnly) {
-        counters.rejected += 1;
-        return { text: "Rejected: notes_only", details: { reason: "notes_only" } };
-      }
       return bridgeSingle(rpc, counters, "tool.ask_question", {
         text: params.text ?? "",
         evidence: params.evidence ?? [],
@@ -324,14 +289,6 @@ export function createMeetingTools(
       additionalProperties: false,
     },
     execute: async (params) => {
-      if (policy.polishOnly) {
-        counters.rejected += 1;
-        return { text: "Rejected: polish_only", details: { reason: "polish_only" } };
-      }
-      if (policy.notesOnly) {
-        counters.rejected += 1;
-        return { text: "Rejected: notes_only", details: { reason: "notes_only" } };
-      }
       return bridgeSingle(rpc, counters, "tool.resolve_question", {
         question_id: params.question_id ?? "",
         answer_text: params.answer_text ?? "",

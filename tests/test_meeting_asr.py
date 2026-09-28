@@ -1,11 +1,7 @@
 """
 Tests for live ASR (MeetingAsrEngine: fake backend, retry ×3, timestamped
-segments), post-meeting offline ASR (silence split, overlap drop), and the
-bounded rolling revision helpers plus their persistence.
+segments) and post-meeting offline ASR (silence split, overlap drop).
 """
-import json
-import wave
-from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -16,7 +12,6 @@ from meeting.asr.engine import (
     DRAFT_PROMPT_WORDS,
     FAST_MODE_BACKLOG_CHUNKS,
     MAX_ATTEMPTS,
-    REVISE_MIN_ADVANCE_S,
     MeetingAsrEngine,
 )
 from meeting.asr.offline import (
@@ -26,18 +21,9 @@ from meeting.asr.offline import (
     offline_segment_id,
     transcribe_session_audio,
 )
-from meeting.asr.revise import (
-    REVISION_WINDOW_S,
-    align_revision_start,
-    build_initial_prompt,
-    interval_iou,
-    match_segments,
-    revision_window,
-    select_chunks_for_window,
-    stitch_window_audio,
-)
 from meeting.capture.spool import TARGET_RATE
 from meeting.interfaces import SpooledChunk, TranscriptSegment
+from meeting.persist.repository import interval_iou
 from tests.helpers import write_wav as _write_wav
 
 
@@ -61,9 +47,7 @@ def _make_engine(repo, backend):
         name="fake",
     ))
     with patch("transcriber.local_backend.LocalWhisperBackend", fake_cls):
-        engine = MeetingAsrEngine(
-            "base", "m_test", repo, enable_revisions=True
-        )
+        engine = MeetingAsrEngine("base", "m_test", repo)
     engine._backend = backend
     engine.is_available = True
     return engine
@@ -314,188 +298,6 @@ class TestOfflineLanguage:
         assert engine._language_votes == {}
 
 
-class TestRollingReviseScheduling:
-    def _engine(self):
-        backend = SimpleNamespace(
-            is_available=lambda: True,
-            model=MagicMock(),
-            cleanup=lambda: None,
-        )
-        engine = _make_engine(FakeRepository(), backend)
-        engine.revise_window = MagicMock(
-            side_effect=lambda channel, frontier: {
-                "channel": channel,
-                "frontier": frontier,
-                "items": [],
-                "removed_ids": [],
-            }
-        )
-        return engine
-
-    def test_coalesces_until_minimum_progress_then_revises_latest(self):
-        engine = self._engine()
-        engine.schedule_revise("mic", 5.0)
-        assert engine.run_pending_revises() == []
-        engine.revise_window.assert_not_called()
-
-        engine.schedule_revise("mic", REVISE_MIN_ADVANCE_S)
-        results = engine.run_pending_revises()
-        assert results[0]["frontier"] == REVISE_MIN_ADVANCE_S
-        engine.revise_window.assert_called_once_with(
-            "mic", REVISE_MIN_ADVANCE_S
-        )
-
-        engine.schedule_revise("mic", REVISE_MIN_ADVANCE_S + 5.0)
-        assert engine.run_pending_revises() == []
-        forced = engine.run_pending_revises(force=True)
-        assert forced[0]["frontier"] == REVISE_MIN_ADVANCE_S + 5.0
-
-    def test_due_channel_is_not_blocked_by_another_channels_partial_window(self):
-        engine = self._engine()
-        engine.schedule_revise("mic", 5.0)
-        engine.schedule_revise("loopback", REVISE_MIN_ADVANCE_S)
-
-        results = engine.run_pending_revises()
-
-        assert [result["channel"] for result in results] == ["loopback"]
-        assert engine._pending_revise == {"mic": 5.0}
-
-    def test_live_revise_waits_behind_any_queued_draft(self):
-        engine = self._engine()
-        engine.schedule_revise("mic", REVISE_MIN_ADVANCE_S)
-        with engine._idle_cond:
-            # One in flight plus one queued behind it.
-            engine._outstanding = 2
-
-        assert engine.run_pending_revises() == []
-        engine.revise_window.assert_not_called()
-
-    def test_forced_revise_does_not_race_an_inflight_worker_decode(self):
-        engine = self._engine()
-        engine.schedule_revise("mic", 5.0)
-        with engine._idle_cond:
-            engine._outstanding = 1
-
-        assert engine.run_pending_revises(force=True) == []
-        engine.revise_window.assert_not_called()
-
-    def test_revise_starts_at_mutable_boundary_without_duplicating_context(
-        self, tmp_path
-    ):
-        path = str(tmp_path / "long.wav")
-        _write_wav(path, duration_s=100.0)
-        repo = FakeRepository()
-        repo.get_audio_chunks = lambda _meeting_id: [{
-            "id": 1,
-            "channel": "mic",
-            "seq": 0,
-            "start_s": 0.0,
-            "duration_s": 100.0,
-            "file_path": path,
-            "asr_status": "done",
-        }]
-        repo.get_segments = lambda _meeting_id, after_start_s=-1.0: []
-        repo.get_segments_in_range = (
-            lambda _meeting_id, _channel, _start_s, _end_s: []
-        )
-        persisted = {}
-
-        def persist(_meeting_id, _channel, _start_s, _end_s,
-                    segments, remove_ids):
-            persisted["segments"] = segments
-            persisted["remove_ids"] = remove_ids
-            return [
-                {"id": segment.segment_id, "text": segment.text}
-                for segment in segments
-            ], []
-
-        repo.revise_segments_in_range = persist
-        model = MagicMock()
-        model.transcribe.return_value = ([
-            FakeWhisperSeg(1.0, 2.0, "first mutable text"),
-            FakeWhisperSeg(6.0, 7.0, "more mutable text"),
-        ], SimpleNamespace())
-        backend = SimpleNamespace(
-            is_available=lambda: True,
-            model=model,
-            cleanup=lambda: None,
-        )
-        engine = _make_engine(repo, backend)
-
-        outcome = engine.revise_window("mic", frontier_s=100.0)
-
-        audio = model.transcribe.call_args.args[0]
-        assert audio.size == pytest.approx(45.0 * 16000, rel=0.01)
-        assert model.transcribe.call_args.kwargs["condition_on_previous_text"] is True
-        assert outcome is not None
-        assert [segment.text for segment in persisted["segments"]] == [
-            "first mutable text",
-            "more mutable text",
-        ]
-        assert persisted["segments"][0].start_s == pytest.approx(56.0)
-
-    def test_revise_expands_boundary_to_preserve_crossing_segment_prefix(
-        self, tmp_path
-    ):
-        path = str(tmp_path / "long.wav")
-        _write_wav(path, duration_s=100.0)
-        crossing = {
-            "id": "sg_crossing",
-            "meeting_id": "m_test",
-            "chunk_id": 1,
-            "channel": "mic",
-            "start_s": 40.0,
-            "end_s": 70.0,
-            "text": "the complete original segment",
-            "speaker_pinned": False,
-        }
-        repo = FakeRepository()
-        repo.get_audio_chunks = lambda _meeting_id: [{
-            "id": 1,
-            "channel": "mic",
-            "seq": 0,
-            "start_s": 0.0,
-            "duration_s": 100.0,
-            "file_path": path,
-            "asr_status": "done",
-        }]
-        repo.get_segments = lambda _meeting_id, after_start_s=-1.0: []
-        repo.get_segments_in_range = (
-            lambda _meeting_id, _channel, start_s, _end_s:
-            [crossing] if start_s <= crossing["end_s"] else []
-        )
-        persisted = {}
-
-        def persist(_meeting_id, _channel, start_s, _end_s,
-                    segments, remove_ids):
-            persisted["start_s"] = start_s
-            persisted["segments"] = segments
-            persisted["remove_ids"] = remove_ids
-            return [{"id": segment.segment_id} for segment in segments], []
-
-        repo.revise_segments_in_range = persist
-        model = MagicMock()
-        model.transcribe.return_value = ([
-            FakeWhisperSeg(0.0, 30.0, "the complete revised segment"),
-        ], SimpleNamespace())
-        backend = SimpleNamespace(
-            is_available=lambda: True,
-            model=model,
-            cleanup=lambda: None,
-        )
-        engine = _make_engine(repo, backend)
-
-        outcome = engine.revise_window("mic", frontier_s=100.0)
-
-        audio = model.transcribe.call_args.args[0]
-        assert audio.size == pytest.approx(60.0 * 16000, rel=0.01)
-        assert outcome is not None
-        assert persisted["start_s"] == 40.0
-        assert persisted["remove_ids"] == []
-        assert persisted["segments"][0].segment_id == "sg_crossing"
-        assert persisted["segments"][0].start_s == 40.0
-
-
 # Post-meeting offline ASR: silence split and overlap drop.
 
 
@@ -582,258 +384,10 @@ class TestOverlapDrop:
             )
 
 
-# Bounded rolling revision helpers and persistence.
-
-
-def test_revision_window_caps_at_horizon():
-    start, end = revision_window(100.0, window_s=45.0)
-    assert start == 55.0
-    assert end == 100.0
-    start0, end0 = revision_window(10.0, window_s=45.0)
-    assert start0 == 0.0
-    assert end0 == 10.0
-
-
-def test_align_revision_start_never_bisects_existing_segment():
-    existing = [
-        {"start_s": 40.0, "end_s": 70.0},
-        {"start_s": 58.0, "end_s": 62.0},
-    ]
-
-    assert align_revision_start(55.0, existing) == 40.0
-    assert align_revision_start(75.0, existing) == 75.0
-
-
-def test_interval_iou_and_match_prefers_overlap():
+def test_interval_iou():
     assert interval_iou(0, 10, 5, 15) == pytest.approx(5 / 15)
-    existing = [
-        {
-            "id": "sg_a",
-            "start_s": 0.0,
-            "end_s": 4.0,
-            "speaker_pinned": False,
-            "speaker_participant_id": "p_me",
-            "speaker_source": "channel",
-            "chunk_id": 1,
-            "channel": "mic",
-            "meeting_id": "m1",
-            "text": "helo",
-        },
-        {
-            "id": "sg_b",
-            "start_s": 4.0,
-            "end_s": 8.0,
-            "speaker_pinned": True,
-            "speaker_participant_id": "p_me",
-            "speaker_source": "human",
-            "chunk_id": 1,
-            "channel": "mic",
-            "meeting_id": "m1",
-            "text": "world",
-        },
-    ]
-    decoded = [
-        TranscriptSegment(
-            segment_id="sg_new1",
-            meeting_id="m1",
-            chunk_id=2,
-            channel="mic",
-            start_s=0.2,
-            end_s=3.8,
-            text="hello",
-        ),
-        TranscriptSegment(
-            segment_id="sg_new2",
-            meeting_id="m1",
-            chunk_id=2,
-            channel="mic",
-            start_s=8.5,
-            end_s=11.0,
-            text="again",
-        ),
-    ]
-    plan = match_segments(existing, decoded)
-    by_id = {seg.segment_id: seg for seg in plan.upserts}
-    assert "sg_a" in by_id
-    assert by_id["sg_a"].text == "hello"
-    assert by_id["sg_a"].speaker_participant_id == "p_me"
-    # Pinned unmatched old is kept (not deleted).
-    assert "sg_b" not in plan.remove_ids
-    # New unmatched insert kept with its new id.
-    assert any(seg.segment_id == "sg_new2" for seg in plan.upserts)
-
-
-def test_select_chunks_and_stitch(tmp_path):
-    def write_wav(name, duration_s, amp=1000):
-        path = tmp_path / name
-        frames = np.full(int(duration_s * 16000), amp, dtype=np.int16)
-        with wave.open(str(path), "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(16000)
-            wf.writeframes(frames.tobytes())
-        return str(path)
-
-    chunks = [
-        {
-            "id": 1,
-            "channel": "mic",
-            "seq": 0,
-            "start_s": 0.0,
-            "duration_s": 5.0,
-            "file_path": write_wav("a.wav", 5.0),
-            "asr_status": "done",
-        },
-        {
-            "id": 2,
-            "channel": "mic",
-            "seq": 1,
-            "start_s": 5.0,
-            "duration_s": 5.0,
-            "file_path": write_wav("b.wav", 5.0),
-            "asr_status": "done",
-        },
-        {
-            "id": 3,
-            "channel": "loopback",
-            "seq": 0,
-            "start_s": 0.0,
-            "duration_s": 5.0,
-            "file_path": write_wav("c.wav", 5.0),
-            "asr_status": "done",
-        },
-    ]
-    selected = select_chunks_for_window(chunks, "mic", 3.0, 8.0)
-    assert [c["id"] for c in selected] == [1, 2]
-    audio, start = stitch_window_audio(selected, 3.0, 8.0)
-    assert start == pytest.approx(3.0)
-    assert audio.size == pytest.approx(5.0 * 16000, rel=0.01)
-
-
-def test_build_initial_prompt_truncates():
-    segs = [{"text": "alpha"}, {"text": "beta " * 80}]
-    prompt = build_initial_prompt(segs)
-    assert len(prompt) <= 224
-    assert "beta" in prompt
-
-
-def test_revise_segments_in_range_persists(tmp_path, repo):
-    meeting_id = "m_revise"
-    repo.create_meeting(
-        id=meeting_id,
-        title="t",
-        status="active",
-        started_at=datetime.now().isoformat(),
-        host_token="h",
-        guest_token="g",
-        cloud_enabled=False,
-        spool_dir=str(tmp_path / "spool"),
-        asr_model="base",
-    )
-    chunk_id = repo.register_chunk(
-        meeting_id=meeting_id,
-        channel="mic",
-        seq=0,
-        file_path=str(tmp_path / "x.wav"),
-        start_s=0.0,
-        duration_s=10.0,
-        sample_rate=16000,
-    )
-    repo.commit_chunk_transcription(
-        meeting_id,
-        chunk_id,
-        [
-            TranscriptSegment(
-                segment_id="sg_old",
-                meeting_id=meeting_id,
-                chunk_id=chunk_id,
-                channel="mic",
-                start_s=1.0,
-                end_s=3.0,
-                text="helo",
-            )
-        ],
-    )
-    upserts = [
-        TranscriptSegment(
-            segment_id="sg_old",
-            meeting_id=meeting_id,
-            chunk_id=chunk_id,
-            channel="mic",
-            start_s=1.0,
-            end_s=3.2,
-            text="hello",
-        ),
-        TranscriptSegment(
-            segment_id="sg_new",
-            meeting_id=meeting_id,
-            chunk_id=chunk_id,
-            channel="mic",
-            start_s=4.0,
-            end_s=6.0,
-            text="there",
-        ),
-    ]
-    rows, removed = repo.revise_segments_in_range(
-        meeting_id, "mic", 0.0, 10.0, upserts, remove_ids=[]
-    )
-    assert removed == []
-    texts = {r["id"]: r["text"] for r in rows}
-    assert texts["sg_old"] == "hello"
-    assert texts["sg_new"] == "there"
-    assert REVISION_WINDOW_S == 45.0
-
-
-def test_revise_keeps_segments_referenced_by_dashboard_evidence(tmp_path, repo):
-    meeting_id = "m_evidence"
-    repo.create_meeting(
-        id=meeting_id,
-        title="t",
-        status="active",
-        started_at=datetime.now().isoformat(),
-        host_token="h",
-        guest_token="g",
-        cloud_enabled=True,
-        spool_dir=str(tmp_path / "spool"),
-        asr_model="base",
-        state_json=json.dumps({
-            "rolling_summary_evidence": ["sg_referenced"],
-        }),
-    )
-    chunk_id = repo.register_chunk(
-        meeting_id=meeting_id,
-        channel="mic",
-        seq=0,
-        file_path=str(tmp_path / "x.wav"),
-        start_s=0.0,
-        duration_s=10.0,
-        sample_rate=16000,
-    )
-    repo.commit_chunk_transcription(
-        meeting_id,
-        chunk_id,
-        [TranscriptSegment(
-            segment_id="sg_referenced",
-            meeting_id=meeting_id,
-            chunk_id=chunk_id,
-            channel="mic",
-            start_s=1.0,
-            end_s=3.0,
-            text="original evidence",
-        )],
-    )
-
-    _rows, removed = repo.revise_segments_in_range(
-        meeting_id,
-        "mic",
-        0.0,
-        10.0,
-        segments=[],
-        remove_ids=["sg_referenced"],
-    )
-
-    assert removed == []
-    assert repo.get_segment(meeting_id, "sg_referenced") is not None
+    assert interval_iou(0, 5, 5, 10) == 0.0
+    assert interval_iou(2, 2, 2, 2) == 0.0
 
 
 def test_offline_decoder_internal_typeerror_is_not_retried(tmp_path, monkeypatch):

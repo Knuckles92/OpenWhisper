@@ -141,19 +141,16 @@ def decode_meeting(
     source_path: Path,
     work_dir: Path,
     model_name: str,
-    run_revisions: bool = True,
     target_sec: float = DEFAULT_TARGET_SEC,
     max_sec: float = DEFAULT_MAX_SEC,
     draft_prompt_words: int = DRAFT_PROMPT_WORDS,
     run_offline: bool = True,
 ) -> dict[str, Any]:
-    """Decode one meeting using production chunking, ASR, and revision code."""
+    """Decode one meeting using production chunking and ASR code."""
     pcm, source_rate = _load_pcm_wav(source_path)
     meeting_id = f"bench_{spec.meeting_id}"
     _create_meeting(repo, meeting_id, work_dir, model_name)
     engine.meeting_id = meeting_id
-    engine._pending_revise.clear()
-    engine._last_revised_frontier.clear()
     engine._draft_context.clear()
     engine._language_votes.clear()
 
@@ -211,9 +208,6 @@ def decode_meeting(
             draft_context.extend(segment.text.split())
         repo.commit_chunk_transcription(meeting_id, chunk_id, decoded)
         engine._remember_draft_segments(chunk, decoded)
-        if run_revisions:
-            engine.schedule_revise("loopback", start_s + duration_s)
-            engine.run_pending_revises()
         chunk_count += 1
         if chunk_count % 25 == 0:
             elapsed = time.perf_counter() - started
@@ -224,8 +218,6 @@ def decode_meeting(
                 flush=True,
             )
 
-    if run_revisions:
-        engine.run_pending_revises(force=True)
     final_segments = repo.get_segments(meeting_id, after_start_s=-1.0)
     elapsed_s = time.perf_counter() - started
     duration_s = pcm.size / float(source_rate)
@@ -302,7 +294,6 @@ def _summary(
     results: Sequence[dict[str, Any]],
     model_name: str,
     language: str,
-    revisions_enabled: bool,
     target_sec: float,
     max_sec: float,
     draft_prompt_words: int,
@@ -346,7 +337,6 @@ def _summary(
         "created_at": datetime.now(timezone.utc).isoformat(),
         "model": model_name,
         "language": language,
-        "revisions_enabled": revisions_enabled,
         "run_offline": run_offline,
         "target_sec": target_sec,
         "max_sec": max_sec,
@@ -423,7 +413,6 @@ def _write_summary(path: Path, summary: dict[str, Any]) -> None:
         "",
         f"- Model: `{summary['model']}`",
         f"- Language: `{summary['language']}`",
-        f"- Rolling revisions: `{summary['revisions_enabled']}`",
         f"- Chunk target / maximum: `{summary['target_sec']}` / `{summary['max_sec']}` seconds",
         f"- Draft prompt context: `{summary['draft_prompt_words']}` words",
         f"- Meetings: {summary['meetings']}",
@@ -435,7 +424,7 @@ def _write_summary(path: Path, summary: dict[str, Any]) -> None:
         f"`{'PASS' if summary['quality_gate']['passed'] else 'FAIL'}`",
         f"- Reference words overlapping another speaker: {overlap_rate:.2%}",
         f"- Draft tcWER: {summary['draft']['wer']:.2%}",
-        f"- Final (live/revise) tcWER: {summary['final']['wer']:.2%}",
+        f"- Final (stored live) tcWER: {summary['final']['wer']:.2%}",
     ]
     offline = summary.get("offline")
     if offline:
@@ -498,16 +487,6 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--max-meetings", type=int, default=None)
     parser.add_argument("--download", action="store_true")
-    parser.add_argument(
-        "--enable-revisions",
-        action="store_true",
-        help="Opt into experimental rolling transcript rewrites",
-    )
-    parser.add_argument(
-        "--skip-revisions",
-        action="store_true",
-        help=argparse.SUPPRESS,
-    )
     parser.add_argument("--target-sec", type=float, default=DEFAULT_TARGET_SEC)
     parser.add_argument("--max-sec", type=float, default=DEFAULT_MAX_SEC)
     parser.add_argument(
@@ -569,15 +548,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.draft_prompt_words < 0:
         print("Draft prompt words must be non-negative", file=sys.stderr)
         return 2
-    revisions_enabled = args.enable_revisions and not args.skip_revisions
-    revision_profile = "revised" if revisions_enabled else "draft-only"
     offline_profile = "-offline" if args.offline_pass else ""
     chunk_profile = f"t{args.target_sec:g}-m{args.max_sec:g}"
     prompt_profile = (
         f"-p{args.draft_prompt_words}" if args.draft_prompt_words else ""
     )
     run_name = (
-        f"{args.model.replace('/', '_')}-{language}-{revision_profile}-"
+        f"{args.model.replace('/', '_')}-{language}-"
         f"{chunk_profile}{prompt_profile}{offline_profile}"
     )
     run_dir = args.results_dir / run_name
@@ -592,7 +569,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "benchmark",
         repo,
         language=language_code,
-        enable_revisions=revisions_enabled,
     )
     if not engine.is_available:
         print(f"Meeting ASR model is unavailable: {args.model}", file=sys.stderr)
@@ -609,7 +585,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             provenance = identity(
                 inputs=[audio_path(args.data_dir, spec.meeting_id),
                         *sorted(annotations_dir.rglob(f"{spec.meeting_id}*.xml"))],
-                settings=dict(model=args.model, language=language, revisions=revisions_enabled,
+                settings=dict(model=args.model, language=language,
                               target_sec=args.target_sec, max_sec=args.max_sec,
                               draft_prompt_words=args.draft_prompt_words, offline=args.offline_pass),
                 model=model_stamp)
@@ -633,7 +609,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     audio_path(args.data_dir, spec.meeting_id),
                     work_dir,
                     args.model,
-                    run_revisions=revisions_enabled,
                     target_sec=args.target_sec,
                     max_sec=args.max_sec,
                     draft_prompt_words=args.draft_prompt_words,
@@ -666,7 +641,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         results,
         args.model,
         language,
-        revisions_enabled=revisions_enabled,
         target_sec=args.target_sec,
         max_sec=args.max_sec,
         draft_prompt_words=args.draft_prompt_words,
