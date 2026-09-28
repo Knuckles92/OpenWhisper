@@ -1196,10 +1196,11 @@ class MeetingRuntime:
     def _stored_finalization(self, meeting_id: str) -> Dict[str, Any]:
         """The finalization persisted for ``meeting_id`` right now."""
         from meeting.state.schema import FinalizationState
+        from meeting.stored import stored_state_dict
 
         try:
             meeting = self._repository().get_meeting(meeting_id) or {}
-            data = json.loads(meeting.get("state_json") or "{}")
+            data = stored_state_dict(meeting)
             return FinalizationState.coerce(
                 data.get("finalization"),
                 cloud_enabled=bool(data.get("cloud_enabled")),

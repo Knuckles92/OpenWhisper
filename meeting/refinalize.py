@@ -11,7 +11,6 @@ No Qt imports; this package stays standalone-extractable.
 from __future__ import annotations
 
 import functools
-import json
 import logging
 import threading
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -44,7 +43,13 @@ from meeting.reinsight import (
 from meeting.stored import (
     open_store as _open_store,
 )
-from meeting.state.schema import CARD_KEYS, CardItem, FinalizationState, MeetingState
+from meeting.state.schema import (
+    CARD_KEYS,
+    CardItem,
+    FinalizationState,
+    MeetingState,
+    parse_state_json,
+)
 from meeting.state.store import MeetingStateStore
 from meeting.time_utils import meeting_duration_s
 
@@ -95,14 +100,12 @@ def reload_store(store: MeetingStateStore, repository: Any,
         logger.exception("Could not reload meeting %s after a pipeline write",
                          meeting_id)
         return
-    raw = (meeting or {}).get("state_json") or ""
-    if not raw:
-        return
-    try:
-        data = json.loads(raw)
-    except (TypeError, ValueError):
-        logger.warning("Corrupt state_json for %s after a pipeline write",
-                       meeting_id)
+    raw = (meeting or {}).get("state_json")
+    data = parse_state_json(raw)
+    if data is None:
+        if raw:
+            logger.warning("Corrupt state_json for %s after a pipeline write",
+                           meeting_id)
         return
     try:
         store.replace_document(MeetingState.from_dict(data))
