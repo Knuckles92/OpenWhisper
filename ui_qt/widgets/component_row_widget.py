@@ -13,8 +13,6 @@ import logging
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QAbstractButton,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -23,61 +21,19 @@ from PyQt6.QtWidgets import (
 
 from services.components import ComponentInfo, ComponentState, InstallPhase
 from services.format_utils import format_size_bytes
-from ui_qt.widgets.buttons import Button, DangerButton, PrimaryButton
+from ui_qt.widgets.buttons import DangerButton, PrimaryButton
+from ui_qt.widgets.download_row import DownloadRow, row_style
 
 logger = logging.getLogger(__name__)
 
-# Child labels must set an explicit transparent background — the global
-# ``QWidget { background-color: @bg }`` rule otherwise paints window-coloured
-# rectangles on top of the row fill.
-_ROW_STYLE = """
-    QFrame#componentRow {
-        background-color: @slate-surface;
-        border: 1px solid @slate-border;
-        border-radius: 12px;
-    }
-    QFrame#componentRow:hover {
-        background-color: @slate-surface-hover;
-        border: 1px solid @slate-border-strong;
-    }
-    QFrame#componentRow:focus {
-        border: 1px solid @accent-tint-border;
-        outline: none;
-    }
-    QFrame#componentRow[selected="true"] {
-        background-color: @accent-tint-strong;
-        border: 1px solid @accent-tint-border-strong;
-    }
-    QLabel#componentRowName {
-        color: @slate-text;
-        background-color: transparent;
-        border: none;
-        font-weight: 600;
-    }
-    QLabel#componentRowSummary {
-        color: @slate-text-3;
-        background-color: transparent;
-        border: none;
-    }
-    QLabel#componentRowSize {
-        color: @slate-text-2;
-        background-color: transparent;
-        border: none;
-    }
-    QLabel#componentRowBadge {
-        background-color: rgba(@slate-text-3-rgb, 0.12);
-        color: @slate-text-2;
-        border: 1px solid rgba(@slate-text-3-rgb, 0.28);
-        border-radius: 6px;
-        padding: 2px 8px;
-        font-size: 10px;
-        font-weight: 600;
-    }
-    QLabel#componentRowBadge[tone="downloading"] {
-        background-color: rgba(@accent-rgb, 0.14);
-        color: @accent-soft;
-        border: 1px solid rgba(@accent-rgb, 0.28);
-    }
+# Everything but the component-only badge tones comes from the shared row
+# stylesheet.
+_ROW_STYLE = row_style(
+    "componentRow",
+    primary="componentInstallButton",
+    remove="componentRemoveButton",
+    progress="componentProgress",
+    extra="""
     QLabel#componentRowBadge[tone="installed"] {
         background-color: rgba(@success-rgb, 0.12);
         color: @success-text-strong;
@@ -88,52 +44,8 @@ _ROW_STYLE = """
         color: @warning-text;
         border: 1px solid rgba(@warning-rgb, 0.32);
     }
-    QProgressBar#componentProgress {
-        background-color: @slate-raised;
-        border: none;
-        border-radius: 3px;
-        max-height: 6px;
-        min-height: 6px;
-        text-align: center;
-        color: transparent;
-    }
-    QProgressBar#componentProgress::chunk {
-        background-color: @accent;
-        border-radius: 3px;
-    }
-    QPushButton#componentInstallButton,
-    QPushButton#componentRemoveButton {
-        border-radius: 7px;
-        padding: 4px 10px;
-        font-size: 11px;
-        font-weight: 600;
-        min-height: 28px;
-        max-height: 28px;
-    }
-    QPushButton#componentInstallButton {
-        background-color: rgba(@accent-rgb, 0.18);
-        color: @accent-soft;
-        border: 1px solid rgba(@accent-rgb, 0.32);
-    }
-    QPushButton#componentInstallButton:hover {
-        background-color: rgba(@accent-rgb, 0.28);
-        border: 1px solid rgba(@accent-rgb, 0.5);
-    }
-    QPushButton#componentInstallButton:disabled {
-        background-color: @slate-raised;
-        color: @slate-text-disabled;
-        border: 1px solid @slate-border-subtle;
-    }
-    QPushButton#componentRemoveButton {
-        background-color: transparent;
-        color: @danger-text-soft;
-        border: 1px solid @slate-border-strong;
-    }
-    QPushButton#componentRemoveButton:hover {
-        background-color: rgba(@danger-rgb, 0.14);
-        border: 1px solid rgba(@danger-rgb, 0.45);
-    }
-"""
+""",
+)
 
 # Badge text and tone per state. "installing" is handled separately because it
 # carries live progress.
@@ -163,7 +75,7 @@ _PHASE_LABELS = {
 }
 
 
-class ComponentRowWidget(QFrame):
+class ComponentRowWidget(DownloadRow):
     """One row in the Components group of Settings → Downloads.
 
     The row is "dumb": it renders whatever state is handed to
@@ -174,7 +86,6 @@ class ComponentRowWidget(QFrame):
     install_clicked = pyqtSignal(str)
     cancel_clicked = pyqtSignal(str)
     remove_clicked = pyqtSignal(str)
-    details_requested = pyqtSignal(str)
 
     def __init__(self, component_id: str, parent=None):
         """Initialize the row for one component.
@@ -182,19 +93,19 @@ class ComponentRowWidget(QFrame):
         Args:
             component_id: Stable component identifier (see ``ComponentId``).
         """
-        super().__init__(parent)
+        super().__init__(
+            component_id,
+            object_name="componentRow",
+            style=_ROW_STYLE,
+            tooltip="Click to view component details",
+            accessible_name=f"{component_id} component",
+            accessible_description=(
+                "Open component details. Install and remove actions are separate."
+            ),
+            parent=parent,
+        )
         self.component_id = component_id
         self._installing = False
-
-        self.setObjectName("componentRow")
-        self.setStyleSheet(_ROW_STYLE)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setToolTip("Click to view component details")
-        self.setAccessibleName(f"{component_id} component")
-        self.setAccessibleDescription(
-            "Open component details. Install and remove actions are separate."
-        )
         self._setup_ui()
 
     def _setup_ui(self):
@@ -262,31 +173,12 @@ class ComponentRowWidget(QFrame):
         self.progress.hide()
         outer.addWidget(self.progress)
 
-    @staticmethod
-    def _compact_button(button: Button, width: int) -> None:
-        """Apply dialog-sized dimensions to a shared application button."""
-        button.set_base_minimum_size(width, 28)
-        button.setMinimumWidth(width)
-        button.setMaximumWidth(width)
-        button.setMinimumHeight(28)
-        button.setMaximumHeight(28)
-        button.setFont(QFont("Segoe UI", 10))
-
     def _on_primary_clicked(self) -> None:
         """Route the primary button to install or cancel, whichever applies."""
         if self._installing:
             self.cancel_clicked.emit(self.component_id)
         else:
             self.install_clicked.emit(self.component_id)
-
-    def _set_badge(self, text: str, tone: str) -> None:
-        """Update badge text and dynamic tone property for QSS styling."""
-        self.badge.setText(text)
-        self.badge.setProperty("tone", tone)
-        # Re-polish so the dynamic property selector takes effect.
-        self.badge.style().unpolish(self.badge)
-        self.badge.style().polish(self.badge)
-        self.badge.update()
 
     def update_state(self, info: ComponentInfo, installing: bool) -> None:
         """Render the row for a component state.
@@ -378,31 +270,3 @@ class ComponentRowWidget(QFrame):
             )
         else:
             self.size_label.setText("")
-
-    @staticmethod
-    def _is_action_child(widget) -> bool:
-        while widget is not None:
-            if isinstance(widget, QAbstractButton):
-                return True
-            widget = widget.parentWidget()
-        return False
-
-    def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            child = self.childAt(event.position().toPoint())
-            if not self._is_action_child(child):
-                self.details_requested.emit(self.component_id)
-                event.accept()
-                return
-        super().mouseReleaseEvent(event)
-
-    def keyPressEvent(self, event) -> None:
-        if event.key() in (
-            Qt.Key.Key_Return,
-            Qt.Key.Key_Enter,
-            Qt.Key.Key_Space,
-        ):
-            self.details_requested.emit(self.component_id)
-            event.accept()
-            return
-        super().keyPressEvent(event)
