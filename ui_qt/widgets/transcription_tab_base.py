@@ -12,6 +12,7 @@ from PyQt6.QtGui import QFont
 
 from config import config
 from services.settings import (
+    SETTING_DEFAULTS,
     LEGACY_STREAMING_KEYS,
     SettingsKey,
     api_model_choices,
@@ -430,7 +431,7 @@ class TranscriptionTabBase(QWidget):
     def load_cleanup_setting(self):
         enabled = settings_manager.get(
             SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
-            config.TRANSCRIPT_CLEANUP_ENABLED,
+            SETTING_DEFAULTS[SettingsKey.TRANSCRIPT_CLEANUP_ENABLED],
         )
         self.cleanup_check.blockSignals(True)
         self.cleanup_check.setChecked(bool(enabled))
@@ -459,7 +460,7 @@ class TranscriptionTabBase(QWidget):
     def load_live_preview_setting(self):
         enabled = settings_manager.get(
             SettingsKey.STREAMING_ENABLED,
-            config.STREAMING_ENABLED,
+            SETTING_DEFAULTS[SettingsKey.STREAMING_ENABLED],
         )
         self._live_preview_wanted = bool(enabled)
         self._sync_live_preview()

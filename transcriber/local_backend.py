@@ -69,9 +69,9 @@ class LocalWhisperBackend(TranscriptionBackend):
     ):
         super().__init__()
         if model_name is None:
-            from services.settings import SettingsKey, settings_manager
+            from services.settings import SettingsKey, setting_value, settings_manager
             settings = settings_manager.load_all_settings()
-            model_name = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
+            model_name = setting_value(SettingsKey.WHISPER_MODEL, settings)
         self.model_name = model_name
         # A faster_whisper.WhisperModel once loaded.
         self.model = None
@@ -148,20 +148,20 @@ class LocalWhisperBackend(TranscriptionBackend):
         return "float32"
 
     def _detect_hardware(self) -> Tuple[str, str, str]:
-        from services.settings import SettingsKey, settings_manager
+        from services.settings import SettingsKey, setting_value, settings_manager
         settings = settings_manager.load_all_settings()
 
         if self._override_device is not None:
             device = self._override_device
         else:
-            device = settings.get(SettingsKey.WHISPER_DEVICE, config.FASTER_WHISPER_DEVICE)
+            device = setting_value(SettingsKey.WHISPER_DEVICE, settings)
 
         if self._override_compute_type is not None:
             compute_type = self._override_compute_type
         else:
-            compute_type = settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, config.FASTER_WHISPER_COMPUTE_TYPE)
+            compute_type = setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings)
 
-        model = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
+        model = setting_value(SettingsKey.WHISPER_MODEL, settings)
 
         if device == "auto" or compute_type == "auto" or model == "auto":
             has_cuda = self._cuda_is_available()
@@ -452,9 +452,9 @@ class LocalWhisperBackend(TranscriptionBackend):
         if model_name:
             self.model_name = model_name
         else:
-            from services.settings import SettingsKey, settings_manager
+            from services.settings import SettingsKey, setting_value, settings_manager
             settings = settings_manager.load_all_settings()
-            self.model_name = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
+            self.model_name = setting_value(SettingsKey.WHISPER_MODEL, settings)
         self.cleanup()
         self._load_model()
 

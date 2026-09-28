@@ -88,6 +88,7 @@ from services.settings import (
     resolve_transcript_cleanup_rules,
     resolve_update_check_enabled,
     resolve_update_notify_enabled,
+    setting_value,
     settings_manager,
 )
 from services.text_llm import (
@@ -894,19 +895,19 @@ class SettingsDialog(QDialog):
         self._bindings.checkbox(
             self.auto_paste_check,
             SettingsKey.AUTO_PASTE,
-            lambda settings: settings.get(SettingsKey.AUTO_PASTE, True),
+            lambda settings: setting_value(SettingsKey.AUTO_PASTE, settings),
         )
         self._bindings.checkbox(
             self.copy_clipboard_check,
             SettingsKey.COPY_CLIPBOARD,
-            lambda settings: settings.get(SettingsKey.COPY_CLIPBOARD, True),
+            lambda settings: setting_value(SettingsKey.COPY_CLIPBOARD, settings),
         )
         self._bindings.checkbox(
             self.minimize_tray_check,
             SettingsKey.MINIMIZE_TRAY,
             lambda settings: (
                 self._tray_available
-                and settings.get(SettingsKey.MINIMIZE_TRAY, True)
+                and setting_value(SettingsKey.MINIMIZE_TRAY, settings)
             ),
         )
         self.update_check_check.toggled.connect(self._on_update_check_toggled)
@@ -1427,9 +1428,7 @@ class SettingsDialog(QDialog):
         self._meeting_bindings.checkbox(
             self.typesafe_topic_shift_check,
             SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED,
-            lambda settings: settings.get(
-                SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, True
-            ) is True,
+            lambda settings: setting_value(SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, settings) is True,
         )
 
         self.typesafe_voice_commands_tile = SettingTile(
@@ -1448,9 +1447,7 @@ class SettingsDialog(QDialog):
         self._meeting_bindings.checkbox(
             self.typesafe_voice_commands_check,
             SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED,
-            lambda settings: settings.get(
-                SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, False
-            ) is True,
+            lambda settings: setting_value(SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, settings) is True,
         )
         self.typesafe_feature_tiles = {}
         for feature, key, title, description in (
@@ -2754,28 +2751,19 @@ class SettingsDialog(QDialog):
         return reply == QMessageBox.StandardButton.Yes
 
     def _load_retention_settings(self, settings: dict) -> None:
-        retention_mode = settings.get(
-            SettingsKey.RECORDING_RETENTION_MODE,
-            RecordingRetentionMode.CUSTOM,
-        )
+        retention_mode = setting_value(SettingsKey.RECORDING_RETENTION_MODE, settings)
         retention_index = self.recording_retention_combo.findData(retention_mode)
         if retention_index < 0:
             retention_index = self.recording_retention_combo.findData(
                 RecordingRetentionMode.CUSTOM
             )
         self.recording_retention_combo.setCurrentIndex(max(0, retention_index))
-        max_recordings = settings.get(
-            SettingsKey.MAX_SAVED_RECORDINGS,
-            config.MAX_SAVED_RECORDINGS,
-        )
+        max_recordings = setting_value(SettingsKey.MAX_SAVED_RECORDINGS, settings)
         try:
             self.max_recordings_spinbox.setValue(max(1, int(max_recordings)))
         except (TypeError, ValueError):
             self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
-        max_recordings_mb = settings.get(
-            SettingsKey.MAX_SAVED_RECORDINGS_MB,
-            config.MAX_SAVED_RECORDINGS_MB,
-        )
+        max_recordings_mb = setting_value(SettingsKey.MAX_SAVED_RECORDINGS_MB, settings)
         try:
             self.max_recordings_mb_spinbox.setValue(int(max_recordings_mb))
         except (TypeError, ValueError):
@@ -3610,10 +3598,7 @@ class SettingsDialog(QDialog):
 
             self._bindings.load(settings)
             self.transcript_cleanup_check.setChecked(
-                settings.get(
-                    SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
-                    config.TRANSCRIPT_CLEANUP_ENABLED,
-                )
+                setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings)
             )
             prompt = resolve_transcript_cleanup_prompt(settings)
             self.cleanup_prompt_edit.setPlainText(prompt)
@@ -3639,9 +3624,7 @@ class SettingsDialog(QDialog):
 
             self._load_retention_settings(settings)
 
-            streaming_enabled = settings.get(
-                SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED
-            )
+            streaming_enabled = setting_value(SettingsKey.STREAMING_ENABLED, settings)
             self.streaming_enabled_check.setChecked(streaming_enabled)
             self.streaming_font_size_spinbox.setValue(
                 resolve_streaming_overlay_font_size(settings)

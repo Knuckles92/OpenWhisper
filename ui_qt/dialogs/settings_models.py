@@ -43,6 +43,7 @@ from services.hf_access import (
     scan_cached_models,
 )
 from services.settings import (
+    SETTING_DEFAULTS,
     MeetingAgentCore,
     MeetingLanguage,
     MeetingSpeakerIdBackend,
@@ -65,6 +66,7 @@ from services.settings import (
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
+    setting_value,
     settings_manager,
 )
 from services.text_llm import (
@@ -1145,7 +1147,7 @@ class ModelAssignments(QObject):
 
         sort = settings_manager.get(
             SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT,
-            config.TRANSCRIPT_CLEANUP_MODEL_SORT,
+            SETTING_DEFAULTS[SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT],
         )
         if sort not in TranscriptCleanupModelSort.ALL:
             sort = config.TRANSCRIPT_CLEANUP_MODEL_SORT
@@ -1223,8 +1225,8 @@ class ModelAssignments(QObject):
         blocker = self.api_model_combo.blockSignals(True)
         self.api_model_combo.setCurrentIndex(max(0, api_index))
         self.api_model_combo.blockSignals(blocker)
-        device = settings.get(SettingsKey.WHISPER_DEVICE, "auto")
-        compute = settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, "auto")
+        device = setting_value(SettingsKey.WHISPER_DEVICE, settings)
+        compute = setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings)
         if self.device_combo.findText(str(device)) < 0:
             device = "auto"
         blocker = self.device_combo.blockSignals(True)
@@ -1459,7 +1461,7 @@ class ModelAssignments(QObject):
         self._cached = dict(cached)
         settings = self._settings_snapshot()
         active_model = settings_manager.get(
-            SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL
+            SettingsKey.WHISPER_MODEL, SETTING_DEFAULTS[SettingsKey.WHISPER_MODEL]
         )
         if active_model not in config.WHISPER_MODEL_CHOICES:
             active_model = config.DEFAULT_WHISPER_MODEL

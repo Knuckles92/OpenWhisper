@@ -11,7 +11,7 @@ from ui_qt.widgets.wrapped_label import WrappedLabel
 from ui_qt.widgets.engine_field import engine_combo
 from services.cleanup_profiles import load_cleanup_profiles
 from services.hotkey_manager import format_hotkey_display
-from services.settings import SettingsKey, settings_manager
+from services.settings import SettingsKey, setting_value, settings_manager
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +132,7 @@ class QuickRecordTab(TranscriptionTabBase):
 
     def refresh_cleanup_profiles(self) -> None:
         settings = settings_manager.load_all_settings()
-        selected = settings.get(SettingsKey.QUICK_RECORD_PROFILE, "")
+        selected = setting_value(SettingsKey.QUICK_RECORD_PROFILE, settings)
         recording = getattr(self, "is_recording", False)
         active_profile = getattr(self, "_active_cleanup_profile", None)
         if recording:

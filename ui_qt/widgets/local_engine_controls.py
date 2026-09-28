@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import QWidget, QHBoxLayout
 from PyQt6.QtCore import pyqtSignal
 
 from config import config
-from services.settings import SettingsKey, settings_manager
+from services.settings import SETTING_DEFAULTS, SettingsKey, setting_value, settings_manager
 from ui_qt.widgets.engine_field import engine_combo, engine_field
 
 logger = logging.getLogger(__name__)
@@ -92,7 +92,7 @@ class LocalEngineControls(QWidget):
         self.compute_combo.parentWidget().setVisible(backend not in BACKENDS)
         self.language_field.setVisible(backend in BACKENDS)
         self.language_combo.blockSignals(True)
-        self.language_combo.setCurrentText("Auto" if settings_manager.get(SettingsKey.LOCAL_ASR_LANGUAGE, "en") == "auto" and backend != "moonshine" else "English")
+        self.language_combo.setCurrentText("Auto" if settings_manager.get(SettingsKey.LOCAL_ASR_LANGUAGE, SETTING_DEFAULTS[SettingsKey.LOCAL_ASR_LANGUAGE]) == "auto" and backend != "moonshine" else "English")
         self.language_combo.blockSignals(False)
         self.language_combo.setEnabled(backend != "moonshine")
         self.device_combo.setEnabled(backend != "moonshine")
@@ -133,9 +133,9 @@ class LocalEngineControls(QWidget):
             return
         settings = settings_manager.load_all_settings()
         self.set_values(
-            settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL),
-            settings.get(SettingsKey.WHISPER_DEVICE, "auto"),
-            settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, "auto"),
+            setting_value(SettingsKey.WHISPER_MODEL, settings),
+            setting_value(SettingsKey.WHISPER_DEVICE, settings),
+            setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings),
         )
 
     def set_values(self, model: str, device: str, compute: str):

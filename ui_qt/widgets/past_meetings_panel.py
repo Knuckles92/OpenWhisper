@@ -14,7 +14,7 @@ from meeting.content import (
     summarize_meeting_content,
 )
 from meeting.time_utils import format_meeting_duration, format_meeting_started_at
-from services.settings import SettingsKey, settings_manager
+from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
 from ui_qt.utils.file_reveal import open_folder_in_file_manager
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.context_menu import context_menu
@@ -727,7 +727,7 @@ class PastMeetingsPanel(QWidget):
         try:
             should_confirm = settings_manager.get(
                 SettingsKey.CONFIRM_MEETING_DELETE,
-                True,
+                SETTING_DEFAULTS[SettingsKey.CONFIRM_MEETING_DELETE],
             )
         except Exception as exc:
             logger.warning("Failed to load meeting deletion preference: %s", exc)

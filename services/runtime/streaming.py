@@ -7,7 +7,7 @@ import time
 from typing import TYPE_CHECKING, Callable, Optional
 
 from config import config
-from services.settings import SettingsKey, settings_manager
+from services.settings import SettingsKey, setting_value, settings_manager
 
 if TYPE_CHECKING:
     from services.recorder import AudioLevelCallback
@@ -191,9 +191,7 @@ class StreamingRuntime:
     def _configure_streaming(self, *, initial_setup: bool) -> None:
         try:
             settings = settings_manager.load_all_settings()
-            self.controller._streaming_enabled = settings.get(
-                SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED
-            )
+            self.controller._streaming_enabled = setting_value(SettingsKey.STREAMING_ENABLED, settings)
             if not self.controller._streaming_enabled:
                 logger.info("Streaming transcription disabled")
                 return
@@ -250,9 +248,7 @@ class StreamingRuntime:
                 )
                 return
 
-            chunk_duration = settings.get(
-                SettingsKey.STREAMING_CHUNK_DURATION, config.STREAMING_CHUNK_DURATION_SEC
-            )
+            chunk_duration = setting_value(SettingsKey.STREAMING_CHUNK_DURATION, settings)
             self.controller.streaming_transcriber = StreamingTranscriber(
                 backend=streaming_backend,
                 chunk_duration_sec=chunk_duration,

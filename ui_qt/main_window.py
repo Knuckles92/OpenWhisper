@@ -11,8 +11,10 @@ from PyQt6.QtGui import QAction, QKeySequence
 from config import config
 from services.hotkey_manager import format_hotkey_display
 from services.settings import (
+    SETTING_DEFAULTS,
     SettingsKey,
     resolve_meeting_mode_intro_seen,
+    setting_value,
     settings_manager,
 )
 from ui_qt.utils.collapse_animation import (
@@ -1127,7 +1129,7 @@ class MainWindow(QMainWindow):
 
     def _restore_compact_mode(self) -> None:
         try:
-            if settings_manager.get(SettingsKey.COMPACT_MODE, False) is True:
+            if settings_manager.get(SettingsKey.COMPACT_MODE, SETTING_DEFAULTS[SettingsKey.COMPACT_MODE]) is True:
                 self.set_compact_mode(True, persist=False)
         except Exception as e:
             logger.warning(f"Failed to restore compact mode: {e}")
@@ -1382,7 +1384,7 @@ class MainWindow(QMainWindow):
 
         try:
             settings = settings_manager.load_all_settings()
-            minimize_tray = settings.get(SettingsKey.MINIMIZE_TRAY, True)  # Default to True
+            minimize_tray = setting_value(SettingsKey.MINIMIZE_TRAY, settings)
         except Exception as e:
             logger.error(f"Failed to load settings: {e}")
             minimize_tray = True  # Default to True on error

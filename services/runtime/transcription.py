@@ -28,6 +28,7 @@ from services.batch_upload import (
     join_raw_parts,
 )
 from services.settings import (
+    SETTING_DEFAULTS,
     SettingsKey,
     compose_transcript_cleanup_prompt,
     resolve_transcript_cleanup_model,
@@ -35,6 +36,7 @@ from services.settings import (
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
     resolve_transcript_cleanup_rules,
+    setting_value,
     settings_manager,
 )
 
@@ -167,7 +169,7 @@ class TranscriptionRuntime:
             # Auto-paste copies the user's clipboard so it can put it back.
             # Take that copy while the user speaks instead of in front of the
             # paste; it is queued to the Qt thread and never delays this start.
-            if settings_manager.get(SettingsKey.AUTO_PASTE, True):
+            if settings_manager.get(SettingsKey.AUTO_PASTE, SETTING_DEFAULTS[SettingsKey.AUTO_PASTE]):
                 self.controller.ui_controller.prefetch_clipboard_snapshot()
             return True
         else:
@@ -788,10 +790,7 @@ class TranscriptionRuntime:
         self._last_cleanup_failure = None
         profile = self._recording_profile
         settings = self._profile_settings if profile else settings_manager.load_all_settings()
-        enabled = profile is not None or settings.get(
-            SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
-            config.TRANSCRIPT_CLEANUP_ENABLED,
-        )
+        enabled = profile is not None or setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings)
         if not enabled or not raw or not raw.strip():
             return raw, None, None
 
@@ -1066,8 +1065,8 @@ class TranscriptionRuntime:
                 paste itself succeeded.
         """
         settings = settings_manager.load_all_settings()
-        copy_clipboard = settings.get(SettingsKey.COPY_CLIPBOARD, True)
-        auto_paste = settings.get(SettingsKey.AUTO_PASTE, True)
+        copy_clipboard = setting_value(SettingsKey.COPY_CLIPBOARD, settings)
+        auto_paste = setting_value(SettingsKey.AUTO_PASTE, settings)
 
         def _status(text: str) -> None:
             self.controller.ui_controller.set_status(text + status_suffix)

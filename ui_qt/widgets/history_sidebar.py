@@ -19,7 +19,7 @@ from PyQt6.QtGui import QFont, QDesktopServices
 from config import config
 from services.format_utils import format_file_size
 from services.history_manager import HistoryEntry, history_manager
-from services.settings import SettingsKey, settings_manager
+from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
 from services.text_llm import profile_display_name
 from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_DURATION_MS,
@@ -995,7 +995,7 @@ class HistorySidebar(QWidget):
         try:
             should_confirm = settings_manager.get(
                 SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE,
-                True,
+                SETTING_DEFAULTS[SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE],
             )
         except Exception as exc:
             logger.warning("Failed to load history deletion preference: %s", exc)
