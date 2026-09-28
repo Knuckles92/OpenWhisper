@@ -349,6 +349,38 @@ class MeetingRuntime:
         except Exception:
             logger.exception("Could not request a Past Meetings refresh")
 
+    def meeting_busy(self, meeting_id: str) -> bool:
+        """Whether this computer may still write to a meeting.
+
+        True while it is live or finishing, in the background, or having its
+        post-meeting steps re-run; the record sync waits for it.
+        """
+        from meeting.refinalize import is_running
+
+        with self._lock:
+            if meeting_id in self._background_engines:
+                return True
+            engine = self._engine
+        if (engine is not None and getattr(engine, "meeting_id", None) == meeting_id
+                and (self.is_active or self._finalizing or self.controller.meeting_active)):
+            return True
+        return is_running(meeting_id)
+
+    def meeting_in_use(self, meeting_id: str) -> bool:
+        """Whether a dashboard here may be showing the meeting right now.
+
+        The ended meeting's dashboard stays open until the next meeting, so
+        a meeting moved to the host keeps its copy here until then.
+        """
+        with self._lock:
+            engine = self._engine
+            archive = self._archive_dashboard
+        if engine is not None and getattr(engine, "meeting_id", None) == meeting_id:
+            return True
+        if archive is not None and getattr(archive, "is_running", lambda: False)():
+            return True
+        return self.meeting_busy(meeting_id)
+
     def continue_in_background(self) -> bool:
         """Detach the ended meeting once its local transcription model is free."""
         with self._lock:
@@ -424,6 +456,7 @@ class MeetingRuntime:
                     "background_message": self._background_message(outcome),
                 })
             self._refresh_past_meetings()
+            self._wake_record_sync()
 
     def defer_finalization_card(self) -> bool:
         """Persist Keep for later and hide the desktop Final Insights card.
@@ -867,6 +900,12 @@ class MeetingRuntime:
             "Demo meeting started: %s" if demo else "Meeting started: %s",
             result.get("meeting_id"),
         )
+        if not demo and result.get("meeting_id"):
+            # Queued now and sent once it has finished (see RecordSync),
+            # when this computer keeps its records on its paired host.
+            from services.remote_records.sync import record_sync
+
+            record_sync.record_saved("meeting", str(result["meeting_id"]))
         for message in deferred_errors:
             self.controller.meeting_error.emit(message)
 
@@ -1643,6 +1682,9 @@ class MeetingRuntime:
                 delete_spools=delete_recordings,
                 skip_ids=skip_ids,
             )
+            from services.remote_records.sync import record_sync
+
+            record_sync.cleared("meeting", keep=skip_ids)
             with self._lock:
                 card_id = self._card_meeting_id
             if card_id and card_id not in skip_ids:
@@ -1830,6 +1872,7 @@ class MeetingRuntime:
             "completed", "disabled", "unavailable", "failed",
         }
         with self._lock:
+            finished_now = terminal and self._finalizing
             self._finalization = normalized
             self._finalizing = status == "running"
             if meeting_id:
@@ -1842,6 +1885,23 @@ class MeetingRuntime:
         elif terminal and message:
             # Persistent non-modal feedback; never a meeting_error dialog.
             self.controller.meeting_status_update.emit(message)
+        if finished_now and meeting_id:
+            # Queued again in case the storage location changed during the
+            # meeting; a no-op while it stays on this computer.
+            self._wake_record_sync(str(meeting_id))
+
+    @staticmethod
+    def _wake_record_sync(meeting_id: str = "") -> None:
+        """A meeting may be ready to go to the paired host now."""
+        try:
+            from services.remote_records.sync import record_sync
+
+            if meeting_id:
+                record_sync.record_saved("meeting", meeting_id)
+            else:
+                record_sync.wake()
+        except Exception:
+            logger.debug("Could not wake the record sync", exc_info=True)
 
     def _shutdown_archive_dashboard(self) -> None:
         archive, self._archive_dashboard = self._archive_dashboard, None

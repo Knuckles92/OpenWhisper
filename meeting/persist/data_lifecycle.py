@@ -50,6 +50,7 @@ def delete_meeting_data(
         return False
     if not delete_spool:
         repository.delete_meeting(meeting_id)
+        _deleted(meeting)
         return True
     spool = _validated_spool_path(
         str(meeting.get("spool_dir") or ""), meetings_root
@@ -89,7 +90,20 @@ def delete_meeting_data(
             shutil.rmtree(tombstone)
         except Exception:
             logger.exception("Could not purge tombstoned spool for %s", meeting_id)
+    _deleted(meeting)
     return True
+
+
+def _deleted(meeting: dict) -> None:
+    """Delete the paired host's copy too, when there is one."""
+    if meeting.get("origin_device_id"):
+        return  # A paired computer's meeting stored here; it has no copy elsewhere.
+    try:
+        from services.remote_records.sync import record_sync
+
+        record_sync.record_deleted("meeting", str(meeting.get("id") or ""))
+    except Exception:
+        logger.debug("Could not tell the record sync about a deleted meeting", exc_info=True)
 
 
 def _purge_orphan_spools(
@@ -151,10 +165,11 @@ def clear_meetings(
 ) -> int:
     """Delete historical meetings, optionally purging audio spools.
 
-    Live capture rows (active / paused / ending) and any id in ``skip_ids``
-    are left untouched. When ``delete_spools`` is true, leftover directories
-    under ``meetings_root`` that are not a skipped meeting's spool are
-    removed as well — including orphans from earlier keep-recording deletes.
+    Live capture rows (active / paused / ending), any id in ``skip_ids``, and
+    meetings a paired computer stored here (its to manage) are left
+    untouched. When ``delete_spools`` is true, leftover directories under
+    ``meetings_root`` that are not a kept meeting's spool are removed as
+    well — including orphans from earlier keep-recording deletes.
 
     Returns:
         Count of meetings whose database rows were removed.
@@ -167,7 +182,8 @@ def clear_meetings(
         if not meeting_id:
             continue
         status = str(meeting.get("status") or "").lower()
-        if meeting_id in skipped or status in _NON_HISTORICAL_STATUSES:
+        if (meeting_id in skipped or status in _NON_HISTORICAL_STATUSES
+                or meeting.get("origin_device_id")):
             spool = str(meeting.get("spool_dir") or "")
             if spool:
                 keep_spools.add(spool)

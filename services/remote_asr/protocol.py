@@ -44,10 +44,35 @@ paired-client authorization as model selection, rejects stale engine choices,
 and answers after the host reloads. The client reconnects to authoritative
 state, including CPU fallback. Older hosts have no editable runtime controls.
 
+Record storage is advertised as ``ready.capabilities.records``: true when the
+host keeps records (dictation history, meetings) for paired computers, false
+when its owner hasn't turned that on, and missing on older hosts.
+``ready.records`` then counts what this device has stored there. Every
+``records_*`` request is scoped to the authenticated device, which can only
+see, fetch or delete its own records, and the permission is rechecked per
+request. A record is a set of files, one of them ``record.json``; uploads are
+resumable and verified:
+
+* ``records_stat`` (``kind``, ``record_id``) lists the files an earlier copy
+  left on the host, so an edited meeting is sent without its audio again
+  (record.json then says ``update``).
+* ``records_begin`` (``kind``, ``record_id``, ``files``, ``bytes``) opens or
+  resumes an upload and answers with what the host already has of each file.
+* ``records_put`` (``record_id``, ``name``, ``size``, ``sha256``, ``offset``)
+  carries up to ``RECORD_CHUNK_BYTES`` of one file as the frame's payload;
+  offsets are append-only and a finished file is checked against its hash.
+* ``records_commit`` (``record_id``) imports the complete record into the
+  host's own history or meetings, badged with the device it came from.
+* ``records_list`` (``kind``, ``query``, ``limit``), ``records_open`` and
+  ``records_fetch`` (``name``, ``offset``) read records back, the latter as
+  base64 in the JSON reply; ``records_delete`` removes one, ``records_clear``
+  every one of a kind, and ``records_abort`` drops an unfinished upload.
+
 A request frame is a 4-byte big-endian header length, the JSON header, then
-the audio as 16 kHz mono signed 16-bit little-endian PCM. Dictation audio is
-recorded as 16-bit and resampled to 16-bit before it is decoded, so the
-conversion loses nothing and halves what float32 would send.
+a payload. For decoding operations the payload is the audio as 16 kHz mono
+signed 16-bit little-endian PCM. Dictation audio is recorded as 16-bit and
+resampled to 16-bit before it is decoded, so the conversion loses nothing
+and halves what float32 would send. For ``records_put`` it is file bytes.
 """
 from __future__ import annotations
 
@@ -69,6 +94,9 @@ MAX_AUDIO_SECONDS = 120
 MAX_HEADER_BYTES = 64 * 1024
 MAX_REQUEST_BYTES = 4 + MAX_HEADER_BYTES + MAX_AUDIO_SECONDS * SAMPLE_RATE * 2
 MAX_REPLY_BYTES = 8 * 1024 * 1024
+#: File bytes per ``records_put`` frame and per ``records_fetch`` reply.
+#: Well inside both frame limits, base64 included.
+RECORD_CHUNK_BYTES = 1024 * 1024
 
 #: WebSocket close codes the host uses (4000-4999 is the application range).
 CLOSE_UNAUTHORIZED = 4401
@@ -97,15 +125,32 @@ def decode_audio(data: bytes) -> np.ndarray:
     return np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
 
 
-def pack_request(header: dict, audio=None) -> bytes:
+def pack_request(header: dict, audio=None, *, payload: Optional[bytes] = None) -> bytes:
+    """A request frame; ``payload`` is raw bytes, sent instead of ``audio``."""
     body = json.dumps(header, separators=(",", ":")).encode("utf-8")
     if len(body) > MAX_HEADER_BYTES:
         raise ProtocolError("Request header is too large")
-    pcm = b"" if audio is None else encode_audio(audio)
-    return _HEADER.pack(len(body)) + body + pcm
+    if payload is not None:
+        data = bytes(payload)
+    else:
+        data = b"" if audio is None else encode_audio(audio)
+    return _HEADER.pack(len(body)) + body + data
 
 
 def unpack_request(frame: bytes) -> Tuple[dict, np.ndarray]:
+    header, payload = unpack_frame(frame)
+    return header, payload_audio(payload)
+
+
+def payload_audio(payload: bytes) -> np.ndarray:
+    """A decoding request's payload as audio, within the length limit."""
+    if len(payload) > MAX_AUDIO_SECONDS * SAMPLE_RATE * 2:
+        raise ProtocolError("Request audio is too long")
+    return decode_audio(payload)
+
+
+def unpack_frame(frame: bytes) -> Tuple[dict, bytes]:
+    """The header and the payload as bytes, without reading it as audio."""
     if not isinstance(frame, (bytes, bytearray, memoryview)):
         raise ProtocolError("Requests must be binary frames")
     frame = bytes(frame)
@@ -120,10 +165,7 @@ def unpack_request(frame: bytes) -> Tuple[dict, np.ndarray]:
         raise ProtocolError("Request header is not JSON") from exc
     if not isinstance(header, dict):
         raise ProtocolError("Request header must be an object")
-    audio = frame[_HEADER.size + length:]
-    if len(audio) > MAX_AUDIO_SECONDS * SAMPLE_RATE * 2:
-        raise ProtocolError("Request audio is too long")
-    return header, decode_audio(audio)
+    return header, frame[_HEADER.size + length:]
 
 
 def certificate_fingerprint(der: bytes) -> str:

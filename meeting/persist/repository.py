@@ -52,6 +52,8 @@ def _session_to_dict(row: MeetingSession) -> Dict[str, Any]:
         "spool_dir": row.spool_dir,
         "state_json": row.state_json, "state_seq": row.state_seq,
         "app_pid": row.app_pid, "app_heartbeat_at": row.app_heartbeat_at,
+        "origin_device_id": row.origin_device_id,
+        "origin_device_name": row.origin_device_name,
     }
 
 
@@ -277,13 +279,15 @@ class SqlMeetingRepository:
         *,
         limit: int = 101,
         query: str = "",
+        origin: Any = ...,
     ) -> List[Dict[str, Any]]:
         """Return a bounded Past Meetings page with batched content metadata.
 
         The Qt history sidebar previously loaded every full session snapshot,
         then issued separate chunk and segment queries for every row. This
         query keeps the page bounded and derives all card capabilities in
-        three aggregate reads.
+        three aggregate reads. ``origin`` limits it to one paired computer's
+        meetings stored here, or with None to this computer's own.
         """
         page_limit = max(1, min(int(limit), 501))
         needle = str(query or "").strip()
@@ -291,6 +295,10 @@ class SqlMeetingRepository:
             sessions = session.query(MeetingSession).filter(
                 ~MeetingSession.status.in_(("active", "paused", "ending"))
             )
+            if origin is None:
+                sessions = sessions.filter(MeetingSession.origin_device_id.is_(None))
+            elif origin is not ...:
+                sessions = sessions.filter(MeetingSession.origin_device_id == origin)
             if needle:
                 escaped = (
                     needle.replace("\\", "\\\\")
@@ -385,6 +393,82 @@ class SqlMeetingRepository:
                 }
                 result.append(meeting)
             return result
+
+    def origin_spools(self, origin: str) -> List[Tuple[str, str]]:
+        """``(meeting_id, spool_dir)`` of the meetings a paired computer stored here."""
+        with self._db.get_session() as session:
+            return [
+                (meeting_id, spool or "") for meeting_id, spool in session.query(
+                    MeetingSession.id, MeetingSession.spool_dir
+                ).filter(MeetingSession.origin_device_id == origin).all()
+            ]
+
+    #: Child tables in the order a whole-meeting copy writes them.
+    _COPY_TABLES = (
+        ("chunks", MeetingAudioChunk), ("segments", MeetingSegment),
+        ("participants", MeetingParticipant), ("state_items", MeetingStateItem),
+        ("questions", MeetingQuestion), ("events", MeetingEvent),
+    )
+
+    @staticmethod
+    def _columns(row) -> Dict[str, Any]:
+        return {column.name: getattr(row, column.name) for column in row.__table__.columns}
+
+    def export_meeting_rows(self, meeting_id: str) -> Optional[Dict[str, Any]]:
+        """Every row of one meeting as plain column dicts, for copying it.
+
+        Segment text is the stored text, before term corrections, since the
+        copy re-applies them from its own state.
+        """
+        with self._db.get_session() as session:
+            row = session.get(MeetingSession, meeting_id)
+            if row is None:
+                return None
+            rows: Dict[str, Any] = {"session": self._columns(row)}
+            for key, model in self._COPY_TABLES:
+                rows[key] = [
+                    self._columns(child) for child in session.query(model).filter(
+                        model.meeting_id == meeting_id
+                    ).order_by(model.id).all()
+                ]
+            return rows
+
+    def replace_meeting_rows(self, meeting_id: str, session_values: Dict[str, Any],
+                             rows: Dict[str, List[Dict[str, Any]]]) -> None:
+        """Write a whole meeting copied from another computer, in one transaction.
+
+        Chunk and event ids are this database's own, so chunks are given new
+        ones and ``chunk_ref`` (the id on the other computer) maps segments
+        onto them. Whatever was stored under ``meeting_id`` is replaced.
+        """
+        with self._db.get_session() as session:
+            for model in (MeetingEvent, MeetingQuestion, MeetingStateItem,
+                          MeetingParticipant, MeetingSegment, MeetingAudioChunk):
+                session.query(model).filter(
+                    model.meeting_id == meeting_id
+                ).delete(synchronize_session=False)
+            old = session.get(MeetingSession, meeting_id)
+            if old is not None:
+                session.delete(old)
+            session.flush()
+            session.add(MeetingSession(**session_values))
+            session.flush()
+            chunk_ids: Dict[int, int] = {}
+            for values in rows.get("chunks", ()):
+                values = dict(values)
+                ref = values.pop("chunk_ref")
+                chunk = MeetingAudioChunk(**values)
+                session.add(chunk)
+                session.flush()
+                chunk_ids[ref] = chunk.id
+            for values in rows.get("segments", ()):
+                values = dict(values)
+                if values.get("chunk_id") is not None:
+                    values["chunk_id"] = chunk_ids.get(values["chunk_id"])
+                session.add(MeetingSegment(**values))
+            for key, model in self._COPY_TABLES[2:]:
+                for values in rows.get(key, ()):
+                    session.add(model(**values))
 
     def delete_meeting(self, meeting_id: str) -> None:
         """Delete a meeting and all child rows.

@@ -40,6 +40,10 @@ class TranscriptionHistory(Base):
     cleanup_provider: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     cleanup_model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     source_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # The paired computer this entry was stored here for (see
+    # services/remote_records); NULL for this computer's own entries.
+    origin_device_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    origin_device_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         Index('idx_history_timestamp', 'timestamp'),
@@ -124,6 +128,10 @@ class MeetingSession(Base):
     # Crash detection: pid + heartbeat let startup recovery spot dead sessions.
     app_pid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     app_heartbeat_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # The paired computer this meeting was stored here for; NULL when it was
+    # recorded on this computer.
+    origin_device_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    origin_device_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         Index('idx_msessions_started', 'started_at'),
@@ -261,4 +269,32 @@ class MeetingEvent(Base):
 
     __table_args__ = (
         Index('idx_mevents_meeting', 'meeting_id', 'seq'),
+    )
+
+
+class RecordSync(Base):
+    """A record this computer is copying to, or moving to, its paired host.
+
+    ``action`` is ``copy`` (keep it here too), ``move`` (delete it here once
+    the host has it) or ``delete`` (remove the host's copy). A finished copy
+    stays as ``done`` so History knows the host has it; a finished move or
+    delete leaves no row, since nothing of it remains here.
+    """
+    __tablename__ = 'record_sync'
+
+    kind: Mapped[str] = mapped_column(String, primary_key=True)  # dictation | meeting
+    record_id: Mapped[str] = mapped_column(String, primary_key=True)
+    host_fingerprint: Mapped[str] = mapped_column(String, nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    # pending | done | failed
+    state: Mapped[str] = mapped_column(String, nullable=False, default='pending')
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # A digest of what was uploaded, so an edited meeting is sent again.
+    content_digest: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    __table_args__ = (
+        Index('idx_record_sync_state', 'state'),
     )

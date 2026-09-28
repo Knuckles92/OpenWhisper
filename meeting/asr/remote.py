@@ -34,9 +34,26 @@ def saved_remote_route(meeting: dict):
             for key in ("fingerprint", "family", "model")
         ):
             raise ValueError
-        return route
     except (TypeError, ValueError) as exc:
         raise ValueError("This meeting's remote speech configuration is invalid.") from exc
+    if _is_this_computer(route["fingerprint"]):
+        # A paired computer's meeting stored here, transcribed by this very
+        # computer's engine: re-running it here is local speech.
+        return None
+    return route
+
+
+def _is_this_computer(fingerprint: str) -> bool:
+    import hmac
+
+    from services.remote_asr.service import _default_identity_dir
+    from services.remote_asr.tls import own_fingerprint
+
+    try:
+        own = own_fingerprint(_default_identity_dir())
+    except Exception:
+        return False
+    return bool(own) and hmac.compare_digest(own, str(fingerprint).upper())
 
 
 class MeetingRemoteBackend(RemoteSpeechBackend):

@@ -38,6 +38,8 @@ _JSON_FIELDS = (
     "audio_duration",
     "file_size",
     "source_name",
+    "origin_device_id",
+    "origin_device_name",
 )
 
 
@@ -59,6 +61,9 @@ def serialize_history_entry(entry: Any) -> Dict[str, Any]:
         "audio_duration": getattr(entry, "audio_duration", None),
         "file_size": getattr(entry, "file_size", None),
         "source_name": getattr(entry, "source_name", None),
+        # Set on a host for the entries a paired computer keeps there.
+        "origin_device_id": getattr(entry, "origin_device_id", None),
+        "origin_device_name": getattr(entry, "origin_device_name", None),
         "formatted_timestamp": format_timestamp(timestamp) if timestamp else "",
         "preview_text": _preview_text(text),
         "has_audio": bool(audio_file),
@@ -268,6 +273,8 @@ def _render_markdown(
     source_name = entry.get("source_name")
     if source_name:
         facts.append(f"- Source: {source_name}")
+    if entry.get("origin_device_name"):
+        facts.append(f"- From: {entry['origin_device_name']}")
     duration = entry.get("audio_duration")
     if duration is not None:
         facts.append(f"- Duration: {format_audio_duration(duration)}")

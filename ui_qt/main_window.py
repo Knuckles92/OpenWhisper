@@ -1334,7 +1334,8 @@ class MainWindow(QMainWindow):
             self.history_sidebar.refresh()
 
     def _on_history_entry_selected(self, entry_id: str):
-        entry = history_manager.get_entry_by_id(entry_id)
+        # Or one the paired host keeps for this computer.
+        entry = self.history_sidebar.entry_for(entry_id)
         if not entry:
             return
 
@@ -1352,6 +1353,10 @@ class MainWindow(QMainWindow):
             self.on_show_copied_animation()
 
     def _on_history_entry_delete_requested(self, entry_id: str):
+        entry = self.history_sidebar.entry_for(entry_id)
+        if getattr(entry, "stored_on", None):
+            self.history_sidebar.delete_remote_entry(entry_id)
+            return
         if history_manager.delete_entry(entry_id):
             self.refresh_history()
             self._on_history_entry_deleted(entry_id)

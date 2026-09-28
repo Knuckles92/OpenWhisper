@@ -110,18 +110,57 @@ def _entry_was_cleaned(entry: HistoryEntry) -> bool:
     return bool(entry.cleanup_model or entry.raw_text)
 
 
+def _record_sync():
+    from services.remote_records.sync import record_sync
+
+    return record_sync
+
+
+def remote_history_entry(item: dict) -> HistoryEntry:
+    """A host-kept entry (from ``RecordSync.list_remote``) in the shape History renders.
+
+    A transient row, never added to this computer's database. ``stored_on``
+    names the host; ``remote_audio`` says whether it kept the recording.
+    """
+    fields = {name: item.get(name) for name in (
+        "id", "text", "raw_text", "timestamp", "model", "transcription_time",
+        "audio_duration", "file_size", "cleanup_provider", "cleanup_model", "source_name",
+    )}
+    entry = HistoryEntry(**fields)
+    entry.stored_on = str(item.get("stored_on") or "the host")
+    entry.remote_audio = bool(item.get("has_audio"))
+    return entry
+
+
+def _location_chip(entry) -> tuple[str, str]:
+    """``(text, tooltip)`` for where an entry is kept, or empty."""
+    stored_on = getattr(entry, "stored_on", None)
+    if stored_on:
+        return f"On {stored_on}", f"Kept on {stored_on}; opened from there"
+    also_on = getattr(entry, "also_on", None)
+    if also_on:
+        return f"Also on {also_on}", f"Kept here and on {also_on}"
+    origin = getattr(entry, "origin_device_name", None)
+    if origin:
+        return f"From {origin}", f"Kept here for {origin}, a paired computer"
+    return "", ""
+
+
 class HistoryItemWidget(QFrame):
     clicked = pyqtSignal(str)
     copy_requested = pyqtSignal(str)
     copy_raw_requested = pyqtSignal(str)
     delete_requested = pyqtSignal(str)
     retranscribe_requested = pyqtSignal(str)
+    _remote_audio_ready = pyqtSignal(str, str)
 
     def __init__(self, entry: HistoryEntry, parent=None):
         super().__init__(parent)
         self.entry = entry
         self._audio_path = None
-        if self.entry.audio_file:
+        self._stored_on = getattr(entry, "stored_on", None)
+        self._remote_audio_ready.connect(self._on_remote_audio_ready)
+        if self.entry.audio_file and not self._stored_on:
             self._audio_path = history_manager.get_recording_path(self.entry.audio_file)
         self.setObjectName("historyItem")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -130,6 +169,12 @@ class HistoryItemWidget(QFrame):
 
         self._setup_ui()
         self._apply_style()
+
+    @property
+    def _has_audio(self) -> bool:
+        if self._stored_on:
+            return bool(getattr(self.entry, "remote_audio", False))
+        return bool(self._audio_path)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -150,7 +195,7 @@ class HistoryItemWidget(QFrame):
             self.timestamp_label, 0, Qt.AlignmentFlag.AlignVCenter
         )
 
-        if self._audio_path:
+        if self._has_audio:
             chip_text = (
                 format_file_size(self.entry.file_size)
                 if self.entry.file_size
@@ -184,8 +229,23 @@ class HistoryItemWidget(QFrame):
 
         layout.addLayout(top_row)
 
-        # Cleanup chip on its own row — the top row is already full, and the
-        # provider/model string is too long to share it.
+        # Cleanup and location chips share their own row: the top row is
+        # already full, and the provider/model string is too long to share it.
+        location_text, location_tip = _location_chip(self.entry)
+        chips = []
+        if location_text:
+            self.location_chip = QLabel()
+            self.location_chip.setObjectName("historyLocationChip")
+            self.location_chip.setFont(QFont("Segoe UI", 9))
+            self.location_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.location_chip.setToolTip(location_tip)
+            self.location_chip.setFixedHeight(20)
+            self.location_chip.setText(
+                self.location_chip.fontMetrics().elidedText(
+                    location_text, Qt.TextElideMode.ElideRight, 110
+                )
+            )
+            chips.append(self.location_chip)
         if _entry_was_cleaned(self.entry):
             cleanup_chip = QLabel()
             cleanup_chip.setObjectName("historyCleanupChip")
@@ -194,7 +254,7 @@ class HistoryItemWidget(QFrame):
             chip_text = f"✦ {_format_cleanup_info(self.entry)}"
             cleanup_chip.setText(
                 cleanup_chip.fontMetrics().elidedText(
-                    chip_text, Qt.TextElideMode.ElideRight, 280
+                    chip_text, Qt.TextElideMode.ElideRight, 150 if chips else 280
                 )
             )
             if self.entry.cleanup_model:
@@ -205,11 +265,15 @@ class HistoryItemWidget(QFrame):
                 cleanup_chip.setToolTip(
                     "Transcript was cleaned (model not recorded)"
                 )
-            cleanup_row = QHBoxLayout()
-            cleanup_row.setContentsMargins(0, 0, 0, 0)
-            cleanup_row.addWidget(cleanup_chip, 0, Qt.AlignmentFlag.AlignVCenter)
-            cleanup_row.addStretch()
-            layout.addLayout(cleanup_row)
+            chips.insert(0, cleanup_chip)
+        if chips:
+            chips_row = QHBoxLayout()
+            chips_row.setContentsMargins(0, 0, 0, 0)
+            chips_row.setSpacing(8)
+            for chip in chips:
+                chips_row.addWidget(chip, 0, Qt.AlignmentFlag.AlignVCenter)
+            chips_row.addStretch()
+            layout.addLayout(chips_row)
 
         source_name = (getattr(self.entry, "source_name", None) or "").strip()
         if source_name:
@@ -235,7 +299,7 @@ class HistoryItemWidget(QFrame):
         )
         layout.addWidget(self.preview_label)
 
-        if self._audio_path:
+        if self._has_audio:
             footer = QHBoxLayout()
             footer.setContentsMargins(0, 2, 0, 0)
             footer.setSpacing(8)
@@ -249,11 +313,42 @@ class HistoryItemWidget(QFrame):
                 "Run this recording through the current model "
                 "using the current AI cleanup setting"
             )
-            self.retranscribe_btn.clicked.connect(
-                lambda: self.retranscribe_requested.emit(self._audio_path)
-            )
+            self.retranscribe_btn.clicked.connect(self._request_retranscribe)
             footer.addWidget(self.retranscribe_btn)
             layout.addLayout(footer)
+
+    def _request_retranscribe(self) -> None:
+        """Transcribe the recording again, fetching it first when the host keeps it."""
+        if not self._stored_on:
+            if self._audio_path:
+                self.retranscribe_requested.emit(self._audio_path)
+            return
+        button = getattr(self, "retranscribe_btn", None)
+        if button is not None:
+            button.setEnabled(False)
+            button.setText(f"Getting it from {self._stored_on}…")
+        entry_id = self.entry.id
+
+        def fetch() -> None:
+            try:
+                path = _record_sync().audio_for(entry_id)
+            except Exception as exc:
+                logger.warning("Could not fetch a recording from the host: %s", exc)
+                self._remote_audio_ready.emit("", str(exc) or type(exc).__name__)
+                return
+            self._remote_audio_ready.emit(path, "")
+
+        threading.Thread(target=fetch, name="history-remote-audio", daemon=True).start()
+
+    def _on_remote_audio_ready(self, path: str, error: str) -> None:
+        button = getattr(self, "retranscribe_btn", None)
+        if button is not None:
+            button.setEnabled(True)
+            button.setText("Transcribe again")
+            if error:
+                button.setToolTip(f"Couldn't get the recording: {error}")
+        if path:
+            self.retranscribe_requested.emit(path)
 
     def _apply_style(self):
         self.setStyleSheet("""
@@ -278,6 +373,15 @@ class HistoryItemWidget(QFrame):
                 padding: 0px 8px;
                 font-size: 10px;
                 font-weight: 500;
+            }
+            QLabel#historyLocationChip {
+                background-color: rgba(@success-rgb, 0.10);
+                color: @success-text;
+                border: 1px solid rgba(@success-rgb, 0.24);
+                border-radius: 6px;
+                padding: 0px 8px;
+                font-size: 10px;
+                font-weight: 600;
             }
             QLabel#historyModelBadge {
                 background-color: rgba(@accent-rgb, 0.14);
@@ -342,11 +446,9 @@ class HistoryItemWidget(QFrame):
                 lambda: self.copy_requested.emit(self.entry.id)
             )
 
-        if self._audio_path:
+        if self._has_audio:
             retranscribe_action = menu.addAction("Transcribe again")
-            retranscribe_action.triggered.connect(
-                lambda: self.retranscribe_requested.emit(self._audio_path)
-            )
+            retranscribe_action.triggered.connect(self._request_retranscribe)
 
         # Always listed so the menu keeps its shape, but only live for entries
         # whose recording is still on disk.
@@ -395,6 +497,10 @@ class HistorySidebar(QWidget):
     # resize in lockstep (keeps the main content area a constant width).
     width_animated = pyqtSignal(int)
     _history_loaded = pyqtSignal(int, str, object, str)
+    _remote_deleted = pyqtSignal(str, str)
+    #: History waits this long for the host's entries before showing this
+    #: computer's alone; the host's are merged in when they arrive.
+    REMOTE_MERGE_WAIT_S = 0.4
 
     COLLAPSED_WIDTH = 0
     EXPANDED_WIDTH = config.MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH
@@ -408,11 +514,16 @@ class HistorySidebar(QWidget):
         self._refresh_pending = True
         self._meeting_mode = False
         self._history_load_generation = 0
+        #: Host-kept entries shown now, by id, for opening, copying, deleting.
+        self._remote_entries = {}
+        #: Entries kept here and copied to the host: id -> the host's name.
+        self._also_on = {}
 
         self._setup_ui()
         self._setup_meetings_ui()
         self._apply_style()
         self._history_loaded.connect(self._apply_history_results)
+        self._remote_deleted.connect(self._on_remote_deleted)
 
         self.setMinimumWidth(self.COLLAPSED_WIDTH)
         self.setMaximumWidth(self.COLLAPSED_WIDTH)
@@ -725,11 +836,12 @@ class HistorySidebar(QWidget):
                 self._make_empty_label("Loading history…")
             )
 
+        limit = self.MAX_HISTORY_ITEMS + 1
+
         def load() -> None:
             entries = []
             error = ""
             try:
-                limit = self.MAX_HISTORY_ITEMS + 1
                 if query:
                     entries = history_manager.search_history(query, limit=limit)
                 else:
@@ -737,13 +849,72 @@ class HistorySidebar(QWidget):
             except Exception as exc:
                 logger.error("Failed to load transcription history: %s", exc)
                 error = str(exc)
-            self._history_loaded.emit(generation, query, entries, error)
+            if error:
+                self._history_loaded.emit(generation, query, entries, error)
+                return
+            remote = self._start_remote_listing(query, limit, entries)
+            if remote is None:
+                self._history_loaded.emit(generation, query, entries, "")
+                return
+            done, merged = remote
+            if not done.wait(self.REMOTE_MERGE_WAIT_S):
+                # Show this computer's entries now rather than wait on the host.
+                self._history_loaded.emit(generation, query, entries, "")
+                done.wait()
+            self._history_loaded.emit(generation, query, merged(), "")
 
         threading.Thread(
             target=load,
             name="history-sidebar-load",
             daemon=True,
         ).start()
+
+    def _start_remote_listing(self, query: str, limit: int, entries):
+        """Ask the host for this computer's entries it keeps, on another thread.
+
+        Returns ``(done, merged)``: ``merged()`` is ``entries`` with the
+        host's merged in by time, copies kept on both marked, and a note row
+        when the host couldn't be asked. None when there's nothing to ask.
+        """
+        try:
+            records = _record_sync()
+            if not records.listing_wanted("dictation"):
+                return None
+        except Exception:
+            logger.debug("Record sync unavailable for History", exc_info=True)
+            return None
+        done = threading.Event()
+        result = {"items": [], "notice": "", "copies": set()}
+
+        def fetch() -> None:
+            try:
+                result["copies"] = records.copies_on_host("dictation", [e.id for e in entries])
+                result["items"] = records.list_remote("dictation", query, limit)
+            except Exception as exc:
+                result["notice"] = str(exc)
+            finally:
+                done.set()
+
+        threading.Thread(target=fetch, name="history-remote-load", daemon=True).start()
+
+        def merged():
+            local_ids = {entry.id for entry in entries}
+            host = ""
+            for item in result["items"]:
+                host = item.get("stored_on") or host
+            try:
+                host = host or records.status().host_name
+            except Exception:
+                pass
+            for entry in entries:
+                if entry.id in result["copies"]:
+                    entry.also_on = host or "the host"
+            remote = [remote_history_entry(item) for item in result["items"]
+                      if item.get("id") not in local_ids]
+            combined = sorted([*entries, *remote], key=lambda e: e.timestamp or "", reverse=True)
+            return {"entries": combined[:limit], "notice": result["notice"]}
+
+        return done, merged
 
     def _apply_history_results(
         self,
@@ -762,7 +933,26 @@ class HistorySidebar(QWidget):
             )
             return
 
+        notice = ""
+        if isinstance(entries, dict):
+            # Merged with the host's: see _start_remote_listing.
+            notice = str(entries.get("notice") or "")
+            entries = entries.get("entries")
         entries = list(entries or [])
+        self._remote_entries = {
+            entry.id: entry for entry in entries if getattr(entry, "stored_on", None)
+        }
+        self._also_on = {
+            entry.id: entry.also_on for entry in entries if getattr(entry, "also_on", None)
+        }
+        if notice:
+            note = self._make_empty_label(
+                f"{notice} Entries kept there show when it is."
+                if "reachable" in notice else notice
+            )
+            note.setObjectName("historyRemoteNotice")
+            note.setWordWrap(True)
+            self.history_list_layout.addWidget(note)
         has_more = len(entries) > self.MAX_HISTORY_ITEMS
         shown = entries[:self.MAX_HISTORY_ITEMS]
 
@@ -795,14 +985,18 @@ class HistorySidebar(QWidget):
                 )
             )
 
+    def entry_for(self, entry_id: str):
+        """This computer's entry, or a host-kept one this list is showing."""
+        return history_manager.get_entry_by_id(entry_id) or self._remote_entries.get(entry_id)
+
     def _on_entry_clicked(self, entry_id: str):
-        entry = history_manager.get_entry_by_id(entry_id)
+        entry = self.entry_for(entry_id)
         if entry:
             self.entry_selected.emit(entry_id)
             logger.debug(f"Entry selected: {entry_id[:8]}...")
 
     def _on_copy_requested(self, entry_id: str):
-        entry = history_manager.get_entry_by_id(entry_id)
+        entry = self.entry_for(entry_id)
         if entry:
             try:
                 clipboard = QApplication.clipboard()
@@ -813,7 +1007,7 @@ class HistorySidebar(QWidget):
                 logger.error(f"Failed to copy to clipboard: {e}")
 
     def _on_copy_raw_requested(self, entry_id: str):
-        entry = history_manager.get_entry_by_id(entry_id)
+        entry = self.entry_for(entry_id)
         if entry and entry.raw_text:
             try:
                 clipboard = QApplication.clipboard()
@@ -834,21 +1028,30 @@ class HistorySidebar(QWidget):
             logger.warning("Failed to load history deletion preference: %s", exc)
             should_confirm = True
 
+        remote = self._remote_entries.get(entry_id)
+        also_on = self._also_on.get(entry_id)
         if should_confirm is not False:
             confirmation = QMessageBox(self)
             confirmation.setIcon(QMessageBox.Icon.Warning)
             confirmation.setWindowTitle("Delete History Entry")
-            confirmation.setText("Delete this transcription from history?")
-            confirmation.setInformativeText(
-                "This cannot be undone."
-            )
+            if remote is not None:
+                confirmation.setText(f"Delete this transcription from {remote.stored_on}?")
+                confirmation.setInformativeText(
+                    "Its recording there is deleted too. This cannot be undone."
+                )
+            else:
+                confirmation.setText("Delete this transcription from history?")
+                confirmation.setInformativeText(
+                    f"This cannot be undone. Its copy on {also_on} is deleted too."
+                    if also_on else "This cannot be undone."
+                )
             confirmation.setStandardButtons(
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             confirmation.setDefaultButton(QMessageBox.StandardButton.No)
 
             audio_choice = None
-            entry = history_manager.get_entry_by_id(entry_id)
+            entry = None if remote is not None else history_manager.get_entry_by_id(entry_id)
             audio_path = (
                 history_manager.get_recording_path(entry.audio_file)
                 if entry and entry.audio_file
@@ -898,6 +1101,9 @@ class HistorySidebar(QWidget):
                         exc,
                     )
 
+        if remote is not None:
+            self.delete_remote_entry(entry_id)
+            return
         if history_manager.delete_entry(
             entry_id,
             delete_audio_file=delete_audio_file,
@@ -905,6 +1111,41 @@ class HistorySidebar(QWidget):
             self.entry_deleted.emit(entry_id)
             self.refresh()  # Refresh the list
             logger.info(f"Deleted entry: {entry_id[:8]}...")
+
+    def delete_remote_entry(self, entry_id: str) -> None:
+        """Delete a host-kept entry there, off the UI thread."""
+        def work() -> None:
+            try:
+                _record_sync().delete_remote("dictation", entry_id)
+            except Exception as exc:
+                logger.warning("Could not delete a host-kept entry: %s", exc)
+                self._remote_deleted.emit(entry_id, str(exc) or type(exc).__name__)
+                return
+            self._remote_deleted.emit(entry_id, "")
+
+        threading.Thread(target=work, name="history-remote-delete", daemon=True).start()
+
+    def _on_remote_deleted(self, entry_id: str, error: str) -> None:
+        if error:
+            QMessageBox.warning(
+                self, "Delete History Entry", f"The entry couldn't be deleted: {error}"
+            )
+            return
+        self._remote_entries.pop(entry_id, None)
+        self.entry_deleted.emit(entry_id)
+        self.refresh()
+        logger.info(f"Deleted host-kept entry: {entry_id[:8]}...")
+
+    def _host_clear_note(self) -> str:
+        """What a clear here also deletes on the paired host, if anything."""
+        try:
+            records = _record_sync()
+            if not records.listing_wanted("dictation"):
+                return ""
+            host = records.status().host_name or "the host"
+        except Exception:
+            return ""
+        return f"\n\nThis computer's entries on {host} are deleted too."
 
     def _show_header_menu(self):
         menu = QMenu(self)
@@ -930,7 +1171,8 @@ class HistorySidebar(QWidget):
         reply = QMessageBox.question(
             self,
             "Clear History",
-            "Delete all history entries?\n\nSaved recordings will be kept.",
+            "Delete all history entries?\n\nSaved recordings will be kept."
+            + self._host_clear_note(),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -945,7 +1187,8 @@ class HistorySidebar(QWidget):
             self,
             "Clear History and Recordings",
             "Delete all history entries AND permanently delete all saved "
-            "recordings from disk?\n\nThis cannot be undone.",
+            "recordings from disk?\n\nThis cannot be undone."
+            + self._host_clear_note(),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

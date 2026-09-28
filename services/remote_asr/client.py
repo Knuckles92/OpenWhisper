@@ -40,6 +40,14 @@ class RemoteEngineError(RuntimeError):
     """A user-facing reason the remote engine can't be used right now."""
 
 
+class RemoteRequestError(RuntimeError):
+    """The host answered a request with an error; ``code`` names the kind, if any."""
+
+    def __init__(self, message: str, *, code=None):
+        super().__init__(message)
+        self.code = code if isinstance(code, str) else None
+
+
 class RemoteConnectionLost(RemoteEngineError):
     """The connection dropped. ``sent`` says whether the host got the request."""
 
@@ -422,14 +430,17 @@ class RemoteConnection:
                 self._beats += 1
             self._stopped.wait(KEEPALIVE_INTERVAL_S)
 
-    def request(self, op: str, *, timeout: float = 180.0, audio=None, **fields) -> dict:
-        return self.request_timed(op, timeout=timeout, audio=audio, **fields)[0]
+    def request(self, op: str, *, timeout: float = 180.0, audio=None,
+                payload: Optional[bytes] = None, **fields) -> dict:
+        return self.request_timed(op, timeout=timeout, audio=audio, payload=payload, **fields)[0]
 
     def request_timed(self, op: str, *, timeout: float = 180.0, audio=None,
+                      payload: Optional[bytes] = None,
                       **fields) -> tuple[dict, Optional[float]]:
         """``request``, plus the seconds the host says it spent on it.
 
         The host's time is None from a host too old to report it.
+        ``payload`` sends raw bytes (a record's file) in place of audio.
         """
         from websockets.exceptions import ConnectionClosed
 
@@ -441,7 +452,8 @@ class RemoteConnection:
                 self._serial += 1
                 serial = self._serial
             try:
-                ws.send(protocol.pack_request({"id": serial, "op": op, **fields}, audio))
+                ws.send(protocol.pack_request({"id": serial, "op": op, **fields}, audio,
+                                              payload=payload))
             except (ConnectionClosed, OSError) as exc:
                 self._mark_closed()
                 raise RemoteConnectionLost(
@@ -484,7 +496,7 @@ class RemoteConnection:
                     self._mark_closed()
                     raise RemoteConnectionLost(str(reply.get("error")), sent=True)
                 if "error" in reply:
-                    raise RuntimeError(str(reply["error"]))
+                    raise RemoteRequestError(str(reply["error"]), code=reply.get("code"))
                 result = reply.get("result")
                 host_ms = reply.get("host_ms")
                 host_s = host_ms / 1000 if isinstance(host_ms, (int, float)) and host_ms >= 0 else None

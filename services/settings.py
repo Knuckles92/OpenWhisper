@@ -179,6 +179,11 @@ class SettingsKey:
     REMOTE_HOST_DEVICES: Final[str] = "remote_host_devices"
     # Let computers signed in to the same Tailscale account pair without a code.
     REMOTE_HOST_TAILSCALE_TRUST: Final[str] = "remote_host_tailscale_trust"
+    # Host opt-in: keep paired computers' records (history, meetings) here.
+    REMOTE_HOST_KEEP_RECORDS: Final[str] = "remote_host_keep_records"
+    # Client: where this computer's records are kept while paired:
+    # "local" (default), "host" (moved there), or "both" (copied there).
+    REMOTE_RECORDS_LOCATION: Final[str] = "remote_records_location"
     # TypeSafe fast judgments. The master switch gates every remote judgment;
     # each feature has its own switch so one can be trialled at a time.
     TYPESAFE_ENABLED: Final[str] = "typesafe_enabled"

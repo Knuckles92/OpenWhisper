@@ -7,6 +7,7 @@ threads and are re-posted to the UI thread the same way.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from datetime import datetime
@@ -14,7 +15,17 @@ from typing import Callable, Optional
 
 from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QButtonGroup,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from services.remote_asr import protocol
 from ui_qt.utils.palette import current_palette
@@ -29,6 +40,8 @@ from ui_qt.widgets import (
     WrappedLabel,
 )
 
+logger = logging.getLogger(__name__)
+
 #: The engine's ``config.MODEL_CHOICES`` label.
 REMOTE_ENGINE_DISPLAY = "Remote computer"
 TAILSCALE_DOWNLOAD_URL = "https://tailscale.com/download"
@@ -41,6 +54,31 @@ def _paired_on(iso: str) -> str:
         return datetime.fromisoformat(iso).astimezone().strftime("%b %d, %Y").replace(" 0", " ")
     except (TypeError, ValueError):
         return ""
+
+
+def _size(size: int) -> str:
+    from services.format_utils import format_file_size
+
+    return format_file_size(size)
+
+
+def _stored_phrase(stored: dict) -> str:
+    """``12 dictations and 3 meetings (1.2 GB)``, or "" when there are none."""
+    parts = []
+    total = 0
+    for kind, one, many in (("dictation", "dictation", "dictations"), ("meeting", "meeting", "meetings")):
+        summary = stored.get(kind) if isinstance(stored, dict) else None
+        count = int((summary or {}).get("count") or 0)
+        total += int((summary or {}).get("bytes") or 0)
+        if count:
+            parts.append(f"{count} {one if count == 1 else many}")
+    if not parts:
+        return ""
+    return f"{' and '.join(parts)} ({_size(total)})" if total else " and ".join(parts)
+
+
+#: The storage choices, in the order the switch shows them.
+RECORD_LOCATIONS = ("local", "host", "both")
 
 
 def _engine_phrase(engine: dict) -> str:
@@ -61,10 +99,23 @@ class RemoteEngineSection(QObject):
     _service_event = pyqtSignal(str)
     _pair_finished = pyqtSignal(object, str)
     _scan_finished = pyqtSignal(object)
+    _records_event = pyqtSignal(str)
+    _records_job_done = pyqtSignal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, records=None):
         super().__init__(parent)
         self._service = None
+        # The record sync (services/remote_records/sync.py); tests pass their own.
+        if records is None:
+            from services.remote_records.sync import record_sync
+
+            records = record_sync
+        self._records = records
+        self._records_busy = ""
+        self._records_note = ""
+        self._records_listener = lambda kind: self._records_event.emit(kind)
+        self._records_event.connect(self._on_records_event)
+        self._records_job_done.connect(self._on_records_job_done)
         self._select_engine: Optional[Callable[[str], None]] = None
         self._set_rail_value: Optional[Callable[[str], None]] = None
         self._pairing_busy = False
@@ -152,6 +203,55 @@ class RemoteEngineSection(QObject):
         self.client_message.setObjectName("remoteClientMessage")
         self.client_tile.add_body(self.client_message)
 
+        # Client: where this computer's history, recordings and meetings go.
+        self.storage_tile = InfoTile(
+            "Where records are kept",
+            "",
+            icon("box-blue.svg"),
+        )
+        self.storage_tile.setObjectName("remoteStorageTile")
+        switch = QFrame()
+        switch.setObjectName("recordsLocationSwitch")
+        switch_layout = QHBoxLayout(switch)
+        switch_layout.setContentsMargins(2, 2, 2, 2)
+        switch_layout.setSpacing(2)
+        self._location_group = QButtonGroup(self)
+        self.location_buttons = {}
+        for location, label in zip(RECORD_LOCATIONS, ("This computer", "Host", "Both")):
+            button = QPushButton(label)
+            button.setObjectName("recordsLocationBtn")
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setMinimumHeight(30)
+            button.clicked.connect(lambda _checked=False, value=location: self._choose_location(value))
+            self._location_group.addButton(button)
+            switch_layout.addWidget(button)
+            self.location_buttons[location] = button
+        switch_row = QHBoxLayout()
+        switch_row.setContentsMargins(0, 0, 0, 0)
+        switch_row.addWidget(switch)
+        switch_row.addStretch(1)
+        self.storage_tile.add_body_layout(switch_row)
+        self.storage_status = WrappedLabel("")
+        self.storage_status.setObjectName("remoteStorageStatus")
+        self.storage_tile.add_body(self.storage_status)
+        storage_actions = QHBoxLayout()
+        storage_actions.setContentsMargins(0, 0, 0, 0)
+        self.send_existing_button = Button("Move existing records")
+        self.send_existing_button.setObjectName("remoteSendExistingButton")
+        self.send_existing_button.clicked.connect(self._send_existing)
+        self.bring_back_button = Button("Bring records back")
+        self.bring_back_button.setObjectName("remoteBringBackButton")
+        self.bring_back_button.clicked.connect(self._bring_back)
+        self.retry_records_button = Button("Try again")
+        self.retry_records_button.setObjectName("remoteRetryRecordsButton")
+        self.retry_records_button.clicked.connect(lambda: self._records.wake(now=True))
+        storage_actions.addWidget(self.send_existing_button)
+        storage_actions.addWidget(self.bring_back_button)
+        storage_actions.addWidget(self.retry_records_button)
+        storage_actions.addStretch(1)
+        self.storage_tile.add_body_layout(storage_actions)
+
         # Client, over Tailscale: computers on the tailnet that are sharing.
         self.tailnet_tile = InfoTile(
             "Computers on your tailnet",
@@ -177,7 +277,7 @@ class RemoteEngineSection(QObject):
         dialog._tile_group(
             layout,
             "Use another computer",
-            [self.client_tile, self.tailnet_tile],
+            [self.client_tile, self.storage_tile, self.tailnet_tile],
             columns=1,
             intro=(
                 "Dictate or record meetings here while a faster computer does the transcription, on "
@@ -227,6 +327,19 @@ class RemoteEngineSection(QObject):
         )
         self.management_tile.setObjectName("remoteModelManagementTile")
         self.management_tile.checkbox.toggled.connect(self._on_model_management_toggled)
+
+        self.keep_records_tile = SettingTile(
+            "Keep records for paired computers",
+            "Off by default. Paired computers can choose to keep their dictation history, "
+            "recordings and meetings here, instead of or as well as on themselves. They show "
+            "in this computer's History and Past Meetings, marked with the computer they came "
+            "from, and use its storage. Each computer can see and delete only its own. "
+            "Turning this off stops new ones; what's kept stays until that computer brings "
+            "it back or you remove it below.",
+            icon("box-blue.svg"),
+        )
+        self.keep_records_tile.setObjectName("remoteKeepRecordsTile")
+        self.keep_records_tile.checkbox.toggled.connect(self._on_keep_records_toggled)
 
         self.port_spin = NoWheelSpinBox()
         self.port_spin.setObjectName("remotePortSpin")
@@ -289,7 +402,8 @@ class RemoteEngineSection(QObject):
         dialog._tile_group(
             layout,
             "Share this computer",
-            [self.share_tile, self.management_tile, self.tailscale_tile, self.port_tile, self.devices_tile],
+            [self.share_tile, self.management_tile, self.keep_records_tile, self.tailscale_tile,
+             self.port_tile, self.devices_tile],
             columns=1,
         )
         self._built = True
@@ -301,18 +415,24 @@ class RemoteEngineSection(QObject):
         if service is not self._service:
             if self._service is not None:
                 self._service.remove_listener(self._listener)
+                self._records.remove_listener(self._records_listener)
             self._service = service
             self._scan = None
             self._scan_at = 0.0
             if service is not None:
                 service.add_listener(self._listener)
+                self._records.add_listener(self._records_listener)
         self.refresh()
         if self._built and self.client_tile.isVisible():
             self.on_shown()
 
     def on_shown(self) -> None:
-        """The page came into view: look for hosts on the tailnet if unpaired."""
-        if self._service is None or self._service.client_pairing() is not None:
+        """The page came into view: ask the host what it keeps, or look for hosts."""
+        if self._service is None:
+            return
+        if self._service.client_pairing() is not None:
+            threading.Thread(target=self._records.refresh_summary,
+                             name="remote-records-summary", daemon=True).start()
             return
         if time.monotonic() - self._scan_at > TAILNET_RESCAN_S:
             self.scan_tailnet()
@@ -324,7 +444,8 @@ class RemoteEngineSection(QObject):
             return
         service = self._service
         for widget in (self.client_tile, self.tailnet_tile, self.share_tile,
-                       self.management_tile, self.tailscale_tile, self.port_tile, self.devices_tile):
+                       self.management_tile, self.keep_records_tile, self.tailscale_tile,
+                       self.port_tile, self.devices_tile):
             widget.setEnabled(service is not None)
         if service is None:
             self.client_tile.set_description("The remote engine isn't available in this window.")
@@ -333,10 +454,82 @@ class RemoteEngineSection(QObject):
             self.pairing_box.hide()
             self.tailnet_tile.hide()
             self.tailscale_tile.hide()
+            self.storage_tile.hide()
             return
         self._refresh_client(service)
+        self._refresh_records()
         self._refresh_tailnet(service)
         self._refresh_host(service)
+
+    def _refresh_records(self) -> None:
+        """The storage tile: the choice, what's on the host, what's under way."""
+        if not self._built:
+            return
+        try:
+            status = self._records.status()
+        except Exception as exc:
+            self.storage_tile.hide()
+            logger.warning("Record sync status failed: %s", exc)
+            return
+        self.storage_tile.setVisible(self._service is not None and status.paired)
+        if not status.paired:
+            return
+        host = status.host_name or "the host"
+        host_button = self.location_buttons["host"]
+        host_button.setText(host_button.fontMetrics().elidedText(
+            host, Qt.TextElideMode.ElideMiddle, 160))
+        host_button.setToolTip(f"Keep records on {host}")
+        for location, button in self.location_buttons.items():
+            button.setChecked(location == status.location)
+            button.setEnabled(not self._records_busy)
+        self.storage_tile.set_description({
+            "local": "History, recordings and meetings stay on this computer.",
+            "host": (f"New dictations and meetings move to {host} once it has checked "
+                     "them. History and Past Meetings list them from there."),
+            "both": (f"New dictations and meetings stay here and are copied to {host}. "
+                     "Deleting one here deletes both copies."),
+        }[status.location])
+
+        stored = _stored_phrase(status.stored)
+        lines = []
+        if self._records_busy:
+            lines.append(self._records_busy)
+        elif status.active:
+            lines.append(status.active)
+        if status.host_supports is False and status.location != "local":
+            lines.append(f"Update OpenWhisper on {host} to keep records there.")
+        elif status.host_keeps is False and status.location != "local":
+            lines.append(
+                f"{host} isn't keeping records for other computers yet. On {host}, turn on "
+                "\"Keep records for paired computers\" under Settings → Remote engine."
+            )
+        elif status.waiting and not status.active:
+            lines.append(status.waiting)
+        if status.pending and not status.active and not self._records_busy:
+            lines.append(f"{status.pending} waiting to be sent.")
+        if status.error and status.pending and not status.active:
+            lines.append(status.error)
+        if stored:
+            lines.append(f"On {host}: {stored}.")
+        if self._records_note:
+            lines.append(self._records_note)
+        self.storage_status.setText(" ".join(lines))
+        self.storage_status.setVisible(bool(lines))
+
+        blocked = bool(self._records_busy)
+        self.send_existing_button.setVisible(status.location != "local")
+        self.send_existing_button.setText(
+            "Move existing records" if status.location == "host" else "Copy existing records"
+        )
+        self.send_existing_button.setToolTip(
+            f"Send the records already on this computer to {host} too"
+        )
+        self.send_existing_button.setEnabled(not blocked and status.host_keeps is not False)
+        has_stored = bool(stored)
+        self.bring_back_button.setVisible(has_stored)
+        self.bring_back_button.setToolTip(f"Move everything {host} keeps for this computer back here")
+        self.bring_back_button.setEnabled(not blocked)
+        self.retry_records_button.setVisible(bool(status.pending and status.error and not status.active))
 
     def _refresh_client(self, service) -> None:
         pairing = service.client_pairing()
@@ -500,11 +693,13 @@ class RemoteEngineSection(QObject):
         self.port_spin.setValue(int(state["port"] or protocol.DEFAULT_PORT))
         self.port_spin.blockSignals(blocked)
 
-        checkbox = self.management_tile.checkbox
-        blocked = checkbox.blockSignals(True)
-        checkbox.setChecked(state.get("model_management") is True)
-        self.management_tile._sync_checked_property(checkbox.isChecked())
-        checkbox.blockSignals(blocked)
+        for tile, key in ((self.management_tile, "model_management"),
+                          (self.keep_records_tile, "keep_records")):
+            checkbox = tile.checkbox
+            blocked = checkbox.blockSignals(True)
+            checkbox.setChecked(state.get(key) is True)
+            tile._sync_checked_property(checkbox.isChecked())
+            checkbox.blockSignals(blocked)
 
         running = state["running"]
         where = protocol.format_address(state["address"] or state["host_name"], state["port"])
@@ -617,6 +812,9 @@ class RemoteEngineSection(QObject):
             if paired:
                 via = " over Tailscale" if device.get("via") == "tailscale" else ""
                 details.append(f"paired {paired}{via}")
+            stored = _stored_phrase(self._device_records(device.get("id")))
+            if stored:
+                details.append(f"keeps {stored} here")
             label = WrappedLabel(" · ".join(details))
             label.setObjectName("remoteDeviceLabel")
             remove = DangerButton("Remove")
@@ -720,6 +918,19 @@ class RemoteEngineSection(QObject):
 
     def _forget(self) -> None:
         if self._service is not None:
+            status = self._records.status()
+            stored = _stored_phrase(status.stored)
+            if stored:
+                host = status.host_name or "the host"
+                answer = QMessageBox.question(
+                    self.client_tile.window(),
+                    "Forget host",
+                    f"{host} keeps {stored} of this computer's. Once you forget it, "
+                    f"this computer can't list or bring them back; they stay on {host}. "
+                    "Forget it anyway?",
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
             self._service.forget_host()
             self._say("Forgot the host. Pair again to use it.")
             self.scan_tailnet(force=True)
@@ -731,6 +942,91 @@ class RemoteEngineSection(QObject):
     def _on_model_management_toggled(self, checked: bool) -> None:
         if self._service is not None:
             self._service.set_model_management(checked)
+
+    def _on_keep_records_toggled(self, checked: bool) -> None:
+        if self._service is not None:
+            self._service.set_keep_records(checked)
+
+    # ---- where records are kept ----
+
+    def _choose_location(self, location: str) -> None:
+        try:
+            current = self._records.location()
+            if location == current:
+                return
+            self._records.set_location(location)
+        except Exception as exc:
+            self._records_note = f"Couldn't change where records are kept: {exc}"
+        else:
+            status = self._records.status()
+            host = status.host_name or "the host"
+            self._records_note = {
+                "local": (f"New records stay here. Those already on {host} stay there "
+                          "until you bring them back."),
+                "host": f"New records will move to {host}.",
+                "both": f"New records will also be copied to {host}.",
+            }[location]
+        self._refresh_records()
+
+    def _run_records_job(self, busy: str, work: Callable[[], str]) -> None:
+        if self._records_busy:
+            return
+        self._records_busy = busy
+        self._records_note = ""
+        self._refresh_records()
+
+        def run():
+            try:
+                message = work()
+            except Exception as exc:
+                message = str(exc) or type(exc).__name__
+            self._records_job_done.emit(message)
+
+        threading.Thread(target=run, name="remote-records-job", daemon=True).start()
+
+    def _on_records_event(self, kind: str) -> None:
+        if kind.startswith("progress:") and self._records_busy:
+            self._records_busy = kind[len("progress:"):]
+        self._refresh_records()
+
+    def _on_records_job_done(self, message: str) -> None:
+        self._records_busy = ""
+        self._records_note = message
+        self._refresh_records()
+
+    def _send_existing(self) -> None:
+        records = self._records
+
+        def work() -> str:
+            queued = records.send_existing()
+            if not queued:
+                return "Everything here is already on the host."
+            return f"Queued {queued} record{'s' if queued != 1 else ''} to send."
+
+        self._run_records_job("Queuing records…", work)
+
+    def _bring_back(self) -> None:
+        records = self._records
+        status = records.status()
+        host = status.host_name or "the host"
+        if status.location != "local":
+            answer = QMessageBox.question(
+                self.storage_tile.window(),
+                "Bring records back",
+                f"Bring every record on {host} back to this computer, and keep new ones "
+                "here from now on?",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            records.set_location("local")
+
+        def work() -> str:
+            moved = records.bring_back(
+                lambda text: self._records_event.emit("progress:" + text)
+            )
+            return f"Brought {moved} record{'s' if moved != 1 else ''} back from {host}."
+
+        self._run_records_job(f"Bringing records back from {host}…", work)
 
     def _on_tailscale_trust_toggled(self, checked: bool) -> None:
         if self._service is not None:
@@ -750,10 +1046,43 @@ class RemoteEngineSection(QObject):
             self._service.cancel_pairing()
             self.refresh()
 
+    def _device_records(self, device_id) -> dict:
+        if self._service is None or not device_id:
+            return {}
+        try:
+            return self._service.records_summary(device_id)
+        except Exception:
+            logger.debug("Could not count a paired computer's records", exc_info=True)
+            return {}
+
     def _remove_device(self, device_id: str) -> None:
-        if self._service is not None and device_id:
-            self._service.remove_device(device_id)
-            self.refresh()
+        if self._service is None or not device_id:
+            return
+        stored = _stored_phrase(self._device_records(device_id))
+        delete_records = False
+        if stored:
+            name = next((d.get("name") for d in self._service.host_state()["devices"]
+                         if d.get("id") == device_id), None) or "This computer"
+            box = QMessageBox(self.devices_tile.window())
+            box.setIcon(QMessageBox.Icon.Question)
+            box.setWindowTitle("Remove paired computer")
+            box.setText(f"{name} keeps {stored} here.")
+            box.setInformativeText(
+                "Keep them in this computer's History and Past Meetings, or delete them "
+                "for good? Deleted records can't be recovered, and that computer can't "
+                "bring them back."
+            )
+            keep = box.addButton("Keep its records", QMessageBox.ButtonRole.AcceptRole)
+            delete = box.addButton("Delete its records", QMessageBox.ButtonRole.DestructiveRole)
+            box.addButton(QMessageBox.StandardButton.Cancel)
+            box.setDefaultButton(keep)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked not in (keep, delete):
+                return
+            delete_records = clicked is delete
+        self._service.remove_device(device_id, delete_records=delete_records)
+        self.refresh()
 
     def _on_service_event(self, kind: str) -> None:
         # "activity" fires around every request a paired computer makes, and

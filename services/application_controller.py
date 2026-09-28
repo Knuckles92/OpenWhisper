@@ -184,6 +184,8 @@ class ApplicationController(QObject):
     update_download_finished = pyqtSignal(object, object, str)
     # The Remote engine's pairing changed (emitted from the pairing worker).
     remote_pairing_changed = pyqtSignal()
+    # Records moved between this computer and its paired host, either way.
+    records_changed = pyqtSignal()
     # A paired computer chose one of this computer's models (emitted from its
     # connection thread with a _ClientModelSwitch the slot answers).
     client_model_switch_requested = pyqtSignal(object)
@@ -332,6 +334,16 @@ class ApplicationController(QObject):
         )
         self.remote_engine.add_listener(self._on_remote_host_event)
         self.ui_controller.remote_engine = self.remote_engine
+        from services.remote_records.sync import record_sync
+        # Where this computer's records go while paired; waits on the meeting
+        # runtime so a meeting is sent only once nothing more is written to it.
+        self.record_sync = record_sync
+        meetings = record_sync.kinds.get("meeting")
+        if meetings is not None:
+            meetings.busy = self.meeting_runtime.meeting_busy
+            meetings.in_use_check = self.meeting_runtime.meeting_in_use
+        record_sync.add_listener(self._on_record_sync_event)
+        self.ui_controller.record_sync = record_sync
         saved_model = settings_manager.load_model_selection()
         self._current_model_name = saved_model
         self.current_backend = self.transcription_backends.get(
@@ -932,6 +944,9 @@ class ApplicationController(QObject):
             name="remote-host-start",
             daemon=True,
         ).start()
+        # Records kept on (or copied to) the paired host: after the database
+        # is initialized above, on the sync's own thread.
+        self.record_sync.start()
         self._warm_openai_sdk()
 
     def _warm_openai_sdk(self) -> None:
@@ -1108,6 +1123,8 @@ class ApplicationController(QObject):
 
     def _on_remote_pairing_changed(self) -> None:
         """Reconnect the Remote engine after pairing or forgetting a host."""
+        self.record_sync.wake(now=True)
+        self.records_changed.emit()
         if self._current_model_name == "remote":
             self._cancel_remote_retry()
             self.reload_whisper_model()
@@ -1251,6 +1268,18 @@ class ApplicationController(QObject):
         if kind == "components":
             self.component_state_changed.emit()
             self.model_cache_changed.emit()
+        if kind == "records":
+            # A paired computer stored or removed a record here.
+            self.records_changed.emit()
+
+    def _on_record_sync_event(self, kind: str) -> None:
+        """Client: a record moved to, or came back from, the paired host (any thread)."""
+        if kind == "records":
+            self.records_changed.emit()
+
+    def _on_records_changed(self) -> None:
+        self.ui_controller.main_window.refresh_history()
+        self.ui_controller.main_window.refresh_past_meetings()
 
     def _on_remote_catalog(self, pairing, ready: dict, catalog: dict) -> None:
         remote = self.transcription_backends.get("remote")
@@ -2313,6 +2342,7 @@ class ApplicationController(QObject):
         self.hf_consent_requested.connect(self._on_hf_consent_requested)
         self.runtime_consent_requested.connect(self._prompt_for_model_runtime)
         self.remote_pairing_changed.connect(self._on_remote_pairing_changed)
+        self.records_changed.connect(self._on_records_changed)
         self.client_model_switch_requested.connect(self._on_client_model_switch)
         self.remote_link_poke.connect(self._publish_remote_link)
         self.remote_catalog_received.connect(self._on_remote_catalog)
@@ -2479,6 +2509,12 @@ class ApplicationController(QObject):
             component_coordinator.cancel_all()
         except Exception as exc:
             logger.debug(f"Error cancelling component installs: {exc}")
+
+        try:
+            # An upload in progress resumes from where it stopped next time.
+            self.record_sync.stop(timeout=2.0)
+        except Exception as exc:
+            logger.debug(f"Error stopping the record sync: {exc}")
 
         try:
             self.remote_engine.shutdown()

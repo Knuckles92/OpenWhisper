@@ -148,6 +148,24 @@ def host_model_management(settings: Optional[Dict[str, Any]] = None) -> bool:
     return _settings(settings).get(SettingsKey.REMOTE_HOST_MODEL_MANAGEMENT) is True
 
 
+def host_keeps_records(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """Off by default; pairing alone never lets a computer store files here."""
+    from services.settings import SettingsKey
+
+    return _settings(settings).get(SettingsKey.REMOTE_HOST_KEEP_RECORDS) is True
+
+
+RECORD_LOCATIONS = ("local", "host", "both")
+
+
+def records_location(settings: Optional[Dict[str, Any]] = None) -> str:
+    """Where this computer keeps its records while paired; "local" by default."""
+    from services.settings import SettingsKey
+
+    value = _settings(settings).get(SettingsKey.REMOTE_RECORDS_LOCATION)
+    return value if value in RECORD_LOCATIONS else "local"
+
+
 def host_port(settings: Optional[Dict[str, Any]] = None) -> int:
     from services.settings import SettingsKey
 

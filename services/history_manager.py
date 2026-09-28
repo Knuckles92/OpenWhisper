@@ -145,6 +145,7 @@ class HistoryManager:
         )
 
         logger.info(f"Added history entry: {entry.id[:8]}...")
+        _record_sync().record_saved("dictation", entry.id)
         return entry
 
     def _save_recording(self, source_path: str) -> Optional[str]:
@@ -307,6 +308,7 @@ class HistoryManager:
             logger.info(f"Deleted history entry: {entry_id[:8]}...")
             if entry and entry.audio_file:
                 self._delete_recording_file(entry.audio_file)
+            _record_sync().record_deleted("dictation", entry_id)
         return result
 
     def _delete_recording_file(self, filename: str) -> bool:
@@ -328,8 +330,9 @@ class HistoryManager:
         return True
 
     def clear_history(self) -> None:
-        """Clear all history entries (keeps recordings)."""
+        """Clear all history entries (keeps recordings), here and on the host."""
         db.clear_history()
+        _record_sync().cleared("dictation")
         logger.info("History cleared")
 
     def clear_history_and_recordings(self) -> None:
@@ -340,6 +343,7 @@ class HistoryManager:
             except Exception as e:
                 logger.error(f"Failed to remove recording {rec.filename}: {e}")
         db.clear_history()
+        _record_sync().cleared("dictation")
         logger.info("History and recordings cleared")
 
     def get_recording_path(self, filename: str) -> Optional[str]:
@@ -351,6 +355,13 @@ class HistoryManager:
         if os.path.exists(file_path):
             return file_path
         return None
+
+
+def _record_sync():
+    """The outbox that copies records to a paired host (services/remote_records)."""
+    from services.remote_records.sync import record_sync
+
+    return record_sync
 
 
 class _LazyHistoryManager:

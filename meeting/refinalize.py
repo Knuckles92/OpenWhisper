@@ -663,6 +663,12 @@ _running_lock = threading.Lock()
 _running_meetings: set = set()
 
 
+def is_running(meeting_id: str) -> bool:
+    """Whether post-meeting steps are re-running for ``meeting_id`` now."""
+    with _running_lock:
+        return meeting_id in _running_meetings
+
+
 def _one_run_per_meeting(fn: Callable[..., Dict[str, Any]]) -> Callable[..., Dict[str, Any]]:
     """Refuse a second concurrent retry of one meeting from any caller.
 

@@ -29,6 +29,7 @@ from ui_qt.widgets.history_sidebar import (
     _entry_was_cleaned,
     _format_cleanup_info,
     _format_model_name,
+    _location_chip,
 )
 
 logger = logging.getLogger(__name__)
@@ -110,7 +111,7 @@ class HistoryEntryDialog(QDialog):
         )
         self._showing_raw = False
         self._audio_path: Optional[str] = None
-        if entry.audio_file:
+        if entry.audio_file and not getattr(entry, "stored_on", None):
             path = history_manager.get_recording_path(entry.audio_file)
             if path:
                 self._audio_path = path
@@ -157,6 +158,14 @@ class HistoryEntryDialog(QDialog):
                     "Transcript was cleaned (model not recorded)"
                 )
             header.addWidget(cleanup_chip)
+
+        location_text, location_tip = _location_chip(self.entry)
+        if location_text:
+            location_chip = QLabel(location_text)
+            location_chip.setObjectName("historyEntryCleanupChip")
+            location_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            location_chip.setToolTip(location_tip)
+            header.addWidget(location_chip)
 
         outer.addLayout(header)
 

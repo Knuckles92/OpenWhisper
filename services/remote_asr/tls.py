@@ -44,6 +44,15 @@ def ensure_host_identity(directory: str) -> HostIdentity:
     return HostIdentity(cert_path, key_path, _fingerprint_of(cert_path))
 
 
+def own_fingerprint(directory: str) -> str:
+    """This computer's host fingerprint, or "" when it has never shared."""
+    cert_path = os.path.join(directory, CERT_FILENAME)
+    try:
+        return _fingerprint_of(cert_path) if os.path.exists(cert_path) else ""
+    except (OSError, ValueError):
+        return ""
+
+
 def _fingerprint_of(cert_path: str) -> str:
     with open(cert_path, encoding="ascii") as stream:
         return certificate_fingerprint(ssl.PEM_cert_to_DER_cert(stream.read()))

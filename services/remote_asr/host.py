@@ -190,6 +190,9 @@ class SpeechHost:
         manage_models: Optional[Callable[[str, dict, str], dict]] = None,
         runtime: Optional[Callable[[], dict]] = None,
         configure_runtime: Optional[Callable[[str, str, dict, str], dict]] = None,
+        records_enabled: Optional[Callable[[], bool]] = None,
+        records: Optional[Callable[[str, dict, bytes, dict], dict]] = None,
+        records_summary: Optional[Callable[[str], dict]] = None,
     ):
         self._engine_provider = engine_provider
         self.registry = registry
@@ -204,6 +207,9 @@ class SpeechHost:
         self._manage_models = manage_models
         self._runtime = runtime or (lambda: {})
         self._configure_runtime = configure_runtime
+        self._records_enabled = records_enabled or (lambda: False)
+        self._records = records
+        self._records_summary = records_summary or (lambda _device_id: {})
         self._lock = threading.Lock()
         self._server = None
         self._thread: Optional[threading.Thread] = None
@@ -458,6 +464,21 @@ class SpeechHost:
             logger.warning("Could not read model management permission", exc_info=True)
             return False
 
+    def _keeps_records(self) -> bool:
+        try:
+            return self._records is not None and self._records_enabled() is True
+        except Exception:
+            logger.warning("Could not read the record storage permission", exc_info=True)
+            return False
+
+    def _stored_summary(self, device_id: str) -> dict:
+        try:
+            summary = self._records_summary(device_id)
+            return dict(summary) if isinstance(summary, dict) else {}
+        except Exception:
+            logger.warning("Could not count a device's stored records", exc_info=True)
+            return {}
+
     def _tailscale_pairing_owner(self) -> str:
         try:
             return str(self._tailscale_owner() or "")
@@ -556,7 +577,7 @@ class SpeechHost:
             return
         engine = self._engine()
         identity = engine.identity
-        self._send(ws, {
+        ready = {
             "type": "ready",
             "host": self._host_info(),
             "device": {"id": device["id"], "name": device["name"]},
@@ -566,7 +587,13 @@ class SpeechHost:
             "capabilities": {"model_management": self._can_manage_models(),
                              "runtime_installation": self._can_manage_models(),
                              "engine_controls": self._configure_runtime is not None},
-        })
+        }
+        if self._records is not None:
+            ready["capabilities"]["records"] = self._keeps_records()
+            # Counted even while storage is off, so a client can still find
+            # (and bring back) what it stored before the owner turned it off.
+            ready["records"] = self._stored_summary(device["id"])
+        self._send(ws, ready)
         connection_id = uuid.uuid4().hex[:8]
         with self._lock:
             if self._server is None:
@@ -588,7 +615,8 @@ class SpeechHost:
                     if self.registry.authenticate(message.get("token")) is None:
                         ws.close(protocol.CLOSE_UNAUTHORIZED, "device removed")
                         break
-                    reply = self._dispatch(frame, engine, identity, connection_id, streams, device["name"])
+                    reply = self._dispatch(frame, engine, identity, connection_id, streams,
+                                           device["name"], device["id"])
                     self._send(ws, reply)
                 finally:
                     self._set_in_request(connection_id, False)
@@ -608,12 +636,21 @@ class SpeechHost:
             self._emit("clients", {})
 
     def _dispatch(self, frame, engine: HostEngine, identity: tuple,
-                  connection_id: str, streams: set, device_name: str = "") -> dict:
+                  connection_id: str, streams: set, device_name: str = "",
+                  device_id: str = "") -> dict:
         try:
-            header, audio = protocol.unpack_request(frame)
+            header, payload = protocol.unpack_frame(frame)
         except protocol.ProtocolError as exc:
             return {"id": None, "error": str(exc), "code": "bad_request"}
         request_id = header.get("id")
+        op = header.get("op")
+        if isinstance(op, str) and op.startswith("records_"):
+            return self._records_request(request_id, header, payload,
+                                         {"id": device_id, "name": device_name})
+        try:
+            audio = protocol.payload_audio(payload)
+        except protocol.ProtocolError as exc:
+            return {"id": request_id, "error": str(exc), "code": "bad_request"}
         if header.get("op") == "configure_runtime":
             return self._configure_runtime_request(request_id, header, device_name)
         if header.get("op") in ("model_catalog", "download_model", "install_runtime"):
@@ -689,6 +726,41 @@ class SpeechHost:
             result = self._manage_models(op, header, device_name)
         except Exception as exc:
             return {"id": request_id, "error": str(exc) or type(exc).__name__}
+        return {"id": request_id, "result": result}
+
+    #: Operations that store something; the rest read back or delete.
+    _RECORD_WRITES = frozenset({"records_begin", "records_put", "records_commit"})
+
+    def _records_request(self, request_id, header: dict, payload: bytes, device: dict) -> dict:
+        """A device's own stored records. Never another device's.
+
+        Storing needs the owner's opt-in, rechecked on every request, so
+        turning it off stops uploads already under way. Reading back and
+        deleting don't: a computer can always retrieve or remove what it
+        stored here while it stays paired.
+        """
+        op = header.get("op")
+        if self._records is None:
+            return {"id": request_id, "code": "unsupported",
+                    "error": "Update OpenWhisper on the host to keep records there."}
+        if op in self._RECORD_WRITES and not self._keeps_records():
+            return {"id": request_id, "code": "forbidden", "error": (
+                f"{self.host_name} isn't keeping records for other computers. Turn on "
+                "\"Keep records for paired computers\" in Settings → Remote engine there."
+            )}
+        if not device.get("id"):
+            return {"id": request_id, "code": "bad_request", "error": "Unknown device."}
+        try:
+            result = self._records(op, header, payload, device)
+        except LookupError as exc:
+            return {"id": request_id, "code": "not_found", "error": str(exc) or "No such record."}
+        except ValueError as exc:
+            return {"id": request_id, "code": "bad_request", "error": str(exc) or "Invalid record request."}
+        except Exception as exc:
+            logger.warning("Record request %s from %s failed", op, device.get("name"), exc_info=True)
+            return {"id": request_id, "error": str(exc) or type(exc).__name__}
+        if op in ("records_commit", "records_delete", "records_clear"):
+            self._emit("records", {"device": device.get("name"), "op": op})
         return {"id": request_id, "result": result}
 
     def _configure_runtime_request(self, request_id, header: dict, device_name: str) -> dict:

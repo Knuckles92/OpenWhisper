@@ -87,8 +87,11 @@ class RemoteEngineService:
         engine_settled: Optional[Callable[[], bool]] = None,
         configure_engine: Optional[Callable[[str, str, dict, str], None]] = None,
         on_host_catalog: Optional[Callable[[object, dict, dict], None]] = None,
+        records_root: Optional[str] = None,
     ):
         self._backend_provider = backend_provider
+        self._records_root = records_root
+        self._records = None
         self._switch_engine = switch_engine
         self._configure_engine = configure_engine
         self._runtime_lock = threading.Lock()
@@ -276,8 +279,40 @@ class RemoteEngineService:
                 manage_models=self.manage_host_models,
                 runtime=self.runtime_state,
                 configure_runtime=self.configure_runtime if self._configure_engine is not None else None,
+                records_enabled=remote_settings.host_keeps_records,
+                records=self.records_request,
+                records_summary=self.records_summary,
             )
         return self._host
+
+    # ---- records paired computers keep here ----
+
+    def record_store(self):
+        """Where paired computers' records are kept (services/remote_records)."""
+        with self._lock:
+            if self._records is None:
+                from config import user_data_path
+                from services.remote_records.host_store import HostRecordStore
+                from services.remote_records.kinds import DictationRecords, MeetingRecords
+
+                self._records = HostRecordStore(
+                    self._records_root or user_data_path("remote_records"),
+                    {"dictation": DictationRecords(), "meeting": MeetingRecords()},
+                )
+            return self._records
+
+    def records_request(self, op: str, header: dict, payload: bytes, device: dict) -> dict:
+        return self.record_store().handle(op, header, payload, device)
+
+    def records_summary(self, device_id: str) -> dict:
+        """What a paired computer keeps here, per kind: ``{"count", "bytes"}``."""
+        return self.record_store().summary(device_id)
+
+    def set_keep_records(self, enabled: bool) -> None:
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_HOST_KEEP_RECORDS, bool(enabled))
+        self._notify("state")
 
     def set_model_management(self, enabled: bool) -> None:
         from services.settings import SettingsKey, settings_manager
@@ -444,17 +479,26 @@ class RemoteEngineService:
         if host is not None:
             host.close_pairing()
 
-    def remove_device(self, device_id: str) -> bool:
+    def remove_device(self, device_id: str, *, delete_records: bool = False) -> bool:
+        """Forget a paired computer; with ``delete_records``, what it stored here too.
+
+        Kept records stay in this computer's History and Past Meetings,
+        badged with the computer they came from.
+        """
         with self._lock:
             host = self._host
         if host is not None:
-            return host.remove_device(device_id)
-        from services.remote_asr.host import DeviceRegistry
+            removed = host.remove_device(device_id)
+        else:
+            from services.remote_asr.host import DeviceRegistry
 
-        removed = DeviceRegistry(
-            remote_settings.load_host_devices, remote_settings.save_host_devices
-        ).remove(device_id)
-        self._notify("devices")
+            removed = DeviceRegistry(
+                remote_settings.load_host_devices, remote_settings.save_host_devices
+            ).remove(device_id)
+            self._notify("devices")
+        if delete_records:
+            self.record_store().delete_device(device_id)
+            self._notify("records")
         return removed
 
     def engine_changed(self) -> None:
@@ -509,6 +553,7 @@ class RemoteEngineService:
             "tailscale": self.tailscale_status(),
             "tailscale_trust": remote_settings.host_tailscale_trust(),
             "model_management": remote_settings.host_model_management(),
+            "keep_records": remote_settings.host_keeps_records(),
         }
         if running:
             try:

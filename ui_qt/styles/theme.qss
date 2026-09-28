@@ -1406,6 +1406,37 @@ QPushButton#transcriptSwitchBtn:hover:!checked {
     color: @text;
 }
 
+/* Settings → Remote engine: where this computer keeps its records. */
+QFrame#recordsLocationSwitch {
+    background-color: @bg;
+    border: 1px solid @border;
+    border-radius: 9px;
+}
+
+QPushButton#recordsLocationBtn {
+    background-color: transparent;
+    color: @text-secondary;
+    border: none;
+    border-radius: 7px;
+    padding: 0 16px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#recordsLocationBtn:checked {
+    background-color: @accent;
+    color: @on-accent;
+}
+
+QPushButton#recordsLocationBtn:hover:!checked {
+    background-color: @surface;
+    color: @text;
+}
+
+QPushButton#recordsLocationBtn:disabled {
+    color: @text-muted;
+}
+
 QPushButton#transcriptExpandButton,
 QPushButton#transcriptCopyButton {
     background-color: transparent;

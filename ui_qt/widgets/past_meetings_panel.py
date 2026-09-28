@@ -64,6 +64,26 @@ _MENU_STYLESHEET = """
     }
 """
 
+def _record_sync():
+    from services.remote_records.sync import record_sync
+
+    return record_sync
+
+
+def _meeting_location(meeting: Dict[str, Any]) -> tuple[str, str]:
+    """``(pill, tooltip)`` for where a meeting is kept, or empty."""
+    stored_on = str(meeting.get("stored_on") or "")
+    if stored_on:
+        return f"On {stored_on}", f"Kept on {stored_on}; opening it downloads a copy"
+    also_on = str(meeting.get("also_on") or "")
+    if also_on:
+        return f"Also on {also_on}", f"Kept here and on {also_on}"
+    origin = str(meeting.get("origin_device_name") or "")
+    if origin:
+        return f"From {origin}", f"Kept here for {origin}, a paired computer"
+    return "", ""
+
+
 # Test-facing aliases for the shared formatters.
 _format_started_at = format_meeting_started_at
 _format_duration = format_meeting_duration
@@ -80,6 +100,8 @@ class PastMeetingItem(QFrame):
         super().__init__(parent)
         self.meeting = dict(meeting)
         self.meeting_id = str(meeting.get("id") or "")
+        #: The paired host that keeps this meeting, when it isn't kept here.
+        self.stored_on = str(meeting.get("stored_on") or "")
         self.setObjectName("pastMeetingItem")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setProperty("selected", False)
@@ -162,8 +184,26 @@ class PastMeetingItem(QFrame):
             self.insights_pill.show()
         else:
             self.insights_pill.hide()
+        location, tip = _meeting_location(meeting)
+        self.location_pill = QLabel(location, self)
+        self.location_pill.setObjectName("pastMeetingInsightsPill")
+        self.location_pill.setProperty("pillTone", "location")
+        self.location_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.location_pill.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+        self.location_pill.setFixedHeight(20)
+        self.location_pill.setToolTip(tip)
+        self.location_pill.setVisible(bool(location))
+        footer.addWidget(self.location_pill)
         footer.addStretch()
         layout.addLayout(footer)
+
+    def set_progress(self, text: str) -> None:
+        """Show a fetch from the host under way on the card ("" hides it)."""
+        if text:
+            self.content_label.setText(text)
+            self.content_label.show()
+        else:
+            self.content_label.hide()
 
     def set_selected(self, selected: bool) -> None:
         """Mark this tile as the meeting shown on the Meeting Mode tab."""
@@ -206,6 +246,16 @@ class PastMeetingItem(QFrame):
     def _show_context_menu(self, pos) -> None:
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLESHEET)
+        if self.stored_on:
+            open_action = menu.addAction(f"Open (from {self.stored_on})")
+            open_action.triggered.connect(self._emit_selected)
+            menu.addSeparator()
+            delete_action = menu.addAction(f"Delete from {self.stored_on}")
+            delete_action.triggered.connect(
+                lambda: self.delete_requested.emit(self.meeting_id)
+            )
+            menu.exec(self.mapToGlobal(pos))
+            return
         copy_action = menu.addAction("Copy transcript")
         copy_action.setEnabled(self._has_transcript())
         copy_action.triggered.connect(
@@ -244,7 +294,12 @@ class PastMeetingsPanel(QWidget):
     delete_meeting_requested = pyqtSignal(str, bool)
     clear_meetings_requested = pyqtSignal(bool)
     _meetings_loaded = pyqtSignal(int, object, str, bool)
+    _fetch_progress = pyqtSignal(str, str)
+    _fetch_done = pyqtSignal(str, str, str)
     MAX_MEETINGS = 100
+    #: How long the list waits for the host's meetings before showing this
+    #: computer's alone; the host's are merged in when they arrive.
+    REMOTE_MERGE_WAIT_S = 0.4
 
     def __init__(
         self,
@@ -265,6 +320,9 @@ class PastMeetingsPanel(QWidget):
         self._setup_ui()
         self._apply_style()
         self._meetings_loaded.connect(self._apply_meeting_results)
+        self._fetch_progress.connect(self._on_fetch_progress)
+        self._fetch_done.connect(self._on_fetch_done)
+        self._fetching: set = set()
 
     def set_selected_meeting_id(self, meeting_id: Optional[str]) -> None:
         """Highlight the tile that matches the leftover card, if listed."""
@@ -276,9 +334,67 @@ class PastMeetingsPanel(QWidget):
             card.set_selected(card.meeting_id == self._selected_id)
 
     def _on_card_selected(self, meeting_id: str) -> None:
+        meeting = self._meeting_by_id(meeting_id) or {}
+        if meeting.get("stored_on"):
+            self._fetch_from_host(meeting_id, str(meeting["stored_on"]), then="open")
+            return
         self._selected_id = meeting_id
         self._apply_selection()
         self.meeting_selected.emit(meeting_id)
+
+    def _card(self, meeting_id: str) -> Optional["PastMeetingItem"]:
+        for card in self.findChildren(PastMeetingItem):
+            if card.meeting_id == meeting_id:
+                return card
+        return None
+
+    def _fetch_from_host(self, meeting_id: str, host: str, *, then: str) -> None:
+        """Download a host-kept meeting here, then open it (or delete it there)."""
+        if meeting_id in self._fetching:
+            return
+        self._fetching.add(meeting_id)
+        self._on_fetch_progress(meeting_id, f"Getting it from {host}…")
+
+        def work() -> None:
+            try:
+                if then == "delete":
+                    _record_sync().delete_remote("meeting", meeting_id)
+                else:
+                    def progress(got: int, total: int) -> None:
+                        if total:
+                            self._fetch_progress.emit(
+                                meeting_id,
+                                f"Getting it from {host}… {got * 100 // total}%",
+                            )
+
+                    _record_sync().check_out("meeting", meeting_id, progress)
+            except Exception as exc:
+                logger.warning("Could not get a meeting from the host: %s", exc)
+                self._fetch_done.emit(meeting_id, then, str(exc) or type(exc).__name__)
+                return
+            self._fetch_done.emit(meeting_id, then, "")
+
+        threading.Thread(target=work, name="past-meeting-fetch", daemon=True).start()
+
+    def _on_fetch_progress(self, meeting_id: str, text: str) -> None:
+        card = self._card(meeting_id)
+        if card is not None:
+            card.set_progress(text)
+
+    def _on_fetch_done(self, meeting_id: str, then: str, error: str) -> None:
+        self._fetching.discard(meeting_id)
+        if error:
+            card = self._card(meeting_id)
+            if card is not None:
+                card.set_progress(
+                    f"Couldn't delete it: {error}" if then == "delete"
+                    else f"Couldn't open it: {error}"
+                )
+            return
+        self.refresh()
+        if then == "open":
+            self._selected_id = meeting_id
+            self.meeting_selected.emit(meeting_id)
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -371,6 +487,54 @@ class PastMeetingsPanel(QWidget):
         self._meeting_load_generation += 1
         self._search_timer.start()
 
+    def _start_remote_listing(self, query: str, meetings: list):
+        """Ask the host for this computer's meetings it keeps, on another thread.
+
+        Returns ``(done, merged)``, like the History list's; None when there
+        is nothing to ask.
+        """
+        try:
+            records = _record_sync()
+            if not records.listing_wanted("meeting"):
+                return None
+        except Exception:
+            logger.debug("Record sync unavailable for Past Meetings", exc_info=True)
+            return None
+        done = threading.Event()
+        result: Dict[str, Any] = {"items": [], "copies": set()}
+
+        def fetch() -> None:
+            try:
+                result["copies"] = records.copies_on_host(
+                    "meeting", [str(m.get("id") or "") for m in meetings]
+                )
+                result["items"] = records.list_remote("meeting", query, self.MAX_MEETINGS + 1)
+            except Exception as exc:
+                logger.debug("Couldn't list the host's meetings: %s", exc)
+            finally:
+                done.set()
+
+        threading.Thread(target=fetch, name="past-meetings-remote", daemon=True).start()
+
+        def merged() -> list:
+            local_ids = {str(m.get("id") or "") for m in meetings}
+            host = next((item.get("stored_on") for item in result["items"]), "") or ""
+            try:
+                host = host or records.status().host_name
+            except Exception:
+                pass
+            combined = []
+            for meeting in meetings:
+                if str(meeting.get("id") or "") in result["copies"]:
+                    meeting = dict(meeting, also_on=host or "the host")
+                combined.append(meeting)
+            combined.extend(item for item in result["items"]
+                            if str(item.get("id") or "") not in local_ids)
+            combined.sort(key=lambda m: str(m.get("started_at") or ""), reverse=True)
+            return combined
+
+        return done, merged
+
     def _load_meetings(
         self,
         query: str = "",
@@ -461,9 +625,17 @@ class PastMeetingsPanel(QWidget):
                 except Exception as exc:
                     logger.error("Failed to load past meetings: %s", exc)
                     error = str(exc)
-                self._meetings_loaded.emit(
-                    generation, meetings, error, source_filtered
-                )
+                remote = None if error else self._start_remote_listing(query, meetings)
+                if remote is None:
+                    self._meetings_loaded.emit(
+                        generation, meetings, error, source_filtered
+                    )
+                    return
+                done, merged = remote
+                if not done.wait(self.REMOTE_MERGE_WAIT_S):
+                    self._meetings_loaded.emit(generation, meetings, "", source_filtered)
+                    done.wait()
+                self._meetings_loaded.emit(generation, merged(), "", source_filtered)
 
             threading.Thread(
                 target=load,
@@ -572,6 +744,20 @@ class PastMeetingsPanel(QWidget):
         return bool(str(meeting.get("spool_dir") or ""))
 
     def _confirm_delete(self, meeting_id: str) -> None:
+        meeting = self._meeting_by_id(meeting_id) or {}
+        if meeting.get("stored_on"):
+            host = str(meeting["stored_on"])
+            reply = QMessageBox.question(
+                self,
+                "Delete meeting",
+                f"Delete this meeting from {host}?\n\nIts transcript, insights and "
+                "recordings there are deleted. This cannot be undone.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._fetch_from_host(meeting_id, host, then="delete")
+            return
         delete_recordings = False
         try:
             should_confirm = settings_manager.get(
@@ -616,11 +802,24 @@ class PastMeetingsPanel(QWidget):
 
         self.delete_meeting_requested.emit(meeting_id, delete_recordings)
 
+    @staticmethod
+    def _host_clear_note() -> str:
+        """What a clear here also deletes on the paired host, if anything."""
+        try:
+            records = _record_sync()
+            if not records.listing_wanted("meeting"):
+                return ""
+            host = records.status().host_name or "the host"
+        except Exception:
+            return ""
+        return f"\n\nThis computer's meetings on {host} are deleted too."
+
     def _on_clear_history(self) -> None:
         reply = QMessageBox.question(
             self,
             "Clear History",
-            "Delete all past meetings?\n\nSaved recordings will be kept.",
+            "Delete all past meetings?\n\nSaved recordings will be kept."
+            + self._host_clear_note(),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -633,7 +832,8 @@ class PastMeetingsPanel(QWidget):
             self,
             "Clear History and Recordings",
             "Delete all past meetings AND permanently delete their "
-            "recordings from disk?\n\nThis cannot be undone.",
+            "recordings from disk?\n\nThis cannot be undone."
+            + self._host_clear_note(),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -651,7 +851,8 @@ class PastMeetingsPanel(QWidget):
 
         dialog = MeetingExportDialog(
             self,
-            meeting_provider=lambda: list(self._meetings),
+            # Meetings kept only on the host export once opened here.
+            meeting_provider=lambda: [m for m in self._meetings if not m.get("stored_on")],
         )
         dialog.exec()
 
@@ -802,6 +1003,11 @@ class PastMeetingsPanel(QWidget):
                 color: @success-text;
                 background-color: rgba(@success-rgb, 0.15);
                 border: 1px solid rgba(@success-rgb, 0.35);
+            }
+            QLabel#pastMeetingInsightsPill[pillTone="location"] {
+                color: @accent-soft;
+                background-color: rgba(@accent-rgb, 0.12);
+                border: 1px solid rgba(@accent-rgb, 0.25);
             }
             QLabel#pastMeetingInsightsPill[pillTone="neutral"] {
                 color: @text-secondary-strong;

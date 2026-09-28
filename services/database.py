@@ -16,7 +16,7 @@ from services.models import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 class DatabaseManager:
@@ -318,6 +318,17 @@ class DatabaseManager:
             if columns and "asr_remote_json" not in columns:
                 conn.execute(text("ALTER TABLE meeting_sessions ADD COLUMN asr_remote_json TEXT"))
 
+        if from_version < 14:
+            # Records a paired computer stored here (services/remote_records);
+            # record_sync itself is new and made by create_all.
+            for table in ("transcription_history", "meeting_sessions"):
+                columns = {row[1] for row in conn.execute(
+                    text(f"PRAGMA table_info({table})")
+                ).fetchall()}
+                for column in ("origin_device_id", "origin_device_name"):
+                    if columns and column not in columns:
+                        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} TEXT"))
+
         conn.execute(text("UPDATE schema_version SET version = :v"), {"v": SCHEMA_VERSION})
         logger.info(f"Database migrated to schema version {SCHEMA_VERSION}")
 
@@ -384,9 +395,19 @@ class DatabaseManager:
                 source_name=source_name,
             ))
 
-    def get_history_entries(self, limit: Optional[int] = None) -> List[TranscriptionHistory]:
+    @staticmethod
+    def _origin_filter(q, origin):
+        """``origin``: a device id, None for this computer's own, or ... for all."""
+        if origin is ...:
+            return q
+        if origin is None:
+            return q.filter(TranscriptionHistory.origin_device_id.is_(None))
+        return q.filter(TranscriptionHistory.origin_device_id == origin)
+
+    def get_history_entries(self, limit: Optional[int] = None, *,
+                            origin=...) -> List[TranscriptionHistory]:
         with self.get_session() as session:
-            q = session.query(TranscriptionHistory).order_by(
+            q = self._origin_filter(session.query(TranscriptionHistory), origin).order_by(
                 TranscriptionHistory.timestamp.desc()
             )
             if limit:
@@ -397,11 +418,13 @@ class DatabaseManager:
         self,
         query: str,
         limit: Optional[int] = None,
+        *,
+        origin=...,
     ) -> List[TranscriptionHistory]:
         """Search transcription text while keeping the returned page bounded."""
         needle = str(query or "").strip()
         if not needle:
-            return self.get_history_entries(limit)
+            return self.get_history_entries(limit, origin=origin)
         escaped = (
             needle.replace("\\", "\\\\")
             .replace("%", "\\%")
@@ -409,12 +432,13 @@ class DatabaseManager:
         )
         pattern = f"%{escaped}%"
         with self.get_session() as session:
-            q = session.query(TranscriptionHistory).filter(
+            q = self._origin_filter(session.query(TranscriptionHistory), origin).filter(
                 or_(
                     TranscriptionHistory.text.ilike(pattern, escape="\\"),
                     TranscriptionHistory.raw_text.ilike(pattern, escape="\\"),
                     TranscriptionHistory.timestamp.ilike(pattern, escape="\\"),
                     TranscriptionHistory.source_name.ilike(pattern, escape="\\"),
+                    TranscriptionHistory.origin_device_name.ilike(pattern, escape="\\"),
                 )
             ).order_by(TranscriptionHistory.timestamp.desc())
             if limit:
@@ -433,9 +457,32 @@ class DatabaseManager:
                 return True
             return False
 
-    def clear_history(self) -> None:
+    def put_history_entry(self, entry: TranscriptionHistory) -> None:
+        """Insert or replace an entry by id (a record a paired computer stored)."""
         with self.get_session() as session:
-            session.query(TranscriptionHistory).delete()
+            session.merge(entry)
+
+    def history_origin_counts(self) -> dict:
+        """``{device_id: entries}`` for entries paired computers stored here."""
+        with self.get_session() as session:
+            rows = session.query(
+                TranscriptionHistory.origin_device_id, func.count(TranscriptionHistory.id)
+            ).filter(TranscriptionHistory.origin_device_id.isnot(None)).group_by(
+                TranscriptionHistory.origin_device_id
+            ).all()
+        return {device: count for device, count in rows}
+
+    def clear_history(self) -> None:
+        """Clear this computer's own entries.
+
+        Entries a paired computer stored here are its to manage, from that
+        computer or by removing it under Remote engine, so a clear here never
+        takes a laptop's only copy.
+        """
+        with self.get_session() as session:
+            session.query(TranscriptionHistory).filter(
+                TranscriptionHistory.origin_device_id.is_(None)
+            ).delete()
 
     def clear_history_audio_file(self, audio_file: str) -> None:
         """Clear the audio_file reference on history entries matching a filename."""
