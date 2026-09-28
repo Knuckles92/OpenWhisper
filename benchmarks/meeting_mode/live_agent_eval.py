@@ -2,7 +2,9 @@
 
 Run with: python -m benchmarks.meeting_mode.live_agent_eval
 Uses the configured model and installed sidecar; output contains synthetic text.
-Pass --sidecar-dir sidecar/dist to test a freshly built bundle.
+Pass --sidecar-dir sidecar/dist to test a freshly built bundle, or
+--harness claude_code|codex|opencode [--model ...] to run an installed agent
+on its own sign-in (its plan pays for the passes).
 """
 
 import argparse
@@ -23,6 +25,7 @@ from meeting.agent.scheduler import CheckpointScheduler
 from meeting.interfaces import AgentConfig, CheckpointPayload
 from services.components import meeting_agent_payload_dir
 from services.settings import (
+    MeetingAgentCore,
     resolve_meeting_llm_endpoint,
     resolve_meeting_llm_model,
     resolve_meeting_llm_provider,
@@ -51,7 +54,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run synthetic live meeting agent checks using the configured provider. Makes billable model calls; never reads meeting recordings."
     )
-    parser.add_argument("--harness", choices=("pi", "direct"), default="pi")
+    parser.add_argument("--harness", choices=("pi", "direct", *MeetingAgentCore.INSTALLED),
+                        default="pi",
+                        help="pi/direct use the configured text endpoint; claude_code, "
+                             "codex, and opencode run the installed agent on its own sign-in")
+    parser.add_argument("--model", help="installed agents: model or alias; default: the agent's own")
     parser.add_argument("--sidecar-dir")
     parser.add_argument("--output", default=".tmp/live_agent_eval.json")
     parser.add_argument(
@@ -59,9 +66,11 @@ def main():
         help="live: the in-meeting checks; consolidation: one end-of-meeting pass",
     )
     args = parser.parse_args()
-    args.sidecar_dir = args.sidecar_dir or meeting_agent_payload_dir(args.harness)
-    provider = resolve_meeting_llm_provider()
-    model = resolve_meeting_llm_model()
+    installed = args.harness in MeetingAgentCore.INSTALLED
+    args.sidecar_dir = None if installed else (
+        args.sidecar_dir or meeting_agent_payload_dir(args.harness))
+    provider = args.harness if installed else resolve_meeting_llm_provider()
+    model = (args.model or "") if installed else resolve_meeting_llm_model()
     results = []
 
     def segment(sid, t, text):
@@ -77,9 +86,9 @@ def main():
                 host.meeting_id,
                 provider,
                 model,
-                find_provider_api_key(provider),
+                None if installed else find_provider_api_key(provider),
                 build_system_prompt(),
-                endpoint=resolve_meeting_llm_endpoint(),
+                endpoint=None if installed else resolve_meeting_llm_endpoint(),
             ),
             host,
         )
