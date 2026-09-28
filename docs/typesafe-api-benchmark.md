@@ -2,7 +2,7 @@
 
 Run: September 17–18, 2026. All inputs were synthetic. No local text model was invoked, and no production behavior or settings were changed.
 
-**Real-meeting follow-up:** [107.8 minutes of public AMI meetings](typesafe-real-meetings.md) confirmed fast TypeSafe calls but did not show a quality gain from broad event advice or blanket verification/repair. A fast provisional LLM writer and explicitly remembered commitments are the narrower proposals. Treat the synthetic results below as development evidence, not real-meeting accuracy.
+**Real-meeting follow-up:** a later 107.8-minute run on public AMI meetings confirmed fast TypeSafe calls but did not show a quality gain from broad event advice or blanket verification/repair. A fast provisional LLM writer and explicitly remembered commitments are the narrower proposals. Treat the synthetic results below as development evidence, not real-meeting accuracy.
 
 Follow-up on request granularity: single claims also passed all 33 support checks, and are now the recommended default for live arrivals. Small batches remain useful for a ready backlog; see the final section.
 
@@ -145,30 +145,9 @@ Next evaluation should use fresh labeled sessions with realistic ASR mistakes, o
 
 ## Artifacts and reproduction
 
-[Machine-readable summary](../benchmarks/typesafe_results/comparison-summary.json) is retained in the repository and can be rebuilt by [typesafe_report.py](../benchmarks/typesafe_report.py) when the original raw results are available locally. Raw requests, outputs, timings, usage and synthetic fixtures under `benchmarks/typesafe_results/` are ignored by Git; only `comparison-summary.json` is retained. The [earlier report](typesafe-experiments.md) covers the original 72-example experiment and shared-state token savings.
+The [earlier report](typesafe-experiments.md) covers the original 72-example experiment and shared-state token savings. The runner scripts and machine-readable summary used to produce the tables above (`typesafe_comparison.py`, `typesafe_agent_comparison.py`, `typesafe_consolidation_probe.py`, `typesafe_hybrid.py`, `typesafe_followups.py`, `typesafe_cleanup_probe.py`, `typesafe_retrieval_probe.py`, `typesafe_report.py`, and `typesafe_results/comparison-summary.json`) were later removed as one-off probes; this report retains the recorded findings.
 
-Runner commands below make paid API calls only when `--live` is supplied. Use new output filenames; live runners refuse to overwrite prior results. Credentials are resolved locally and are not written into artifacts.
-
-```powershell
-. .\venv\Scripts\Activate.ps1
-python -m benchmarks.typesafe_comparison --arm typesafe --live --output benchmarks/typesafe_results/new-typesafe.json
-python -m benchmarks.typesafe_comparison --arm meeting --strict-json --max-output 8192 --live --output benchmarks/typesafe_results/new-meeting.json
-python -m benchmarks.typesafe_comparison --arm cleanup --strict-json --max-output 8192 --live --output benchmarks/typesafe_results/new-cleanup.json
-python -m benchmarks.typesafe_comparison --arm openai --strict-json --max-output 8192 --live --output benchmarks/typesafe_results/new-openai.json
-python -m benchmarks.typesafe_comparison --arm deterministic --output benchmarks/typesafe_results/new-deterministic.json
-python -m benchmarks.typesafe_agent_comparison --harness direct-json --live --output benchmarks/typesafe_results/new-agent.json
-python -m benchmarks.typesafe_consolidation_probe --harness direct-json --live --output benchmarks/typesafe_results/new-consolidation.json
-python -m benchmarks.typesafe_hybrid --mode insights --live --output benchmarks/typesafe_results/new-insights.json
-python -m benchmarks.typesafe_hybrid --mode cascade --live --output benchmarks/typesafe_results/new-cascade.json
-python -m benchmarks.typesafe_followups --mode scaling --live --output benchmarks/typesafe_results/new-scaling.json
-python -m benchmarks.typesafe_cleanup_probe --live --output benchmarks/typesafe_results/new-cleanup-production.json
-python -m benchmarks.typesafe_retrieval_probe --live --output benchmarks/typesafe_results/new-retrieval.json
-python -m benchmarks.typesafe_report
-```
-
-The verification follow-up modes intentionally read the saved `hybrid-insights.json` and `followup-verification.json` artifacts to compare identical drafts. The offline report likewise summarizes the named recorded runs, not arbitrary new output names. These raw inputs are local artifacts and are not included in a fresh checkout; restore them locally before running the dependent follow-ups or rebuilding the summary. For the other agent paths, repeat the agent/consolidation commands with `direct`, `pi` and `opencode`.
-
-Validation: 15 focused offline tests cover label exclusion, evidence IDs, request binding, strict schemas, failure accounting and use of actual deterministic functions. Ruff F checks pass on the benchmark scripts and tests. No production files were edited.
+Validation at the time: 15 focused offline tests covered label exclusion, evidence IDs, request binding, strict schemas, failure accounting and use of actual deterministic functions. Ruff F checks passed on the benchmark scripts and tests. No production files were edited.
 
 
 ## Follow-up: one claim per call (September 18)
@@ -195,9 +174,4 @@ Batching eight used about 41% fewer input tokens than one-claim calls here and c
 
 This refines the earlier recommendation: choose the request unit around a coherent claim and the application's latency needs, rather than fixing one batch size globally. Network calls remain outside the state lock and results still need revision/freshness checks.
 
-Artifacts: raw requests, responses and timings are stored locally in `benchmarks/typesafe_results/followup-granularity.json` (ignored by Git); the [live runner](../benchmarks/typesafe_granularity_probe.py) and [three offline binding/failure-accounting tests](../tests/test_typesafe_granularity.py) remain in the repository. The three new tests and Ruff F checks pass. Production behavior remains unchanged.
-
-```powershell
-. .\venv\Scripts\Activate.ps1
-python -m benchmarks.typesafe_granularity_probe --live --output benchmarks/typesafe_results/new-granularity.json
-```
+Artifacts: raw requests, responses and timings were stored locally in `benchmarks/typesafe_results/followup-granularity.json` (ignored by Git); the live runner and its offline binding/failure-accounting tests were later removed as a one-off probe. The three tests and Ruff F checks passed at the time. Production behavior remains unchanged.
