@@ -106,7 +106,7 @@ then exits cleanly; the sidecar also exits when its stdin closes.
 
 ## Text-provider metadata
 
-The hello handshake includes text_protocols (chat, responses, anthropic, google). New providers require this capability advertisement, so an old installed bundle fails with an update instruction. Existing providers remain compatible with older handshakes.
+The hello handshake includes text_protocols (chat, responses, anthropic, google). New providers require this capability advertisement, so an old installed bundle fails with an update instruction.
 
 Initialization receives non-secret protocol, context/output budgets, tool/reasoning capabilities, Pi compatibility options and provider headers. The API key remains in the child environment. Chat maps to openai-completions, Responses to openai-responses, Messages to anthropic-messages, and Gemini to google-generative-ai. Anthropic's base URL omits the final /v1 because its SDK appends it; the other APIs keep the versioned endpoint.
 
