@@ -25,9 +25,15 @@ class AudioFilePreview:
     duration_seconds: float
     sample_rate: int
     channels: int
+    #: Whether the engine this preview was read for will split the file.
     needs_splitting: bool
     estimated_chunks: int
     chunk_durations: List[float] = field(default_factory=list)
+
+    @property
+    def over_upload_limit(self) -> bool:
+        """Whether the file is bigger than one API upload may be."""
+        return self.file_size_mb > config.MAX_FILE_SIZE_MB
 
     @property
     def duration_formatted(self) -> str:
@@ -115,13 +121,21 @@ class AudioProcessor:
 
         return needs_splitting, file_size_mb
 
-    def preview_file(self, audio_path: str) -> AudioFilePreview:
+    def preview_file(
+        self, audio_path: str, *, engine_splits: bool
+    ) -> AudioFilePreview:
         """Return metadata and estimated chunks without creating files.
 
-        Only a file large enough to need splitting is decoded. Everything the
-        card shows for a normal file — duration, sample rate, channels — is in
-        the container header, so decoding one to read three numbers buys
-        nothing and is paid on every drop.
+        Args:
+            audio_path: The file to read.
+            engine_splits: Whether the engine that will transcribe the file
+                splits one over the upload limit (only the OpenAI API does).
+
+        Only a file that engine will split is decoded, to find its split
+        points. Everything the card shows for a file taken in one pass —
+        duration, sample rate, channels — is in the container header, so
+        decoding one to read three numbers buys nothing and is paid on every
+        drop.
 
         The saving tracks the codec, not the file size: a ten-minute AAC
         recording measured 604 ms to decode against 3.4 ms to read the header,
@@ -135,7 +149,7 @@ class AudioProcessor:
         file_name = os.path.basename(audio_path)
         file_size_bytes = os.path.getsize(audio_path)
         file_size_mb = file_size_bytes / (1024 * 1024)
-        needs_splitting = file_size_mb > config.MAX_FILE_SIZE_MB
+        needs_splitting = engine_splits and file_size_mb > config.MAX_FILE_SIZE_MB
 
         chunk_durations = []
         if needs_splitting:
