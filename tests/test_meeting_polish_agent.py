@@ -12,24 +12,8 @@ from meeting.agent.tool_policy import (
     run_tool,
     tool_result_text,
 )
-from meeting.interfaces import OpResult
+from tests.fakes.agent_core import RecordingAgentTools
 
-class _Tools:
-    def __init__(self) -> None:
-        self.ops = []
-        self.question_calls = 0
-
-    def apply_agent_ops(self, ops):
-        self.ops.extend(ops)
-        return [OpResult(ok=True, op=op) for op in ops]
-
-    def ask_question(self, text, evidence):
-        self.question_calls += 1
-        return OpResult(ok=True, op={"op": "ask_question"})
-
-    def resolve_question(self, question_id, answer_text, confidence, evidence):
-        self.question_calls += 1
-        return OpResult(ok=True, op={"op": "resolve_question"})
 
 def test_polish_prompt_limits_the_agent_to_transcript_text():
     prompt = build_checkpoint_user_prompt(
@@ -52,7 +36,7 @@ def test_polish_prompt_limits_the_agent_to_transcript_text():
     assert "search_context_files" in prompt
 
 def test_polish_scope_rejects_state_and_question_tools():
-    tools = _Tools()
+    tools = RecordingAgentTools()
     scope = ToolScope(pass_kind=PASS_POLISH)
 
     payload, results = run_tool(tools, "patch_state", {"ops": [
@@ -87,7 +71,7 @@ def test_polish_scope_rejects_state_and_question_tools():
 def test_direct_tool_mode_tells_the_model_about_pass_rejections(monkeypatch):
     from types import SimpleNamespace
 
-    tools = _Tools()
+    tools = RecordingAgentTools()
     agent = DirectOpenRouterAgent()
     agent._tools = tools
     ops = [
@@ -124,7 +108,7 @@ def test_direct_tool_mode_tells_the_model_about_pass_rejections(monkeypatch):
 
 
 def test_direct_read_tool_returns_text_without_ops():
-    tools = _Tools()
+    tools = RecordingAgentTools()
     tools.searches = []
 
     def search_past_meetings(query="", meeting_id=None, limit=10):
@@ -157,7 +141,7 @@ def test_direct_read_tool_returns_text_without_ops():
 
 def test_missing_read_tool_says_so_in_plain_text():
     payload, results = run_tool(
-        _Tools(), "search_past_meetings", {"query": "budget"}, ToolScope(),
+        RecordingAgentTools(), "search_past_meetings", {"query": "budget"}, ToolScope(),
     )
     assert payload["disabled"] is True
     assert results == []

@@ -1,5 +1,25 @@
-"""An ``AgentCore`` stand-in for the headless passes over a stored meeting."""
-from meeting.interfaces import AgentResult
+"""Stand-ins for an ``AgentCore`` and the tools the engine hands it."""
+from meeting.interfaces import AgentResult, OpResult
+
+
+class RecordingAgentTools:
+    """Agent tools that accept every op and count question calls."""
+
+    def __init__(self) -> None:
+        self.ops = []
+        self.question_calls = 0
+
+    def apply_agent_ops(self, ops):
+        self.ops.extend(ops)
+        return [OpResult(ok=True, op=op) for op in ops]
+
+    def ask_question(self, text, evidence):
+        self.question_calls += 1
+        return OpResult(ok=True, op={"op": "ask_question"})
+
+    def resolve_question(self, question_id, answer_text, confidence, evidence):
+        self.question_calls += 1
+        return OpResult(ok=True, op={"op": "resolve_question"})
 
 
 class ReplayAgentCore:

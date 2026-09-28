@@ -14,9 +14,9 @@ from meeting.agent.prompts import (
 )
 from meeting.agent.scheduler import CheckpointScheduler
 from meeting.agent.tool_policy import PASS_NOTES, ToolScope, run_tool
-from meeting.interfaces import OpResult
 from meeting.state.patches import OpContext, apply_ops, filter_notes_ops, live_note_ids
 from meeting.state.schema import CARD_KEYS, MeetingState
+from tests.fakes.agent_core import RecordingAgentTools
 from tests.fakes.scheduler import FakeNotesAgent, FakeNotesEngine, segment
 
 
@@ -136,24 +136,9 @@ class TestNoteTakerPrompts:
         assert "(no new segments)" in prompt
 
 
-class _Tools:
-    def __init__(self) -> None:
-        self.ops = []
-
-    def apply_agent_ops(self, ops):
-        self.ops.extend(ops)
-        return [OpResult(ok=True, op=op) for op in ops]
-
-    def ask_question(self, text, evidence):
-        return OpResult(ok=True, op={"op": "ask_question"})
-
-    def resolve_question(self, question_id, answer_text, confidence, evidence):
-        return OpResult(ok=True, op={"op": "resolve_question"})
-
-
 class TestNotesToolScope:
     def test_notes_scope_rejects_everything_but_live_notes_ops(self):
-        tools = _Tools()
+        tools = RecordingAgentTools()
         scope = ToolScope(pass_kind=PASS_NOTES, note_ids=frozenset({"it_note1"}))
 
         _, results = run_tool(tools, "patch_state", {"ops": [
