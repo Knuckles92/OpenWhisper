@@ -28,7 +28,7 @@ def _menu_actions(widget):
         captured["actions"] = list(self.actions())
         return None
 
-    with patch("ui_qt.widgets.history_sidebar.QMenu.exec", _capture):
+    with patch("ui_qt.widgets.context_menu.QMenu.exec", _capture):
         widget._show_context_menu(widget.rect().center())
     return captured["actions"]
 
