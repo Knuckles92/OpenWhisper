@@ -1330,9 +1330,6 @@ def resolve_meeting_end_report(
     )
 
 
-DEFAULT_REPORT_VIEWS: Final[Tuple[str, ...]] = ("ribbon", "brief", "signal")
-
-
 def resolve_meeting_report_ribbon(
     settings: Optional[Dict[str, Any]] = None,
 ) -> bool:
