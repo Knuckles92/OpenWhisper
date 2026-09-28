@@ -36,6 +36,7 @@ from services.text_llm import (
 )
 from services.transcript_cleanup import find_api_key
 from ui_qt.utils.icons import design_icon
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.buttons import Button
 from ui_qt.widgets.no_wheel import ElidingComboBox
 from ui_qt.widgets.searchable_combo import SearchableComboBox
@@ -370,10 +371,7 @@ class TextModelPicker(QWidget):
             "check-green.svg" if available else "info-warning.svg"
         )
         self.provider_credential_icon.setPixmap(credential_icon.pixmap(16, 16))
-        self.provider_requirement.setProperty("available", available)
-        self.provider_requirement.style().unpolish(self.provider_requirement)
-        self.provider_requirement.style().polish(self.provider_requirement)
-        self.provider_requirement.update()
+        set_style_property(self.provider_requirement, "available", available)
 
     def _staged_model(self) -> str:
         """Return the model this picker shows for the selected endpoint."""

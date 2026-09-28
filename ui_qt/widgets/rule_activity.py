@@ -43,6 +43,7 @@ from ui_qt.utils.collapse_animation import (
     run_max_height_animation,
 )
 from ui_qt.utils.palette import token_color
+from ui_qt.utils.restyle import repolish
 from ui_qt.widgets.eliding_label import ElidingLabel
 
 IDLE: Final[str] = "idle"
@@ -98,12 +99,6 @@ def _mix(start: QColor, end: QColor, t: float, alpha: float) -> QColor:
     )
     color.setAlphaF(min(1.0, max(0.0, alpha)))
     return color
-
-
-def _repolish(widget: QWidget) -> None:
-    style = widget.style()
-    style.unpolish(widget)
-    style.polish(widget)
 
 
 class _ActivityGlyph(QWidget):
@@ -424,7 +419,7 @@ class RuleActivityStrip(QWidget):
         self.glyph.set_state(state)
         if self.panel.property("state") != state:
             self.panel.setProperty("state", state)
-            _repolish(self.panel)
+            repolish(self.panel)
         self.setAccessibleName(title)
         self.setAccessibleDescription(detail)
         self._sync_timer()
@@ -464,7 +459,7 @@ class RuleActivityStrip(QWidget):
         self.glyph.set_state(IDLE)
         if self.panel.property("state") != IDLE:
             self.panel.setProperty("state", IDLE)
-            _repolish(self.panel)
+            repolish(self.panel)
         self._sync_timer()
 
     def _sync_timer(self) -> None:
@@ -496,7 +491,7 @@ class RuleActivityStrip(QWidget):
 
     def _repolish_clock(self, near: bool) -> None:
         self.time_label.setProperty("nearCap", near)
-        _repolish(self.time_label)
+        repolish(self.time_label)
 
     def _place_panel(self) -> None:
         self.panel.setGeometry(

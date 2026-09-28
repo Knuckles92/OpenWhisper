@@ -37,6 +37,7 @@ from services.settings import (
 from ui_qt.overlay_state import OverlayState
 from ui_qt.utils.icons import tabler_icon as _tabler_icon
 from ui_qt.utils.icons import tabler_pixmap as _tabler_pixmap
+from ui_qt.utils.restyle import set_style_property as _repolish
 from ui_qt.widgets.buttons import Button, PrimaryButton
 from ui_qt.widgets.decode_label import DecodeLabel
 from ui_qt.widgets.eliding_label import ElidingLabel
@@ -85,12 +86,6 @@ _ROW_STATE_TEXT = {
     "done": "Done",
     "failed": "Failed",
 }
-
-
-def _repolish(widget: QWidget, prop: str, value: str) -> None:
-    widget.setProperty(prop, value)
-    widget.style().unpolish(widget)
-    widget.style().polish(widget)
 
 
 def _is_supported_audio(path: str) -> bool:

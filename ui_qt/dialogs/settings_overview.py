@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 from services.format_utils import format_size_bytes
 from ui_qt.utils.icons import tabler_icon
 from ui_qt.utils.palette import token_color
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
@@ -107,9 +108,7 @@ class OverviewCard(QFrame):
         self.value_label.setText(value)
         self.detail_label.setText(detail)
         self.detail_label.setVisible(bool(detail))
-        self.value_label.setProperty("muted", muted)
-        self.value_label.style().unpolish(self.value_label)
-        self.value_label.style().polish(self.value_label)
+        set_style_property(self.value_label, "muted", muted)
         self.setToolTip(f"{self.role_label.text()}: {value}" if value else "")
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:

@@ -53,6 +53,7 @@ from services.settings import (
 )
 from ui_qt.dialogs.component_details_dialog import ComponentDetailsDialog
 from ui_qt.utils.app_icon import app_icon
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets import Button, ElidingComboBox, ElidingLabel, PrimaryButton
 from ui_qt.widgets.buttons import fit_compact_button
 from ui_qt.widgets.component_row_widget import ComponentRowWidget
@@ -493,9 +494,7 @@ class DownloadsPage(QWidget):
                 shadow.setOffset(-6, 0)
                 shadow.setColor(QColor(0, 0, 0, 110))
                 self.inspector.setGraphicsEffect(shadow)
-            self.inspector.setProperty("overlay", not docked)
-            self.inspector.style().unpolish(self.inspector)
-            self.inspector.style().polish(self.inspector)
+            set_style_property(self.inspector, "overlay", not docked)
             self.inspector_close_button.setVisible(not docked)
         if docked:
             self.inspector.setVisible(True)
@@ -690,10 +689,7 @@ class DownloadsPage(QWidget):
         self._details = get_model_details(model_name)
         self._render_inspector()
         for name, row in self.rows.items():
-            row.setProperty("selected", name == model_name)
-            row.style().unpolish(row)
-            row.style().polish(row)
-            row.update()
+            set_style_property(row, "selected", name == model_name)
         self._inspector_open = True
         self._update_inspector_mode()
 
@@ -908,10 +904,7 @@ class DownloadsPage(QWidget):
         if component_id not in self._component_rows:
             return
         for cid, row in self._component_rows.items():
-            row.setProperty("selected", cid == component_id)
-            row.style().unpolish(row)
-            row.style().polish(row)
-            row.update()
+            set_style_property(row, "selected", cid == component_id)
         row = self._component_rows[component_id]
         self.library_scroll_area.ensureWidgetVisible(row, 0, 12)
         row.setFocus(Qt.FocusReason.OtherFocusReason)
@@ -925,10 +918,7 @@ class DownloadsPage(QWidget):
         dialog.exec()
         selected = self._component_rows.get(component_id)
         if selected is not None:
-            selected.setProperty("selected", False)
-            selected.style().unpolish(selected)
-            selected.style().polish(selected)
-            selected.update()
+            set_style_property(selected, "selected", False)
 
     def _confirm_component_removal(self, component_id: str) -> None:
         """Ask before deleting a multi-gigabyte component."""

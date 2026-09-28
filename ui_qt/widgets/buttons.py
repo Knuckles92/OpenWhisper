@@ -23,6 +23,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QFont, QPainter, QPen
 
 from ui_qt.utils.palette import token_color
+from ui_qt.utils.restyle import set_style_property
 
 
 class HotkeyHoverHint(QWidget):
@@ -213,10 +214,7 @@ class Button(QPushButton):
         if self._active == active:
             return
         self._active = active
-        self.setProperty("inactive", not active)
-        self.style().unpolish(self)
-        self.style().polish(self)
-        self.update()
+        set_style_property(self, "inactive", not active)
         self.setCursor(
             Qt.CursorShape.PointingHandCursor if active else Qt.CursorShape.ArrowCursor
         )

@@ -140,6 +140,7 @@ from ui_qt.dialogs.settings_search import (
 from ui_qt.utils.app_icon import app_icon
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets import (
     Button,
     DangerButton,
@@ -1850,9 +1851,7 @@ class SettingsDialog(QDialog):
         self.api_key_status.setText(text)
         icon = "check-green.svg" if tone == "success" else "info-warning.svg"
         self.api_key_status_icon.setPixmap(design_icon(icon).pixmap(16, 16))
-        self.api_key_status.setProperty("tone", tone)
-        self.api_key_status.style().unpolish(self.api_key_status)
-        self.api_key_status.style().polish(self.api_key_status)
+        set_style_property(self.api_key_status, "tone", tone)
         self._render_api_key_uses(name)
         self._update_api_key_controls()
 
@@ -2353,9 +2352,7 @@ class SettingsDialog(QDialog):
                 card = card.parentWidget()
             self._clear_search_flash()
             if card is not None:
-                card.setProperty("searchHit", True)
-                card.style().unpolish(card)
-                card.style().polish(card)
+                set_style_property(card, "searchHit", True)
                 self._search_flash = card
                 self._search_flash_timer.start()
             focus = next(
@@ -2376,9 +2373,7 @@ class SettingsDialog(QDialog):
         if card is None:
             return
         try:
-            card.setProperty("searchHit", False)
-            card.style().unpolish(card)
-            card.style().polish(card)
+            set_style_property(card, "searchHit", False)
         except RuntimeError:
             pass  # The card was destroyed with its page.
 
@@ -3060,9 +3055,7 @@ class SettingsDialog(QDialog):
 
     def _set_rule_mic_recording(self, recording: bool) -> None:
         button = self.cleanup_rule_mic_btn
-        button.setProperty("recording", recording)
-        button.style().unpolish(button)
-        button.style().polish(button)
+        set_style_property(button, "recording", recording)
         button.setText("Stop" if recording else "Dictate")
         button.setToolTip(
             "Stop and transcribe · Esc throws the recording away"

@@ -16,6 +16,7 @@ from meeting.content import (
 from meeting.time_utils import format_meeting_duration, format_meeting_started_at
 from services.settings import SettingsKey, settings_manager
 from ui_qt.utils.file_reveal import open_folder_in_file_manager
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.context_menu import context_menu
 
 from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
@@ -151,11 +152,7 @@ class PastMeetingItem(QFrame):
         if pill:
             label, tone = pill
             self.insights_pill.setText(label)
-            self.insights_pill.setProperty("pillTone", tone)
-            style = self.insights_pill.style()
-            if style is not None:
-                style.unpolish(self.insights_pill)
-                style.polish(self.insights_pill)
+            set_style_property(self.insights_pill, "pillTone", tone)
             self.insights_pill.show()
         else:
             self.insights_pill.hide()
@@ -182,12 +179,7 @@ class PastMeetingItem(QFrame):
 
     def set_selected(self, selected: bool) -> None:
         """Mark this tile as the meeting shown on the Meeting Mode tab."""
-        self.setProperty("selected", bool(selected))
-        style = self.style()
-        if style is not None:
-            style.unpolish(self)
-            style.polish(self)
-        self.update()
+        set_style_property(self, "selected", bool(selected))
 
     def _has_transcript(self) -> bool:
         summary = dict(self.meeting.get("content_summary") or {})

@@ -18,6 +18,7 @@ from services.settings import (
     resolve_meeting_unsupported_platform_ack,
     settings_manager,
 )
+from ui_qt.utils.restyle import set_style_property
 
 logger = logging.getLogger(__name__)
 
@@ -137,10 +138,7 @@ class TabbedContentWidget(QWidget):
         )
         self._meeting_unlocked = supported or acknowledged
         unsupported = not supported
-        self.tab_bar.setProperty("unsupportedMeeting", unsupported)
-        self.tab_bar.style().unpolish(self.tab_bar)
-        self.tab_bar.style().polish(self.tab_bar)
-        self.tab_bar.update()
+        set_style_property(self.tab_bar, "unsupportedMeeting", unsupported)
         self._apply_meeting_tab_tooltip()
 
     def _apply_meeting_tab_tooltip(self) -> None:
