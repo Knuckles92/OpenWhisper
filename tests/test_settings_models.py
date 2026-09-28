@@ -670,7 +670,9 @@ class TestMeetingDestinations(_DialogTestCase):
     def test_refresh_component_state_enables_pi_after_install(self):
         with patch.object(
             dialog_module, "meeting_agent_payload_dir", return_value=None
-        ):
+        ), patch.object(
+            dialog_module, "meeting_agent_needs_update", return_value=False
+        ), patch.object(dialog_module, "is_frozen", return_value=False):
             dialog, _values = self._make_meeting_dialog()
         item = dialog.meeting_agent_core_combo.model().item(0)
         assert item is not None
@@ -683,6 +685,24 @@ class TestMeetingDestinations(_DialogTestCase):
             dialog.refresh_component_state()
         assert item.isEnabled()
         assert dialog.meeting_agent_core_combo.itemText(0) == "Pi (sidecar)"
+
+    def test_pi_label_says_why_it_is_unavailable(self):
+        with patch.object(dialog_module, "meeting_agent_payload_dir", return_value=None):
+            dialog, _values = self._make_meeting_dialog()
+        combo = dialog.meeting_agent_core_combo
+        for needs_update, frozen, label in (
+            (True, True, "Pi (update from Downloads)"),
+            (True, False, "Pi (update from Downloads)"),
+            (False, True, "Pi (install from Downloads)"),
+            (False, False, "Pi (sidecar not built)"),
+        ):
+            with patch.object(dialog_module, "meeting_agent_payload_dir", return_value=None), \
+                    patch.object(dialog_module, "meeting_agent_needs_update",
+                                 return_value=needs_update), \
+                    patch.object(dialog_module, "is_frozen", return_value=frozen):
+                dialog.refresh_component_state()
+            assert combo.itemText(0) == label
+            assert not combo.model().item(0).isEnabled()
 
     def test_refresh_component_state_restores_saved_pi_core(self):
         with patch.object(

@@ -513,6 +513,16 @@ def test_meeting_agent_payload_dir_skips_outdated_pi_bundle(component_root, tmp_
             assert components.meeting_agent_payload_dir() == str(tmp_path)
 
 
+def test_meeting_agent_needs_update_reads_the_installed_manifest(component_root):
+    assert components.meeting_agent_needs_update() is False
+    _make_installed(
+        component_root,
+        ComponentId.MEETING_AGENT,
+        {"version": "node22-pi1", "component_api": 1, "platform": "win_amd64"},
+    )
+    assert components.meeting_agent_needs_update() is True
+
+
 @pytest.mark.parametrize(
     ("version", "outdated"),
     [

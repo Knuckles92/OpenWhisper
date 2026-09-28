@@ -623,6 +623,14 @@ def _pi_bundle_outdated(version: object) -> bool:
     return match is not None and int(match.group(1)) < _MIN_PI_BUNDLE_REVISION
 
 
+def meeting_agent_needs_update() -> bool:
+    """True when the installed Pi bundle is too old for the sidecar handshake."""
+    if not is_installed(ComponentId.MEETING_AGENT):
+        return False
+    manifest = read_manifest(ComponentId.MEETING_AGENT)
+    return manifest is not None and _pi_bundle_outdated(manifest.get("version"))
+
+
 def _source_sidecar_payload_dir() -> Optional[str]:
     """Repo ``sidecar/dist`` when running from source and the bundle is built.
 

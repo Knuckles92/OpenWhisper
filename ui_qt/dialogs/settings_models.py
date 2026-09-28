@@ -28,10 +28,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import config
+from config import config, is_frozen
 from services.components import (
     component_coordinator,
     current_platform_tag,
+    meeting_agent_needs_update,
     meeting_agent_payload_dir,
     speaker_model_path,
 )
@@ -126,7 +127,7 @@ def agent_core_label(core: str) -> str:
 
 def _opencode_in_downloads() -> bool:
     """Whether Downloads offers the OpenCode component on this platform."""
-    from services.components import component_is_published
+    from services.components import ComponentId, component_is_published
     return component_is_published(ComponentId.MEETING_AGENT_OPENCODE)
 
 
@@ -469,11 +470,7 @@ class ModelAssignments(QObject):
         self.meeting_agent_core_combo = ElidingComboBox()
         self.meeting_agent_core_combo.setObjectName("meetingAgentCoreCombo")
         self.meeting_agent_core_combo.setMinimumHeight(40)
-        pi_label = (
-            "Pi (sidecar)" if self._pi_payload_available
-            else "Pi (sidecar not built)"
-        )
-        self.meeting_agent_core_combo.addItem(pi_label, MeetingAgentCore.PI)
+        self.meeting_agent_core_combo.addItem(self._pi_label(), MeetingAgentCore.PI)
         model = self.meeting_agent_core_combo.model()
         item = model.item(0) if hasattr(model, "item") else None
         if item is not None:
@@ -544,6 +541,15 @@ class ModelAssignments(QObject):
             )
         )
         self._built.add(RUNTIME)
+
+    def _pi_label(self) -> str:
+        if self._pi_payload_available:
+            return "Pi (sidecar)"
+        if meeting_agent_needs_update():
+            return "Pi (update from Downloads)"
+        if is_frozen():
+            return "Pi (install from Downloads)"
+        return "Pi (sidecar not built)"
 
     def _opencode_label(self) -> str:
         if self._opencode_payload_available:
@@ -1397,10 +1403,7 @@ class ModelAssignments(QObject):
         combo = getattr(self, "meeting_agent_core_combo", None)
         if combo is None:
             return
-        combo.setItemText(
-            0,
-            "Pi (sidecar)" if self._pi_payload_available else "Pi (sidecar not built)",
-        )
+        combo.setItemText(0, self._pi_label())
         model = combo.model()
         item = model.item(0) if hasattr(model, "item") else None
         if item is not None:
