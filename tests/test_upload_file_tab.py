@@ -2,6 +2,7 @@ import os
 import sys
 
 import pytest
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -1602,7 +1603,7 @@ class TestRemoteModelField:
 
     @pytest.mark.parametrize("choices, text, tip", [
         ((None,), "Not connected", "once this computer connects"),
-        (([],), "No models ready", "no downloaded models"),
+        (([],), "No models ready", "Open Manage host models"),
         ((None, PARAKEET), "Parakeet TDT 0.6B v3", "Update OpenWhisper there"),
         (([PARAKEET], PARAKEET), "Parakeet TDT 0.6B v3", "only downloaded model"),
     ])
@@ -1637,8 +1638,16 @@ class TestRemoteModelField:
         QApplication.processEvents()
         local_height = tab.engine_card.height()
         tab.choose_backend("Remote computer")
-        tab.set_remote_models(self._choices([self.PARAKEET, self.NEMOTRON], current=self.PARAKEET))
+        choices = self._choices([self.PARAKEET, self.NEMOTRON], current=self.PARAKEET)
+        tab.set_remote_models(choices)
         QApplication.processEvents()
+        assert tab.remote_manage_button.isVisible()
+        assert tab.engine_card.height() == local_height
+        # Something to install on the host is a dot on the footer's link, not a row.
+        gpu = {"label": "GPU Acceleration", "device": "cuda", "installable": True}
+        tab.set_remote_models(replace(choices, runtime={"dependencies": [gpu]}))
+        QApplication.processEvents()
+        assert tab.remote_manage_button.available == ["GPU Acceleration"]
         assert tab.engine_card.height() == local_height
 
 

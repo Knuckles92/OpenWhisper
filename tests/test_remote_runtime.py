@@ -340,7 +340,9 @@ def test_missing_gpu_runtime_has_setup_route_in_main_card(engine, monkeypatch):
     changes = []
     tab.help_requested.connect(destinations.append)
     tab.remote_runtime_selected.connect(lambda *args: changes.append(args))
-    assert "GPU Acceleration" in tab.remote_dependency_label.text()
+    assert tab.remote_manage_button.isVisible()
+    assert tab.remote_manage_button.available == ["GPU Acceleration"]
+    assert "GPU Acceleration" in tab.remote_manage_button.toolTip()
     tab.remote_manage_button.click()
     assert destinations == ["remote_models"]
     combo = tab.remote_engine.device_combo

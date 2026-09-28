@@ -268,12 +268,10 @@ class TranscriptionTabBase(QWidget):
         self.remote_runtime_label.hide()
         engine_layout.addWidget(self.remote_runtime_label)
 
-        self.remote_management_row = RemoteModelNotice()
-        self.remote_dependency_label = self.remote_management_row.detail_label
-        self.remote_manage_button = self.remote_management_row.manage_button
+        # On the footer line, so the Remote card is as tall as the others.
+        self.remote_manage_button = RemoteModelNotice()
         self.remote_manage_button.clicked.connect(lambda: self.help_requested.emit("remote_models"))
-        self.remote_management_row.hide()
-        engine_layout.addWidget(self.remote_management_row)
+        self.remote_manage_button.hide()
 
         self.status_dot = StatusDot(diameter=16)
         # Stands in for the dot while Remote is selected.
@@ -309,6 +307,7 @@ class TranscriptionTabBase(QWidget):
         footer_row.addWidget(self.status_dot)
         footer_row.addWidget(self.link_glyph)
         footer_row.addWidget(self.resolved_label, stretch=1)
+        footer_row.addWidget(self.remote_manage_button)
         footer_row.addSpacing(6)
         footer_row.addWidget(self.cleanup_check)
         footer_row.addSpacing(6)
@@ -831,7 +830,7 @@ class TranscriptionTabBase(QWidget):
         self.api_model_field.setVisible(not visible and not remote)
         self.remote_model_field.setVisible(remote)
         self.remote_engine.setVisible(remote)
-        self.remote_management_row.setVisible(remote)
+        self.remote_manage_button.setVisible(remote)
         self._show_remote_runtime()
         if remote:
             self._show_remote_models()
@@ -848,7 +847,7 @@ class TranscriptionTabBase(QWidget):
         self.remote_engine.set_state(choices)
         dependencies = (getattr(choices, "runtime", None) or {}).get("dependencies", [])
         missing = [item["label"] for item in dependencies if item.get("installable")]
-        self.remote_management_row.set_available(missing)
+        self.remote_manage_button.set_available(missing)
         self._show_remote_models()
         # The host's engine decides whether the Remote engine can preview.
         self._sync_live_preview()
