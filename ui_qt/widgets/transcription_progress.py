@@ -146,7 +146,6 @@ class TranscriptionProgressPanel(QFrame):
         self.setObjectName("uploadProgressPanel")
         self._stage: Optional[ProgressStage] = None
         self._started_at: Optional[float] = None
-        self._with_cleanup = True
         self._batch_total = 1
         self._batch_position = 1
 
@@ -237,7 +236,6 @@ class TranscriptionProgressPanel(QFrame):
             total_files: Files in the job. More than one turns the bar
                 determinate and shows the position label.
         """
-        self._with_cleanup = with_cleanup
         self._batch_total = max(1, total_files)
         self._batch_position = 1
         self.steps[2].setVisible(with_cleanup)

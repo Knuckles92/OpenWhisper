@@ -159,9 +159,6 @@ class NavRail(QListWidget):
         row = self._rows.get(key)
         return row.name_label.text() if row is not None else ""
 
-    def is_selected(self, key: str) -> bool:
-        return bool(self._rows[key].property("selected")) if key in self._rows else False
-
     def select(self, key: str) -> None:
         item = self._items.get(key)
         if item is not None:

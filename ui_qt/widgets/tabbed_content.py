@@ -39,8 +39,6 @@ class TabbedContentWidget(QWidget):
         self._pending_tab_index: Optional[int] = None
         self._last_allowed_index = self.TAB_QUICK_RECORD
         self._programmatic_tab_change = False
-        self._recording_active = False
-        self._recording_source_tab = -1
         self._meeting_unlocked = True
         self._tab_save_timer = QTimer(self)
         self._tab_save_timer.setSingleShot(True)
@@ -315,8 +313,6 @@ class TabbedContentWidget(QWidget):
                 self._programmatic_tab_change = False
 
     def set_recording_state(self, is_recording: bool, source_tab: int):
-        self._recording_active = is_recording
-        self._recording_source_tab = source_tab
         if is_recording and 0 <= source_tab < self.tab_bar.count():
             # Disabling the selected tab lets Qt choose a neighbor, which can
             # briefly visit (and queue a save for) Meeting Mode during dictation.

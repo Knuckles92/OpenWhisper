@@ -1003,7 +1003,6 @@ class UploadFileTab(TranscriptionTabBase):
         # Mirrors of the single queued file, kept for the single-file callers.
         self._audio_path: str | None = None
         self._preview: AudioFilePreview | None = None
-        self._cancel_pending = False
         # What the last drop left out (non-audio, duplicates) or what the last
         # Transcribe removed; shown in the queue header until the next drop,
         # clear, or job.
@@ -1073,8 +1072,6 @@ class UploadFileTab(TranscriptionTabBase):
             self.file_info_card.finish_transcribing(success=False)
             self._unlock_engine()
             return
-        if state is OverlayState.CANCELING:
-            self._cancel_pending = True
         self.file_info_card.progress.apply_overlay_state(state)
 
     def set_large_file_stage(self, file_size_mb: float, is_splitting: bool) -> None:
@@ -1388,7 +1385,6 @@ class UploadFileTab(TranscriptionTabBase):
         failed = stripped.startswith("Error:")
         copyable = bool(stripped) and stripped != EMPTY_ASR_MESSAGE and not failed
         self.file_info_card.finish_transcribing(success=not failed)
-        self._cancel_pending = False
         self._unlock_engine()
         self.file_info_card.set_copy_enabled(copyable)
         self.expand_btn.setVisible(copyable)
@@ -1475,7 +1471,6 @@ class UploadFileTab(TranscriptionTabBase):
         self._items = []
         self._audio_path = None
         self._preview = None
-        self._cancel_pending = False
         self._queue_note = ""
         card = self.file_info_card
         card.hide()
@@ -1487,12 +1482,6 @@ class UploadFileTab(TranscriptionTabBase):
         card.set_ready(True)
         self.drop_zone.show()
         self._unlock_engine()
-
-    def set_file(self, audio_path: str):
-        self._on_file_selected(audio_path)
-
-    def set_files(self, audio_paths: list[str]):
-        self._on_files_selected(list(audio_paths), 0)
 
     def open_file_browser(self):
         self.drop_zone.open_file_browser()
