@@ -51,7 +51,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run synthetic live meeting agent checks using the configured provider. Makes billable model calls; never reads meeting recordings."
     )
-    parser.add_argument("--harness", choices=("pi", "opencode", "direct"), default="pi")
+    parser.add_argument("--harness", choices=("pi", "direct"), default="pi")
     parser.add_argument("--sidecar-dir")
     parser.add_argument("--output", default=".tmp/live_agent_eval.json")
     parser.add_argument(
@@ -101,7 +101,7 @@ def main():
 
     def final_consolidation():
         # The app's own consolidation budget (stall limit and hard cap), not a shorter probe
-        # timer: a 120 s cancel once made a still-thinking OpenCode pass look broken.
+        # timer: a 120 s cancel once made a still-thinking agent pass look broken.
         segments = [
             dict(id=sid, speaker=speaker, text=text, start_s=i * 8, end_s=i * 8 + 6, channel="mic")
             for i, (sid, speaker, text) in enumerate(CONSOLIDATION_MEETING)
