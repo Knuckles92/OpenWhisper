@@ -15,6 +15,7 @@ import pytest
 
 from meeting.agent import sidecar as pi_mod
 from meeting.agent.pi_sidecar import PiSidecarAgent
+from meeting.agent.tool_policy import pass_kind_for
 from meeting.interfaces import AgentConfig, CheckpointPayload, OpResult
 
 
@@ -681,7 +682,7 @@ def _track_pass(agent, payload):
         agent._active_request_ids.add(payload.request_id)
         agent._checkpoint_op_results[payload.request_id] = []
         agent._request_contexts[payload.request_id] = {
-            "pass": pi_mod._pass_kind_for(payload),
+            "pass": pass_kind_for(payload),
             "notes_ids": frozenset(),
             "evidence": [],
         }

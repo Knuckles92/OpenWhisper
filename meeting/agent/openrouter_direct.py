@@ -16,12 +16,19 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from config import config
-from meeting.agent.evidence import repair_evidence_ids
 from meeting.agent.prompts import (
     JSON_FALLBACK_INSTRUCTIONS,
     build_checkpoint_user_prompt,
     build_note_taker_system_prompt,
     build_notes_user_prompt,
+)
+from meeting.agent.tool_policy import (
+    PASS_REJECTIONS,
+    ToolScope,
+    apply_patch_ops,
+    op_results_payload,
+    run_tool,
+    tool_result_text,
 )
 from meeting.finalization import POLISH_TIMEOUT_S
 from meeting.interfaces import (
@@ -31,7 +38,6 @@ from meeting.interfaces import (
     CheckpointPayload,
     OpResult,
 )
-from meeting.state.patches import filter_notes_ops, live_note_ids
 from meeting.state.schema import CARD_KEYS
 
 from services.text_generation import generate
@@ -91,7 +97,6 @@ _PATCH_STATE_OPS = (
     "upsert_participant", "suggest_participant_name",
     "revise_segment_text",
 )
-_POLISH_ONLY_OPS = frozenset({"revise_segment_text"})
 _AGENT_CARDS = [key for key in CARD_KEYS if key != "user_notes"]
 
 _EVIDENCE_SCHEMA = {
@@ -289,8 +294,6 @@ _SEARCH_CONTEXT_FILES_TOOL = {
     },
 }
 
-_READ_TOOLS = frozenset({"search_past_meetings", "search_context_files"})
-
 _TOOLS = [
     _PATCH_STATE_TOOL, _ASK_QUESTION_TOOL, _RESOLVE_QUESTION_TOOL,
     _SEARCH_PAST_MEETINGS_TOOL, _SEARCH_CONTEXT_FILES_TOOL,
@@ -326,21 +329,6 @@ def _context_folder_enabled() -> bool:
         return False
 
 
-def _op_results_payload(results: List[OpResult]) -> Dict[str, Any]:
-    return {
-        "results": [
-            {
-                "ok": r.ok,
-                "reason": r.reason,
-                "target_id": r.target_id,
-                "seq": r.seq,
-                "current_revision": r.current_revision,
-            }
-            for r in results
-        ]
-    }
-
-
 class DirectOpenRouterAgent:
     """``AgentCore`` implementation calling OpenRouter/OpenAI directly.
 
@@ -365,10 +353,6 @@ class DirectOpenRouterAgent:
         self._json_mode = False
         self._use_json_response_format = True
         self._profile = None
-        self._polish_mode = False
-        self._notes_mode = False
-        self._notes_item_ids: Optional[frozenset] = None
-        self._citable_ids: List[str] = []
         self._fatal = False
         self._shut_down = False
         self._cancel_event = threading.Event()
@@ -551,8 +535,7 @@ class DirectOpenRouterAgent:
         if client is None:
             return AgentResult(ok=False, error="client_unavailable")
 
-        is_notes = bool(getattr(payload, "is_notes", False))
-        if is_notes:
+        if payload.is_notes:
             system_prompt = build_note_taker_system_prompt()
             user_prompt = build_notes_user_prompt(
                 payload.state_snapshot,
@@ -564,7 +547,7 @@ class DirectOpenRouterAgent:
                 payload.state_snapshot,
                 payload.new_segments,
                 payload.is_consolidation,
-                is_polish=bool(getattr(payload, "is_polish", False)),
+                is_polish=payload.is_polish,
             )
         max_rounds = (
             _MAX_CONSOLIDATION_TOOL_ROUNDS if payload.is_consolidation
@@ -575,122 +558,20 @@ class DirectOpenRouterAgent:
             and max_rounds < _MAX_TOOL_ROUNDS_WITH_RECALL
         ):
             max_rounds = _MAX_TOOL_ROUNDS_WITH_RECALL
-        self._polish_mode = bool(getattr(payload, "is_polish", False))
-        self._notes_mode = is_notes
-        self._notes_item_ids = (
-            live_note_ids(payload.state_snapshot) if is_notes else None
-        )
-        self._citable_ids = [
-            str(seg.get("id"))
-            for seg in ((payload.new_segments or [])
-                            + (payload.state_snapshot.get("recent_transcript_context") or []))
-            if isinstance(seg, dict) and seg.get("id")
-        ]
+        scope = ToolScope.for_payload(payload)
         self._pass_deadline = time.monotonic() + timeout_s
-        try:
-            if self._json_mode:
-                return self._run_json_mode(
-                    client, system_prompt, user_prompt, timeout_s
-                )
-            return self._run_tool_mode(
-                client, system_prompt, user_prompt, timeout_s, max_rounds=max_rounds,
+        if self._json_mode:
+            return self._run_json_mode(
+                client, system_prompt, user_prompt, timeout_s, scope=scope,
             )
-        finally:
-            self._polish_mode = False
-            self._notes_mode = False
-            self._notes_item_ids = None
-            self._citable_ids = []
-
-    def _repair_ops(self, ops: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        tools = self._tools
-        exists = getattr(tools, "segment_exists", None)
-        if not callable(exists) or not self._citable_ids:
-            return ops
-        repaired, count = repair_evidence_ids(ops, self._citable_ids, exists)
-        if count:
-            logger.info("Repaired %d mistyped evidence id(s)", count)
-        return repaired
-
-    def _repair_evidence_list(self, evidence: List[str]) -> List[str]:
-        ops = self._repair_ops([{"op": "ask_question",
-                                 "evidence": evidence}])
-        return ops[0].get("evidence") or evidence
-
-    def _dispatch_read_tool(self, name: str, args: Dict[str, Any]) -> str:
-        if name == "search_past_meetings":
-            search = getattr(self._tools, "search_past_meetings", None)
-            if not callable(search):
-                return json.dumps({
-                    "ok": False,
-                    "disabled": True,
-                    "text": "Past-meeting recall is not available.",
-                    "hits": [],
-                })
-            meeting_id = str(args.get("meeting_id") or "").strip() or None
-            result = search(
-                query=str(args.get("query") or ""),
-                meeting_id=meeting_id,
-                limit=args.get("limit", 10),
-            )
-            if isinstance(result, dict):
-                return str(result.get("text") or json.dumps(result))
-            return str(result or "")
-        if name == "search_context_files":
-            search = getattr(self._tools, "search_context_files", None)
-            if not callable(search):
-                return json.dumps({
-                    "ok": False,
-                    "disabled": True,
-                    "text": "Knowledge-folder search is not available.",
-                    "hits": [],
-                })
-            relative_path = str(args.get("relative_path") or "").strip() or None
-            result = search(
-                query=str(args.get("query") or ""),
-                relative_path=relative_path,
-                limit=args.get("limit", 10),
-            )
-            if isinstance(result, dict):
-                return str(result.get("text") or json.dumps(result))
-            return str(result or "")
-        raise ValueError(f"unknown read tool: {name}")
-
-    def _dispatch_tool_call(self, name: str, args: Dict[str, Any]) -> List[OpResult]:
-        tools = self._tools
-        assert tools is not None
-        if name == "patch_state":
-            ops = args.get("ops")
-            if not isinstance(ops, list):
-                raise ValueError("'ops' must be a list of op objects")
-            if self._polish_mode:
-                ops = [
-                    op for op in ops
-                    if isinstance(op, dict) and op.get("op") in _POLISH_ONLY_OPS
-                ]
-            elif self._notes_mode:
-                ops = filter_notes_ops(ops, self._notes_item_ids)
-            ops = self._repair_ops(ops)
-            return tools.apply_agent_ops(ops)
-        if (
-            self._polish_mode or self._notes_mode
-        ) and name in ("ask_question", "resolve_question"):
-            return []
-        if name == "ask_question":
-            return [tools.ask_question(
-                str(args.get("text") or ""),
-                self._repair_evidence_list(list(args.get("evidence") or [])),
-            )]
-        if name == "resolve_question":
-            return [tools.resolve_question(
-                str(args.get("question_id") or ""),
-                str(args.get("answer_text") or ""),
-                float(args.get("confidence") or 0.0),
-                self._repair_evidence_list(list(args.get("evidence") or [])),
-            )]
-        raise ValueError(f"unknown tool: {name}")
+        return self._run_tool_mode(
+            client, system_prompt, user_prompt, timeout_s,
+            max_rounds=max_rounds, scope=scope,
+        )
 
     def _run_tool_mode(self, client: Any, system_prompt: str, user_prompt: str,
                        timeout_s: float, max_rounds: int = _MAX_TOOL_ROUNDS,
+                       scope: ToolScope = ToolScope(),
                        ) -> AgentResult:
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -739,16 +620,11 @@ class DirectOpenRouterAgent:
                     args = json.loads(call.function.arguments or "{}")
                     if not isinstance(args, dict):
                         raise ValueError("tool arguments must be a JSON object")
-                    if call.function.name in _READ_TOOLS:
-                        content = self._dispatch_read_tool(
-                            call.function.name, args,
-                        )
-                    else:
-                        results = self._dispatch_tool_call(
-                            call.function.name, args,
-                        )
-                        op_results.extend(results)
-                        content = json.dumps(_op_results_payload(results))
+                    result, results = run_tool(
+                        self._tools, call.function.name, args, scope,
+                    )
+                    op_results.extend(results)
+                    content = tool_result_text(call.function.name, result)
                 except json.JSONDecodeError as exc:
                     logger.warning(
                         "Tool call %s produced malformed JSON: %s",
@@ -778,7 +654,8 @@ class DirectOpenRouterAgent:
         return AgentResult(ok=True, op_results=op_results, usage=usage)
 
     def _run_json_mode(self, client: Any, system_prompt: str, user_prompt: str,
-                       timeout_s: float) -> AgentResult:
+                       timeout_s: float, scope: ToolScope = ToolScope(),
+                       ) -> AgentResult:
         """Fallback for models without tool support: one ops-JSON object."""
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -850,24 +727,21 @@ class DirectOpenRouterAgent:
                 )
 
             assert self._tools is not None
-            if self._polish_mode:
-                ops = [
-                    op for op in ops
-                    if isinstance(op, dict) and op.get("op") in _POLISH_ONLY_OPS
-                ]
-            elif self._notes_mode:
-                ops = filter_notes_ops(ops, self._notes_item_ids)
-            ops = self._repair_ops(ops)
-            op_results = self._tools.apply_agent_ops(ops) if ops else []
+            op_results = apply_patch_ops(self._tools, ops, scope)
             all_results.extend(op_results)
-            rejected = [r for r in op_results if not r.ok]
+            # Ops outside the pass's job are reported, but neither worth a
+            # repair round nor a failed pass on their own.
+            rejected = [
+                r for r in op_results
+                if not r.ok and r.reason not in PASS_REJECTIONS
+            ]
             repairable = [r for r in rejected if r.reason not in {
                 "human_edited", "human_named", "agent_writes_revoked",
             }]
             if repairable and attempt < 2:
                 messages.append(response.assistant_message)
                 messages.append({"role": "user", "content": (
-                    "Operation results: " + json.dumps(_op_results_payload(op_results))
+                    "Operation results: " + json.dumps(op_results_payload(op_results))
                     + "\nCorrect the rejected operations using these reasons and current "
                     "revisions. Do not repeat successful operations or retry protected "
                     "human items. Emit only the remaining warranted changes as "

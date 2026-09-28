@@ -16,6 +16,7 @@ from meeting.agent.prompts import (
     build_system_prompt,
 )
 from meeting.agent.scheduler import CheckpointScheduler
+from meeting.agent.tool_policy import PASS_NOTES, ToolScope, run_tool
 from meeting.interfaces import AgentResult, OpResult
 from meeting.state.patches import OpContext, apply_ops, filter_notes_ops, live_note_ids
 from meeting.state.schema import CARD_KEYS, MeetingState
@@ -166,14 +167,11 @@ class TestDirectAgentNotesMode:
     def test_direct_agent_declares_notes_support(self):
         assert DirectOpenRouterAgent.supports_notes_pass is True
 
-    def test_notes_mode_filters_to_live_notes_ops(self):
+    def test_notes_scope_rejects_everything_but_live_notes_ops(self):
         tools = _Tools()
-        agent = DirectOpenRouterAgent()
-        agent._tools = tools
-        agent._notes_mode = True
-        agent._notes_item_ids = frozenset({"it_note1"})
+        scope = ToolScope(pass_kind=PASS_NOTES, note_ids=frozenset({"it_note1"}))
 
-        results = agent._dispatch_tool_call("patch_state", {"ops": [
+        _, results = run_tool(tools, "patch_state", {"ops": [
             {
                 "op": "add_item", "card": "live_notes",
                 "text": "new block", "evidence": ["sg_1"],
@@ -193,15 +191,18 @@ class TestDirectAgentNotesMode:
             {
                 "op": "set_topic", "text": "must not apply", "evidence": ["sg_1"],
             },
-        ]})
-        question = agent._dispatch_tool_call("ask_question", {
+        ]}, scope)
+        question, question_results = run_tool(tools, "ask_question", {
             "text": "must not apply", "evidence": ["sg_1"],
-        })
+        }, scope)
 
         assert [op["op"] for op in tools.ops] == ["add_item", "update_item"]
         assert tools.ops[0]["card"] == "live_notes"
-        assert len(results) == 2
-        assert question == []
+        assert [r.reason for r in results] == [
+            None, "notes_only", None, "notes_only", "notes_only",
+        ]
+        assert question["reason"] == "notes_only"
+        assert [r.ok for r in question_results] == [False]
 
 
 class TestNotesPatchOps:

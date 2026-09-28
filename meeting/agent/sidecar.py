@@ -37,8 +37,15 @@ from meeting.interfaces import (
     CheckpointPayload,
     OpResult,
 )
-from meeting.agent.evidence import repair_evidence_ids
-from meeting.state.patches import filter_notes_ops, live_note_ids
+from meeting.agent.tool_policy import (
+    PASS_CARDS,
+    PASS_CONSOLIDATION,
+    PASS_NOTES,
+    PASS_POLISH,
+    TOOL_NAMES,
+    ToolScope,
+    run_tool,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,12 +103,6 @@ _PROGRESS_DETAILS = {
     "auto_compaction_start": "Compressing long context…",
 }
 
-
-#: Pass kinds a checkpoint can run as, in the order they are checked.
-PASS_CARDS = "cards"
-PASS_NOTES = "notes"
-PASS_POLISH = "polish"
-PASS_CONSOLIDATION = "consolidation"
 
 #: Copy for events whose default wording is consolidation-specific. Only the
 #: entries that would otherwise say "final report" during a rolling pass are
@@ -211,16 +212,6 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _pass_kind_for(payload: CheckpointPayload) -> str:
-    if payload.is_consolidation:
-        return PASS_CONSOLIDATION
-    if bool(getattr(payload, "is_polish", False)):
-        return PASS_POLISH
-    if bool(getattr(payload, "is_notes", False)):
-        return PASS_NOTES
-    return PASS_CARDS
-
-
 @dataclass(frozen=True)
 class AgentActivity:
     """One ephemeral agent activity tick for the host-only dashboard strip.
@@ -278,16 +269,6 @@ class _ExpiredRpc:
     last_progress_mono: float
     expired_mono: float
     reason: str
-
-
-def _serialize_op_result(result: OpResult) -> Dict[str, Any]:
-    return {
-        "ok": result.ok,
-        "reason": result.reason,
-        "target_id": result.target_id,
-        "seq": result.seq,
-        "current_revision": result.current_revision,
-    }
 
 
 def _op_results_from_counts(applied: int, rejected: int) -> List[OpResult]:
@@ -637,22 +618,15 @@ class SidecarAgent:
             if not self._try_recover("unhealthy before checkpoint"):
                 return AgentResult(ok=False, error="agent_unavailable")
 
-        pass_kind = _pass_kind_for(payload)
+        scope = ToolScope.for_payload(payload)
+        pass_kind = scope.pass_kind
         with self._lock:
             self._active_request_ids.add(payload.request_id)
             self._checkpoint_op_results[payload.request_id] = []
             self._request_contexts[payload.request_id] = {
                 "pass": pass_kind,
-                "notes_ids": (
-                    live_note_ids(payload.state_snapshot)
-                    if payload.is_notes else frozenset()
-                ),
-                "evidence": [
-                    str(seg.get("id"))
-                    for seg in ((payload.new_segments or [])
-                                + (payload.state_snapshot.get("recent_transcript_context") or []))
-                    if isinstance(seg, dict) and seg.get("id")
-                ],
+                "notes_ids": scope.note_ids,
+                "evidence": list(scope.citable_ids),
             }
         # The host owns the prompt. ``state`` and the pass flags still travel
         # because installed bundles pre-filter tool calls with them.
@@ -1405,21 +1379,6 @@ class SidecarAgent:
             pending.result = msg.get("result")
         pending.event.set()
 
-    @staticmethod
-    def _repair_evidence(
-        ops: List[Dict[str, Any]],
-        tools: Any,
-        citable_ids: List[str],
-    ) -> List[Dict[str, Any]]:
-        """Repair truncated/typo'd evidence ids before exact-match validation."""
-        exists = getattr(tools, "segment_exists", None)
-        if not callable(exists) or not citable_ids:
-            return ops
-        repaired, count = repair_evidence_ids(ops, citable_ids, exists)
-        if count:
-            logger.info("Repaired %d mistyped evidence id(s)", count)
-        return repaired
-
     def _handle_tool_request(self, msg: Dict[str, Any],
                              generation: Optional[int] = None) -> None:
         # Revocation and a host operation cannot cross: cancel waits for any
@@ -1451,125 +1410,30 @@ class SidecarAgent:
                     or request_id in self._revoked_requests):
                 self._write_error(req_id, -32600, "Meeting request is no longer active")
                 return
-            pass_kind = context.get("pass", "")
-            notes_mode = pass_kind == PASS_NOTES
-            notes_item_ids = context.get("notes_ids") or frozenset()
-            citable_ids = context.get("evidence") or []
+            scope = ToolScope(
+                pass_kind=context.get("pass", ""),
+                note_ids=frozenset(context.get("notes_ids") or ()),
+                citable_ids=tuple(context.get("evidence") or ()),
+            )
         if tools is None:
             self._write_error(req_id, -32603, "tool host not initialized")
             return
         tool_name = method.split(".", 1)[-1] if isinstance(method, str) else ""
-        detail = _progress_detail("tool_execution_start", pass_kind=pass_kind)
+        detail = _progress_detail("tool_execution_start", pass_kind=scope.pass_kind)
         self._note_progress(detail, request_id=request_id, event=method or "tool")
-        self._emit_activity("tool", detail, tool_name, pass_kind)
+        self._emit_activity("tool", detail, tool_name, scope.pass_kind)
         try:
-            if method == "tool.patch_state":
-                ops = params.get("ops")
-                if not isinstance(ops, list):
-                    raise ValueError("'ops' must be a list")
-                allowed = []
-                denied = {}
-                for index, op in enumerate(ops):
-                    if pass_kind == PASS_POLISH and (not isinstance(op, dict) or op.get("op") != "revise_segment_text"):
-                        denied[index] = OpResult(ok=False, op=op, reason="polish_only")
-                    elif notes_mode and not filter_notes_ops([op], notes_item_ids):
-                        denied[index] = OpResult(ok=False, op=op, reason="notes_only")
-                    else:
-                        allowed.append(op)
-                allowed = self._repair_evidence(allowed, tools, citable_ids)
-                applied = iter(tools.apply_agent_ops(allowed) if allowed else [])
-                results = [denied[index] if index in denied else next(applied) for index in range(len(ops))]
-                with self._lock:
-                    recorded = self._checkpoint_op_results.get(request_id)
-                    if recorded is not None:
-                        recorded.extend(results)
-                payload: Dict[str, Any] = {
-                    "results": [_serialize_op_result(r) for r in results],
-                }
-            elif method == "tool.search_past_meetings":
-                search = getattr(tools, "search_past_meetings", None)
-                if not callable(search):
-                    payload = {
-                        "ok": False,
-                        "disabled": True,
-                        "text": "Past-meeting recall is not available.",
-                        "hits": [],
-                    }
-                else:
-                    raw_limit = params.get("limit", 10)
-                    try:
-                        limit = int(raw_limit)
-                    except (TypeError, ValueError):
-                        limit = 10
-                    meeting_id = str(params.get("meeting_id") or "").strip() or None
-                    payload = search(
-                        query=str(params.get("query") or ""),
-                        meeting_id=meeting_id,
-                        limit=limit,
-                    )
-                    if not isinstance(payload, dict):
-                        payload = {
-                            "ok": True,
-                            "text": str(payload or ""),
-                            "hits": [],
-                        }
-            elif method == "tool.search_context_files":
-                search = getattr(tools, "search_context_files", None)
-                if not callable(search):
-                    payload = {
-                        "ok": False,
-                        "disabled": True,
-                        "text": "Knowledge-folder search is not available.",
-                        "hits": [],
-                    }
-                else:
-                    raw_limit = params.get("limit", 10)
-                    try:
-                        limit = int(raw_limit)
-                    except (TypeError, ValueError):
-                        limit = 10
-                    relative_path = (
-                        str(params.get("relative_path") or "").strip() or None
-                    )
-                    payload = search(
-                        query=str(params.get("query") or ""),
-                        relative_path=relative_path,
-                        limit=limit,
-                    )
-                    if not isinstance(payload, dict):
-                        payload = {
-                            "ok": True,
-                            "text": str(payload or ""),
-                            "hits": [],
-                        }
-            elif method in ("tool.ask_question", "tool.resolve_question"):
-                if notes_mode or pass_kind == PASS_POLISH:
-                    result = OpResult(ok=False, op={"op": method},
-                                      reason="notes_only" if notes_mode else "polish_only")
-                    payload = _serialize_op_result(result)
-                elif method == "tool.ask_question":
-                    result = tools.ask_question(
-                        str(params.get("text") or ""),
-                        list(params.get("evidence") or []),
-                    )
-                    payload = _serialize_op_result(result)
-                else:
-                    result = tools.resolve_question(
-                        str(params.get("question_id") or ""),
-                        str(params.get("answer_text") or ""),
-                        float(params.get("confidence") or 0.0),
-                        list(params.get("evidence") or []),
-                    )
-                    payload = _serialize_op_result(result)
-                with self._lock:
-                    recorded = self._checkpoint_op_results.get(request_id)
-                    if recorded is not None:
-                        recorded.append(result)
-            else:
+            if method != f"tool.{tool_name}" or tool_name not in TOOL_NAMES:
                 self._write_error(
                     req_id, -32601, f"method not found: {method}",
                 )
                 return
+            payload, results = run_tool(tools, tool_name, params, scope)
+            if results:
+                with self._lock:
+                    recorded = self._checkpoint_op_results.get(request_id)
+                    if recorded is not None:
+                        recorded.extend(results)
             self._write_msg({
                 "jsonrpc": _JSONRPC,
                 "id": req_id,
