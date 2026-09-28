@@ -43,7 +43,7 @@ def scored_meeting(monkeypatch, tmp_path):
 def test_empty_offline_is_scored_as_deletions_and_fails_gate(scored_meeting):
     result = scored_meeting([])
     assert result["offline_score"]["deletions"] == 2
-    summary = ami_run._summary([result]*10, "fake", "en", False, 5, 20, 50, True)
+    summary = ami_run._summary([result]*10, "fake", "en", 5, 20, 50, True)
     assert summary["quality_gate"]["product"] == "offline"
     assert not summary["quality_gate"]["passed"]
     assert summary["offline"]["wer"] == 1
@@ -52,7 +52,7 @@ def test_empty_offline_is_scored_as_deletions_and_fails_gate(scored_meeting):
 def test_disabled_offline_does_not_use_cached_offline_score(scored_meeting):
     result = scored_meeting([], enabled=False)
     assert result["offline_score"] is None
-    summary = ami_run._summary([result]*10, "fake", "en", False, 5, 20, 50, False)
+    summary = ami_run._summary([result]*10, "fake", "en", 5, 20, 50, False)
     assert summary["quality_gate"]["passed"]
 
 
@@ -60,7 +60,7 @@ def test_missing_required_offline_score_cannot_substitute_draft(scored_meeting):
     result = scored_meeting([])
     result["offline_score"] = None
     with pytest.raises(ValueError, match="offline"):
-        ami_run._summary([result], "fake", "en", False, 5, 20, 50, True)
+        ami_run._summary([result], "fake", "en", 5, 20, 50, True)
 
 
 def test_partial_polish_failure_is_not_completed():
