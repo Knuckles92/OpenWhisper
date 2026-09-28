@@ -196,13 +196,13 @@ def test_sidecar_retains_transcript_revision_operations_and_shared_prompt(
 
     def rpc(method, params, **kwargs):
         assert "REVIEW EXISTING NOTES NOW" in params["user_prompt"]
-        assert "REVIEW EXISTING NOTES NOW" in params["system_prompt"]
-        assert "No new speech" in params["state"]["note_adjustment_request"]
+        assert "note_adjustment_request" not in params["state"]
         agent._handle_tool_request(
             {
                 "id": 1,
                 "method": "tool.patch_state",
                 "params": {
+                    "request_id": params["request_id"],
                     "ops": [
                         {
                             "op": "add_item",
@@ -251,6 +251,7 @@ def test_sidecar_returns_actual_polish_revision(monkeypatch, tmp_path):
                 "id": 1,
                 "method": "tool.patch_state",
                 "params": {
+                    "request_id": params["request_id"],
                     "ops": [
                         {
                             "op": "revise_segment_text",

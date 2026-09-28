@@ -28,7 +28,6 @@ from meeting.agent.base import (
 )
 from meeting.agent.prompts import (
     build_checkpoint_user_prompt, build_note_taker_system_prompt, build_notes_user_prompt,
-    intent_prompt,
 )
 from meeting.finalization import POLISH_TIMEOUT_S
 from meeting.interfaces import (
@@ -45,6 +44,12 @@ logger = logging.getLogger(__name__)
 
 _JSONRPC = "2.0"
 _PROTOCOL_VERSION = 1
+
+#: Shown when a bundle answers the handshake but predates the host-prompt,
+#: request-scoped-tools protocol (the node22-pi1 Pi bundle, for one).
+OUTDATED_AGENT_MESSAGE = (
+    "The installed meeting agent is out of date. Update it from Downloads."
+)
 
 _HELLO_TIMEOUT_S = 10.0
 #: Hard wall for a live cards/notes/polish pass, even while progress ticks.
@@ -331,6 +336,8 @@ class SidecarAgent:
     """
 
     supports_notes_pass = True
+    #: Tool calls always need an active request id. This flag additionally
+    #: drops progress notifications that do not name an active request.
     require_request_scope = False
 
     def __init__(self, payload_dir: str) -> None:
@@ -340,6 +347,9 @@ class SidecarAgent:
 
         self._lock = threading.RLock()
         self._tool_authority_lock = threading.RLock()
+        #: In-flight ``request_id`` -> that pass's tool authority (``pass``
+        #: kind, live ``notes_ids``, citable ``evidence`` ids). A consolidation
+        #: can overlap a rolling checkpoint, so nothing is kept in one slot.
         self._request_contexts: Dict[str, Dict[str, Any]] = {}
         self._revoked_requests: Set[str] = set()
         self._write_lock = threading.Lock()
@@ -357,7 +367,7 @@ class SidecarAgent:
         self._hello_ok = False
         self._hello_seen = False
         self._text_protocols = []
-        self._host_prompt_supported = False
+        self._hello_outdated = False
         self._pi_version: Optional[str] = None
 
         self._reader_thread: Optional[threading.Thread] = None
@@ -377,25 +387,11 @@ class SidecarAgent:
         self._restart_times: Deque[float] = deque()
         self._restart_generation = 0
         self._initialized = False
-        #: Notes-pass state for the tool bridge: set while a notes checkpoint
-        #: RPC is in flight (the bundle serializes checkpoints, so tool calls
-        #: arriving now belong to it), read on the single tool worker.
-        self._notes_mode = False
-        self._notes_item_ids: frozenset = frozenset()
-        #: Segment ids shown in the in-flight checkpoint's payload — the
-        #: citable universe for evidence-id repair in the tool bridge.
-        self._citable_ids: List[str] = []
         self._last_progress_mono = 0.0
         self._progress_cb: Optional[Any] = None
         #: Long-lived activity sink for the dashboard strip. Distinct from
         #: ``_progress_cb``, which is installed around one consolidation only.
         self._activity_cb: Optional[Any] = None
-        #: In-flight ``request_id`` -> pass kind. A consolidation can overlap a
-        #: rolling checkpoint, so the pass is resolved per request rather than
-        #: from a single slot; ``_pass_kind`` is the newest one, used when a
-        #: notification carries no request id (and by the tool bridge).
-        self._pass_kinds: Dict[str, str] = {}
-        self._pass_kind = ""
 
     def initialize(self, cfg: AgentConfig, tools: AgentToolHost) -> None:
         """Spawn the sidecar, complete the hello handshake, and initialize Pi.
@@ -569,23 +565,14 @@ class SidecarAgent:
     def _matching_pendings_locked(self, request_id: Any = None) -> List[_Pending]:
         """Return pendings whose stall clock belongs to ``request_id``.
 
-        A missing ``request_id`` is attributed only to the current pass so a
-        neighbor turn's thinking ticks cannot keep the wrong RPC alive.
+        Progress without a ``request_id`` keeps nothing alive, so a neighbor
+        turn's thinking ticks cannot hold the wrong RPC open.
         """
-        if isinstance(request_id, str) and request_id:
-            return [
-                pending for pending in self._pending.values()
-                if pending.request_id == request_id
-            ]
-        if not self._pass_kind:
+        if not isinstance(request_id, str) or not request_id:
             return []
-        current_ids = {
-            rid for rid, kind in self._pass_kinds.items()
-            if kind == self._pass_kind
-        }
         return [
             pending for pending in self._pending.values()
-            if pending.request_id in current_ids
+            if pending.request_id == request_id
         ]
 
     def _note_progress(
@@ -598,8 +585,7 @@ class SidecarAgent:
 
         Args:
             detail: Human-readable status for the progress callback.
-            request_id: Sidecar checkpoint id when known. Tool-bridge calls
-                omit it and fall back to the current pass.
+            request_id: Sidecar checkpoint id when known.
             event: Compact progress label stored for timeout diagnostics.
         """
         now = time.monotonic()
@@ -617,11 +603,11 @@ class SidecarAgent:
                 logger.debug("Checkpoint progress callback failed", exc_info=True)
 
     def _current_pass_kind(self, request_id: Any = None) -> str:
-        """Pass kind for ``request_id``, falling back to the newest pass."""
+        """Pass kind of the in-flight ``request_id``, else an empty string."""
         with self._lock:
-            if isinstance(request_id, str) and request_id in self._pass_kinds:
-                return self._pass_kinds[request_id]
-            return self._pass_kind
+            if not isinstance(request_id, str):
+                return ""
+            return str((self._request_contexts.get(request_id) or {}).get("pass") or "")
 
     def _emit_activity(self, kind: str, label: str, tool: str,
                        pass_kind: str) -> None:
@@ -651,85 +637,43 @@ class SidecarAgent:
             if not self._try_recover("unhealthy before checkpoint"):
                 return AgentResult(ok=False, error="agent_unavailable")
 
+        pass_kind = _pass_kind_for(payload)
         with self._lock:
             self._active_request_ids.add(payload.request_id)
             self._checkpoint_op_results[payload.request_id] = []
-            self._pass_kind = _pass_kind_for(payload)
-            self._pass_kinds[payload.request_id] = self._pass_kind
-            is_notes = bool(getattr(payload, "is_notes", False))
-            self._notes_mode = is_notes
-            self._notes_item_ids = (
-                live_note_ids(payload.state_snapshot) if is_notes else frozenset()
-            )
-            self._citable_ids = [
-                str(seg.get("id"))
-                for seg in ((payload.new_segments or [])
-                            + (payload.state_snapshot.get("recent_transcript_context") or []))
-                if isinstance(seg, dict) and seg.get("id")
-            ]
             self._request_contexts[payload.request_id] = {
-                "notes": is_notes, "notes_ids": self._notes_item_ids,
-                "evidence": self._citable_ids, "pass": self._pass_kind,
+                "pass": pass_kind,
+                "notes_ids": (
+                    live_note_ids(payload.state_snapshot)
+                    if payload.is_notes else frozenset()
+                ),
+                "evidence": [
+                    str(seg.get("id"))
+                    for seg in ((payload.new_segments or [])
+                                + (payload.state_snapshot.get("recent_transcript_context") or []))
+                    if isinstance(seg, dict) and seg.get("id")
+                ],
             }
-        from meeting.corrections import guidance_prompt
-        # Bundles that build their own prompt ignore ``user_prompt`` and read
-        # only ``human_guidance``; the brief rides along so an older sidecar
-        # still works to the host's stated intent.
+        # The host owns the prompt. ``state`` and the pass flags still travel
+        # because installed bundles pre-filter tool calls with them.
         params: Dict[str, Any] = {
-            "human_guidance": "\n\n".join(
-                part for part in (intent_prompt(payload.state_snapshot),
-                                  guidance_prompt(payload.state_snapshot))
-                if part
-            ),
             "user_prompt": (
                 build_notes_user_prompt(payload.state_snapshot, payload.new_segments)
-                if is_notes else build_checkpoint_user_prompt(
+                if payload.is_notes else build_checkpoint_user_prompt(
                     payload.state_snapshot, payload.new_segments,
-                    payload.is_consolidation, bool(getattr(payload, "is_polish", False)),
+                    payload.is_consolidation, payload.is_polish,
                 )
             ),
             "request_id": payload.request_id,
             "state": payload.state_snapshot,
             "new_segments": payload.new_segments,
             "is_consolidation": payload.is_consolidation,
-            "is_polish": bool(getattr(payload, "is_polish", False)),
-            "is_notes": is_notes,
+            "is_polish": payload.is_polish,
+            "is_notes": payload.is_notes,
         }
-        legacy_context = payload.state_snapshot.get("recent_transcript_context") or []
-        if legacy_context:
-            from meeting.agent.prompts import format_segment_line
-            participants = payload.state_snapshot.get("participants") or {}
-            params["human_guidance"] += "\n## RECENT TRANSCRIPT CONTEXT (already seen; may correct)\n" + "\n".join(
-                format_segment_line(seg, participants) for seg in legacy_context
-            )
-        if payload.state_snapshot.get("notes_review_requested"):
-            # Old notes bundles honor the explicit-request path. This is a
-            # transport-only copy, never a fabricated persisted user request.
-            params["state"] = dict(payload.state_snapshot)
-            params["state"].setdefault("note_adjustment_request",
-                "Review existing AI notes against current human guidance and "
-                "corrected transcript now, including older blocks. No new speech "
-                "is required. Fix stale names and claims; preserve human-touched "
-                "blocks and evidence. Do not add duplicate notes.")
-        if is_notes:
-            # The note-taker persona replaces the copilot charter for this
-            # pass. Bundles that predate is_notes ignore the extra fields;
-            # the tool-bridge filter below still keeps them notes-only.
+        if payload.is_notes:
+            # The note-taker persona replaces the copilot charter for this pass.
             params["system_prompt"] = build_note_taker_system_prompt()
-            if not self._host_prompt_supported:
-                # Installed bundles before host_prompt omit user notes,
-                # guidance, and explicit requests from their notes projection.
-                # They DO accept a per-notes-pass charter; carry the complete
-                # current prompt there without mutating persistent state.
-                params["system_prompt"] += "\n\n" + params["user_prompt"] + (
-                    "\nFor this pass, a NOTE ADJUSTMENT REQUEST or REVIEW EXISTING "
-                    "NOTES NOW above takes precedence over default append-only "
-                    "or prose instructions elsewhere in the template."
-                )
-        if not self._host_prompt_supported:
-            params["state"] = dict(params["state"])
-            params["state"]["human_guidance"] = params["human_guidance"]
-        pass_kind = self._pass_kind
         logger.info(
             "Dispatching %s checkpoint request_id=%s (%d segments, "
             "timeout=%.0fs stall=%s)",
@@ -777,14 +721,6 @@ class SidecarAgent:
                 self._active_request_ids.discard(payload.request_id)
                 self._request_contexts.pop(payload.request_id, None)
                 self._revoked_requests.discard(payload.request_id)
-                self._pass_kinds.pop(payload.request_id, None)
-                # An overlapping pass keeps naming itself; only the last one
-                # out clears the fallback.
-                remaining = list(self._pass_kinds.values())
-                self._pass_kind = remaining[-1] if remaining else ""
-                self._notes_mode = False
-                self._notes_item_ids = frozenset()
-                self._citable_ids = []
 
         if not isinstance(result, dict):
             return AgentResult(ok=False, error="invalid checkpoint response")
@@ -882,27 +818,14 @@ class SidecarAgent:
     def _build_env(self, api_key: str) -> Dict[str, str]:
         """Environment for the sidecar child process."""
         assert self._cfg is not None
+        from services.text_llm import SIDECAR_API_KEY_ENV, profile_from_agent_config
+
         env = os.environ.copy()
         env["OPENWHISPER_SIDECAR_TOKEN"] = self._token or ""
-        env["OPENWHISPER_LLM_API_KEY"] = api_key
-        # Keep OPENROUTER_API_KEY for older sidecar bundles and tests.
-        env["OPENROUTER_API_KEY"] = api_key
-        if self._cfg.provider == "openai":
-            env["OPENAI_API_KEY"] = api_key
-        try:
-            from services.text_llm import profile_from_agent_config
-
-            profile = profile_from_agent_config(
-                self._cfg.provider, self._cfg.endpoint,
-            )
-            if profile.api_key_env:
-                env[profile.api_key_env] = api_key
-            if profile.base_url:
-                env["OPENWHISPER_LLM_BASE_URL"] = profile.base_url
-        except Exception:
-            pass
-        if self._cfg.model:
-            env["PI_MODEL"] = self._cfg.model
+        env[SIDECAR_API_KEY_ENV] = api_key
+        profile = profile_from_agent_config(self._cfg.provider, self._cfg.endpoint)
+        if profile.base_url:
+            env["OPENWHISPER_LLM_BASE_URL"] = profile.base_url
         return env
 
     def _spawn_and_handshake(self, api_key: str) -> None:
@@ -912,6 +835,7 @@ class SidecarAgent:
         self._hello_event.clear()
         self._hello_ok = False
         self._hello_seen = False
+        self._hello_outdated = False
         self._text_protocols = []
         self._pi_version = None
 
@@ -981,6 +905,9 @@ class SidecarAgent:
                     "sidecar process exited before the hello handshake "
                     f"(exit code {exit_code}); see the sidecar stderr log above"
                 )
+            if self._hello_outdated:
+                self._fatal = True
+                raise RuntimeError(OUTDATED_AGENT_MESSAGE)
             raise RuntimeError("sidecar hello token/protocol mismatch")
 
     @staticmethod
@@ -1368,8 +1295,15 @@ class SidecarAgent:
             )
 
     def _validate_hello(self, params: Dict[str, Any]) -> bool:
-        """Harness-specific additions; old Pi protocol remains accepted."""
-        return True
+        """True when the harness speaks the current host protocol.
+
+        The host writes every prompt and scopes every tool call to its
+        checkpoint; a bundle that cannot do both is out of date.
+        """
+        return (
+            params.get("host_prompt") == 1
+            and params.get("request_scoped_tools") == 1
+        )
 
     def _handle_notification(self, method: str, params: Any,
                              generation: Optional[int] = None) -> None:
@@ -1389,18 +1323,22 @@ class SidecarAgent:
                 and len(token) == len(expected)
                 and hmac.compare_digest(token, expected)
             )
-            ok = token_ok and protocol == _PROTOCOL_VERSION and self._validate_hello(params)
+            current = self._validate_hello(params)
+            ok = token_ok and protocol == _PROTOCOL_VERSION and current
             self._hello_seen = True
             self._hello_ok = bool(ok)
+            self._hello_outdated = bool(
+                token_ok and protocol == _PROTOCOL_VERSION and not current
+            )
             self._text_protocols = params.get("text_protocols", []) if ok else []
-            self._host_prompt_supported = ok and params.get("host_prompt") == 1
             version = params.get("harness_version") or params.get("pi_version")
             if isinstance(version, str):
                 self._pi_version = version
             if not ok:
                 logger.error(
-                    "Sidecar hello rejected (token_match=%s protocol=%r)",
-                    token_ok, protocol,
+                    "Sidecar hello rejected (token_match=%s protocol=%r "
+                    "current=%s version=%r)",
+                    token_ok, protocol, current, version,
                 )
             self._hello_event.set()
             return
@@ -1505,20 +1443,18 @@ class SidecarAgent:
                         and generation != self._restart_generation)):
                 return
             tools = self._tools
+            # Every call names its checkpoint; a call for a finished, canceled
+            # or unknown request has no authority to write.
             request_id = params.get("request_id")
-            scoped = self.require_request_scope or bool(request_id)
             context = self._request_contexts.get(request_id) if isinstance(request_id, str) else None
-            if scoped and (
-                context is None or request_id not in self._active_request_ids
-                or request_id in self._revoked_requests
-            ):
+            if (context is None or request_id not in self._active_request_ids
+                    or request_id in self._revoked_requests):
                 self._write_error(req_id, -32600, "Meeting request is no longer active")
                 return
-            context = context or {}
-            notes_mode = context.get("notes", self._notes_mode)
-            notes_item_ids = context.get("notes_ids", self._notes_item_ids)
-            citable_ids = context.get("evidence", self._citable_ids)
-            pass_kind = context.get("pass", self._pass_kind)
+            pass_kind = context.get("pass", "")
+            notes_mode = pass_kind == PASS_NOTES
+            notes_item_ids = context.get("notes_ids") or frozenset()
+            citable_ids = context.get("evidence") or []
         if tools is None:
             self._write_error(req_id, -32603, "tool host not initialized")
             return
@@ -1544,9 +1480,6 @@ class SidecarAgent:
                 applied = iter(tools.apply_agent_ops(allowed) if allowed else [])
                 results = [denied[index] if index in denied else next(applied) for index in range(len(ops))]
                 with self._lock:
-                    request_id = params.get("request_id")
-                    if not request_id and len(self._active_request_ids) == 1:
-                        request_id = next(iter(self._active_request_ids))
                     recorded = self._checkpoint_op_results.get(request_id)
                     if recorded is not None:
                         recorded.extend(results)
