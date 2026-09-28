@@ -27,8 +27,7 @@ from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 from meeting.clock import MeetingClock
 from meeting.finalization import (
-    POLISH_TIMEOUT_S, make_step, failed_steps_message, sparse_redecode_detail,
-    speaker_pass_gate,
+    POLISH_TIMEOUT_S, make_step, failed_steps_message, speaker_pass_gate,
 )
 from meeting.interfaces import (
     CHANNEL_LOOPBACK,
@@ -1263,6 +1262,9 @@ class MeetingEngine:
     ) -> bool:
         """Re-decode session audio, replace the draft transcript, refresh UI.
 
+        The same ``rerun_redecode`` a retry runs, fed by the meeting's own
+        ASR engine and diarizer while they are still loaded.
+
         Returns:
             True when a non-empty offline transcript was committed.
         """
@@ -1275,71 +1277,24 @@ class MeetingEngine:
         transcribe = getattr(asr, "transcribe_offline_session", None)
         if not callable(transcribe):
             return False
-        spool_dir = self._spool_dir or ""
-        try:
-            chunks = self.repository.get_audio_chunks(self.meeting_id)
-        except Exception:
-            logger.exception("Could not load audio chunks for offline ASR")
-            chunks = []
-        try:
-            decoded = list(transcribe(spool_dir, chunks, progress_cb=progress_cb) or [])
-        except Exception:
-            logger.exception("Offline session transcription failed")
-            return False
-        if not decoded:
-            return False
-        try:
-            existing = self.get_transcript()
-        except Exception:
-            existing = []
-        new_words = sum(len(seg.text.split()) for seg in decoded)
-        old_words = sum(
-            len(str(row.get("text") or "").split()) for row in existing
-        )
-        if self.options.redecode_coverage_guard and old_words and new_words < 0.8 * old_words:
-            self._offline_failure_detail = sparse_redecode_detail(new_words, old_words)
-            logger.warning(
-                "Keeping live draft transcript: offline pass has %d words vs "
-                "draft %d (AMI IN1009 guard: do not replace a sparser decode)",
-                new_words, old_words,
-            )
-            return False
-        from meeting.refinalize import (
-            assign_session_speakers,
-            reload_store,
-            strip_unevidenced_proposed,
-        )
+        from meeting.refinalize import rerun_redecode
 
-        assign_session_speakers(
-            decoded, me_id=self._me_participant_id, diarizer=self._diarizer,
-            spool_dir=spool_dir, chunks=chunks,
+        result = rerun_redecode(
+            self.repository,
+            self.meeting_id,
+            store=self.store,
+            transcribe_fn=transcribe,
+            progress_cb=progress_cb,
+            redecode_coverage_guard=self.options.redecode_coverage_guard,
+            speaker_id_backend=self.options.speaker_id_backend,
+            diarizer=self._diarizer,
         )
-        replace = getattr(self.repository, "replace_final_transcript", None)
-        if not callable(replace):
+        if not result.get("ok"):
+            if result.get("kept_draft"):
+                self._offline_failure_detail = str(result.get("error") or "")
             return False
-        try:
-            rows, deleted, _id_map = replace(self.meeting_id, decoded)
-        except Exception:
-            logger.exception("Final transcript replace failed")
-            return False
-        mark_done = getattr(self.repository, "mark_chunks_done", None)
-        if callable(mark_done):
-            try:
-                mark_done(self.meeting_id)
-            except Exception:
-                logger.exception("Could not mark chunks done after offline ASR")
-        if self.store is not None:
-            reload_store(self.store, self.repository, self.meeting_id)
-            strip_unevidenced_proposed(self.store)
-        # The end-of-capture repair ran against the draft transcript; timeline
-        # coverage and summary fallbacks are rebuilt from the final one.
-        if self.store is not None:
-            try:
-                from meeting.state.repair import repair_meeting_state
-
-                repair_meeting_state(self.store, rows)
-            except Exception:
-                logger.exception("State repair after offline ASR failed")
+        rows = list(result.get("rows") or [])
+        deleted = list(result.get("removed_ids") or [])
         payload = {"items": rows, "removed_ids": deleted}
         self._emit("segments", payload)
         self._broadcast({"type": "segments", **payload})

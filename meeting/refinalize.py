@@ -64,6 +64,8 @@ TranscribeFn = Callable[..., Any]
 #: rather than importing the app's controller keeps ``meeting`` usable
 #: standalone, and keeps the "who owns the engine" policy in the services layer.
 ModelLease = Tuple[Callable[[], bool], Callable[[], None]]
+#: ``rerun_redecode``'s default: build a diarizer from the speaker model.
+_NEW_DIARIZER: Any = object()
 
 __all__ = [
     "FinalizationBusyError",
@@ -419,12 +421,15 @@ def rerun_redecode(
     model_lease: Optional[ModelLease] = None,
     redecode_coverage_guard: bool = False,
     speaker_id_backend: str = "local",
+    diarizer: Any = _NEW_DIARIZER,
 ) -> Dict[str, Any]:
     """Re-decode session audio and replace the stored draft transcript.
 
-    Keeps the live draft when the new pass is empty. The optional coverage
-    guard also rejects results with fewer than 80% of the draft's words. Human-pinned speakers and evidenced cards survive
-    ``replace_final_transcript``.
+    Live End runs this with the meeting's own ASR engine as
+    ``transcribe_fn``; a retry loads a model. Keeps the live draft when the
+    new pass is empty. The optional coverage guard also rejects results with
+    fewer than 80% of the draft's words. Human-pinned speakers and evidenced
+    cards survive ``replace_final_transcript``.
 
     Args:
         repository: A ``MeetingRepository``.
@@ -432,18 +437,24 @@ def rerun_redecode(
         store: Optional existing store; built from ``state_json`` otherwise.
         asr_model_name: Whisper model name used when ``transcribe_fn`` is omitted.
         language: Optional ISO-639-1 language pin.
-        transcribe_fn: Injectable decoder (tests).
+        transcribe_fn: ``(spool_dir, chunks, progress_cb=)`` decoder; the
+            live meeting's ``transcribe_offline_session``, or a test fake.
         progress_cb: Optional window-progress callback.
         model_lease: Optional ``(acquire, release)`` pair invoked around the
             Whisper load. The app passes its dictation-engine lease here so
             only one model is ever resident; ``meeting`` itself stays
             independent of the services layer.
+        redecode_coverage_guard: Keep the draft when the new pass is sparse.
         speaker_id_backend: ``off`` leaves system audio unlabeled, as a live
             meeting with speaker identification off does.
+        diarizer: Labels system audio. By default a fresh one is built from
+            the speaker model; live End passes the meeting's own, or None.
 
     Returns:
-        ``{ok, error}``. Failures are reported here, not raised, except
-        unknown-meeting ``ValueError``.
+        ``{ok, error}``, plus the stored ``rows`` and ``removed_ids`` on
+        success and ``kept_draft`` when the coverage guard refused the pass.
+        Failures are reported here, not raised, except unknown-meeting
+        ``ValueError``.
     """
     meeting = repository.get_meeting(meeting_id)
     if meeting is None:
@@ -504,7 +515,7 @@ def rerun_redecode(
                 progress_cb=progress_cb,
             ) or [])
     except Exception as exc:
-        logger.exception("Redeocde transcription failed for %s", meeting_id)
+        logger.exception("Redecode transcription failed for %s", meeting_id)
         return {"ok": False, "error": str(exc)}
     finally:
         if backend is not None:
@@ -525,18 +536,22 @@ def rerun_redecode(
     if redecode_coverage_guard and old_words and new_words < 0.8 * old_words:
         logger.warning(
             "Keeping live draft transcript for %s: offline pass has %d words "
-            "vs draft %d",
+            "vs draft %d (AMI IN1009 guard: do not replace a sparser decode)",
             meeting_id, new_words, old_words,
         )
         return {
             "ok": False,
             "error": sparse_redecode_detail(new_words, old_words),
+            "kept_draft": True,
         }
-    diarizer = None
-    if speaker_id_backend != "off" and any(
-        seg.channel == CHANNEL_LOOPBACK for seg in decoded
-    ):
-        diarizer = _new_offline_diarizer(store, repository, meeting_id)
+    if speaker_id_backend == "off":
+        diarizer = None
+    elif diarizer is _NEW_DIARIZER:
+        diarizer = (
+            _new_offline_diarizer(store, repository, meeting_id)
+            if any(seg.channel == CHANNEL_LOOPBACK for seg in decoded)
+            else None
+        )
     assign_session_speakers(
         decoded, me_id=_me_participant_id(store), diarizer=diarizer,
         spool_dir=spool_dir, chunks=chunks,
@@ -545,7 +560,7 @@ def rerun_redecode(
     if not callable(replace):
         return {"ok": False, "error": "Transcript replace is unavailable."}
     try:
-        replace(meeting_id, decoded)
+        rows, removed_ids, _id_map = replace(meeting_id, decoded)
     except Exception as exc:
         logger.exception("Final transcript replace failed for %s", meeting_id)
         return {"ok": False, "error": str(exc)}
@@ -554,16 +569,18 @@ def rerun_redecode(
         try:
             mark_done(meeting_id)
         except Exception:
-            logger.exception("Could not mark chunks done after redecode retry")
+            logger.exception("Could not mark chunks done after a redecode")
     reload_store(store, repository, meeting_id)
     strip_unevidenced_proposed(store)
+    # Repair ran against the draft at End; timeline coverage and summary
+    # fallbacks are rebuilt from the final transcript.
     try:
         from meeting.state.repair import repair_meeting_state
 
-        repair_meeting_state(store, repository.get_segments(meeting_id))
+        repair_meeting_state(store, rows)
     except Exception:
-        logger.exception("State repair after redecode retry failed")
-    return {"ok": True, "error": None}
+        logger.exception("State repair after a redecode failed")
+    return {"ok": True, "error": None, "rows": rows, "removed_ids": removed_ids}
 
 
 def _run_checkpoint(core: Any, payload: CheckpointPayload,
