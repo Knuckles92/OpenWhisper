@@ -860,13 +860,14 @@ class AgentTile(QWidget):
             self._paint_shadow(painter, card, raised, ring if self._selected else None)
 
         base = token_color("slate-field" if tone == MISSING else "slate-surface")
-        base = _mix(base, token_color("slate-surface-hover"), hover)
         path = QPainterPath()
         path.addRoundedRect(card, radius, radius)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(base)
         painter.drawPath(path)
+        # Found, hovered, and chosen tiles glow in their own colour, never grey.
         wash = self._warmth() * (0.085 if dark else 0.05)
+        wash += (1.0 - self._lift) * hover * (0.05 if dark else 0.035)
         wash += self._lift * (0.07 if dark else 0.055)
         if wash > 0.0:
             painter.setBrush(_alpha(ring if blocked else accent, wash))
@@ -888,7 +889,7 @@ class AgentTile(QWidget):
             border = _mix(border, _alpha(accent, 0.6), self._warmth() * 0.45)
             # While the scan looks, the edge breathes the agent's colour.
             border = _mix(border, _alpha(accent, 0.7), self.scan_breath() * 0.5)
-            border = _mix(border, token_color("slate-border-hover"), hover)
+            border = _mix(border, _alpha(_ring_color(accent), 0.85), hover * 0.8)
             painter.setPen(QPen(border, 1.0))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(path)
