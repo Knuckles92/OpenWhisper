@@ -2,9 +2,9 @@
 
 Owns one meeting's whole pipeline — capture sources, chunk spools, the
 dedicated ASR engine, the diarizer, the state store, the web server, and the
-intelligence layer (agent core + checkpoint scheduler) — and implements the
-``AgentToolHost`` protocol so the agent's only authority is validated state
-patches.
+intelligence layer (agent core + checkpoint scheduler). The agent acts only
+through a ``StoreToolHost`` over the meeting's store, so its only authority is
+validated state patches.
 
 No Qt imports; the Qt runtime observes the engine through ``add_listener``.
 Sibling subsystem imports (``meeting.capture``, ``meeting.asr``,
@@ -118,7 +118,7 @@ class MeetingEngineOptions:
 
 
 class MeetingEngine:
-    """Single-meeting orchestrator; also the agent's ``AgentToolHost``.
+    """Single-meeting orchestrator.
 
     Lifecycle: construct → ``start()`` → (``pause()``/``resume()``/
     ``set_cloud_enabled()`` while live) → ``end()`` or ``cancel()`` →
@@ -2432,6 +2432,7 @@ class MeetingEngine:
         try:
             from meeting.agent.base import create_agent_core
             from meeting.agent.scheduler import CheckpointScheduler
+            from meeting.reinsight import StoreToolHost
             if self._agent_core is None:
                 system_prompt = ""
                 try:
@@ -2451,7 +2452,11 @@ class MeetingEngine:
                         system_prompt=system_prompt,
                         endpoint=self.options.llm_endpoint,
                     ),
-                    self,
+                    StoreToolHost(
+                        get_store=lambda: self.store,
+                        repository=self.repository,
+                        writes_allowed=self.agent_writes_allowed,
+                    ),
                 )
                 self._agent_core = created_core
                 # Duck-typed: cores without session events (the direct
@@ -3074,90 +3079,3 @@ class MeetingEngine:
         return self.repository.get_segments(
             self.meeting_id, after_start_s=after_start_s, limit=limit
         )
-
-    def apply_agent_ops(self, ops: List[Dict[str, Any]]) -> List[OpResult]:
-        """Validate and apply state-patch ops on behalf of the agent."""
-        if self.store is None:
-            return [
-                OpResult(ok=False,
-                         op=op if isinstance(op, dict) else {"op": op},
-                         reason="inactive")
-                for op in ops
-            ]
-        if not self.agent_writes_allowed():
-            return [
-                OpResult(
-                    ok=False,
-                    op=op if isinstance(op, dict) else {"op": op},
-                    reason="agent_writes_revoked",
-                )
-                for op in ops
-            ]
-        return self.store.apply("agent", "agent", list(ops))
-
-    def segment_exists(self, segment_id: str) -> bool:
-        """Exact-match stored-segment lookup for agent evidence repair."""
-        repository = getattr(self, "repository", None)
-        meeting_id = getattr(self, "meeting_id", None)
-        if not meeting_id or not hasattr(repository, "segment_exists"):
-            return False
-        try:
-            return bool(repository.segment_exists(meeting_id, segment_id))
-        except Exception:
-            logger.exception("Segment existence probe failed")
-            return False
-
-    def ask_question(self, text: str, evidence: List[str]) -> OpResult:
-        """Add a question to the quiet inbox (agent tool)."""
-        return self._apply_single_agent_op({
-            "op": "ask_question", "text": text,
-            "evidence": list(evidence or []),
-        })
-
-    def resolve_question(self, question_id: str, answer_text: str,
-                         confidence: float, evidence: List[str]) -> OpResult:
-        """Answer an open question from audio evidence (agent tool)."""
-        return self._apply_single_agent_op({
-            "op": "resolve_question", "question_id": question_id,
-            "answer_text": answer_text, "confidence": confidence,
-            "evidence": list(evidence or []),
-        })
-
-    def search_past_meetings(
-        self,
-        query: str = "",
-        meeting_id: Optional[str] = None,
-        limit: int = 10,
-    ) -> Dict[str, Any]:
-        """Bounded, consent-gated recall of earlier meeting transcripts."""
-        from meeting.recall import search_past_meetings as recall
-
-        return recall(
-            getattr(self, "repository", None),
-            query=query,
-            current_meeting_id=getattr(self, "meeting_id", None) or "",
-            meeting_id=meeting_id,
-            limit=limit,
-        )
-
-    def search_context_files(
-        self,
-        query: str = "",
-        relative_path: Optional[str] = None,
-        limit: int = 10,
-    ) -> Dict[str, Any]:
-        """Bounded, consent-gated search of the configured knowledge folder."""
-        from meeting.context_folder import search_context_files as search
-
-        return search(
-            query=query,
-            relative_path=relative_path,
-            limit=limit,
-        )
-
-    def _apply_single_agent_op(self, op: Dict[str, Any]) -> OpResult:
-        if self.store is None:
-            return OpResult(ok=False, op=op, reason="inactive")
-        if not self.agent_writes_allowed():
-            return OpResult(ok=False, op=op, reason="agent_writes_revoked")
-        return self.store.apply("agent", "agent", [op])[0]

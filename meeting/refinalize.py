@@ -38,7 +38,7 @@ from meeting.interfaces import (
 )
 from meeting.reinsight import (
     DEFAULT_TIMEOUT_S,
-    _OfflineToolHost,
+    StoreToolHost,
 )
 from meeting.stored import (
     meeting_endpoint as _meeting_endpoint,
@@ -625,7 +625,7 @@ def rerun_polish(
     except Exception as exc:
         logger.exception("Agent core unavailable for polish retry")
         return {"ok": False, "applied": 0, "error": str(exc)}
-    tools = _OfflineToolHost(store, repository)
+    tools = StoreToolHost(store, repository)
     applied_before = tools.applied
     try:
         core.initialize(

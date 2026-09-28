@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from meeting.agent.base import create_agent_core
 from meeting.agent.prompts import build_system_prompt
@@ -34,33 +34,81 @@ logger = logging.getLogger(__name__)
 #: after ``CONSOLIDATION_STALL_S`` of silence (no Pi events / tool calls).
 DEFAULT_TIMEOUT_S = 900.0
 
-__all__ = ["rerun_insights", "DEFAULT_TIMEOUT_S"]
+__all__ = ["StoreToolHost", "rerun_insights", "DEFAULT_TIMEOUT_S"]
 
 
-class _OfflineToolHost:
-    """``AgentToolHost`` for a stored meeting: state patches plus read tools.
+class StoreToolHost:
+    """``AgentToolHost`` over one meeting's state store: patches plus reads.
 
-    Mirrors ``MeetingEngine``'s tool-host implementation op-for-op so the
-    validation layer behaves identically to a live checkpoint. The store is
-    built with a segment handler so system/diarizer speaker ops can persist;
-    the agent still cannot emit ``reassign_segment_speaker`` (agent_forbidden).
+    The live meeting and every headless re-run hand their agent this host,
+    so validation behaves identically in both. The store is built with a
+    segment handler so system/diarizer speaker ops can persist; the agent
+    still cannot emit ``reassign_segment_speaker`` (agent_forbidden).
 
     Attributes:
         applied: Running count of ops the store actually applied.
     """
 
-    def __init__(self, store: MeetingStateStore,
-                 repository: Any = None) -> None:
-        self._store = store
-        self._repository = (
-            repository if repository is not None
-            else getattr(store, "_repository", None)
-        )
+    def __init__(
+        self,
+        store: Optional[MeetingStateStore] = None,
+        repository: Any = None,
+        *,
+        get_store: Optional[Callable[[], Optional[MeetingStateStore]]] = None,
+        writes_allowed: Optional[Callable[[], bool]] = None,
+    ) -> None:
+        """
+        Args:
+            store: A stored meeting's store.
+            repository: Serves evidence and recall lookups; defaults to the
+                store's own.
+            get_store: Returns the live meeting's current store (None while
+                it has none); used instead of ``store``.
+            writes_allowed: Returns False once agent writes are revoked, so
+                a late or canceled agent cannot mutate durable state.
+        """
+        self._current_store = get_store or (lambda: store)
+        if repository is None:
+            repository = getattr(store, "_repository", None)
+        self._repository = repository
+        self._writes_allowed = writes_allowed or (lambda: True)
         self.applied = 0
+
+    def _meeting_id(self) -> str:
+        return str(getattr(self._current_store(), "meeting_id", "") or "")
+
+    def _refusal(self) -> Optional[str]:
+        """Why an agent write must not land now, or None."""
+        if self._current_store() is None:
+            return "inactive"
+        if not self._writes_allowed():
+            return "agent_writes_revoked"
+        return None
 
     def apply_agent_ops(self, ops: List[Dict[str, Any]]) -> List[OpResult]:
         """Validate and apply state-patch ops on behalf of the agent."""
-        return self._record(self._store.apply("agent", "agent", list(ops)))
+        reason = self._refusal()
+        if reason:
+            return [
+                OpResult(ok=False,
+                         op=op if isinstance(op, dict) else {"op": op},
+                         reason=reason)
+                for op in ops
+            ]
+        return self._record(
+            self._current_store().apply("agent", "agent", list(ops))
+        )
+
+    def segment_exists(self, segment_id: str) -> bool:
+        """Exact-match stored-segment lookup for agent evidence repair."""
+        meeting_id = self._meeting_id()
+        if not meeting_id or not hasattr(self._repository, "segment_exists"):
+            return False
+        try:
+            return bool(self._repository.segment_exists(meeting_id, segment_id))
+        except Exception:
+            logger.exception("Segment existence probe failed")
+            return False
 
     def ask_question(self, text: str, evidence: List[str]) -> OpResult:
         """Add a question to the quiet inbox (agent tool)."""
@@ -87,15 +135,10 @@ class _OfflineToolHost:
         """Bounded, consent-gated recall of earlier meeting transcripts."""
         from meeting.recall import search_past_meetings as recall
 
-        current_id = ""
-        try:
-            current_id = self._store.meeting_id
-        except Exception:
-            current_id = ""
         return recall(
             self._repository,
             query=query,
-            current_meeting_id=current_id,
+            current_meeting_id=self._meeting_id(),
             meeting_id=meeting_id,
             limit=limit,
         )
@@ -116,7 +159,10 @@ class _OfflineToolHost:
         )
 
     def _apply_single(self, op: Dict[str, Any]) -> OpResult:
-        return self._record(self._store.apply("agent", "agent", [op]))[0]
+        reason = self._refusal()
+        if reason:
+            return OpResult(ok=False, op=op, reason=reason)
+        return self._record(self._current_store().apply("agent", "agent", [op]))[0]
 
     def _record(self, results: List[OpResult]) -> List[OpResult]:
         self.applied += sum(1 for result in results if result.ok)
@@ -183,7 +229,7 @@ def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
 
     if store is None:
         store = open_store(repository, meeting_id, meeting)
-    tools = _OfflineToolHost(store, repository)
+    tools = StoreToolHost(store, repository)
 
     try:
         core = create_agent_core(agent_core_kind, sidecar_payload_dir)

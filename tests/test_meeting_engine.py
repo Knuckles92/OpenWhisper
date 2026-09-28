@@ -162,6 +162,7 @@ class FakeAgentCore:
 
     def initialize(self, cfg, tools):
         self.config = cfg
+        self.tools = tools
 
     def checkpoint(self, payload):
         return AgentResult(ok=True)
@@ -1649,6 +1650,37 @@ class TestCloudSpeakerStep:
         assert announced == []
         assert result["skipped"] is True
         assert reason in result["error"]
+
+class TestAgentToolHost:
+    """The live agent acts through the same host as a re-run's agent."""
+
+    def test_live_writes_follow_the_engine_gate(self, make_engine, fakes, repo):
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+        repo.add_segments([TranscriptSegment(
+            segment_id="sg_said", meeting_id=engine.meeting_id, chunk_id=None,
+            channel="mic", start_s=0.0, end_s=1.0, text="Ship it Friday",
+        )])
+        tools = fakes.cores[0].tools
+
+        [landed] = tools.apply_agent_ops([
+            {"op": "set_topic", "text": "Launch", "evidence": ["sg_said"]},
+        ])
+        assert landed.ok
+        assert engine.store.snapshot()["topic"]["current"] == "Launch"
+        assert tools.segment_exists("sg_said") is True
+        assert tools.segment_exists("sg_never") is False
+
+        engine.revoke_agent_writes()
+        [refused] = tools.apply_agent_ops([
+            {"op": "set_topic", "text": "Too late", "evidence": ["sg_said"]},
+        ])
+        assert refused.reason == "agent_writes_revoked"
+        assert tools.ask_question("Why?", ["sg_said"]).reason == (
+            "agent_writes_revoked"
+        )
+        assert engine.store.snapshot()["topic"]["current"] == "Launch"
+
 
 def test_engine_module_has_no_dead_recent_text_api():
     """The unused topic-shift buffer is gone (the scheduler reads the DB)."""
