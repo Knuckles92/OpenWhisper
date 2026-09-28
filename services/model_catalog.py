@@ -21,6 +21,13 @@ RUNTIME_FORMAT: Final[str] = "CTranslate2 conversion (FP16 weights)"
 LICENSE: Final[str] = "MIT"
 
 
+def format_download_mb(size_mb: float) -> str:
+    """Approximate download size for display, like ``~145 MB`` or ``~1.6 GB``."""
+    if size_mb >= 1000:
+        return f"~{size_mb / 1000:.1f} GB"
+    return f"~{size_mb:.0f} MB"
+
+
 @dataclass(frozen=True)
 class ModelDetails:
     """Immutable user-facing metadata for one local Whisper model."""
@@ -47,9 +54,7 @@ class ModelDetails:
 
     @property
     def download_size(self) -> str:
-        if self.download_size_mb >= 1000:
-            return f"~{self.download_size_mb / 1000:.1f} GB"
-        return f"~{self.download_size_mb} MB"
+        return format_download_mb(self.download_size_mb)
 
     @property
     def compact_tags(self) -> str:
@@ -385,6 +390,16 @@ for _key, _model in SPEECH_MODELS.items():
         source_urls=(_source, "https://github.com/NVIDIA/NeMo-Speech.cpp" if _model.backend in ("parakeet", "nemotron") else ("https://github.com/QwenLM/Qwen3-ASR" if _model.backend == "qwen_asr" else "https://moonshine-voice.readthedocs.io/")),
     )
 MODEL_CATALOG: Final[Mapping[str, ModelDetails]] = MappingProxyType(_CATALOG)
+
+#: Approximate download sizes (MB) by model name, bundled so the consent
+#: dialog never contacts Hugging Face just to show an estimate: every catalog
+#: model, plus the faster-whisper names the catalog does not list.
+MODEL_DOWNLOAD_SIZE_MB: Final[Mapping[str, int]] = MappingProxyType({
+    "large": 3090,
+    "large-v3-turbo": 1620,
+    "distil-large-v3.5": 1510,
+    **{name: details.download_size_mb for name, details in _CATALOG.items()},
+})
 
 
 def get_model_details(model_name: str) -> ModelDetails:
