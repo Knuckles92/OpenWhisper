@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Callable, Dict, List, Optional
+from contextlib import contextmanager
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from meeting.agent.base import create_agent_core
 from meeting.agent.prompts import build_system_prompt
@@ -34,7 +35,13 @@ logger = logging.getLogger(__name__)
 #: after ``CONSOLIDATION_STALL_S`` of silence (no Pi events / tool calls).
 DEFAULT_TIMEOUT_S = 900.0
 
-__all__ = ["StoreToolHost", "rerun_insights", "DEFAULT_TIMEOUT_S"]
+__all__ = [
+    "AgentUnavailable",
+    "StoreToolHost",
+    "stored_agent",
+    "rerun_insights",
+    "DEFAULT_TIMEOUT_S",
+]
 
 
 class StoreToolHost:
@@ -169,25 +176,69 @@ class StoreToolHost:
         return results
 
 
-def _consolidate(core: Any, payload: CheckpointPayload,
-                 timeout_s: float) -> AgentResult:
-    """Run one bounded ``consolidate`` call on a worker thread.
+class AgentUnavailable(RuntimeError):
+    """No agent core could be created for a headless pass."""
+
+
+@contextmanager
+def stored_agent(
+    meeting_id: str,
+    meeting: Dict[str, Any],
+    tools: StoreToolHost,
+    *,
+    provider: str,
+    model: str,
+    endpoint: Optional[Dict[str, Any]] = None,
+    agent_core_kind: str = "pi",
+    sidecar_payload_dir: Optional[str] = None,
+) -> Iterator[Any]:
+    """A throwaway agent core over a stored meeting, always shut down after.
+
+    The polish retry and the insight re-run both run their pass inside one.
 
     Args:
-        core: The initialized ``AgentCore``.
-        payload: The consolidation payload.
-        timeout_s: Maximum seconds to wait before canceling the agent.
+        meeting_id: The meeting the agent works on.
+        meeting: Its stored row; supplies the recorded endpoint.
+        tools: The host the agent acts through.
+        provider: LLM provider id.
+        model: Model id.
+        endpoint: Endpoint snapshot; the row's when omitted.
+        agent_core_kind: ``pi`` for the bundled sidecar, ``direct`` otherwise.
+        sidecar_payload_dir: Directory holding the Pi sidecar payload.
 
-    Returns:
-        The agent's result, or a failed ``AgentResult`` on timeout or raise.
+    Yields:
+        The initialized core.
+
+    Raises:
+        AgentUnavailable: When no core could be created.
     """
-    result = run_agent_call(
-        lambda: core.consolidate(payload),
-        cancel=core.cancel, timeout_s=timeout_s, name="meeting-reinsight",
-    )
-    return result or AgentResult(
-        ok=False, error=f"timed out after {timeout_s:.0f}s",
-    )
+    try:
+        core = create_agent_core(agent_core_kind, sidecar_payload_dir)
+    except Exception as exc:
+        logger.exception("Agent core unavailable for a re-run of %s", meeting_id)
+        raise AgentUnavailable(str(exc)) from exc
+    try:
+        core.initialize(
+            AgentConfig(
+                meeting_id=meeting_id,
+                provider=provider,
+                model=model,
+                api_key=None,  # resolved inside the agent layer
+                system_prompt=build_system_prompt(),
+                endpoint=endpoint or _meeting_endpoint(meeting),
+            ),
+            tools,
+        )
+        yield core
+    finally:
+        # A leaked sidecar process outlives the request, so shutdown is
+        # unconditional.
+        try:
+            core.shutdown()
+        except Exception:
+            logger.exception(
+                "Agent core shutdown failed after a re-run of %s", meeting_id,
+            )
 
 
 def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
@@ -231,51 +282,39 @@ def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
         store = open_store(repository, meeting_id, meeting)
     tools = StoreToolHost(store, repository)
 
-    try:
-        core = create_agent_core(agent_core_kind, sidecar_payload_dir)
-    except Exception as exc:
-        logger.exception("Agent core unavailable for insight re-run")
-        return {"ok": False, "state": store.snapshot(), "applied": 0,
-                "error": str(exc)}
-
     ok = False
     error: Optional[str] = None
     try:
-        core.initialize(
-            AgentConfig(
-                meeting_id=meeting_id,
-                provider=provider,
-                model=model,
-                api_key=None,  # resolved inside the agent layer
-                system_prompt=build_system_prompt(),
-                endpoint=endpoint or _meeting_endpoint(meeting),
-            ),
-            tools,
-        )
-        payload = CheckpointPayload(
-            request_id=uuid.uuid4().hex,
-            state_snapshot=store.snapshot(),
-            new_segments=segments,
-            is_consolidation=True,
-        )
-        logger.info(
-            "Re-running insights for meeting %s over %d segments "
-            "(core=%s provider=%s model=%s)",
-            meeting_id, len(segments), agent_core_kind, provider, model,
-        )
-        result = _consolidate(core, payload, timeout_s)
-        ok = bool(result.ok)
-        error = None if ok else (result.error or "agent failed")
+        with stored_agent(
+            meeting_id, meeting, tools,
+            provider=provider, model=model, endpoint=endpoint,
+            agent_core_kind=agent_core_kind,
+            sidecar_payload_dir=sidecar_payload_dir,
+        ) as core:
+            payload = CheckpointPayload(
+                request_id=uuid.uuid4().hex,
+                state_snapshot=store.snapshot(),
+                new_segments=segments,
+                is_consolidation=True,
+            )
+            logger.info(
+                "Re-running insights for meeting %s over %d segments "
+                "(core=%s provider=%s model=%s)",
+                meeting_id, len(segments), agent_core_kind, provider, model,
+            )
+            result = run_agent_call(
+                lambda: core.consolidate(payload),
+                cancel=core.cancel, timeout_s=timeout_s,
+                name="meeting-reinsight",
+            ) or AgentResult(ok=False, error=f"timed out after {timeout_s:.0f}s")
+            ok = bool(result.ok)
+            error = None if ok else (result.error or "agent failed")
+    except AgentUnavailable as exc:
+        return {"ok": False, "state": store.snapshot(), "applied": 0,
+                "error": str(exc)}
     except Exception as exc:
         logger.exception("Insight re-run failed for meeting %s", meeting_id)
         error = str(exc)
-    finally:
-        # A leaked sidecar process outlives the request, so shutdown is
-        # unconditional.
-        try:
-            core.shutdown()
-        except Exception:
-            logger.exception("Agent core shutdown failed after insight re-run")
 
     # Structural repair: gpt-4o-mini often ships key points + summary but
     # leaves timeline empty. Promote evidenced key points (or sample the

@@ -33,15 +33,15 @@ from meeting.finalization import (
 from meeting.interfaces import (
     CHANNEL_LOOPBACK,
     CHANNEL_MIC,
-    AgentConfig,
     TranscriptSegment,
 )
 from meeting.reinsight import (
     DEFAULT_TIMEOUT_S,
+    AgentUnavailable,
     StoreToolHost,
+    stored_agent,
 )
 from meeting.stored import (
-    meeting_endpoint as _meeting_endpoint,
     open_store as _open_store,
 )
 from meeting.state.schema import CARD_KEYS, CardItem, FinalizationState, MeetingState
@@ -617,42 +617,24 @@ def rerun_polish(
     segments = repository.get_segments(meeting_id)
     if not segments:
         return {"ok": True, "applied": 0, "error": None}
-    try:
-        from meeting.agent.base import create_agent_core
-        from meeting.agent.prompts import build_system_prompt
-
-        core = create_agent_core(agent_core_kind, sidecar_payload_dir)
-    except Exception as exc:
-        logger.exception("Agent core unavailable for polish retry")
-        return {"ok": False, "applied": 0, "error": str(exc)}
     tools = StoreToolHost(store, repository)
-    applied_before = tools.applied
     try:
-        core.initialize(
-            AgentConfig(
-                meeting_id=meeting_id,
-                provider=provider,
-                model=model,
-                api_key=None,
-                system_prompt=build_system_prompt(),
-                endpoint=endpoint or _meeting_endpoint(meeting),
-            ),
-            tools,
-        )
-        error = polish_transcript(
-            core, store, segments, timeout_s=timeout_s, progress_cb=progress_cb,
-        )
-        return {"ok": error is None, "applied": tools.applied - applied_before,
-                "error": error}
+        with stored_agent(
+            meeting_id, meeting, tools,
+            provider=provider, model=model, endpoint=endpoint,
+            agent_core_kind=agent_core_kind,
+            sidecar_payload_dir=sidecar_payload_dir,
+        ) as core:
+            error = polish_transcript(
+                core, store, segments,
+                timeout_s=timeout_s, progress_cb=progress_cb,
+            )
+    except AgentUnavailable as exc:
+        return {"ok": False, "applied": 0, "error": str(exc)}
     except Exception as exc:
         logger.exception("Polish retry failed for meeting %s", meeting_id)
-        return {"ok": False, "applied": tools.applied - applied_before,
-                "error": str(exc)}
-    finally:
-        try:
-            core.shutdown()
-        except Exception:
-            logger.exception("Agent core shutdown failed after polish retry")
+        error = str(exc)
+    return {"ok": error is None, "applied": tools.applied, "error": error}
 
 
 def run_speaker_pass(

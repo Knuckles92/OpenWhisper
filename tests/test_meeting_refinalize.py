@@ -553,7 +553,7 @@ class TestEndpointSnapshot:
         assert core.cfg.endpoint["profile_id"] == "custom_abcd1234"
 
     def test_old_row_reconstructs_builtin_endpoint(self):
-        from meeting.refinalize import _meeting_endpoint
+        from meeting.stored import meeting_endpoint as _meeting_endpoint
 
         snapshot = _meeting_endpoint({"agent_provider": "openai"})
         assert snapshot["profile_id"] == "openai"
