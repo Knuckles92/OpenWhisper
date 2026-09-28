@@ -31,7 +31,7 @@ declare const __PI_VERSION__: string | undefined;
 // Neutral tool-definition types
 
 export type { ParamSpec, ObjectSpec, MeetingToolDef, TurnResult, CreateSessionOptions, SessionProgress } from "./session";
-import type { ParamSpec, TurnResult, CreateSessionOptions, SessionProgress, HarnessSession } from "./session";
+import type { ParamSpec, TurnResult, TurnContext, CreateSessionOptions, SessionProgress, HarnessSession } from "./session";
 export type PiSession = HarnessSession;
 
 /**
@@ -339,14 +339,17 @@ export async function createSession(opts: CreateSessionOptions): Promise<PiSessi
       }
     },
 
-    async runTurn(userMessage: string): Promise<TurnResult> {
+    async runTurn(userMessage: string, context?: TurnContext): Promise<TurnResult> {
       aborting = false;
       lastUsage = {};
+      // Pi gets the pass charter and the host prompt as one user message.
+      const charter = context?.systemPrompt ?? "";
+      const message = charter ? `${charter}\n\n${userMessage}` : userMessage;
       try {
         if ((session as any)?.agent?.state?.messages) {
           (session as any).agent.state.messages = [];
         }
-        await (session as any).prompt(userMessage);
+        await (session as any).prompt(message);
       } catch (err) {
         if (aborting) {
           return { aborted: true, usage: lastUsage };

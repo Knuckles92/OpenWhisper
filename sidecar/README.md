@@ -6,8 +6,8 @@ It runs the selected text provider through Pi's agentic loop while holding
 **meeting-state-only authority**: the session gets five custom tools
 (`patch_state`, `ask_question`, `resolve_question`, `search_past_meetings`,
 `search_context_files`) and no shell, filesystem, or network tools. Every tool
-call is bridged back to the Python host over RPC, where write operations are
-validated again.
+call is bridged back to the Python host over RPC, which decides what a pass
+may write and validates every operation.
 
 ## Build
 
@@ -30,7 +30,7 @@ external). The installed Pi SDK version is baked in and reported in the
 
 The sidecar ships as the downloadable `MEETING_AGENT` component: a portable
 win-x64 Node runtime plus the bundle. Download URLs and SHA-256 pins live in
-`services/components.py`. The Python side (`meeting/agent/pi_sidecar.py`)
+`services/components.py`. The Python side (`meeting/agent/sidecar.py`)
 spawns:
 
 ```
@@ -44,8 +44,6 @@ with `CREATE_NO_WINDOW`, stdio piped, and this environment:
 | `OPENWHISPER_SIDECAR_TOKEN` | Handshake token; echoed in the first `hello` line so Python can authenticate the process. |
 | `OPENWHISPER_LLM_API_KEY` | Process-scoped API key written into Pi's generated `models.json` (`$OPENWHISPER_LLM_API_KEY`). Auth-free local servers receive a dummy value. |
 | `OPENWHISPER_LLM_BASE_URL` | Optional fallback base URL when `initialize.base_url` is empty. |
-| `OPENROUTER_API_KEY` | Legacy alias of the same key, kept for older sidecar bundles. |
-| `PI_MODEL` | Fallback model id when `initialize.model` is empty. |
 
 ### Payload layout expected by the Python side
 
@@ -61,16 +59,20 @@ stdout is protocol-only: one JSON object per line, never anything else.
 Diagnostics go out as `log` notifications (or stderr).
 
 - **First line out** (before anything else):
-  `{"jsonrpc":"2.0","method":"hello","params":{"token":"...","protocol":1,"pi_version":"..."}}`
+  `{"jsonrpc":"2.0","method":"hello","params":{"token":"...","protocol":1,"pi_version":"...","host_prompt":1,"request_scoped_tools":1,"text_protocols":[...]}}`.
+  The host refuses a bundle whose hello lacks `host_prompt` or
+  `request_scoped_tools` and asks the user to update it from Downloads.
 - **Python → sidecar requests:** `initialize {meeting_id, provider, model,
-  system_prompt, base_url, api_key_env, kind, model_metadata, headers}` · `checkpoint {request_id, state, new_segments,
-  is_consolidation, is_polish}` → `{"applied":N,"rejected":N,"usage":{}}` ·
+  system_prompt, base_url, api_key_env, kind, model_metadata, headers}` · `checkpoint {request_id, user_prompt,
+  system_prompt?, state, new_segments, is_consolidation, is_polish, is_notes}`
+  → `{"applied":N,"rejected":N,"usage":{}}` ·
   `cancel {request_id}` · `ping {}` · `status {}` · `shutdown {}`
-- **Sidecar → Python requests (tool bridge, awaited):** `tool.patch_state
+- **Sidecar → Python requests (tool bridge, awaited, each carrying the active
+  checkpoint's `request_id`):** `tool.patch_state
   {ops}` · `tool.ask_question {text, evidence}` · `tool.resolve_question
   {question_id, answer_text, confidence, evidence}` ·
   `tool.search_past_meetings {query, meeting_id?, limit?}` ·
-  `tool.search_context_files {query, limit?}`
+  `tool.search_context_files {query, relative_path?, limit?}`
 - **Sidecar → Python notifications:** `log {level, msg}` · `progress
   {request_id, event, delta, tool, streaming}` from Pi
   `session.subscribe` (the official SDK hook; `thinking_delta` means the
@@ -78,10 +80,13 @@ Diagnostics go out as `log` notifications (or stderr).
   `thinkingFormat`; generic endpoints default to non-reasoning settings.
 
 `initialize` creates one Pi session per meeting (in-memory, private temp agent
-dir so user-global `~/.pi` extensions can't inject tools). Each `checkpoint`
-feeds the system prompt plus the state snapshot and new segments into that
-session as a user message and resolves once the agentic loop settles;
-`applied`/`rejected` counts come from the tool bridge results. `cancel` aborts
+dir so user-global `~/.pi` extensions can't inject tools). The host writes the
+whole prompt: each `checkpoint` feeds the pass charter (the checkpoint's
+`system_prompt` on a notes pass, else the `initialize` one) followed by
+`user_prompt` into that session as one user message, and resolves once the
+agentic loop settles. `applied`/`rejected` counts come from the host's tool
+bridge results; the host answers ops outside a polish or notes pass with
+`polish_only`/`notes_only` rejections. `cancel` aborts
 the active run (or pre-cancels a queued `request_id`). `shutdown` responds,
 then exits cleanly; the sidecar also exits when its stdin closes.
 
@@ -90,12 +95,14 @@ then exits cleanly; the sidecar also exits when its stdin closes.
 - `src/rpc.ts` — NDJSON JSON-RPC endpoint (correlation, dispatch, timeouts).
 - `src/tools.ts` — the five meeting tools; op vocabulary documented in the
   tool descriptions; applied/rejected tallies for checkpoint write responses.
+  No pass filtering happens here.
 - `src/pi-adapter.ts` — the **only** file that imports Pi packages. Session
   creation, provider registration (`models.json` in a temp agent
   dir), tool registration, run/abort/dispose. Uncertain SDK touchpoints are
   marked `TODO(pi-api)` so API drift stays a one-file fix.
-- `src/main.ts` — env, `hello` handshake, request handlers, checkpoint
-  serialization, prompt composition.
+- `src/runner.ts` — env, `hello` handshake, request handlers and checkpoint
+  serialization, shared with the OpenCode sidecar; `src/main.ts` starts it
+  with the Pi adapter.
 
 ## Text-provider metadata
 

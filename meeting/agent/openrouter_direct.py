@@ -38,6 +38,7 @@ from meeting.interfaces import (
     CheckpointPayload,
     OpResult,
 )
+from meeting.state.patches import RESOLVE_CONFIDENCE, SUGGEST_CONFIDENCE
 from meeting.state.schema import CARD_KEYS
 
 from services.text_generation import generate
@@ -210,7 +211,8 @@ _RESOLVE_QUESTION_TOOL = {
         "name": "resolve_question",
         "description": (
             "Answer an open inbox question from meeting audio. Confidence >= "
-            "0.8 resolves it; 0.4-0.8 stores a greyed suggestion; lower is "
+            f"{RESOLVE_CONFIDENCE:g} resolves it; {SUGGEST_CONFIDENCE:g}-"
+            f"{RESOLVE_CONFIDENCE:g} stores a greyed suggestion; lower is "
             "rejected. Report confidence honestly."
         ),
         "parameters": {
