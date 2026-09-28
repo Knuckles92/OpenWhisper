@@ -197,6 +197,8 @@ Add credentials in **Settings → API keys**; they are stored in the OS credenti
 
 Enable cleanup in **Settings → AI cleanup**, teach spelling and style in **Learned rules**, and use [Profiles](docs/cleanup-profiles.md) for formats such as emails or support tickets. Meeting settings control intelligence, end-of-meeting processing, and dashboard sharing.
 
+**Meeting insights through your own coding agent.** If you use **Claude Code**, **Codex**, or **OpenCode**, meetings can run on it instead of an API key. **Settings → Intelligence** shows which of them it found on this computer. Choose one and a model (or keep the agent's default), and meeting passes run with that agent's own sign-in, providers, and models. The agent gets OpenWhisper's meeting tools and nothing else. Claude Code and Codex run headless with their built-in tools switched off. OpenCode runs over the [Agent Client Protocol](https://agentclientprotocol.com) with its own tools denied. Each pass counts toward that agent's plan, so live insights refresh about once a minute rather than every few seconds. Custom reports use the same agent. OpenWhisper never installs or updates these agents.
+
 ### Offline use
 
 Downloaded speech models load from the local cache without network metadata checks. Install any required runtime before going offline.
