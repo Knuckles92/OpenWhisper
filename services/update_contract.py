@@ -6,10 +6,9 @@ without pulling in Qt, settings, or the rest of the application.
 
 from __future__ import annotations
 
-import json
 import os
 import re
-from typing import Dict, Final, List, Optional, Tuple
+from typing import Final, Optional, Tuple
 
 APP_NAME: Final[str] = "OpenWhisper"
 APP_ID: Final[str] = "{CA36AD0A-13B9-4737-87AD-ADB54A28EFC9}"
@@ -188,11 +187,3 @@ def decode_native_result(raw: str) -> Optional[str]:
         return validate_transaction_id(token)
     except ValueError:
         return None
-
-
-def dump_json(payload: Dict) -> str:
-    return json.dumps(payload, indent=2, sort_keys=True) + "\n"
-
-
-def required_manifest_files() -> List[str]:
-    return list(MANAGED_TOP_LEVEL_FILES)

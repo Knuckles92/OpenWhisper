@@ -53,6 +53,7 @@ from services.update_contract import (
     ApplyMode,
     archive_asset_name,
     encode_native_result,
+    normalize_version,
     setup_asset_name,
     updates_root,
 )
@@ -189,14 +190,6 @@ def channel_label(channel: str, platform_name: Optional[str] = None) -> str:
     if channel == InstallChannel.GIT:
         return "Source checkout (git)"
     return "Source copy"
-
-
-def normalize_version(raw: str) -> str:
-    """Strip a leading ``v`` and surrounding whitespace from a version string."""
-    text = (raw or "").strip()
-    if text[:1] in ("v", "V"):
-        text = text[1:]
-    return text.strip()
 
 
 def parse_version(raw: str) -> Tuple[int, int, int]:

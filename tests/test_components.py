@@ -654,8 +654,8 @@ def test_update_available_explains_the_disk_it_frees(component_root):
     entry = {"version": "new", "install_bytes": 0, "archives": []}
 
     with patch.object(coordinator, "fetch_catalog", return_value={
-        "schema": 1, "components": {"gpu-accel": entry},
-    }):
+        "schema": 2, "components": {"gpu-accel": {"platforms": {"win_amd64": entry}}},
+    }), patch.object(components, "current_platform_tag", return_value="win_amd64"):
         info = coordinator.describe("gpu-accel")
 
     assert info.state == ComponentState.UPDATE_AVAILABLE

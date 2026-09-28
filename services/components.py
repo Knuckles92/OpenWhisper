@@ -250,11 +250,6 @@ _BUILTIN_MEETING_AGENT_BY_PLATFORM: Final[Dict[str, dict]] = {
     },
 }
 
-# Back-compat alias used by older tests/docs.
-_BUILTIN_MEETING_AGENT_ARCHIVES: Final[Tuple[dict, ...]] = tuple(
-    _BUILTIN_MEETING_AGENT_BY_PLATFORM[PLATFORM_WIN_AMD64]["archives"]
-)
-
 # Version of the gpu-accel payload. Derived from the CUDA libraries it carries,
 # NOT from the application version: the payload is unchanged by an app release,
 # and an app-derived version would report "update available" after every release.
@@ -472,16 +467,13 @@ def catalog_entry_for_platform(
     if root is None:
         return None
     platforms = root.get("platforms")
-    if isinstance(platforms, Mapping):
-        tag = platform_tag if platform_tag is not None else current_platform_tag()
-        if not tag:
-            return None
-        entry = platforms.get(tag)
-        if not isinstance(entry, Mapping):
-            return None
-        return _thaw_catalog_value(entry)
-    # Schema 1 fallback: a flat entry already carries platform/archives.
-    return _thaw_catalog_value(root)
+    tag = platform_tag if platform_tag is not None else current_platform_tag()
+    if not isinstance(platforms, Mapping) or not tag:
+        return None
+    entry = platforms.get(tag)
+    if not isinstance(entry, Mapping):
+        return None
+    return _thaw_catalog_value(entry)
 
 
 def available_component_ids(
@@ -1819,27 +1811,13 @@ class ComponentCoordinator:
         for event in events:
             event.set()
 
-    def fetch_catalog(self, force: bool = False) -> Optional[Mapping]:
-        """Return a read-only view of the component catalog.
+    def fetch_catalog(self) -> Optional[Mapping]:
+        """Return a read-only view of the built-in component catalog.
 
         :meth:`catalog_entry` returns a mutable copy of one entry; copying the
         whole catalog here instead cost Settings a deep copy per component.
-
-        The catalog ships in the application (:data:`_BUILTIN_CATALOG`) and
-        needs no network access: its entries point at immutable upstream URLs
-        (PyPI wheels, nodejs.org, GitHub Release assets) with pinned SHA-256
-        digests, so there is nothing to resolve at runtime.
-
-        An earlier design fetched a catalog from the project website and treated
-        the built-in copy as a fallback. That inverted reality — the website
-        serves its SPA shell for unknown paths, so the remote branch never once
-        succeeded, while costing a wasted request and a warning per session. It
-        also made every install look outdated, because the permanently-failed
-        remote flag suppressed update detection. Regenerate the pinned entries
-        with ``python scripts/build_component.py gpu-accel`` or
-        ``python scripts/build_component.py meeting-agent``.
-
-        ``force`` remains accepted for call compatibility.
+        The catalog ships in the application and needs no network access: its
+        entries pin immutable upstream URLs and SHA-256 digests.
         """
         return _BUILTIN_CATALOG
 
@@ -1847,7 +1825,6 @@ class ComponentCoordinator:
         catalog = self.fetch_catalog()
         if not catalog:
             return None
-        # Prefer the platform-specific schema-2 entry for this host.
         return catalog_entry_for_platform(component_id, catalog=catalog)
 
     def describe(self, component_id: str) -> ComponentInfo:
