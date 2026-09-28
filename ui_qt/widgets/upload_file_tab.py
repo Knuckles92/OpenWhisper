@@ -1074,9 +1074,9 @@ class UploadFileTab(TranscriptionTabBase):
             return
         self.file_info_card.progress.apply_overlay_state(state)
 
-    def set_large_file_stage(self, file_size_mb: float, is_splitting: bool) -> None:
+    def set_large_file_stage(self, file_size_mb: float) -> None:
         if self.is_transcribing:
-            self.file_info_card.progress.set_large_file(file_size_mb, is_splitting)
+            self.file_info_card.progress.set_large_file(file_size_mb)
 
     def set_batch_progress(self, position: int, total: int, source_name: str) -> None:
         """A file of the running batch is starting (1-based position)."""

@@ -344,7 +344,7 @@ class TestTranscriptionProgressPanel:
         panel = TranscriptionProgressPanel()
         panel.start(with_cleanup=False)
 
-        panel.set_large_file(30.0, is_splitting=True)
+        panel.set_large_file(30.0)
         assert panel.stage is ProgressStage.SPLITTING
         assert panel.detail_label.text() == "30.0 MB file"
 
@@ -1071,7 +1071,7 @@ class TestUploadFileTab:
         tab._on_transcribe()
         panel = tab.file_info_card.progress
 
-        tab.set_large_file_stage(30.0, is_splitting=True)
+        tab.set_large_file_stage(30.0)
         assert panel.stage is ProgressStage.SPLITTING
 
         tab.set_progress_state(OverlayState.TRANSCRIBING)

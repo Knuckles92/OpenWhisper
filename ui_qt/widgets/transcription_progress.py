@@ -296,9 +296,9 @@ class TranscriptionProgressPanel(QFrame):
     def set_stop_enabled(self, enabled: bool) -> None:
         self.stop_btn.setEnabled(enabled)
 
-    def set_large_file(self, file_size_mb: float, is_splitting: bool) -> None:
-        stage = ProgressStage.SPLITTING if is_splitting else ProgressStage.PREPARING
-        self.set_stage(stage, detail=f"{file_size_mb:.1f} MB file")
+    def set_large_file(self, file_size_mb: float) -> None:
+        """Show that a large file is being split into chunks."""
+        self.set_stage(ProgressStage.SPLITTING, detail=f"{file_size_mb:.1f} MB file")
 
     def apply_overlay_state(self, state: OverlayState) -> bool:
         """Map a routed overlay state onto the stepper.

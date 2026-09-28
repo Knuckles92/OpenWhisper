@@ -595,18 +595,18 @@ class UIController(QObject):
         tab.set_progress_state(state)
         return True
 
-    def show_large_file_state(self, file_size_mb: float, is_splitting: bool) -> None:
-        """Announce a large file: inline for an upload job, on the overlay otherwise."""
+    def show_large_file_state(self, file_size_mb: float, is_splitting: bool = True) -> None:
+        """Announce a file being split: inline for an upload job, on the overlay otherwise.
+
+        ``is_splitting`` rides along from ``large_file_detected(float, bool)``,
+        which only fires for files the OpenAI backend splits, so it is always
+        True and not read.
+        """
         if self._upload_job_active():
-            self.main_window.upload_file_tab.set_large_file_stage(
-                file_size_mb, is_splitting
-            )
+            self.main_window.upload_file_tab.set_large_file_stage(file_size_mb)
             return
         self.overlay.set_large_file_info(file_size_mb)
-        if is_splitting:
-            self.overlay.show_at_cursor(self.overlay.STATE_LARGE_FILE_SPLITTING)
-        else:
-            self.overlay.show_at_cursor(self.overlay.STATE_LARGE_FILE_PROCESSING)
+        self.overlay.show_at_cursor(self.overlay.STATE_LARGE_FILE_SPLITTING)
 
     def _dismiss_streaming_preview_for_waveform(self, waveform_state: str) -> None:
         self.streaming_flow_active = False

@@ -3,12 +3,11 @@ import math
 import random
 import sys
 import time
-from dataclasses import dataclass
 from typing import Optional, List
 from PyQt6.QtWidgets import QApplication, QWidget
 from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, pyqtSignal, QPoint
 from PyQt6.QtGui import (
-    QPainter, QPainterPath, QColor, QBrush, QPen,
+    QPainter, QPainterPath, QColor, QPen,
     QFont, QFontMetrics, QCursor
 )
 from config import config
@@ -21,12 +20,6 @@ from ui_qt.utils.palette import token_color
 from ui_qt.waveform_styles import Particle, ParticleStyle, round_pen
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class LargeFileOverlayInfo:
-    file_size_mb: float = 0.0
-    chunk_count: int = 0
 
 
 class WaveformOverlay(QWidget):
@@ -43,7 +36,6 @@ class WaveformOverlay(QWidget):
     STATE_STT_DISABLE = "stt_disable"
     STATE_COPIED = "copied"
     STATE_LARGE_FILE_SPLITTING = "large_file_splitting"
-    STATE_LARGE_FILE_PROCESSING = "large_file_processing"
 
     def __init__(self):
         super().__init__()
@@ -79,7 +71,7 @@ class WaveformOverlay(QWidget):
         # Cursor anchor used to keep the overlay on-screen as it grows.
         self._anchor_pos: Optional[QPoint] = None
 
-        self.large_file_info = LargeFileOverlayInfo()
+        self.large_file_size_mb = 0.0
 
         style_config = config.WAVEFORM_STYLE_CONFIGS.get('particle', {})
         self.style = ParticleStyle(
@@ -125,8 +117,6 @@ class WaveformOverlay(QWidget):
                 self._draw_copied_state(painter)
             elif self.current_state == self.STATE_LARGE_FILE_SPLITTING:
                 self._draw_large_file_splitting_state(painter)
-            elif self.current_state == self.STATE_LARGE_FILE_PROCESSING:
-                self._draw_large_file_processing_state(painter)
         except Exception as e:
             logger.error(f"Error drawing waveform frame: {e}", exc_info=True)
             try:
@@ -417,11 +407,8 @@ class WaveformOverlay(QWidget):
         painter.drawLine(int(cx - diag), int(cy - diag), int(cx + diag), int(cy + diag))
         painter.drawLine(int(cx - diag), int(cy + diag), int(cx + diag), int(cy - diag))
 
-    def set_large_file_info(self, file_size_mb: float, chunk_count: int = 0):
-        self.large_file_info = LargeFileOverlayInfo(
-            file_size_mb=file_size_mb,
-            chunk_count=chunk_count,
-        )
+    def set_large_file_info(self, file_size_mb: float):
+        self.large_file_size_mb = file_size_mb
 
     def _draw_large_file_splitting_state(self, painter: QPainter):
         rect = self.rect()
@@ -449,42 +436,7 @@ class WaveformOverlay(QWidget):
 
         painter.setPen(QPen(amber))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        text = f"Splitting ({self.large_file_info.file_size_mb:.1f} MB)..."
-        painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, text)
-
-    def _draw_large_file_processing_state(self, painter: QPainter):
-        rect = self.rect()
-        w, h = rect.width(), rect.height()
-
-        progress = (self.animation_time * 0.5) % 1.0
-        center_x, center_y = w // 2, h // 2 - 10
-        radius = 18
-
-        cyan = token_color("accent-cyan")
-        painter.setPen(round_pen(cyan, 2))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-
-        painter.drawEllipse(center_x - radius, center_y - radius, radius * 2, radius * 2)
-
-        hand_angle = progress * 2 * math.pi - math.pi / 2
-        hand_length = radius - 5
-        hand_x = center_x + int(hand_length * math.cos(hand_angle))
-        hand_y = center_y + int(hand_length * math.sin(hand_angle))
-        painter.drawLine(center_x, center_y, hand_x, hand_y)
-
-        hour_angle = progress * 2 * math.pi / 12 - math.pi / 2
-        hour_length = radius - 10
-        hour_x = center_x + int(hour_length * math.cos(hour_angle))
-        hour_y = center_y + int(hour_length * math.sin(hour_angle))
-        painter.setPen(round_pen(cyan, 3))
-        painter.drawLine(center_x, center_y, hour_x, hour_y)
-
-        painter.setBrush(QBrush(cyan))
-        painter.drawEllipse(center_x - 3, center_y - 3, 6, 6)
-
-        painter.setPen(QPen(cyan))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        text = f"Processing ({self.large_file_info.file_size_mb:.1f} MB)..."
+        text = f"Splitting ({self.large_file_size_mb:.1f} MB)..."
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, text)
 
     def _update_animation(self):
