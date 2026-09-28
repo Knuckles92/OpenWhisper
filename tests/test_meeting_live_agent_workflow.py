@@ -7,12 +7,12 @@ from concurrent.futures import Future
 from meeting.agent.prompts import build_checkpoint_user_prompt, build_notes_user_prompt
 from meeting.agent.scheduler import CheckpointScheduler
 from meeting.interfaces import AgentResult, OpResult
-from tests.test_meeting_notes_agent import FakeAgent, FakeEngine, _seg
+from tests.fakes.scheduler import FakeNotesAgent, FakeNotesEngine, segment
 
 
 def test_guidance_revisits_consumed_notes_without_new_speech():
-    agent = FakeAgent()
-    engine = FakeEngine([_seg("sg_old", 1, "Anthropic makes Claude.")])
+    agent = FakeNotesAgent()
+    engine = FakeNotesEngine([segment("sg_old", 1, "Anthropic makes Claude.")])
     scheduler = CheckpointScheduler(engine, agent)
     scheduler._fire()
     assert scheduler._notes_sent_starts == {"sg_old": 1}
@@ -36,7 +36,7 @@ def test_first_cleanup_runs_during_silence(monkeypatch):
     monkeypatch.setattr(module, "_TICK_S", 0.01)
     monkeypatch.setattr(module, "_POLISH_INITIAL_DELAY_S", 0.02)
     cleaned = threading.Event()
-    agent = FakeAgent()
+    agent = FakeNotesAgent()
     original = agent.checkpoint
 
     def checkpoint(payload):
@@ -47,7 +47,7 @@ def test_first_cleanup_runs_during_silence(monkeypatch):
 
     agent.checkpoint = checkpoint
     scheduler = CheckpointScheduler(
-        FakeEngine([_seg("sg_1", 1)]), agent, min_interval_s=0.01
+        FakeNotesEngine([segment("sg_1", 1)]), agent, min_interval_s=0.01
     )
     scheduler.start()
     try:
@@ -63,8 +63,8 @@ def test_first_cleanup_runs_during_silence(monkeypatch):
 
 
 def test_user_request_precedes_follow_on_background_passes():
-    agent = FakeAgent()
-    scheduler = CheckpointScheduler(FakeEngine([_seg("sg_1", 1)]), agent)
+    agent = FakeNotesAgent()
+    scheduler = CheckpointScheduler(FakeNotesEngine([segment("sg_1", 1)]), agent)
     scheduler._successful_checkpoints = 5
     request = Future()
     original = agent.checkpoint
@@ -84,11 +84,11 @@ def test_user_request_precedes_follow_on_background_passes():
 
 
 def test_later_speech_can_correct_a_previously_consumed_name():
-    engine = FakeEngine([_seg("sg_old", 1, "We are evaluating Entropic.")])
-    agent = FakeAgent()
+    engine = FakeNotesEngine([segment("sg_old", 1, "We are evaluating Entropic.")])
+    agent = FakeNotesAgent()
     scheduler = CheckpointScheduler(engine, agent)
     scheduler._fire()
-    engine._segments.append(_seg("sg_new", 5, "Their Claude model is the candidate."))
+    engine._segments.append(segment("sg_new", 5, "Their Claude model is the candidate."))
     scheduler._fire()
     payload = agent.calls[-1]
     assert [s["id"] for s in payload.new_segments] == ["sg_new"]
@@ -98,7 +98,7 @@ def test_later_speech_can_correct_a_previously_consumed_name():
 
 
 def test_polish_changes_trigger_dashboard_and_notes_review():
-    agent = FakeAgent()
+    agent = FakeNotesAgent()
 
     def checkpoint(payload):
         return AgentResult(
@@ -116,7 +116,7 @@ def test_polish_changes_trigger_dashboard_and_notes_review():
         )
 
     agent.checkpoint = checkpoint
-    scheduler = CheckpointScheduler(FakeEngine([_seg("sg_1", 1)]), agent)
+    scheduler = CheckpointScheduler(FakeNotesEngine([segment("sg_1", 1)]), agent)
     scheduler._successful_checkpoints = 6
     scheduler._maybe_fire_polish()
     assert scheduler._guidance_pending and scheduler._notes_guidance_pending
@@ -128,7 +128,7 @@ def test_failed_notes_retry_in_silence_and_do_not_spin(monkeypatch):
     monkeypatch.setattr(module, "_TICK_S", 0.01)
     monkeypatch.setattr(module, "_NOTES_MIN_INTERVAL_S", 0.08)
     finished = threading.Event()
-    agent = FakeAgent()
+    agent = FakeNotesAgent()
     attempts = []
 
     def checkpoint(payload):
@@ -141,7 +141,7 @@ def test_failed_notes_retry_in_silence_and_do_not_spin(monkeypatch):
 
     agent.checkpoint = checkpoint
     scheduler = CheckpointScheduler(
-        FakeEngine([_seg("sg_1", 1)]), agent, min_interval_s=0.01
+        FakeNotesEngine([segment("sg_1", 1)]), agent, min_interval_s=0.01
     )
     scheduler.start()
     try:
@@ -157,9 +157,9 @@ def test_notes_backlog_keeps_earliest_unprocessed_segments(monkeypatch):
     from meeting.agent import scheduler as module
 
     monkeypatch.setattr(module, "_NOTES_MAX_SEGMENTS", 2)
-    agent = FakeAgent()
+    agent = FakeNotesAgent()
     scheduler = CheckpointScheduler(
-        FakeEngine([_seg(f"sg_{i}", i * 200) for i in range(5)]), agent
+        FakeNotesEngine([segment(f"sg_{i}", i * 200) for i in range(5)]), agent
     )
     scheduler._successful_checkpoints = 1
     scheduler._maybe_fire_notes()
@@ -272,9 +272,9 @@ def test_guidance_review_does_not_skip_unprocessed_note_backlog(monkeypatch):
     from meeting.agent import scheduler as module
 
     monkeypatch.setattr(module, "_NOTES_MAX_SEGMENTS", 2)
-    agent = FakeAgent()
+    agent = FakeNotesAgent()
     scheduler = CheckpointScheduler(
-        FakeEngine([_seg(f"sg_{i}", i * 200) for i in range(5)]), agent
+        FakeNotesEngine([segment(f"sg_{i}", i * 200) for i in range(5)]), agent
     )
     scheduler._notes_guidance_pending = True
     scheduler._maybe_fire_notes()
@@ -286,7 +286,7 @@ def test_guidance_review_does_not_skip_unprocessed_note_backlog(monkeypatch):
 
 
 def test_new_human_guidance_gets_an_attempt_despite_earlier_failure_backoff():
-    scheduler = CheckpointScheduler(FakeEngine([]), FakeAgent())
+    scheduler = CheckpointScheduler(FakeNotesEngine([]), FakeNotesAgent())
     scheduler._retry_not_before = time.monotonic() + 300
     scheduler._notes_retry_not_before = time.monotonic() + 45
     scheduler.notify_guidance()

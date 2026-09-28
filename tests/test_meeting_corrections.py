@@ -23,7 +23,7 @@ from tests.test_meeting_engine import (  # noqa: F401  (fixtures)
     fakes,
     make_engine,
 )
-from tests.test_meeting_notes_agent import FakeAgent, FakeEngine, _seg
+from tests.fakes.scheduler import FakeNotesAgent, FakeNotesEngine, segment
 from tests.helpers import make_meeting, make_segment
 
 
@@ -175,8 +175,8 @@ class TestRepositoryReadTimeCorrection:
 
 class TestSchedulerGuidancePass:
     def test_guidance_fires_without_new_speech_and_resends_recent_transcript(self):
-        agent = FakeAgent()
-        engine = FakeEngine([_seg(f"sg_{i}", float(i)) for i in range(_GUIDANCE_MAX_SEGMENTS + 5)])
+        agent = FakeNotesAgent()
+        engine = FakeNotesEngine([segment(f"sg_{i}", float(i)) for i in range(_GUIDANCE_MAX_SEGMENTS + 5)])
         scheduler = CheckpointScheduler(engine, agent, base_interval_s=60.0,
                                         min_interval_s=60.0, max_interval_s=60.0)
         # Everything is already known to the agent; a normal tick would not fire.
@@ -199,8 +199,8 @@ class TestSchedulerGuidancePass:
             scheduler.stop()
 
     def test_failed_guidance_pass_is_retried(self):
-        agent = FakeAgent(fail_times=1)
-        engine = FakeEngine([_seg("sg_1", 1.0)])
+        agent = FakeNotesAgent(fail_times=1)
+        engine = FakeNotesEngine([segment("sg_1", 1.0)])
         scheduler = CheckpointScheduler(engine, agent)
         scheduler._mark_sent(engine._segments)
         scheduler.notify_guidance()

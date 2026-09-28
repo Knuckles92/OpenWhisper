@@ -15,52 +15,7 @@ from meeting.agent.scheduler import (
 )
 from meeting.interfaces import AgentResult, OpResult
 from meeting.finalization import POLISH_MAX_SEGMENTS, POLISH_MAX_TEXT_CHARS
-
-class FakeStore:
-    def __init__(self, snapshot=None):
-        self._snapshot = snapshot or {
-            "meeting_id": "m_test",
-            "seq": 1,
-            "cards": {
-                "key_points": [{
-                    "id": "it_1", "text": "seeded", "status": "proposed",
-                    "evidence": ["sg_1"],
-                }],
-            },
-            "topic": {"current": "seeded topic", "history": []},
-            "rolling_summary": "seeded summary",
-        }
-        self.apply_calls = []
-
-    def snapshot(self):
-        return dict(self._snapshot)
-
-    def apply(self, actor_kind, actor_id, ops):
-        self.apply_calls.append((actor_kind, actor_id, ops))
-        return [OpResult(ok=True, op=op) for op in ops]
-
-class FakeClock:
-    def __init__(self, now_s=200.0):
-        self._now = now_s
-
-    def now_s(self):
-        return self._now
-
-class FakeEngine:
-    def __init__(self, segments=None, clock_s=200.0):
-        self.store = FakeStore()
-        self.clock = FakeClock(clock_s)
-        self._segments = list(segments or [])
-
-    def get_transcript(self, after_start_s=-1.0, limit=None):
-        # Match repository semantics: start_s strictly greater than the cursor.
-        items = [
-            s for s in self._segments
-            if float(s.get("start_s") or 0.0) > float(after_start_s)
-        ]
-        if limit is not None:
-            items = items[:limit]
-        return items
+from tests.fakes.scheduler import FakeSchedulerEngine, FakeSchedulerStore
 
 class FakeAgent:
     def __init__(self, block_s=0.0, fail_times=0, fail_error="forced"):
@@ -103,14 +58,14 @@ class FakeAgent:
 
 class TestAdaptiveInterval:
     def test_defaults_prioritize_live_dashboard_freshness(self):
-        sched = CheckpointScheduler(FakeEngine(), FakeAgent())
+        sched = CheckpointScheduler(FakeSchedulerEngine(), FakeAgent())
 
         assert sched._interval_for(2) == 20.0
         assert sched._interval_for(3) == 15.0
         assert sched._interval_for(8) == 5.0
 
     def test_pinned_intervals(self):
-        engine = FakeEngine()
+        engine = FakeSchedulerEngine()
         agent = FakeAgent()
         sched = CheckpointScheduler(
             engine, agent,
@@ -146,8 +101,8 @@ class TestInitialContext:
             {"id": f"sg_{i}", "start_s": float(i), "text": f"Opening claim {i}"}
             for i in range(12)
         ]
-        engine = FakeEngine(segments, clock_s=119.9)
-        engine.store = FakeStore({"cards": {}, "topic": {}, "rolling_summary": ""})
+        engine = FakeSchedulerEngine(segments, clock_s=119.9)
+        engine.store = FakeSchedulerStore({"cards": {}, "topic": {}, "rolling_summary": ""})
         agent = FakeAgent()
         sched = CheckpointScheduler(engine, agent)
         sched.notify_segments(len(segments))
@@ -170,7 +125,7 @@ class TestInitialContext:
         assert agent.notes_calls
 
     def test_background_notes_and_polish_wait_even_without_pending_speech(self):
-        sched = CheckpointScheduler(FakeEngine(clock_s=30.0), FakeAgent())
+        sched = CheckpointScheduler(FakeSchedulerEngine(clock_s=30.0), FakeAgent())
         with patch.object(sched, "_maybe_fire_notes") as notes, patch.object(
             sched, "_maybe_fire_polish"
         ) as polish:
@@ -181,7 +136,7 @@ class TestInitialContext:
     def test_paused_time_does_not_complete_warmup(self):
         from meeting.clock import MeetingClock
 
-        engine = FakeEngine([{"id": "sg_1", "start_s": 1.0, "text": "Opening"}])
+        engine = FakeSchedulerEngine([{"id": "sg_1", "start_s": 1.0, "text": "Opening"}])
         agent = FakeAgent()
         with patch("meeting.clock.time.monotonic", return_value=0.0) as now:
             engine.clock = MeetingClock()
@@ -201,7 +156,7 @@ class TestInitialContext:
     def test_short_meeting_still_gets_final_insights(self):
         segment = {"id": "sg_1", "start_s": 1.0, "text": "We agreed to ship."}
         agent = FakeAgent()
-        sched = CheckpointScheduler(FakeEngine([segment], clock_s=30.0), agent)
+        sched = CheckpointScheduler(FakeSchedulerEngine([segment], clock_s=30.0), agent)
         result = sched.run_consolidation()
         assert result.status == "completed"
         assert agent.calls[0].is_consolidation
@@ -214,7 +169,7 @@ class TestCoalescing:
             {"id": "sg_1", "start_s": 1.0, "end_s": 2.0, "text": "one"},
             {"id": "sg_2", "start_s": 3.0, "end_s": 4.0, "text": "two"},
         ]
-        engine = FakeEngine(segs)
+        engine = FakeSchedulerEngine(segs)
         agent = FakeAgent()
         agent.block_s = 5.0
         agent._release.clear()
@@ -262,7 +217,7 @@ class TestSegmentWatermark:
 
     def test_out_of_order_channel_arrival_loses_nothing(self):
         # Mic chunk 0 (one long segment) is transcribed first.
-        engine = FakeEngine([
+        engine = FakeSchedulerEngine([
             {"id": "mic_1", "start_s": 0.0, "end_s": 30.0, "text": "mic one"},
         ])
         agent = FakeAgent()
@@ -287,7 +242,7 @@ class TestSegmentWatermark:
         ]
 
     def test_sent_segments_are_never_resent(self):
-        engine = FakeEngine([
+        engine = FakeSchedulerEngine([
             {"id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "one"},
             {"id": "sg_2", "start_s": 5.0, "end_s": 10.0, "text": "two"},
         ])
@@ -306,7 +261,7 @@ class TestSegmentWatermark:
             {"id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "one"},
             {"id": "sg_2", "start_s": 5.0, "end_s": 10.0, "text": "two"},
         ]
-        sched = self._sched(FakeEngine(segments), FakeAgent())
+        sched = self._sched(FakeSchedulerEngine(segments), FakeAgent())
 
         sched.seed_sent_segments(segments)
 
@@ -315,7 +270,7 @@ class TestSegmentWatermark:
         assert sched._notes_max_sent_start_s == 5.0
 
     def test_failed_checkpoint_retries_the_same_segments(self):
-        engine = FakeEngine([
+        engine = FakeSchedulerEngine([
             {"id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "one"},
         ])
         agent = FakeAgent(fail_times=1)
@@ -327,7 +282,7 @@ class TestSegmentWatermark:
         assert [s["id"] for s in agent.calls[1].new_segments] == ["sg_1"]
 
     def test_offline_scheduler_recovers_after_a_successful_retry(self):
-        engine = FakeEngine([
+        engine = FakeSchedulerEngine([
             {"id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "one"},
         ])
         agent = FakeAgent(fail_times=3)
@@ -347,7 +302,7 @@ class TestSegmentWatermark:
         assert sched._consecutive_failures == 0
 
     def test_timeout_failures_retain_work_and_three_mark_offline(self, caplog):
-        engine = FakeEngine([
+        engine = FakeSchedulerEngine([
             {"id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "one"},
         ])
         agent = FakeAgent(
@@ -382,14 +337,14 @@ class TestSegmentWatermark:
         assert len(agent.calls) == 4
 
     def test_empty_checkpoint_does_not_manufacture_insights(self):
-        empty_store = FakeStore({
+        empty_store = FakeSchedulerStore({
             "meeting_id": "m_test",
             "seq": 1,
             "cards": {"key_points": []},
             "topic": {"current": "", "history": []},
             "rolling_summary": "",
         })
-        engine = FakeEngine([
+        engine = FakeSchedulerEngine([
             {
                 "id": "sg_1", "start_s": 0.0, "end_s": 5.0,
                 "text": "We should pack up and try the griddle.",
@@ -418,7 +373,7 @@ class TestSegmentWatermark:
         agent = FakeAgent()
         canceled = []
         agent.cancel = lambda: canceled.append(True)
-        sched = CheckpointScheduler(FakeEngine(), agent)
+        sched = CheckpointScheduler(FakeSchedulerEngine(), agent)
         sched.start()
         try:
             sched.prepare_for_end()
@@ -429,7 +384,7 @@ class TestSegmentWatermark:
             sched.stop()
 
     def test_transcript_fetch_failure_restores_claimed_work(self):
-        class FailingEngine(FakeEngine):
+        class FailingEngine(FakeSchedulerEngine):
             def get_transcript(self, after_start_s=-1.0, limit=None):
                 raise RuntimeError("database busy")
 
@@ -440,7 +395,7 @@ class TestSegmentWatermark:
         assert sched._consecutive_failures == 1
 
     def test_sent_id_set_is_pruned_outside_the_refetch_window(self):
-        engine = FakeEngine()
+        engine = FakeSchedulerEngine()
         agent = FakeAgent()
         sched = self._sched(engine, agent)
 
@@ -463,7 +418,7 @@ class TestSegmentWatermark:
 
 class TestConsolidationRace:
     def test_consolidation_skipped_when_worker_will_not_stop(self):
-        engine = FakeEngine([
+        engine = FakeSchedulerEngine([
             {"id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "one"},
         ])
         agent = FakeAgent()
@@ -486,7 +441,7 @@ class TestConsolidationRace:
             thread.join(timeout=5.0)
 
     def test_consolidation_runs_once_the_worker_is_stopped(self):
-        engine = FakeEngine([
+        engine = FakeSchedulerEngine([
             {"id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "one"},
         ])
         agent = FakeAgent()
@@ -505,12 +460,12 @@ class TestConsolidationRace:
             def is_healthy(self):
                 return False
 
-        sched = CheckpointScheduler(FakeEngine(), Unhealthy())
+        sched = CheckpointScheduler(FakeSchedulerEngine(), Unhealthy())
         outcome = sched.run_consolidation(timeout_s=1.0)
         assert outcome.status == "unavailable"
 
     def test_consolidation_transcript_failure(self):
-        class BoomEngine(FakeEngine):
+        class BoomEngine(FakeSchedulerEngine):
             def get_transcript(self, after_start_s=-1.0, limit=None):
                 raise RuntimeError("db locked")
 
@@ -519,7 +474,7 @@ class TestConsolidationRace:
         assert "transcript" in outcome.message.lower()
 
     def test_consolidation_missing_store(self):
-        engine = FakeEngine([{"id": "sg_1", "start_s": 0.0, "end_s": 1.0, "text": "x"}])
+        engine = FakeSchedulerEngine([{"id": "sg_1", "start_s": 0.0, "end_s": 1.0, "text": "x"}])
         engine.store = None
         outcome = CheckpointScheduler(engine, FakeAgent()).run_consolidation()
         assert outcome.status == "failed"
@@ -542,7 +497,7 @@ class TestConsolidationRace:
                 # Leave the worker blocked so result_box stays empty.
                 return
 
-        engine = FakeEngine([{"id": "sg_1", "start_s": 0.0, "end_s": 1.0, "text": "x"}])
+        engine = FakeSchedulerEngine([{"id": "sg_1", "start_s": 0.0, "end_s": 1.0, "text": "x"}])
         sched = CheckpointScheduler(engine, HangingAgent())
         outcome = sched.run_consolidation(timeout_s=0.05)
         assert outcome.status == "failed"
@@ -553,7 +508,7 @@ class TestConsolidationRace:
             def consolidate(self, payload):
                 return AgentResult(ok=False, error="model down")
 
-        engine = FakeEngine([{"id": "sg_1", "start_s": 0.0, "end_s": 1.0, "text": "x"}])
+        engine = FakeSchedulerEngine([{"id": "sg_1", "start_s": 0.0, "end_s": 1.0, "text": "x"}])
         outcome = CheckpointScheduler(engine, FailingAgent()).run_consolidation()
         assert outcome.status == "failed"
         assert "model down" in outcome.message
@@ -567,7 +522,7 @@ class TestFinalPolish:
         ]
         agent = FakeAgent()
         progress = []
-        outcome = CheckpointScheduler(FakeEngine(segments), agent).run_final_polish(
+        outcome = CheckpointScheduler(FakeSchedulerEngine(segments), agent).run_final_polish(
             timeout_s=5.0, progress_cb=lambda *args: progress.append(args),
         )
         assert outcome.status == "completed"
@@ -591,7 +546,7 @@ class TestFinalPolish:
             for i in range(435)
         ]
         agent = FakeAgent()
-        scheduler = CheckpointScheduler(FakeEngine(segments), agent)
+        scheduler = CheckpointScheduler(FakeSchedulerEngine(segments), agent)
         scheduler._successful_checkpoints = 6
         scheduler._maybe_fire_polish()
         assert len(agent.calls) == 1
@@ -601,7 +556,7 @@ class TestFinalPolish:
         assert block == segments[-len(block):]
 
     def test_final_polish_uses_full_transcript_and_is_polish(self):
-        engine = FakeEngine([
+        engine = FakeSchedulerEngine([
             {"id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "hello"},
             {"id": "sg_2", "start_s": 5.0, "end_s": 10.0, "text": "world"},
         ])
@@ -616,7 +571,7 @@ class TestFinalPolish:
 
     @pytest.mark.parametrize("timeout", [False, True])
     def test_later_block_failure_keeps_prior_work_but_reports_failure(self, timeout, caplog):
-        engine = FakeEngine([
+        engine = FakeSchedulerEngine([
             {"id": f"sg_{i}", "start_s": float(i), "end_s": float(i + 1), "text": "draft"}
             for i in range(POLISH_MAX_SEGMENTS + 1)
         ])
@@ -645,7 +600,7 @@ class TestFinalPolish:
         assert engine._segments[0]["text"] == "Cleaned."
 
     def test_final_polish_then_consolidation_see_same_segments(self):
-        engine = FakeEngine([
+        engine = FakeSchedulerEngine([
             {"id": "sg_final", "start_s": 1.0, "end_s": 2.0, "text": "clean"},
         ])
         agent = FakeAgent()
@@ -685,7 +640,7 @@ class TestTopicShift:
             {"start_s": 165.0, "end_s": 185.0,
              "text": "recruitment culture retention engineers designers"},
         ]
-        engine = FakeEngine(older + newer, clock_s=200.0)
+        engine = FakeSchedulerEngine(older + newer, clock_s=200.0)
         agent = FakeAgent()
         sched = CheckpointScheduler(
             engine, agent,
@@ -724,7 +679,7 @@ class TestTopicShift:
             {"start_s": 165.0, "end_s": 185.0,
              "text": "recruitment culture retention engineers designers"},
         ]
-        engine = FakeEngine(older + newer, clock_s=200.0)
+        engine = FakeSchedulerEngine(older + newer, clock_s=200.0)
         agent = FakeAgent()
         sched = CheckpointScheduler(
             engine, agent,
