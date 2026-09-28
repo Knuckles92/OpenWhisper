@@ -416,16 +416,6 @@ class MeetingRepository(Protocol):
     ) -> Optional[Dict[str, Any]]: ...
     def get_segments(self, meeting_id: str, after_start_s: float = -1.0,
                      limit: Optional[int] = None) -> List[Dict[str, Any]]: ...
-    def get_segments_in_range(
-        self, meeting_id: str, channel: str,
-        start_s: float, end_s: float,
-    ) -> List[Dict[str, Any]]: ...
-    def revise_segments_in_range(
-        self, meeting_id: str, channel: str,
-        start_s: float, end_s: float,
-        segments: List[TranscriptSegment],
-        remove_ids: List[str],
-    ) -> Any: ...
     def get_segments_page(
         self, meeting_id: str, cursor_start_s: Optional[float] = None,
         cursor_id: Optional[str] = None, limit: int = 500,

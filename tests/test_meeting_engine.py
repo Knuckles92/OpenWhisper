@@ -62,11 +62,10 @@ class FakeAsr:
     instances = []
 
     def __init__(self, model, meeting_id, repository, language=None,
-                 enable_revisions=True, term_rules=None):
+                 term_rules=None):
         self.model = model
         self.meeting_id = meeting_id
         self.language = language
-        self.enable_revisions = enable_revisions
         self.term_rules = term_rules
         self.is_available = True
         self.on_segments = None
@@ -541,7 +540,6 @@ class TestIntelligenceHealth:
 
         assert fakes.cores == []
         assert fakes.schedulers == []
-        assert fakes.asr[0].enable_revisions is False
         assert engine.store.with_state(lambda s: s.intelligence_online) is False
 
     def test_asr_receives_pinned_meeting_language(self, make_engine, fakes):

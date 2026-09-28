@@ -15,7 +15,6 @@ from sqlalchemy import case, func, or_, text as sql_text
 from sqlalchemy.orm import object_session
 from meeting.corrections import correct_text, term_rules
 
-from meeting.asr.revise import MIN_MATCH_IOU, interval_iou
 from meeting.interfaces import OpResult, TranscriptSegment
 from meeting.time_utils import utc_now_iso
 from services.models import (
@@ -32,6 +31,27 @@ logger = logging.getLogger(__name__)
 
 #: Failed chunks are retried until this many attempts.
 MAX_CHUNK_ATTEMPTS = 3
+
+#: Minimum time IoU for a new transcript row to inherit an old row's
+#: speaker label or evidence anchor.
+MIN_MATCH_IOU = 0.25
+
+
+def interval_iou(
+    a_start: float, a_end: float, b_start: float, b_end: float
+) -> float:
+    """Intersection-over-union for two half-open time intervals."""
+    start = max(float(a_start), float(b_start))
+    end = min(float(a_end), float(b_end))
+    inter = max(0.0, end - start)
+    if inter <= 0.0:
+        return 0.0
+    union = (
+        max(float(a_end), float(b_end)) - min(float(a_start), float(b_start))
+    )
+    if union <= 0.0:
+        return 0.0
+    return inter / union
 
 
 def _now_iso() -> str:
@@ -89,36 +109,6 @@ def _segment_to_dict(row: MeetingSegment) -> Dict[str, Any]:
         "speaker_pinned": row.speaker_pinned,
         "created_at": row.created_at,
     }
-
-
-def _state_evidence_ids(state_json: Optional[str]) -> Optional[set[str]]:
-    """Return current evidence ids, or None when state cannot be inspected."""
-    if not state_json:
-        return set()
-    try:
-        state = json.loads(state_json)
-    except (TypeError, ValueError):
-        logger.warning("Could not inspect corrupt meeting state evidence")
-        return None
-
-    evidence_ids: set[str] = set()
-
-    def visit(value: Any, key: str = "") -> None:
-        if isinstance(value, dict):
-            for child_key, child_value in value.items():
-                visit(child_value, str(child_key))
-            return
-        if isinstance(value, list):
-            if key == "evidence" or key.endswith("_evidence"):
-                evidence_ids.update(
-                    item for item in value
-                    if isinstance(item, str) and item.startswith("sg_")
-                )
-            for item in value:
-                visit(item, key)
-
-    visit(state)
-    return evidence_ids
 
 
 def _best_evidence_match(
@@ -791,106 +781,6 @@ class SqlMeetingRepository:
             if limit:
                 q = q.limit(limit)
             return [_segment_to_dict(r) for r in q.all()]
-
-    def get_segments_in_range(
-        self,
-        meeting_id: str,
-        channel: str,
-        start_s: float,
-        end_s: float,
-    ) -> List[Dict[str, Any]]:
-        """Segments on ``channel`` overlapping ``[start_s, end_s)``."""
-        with self._db.get_session() as session:
-            rows = session.query(MeetingSegment).filter(
-                MeetingSegment.meeting_id == meeting_id,
-                MeetingSegment.channel == channel,
-                MeetingSegment.end_s > float(start_s),
-                MeetingSegment.start_s < float(end_s),
-            ).order_by(MeetingSegment.start_s, MeetingSegment.id).all()
-            return [_segment_to_dict(r) for r in rows]
-
-    def revise_segments_in_range(
-        self,
-        meeting_id: str,
-        channel: str,
-        start_s: float,
-        end_s: float,
-        segments: List[TranscriptSegment],
-        remove_ids: List[str],
-    ) -> Tuple[List[Dict[str, Any]], List[str]]:
-        """Apply a rolling revise plan: upsert matched/new rows, delete others.
-
-        Speaker-pinned rows and rows referenced by current dashboard evidence
-        are kept. Returns the upserted canonical rows and ids actually deleted.
-        """
-        created = _now_iso()
-        removed: List[str] = []
-        with self._db.get_session() as session:
-            meeting = session.get(MeetingSession, meeting_id)
-            protected_evidence = _state_evidence_ids(
-                meeting.state_json if meeting is not None else None
-            )
-            for seg_id in remove_ids:
-                row = session.query(MeetingSegment).filter(
-                    MeetingSegment.meeting_id == meeting_id,
-                    MeetingSegment.id == seg_id,
-                    MeetingSegment.channel == channel,
-                ).one_or_none()
-                if row is None:
-                    continue
-                if (
-                    row.speaker_pinned
-                    or protected_evidence is None
-                    or seg_id in protected_evidence
-                ):
-                    continue
-                # Only delete rows that still overlap the revise window.
-                if row.end_s <= float(start_s) or row.start_s >= float(end_s):
-                    continue
-                session.delete(row)
-                removed.append(seg_id)
-
-            upserted_ids: List[str] = []
-            for seg in segments:
-                if seg.meeting_id != meeting_id or seg.channel != channel:
-                    raise ValueError("segment does not belong to revise window")
-                existing = session.get(MeetingSegment, seg.segment_id)
-                if existing is not None and existing.meeting_id != meeting_id:
-                    raise ValueError("segment id already belongs to another meeting")
-                if existing is not None and existing.speaker_pinned:
-                    # Preserve human pin; still allow ASR text/time cleanup.
-                    speaker_id = existing.speaker_participant_id
-                    speaker_source = existing.speaker_source
-                    pinned = True
-                else:
-                    speaker_id = seg.speaker_participant_id
-                    speaker_source = seg.speaker_source
-                    pinned = bool(seg.speaker_pinned)
-                session.merge(MeetingSegment(
-                    id=seg.segment_id,
-                    meeting_id=seg.meeting_id,
-                    chunk_id=seg.chunk_id,
-                    channel=seg.channel,
-                    start_s=seg.start_s,
-                    end_s=seg.end_s,
-                    text=seg.text,
-                    speaker_participant_id=speaker_id,
-                    speaker_source=speaker_source,
-                    speaker_pinned=pinned,
-                    embedding=seg.embedding if existing is None else existing.embedding,
-                    created_at=(
-                        existing.created_at if existing is not None else created
-                    ),
-                ))
-                upserted_ids.append(seg.segment_id)
-
-            session.flush()
-            rows = []
-            for seg_id in upserted_ids:
-                row = session.get(MeetingSegment, seg_id)
-                if row is not None:
-                    rows.append(_segment_to_dict(row))
-            return rows, removed
 
     def mark_chunks_done(self, meeting_id: str) -> int:
         """Mark every audio chunk transcribed so recovery will not re-decode.

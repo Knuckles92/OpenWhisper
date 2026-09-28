@@ -259,20 +259,9 @@ def test_empty_committed_audio_advances_pulse_frontier(signals, monkeypatch):
     repo.commit_chunk_transcription = lambda *a: ([], True)
     engine._live_signals = Mock()
     engine._start_fast_features = lambda: None
-    engine._maybe_revise_transcript = lambda chunk: None
     chunk = SpooledChunk(1, "m_test", "mic", 1, "unused", 55, 6, 16000)
     engine._on_chunk_result(chunk, [])
     engine._live_signals.observe.assert_called_once_with([], frontier=61)
-
-
-def test_rolling_revision_reaches_pulse_worker(signals):
-    from unittest.mock import Mock
-    worker, repo, *_ = signals
-    engine = MeetingEngine(MeetingEngineOptions(), repository=repo)
-    engine._live_signals = Mock()
-    revised = dict(repo.rows[0], speaker_participant_id="me")
-    engine._publish_revise_result({"items": [revised], "removed_ids": []})
-    engine._live_signals.observe.assert_called_once_with([revised])
 
 
 @pytest.mark.parametrize("probability,anchor,expected", [
