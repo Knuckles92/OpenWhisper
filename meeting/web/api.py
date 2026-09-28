@@ -30,8 +30,11 @@ from meeting.export.json_export import export_json
 from meeting.export.markdown import export_markdown
 from meeting.export.transcript_txt import export_transcript_txt
 from meeting.audio_playback import build_playback
-from meeting.refinalize import FinalizationBusyError, rerun_finalization
-from meeting.respeaker import rerun_speakers
+from meeting.refinalize import (
+    FinalizationBusyError,
+    rerun_finalization,
+    rerun_speakers,
+)
 from meeting.persist.data_lifecycle import delete_meeting_data
 from meeting.state.custom_reports import MAX_REQUEST_CHARS
 from meeting.state.schema import (
@@ -673,10 +676,12 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                 insights_executor,
                 functools.partial(
                     rerun_speakers, repository, meeting_id,
-                    api_key=gate.api_key, store=store,
+                    gate=gate, store=store,
                     spool_dir=meeting.get("spool_dir"),
                 ),
             )
+        except FinalizationBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

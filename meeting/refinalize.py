@@ -17,6 +17,7 @@ import threading
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from meeting.diarize import cloud_pass
 from meeting.finalization import (
     POLISH_TIMEOUT_S,
     polish_blocks,
@@ -24,6 +25,7 @@ from meeting.finalization import (
     STEP_DETAILS,
     STEP_NAMES,
     STEP_ORDER,
+    SpeakerPassGate,
     failed_steps_message,
     make_step as _make_step,
     speaker_pass_gate,
@@ -40,7 +42,6 @@ from meeting.reinsight import (
     DEFAULT_TIMEOUT_S,
     _OfflineToolHost,
 )
-from meeting.respeaker import rerun_speakers
 from meeting.stored import (
     meeting_endpoint as _meeting_endpoint,
     open_store as _open_store,
@@ -68,6 +69,9 @@ __all__ = [
     "rerun_finalization",
     "rerun_redecode",
     "rerun_polish",
+    "rerun_speakers",
+    "run_speaker_pass",
+    "speaker_step_outcome",
     "ModelLease",
     "acquire_model_lease",
     "release_model_lease",
@@ -660,6 +664,85 @@ def rerun_polish(
             logger.exception("Agent core shutdown failed after polish retry")
 
 
+def run_speaker_pass(
+    repository: Any,
+    meeting_id: str,
+    store: MeetingStateStore,
+    spool_dir: str,
+    *,
+    gate: SpeakerPassGate,
+    transcribe_fn: Optional[TranscribeFn] = None,
+    progress_cb: Optional[Callable[[str, int, int], None]] = None,
+    on_start: Optional[Callable[[], None]] = None,
+) -> Dict[str, Any]:
+    """Upload system audio and relabel speakers when ``gate`` allows it.
+
+    Live End, the finalization retry, and the dashboard's re-run all come
+    through here. Never raises.
+
+    Args:
+        repository: A ``MeetingRepository``.
+        meeting_id: The meeting to relabel.
+        store: The meeting's store; built with a segment handler so relabels
+            persist and broadcast.
+        spool_dir: Directory holding the meeting's session audio.
+        gate: From ``speaker_pass_gate``; nothing is uploaded unless ``ok``.
+        transcribe_fn: Injectable decoder (tests).
+        progress_cb: Optional ``cb(detail, current, total)``.
+        on_start: Called once the upload is about to begin.
+
+    Returns:
+        ``{ok, skipped, applied, created, windows, error}``. ``skipped`` means
+        the gate refused or OpenAI retired the model early; either way the
+        on-device labels stand.
+    """
+    if not gate.ok:
+        return {
+            "ok": False, "skipped": True, "applied": 0, "created": 0,
+            "windows": 0, "error": gate.reason,
+        }
+    if on_start is not None:
+        on_start()
+    try:
+        result = cloud_pass.run_cloud_speaker_pass(
+            repository, meeting_id, store, spool_dir,
+            api_key=gate.api_key,
+            transcribe_fn=transcribe_fn,
+            progress_cb=progress_cb,
+        )
+    except Exception as exc:
+        logger.exception("Cloud speaker pass raised for %s", meeting_id)
+        result = {"ok": False, "error": str(exc)}
+    logger.info(
+        "Speaker pass for meeting %s finished: ok=%s applied=%s",
+        meeting_id, result.get("ok"), result.get("applied"),
+    )
+    return {
+        "ok": bool(result.get("ok")),
+        "skipped": bool(result.get("retired")),
+        "applied": int(result.get("applied") or 0),
+        "created": int(result.get("created") or 0),
+        "windows": int(result.get("windows") or 0),
+        "error": result.get("error"),
+    }
+
+
+def speaker_step_outcome(result: Dict[str, Any]) -> Tuple[str, str]:
+    """``(status, detail)`` for the speaker step; a skip is not a failure."""
+    if result.get("ok"):
+        count = int(result.get("applied") or 0)
+        return "completed", (
+            f"Updated {count} speaker label{'' if count == 1 else 's'}"
+        )
+    if result.get("skipped"):
+        return "completed", (
+            str(result.get("error") or "") or "Speaker identification skipped."
+        )
+    return "failed", (
+        str(result.get("error") or "") or "Speaker identification failed."
+    )
+
+
 class FinalizationBusyError(RuntimeError):
     """Raised when another retry is already running for the same meeting."""
 
@@ -695,6 +778,52 @@ def _one_run_per_meeting(fn: Callable[..., Dict[str, Any]]) -> Callable[..., Dic
                 _running_meetings.discard(meeting_id)
 
     return wrapper
+
+
+@_one_run_per_meeting
+def rerun_speakers(
+    repository: Any,
+    meeting_id: str,
+    *,
+    gate: SpeakerPassGate,
+    store: Optional[MeetingStateStore] = None,
+    spool_dir: Optional[str] = None,
+    transcribe_fn: Optional[TranscribeFn] = None,
+    progress_cb: Optional[Callable[[str, int, int], None]] = None,
+) -> Dict[str, Any]:
+    """Relabel a finished meeting's speakers from its system-audio recording.
+
+    Someone who renames a speaker can re-run this: the new name becomes a
+    reference clip for the next pass.
+
+    Args:
+        repository: A ``MeetingRepository``.
+        meeting_id: The meeting to relabel.
+        gate: From ``speaker_pass_gate``; nothing is uploaded unless ``ok``.
+        store: Optional existing ``MeetingStateStore``.
+        spool_dir: Override for the meeting's stored spool directory.
+        transcribe_fn: Injectable decoder (tests).
+        progress_cb: Optional progress callback.
+
+    Returns:
+        ``run_speaker_pass``'s result plus the post-pass ``state`` snapshot.
+
+    Raises:
+        ValueError: When the meeting is unknown.
+        FinalizationBusyError: When post-meeting steps of this meeting are
+            already running.
+    """
+    meeting = repository.get_meeting(meeting_id)
+    if meeting is None:
+        raise ValueError("unknown meeting")
+    if store is None:
+        store = _open_store(repository, meeting_id, meeting)
+    result = run_speaker_pass(
+        repository, meeting_id, store,
+        spool_dir or meeting.get("spool_dir") or "",
+        gate=gate, transcribe_fn=transcribe_fn, progress_cb=progress_cb,
+    )
+    return {**result, "state": store.snapshot()}
 
 
 @_one_run_per_meeting
@@ -841,48 +970,22 @@ def rerun_finalization(
                     f"Identifying speakers (window {curr}/{total})…",
                 )
 
-            if not gate.ok:
-                # As at live End: a refused pass is skipped, not failed, and
-                # no audio leaves this computer.
-                _set_step(steps, "speaker_id", "completed", gate.reason)
-            else:
-                _running(
+            result = run_speaker_pass(
+                repository, meeting_id, store, meeting.get("spool_dir") or "",
+                gate=gate,
+                transcribe_fn=speaker_transcribe_fn,
+                progress_cb=_speaker_progress,
+                on_start=lambda: _running(
                     "speaker_id",
                     "Uploading system audio for speaker labels…",
                     "Identifying speakers…",
-                )
-                try:
-                    result = rerun_speakers(
-                        repository,
-                        meeting_id,
-                        api_key=gate.api_key,
-                        store=store,
-                        spool_dir=meeting.get("spool_dir") or "",
-                        transcribe_fn=speaker_transcribe_fn,
-                        progress_cb=_speaker_progress,
-                    )
-                except Exception as exc:
-                    logger.exception("Speaker retry failed for %s", meeting_id)
-                    result = {"ok": False, "error": str(exc)}
-                if result.get("ok"):
-                    applied += int(result.get("applied") or 0)
-                    count = int(result.get("applied") or 0)
-                    _set_step(
-                        steps, "speaker_id", "completed",
-                        f"Updated {count} speaker label"
-                        f"{'' if count == 1 else 's'}",
-                    )
-                elif result.get("retired"):
-                    # OpenAI retired the model early: on-device labels stand.
-                    _set_step(
-                        steps, "speaker_id", "completed",
-                        result.get("error") or "Speaker identification skipped.",
-                    )
-                else:
-                    last_error = (
-                        result.get("error") or "Speaker identification failed."
-                    )
-                    _set_step(steps, "speaker_id", "failed", last_error)
+                ),
+            )
+            status, detail = speaker_step_outcome(result)
+            applied += int(result.get("applied") or 0)
+            if status == "failed":
+                last_error = detail
+            _set_step(steps, "speaker_id", status, detail)
         elif step_id == "polish":
             _running(
                 "polish",
