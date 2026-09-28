@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
@@ -57,6 +58,8 @@ _LIVE_STALL_S = 75.0
 #: Live passes favour speed; the final report may think harder.
 LIVE_EFFORT = "low"
 FINAL_EFFORT = "medium"
+#: Repeat the same progress line at most this often.
+_PROGRESS_MIN_INTERVAL_S = 1.0
 
 #: Driver event kind -> the Pi session event whose copy and activity kind
 #: :mod:`meeting.agent.sidecar` already defines.
@@ -112,6 +115,7 @@ class InstalledAgentCore:
         self._shut_down = False
         self._progress_cb: Optional[Any] = None
         self._activity_cb: Optional[Any] = None
+        self._last_progress = ("", 0.0)
 
     @property
     def name(self) -> str:
@@ -265,7 +269,13 @@ class InstalledAgentCore:
         event, delta = _PI_EVENTS.get(kind, ("update", ""))
         detail = _progress_detail(event, delta, pass_kind)
         progress = self._progress_cb
-        if callable(progress):
+        # Streaming agents report every token; the finalization card needs
+        # a change of wording, or a heartbeat.
+        last_detail, last_at = self._last_progress
+        now = time.monotonic()
+        if callable(progress) and (detail != last_detail
+                                   or now - last_at >= _PROGRESS_MIN_INTERVAL_S):
+            self._last_progress = (detail, now)
             try:
                 progress(detail)
             except Exception:

@@ -95,6 +95,17 @@ def test_a_notes_pass_is_the_note_taker_and_keeps_to_notes(monkeypatch, agent):
     assert tools.ops == []
 
 
+def test_streamed_progress_reaches_the_card_only_when_it_changes(monkeypatch, agent):
+    driver = FakeDriver(calls=[])
+    core, _ = _core(monkeypatch, driver)
+    lines = []
+    core.set_progress_callback(lines.append)
+    for _ in range(50):  # a streaming agent reports every token
+        core._on_event("writing", "", "consolidation")
+    core._on_event("settled", "", "consolidation")
+    assert len(lines) == 2 and lines[0] != lines[1]
+
+
 def test_the_final_pass_thinks_harder_and_waits_longer(monkeypatch, agent):
     driver = FakeDriver()
     core, _ = _core(monkeypatch, driver)
