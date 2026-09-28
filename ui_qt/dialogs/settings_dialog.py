@@ -121,6 +121,11 @@ from ui_qt.dialogs.settings_destinations import (
     resolve_destination,
 )
 from ui_qt.dialogs.settings_downloads import DownloadsPage
+from ui_qt.dialogs.settings_fields import (
+    group_title,
+    settings_caption,
+    settings_field,
+)
 from ui_qt.dialogs.settings_models import ModelAssignments
 from ui_qt.dialogs.settings_overview import OverviewPage, OverviewSummary
 from ui_qt.dialogs.settings_remote import RemoteEngineSection
@@ -732,32 +737,6 @@ class SettingsDialog(QDialog):
         )
         layout.addWidget(self.downloads, stretch=1)
 
-    def _field(self, label: str, widget: QWidget) -> QWidget:
-        wrapper = QWidget()
-        wrapper.setObjectName("modelManagerFieldGroup")
-        col = QVBoxLayout(wrapper)
-        col.setContentsMargins(0, 0, 0, 0)
-        col.setSpacing(5)
-        caption = QLabel(label)
-        caption.setObjectName("textModelFieldLabel")
-        col.addWidget(caption)
-        col.addWidget(widget)
-        return wrapper
-
-    @staticmethod
-    def _caption(text: str) -> WrappedLabel:
-        label = WrappedLabel(text)
-        label.setObjectName("infoLabel")
-        return label
-
-    @staticmethod
-    def _section_title(layout: QVBoxLayout, title: str) -> QLabel:
-        # Qt stylesheets have no text-transform, so the eyebrow case is set here.
-        caption = QLabel(title.upper())
-        caption.setObjectName("settingsTileGroupTitle")
-        layout.addWidget(caption)
-        return caption
-
     def _tile_group(
         self,
         layout: QVBoxLayout,
@@ -772,10 +751,10 @@ class SettingsDialog(QDialog):
         A trailing odd tile spans the rest of its row so no column is left
         empty. Returns the caption and intro labels for callers that gate them.
         """
-        caption = self._section_title(layout, title)
+        caption = group_title(layout, title)
         intro_label = None
         if intro:
-            intro_label = self._caption(intro)
+            intro_label = settings_caption(intro)
             layout.addWidget(intro_label)
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
@@ -1064,7 +1043,7 @@ class SettingsDialog(QDialog):
             self.max_recordings_mb_label, self.max_recordings_mb_spinbox
         )
         self.recording_retention_tile.add_body_layout(retention_form)
-        self.recordings_usage_label = self._caption("")
+        self.recordings_usage_label = settings_caption("")
         self.recording_retention_tile.add_body(self.recordings_usage_label)
         self._tile_group(
             layout, "Saved recordings", [self.recording_retention_tile]
@@ -1135,7 +1114,7 @@ class SettingsDialog(QDialog):
         )
         self._tile_group(layout, "AI cleanup", [self.transcript_cleanup_tile])
 
-        self._section_title(layout, "Model")
+        group_title(layout, "Model")
         self.cleanup_model_tile = self.models.build_cleanup_model_section(layout)
         layout.addSpacing(6)
 
@@ -1321,7 +1300,7 @@ class SettingsDialog(QDialog):
         self._update_cleanup_prompt_ui()
 
     def _build_meeting_intelligence_page(self, layout: QVBoxLayout) -> None:
-        self._section_title(layout, "Model")
+        group_title(layout, "Model")
         self.meeting_model_tile = self.models.build_meeting_model_section(layout)
         layout.addSpacing(6)
 
@@ -1546,7 +1525,7 @@ class SettingsDialog(QDialog):
                                     self.meeting_review_sensitivity.currentData())
         )
         review_row.addWidget(
-            self._field("Sensitivity", self.meeting_review_sensitivity)
+            settings_field("Sensitivity", self.meeting_review_sensitivity)
         )
         self.meeting_review_tile.add_body_layout(review_row)
 
@@ -1611,7 +1590,7 @@ class SettingsDialog(QDialog):
             )
         )
 
-        self.meeting_report_views_hint = self._caption(
+        self.meeting_report_views_hint = settings_caption(
             "At least one view is required. Ribbon stays on."
         )
         self.meeting_report_views_hint.hide()
@@ -1695,7 +1674,7 @@ class SettingsDialog(QDialog):
         )
         status_row.addWidget(self.api_key_status, stretch=1)
         self.api_key_credential_tile.add_body_layout(status_row)
-        self.api_key_uses_caption = self._caption("")
+        self.api_key_uses_caption = settings_caption("")
         self.api_key_credential_tile.add_body(self.api_key_uses_caption)
         self._tile_group(
             layout, "Credential", [self.api_key_credential_tile], columns=1
@@ -2160,7 +2139,7 @@ class SettingsDialog(QDialog):
         self.record_mode_combo.currentIndexChanged.connect(
             self._on_recording_trigger_mode_changed
         )
-        return self._field("How the record hotkey activates", self.record_mode_combo)
+        return settings_field("How the record hotkey activates", self.record_mode_combo)
 
     def _on_recording_trigger_mode_changed(self, _index: int = 0) -> None:
         mode = self.record_mode_combo.currentData()
