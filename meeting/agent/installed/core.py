@@ -283,12 +283,14 @@ class InstalledAgentCore:
 
 def run_agent_task(agent_id: str, *, model: str, system_prompt: str,
                    user_prompt: str, tools: List[Dict[str, Any]], handler: Any,
-                   timeout_s: float, effort: str = FINAL_EFFORT,
+                   timeout_s: float, closing: str, effort: str = FINAL_EFFORT,
                    cancel_event: Optional[threading.Event] = None) -> PassOutcome:
     """Run one self-contained task (a custom report) through an installed agent.
 
     Starts a tool server and the agent's driver, runs one pass, and stops
-    both. ``tools`` and ``handler`` are the task's own (read-only) tools.
+    both. ``tools`` and ``handler`` (``handler(name, args) -> (text,
+    is_error)``) are the task's own read-only tools; ``closing`` says what
+    the final reply must be, since that reply is the task's result.
 
     Raises:
         AgentUnavailable: When the agent cannot run.
@@ -300,7 +302,7 @@ def run_agent_task(agent_id: str, *, model: str, system_prompt: str,
     driver = make_driver(agent)
     try:
         charter = f"{system_prompt}\n\n" + tool_contract(
-            tools, name, getattr(driver, "tool_prefix", ""))
+            tools, name, getattr(driver, "tool_prefix", ""), closing)
         driver.start(server, {"build": charter}, tools)
         request = PassRequest(
             system_prompt=charter,

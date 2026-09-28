@@ -34,11 +34,17 @@ class ArchivedMeetingDashboard:
         self.repository = repository
         self.meeting_id = str(meeting["id"])
         self.model_lease = model_lease
+        from services.settings import MeetingAgentCore
+
+        # An installed agent brings its own model; the row's text endpoint
+        # would only mislead it.
+        installed = agent_core_kind in MeetingAgentCore.INSTALLED
         self.options = SimpleNamespace(
             spool_root=spool_root,
-            llm_provider=meeting.get("agent_provider") or llm_provider,
-            llm_model=meeting.get("agent_model") or llm_model,
-            llm_endpoint=stored_endpoint(meeting) or llm_endpoint,
+            llm_provider=llm_provider if installed else (
+                meeting.get("agent_provider") or llm_provider),
+            llm_model=llm_model if installed else (meeting.get("agent_model") or llm_model),
+            llm_endpoint=None if installed else (stored_endpoint(meeting) or llm_endpoint),
             agent_core_kind=agent_core_kind,
             sidecar_payload_dir=sidecar_payload_dir,
         )
