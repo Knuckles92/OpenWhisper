@@ -169,7 +169,7 @@ def test_history_export_preserves_every_persisted_field_and_upload_source():
 @pytest.mark.parametrize("fmt", ["md", "json", "txt"])
 def test_web_downloads_preserve_current_features_and_match_bulk_content(client, fmt):  # noqa: F811 -- pytest injects the imported endpoint fixture
     from meeting.export.bulk import render_meeting_document
-    from tests.test_meeting_web_auth import HOST_TOKEN
+    from tests.fakes.meeting_web import HOST_TOKEN
 
     tc, engine, repo = client
     _, state, segments = _recent_features()

@@ -11,7 +11,7 @@ from meeting.interfaces import AgentResult, OpResult
 from meeting.web.api import create_app
 from meeting.web.ws import WsHub
 from tests.test_meeting_notes_agent import FakeAgent, FakeEngine, _seg
-from tests.test_meeting_web_auth import FakeEngine as WebEngine, FakeRepo, HOST_TOKEN, GUEST_TOKEN
+from tests.fakes.meeting_web import GUEST_TOKEN, HOST_TOKEN, FakeWebEngine, FakeWebRepo
 
 
 def test_prompt_includes_user_context_but_not_deleted_notes():
@@ -87,7 +87,7 @@ def test_agent_failure_reaches_requester():
 
 @pytest.mark.parametrize("token", [HOST_TOKEN, GUEST_TOKEN])
 def test_request_api_auth_validation_and_result(token):
-    engine, repo = WebEngine(), FakeRepo()
+    engine, repo = FakeWebEngine(), FakeWebRepo()
     calls = []
     def request(text):
         calls.append(text)
