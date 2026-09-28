@@ -25,6 +25,7 @@ from meeting.finalization import (
     POLISH_MAX_SEGMENTS,
     POLISH_TIMEOUT_S,
     polish_blocks,
+    polish_transcript,
     run_agent_call,
 )
 from meeting.interfaces import AgentResult, CheckpointPayload
@@ -1101,67 +1102,18 @@ class CheckpointScheduler:
                 status="completed",
                 message="No transcript text needed cleanup.",
             )
-        blocks = polish_blocks(segments)
-
-        last_error = ""
-        total_blocks = len(blocks)
-        for idx, block in enumerate(blocks, 1):
-            if progress_cb is not None:
-                try:
-                    progress_cb(
-                        f"Cleaning transcript formatting and grammar (block {idx}/{total_blocks}, {len(block)} segments)...",
-                        idx,
-                        total_blocks,
-                    )
-                except Exception:
-                    logger.exception("Final polish progress callback failed")
-
-            payload = self._build_payload(
-                block, is_consolidation=False, is_polish=True,
+        store = getattr(self._engine, "store", None)
+        if store is None:
+            return ConsolidationOutcome(
+                status="failed",
+                message="Meeting state was unavailable for transcript cleanup.",
             )
-            if payload is None:
-                return ConsolidationOutcome(
-                    status="failed",
-                    message="Meeting state was unavailable for transcript cleanup.",
-                )
-            started = self._monotonic()
-            logger.info(
-                "Final polish started meeting_id=%s request_id=%s block=%s/%s segments=%s timeout_s=%s",
-                payload.state_snapshot.get("meeting_id", "unknown"), payload.request_id,
-                idx, total_blocks, len(block), timeout_s,
-            )
-            result = run_agent_call(
-                lambda bound=payload: self._agent.checkpoint(bound),
-                cancel=self._agent.cancel,
-                timeout_s=timeout_s,
-                name="meeting-final-polish",
-            )
-            if result is None:
-                logger.warning(
-                    "Final polish timed out request_id=%s block=%s/%s elapsed_s=%.2f timeout_s=%s; canceled",
-                    payload.request_id, idx, total_blocks, self._monotonic() - started, timeout_s,
-                )
-                last_error = (
-                    f"Transcript cleanup timed out after {timeout_s:g}s "
-                    f"on block {idx}/{total_blocks}. Request ID: {payload.request_id}."
-                )
-                break
-            if not result.ok:
-                last_error = result.error or "transcript cleanup failed"
-                logger.warning(
-                    "Final polish failed request_id=%s block=%s/%s elapsed_s=%.2f error=%s",
-                    payload.request_id, idx, total_blocks, self._monotonic() - started, last_error,
-                )
-                last_error = f"{last_error} (block {idx}/{total_blocks}; request ID: {payload.request_id})"
-                break
-            logger.info(
-                "Final polish completed request_id=%s block=%s/%s elapsed_s=%.2f",
-                payload.request_id, idx, total_blocks, self._monotonic() - started,
-            )
-            self._last_polish_mono = self._monotonic()
-
-        if last_error:
-            return ConsolidationOutcome(status="failed", message=last_error)
+        error = polish_transcript(
+            self._agent, store, segments,
+            timeout_s=timeout_s, progress_cb=progress_cb,
+        )
+        if error:
+            return ConsolidationOutcome(status="failed", message=error)
         return ConsolidationOutcome(
             status="completed",
             message="Transcript cleanup is ready.",

@@ -458,7 +458,14 @@ class TestStepSelection:
 
         assert len(core.polish_payloads) == 2
         assert result["ok"] is False
-        assert result["error"] == "polish failed"
+        # The same detail live End reports: which block, and its request id.
+        from meeting.finalization import polish_blocks
+
+        total = len(polish_blocks(repo.get_segments("m_retry")))
+        assert result["error"] == (
+            f"polish failed (block 2/{total}; request ID: "
+            f"{core.polish_payloads[1].request_id})"
+        )
 
 
 class TestProtection:

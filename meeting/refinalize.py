@@ -14,13 +14,12 @@ import functools
 import json
 import logging
 import threading
-import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from meeting.diarize import cloud_pass
 from meeting.finalization import (
     POLISH_TIMEOUT_S,
-    polish_blocks,
+    polish_transcript,
     sparse_redecode_detail,
     STEP_DETAILS,
     STEP_NAMES,
@@ -28,7 +27,6 @@ from meeting.finalization import (
     SpeakerPassGate,
     failed_steps_message,
     make_step as _make_step,
-    run_agent_call,
     speaker_pass_gate,
     summary_stats,
 )
@@ -36,8 +34,6 @@ from meeting.interfaces import (
     CHANNEL_LOOPBACK,
     CHANNEL_MIC,
     AgentConfig,
-    AgentResult,
-    CheckpointPayload,
     TranscriptSegment,
 )
 from meeting.reinsight import (
@@ -584,17 +580,6 @@ def rerun_redecode(
     return {"ok": True, "error": None, "rows": rows, "removed_ids": removed_ids}
 
 
-def _run_checkpoint(core: Any, payload: CheckpointPayload,
-                    timeout_s: float) -> AgentResult:
-    result = run_agent_call(
-        lambda: core.checkpoint(payload),
-        cancel=core.cancel, timeout_s=timeout_s, name="meeting-repolish",
-    )
-    return result or AgentResult(
-        ok=False, error=f"timed out after {timeout_s:.0f}s",
-    )
-
-
 def rerun_polish(
     repository: Any,
     meeting_id: str,
@@ -632,7 +617,6 @@ def rerun_polish(
     segments = repository.get_segments(meeting_id)
     if not segments:
         return {"ok": True, "applied": 0, "error": None}
-    blocks = polish_blocks(segments)
     try:
         from meeting.agent.base import create_agent_core
         from meeting.agent.prompts import build_system_prompt
@@ -655,36 +639,11 @@ def rerun_polish(
             ),
             tools,
         )
-        total = len(blocks)
-        for idx, block in enumerate(blocks, 1):
-            if progress_cb is not None:
-                try:
-                    progress_cb(
-                        f"Cleaning transcript formatting and grammar "
-                        f"(block {idx}/{total}, {len(block)} segments)...",
-                        idx,
-                        total,
-                    )
-                except Exception:
-                    logger.exception("Polish retry progress callback failed")
-            payload = CheckpointPayload(
-                request_id=uuid.uuid4().hex,
-                state_snapshot=store.snapshot(),
-                new_segments=block,
-                is_polish=True,
-            )
-            result = _run_checkpoint(core, payload, timeout_s)
-            if not result.ok:
-                # Earlier blocks may already have persisted edits.  Report the
-                # pass as incomplete so finalization remains retryable instead
-                # of presenting a partially polished transcript as finished.
-                return {
-                    "ok": False,
-                    "applied": tools.applied - applied_before,
-                    "error": result.error or "transcript cleanup failed",
-                }
-        return {"ok": True, "applied": tools.applied - applied_before,
-                "error": None}
+        error = polish_transcript(
+            core, store, segments, timeout_s=timeout_s, progress_cb=progress_cb,
+        )
+        return {"ok": error is None, "applied": tools.applied - applied_before,
+                "error": error}
     except Exception as exc:
         logger.exception("Polish retry failed for meeting %s", meeting_id)
         return {"ok": False, "applied": tools.applied - applied_before,

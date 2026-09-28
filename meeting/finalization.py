@@ -1,12 +1,14 @@
 """Shared presentation of live and retried finalization steps."""
 import logging
 import threading
+import time
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Optional
 
-from meeting.interfaces import AgentResult
+from meeting.interfaces import AgentResult, CheckpointPayload
 from services import openai_retirement
 
 logger = logging.getLogger(__name__)
@@ -107,6 +109,91 @@ def polish_blocks(
         overlap = min(POLISH_OVERLAP_SEGMENTS, (end - start) // 4)
         start = end - overlap
     return blocks
+
+
+def polish_transcript(
+    agent: Any,
+    store: Any,
+    segments: Sequence[dict[str, Any]],
+    *,
+    timeout_s: float = POLISH_TIMEOUT_S,
+    progress_cb: Optional[Callable[[str, int, int], None]] = None,
+) -> Optional[str]:
+    """Clean a transcript block by block, stopping at the first failure.
+
+    Live End (through the meeting's own agent) and the retry (through a
+    throwaway one) both run this. Blocks that already succeeded keep their
+    edits, so a later failure leaves the pass incomplete rather than done.
+
+    Args:
+        agent: An initialized agent core.
+        store: The meeting's store; each block carries a fresh snapshot.
+        segments: The stored transcript, in timeline order.
+        timeout_s: Budget per block.
+        progress_cb: Optional ``cb(detail, current_block, total_blocks)``.
+
+    Returns:
+        None when every block succeeded, otherwise why the pass stopped.
+    """
+    blocks = polish_blocks(list(segments))
+    total = len(blocks)
+    for idx, block in enumerate(blocks, 1):
+        if progress_cb is not None:
+            try:
+                progress_cb(
+                    f"Cleaning transcript formatting and grammar "
+                    f"(block {idx}/{total}, {len(block)} segments)...",
+                    idx,
+                    total,
+                )
+            except Exception:
+                logger.exception("Transcript cleanup progress callback failed")
+        payload = CheckpointPayload(
+            request_id=uuid.uuid4().hex,
+            state_snapshot=store.snapshot(),
+            new_segments=block,
+            is_polish=True,
+        )
+        started = time.monotonic()
+        logger.info(
+            "Final polish started meeting_id=%s request_id=%s block=%s/%s "
+            "segments=%s timeout_s=%s",
+            payload.state_snapshot.get("meeting_id", "unknown"),
+            payload.request_id, idx, total, len(block), timeout_s,
+        )
+        result = run_agent_call(
+            lambda bound=payload: agent.checkpoint(bound),
+            cancel=agent.cancel,
+            timeout_s=timeout_s,
+            name="meeting-final-polish",
+        )
+        elapsed = time.monotonic() - started
+        if result is None:
+            logger.warning(
+                "Final polish timed out request_id=%s block=%s/%s "
+                "elapsed_s=%.2f timeout_s=%s; canceled",
+                payload.request_id, idx, total, elapsed, timeout_s,
+            )
+            return (
+                f"Transcript cleanup timed out after {timeout_s:g}s on block "
+                f"{idx}/{total}. Request ID: {payload.request_id}."
+            )
+        if not result.ok:
+            error = result.error or "transcript cleanup failed"
+            logger.warning(
+                "Final polish failed request_id=%s block=%s/%s elapsed_s=%.2f "
+                "error=%s",
+                payload.request_id, idx, total, elapsed, error,
+            )
+            return (
+                f"{error} (block {idx}/{total}; request ID: "
+                f"{payload.request_id})"
+            )
+        logger.info(
+            "Final polish completed request_id=%s block=%s/%s elapsed_s=%.2f",
+            payload.request_id, idx, total, elapsed,
+        )
+    return None
 
 
 def summary_stats(
