@@ -3,9 +3,8 @@
 ``create_app`` wires every pinned route against a ``MeetingEngine`` and a
 ``MeetingRepository``. All blocking engine/repository calls run through
 ``asyncio.to_thread`` so the event loop never stalls on SQLite or engine
-locks. When the built React frontend (``webui/dist``) is absent, a compact
-self-contained fallback page is served so the live pipeline can be verified
-without the frontend build.
+locks. When the built React frontend (``webui/dist``) is absent, the
+dashboard route serves a short notice saying how to build it.
 """
 from __future__ import annotations
 
@@ -239,6 +238,17 @@ def _webui_dist_dir() -> str:
     return os.path.join(config.bundle_root(), "webui", "dist")
 
 
+#: Served in place of the dashboard when ``webui/dist`` is missing. The
+#: bundle is tracked in git and shipped with the app, so this only shows in
+#: a checkout whose build output was deleted.
+_MISSING_BUNDLE_PAGE = (
+    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+    "<title>OpenWhisper Meeting</title></head><body>"
+    "<p>The dashboard bundle is missing; run "
+    "<code>npm run build --prefix webui</code>.</p></body></html>"
+)
+
+
 def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
     """Build the dashboard FastAPI app.
 
@@ -393,7 +403,7 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         index_path = os.path.join(dist_dir, "index.html")
         if os.path.isfile(index_path):
             return FileResponse(index_path, media_type="text/html")
-        return HTMLResponse(_FALLBACK_PAGE)
+        return HTMLResponse(_MISSING_BUNDLE_PAGE)
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
@@ -977,279 +987,3 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         return {"ok": True, **result}
 
     return app
-
-
-#: Self-contained dark-theme dashboard served when webui/dist is missing.
-#: Vanilla JS: connects to /ws, prompts guests for a name (close code 4400),
-#: renders live transcript, topic, cards, and questions. Verification aid
-#: only; the React build replaces it when present.
-_FALLBACK_PAGE = """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenWhisper Meeting</title>
-<style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; margin: 0; }
-  body { background:#111418; color:#e8eaed; font:14px/1.5 "Segoe UI",system-ui,sans-serif; }
-  header { padding:14px 20px; background:#1a1f26; border-bottom:1px solid #2a313b;
-           display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; }
-  header h1 { font-size:17px; font-weight:600; }
-  #status { color:#9aa4b2; font-size:12px; }
-  .pill { font-size:11px; padding:2px 8px; border-radius:10px; background:#243041; color:#8ab4f8; }
-  main { display:grid; grid-template-columns:1.2fr .8fr; gap:16px; padding:16px 20px;
-         max-width:1200px; margin:0 auto; }
-  @media (max-width:800px){ main{ grid-template-columns:1fr; } }
-  section { background:#1a1f26; border:1px solid #2a313b; border-radius:10px;
-            padding:12px 14px; margin-bottom:16px; }
-  section h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em;
-               color:#9aa4b2; margin-bottom:8px; }
-  #topic { font-size:15px; font-weight:600; }
-  #summary { color:#c3c9d1; font-size:13px; margin-top:6px; white-space:pre-wrap; }
-  #transcript { max-height:60vh; overflow-y:auto; display:flex; flex-direction:column; gap:6px; }
-  .seg { display:flex; gap:8px; }
-  .seg .t { color:#6f7a87; font-variant-numeric:tabular-nums; flex:none; }
-  .seg .who { color:#8ab4f8; flex:none; }
-  .card { margin-bottom:12px; }
-  .card h3 { font-size:12px; color:#c3c9d1; margin-bottom:4px; text-transform:capitalize; }
-  .card ul { margin-left:18px; }
-  .card li { margin:3px 0; }
-  .badge { font-size:10px; color:#6f7a87; margin-left:6px; }
-  .q { border-left:3px solid #b8860b; padding-left:8px; margin:6px 0; }
-  .q .ans { color:#7dcf85; }
-</style>
-</head>
-<body>
-<header>
-  <h1 id="title">Meeting</h1>
-  <span class="pill" id="role-pill">&hellip;</span>
-  <span id="status">connecting&hellip;</span>
-</header>
-<main>
-  <div>
-    <section><h2>Topic</h2><div id="topic">&mdash;</div><div id="summary"></div></section>
-    <section><h2>Transcript</h2><div id="transcript"></div></section>
-  </div>
-  <div>
-    <section><h2>Cards</h2><div id="cards"></div></section>
-    <section><h2>Questions</h2><div id="questions"></div></section>
-  </div>
-</main>
-<script>
-"use strict";
-var token = decodeURIComponent(location.pathname.split("/").pop());
-var CARD_KEYS = ["live_notes","key_points","decisions","action_items","risks","timeline","user_notes"];
-var state = null, meeting = null, role = null, segs = {}, ws = null, pingTimer = null;
-function $(id){ return document.getElementById(id); }
-function esc(s){ var d = document.createElement("div"); d.textContent = String(s == null ? "" : s); return d.innerHTML; }
-function fmtT(s){ s = Math.max(0, Math.floor(s || 0)); var m = Math.floor(s / 60); return m + ":" + String(s % 60).padStart(2, "0"); }
-function setStatus(s){ $("status").textContent = s; }
-function speakerName(sg){
-  if (state && sg.speaker_participant_id){
-    var p = (state.participants || {})[sg.speaker_participant_id];
-    if (p) return p.display_name;
-  }
-  return sg.channel === "mic" ? "Me" : "Others";
-}
-function finalizationLabel(){
-  if (!state || !state.finalization) return "";
-  var f = state.finalization;
-  var st = f.status || "";
-  var msg = (f.message || "").trim();
-  if (st === "running") {
-    if (f.total_steps && f.current_step) {
-      return "Step " + f.current_step + "/" + f.total_steps + ": " + (msg || "Preparing final insights");
-    }
-    return msg || "Preparing final insights";
-  }
-  if (st === "completed") return msg || "Final insights ready";
-  if (st === "disabled") return msg || "AI insights off";
-  if (st === "unavailable") return msg || "Final insights unavailable";
-  if (st === "failed") return msg || "Final insights failed";
-  return msg || st;
-}
-function renderHeader(){
-  if (!state) return;
-  var bits = [state.status || ""];
-  bits.push(state.intelligence_online ? "AI online" : "AI offline");
-  if (state.cloud_enabled) bits.push("cloud");
-  var fin = finalizationLabel();
-  if (fin) bits.push(fin);
-  $("role-pill").textContent = (role || "") + " \\u00b7 " + bits.join(" \\u00b7 ");
-  var t = state.title || (meeting && meeting.title) || "Meeting";
-  $("title").textContent = t;
-  document.title = t + " \\u2014 OpenWhisper";
-}
-function addSegments(items){
-  if (!items || !items.length) return;
-  for (var i = 0; i < items.length; i++){ segs[items[i].id] = items[i]; }
-  renderTranscript();
-}
-function renderTranscript(){
-  var el = $("transcript");
-  var stick = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
-  var arr = Object.values(segs).sort(function(a, b){ return a.start_s - b.start_s; });
-  var html = "";
-  for (var i = 0; i < arr.length; i++){
-    var sg = arr[i];
-    html += '<div class="seg"><span class="t">' + fmtT(sg.start_s) + '</span><span class="who">'
-          + esc(speakerName(sg)) + ':</span><span>' + esc(sg.text) + '</span></div>';
-  }
-  el.innerHTML = html;
-  if (stick) el.scrollTop = el.scrollHeight;
-}
-function renderState(){
-  if (!state) return;
-  renderHeader();
-  $("topic").textContent = (state.topic && state.topic.current) || "\\u2014";
-  $("summary").textContent = state.rolling_summary || "";
-  var html = "";
-  for (var i = 0; i < CARD_KEYS.length; i++){
-    var key = CARD_KEYS[i];
-    var live = ((state.cards || {})[key] || []).filter(function(it){ return it.status !== "removed"; });
-    if (!live.length) continue;
-    var label = key === "live_notes" ? "Meeting Notes" : key.replace(/_/g, " ");
-    html += '<div class="card"><h3>' + esc(label) + '</h3><ul>';
-    for (var j = 0; j < live.length; j++){
-      var it = live[j];
-      var body = "";
-      if (key === "live_notes"){
-        var d = it.data || {};
-        var head = String(d.heading || "").trim();
-        var stamp = typeof d.start_s === "number" ? fmtT(d.start_s) : "";
-        var bits = (stamp ? [stamp] : []).concat(head ? [head] : []);
-        if (bits.length) body += "<strong>" + esc(bits.join(" \\u2014 ")) + "</strong> ";
-      }
-      body += esc(it.text);
-      html += '<li>' + body + '<span class="badge">' + esc(it.status)
-            + (it.pinned ? " \\u00b7 pinned" : "") + '</span></li>';
-    }
-    html += '</ul></div>';
-  }
-  $("cards").innerHTML = html || '<div class="badge">No items yet.</div>';
-  var qh = "";
-  var qs = state.questions || [];
-  for (var k = 0; k < qs.length; k++){
-    var q = qs[k];
-    if (q.status === "dismissed") continue;
-    qh += '<div class="q">' + esc(q.text);
-    if (q.answer) qh += '<div class="ans">' + esc(q.answer) + '</div>';
-    else if (q.suggested_answer) qh += '<div class="badge">suggested: ' + esc(q.suggested_answer) + '</div>';
-    qh += '</div>';
-  }
-  $("questions").innerHTML = qh || '<div class="badge">No questions.</div>';
-}
-function applyEffect(e){
-  if (!e || !state) return;
-  if (e.entity === "item" && e.item){
-    var arr = state.cards[e.item.card] || (state.cards[e.item.card] = []);
-    var idx = arr.findIndex(function(x){ return x.id === e.item.id; });
-    if (idx >= 0) arr[idx] = e.item; else arr.push(e.item);
-  } else if (e.entity === "topic"){ state.topic = e.topic; }
-  else if (e.entity === "rolling_summary"){ state.rolling_summary = e.text; }
-  else if (e.entity === "title"){ state.title = e.text; }
-  else if (e.entity === "cloud_enabled"){ state.cloud_enabled = e.enabled; }
-  else if (e.entity === "participant" && e.participant){
-    state.participants[e.participant.id] = e.participant; renderTranscript();
-  } else if (e.entity === "question" && e.question){
-    var qs = state.questions || (state.questions = []);
-    var qi = qs.findIndex(function(x){ return x.id === e.question.id; });
-    if (qi >= 0) qs[qi] = e.question; else qs.push(e.question);
-  } else if (e.entity === "segment_speaker"){
-    var sg = segs[e.segment_id];
-    if (sg){ sg.speaker_participant_id = e.participant_id; renderTranscript(); }
-  }
-}
-function handle(msg){
-  switch (msg.type){
-    case "hello":
-      role = msg.role; state = msg.state; meeting = msg.meeting;
-      segs = {}; addSegments(msg.segments); renderState(); setStatus("live");
-      break;
-    case "segments": addSegments(msg.items); break;
-    case "patch":
-      // Seq guard: a patch that lost a race must never regress newer state.
-      (msg.results || []).forEach(function(r){
-        if (!state) return;
-        if (r.seq != null && r.seq <= state.seq) return;
-        applyEffect(r.effect);
-        if (r.seq != null) state.seq = r.seq;
-      });
-      renderState();
-      break;
-    case "status":
-      if (state){
-        if (msg.status != null) state.status = msg.status;
-        if (msg.intelligence_online != null) state.intelligence_online = msg.intelligence_online;
-        if (msg.finalization !== undefined) state.finalization = msg.finalization;
-      }
-      renderHeader();
-      if (state && state.finalization && state.finalization.status === "running"){
-        setStatus(finalizationLabel() || "preparing final insights");
-      } else if (state && state.finalization && state.finalization.status){
-        var fs = state.finalization.status;
-        if (fs === "completed" || fs === "disabled" || fs === "unavailable" || fs === "failed"){
-          setStatus(finalizationLabel() || fs);
-        }
-      }
-      break;
-    case "presence":
-      if (msg.participant && state) state.participants[msg.participant.id] = msg.participant;
-      if (msg.participant) setStatus(msg.participant.display_name + (msg.event === "joined" ? " joined" : " left"));
-      break;
-    case "meeting_ended":
-      if (state) state.status = msg.status || "ended";
-      renderHeader();
-      if (state && state.finalization && state.finalization.status === "running"){
-        setStatus(finalizationLabel() || "meeting ended — preparing final insights");
-      } else {
-        setStatus("meeting ended");
-      }
-      break;
-  }
-}
-function guestId(){
-  var id = "";
-  try { id = sessionStorage.getItem("ow_guest_id") || ""; } catch (e) { return ""; }
-  if (!id){
-    id = "g" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
-    try { sessionStorage.setItem("ow_guest_id", id); } catch (e) { /* private mode */ }
-  }
-  return id;
-}
-function connect(name){
-  var url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host
-          + "/ws?token=" + encodeURIComponent(token);
-  if (name){
-    url += "&name=" + encodeURIComponent(name);
-    // Stable key so reconnects reuse one participant, never a new one.
-    var gid = guestId();
-    if (gid) url += "&guest_id=" + encodeURIComponent(gid);
-  }
-  setStatus("connecting\\u2026");
-  ws = new WebSocket(url);
-  ws.onopen = function(){
-    pingTimer = setInterval(function(){
-      try { ws.send(JSON.stringify({type: "ping"})); } catch (e) {}
-    }, 20000);
-  };
-  ws.onmessage = function(ev){ try { handle(JSON.parse(ev.data)); } catch (e) {} };
-  ws.onclose = function(ev){
-    clearInterval(pingTimer);
-    if (ev.code === 4400){
-      var n = (prompt("Enter your display name to join:") || "").trim();
-      if (n){ sessionStorage.setItem("ow_name", n); connect(n); }
-      else setStatus("A display name is required to join.");
-      return;
-    }
-    if (ev.code === 4401){ setStatus("Invalid or expired link."); return; }
-    setStatus("Disconnected \\u2014 reconnecting\\u2026");
-    setTimeout(function(){ connect(name); }, 2000);
-  };
-}
-connect(sessionStorage.getItem("ow_name") || "");
-</script>
-</body>
-</html>
-"""

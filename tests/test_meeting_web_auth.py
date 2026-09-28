@@ -228,6 +228,32 @@ class TestCloudConsent:
         assert self.saved == [True, False]
 
 
+class TestDashboardPage:
+    def _client(self, monkeypatch, dist_dir):
+        from fastapi.testclient import TestClient
+        import meeting.web.api as api_mod
+
+        monkeypatch.setattr(api_mod, "_webui_dist_dir", lambda: str(dist_dir))
+        engine, repo = FakeEngine(), FakeRepo()
+        return TestClient(api_mod.create_app(engine, repo, WsHub(engine, repo)))
+
+    def test_serves_the_built_bundle(self, monkeypatch, tmp_path):
+        (tmp_path / "index.html").write_text("<div id=root></div>", encoding="utf-8")
+        with self._client(monkeypatch, tmp_path) as tc:
+            r = tc.get(f"/m/{GUEST_TOKEN}")
+        assert r.status_code == 200
+        assert r.text == "<div id=root></div>"
+
+    def test_missing_bundle_says_how_to_build_it(self, monkeypatch, tmp_path):
+        with self._client(monkeypatch, tmp_path / "missing") as tc:
+            r = tc.get(f"/m/{HOST_TOKEN}")
+            rejected = tc.get("/m/not-a-token")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("text/html")
+        assert "npm run build --prefix webui" in r.text
+        assert rejected.status_code == 403
+
+
 class TestHostOnlyAuthz:
     def test_guest_cannot_list_meetings(self, client):
         tc, _, _ = client
