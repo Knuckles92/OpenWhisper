@@ -14,7 +14,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
+from services import installed_agents
 from services.hf_access import CachedModelInfo
+from services.installed_agents import AgentModel, InstalledAgent
 from services.settings import (
     MeetingAgentCore,
     MeetingSpeakerIdBackend,
@@ -36,6 +38,7 @@ from ui_qt.dialogs.settings_destinations import (
     VOICE_MODEL,
 )
 from ui_qt.dialogs.settings_models import WHISPER_FILTER, ModelAssignments
+from ui_qt.widgets import agent_picker
 from ui_qt.widgets import text_model_picker as picker_module
 from ui_qt.widgets.nav_rail import NavRail
 
@@ -44,6 +47,10 @@ ONDEMAND_VOICE = VOICE_MODEL
 ONDEMAND_TEXT = CLEANUP
 MEETING_TEXT = MEETING_INTELLIGENCE
 SHARED_RUNTIME = RUNTIME
+
+CLAUDE = InstalledAgent("claude_code", "C:/bin/claude.exe", "2.1.281",
+                        "Claude Team", True)
+CODEX = InstalledAgent("codex", "C:/bin/codex.exe", "0.158.0", "ChatGPT", True)
 
 
 class _Host(QWidget):
@@ -719,45 +726,151 @@ class TestMeetingDestinations(_DialogTestCase):
             dialog.refresh_component_state()
         assert dialog.meeting_agent_core_combo.currentData() == MeetingAgentCore.PI
 
-    def test_saved_opencode_remains_selected_when_payload_is_unavailable(self):
-        with patch.object(dialog_module, "meeting_agent_payload_dir", return_value=None):
-            dialog, values = self._make_meeting_dialog(
-                extra={SettingsKey.MEETING_AGENT_CORE: MeetingAgentCore.OPENCODE}
-            )
+    def test_agent_core_combo_lists_only_the_built_in_cores(self):
+        dialog, _values = self._make_meeting_dialog()
         combo = dialog.meeting_agent_core_combo
-        index = combo.findData(MeetingAgentCore.OPENCODE)
-        assert combo.currentData() == MeetingAgentCore.OPENCODE
-        assert not combo.model().item(index).isEnabled()
-        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.OPENCODE
-        with patch.object(dialog_module, "meeting_agent_payload_dir",
-                          side_effect=lambda kind="pi": "C:/opencode" if kind == "opencode" else None):
-            dialog.refresh_component_state()
-        assert combo.model().item(index).isEnabled()
-        assert combo.currentData() == MeetingAgentCore.OPENCODE
+        cores = [combo.itemData(i) for i in range(combo.count())]
+        assert cores == [MeetingAgentCore.PI, MeetingAgentCore.DIRECT]
+        assert "Downloads" not in dialog.meeting_model_tile.description_label.text()
+        assert dialog_module.agent_core_label(MeetingAgentCore.CLAUDE_CODE) == "Claude Code"
+        assert dialog_module.agent_core_label(MeetingAgentCore.OPENCODE) == "OpenCode"
 
-    def test_opencode_label_says_why_it_is_unavailable(self):
-        with patch.object(dialog_module, "meeting_agent_payload_dir", return_value=None):
-            dialog, _values = self._make_meeting_dialog()
-        combo = dialog.meeting_agent_core_combo
-        index = combo.findData(MeetingAgentCore.OPENCODE)
-        published = "services.components.component_is_published"
-        for tag, offered, label in (
-            ("darwin_arm64", False, "OpenCode v2 (Windows and Linux only)"),
-            ("linux_aarch64", False, "OpenCode v2 (not in Downloads yet)"),
-            ("win_amd64", True, "OpenCode v2 (install from Downloads)"),
-        ):
-            with patch.object(dialog_module, "current_platform_tag", return_value=tag), \
-                    patch(published, return_value=offered), \
-                    patch.object(dialog_module, "meeting_agent_payload_dir", return_value=None):
-                dialog.refresh_component_state()
-            assert combo.itemText(index) == label
-            assert not combo.model().item(index).isEnabled()
+
+class TestMeetingAgentChoice(_DialogTestCase):
+    """Who runs AI insights: an installed agent or OpenWhisper's engine."""
+
+    @pytest.fixture(autouse=True)
+    def _agents_found(self):
+        """Claude Code and Codex are found; OpenCode is not installed."""
+        scan = {
+            MeetingAgentCore.CLAUDE_CODE: CLAUDE,
+            MeetingAgentCore.CODEX: CODEX,
+            MeetingAgentCore.OPENCODE: None,
+        }
+        models = {
+            MeetingAgentCore.CLAUDE_CODE: [
+                AgentModel("", "Claude Code default"),
+                AgentModel("haiku", "Haiku (fastest)"),
+                AgentModel("sonnet", "Sonnet"),
+            ],
+            MeetingAgentCore.CODEX: [AgentModel("", "Codex default")],
+        }
+        with patch.object(agent_picker, "cached_agents", return_value=scan), \
+                patch.object(agent_picker, "scan_installed_agents", return_value=scan), \
+                patch.object(agent_picker, "list_agent_models",
+                             side_effect=lambda agent: models[agent.id]), \
+                patch.object(installed_agents, "configured_default_model",
+                             return_value=""):
+            yield
+
+    def _make_agent_dialog(self, core, models=None, pi=False):
+        extra = {SettingsKey.MEETING_AGENT_CORE: core}
+        if models is not None:
+            extra[SettingsKey.MEETING_AGENT_MODELS] = models
         with patch.object(dialog_module, "meeting_agent_payload_dir",
-                          side_effect=lambda kind="pi": "/opt/opencode" if kind == "opencode" else None):
-            dialog.refresh_component_state()
-        assert combo.itemText(index) == "OpenCode v2"
-        assert combo.model().item(index).isEnabled()
-        assert "beta" not in dialog_module.agent_core_label(MeetingAgentCore.OPENCODE)
+                          return_value="C:/pi" if pi else None):
+            return self._make_dialog(extra_settings=extra)
+
+    def test_saved_agent_is_chosen_and_hides_the_built_in_chat_model(self):
+        dialog, _values = self._make_agent_dialog(
+            MeetingAgentCore.CLAUDE_CODE, models={MeetingAgentCore.CLAUDE_CODE: "haiku"}
+        )
+        picker = dialog.meeting_agent_picker
+        assert picker.choice() == MeetingAgentCore.CLAUDE_CODE
+        assert picker.tiles[MeetingAgentCore.CLAUDE_CODE].selected
+        assert dialog.meeting_model_tile.isHidden()
+        assert dialog.meeting_model_title.isHidden()
+        assert dialog.rail.value(MEETING_TEXT) == "Claude Code · Haiku"
+        assert picker.model_combo().currentData() == "haiku"
+        assert "Claude Team" in picker.usage_label.text()
+
+    def test_built_in_core_shows_the_chat_model_tile(self):
+        dialog, _values = self._make_agent_dialog(MeetingAgentCore.DIRECT)
+        assert dialog.meeting_agent_picker.choice() == agent_picker.BUILTIN
+        assert not dialog.meeting_model_tile.isHidden()
+        assert dialog.rail.value(MEETING_TEXT) == "OpenRouter · deepseek/test-model"
+
+    def test_choosing_an_agent_saves_it_and_openwhisper_restores_direct(self):
+        dialog, values = self._make_agent_dialog(MeetingAgentCore.DIRECT)
+        picker = dialog.meeting_agent_picker
+        picker.tiles[MeetingAgentCore.CODEX].clicked.emit(MeetingAgentCore.CODEX)
+        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.CODEX
+        assert picker.choice() == MeetingAgentCore.CODEX
+        assert dialog.meeting_model_tile.isHidden()
+        assert dialog.rail.value(MEETING_TEXT) == "Codex · default model"
+
+        picker.tiles[agent_picker.BUILTIN].clicked.emit(agent_picker.BUILTIN)
+        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.DIRECT
+        assert not dialog.meeting_model_tile.isHidden()
+
+    def test_openwhisper_restores_pi_when_it_was_the_last_built_in_core(self):
+        with patch.object(dialog_module, "meeting_agent_payload_dir", return_value="C:/pi"):
+            dialog, values = self._make_agent_dialog(MeetingAgentCore.PI, pi=True)
+            picker = dialog.meeting_agent_picker
+            picker.tiles[MeetingAgentCore.CLAUDE_CODE].clicked.emit(
+                MeetingAgentCore.CLAUDE_CODE
+            )
+            assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.CLAUDE_CODE
+            picker.tiles[agent_picker.BUILTIN].clicked.emit(agent_picker.BUILTIN)
+        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.PI
+
+    def test_saved_agent_starts_from_pi_when_the_payload_is_there(self):
+        with patch.object(dialog_module, "meeting_agent_payload_dir", return_value="C:/pi"):
+            dialog, values = self._make_agent_dialog(MeetingAgentCore.CODEX, pi=True)
+            dialog.meeting_agent_picker.tiles[agent_picker.BUILTIN].clicked.emit(
+                agent_picker.BUILTIN
+            )
+        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.PI
+
+    def test_agent_core_combo_does_not_save_while_an_agent_is_chosen(self):
+        dialog, values = self._make_agent_dialog(MeetingAgentCore.CLAUDE_CODE)
+        combo = dialog.meeting_agent_core_combo
+        combo.setCurrentIndex(combo.findData(MeetingAgentCore.PI))
+        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.CLAUDE_CODE
+
+    def test_model_choice_merges_into_the_saved_models(self):
+        dialog, values = self._make_agent_dialog(
+            MeetingAgentCore.CLAUDE_CODE, models={MeetingAgentCore.CODEX: "gpt-x"}
+        )
+        combo = dialog.meeting_agent_picker.model_combo()
+        combo.activated.emit(combo.findData("sonnet"))
+        assert values[SettingsKey.MEETING_AGENT_MODELS] == {
+            MeetingAgentCore.CODEX: "gpt-x",
+            MeetingAgentCore.CLAUDE_CODE: "sonnet",
+        }
+        assert dialog.rail.value(MEETING_TEXT) == "Claude Code · Sonnet"
+        combo.activated.emit(combo.findData(""))
+        assert values[SettingsKey.MEETING_AGENT_MODELS][MeetingAgentCore.CLAUDE_CODE] == ""
+
+    def test_saved_agent_that_is_missing_stays_selected_with_a_notice(self):
+        dialog, values = self._make_agent_dialog(MeetingAgentCore.OPENCODE)
+        picker = dialog.meeting_agent_picker
+        tile = picker.tiles[MeetingAgentCore.OPENCODE]
+        assert tile.selected
+        assert tile.state.tone == agent_picker.MISSING
+        assert not tile.selectable
+        assert not picker.notice.isHidden()
+        assert "until it is installed" in picker.notice_label.text()
+        assert picker.model_card.isHidden()
+        assert dialog.meeting_model_tile.isHidden()
+        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.OPENCODE
+
+    def test_opening_intelligence_uses_the_cached_scan(self):
+        dialog, _values = self._make_agent_dialog(MeetingAgentCore.DIRECT)
+        with patch.object(agent_picker, "scan_installed_agents") as scan:
+            dialog.on_destination_shown(MEETING_INTELLIGENCE)
+        scan.assert_not_called()
+        assert not dialog.meeting_agent_picker.is_scanning()
+
+    def test_overview_names_the_agent_and_its_sign_in(self):
+        dialog, _values = self._make_agent_dialog(
+            MeetingAgentCore.CLAUDE_CODE, models={MeetingAgentCore.CLAUDE_CODE: "haiku"}
+        )
+        assert dialog.meeting_intelligence_overview() == (
+            "Haiku", "Claude Code · your Claude Team sign-in"
+        )
+        assert dialog.meeting_intelligence_is_remote(lambda provider: False)
+        assert dialog.meeting_agent_core_label() == "Claude Code"
 
 
 class TestSharedRuntime(_DialogTestCase):
