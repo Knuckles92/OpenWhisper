@@ -341,6 +341,29 @@ def test_timeout_preserves_real_operations_and_revokes_late_tools(authorized_age
     assert agent._tools.apply_agent_ops.call_count == before
 
 
+def test_consolidation_gets_the_sidecar_budget_not_a_live_pass_limit(authorized_agent):
+    from meeting.agent.base import CONSOLIDATION_STALL_S, CONSOLIDATION_TIMEOUT_CAP_S
+    agent = authorized_agent
+    agent._cfg = AgentConfig("m", "openrouter", "test", "key", "charter")
+    agent.is_healthy = lambda: True
+    budgets = []
+    def rpc(method, params, timeout_s, stall_s=None):
+        budgets.append((method, timeout_s, stall_s))
+        return {"applied": 1, "rejected": 0, "usage": {}}
+    agent._rpc = rpc
+    result = agent.consolidate(CheckpointPayload(
+        "final", {}, [{"id": "sg_1", "text": "draft"}], is_consolidation=True))
+    assert result.ok
+    assert budgets == [("checkpoint", CONSOLIDATION_TIMEOUT_CAP_S, CONSOLIDATION_STALL_S)]
+    assert (CONSOLIDATION_STALL_S, CONSOLIDATION_TIMEOUT_CAP_S) == (300.0, 900.0)
+    # SDK reasoning ticks for the active request keep a long consolidation alive.
+    agent._active_request_ids.add("final")
+    before = agent._last_progress_mono
+    agent._handle_notification("progress", {
+        "request_id": "final", "event": "message_update", "delta": "thinking_delta"})
+    assert agent._last_progress_mono > before
+
+
 def test_pin_tool_copies_measured_pins_into_the_catalog(tmp_path):
     import importlib.util
     import runpy
