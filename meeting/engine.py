@@ -394,6 +394,30 @@ class MeetingEngine:
             self._emit_status()
         return True
 
+    def publish_finalization(self, finalization: Dict[str, Any]) -> bool:
+        """Show a finalization snapshot that a retry computed elsewhere.
+
+        A retry of the meeting this engine still serves writes to the stored
+        state; publishing through the engine keeps its dashboard in step.
+
+        Args:
+            finalization: A ``FinalizationState``-shaped mapping.
+
+        Returns:
+            True when the snapshot was persisted.
+        """
+        payload = dict(finalization or {})
+        return self._set_finalization(
+            str(payload.get("status") or "running"),
+            str(payload.get("message") or ""),
+            stage=str(payload.get("stage") or ""),
+            current_step=int(payload.get("current_step") or 0),
+            total_steps=int(payload.get("total_steps") or 0),
+            step_details=str(payload.get("step_details") or ""),
+            steps=list(payload.get("steps") or []),
+            summary_stats=dict(payload.get("summary_stats") or {}),
+        )
+
     def _adopt_untitled_title_from_topic(self) -> None:
         """Copy topic.current into title when the host never named the meeting."""
         if self.store is None:

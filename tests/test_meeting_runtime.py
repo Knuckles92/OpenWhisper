@@ -484,10 +484,38 @@ def test_retry_insights_runs_and_updates_finalization(runtime, monkeypatch):
     assert called[0]["from_step"] == "failed"
     assert rt._finalization["status"] == "completed"
     assert "ready" in rt._finalization["message"]
-    assert fake_engine._set_finalization.called
-    status, message = fake_engine._set_finalization.call_args[0][:2]
-    assert status == "completed"
-    assert message == "Final insights are ready."
+    assert fake_engine.publish_finalization.called
+    published = fake_engine.publish_finalization.call_args[0][0]
+    assert published["status"] == "completed"
+    assert published["message"] == "Final insights are ready."
+
+
+def test_retry_waits_for_a_run_already_holding_the_meeting(runtime, monkeypatch):
+    """A dashboard re-run in progress is neither duplicated nor overwritten."""
+    import meeting.refinalize as refinalize
+
+    rt, controller = runtime
+    controller.meeting_active = False
+    fake_engine = MagicMock()
+    fake_engine.is_active.return_value = False
+    fake_engine.meeting_id = "m_busy"
+    rt._engine = fake_engine
+    rt._repo = MagicMock()
+    started = []
+    monkeypatch.setattr(
+        "meeting.refinalize.rerun_finalization",
+        lambda *args, **kwargs: started.append(kwargs) or {"ok": True},
+    )
+    monkeypatch.setattr(refinalize, "_running_meetings", {"m_busy"})
+    notes = []
+    controller.meeting_status_update.connect(notes.append)
+
+    rt.retry_insights()
+
+    assert rt.is_finalizing is False
+    assert started == []
+    assert notes == ["Post-meeting steps are already running for this meeting."]
+    fake_engine.publish_finalization.assert_not_called()
 
 
 def test_retry_after_engine_teardown_uses_card_meeting(runtime, monkeypatch):
