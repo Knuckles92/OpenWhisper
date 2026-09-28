@@ -18,7 +18,6 @@ class TestComponentCatalog:
         expected = {
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
-            ComponentId.MEETING_AGENT_OPENCODE,
         }
         from services.local_asr.catalog import RUNTIME_IDS
         assert set(COMPONENT_CATALOG) == expected | set(RUNTIME_IDS)

@@ -9,7 +9,7 @@ import textwrap
 import threading
 import time
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -902,6 +902,116 @@ class TestToolBridgeThreading:
         finally:
             release.set()
             agent.shutdown()
+
+
+@pytest.fixture
+def authorized_agent():
+    """A Pi agent with one active cards pass and a recording tool host."""
+    agent = PiSidecarAgent("unused")
+    agent._initialized = True
+    agent._tools = Mock()
+    agent._tools.apply_agent_ops.side_effect = lambda ops: [OpResult(ok=True, op=op) for op in ops]
+    agent._tools.segment_exists.return_value = True
+    agent._tools.ask_question.return_value = OpResult(ok=True, op={"op": "ask_question"})
+    agent._write_msg = Mock()
+    agent._active_request_ids.add("active")
+    agent._request_contexts["active"] = {"pass": "cards", "notes": False, "evidence": ["sg_1"]}
+    agent._checkpoint_op_results["active"] = []
+    yield agent
+    agent.shutdown()
+
+
+class TestToolAuthority:
+    """Each tool call acts only with the authority of the request it names."""
+
+    @pytest.mark.parametrize("request_id", [None, "", "expired", "revoked"])
+    def test_unscoped_expired_and_canceled_tools_cannot_write(self, authorized_agent, request_id):
+        agent = authorized_agent
+        if request_id == "revoked":
+            agent._active_request_ids.add(request_id)
+            agent._request_contexts[request_id] = {}
+            agent._revoked_requests.add(request_id)
+        agent._handle_tool_request({"id": 1, "method": "tool.patch_state", "params": {
+            "request_id": request_id, "ops": [{"op": "set_topic", "text": "bad"}]}})
+        agent._tools.apply_agent_ops.assert_not_called()
+        assert "error" in agent._write_msg.call_args.args[0]
+
+    def test_stale_generation_cannot_write(self, authorized_agent):
+        agent = authorized_agent
+        agent._handle_tool_request({"id": 1, "method": "tool.patch_state", "params": {
+            "request_id": "active", "ops": [{"op": "set_topic", "text": "bad"}]}}, generation=-1)
+        agent._tools.apply_agent_ops.assert_not_called()
+
+    @pytest.mark.parametrize("kind", [pi_mod.PASS_POLISH, pi_mod.PASS_NOTES])
+    def test_pass_authority_uses_request_snapshot_and_preserves_actual_results(
+        self, authorized_agent, kind,
+    ):
+        agent = authorized_agent
+        agent._pass_kind = "cards"  # An overlapping newer pass must not change this one's authority.
+        agent._request_contexts["active"].update(
+            {"pass": kind, "notes": kind == pi_mod.PASS_NOTES, "notes_ids": frozenset()})
+        allowed = ({"op": "revise_segment_text", "segment_id": "sg_1", "text": "corrected", "evidence": ["sg_1"]}
+                   if kind == pi_mod.PASS_POLISH
+                   else {"op": "add_item", "card": "live_notes", "text": "note", "evidence": ["sg_1"]})
+        denied = {"op": "set_topic", "text": "bad", "evidence": ["sg_1"]}
+        agent._handle_tool_request({"id": 1, "method": "tool.patch_state",
+                                    "params": {"request_id": "active", "ops": [denied, allowed]}})
+        agent._tools.apply_agent_ops.assert_called_once_with([allowed])
+        results = agent._checkpoint_op_results["active"]
+        assert [r.ok for r in results] == [False, True]
+        assert results[1].op == allowed
+
+    def test_question_operations_are_reported_to_scheduler(self, authorized_agent):
+        agent = authorized_agent
+        agent._handle_tool_request({"id": 1, "method": "tool.ask_question", "params": {
+            "request_id": "active", "text": "Who owns this?", "evidence": ["sg_1"]}})
+        assert agent._checkpoint_op_results["active"][0].op["op"] == "ask_question"
+
+    def test_timeout_preserves_real_operations_and_revokes_late_tools(self, authorized_agent):
+        agent = authorized_agent
+        agent._cfg = AgentConfig("m", "openrouter", "test", "key", "charter")
+        agent.is_healthy = lambda: True
+        op = {"op": "revise_segment_text", "segment_id": "sg_1", "text": "corrected", "evidence": ["sg_1"]}
+
+        def rpc(method, params, **kwargs):
+            if method == "cancel":
+                return {"ok": True}
+            agent._handle_tool_request({"id": 7, "method": "tool.patch_state", "params": {
+                "request_id": params["request_id"], "ops": [op]}})
+            raise TimeoutError("synthetic stall")
+
+        agent._rpc = rpc
+        result = agent.checkpoint(CheckpointPayload("timeout", {}, [{"id": "sg_1", "text": "draft"}]))
+        assert not result.ok
+        assert result.op_results[0].op == op
+        before = agent._tools.apply_agent_ops.call_count
+        agent._handle_tool_request({"id": 8, "method": "tool.patch_state", "params": {
+            "request_id": "timeout", "ops": [op]}})
+        assert agent._tools.apply_agent_ops.call_count == before
+
+    def test_consolidation_gets_the_sidecar_budget_not_a_live_pass_limit(self, authorized_agent):
+        from meeting.agent.base import CONSOLIDATION_STALL_S, CONSOLIDATION_TIMEOUT_CAP_S
+        agent = authorized_agent
+        agent._cfg = AgentConfig("m", "openrouter", "test", "key", "charter")
+        agent.is_healthy = lambda: True
+        budgets = []
+
+        def rpc(method, params, timeout_s, stall_s=None):
+            budgets.append((method, timeout_s, stall_s))
+            return {"applied": 1, "rejected": 0, "usage": {}}
+
+        agent._rpc = rpc
+        result = agent.consolidate(CheckpointPayload(
+            "final", {}, [{"id": "sg_1", "text": "draft"}], is_consolidation=True))
+        assert result.ok
+        assert budgets == [("checkpoint", CONSOLIDATION_TIMEOUT_CAP_S, CONSOLIDATION_STALL_S)]
+        assert (CONSOLIDATION_STALL_S, CONSOLIDATION_TIMEOUT_CAP_S) == (300.0, 900.0)
+        # Reasoning ticks for the active request keep a long consolidation alive.
+        agent._active_request_ids.add("final")
+        before = agent._last_progress_mono
+        agent._handle_notification("progress", {
+            "request_id": "final", "event": "message_update", "delta": "thinking_delta"})
+        assert agent._last_progress_mono > before
 
 
 class TestSidecarRestartBudget:

@@ -165,7 +165,7 @@ def package(args):
     host = ProductEvalHost(mid, rows)
     host.allow_agent_writes()
     provider, model, kind = resolve_meeting_llm_provider(), resolve_meeting_llm_model(), resolve_meeting_agent_core()
-    agent = create_agent_core(kind, meeting_agent_payload_dir(kind) if kind in ('pi', 'opencode') else None)
+    agent = create_agent_core(kind, meeting_agent_payload_dir(kind))
     base_prompt = build_system_prompt()
     supplied = []
     if args.arm == 'assisted':

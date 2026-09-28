@@ -101,8 +101,7 @@ then exits cleanly; the sidecar also exits when its stdin closes.
   dir), tool registration, run/abort/dispose. Uncertain SDK touchpoints are
   marked `TODO(pi-api)` so API drift stays a one-file fix.
 - `src/runner.ts` — env, `hello` handshake, request handlers and checkpoint
-  serialization, shared with the OpenCode sidecar; `src/main.ts` starts it
-  with the Pi adapter.
+  serialization; `src/main.ts` starts it with the Pi adapter.
 
 ## Text-provider metadata
 

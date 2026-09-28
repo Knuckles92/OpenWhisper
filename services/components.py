@@ -329,8 +329,6 @@ _BUILTIN_CATALOG_RAW: Final[dict] = {
 # Immutable source of truth. Public APIs always return thawed defensive copies.
 from services.local_asr.catalog import runtime_catalog, RUNTIME_IDS
 _BUILTIN_CATALOG_RAW["components"].update(runtime_catalog())
-from services.opencode_catalog import catalog_entry as _opencode_catalog_entry
-_BUILTIN_CATALOG_RAW["components"]["meeting-agent-opencode"] = _opencode_catalog_entry()
 _BUILTIN_CATALOG: Final[Any] = _freeze_catalog_value(_BUILTIN_CATALOG_RAW)
 
 # CTranslate2 4.8 loads exactly one CUDA library by name (plus nvcuda.dll from
@@ -362,7 +360,6 @@ class ComponentId:
 
     GPU_ACCEL: Final[str] = "gpu-accel"
     MEETING_AGENT: Final[str] = "meeting-agent"
-    MEETING_AGENT_OPENCODE: Final[str] = "meeting-agent-opencode"
     ASR_NVIDIA_CPU: Final[str] = "asr-nvidia-cpu"
     ASR_NVIDIA_CUDA: Final[str] = "asr-nvidia-cuda"
     ASR_NVIDIA_VULKAN: Final[str] = "asr-nvidia-vulkan"
@@ -488,8 +485,8 @@ def available_component_ids(
     """Components that can be installed on this platform.
 
     GPU Acceleration (the CUDA libraries Local Whisper loads) is offered on
-    Windows x64 and Linux x86_64. The Pi and OpenCode meeting agents are
-    offered on Windows x64 and Linux x86_64/aarch64. Linux x86_64 also offers the native NVIDIA
+    Windows x64 and Linux x86_64. The Pi meeting agent is offered on
+    Windows x64 and Linux x86_64/aarch64. Linux x86_64 also offers the native NVIDIA
     Speech CPU and CUDA runtimes, and the Vulkan one to a computer whose
     NVIDIA GPU is older than Turing (or that already has it); Apple Silicon
     Macs offer the CPU one.
@@ -504,7 +501,6 @@ def available_component_ids(
         candidates = (
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
-            ComponentId.MEETING_AGENT_OPENCODE,
             *RUNTIME_IDS,
         )
     elif tag == PLATFORM_LINUX_X86_64:
@@ -513,7 +509,6 @@ def available_component_ids(
         candidates = (
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
-            ComponentId.MEETING_AGENT_OPENCODE,
             ComponentId.ASR_NVIDIA_CPU,
             ComponentId.ASR_NVIDIA_CUDA,
         )
@@ -521,7 +516,7 @@ def available_component_ids(
                 or nvidia_gpu_runtime() == ComponentId.ASR_NVIDIA_VULKAN):
             candidates += (ComponentId.ASR_NVIDIA_VULKAN,)
     elif tag == PLATFORM_LINUX_AARCH64:
-        candidates = (ComponentId.MEETING_AGENT, ComponentId.MEETING_AGENT_OPENCODE)
+        candidates = (ComponentId.MEETING_AGENT,)
     elif tag == "darwin_arm64":
         candidates = (ComponentId.ASR_NVIDIA_CPU,)
     else:
@@ -646,10 +641,10 @@ def _source_sidecar_payload_dir() -> Optional[str]:
 
 
 def meeting_agent_payload_dir(kind: str = "pi") -> Optional[str]:
-    """Resolve the selected harness payload (Pi by default).
+    """Resolve the packaged Pi sidecar payload.
 
-    OpenCode uses its own strict resolver; unavailable payloads return None.
-    The following legacy resolution order applies to Pi only.
+    Pi is the only packaged meeting agent, so every other ``kind`` returns
+    None.
 
     Resolution order:
         1. Installed ``meeting-agent`` component tree with ``bundle.cjs``,
@@ -662,9 +657,6 @@ def meeting_agent_payload_dir(kind: str = "pi") -> Optional[str]:
         Absolute path to a payload directory containing ``bundle.cjs``, or
         None when no runnable sidecar is present.
     """
-    if kind == "opencode":
-        from services.opencode_component import payload_dir
-        return payload_dir()
     if kind != "pi":
         return None
     if is_installed(ComponentId.MEETING_AGENT):
@@ -1380,10 +1372,6 @@ def _safe_extract_nemo_tar(
 
 
 def _validate_component_payload(component_id: str, target_dir: str) -> None:
-    if component_id == ComponentId.MEETING_AGENT_OPENCODE:
-        from services.opencode_component import validate_payload
-        validate_payload(target_dir)
-        return
     if component_id in RUNTIME_IDS:
         tag = current_platform_tag()
         if tag == "darwin_arm64":
@@ -1507,23 +1495,7 @@ def _replace_speech_runtime(source: str, destination: str, cancel: threading.Eve
     )
 
 
-def install_component(component_id: str, entry: dict, progress: ProgressCallback, cancel: threading.Event) -> None:
-    if component_id != ComponentId.MEETING_AGENT_OPENCODE:
-        return _install_component(component_id, entry, progress, cancel)
-    from services.component_leases import component_mutation
-    with component_mutation(component_id):
-        _install_component(component_id, entry, progress, cancel)
-
-
-def uninstall_component(component_id: str) -> None:
-    if component_id != ComponentId.MEETING_AGENT_OPENCODE:
-        return _uninstall_component(component_id)
-    from services.component_leases import component_mutation
-    with component_mutation(component_id):
-        _uninstall_component(component_id)
-
-
-def _install_component(
+def install_component(
     component_id: str,
     entry: dict,
     progress: ProgressCallback,
@@ -1557,7 +1529,7 @@ def _install_component(
     consumed = 0
     for archive in archives:
         target = os.path.join(cache_dir(), archive["name"])
-        if (component_id in RUNTIME_IDS or component_id == ComponentId.MEETING_AGENT_OPENCODE) and os.path.exists(target):
+        if component_id in RUNTIME_IDS and os.path.exists(target):
             with open(target, "rb") as cached_archive:
                 digest = hashlib.file_digest(cached_archive, "sha256").hexdigest()
             if digest != archive["sha256"] or os.path.getsize(target) != archive["size_bytes"]:
@@ -1673,7 +1645,7 @@ def _install_component(
             _rmtree(staging)
 
 
-def _uninstall_component(component_id: str) -> None:
+def uninstall_component(component_id: str) -> None:
     """Remove an installed component from disk.
 
     Raises:
@@ -1898,11 +1870,8 @@ class ComponentCoordinator:
             and available_version != installed_version
         )
 
-        from services.opencode_component import runnable as opencode_runnable
         if incompatible:
             state, reason = ComponentState.INCOMPATIBLE, incompatible
-        elif component_id == ComponentId.MEETING_AGENT_OPENCODE and not opencode_runnable(component_dir(component_id)):
-            state, reason = ComponentState.BROKEN, "OpenCode files are missing or incompatible. Reinstall this component."
         elif outdated:
             # Say what the user gets, since an update is their choice: a slimmer
             # payload reclaims disk, and the row already shows the download size.
