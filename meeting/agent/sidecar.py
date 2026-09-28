@@ -829,16 +829,7 @@ class SidecarAgent:
     @staticmethod
     def _resolve_api_key(cfg: AgentConfig) -> Optional[str]:
         """Resolve the process key, including auth-free custom endpoints."""
-        try:
-            from services.text_llm import (
-                profile_from_agent_config,
-                resolve_api_key,
-            )
-
-            profile = profile_from_agent_config(cfg.provider, cfg.endpoint)
-            return resolve_api_key(profile)
-        except Exception:
-            return find_provider_api_key(cfg.provider)
+        return find_provider_api_key(cfg.provider, cfg.endpoint)
 
     def _endpoint_fields(self) -> Dict[str, Any]:
         """Non-secret connection fields passed to sidecar ``initialize``."""

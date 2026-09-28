@@ -16,7 +16,6 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from config import config
-from meeting.agent.base import find_provider_api_key
 from meeting.agent.evidence import repair_evidence_ids
 from meeting.agent.prompts import (
     JSON_FALLBACK_INSTRUCTIONS,
@@ -36,6 +35,13 @@ from meeting.state.patches import filter_notes_ops, live_note_ids
 from meeting.state.schema import CARD_KEYS
 
 from services.text_generation import generate
+from services.text_llm import (
+    NEW_PROFILE_IDS,
+    profile_from_agent_config,
+    provider_headers,
+    resolve_api_key,
+)
+from services.text_model_catalog import model_spec
 
 logger = logging.getLogger(__name__)
 
@@ -71,13 +77,10 @@ _MAX_TOOL_ROUNDS_WITH_RECALL = 3
 #: especially benefits from less paraphrase drift between runs.
 _TEMPERATURE = 0.0
 
-_DEFAULT_BASE_URLS = {"openrouter": "https://openrouter.ai/api/v1"}
 _DEFAULT_MODELS = {
     "openrouter": config.MEETING_LLM_MODEL,
     "openai": "gpt-4o-mini",
 }
-# OpenRouter attributes traffic to the app via this optional header.
-_OPENROUTER_HEADERS = {"X-Title": "OpenWhisper"}
 
 #: Ops the model may put inside patch_state. ask_question/resolve_question
 #: have dedicated tools, so they are steered out of this enum (the tool host
@@ -361,7 +364,6 @@ class DirectOpenRouterAgent:
         self._model: str = ""
         self._json_mode = False
         self._use_json_response_format = True
-        self._profile_kind: str = ""
         self._profile = None
         self._polish_mode = False
         self._notes_mode = False
@@ -382,25 +384,11 @@ class DirectOpenRouterAgent:
         self._tools = tools
         self._fatal = False
         self._shut_down = False
-        profile = self._resolve_profile(cfg)
+        profile = profile_from_agent_config(cfg.provider, cfg.endpoint)
         self._profile = profile
-        self._profile_kind = profile.kind if profile is not None else cfg.provider
-        self._api_key = cfg.api_key or (
-            self._resolve_profile_key(profile, cfg.provider)
-        )
-        self._base_url = (
-            profile.base_url if profile is not None
-            else self._provider_base_url(cfg.provider)
-        )
-        self._headers = (
-            dict(_OPENROUTER_HEADERS)
-            if (profile is not None and profile.kind == "openrouter")
-            or cfg.provider == "openrouter"
-            else None
-        )
-        if profile is not None:
-            from services.text_llm import provider_headers
-            self._headers = provider_headers(profile, cfg.meeting_id)
+        self._api_key = cfg.api_key or resolve_api_key(profile)
+        self._base_url = profile.base_url
+        self._headers = provider_headers(profile, cfg.meeting_id)
         self._use_json_response_format = True
         self._model = self._resolve_model(cfg)
 
@@ -414,9 +402,7 @@ class DirectOpenRouterAgent:
             )
             return
 
-        if profile is not None:
-            from services.text_model_catalog import model_spec
-            model_spec(profile, self._model)
+        model_spec(profile, self._model)
         client = self._ensure_client()
         if client is not None:
             self._probe_tool_support(client)
@@ -466,45 +452,6 @@ class DirectOpenRouterAgent:
         self.cancel()
 
     @staticmethod
-    def _resolve_profile(cfg: AgentConfig):
-        try:
-            from services.text_llm import profile_from_agent_config
-
-            return profile_from_agent_config(cfg.provider, cfg.endpoint)
-        except ImportError:
-            return None
-
-    @staticmethod
-    def _resolve_profile_key(profile: Any, provider: str) -> Optional[str]:
-        if profile is not None:
-            try:
-                from services.text_llm import resolve_api_key
-
-                return resolve_api_key(profile)
-            except Exception:
-                pass
-        return find_provider_api_key(provider)
-
-    @staticmethod
-    def _provider_base_url(provider: str) -> Optional[str]:
-        try:
-            from services.text_llm import get_profile
-
-            profile = get_profile(provider)
-            if profile is not None:
-                return profile.base_url
-        except Exception:
-            pass
-        if provider == "openrouter":
-            try:
-                from config import config
-
-                return config.OPENROUTER_BASE_URL
-            except Exception:
-                return _DEFAULT_BASE_URLS["openrouter"]
-        return None
-
-    @staticmethod
     def _resolve_model(cfg: AgentConfig) -> str:
         if cfg.model:
             return cfg.model
@@ -541,9 +488,7 @@ class DirectOpenRouterAgent:
             return self._client
 
     def _probe_tool_support(self, client: Any) -> None:
-        new_provider = self._profile is not None and self._profile.kind in (
-            "ollama", "groq", "opencode_go", "opencode_zen",
-        )
+        new_provider = self._profile.kind in NEW_PROFILE_IDS
         try:
             result = generate(
                 client.with_options(timeout=_PROBE_TIMEOUT_S), self._profile,
