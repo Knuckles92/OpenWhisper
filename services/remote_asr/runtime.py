@@ -8,7 +8,7 @@ from services.local_asr.catalog import (
     runtime_id,
     selected_device,
 )
-from services.settings import SettingsKey, settings_manager
+from services.settings import SettingsKey, setting_value, settings_manager
 
 
 def runtime_state(engine: dict) -> dict:
@@ -40,8 +40,8 @@ def runtime_state(engine: dict) -> dict:
                 compute_types[device] = ["auto"]
         devices = ["auto", "cpu"] + (["cuda"] if cuda else [])
         selected = {
-            "device": settings.get(SettingsKey.WHISPER_DEVICE, "auto"),
-            "compute_type": settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, "auto"),
+            "device": setting_value(SettingsKey.WHISPER_DEVICE, settings),
+            "compute_type": setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings),
         }
         compute_types["auto"] = compute_types.get("cuda" if cuda else "cpu", ["auto"])
     else:
@@ -54,7 +54,7 @@ def runtime_state(engine: dict) -> dict:
         if family != "moonshine" and devices:
             devices.insert(0, "auto")
         selected = {"device": selected_device(family, settings),
-                    "language": "en" if family == "moonshine" else settings.get(SettingsKey.LOCAL_ASR_LANGUAGE, "en")}
+                    "language": "en" if family == "moonshine" else setting_value(SettingsKey.LOCAL_ASR_LANGUAGE, settings)}
     return {
         "family": family,
         "model": engine.get("model", ""),

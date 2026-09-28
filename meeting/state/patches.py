@@ -863,7 +863,7 @@ def _op_reassign_segment_speaker(state: MeetingState, op: Dict[str, Any],
 
 def _op_revise_segment_text(state: MeetingState, op: Dict[str, Any],
                             ctx: OpContext) -> OpResult:
-    """In-place transcript polish; structure changes belong to ASR revise."""
+    """In-place transcript polish; segment boundaries and timing never change."""
     segment_id = op.get("segment_id")
     if not isinstance(segment_id, str) or not segment_id:
         return _reject(op, "invalid_segment")

@@ -11,7 +11,6 @@ Linux package installs, source copies, and git checkouts are notify-only.
 
 from __future__ import annotations
 
-import hashlib
 import ipaddress
 import json
 import logging
@@ -41,7 +40,6 @@ from services.app_update_apply import (
     resolve_apply_mode,
     running_app_dir,
 )
-from services.format_utils import format_size_bytes
 from services.settings import (
     SettingsKey,
     resolve_update_check_enabled,
@@ -53,9 +51,12 @@ from services.update_contract import (
     ApplyMode,
     archive_asset_name,
     encode_native_result,
+    normalize_version,
     setup_asset_name,
     updates_root,
 )
+from services.verified_download import DownloadError, download_verified, open_url
+from services.verified_files import NotARegularFile, sha256_file
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +73,6 @@ _RATE_LIMIT_MESSAGE: Final[str] = (
     "GitHub rate-limited this update check. Try again later, or open "
     f"{RELEASES_PAGE_URL}."
 )
-_USER_AGENT: Final[str] = f"OpenWhisper/{__version__}"
-_NETWORK_TIMEOUT_S: Final[int] = 30
-_CHUNK_BYTES: Final[int] = 1 << 20
 _MAX_ASSET_BYTES: Final[int] = 2 * 1024 * 1024 * 1024
 _DOWNLOAD_KEEP_WINDOW_S: Final[int] = 30
 _MAX_REDIRECTS: Final[int] = 5
@@ -189,14 +187,6 @@ def channel_label(channel: str, platform_name: Optional[str] = None) -> str:
     if channel == InstallChannel.GIT:
         return "Source checkout (git)"
     return "Source copy"
-
-
-def normalize_version(raw: str) -> str:
-    """Strip a leading ``v`` and surrounding whitespace from a version string."""
-    text = (raw or "").strip()
-    if text[:1] in ("v", "V"):
-        text = text[1:]
-    return text.strip()
 
 
 def parse_version(raw: str) -> Tuple[int, int, int]:
@@ -951,14 +941,12 @@ def _open(url: str, extra_headers: Optional[Dict[str, str]] = None):
 
     if not _redirect_url_allowed(url, url):
         raise urllib.error.URLError("The update URL is not trusted.")
-    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    for key, value in (extra_headers or {}).items():
-        request.add_header(key, value)
-    opener = urllib.request.build_opener(
-        _SafeRedirectHandler(url),
-        urllib.request.HTTPSHandler(context=verified_context()),
+    response = open_url(
+        url,
+        extra_headers,
+        context=verified_context(),
+        handlers=(_SafeRedirectHandler(url),),
     )
-    response = opener.open(request, timeout=_NETWORK_TIMEOUT_S)
     final_url = response.geturl()
     if not _redirect_url_allowed(url, final_url):
         response.close()
@@ -994,41 +982,24 @@ def _describe_network_error(exc: Exception) -> str:
 
 
 def _file_sha256(path: str) -> str:
-    digest = hashlib.sha256()
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(path, flags)
-    with os.fdopen(fd, "rb") as handle:
-        info = os.fstat(handle.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise AppUpdateError("The update download path is not a regular file.")
-        for block in iter(lambda: handle.read(_CHUNK_BYTES), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def _response_header(response: object, name: str) -> Optional[str]:
-    headers = getattr(response, "headers", None)
-    if headers is not None:
-        value = headers.get(name)
-        return str(value) if value is not None else None
-    getter = getattr(response, "getheader", None)
-    if getter is not None:
-        value = getter(name)
-        return str(value) if value is not None else None
-    return None
-
-
-def _discard_regular_file(path: str) -> None:
     try:
-        info = os.lstat(path)
-        if stat.S_ISREG(info.st_mode):
-            os.unlink(path)
-    except OSError:
-        pass
+        return sha256_file(path, regular_only=True)
+    except NotARegularFile:
+        raise AppUpdateError("The update download path is not a regular file.") from None
 
 
-class _DownloadInterrupted(AppUpdateError):
-    """A truncated transfer whose prefix can be resumed on retry."""
+# The shared downloader's wording, kept as the updater has always shown it.
+_DOWNLOAD_MESSAGES: Final[Dict[str, str]] = {
+    "invalid_size": "The update package has an invalid size.",
+    "unsafe_partial": "The update download could not be created safely.",
+    "partial_not_regular": "The update partial is not a regular file.",
+    "partial_unreadable": "The partial update could not be read.",
+    "bad_resume": "The update server returned an invalid resume response.",
+    "bad_length": "The update server returned an invalid download size.",
+    "unexpected_length": "The update server returned an unexpected download size.",
+    "too_much_data": "The update server returned more data than expected.",
+    "finalize": "The verified update could not be finalized. Please retry.",
+}
 
 
 def _download_verified(
@@ -1040,169 +1011,18 @@ def _download_verified(
     cancel: threading.Event,
 ) -> None:
     """Fetch ``url`` with bounded resume, exact-size, and SHA-256 checks."""
-    if size_bytes <= 0 or size_bytes > _MAX_ASSET_BYTES:
-        raise AppUpdateError("The update package has an invalid size.")
-    part_path = destination + ".part"
-    flags = (
-        os.O_RDWR
-        | os.O_CREAT
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
     try:
-        fd = os.open(part_path, flags, 0o600)
-    except OSError as exc:
-        raise AppUpdateError("The update download could not be created safely.") from exc
-
-    try:
-        with os.fdopen(fd, "r+b") as out:
-            info = os.fstat(out.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                raise AppUpdateError("The update partial is not a regular file.")
-            try:
-                os.chmod(part_path, 0o600, follow_symlinks=False)
-            except (NotImplementedError, OSError):
-                fchmod = getattr(os, "fchmod", None)
-                if fchmod is not None:
-                    fchmod(out.fileno(), 0o600)
-
-            resume_from = info.st_size
-            if resume_from > size_bytes:
-                out.seek(0)
-                out.truncate(0)
-                resume_from = 0
-
-            digest = hashlib.sha256()
-            out.seek(0)
-            remaining = resume_from
-            while remaining:
-                if cancel.is_set():
-                    raise AppUpdateError("The download was canceled.")
-                block = out.read(min(_CHUNK_BYTES, remaining))
-                if not block:
-                    raise AppUpdateError("The partial update could not be read.")
-                digest.update(block)
-                remaining -= len(block)
-
-            if cancel.is_set():
-                raise AppUpdateError("The download was canceled.")
-            if resume_from == size_bytes and digest.hexdigest() != sha256_hex.lower():
-                out.seek(0)
-                out.truncate(0)
-                resume_from = 0
-                digest = hashlib.sha256()
-            if resume_from < size_bytes:
-                headers = {"Range": f"bytes={resume_from}-"} if resume_from else None
-                try:
-                    response = _open(url, headers)
-                except urllib.error.HTTPError as exc:
-                    if exc.code != 416 or not resume_from:
-                        raise
-                    exc.close()
-                    resume_from = 0
-                    digest = hashlib.sha256()
-                    out.seek(0)
-                    out.truncate(0)
-                    response = _open(url)
-                with response:
-                    status = getattr(response, "status", None)
-                    if resume_from and status != 206:
-                        logger.info("Server ignored Range header; restarting download")
-                        resume_from = 0
-                        digest = hashlib.sha256()
-                        out.seek(0)
-                        out.truncate(0)
-                    elif resume_from:
-                        content_range = _response_header(response, "Content-Range") or ""
-                        match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", content_range)
-                        if (
-                            match is None
-                            or int(match.group(1)) != resume_from
-                            or int(match.group(2)) != size_bytes - 1
-                            or int(match.group(3)) != size_bytes
-                        ):
-                            raise AppUpdateError(
-                                "The update server returned an invalid resume response."
-                            )
-
-                    expected_response_bytes = size_bytes - resume_from
-                    content_length = _response_header(response, "Content-Length")
-                    if content_length is not None:
-                        try:
-                            declared_response_bytes = int(content_length)
-                        except ValueError as exc:
-                            raise AppUpdateError(
-                                "The update server returned an invalid download size."
-                            ) from exc
-                        if declared_response_bytes != expected_response_bytes:
-                            raise AppUpdateError(
-                                "The update server returned an unexpected download size."
-                            )
-
-                    out.seek(resume_from)
-                    written = resume_from
-                    while True:
-                        if cancel.is_set():
-                            raise AppUpdateError("The download was canceled.")
-                        chunk = response.read(_CHUNK_BYTES)
-                        if not chunk:
-                            break
-                        if written + len(chunk) > size_bytes:
-                            raise AppUpdateError(
-                                "The update server returned more data than expected."
-                            )
-                        out.write(chunk)
-                        digest.update(chunk)
-                        written += len(chunk)
-                        progress(DownloadPhase.DOWNLOADING, written, size_bytes)
-
-            if cancel.is_set():
-                raise AppUpdateError("The download was canceled.")
-            actual_size = out.tell()
-            if actual_size != size_bytes:
-                raise _DownloadInterrupted(
-                    "The download did not complete "
-                    f"({format_size_bytes(actual_size)} of "
-                    f"{format_size_bytes(size_bytes)})."
-                )
-            progress(DownloadPhase.VERIFYING, actual_size, actual_size)
-            if cancel.is_set():
-                raise AppUpdateError("The download was canceled.")
-            if digest.hexdigest() != sha256_hex.lower():
-                raise AppUpdateError(
-                    "The download failed its integrity check and was discarded. "
-                    "Please try again."
-                )
-            out.flush()
-            os.fsync(out.fileno())
-            if cancel.is_set():
-                raise AppUpdateError("The download was canceled.")
-    except _DownloadInterrupted:
-        raise
-    except AppUpdateError:
-        _discard_regular_file(part_path)
-        raise
-    except (urllib.error.URLError, OSError) as exc:
-        raise AppUpdateError(_describe_network_error(exc)) from exc
-
-    if cancel.is_set():
-        _discard_regular_file(part_path)
-        raise AppUpdateError("The download was canceled.")
-    try:
-        os.replace(part_path, destination)
-        try:
-            os.chmod(destination, 0o600, follow_symlinks=False)
-        except NotImplementedError:
-            os.chmod(destination, 0o600)
-        if os.name != "nt":
-            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-            directory_fd = os.open(os.path.dirname(destination), directory_flags)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-    except OSError as exc:
-        raise AppUpdateError("The verified update could not be finalized. Please retry.") from exc
-    if cancel.is_set():
-        _discard_regular_file(destination)
-        raise AppUpdateError("The download was canceled.")
+        download_verified(
+            url,
+            sha256_hex,
+            size_bytes,
+            destination,
+            progress,
+            cancel,
+            opener=_open,
+            describe_error=_describe_network_error,
+            max_bytes=_MAX_ASSET_BYTES,
+            messages=_DOWNLOAD_MESSAGES,
+        )
+    except DownloadError as exc:
+        raise AppUpdateError(str(exc)) from exc.__cause__

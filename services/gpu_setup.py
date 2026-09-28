@@ -50,22 +50,19 @@ def plan_gpu_setup(settings: dict, supported: Iterable[str]) -> Optional[GpuSetu
     supports; an "auto" model, or one too large for the card, becomes
     "auto", which resolves to the model ``plan_cuda`` picks for this card.
     """
-    from config import config
     from services.components import (
         ComponentId, available_component_ids, catalog_entry_for_platform, gpu_runtime_available,
     )
     from services.hf_access import MODEL_DOWNLOAD_SIZE_MB, is_model_cached
-    from services.settings import SettingsKey
+    from services.settings import SettingsKey, setting_value
 
     if ComponentId.GPU_ACCEL not in available_component_ids():
         return None
     supported = set(supported) or {"float32"}
     gpu = nvidia_gpu()
     total = gpu.total_mib if gpu is not None else None
-    selected = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL) or "auto"
-    compute_setting = settings.get(
-        SettingsKey.WHISPER_COMPUTE_TYPE, config.FASTER_WHISPER_COMPUTE_TYPE
-    ) or "auto"
+    selected = setting_value(SettingsKey.WHISPER_MODEL, settings) or "auto"
+    compute_setting = setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings) or "auto"
 
     keep = selected != "auto" and fits(selected, best_cuda_compute_type(supported), total)
     model_setting = selected if keep else "auto"

@@ -4,7 +4,7 @@ import pytest
 from dataclasses import FrozenInstanceError
 
 from config import config
-from services.hf_access import MODEL_DOWNLOAD_SIZE_MB, resolve_model_repo
+from services.hf_access import format_download_size, resolve_model_repo
 from services.model_catalog import MODEL_CATALOG, get_model_details
 
 
@@ -53,7 +53,7 @@ class TestModelCatalog:
     def test_repository_and_size_match_download_configuration(self, model_name):
         details = MODEL_CATALOG[model_name]
         assert details.repository_id == resolve_model_repo(model_name)
-        assert details.download_size_mb == MODEL_DOWNLOAD_SIZE_MB[model_name]
+        assert format_download_size(model_name) == details.download_size
 
     def test_parameter_counts_match_published_model_families(self):
         expected = {

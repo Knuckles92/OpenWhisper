@@ -502,7 +502,6 @@ class AppConfig:
     # Meeting Mode defaults
     MEETING_WHISPER_MODEL: str = "auto"
     MEETING_LANGUAGE: str = "auto"
-    MEETING_LLM_PROVIDER: str = "openrouter"
     MEETING_LLM_MODEL: str = "openrouter/free"
     MEETING_AGENT_CORE: str = "pi"
     MEETING_SPEAKER_ID_BACKEND: str = "local"
