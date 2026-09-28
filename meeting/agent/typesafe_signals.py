@@ -14,10 +14,8 @@ from services.typesafe import ChoiceAnswer, TypeSafeJudge
 
 # -- topic boundary --------------------------------------------------------------
 
-#: Measured on 97 human-labelled minute pairs: AUROC 0.845, precision 0.69 and
-#: recall 0.78 at this threshold. The shipped Jaccard rule scored precision
-#: 0.35 at recall 0.97 on the same windows.
-TOPIC_SHIFT_THRESHOLD = 0.5
+#: The caller's cut-off (``scheduler._SHIFT_SEMANTIC_THRESHOLD``) was measured
+#: on 97 human-labelled minute pairs: AUROC 0.845 for this question.
 TOPIC_CHANGED_INSTRUCTIONS = (
     "Does the discussion in `window` move on to a different agenda topic or "
     "activity than the one in `previous_window`? Elaborating the same topic, "
