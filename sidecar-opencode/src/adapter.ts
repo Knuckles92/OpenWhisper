@@ -41,8 +41,8 @@ export async function createSession(options: CreateSessionOptions): Promise<Harn
         for (const agent of editor.list()) if (String(agent.id) !== "meeting") editor.remove(String(agent.id));
         editor.default("meeting");
       });
-      await ctx.catalog.transform(editor => {
-        for (const provider of editor.provider.list()) if (String(provider.provider.id) !== "openwhisper") editor.provider.remove(String(provider.provider.id));
+      await ctx.provider.transform(editor => {
+        for (const record of editor.list()) if (String(record.provider.id) !== "openwhisper") editor.remove(String(record.provider.id));
       });
       await ctx.session.hook("context", event => {
         if (!active || active.canceled || active.id !== event.sessionID) throw new Error("Inactive meeting request");
@@ -50,7 +50,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Harn
         event.system = [{ type: "text", text: active.systemPrompt }];
         for (const name of Object.keys(event.tools)) if (!names.has(name)) delete event.tools[name];
         if (Object.keys(event.tools).length !== names.size) throw new Error("OpenCode meeting tool registration is incomplete");
-        event.generation.maxTokens = options.modelMetadata?.max_output_tokens ?? 4096;
+        event.options.maxTokens = options.modelMetadata?.max_output_tokens ?? 4096;
       });
       await ctx.session.hook("retry", event => {
         // Python owns retries and deadlines; never hide a provider failure in an unbounded loop.
@@ -124,7 +124,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Harn
         })().catch(error => {
           if (!controller.signal.aborted) {
             streamError = error;
-            void host.sessions.interrupt({ sessionID: session.id, continue: false }).catch(() => {});
+            void host.sessions.interrupt({ sessionID: session.id, resume: false }).catch(() => {});
           }
         });
         options.onEvent?.({ type: "agent_start" });
@@ -154,7 +154,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Harn
         controller.abort();
         await pump;
         if (request.id) {
-          await host.sessions.interrupt({ sessionID: request.id, continue: false }).catch(() => {});
+          await host.sessions.interrupt({ sessionID: request.id, resume: false }).catch(() => {});
           await host.sessions.remove({ sessionID: request.id }).catch(() => {});
         }
         active = null;
@@ -165,13 +165,13 @@ export async function createSession(options: CreateSessionOptions): Promise<Harn
       if (!request) return;
       request.canceled = true;
       if (request.id) {
-        await host.sessions.interrupt({ sessionID: request.id, continue: false });
+        await host.sessions.interrupt({ sessionID: request.id, resume: false });
         await host.sessions.wait({ sessionID: request.id });
       }
     },
     async dispose() {
       closed = true;
-      if (active) { active.canceled = true; if (active.id) await host.sessions.interrupt({ sessionID: active.id, continue: false }); }
+      if (active) { active.canceled = true; if (active.id) await host.sessions.interrupt({ sessionID: active.id, resume: false }); }
       await host.close();
     },
   };

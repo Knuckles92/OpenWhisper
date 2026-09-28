@@ -41,9 +41,9 @@ Native transports retain their own message and reasoning serialization.
 
 ## Versions and upgrades
 
-The current tested pair is SDK **0.0.0-dev-19291** and Bun **1.3.14**.
+The current tested pair is SDK **2.0.18** (the stable `latest` release on npm) and Bun **1.3.14**.
 Exact pins are an OpenWhisper release/testing policy; neither SDK requires applications to freeze
-versions permanently. The upstream V2 SDK is beta and currently documents @opencode/sdk@dev.
+versions permanently. Upstream publishes 2.0.x patches often; move only after the checks below pass.
 
 Update both SDK package declarations and bun.lock, src/versions.ts, and
 services/opencode_catalog.py together. Update Bun's version, official archive hash, and CI pin
