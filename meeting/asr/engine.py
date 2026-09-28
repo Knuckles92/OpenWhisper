@@ -60,7 +60,7 @@ _STOP = object()
 
 
 class MeetingAsrEngine:
-    """Implements ``meeting.interfaces.AsrEngine`` on faster-whisper.
+    """Transcribes spooled meeting chunks on a dedicated speech backend.
 
     A failed model load never raises out of the constructor: the engine logs
     the failure and sets :attr:`is_available` to False so the meeting can

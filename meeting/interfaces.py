@@ -1,9 +1,9 @@
-"""Boundary protocols for every Meeting Mode subsystem.
+"""Shared value types and boundary protocols for Meeting Mode.
 
-Each subsystem (capture, spool, ASR, diarization, agent core, state store,
-web transport, persistence) is used exclusively through the protocols defined
-here so implementations can be swapped — and so the package can become a
-standalone application without rewrites.
+The dataclasses here cross subsystem boundaries (capture, ASR, agent core,
+state store, persistence). The protocols describe the seams that have more
+than one implementation or a test double: capture sources, the diarizer,
+the agent core and its tool host, and the meeting repository.
 """
 from __future__ import annotations
 
@@ -178,47 +178,6 @@ class CaptureSource(Protocol):
         ...
 
 
-# Spool
-
-@runtime_checkable
-class ChunkSpool(Protocol):
-    """Durable chunked WAV writer for one channel of a meeting."""
-
-    def feed(self, block: CaptureBlock) -> None:
-        """Append captured frames; finalize a chunk when cut criteria are met."""
-        ...
-
-    def flush(self) -> Optional[SpooledChunk]:
-        """Finalize and register any pending partial chunk (end of meeting)."""
-        ...
-
-
-# ASR
-
-@runtime_checkable
-class AsrEngine(Protocol):
-    """Background transcription of spooled chunks with per-chunk retry."""
-
-    def start(
-        self,
-        on_chunk_result: Callable[[SpooledChunk, List[TranscriptSegment]], None],
-    ) -> None:
-        """Start the worker; the callback durably commits each chunk result."""
-        ...
-
-    def enqueue(self, chunk: SpooledChunk) -> None:
-        """Queue a finalized chunk for transcription."""
-        ...
-
-    def drain(self, timeout_s: float) -> bool:
-        """Block until the queue is empty or ``timeout_s`` elapses."""
-        ...
-
-    def stop(self) -> None:
-        """Stop the worker and release the model."""
-        ...
-
-
 # Diarization
 
 @runtime_checkable
@@ -317,58 +276,6 @@ class AgentCore(Protocol):
         ...
 
 
-# State store
-
-@runtime_checkable
-class StateStore(Protocol):
-    """Single-writer meeting-state document with audit and fan-out."""
-
-    def apply(self, actor_type: str, actor_id: Optional[str],
-              ops: List[Dict[str, Any]]) -> List[OpResult]:
-        """Validate and apply ops; bump seq; persist; notify subscribers."""
-        ...
-
-    def snapshot(self) -> Dict[str, Any]:
-        """Deep-copied full state dict (safe to serialize)."""
-        ...
-
-    def subscribe(self, cb: Callable[[int, List[OpResult]], None]) -> None:
-        """Register a listener invoked after each applied batch."""
-        ...
-
-    def unsubscribe(self, cb: Callable[[int, List[OpResult]], None]) -> None:
-        ...
-
-
-# Web transport
-
-@runtime_checkable
-class TransportServer(Protocol):
-    """The localhost/LAN web server hosting the dashboard."""
-
-    def start(self) -> str:
-        """Start serving; returns the base URL (scheme://host:port)."""
-        ...
-
-    def stop(self) -> None:
-        ...
-
-    def broadcast(self, message: Dict[str, Any], *,
-                  host_only: bool = False) -> None:
-        """Push a JSON-serializable message to connected clients.
-
-        Args:
-            message: JSON-serializable payload.
-            host_only: When True, deliver only to host-authenticated clients
-                (used for ephemeral agent activity). Optional: this protocol
-                is ``runtime_checkable``, which only checks method presence,
-                so a transport predating the keyword still satisfies it — the
-                engine drops host-only messages such a transport cannot
-                target.
-        """
-        ...
-
-
 # Persistence
 
 @runtime_checkable
@@ -411,9 +318,6 @@ class MeetingRepository(Protocol):
         self, meeting_id: str, segment_id: str,
         participant_id: Optional[str], source: str, pinned: bool,
     ) -> None: ...
-    def update_segment_text(
-        self, meeting_id: str, segment_id: str, text: str,
-    ) -> Optional[Dict[str, Any]]: ...
     def get_segments(self, meeting_id: str, after_start_s: float = -1.0,
                      limit: Optional[int] = None) -> List[Dict[str, Any]]: ...
     def get_segments_page(

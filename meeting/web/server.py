@@ -56,7 +56,7 @@ class _ThreadedUvicornServer(uvicorn.Server):
 
 
 class MeetingWebServer:
-    """Implements ``meeting.interfaces.TransportServer`` over FastAPI/uvicorn."""
+    """The localhost/LAN dashboard web server, over FastAPI/uvicorn."""
 
     def __init__(self, engine: Any, repository: Any, bind: str = "localhost",
                  port: int = 0) -> None:

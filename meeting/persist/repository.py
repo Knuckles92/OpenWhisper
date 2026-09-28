@@ -753,24 +753,6 @@ class SqlMeetingRepository:
             row.speaker_source = source
             row.speaker_pinned = pinned
 
-    def update_segment_text(
-        self, meeting_id: str, segment_id: str, text: str,
-    ) -> Optional[Dict[str, Any]]:
-        """Replace a segment's transcript text; return the stored row or None."""
-        cleaned = (text or "").strip()
-        if not cleaned:
-            raise ValueError("segment text must be non-empty")
-        with self._db.get_session() as session:
-            row = session.query(MeetingSegment).filter(
-                MeetingSegment.meeting_id == meeting_id,
-                MeetingSegment.id == segment_id,
-            ).one_or_none()
-            if row is None:
-                return None
-            row.text = cleaned
-            session.flush()
-            return _segment_to_dict(row)
-
     def get_segments(self, meeting_id: str, after_start_s: float = -1.0,
                      limit: Optional[int] = None) -> List[Dict[str, Any]]:
         with self._db.get_session() as session:
