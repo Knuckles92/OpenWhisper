@@ -21,7 +21,7 @@ from meeting.interfaces import AgentConfig, CheckpointPayload, OpResult
 
 #: Minimal NDJSON sidecar stub (Python). Speaks hello from env token, answers
 #: initialize/checkpoint/ping/shutdown. Optional SIDECAR_STUB_MODE=
-#: bad_token|crash_after_init|die_silently|slow|slow_progress.
+#: bad_token|pi1_hello|crash_after_init|die_silently|slow|slow_progress.
 _STUB_SOURCE = textwrap.dedent(r"""
 import json, os, sys, time, threading
 
@@ -1295,14 +1295,14 @@ class TestResolveNodeCmd:
             agent._resolve_node_cmd()
 
 
-# Sidecar createMeetingTools polishOnly gate (TypeScript via esbuild runner).
+# Sidecar TypeScript tests: meeting tools, text providers and the real Pi runner.
 
 SIDECAR_ROOT = Path(__file__).resolve().parents[1] / "sidecar"
 RUNNER = SIDECAR_ROOT / "scripts" / "run-tools-test.mjs"
 
 
-def test_polish_only_write_filter():
-    """policy.polishOnly must be the write gate on the Pi tool path."""
+def test_sidecar_typescript_suite():
+    """The Node tests pass: tools forward to the host, the runner needs user_prompt."""
     if not RUNNER.is_file():
         pytest.fail(f"missing {RUNNER}")
     esbuild = SIDECAR_ROOT / "node_modules" / "esbuild"
