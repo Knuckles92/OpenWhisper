@@ -1,8 +1,7 @@
 """Secure installation of optional downloadable components.
 
 This file is the only catalog of component download URLs. Each archive pins an
-immutable URL and SHA-256; ``urllib`` is used because it honors Windows proxy
-settings and enterprise trust roots.
+immutable URL and SHA-256, fetched by ``services.verified_download``.
 
 The app installer is not listed here — Help → Check for Updates uses GitHub
 ``/releases/latest``. ``MEETING_AGENT_RELEASE_TAG`` hosts the sidecar zip and
@@ -26,17 +25,27 @@ import tarfile
 import tempfile
 import threading
 import urllib.error
-import urllib.request
+import urllib.parse
 import zipfile
 import copy
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Callable, Dict, Final, Mapping, Optional, Set, Tuple
 
-from _version import __version__
 from config import bundle_root, components_root, is_frozen, local_app_dir
 from services.component_catalog import get_component_details
 from services.format_utils import format_size_bytes
+from services.verified_download import (
+    DownloadCanceled,
+    DownloadError,
+    download_verified,
+    open_url,
+)
+from services.verified_files import (
+    free_space_shortfall,
+    retry_while_locked,
+    sha256_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -341,9 +350,7 @@ _REQUIRED_GPU_SHARED_OBJECTS: Final[Tuple[str, ...]] = (
     "libcublasLt.so.12",
 )
 
-_USER_AGENT: Final[str] = f"OpenWhisper/{__version__}"
 _CHUNK_BYTES: Final[int] = 1 << 20
-_NETWORK_TIMEOUT_S: Final[int] = 30
 # Written last, so its presence means "this tree is complete".
 _SENTINEL_NAME: Final[str] = ".installed"
 _MANIFEST_NAME: Final[str] = "manifest.json"
@@ -760,12 +767,7 @@ def _speaker_model_download_allowed() -> bool:
 def _verify_speaker_model(path: str) -> None:
     if not os.path.isfile(path):
         raise ComponentError("The speaker model download produced no file.")
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for block in iter(lambda: handle.read(_CHUNK_BYTES), b""):
-            digest.update(block)
-    actual = digest.hexdigest()
-    if actual != SPEAKER_MODEL_SHA256:
+    if sha256_file(path) != SPEAKER_MODEL_SHA256:
         try:
             os.unlink(path)
         except OSError:
@@ -1002,12 +1004,9 @@ ProgressCallback = Callable[[str, int, int], None]
 
 
 def _open(url: str, extra_headers: Optional[Dict[str, str]] = None):
-    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    for key, value in (extra_headers or {}).items():
-        request.add_header(key, value)
     from services.http_tls import verified_context
 
-    return urllib.request.urlopen(request, timeout=_NETWORK_TIMEOUT_S, context=verified_context())
+    return open_url(url, extra_headers, context=verified_context())
 
 
 def _rmtree(path: str) -> None:
@@ -1015,18 +1014,22 @@ def _rmtree(path: str) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _describe_network_error(exc: Exception) -> str:
+def _describe_network_error(exc: Exception, url: str = "") -> str:
     """Translate a urllib failure into something a user can act on."""
     import ssl
 
-    if isinstance(exc, ssl.SSLCertVerificationError):
-        # Name the host the app actually contacts. Component payloads are
-        # fetched from PyPI and nowhere else, so listing our own domains here
-        # would send a blocked user to allowlist hosts that are never used.
+    # urllib reports a failed handshake as a URLError wrapping the SSL error.
+    if isinstance(exc, ssl.SSLCertVerificationError) or isinstance(
+        getattr(exc, "reason", None), ssl.SSLCertVerificationError
+    ):
+        # Name the host being contacted: payloads come from PyPI, nodejs.org,
+        # GitHub and Hugging Face, so a fixed list would send a blocked user
+        # to allowlist hosts this download never touches.
+        host = urllib.parse.urlsplit(url).hostname if url else None
         return (
             "The download server's certificate could not be verified. This is "
             "usually caused by network security software that inspects HTTPS "
-            "traffic. Ask your IT team to allow files.pythonhosted.org."
+            f"traffic. Ask your IT team to allow {host or 'the download server'}."
         )
     if isinstance(exc, urllib.error.HTTPError):
         return f"The download server returned an error ({exc.code} {exc.reason})."
@@ -1047,10 +1050,13 @@ def _download_verified(
 ) -> None:
     """Fetch ``url`` to ``destination``, resuming and verifying its hash.
 
+    A canceled transfer stays in ``<destination>.part`` so the next attempt
+    resumes it; see :func:`services.verified_download.download_verified`.
+
     Args:
         url: Archive URL.
         sha256_hex: Expected SHA-256, lowercase hex.
-        size_bytes: Expected size, used as a cheap pre-hash check.
+        size_bytes: Exact expected size.
         destination: Final path for the verified archive.
         progress: Progress sink.
         cancel: Set to abort; checked once per chunk.
@@ -1061,67 +1067,25 @@ def _download_verified(
         ComponentCanceled: The cancel event was set.
         ComponentError: The download was incomplete or failed verification.
     """
-    part_path = destination + ".part"
-    digest = hashlib.sha256()
-    resume_from = os.path.getsize(part_path) if os.path.exists(part_path) else 0
+    def overall(phase: str, done: int, _total: int) -> None:
+        progress(phase, offset_base + done, grand_total)
 
-    if resume_from:
-        # Re-hash what is already on disk. Without this the running digest
-        # would only cover the newly fetched bytes and the final comparison
-        # would be meaningless.
-        with open(part_path, "rb") as handle:
-            for block in iter(lambda: handle.read(_CHUNK_BYTES), b""):
-                digest.update(block)
-
-    headers = {"Range": f"bytes={resume_from}-"} if resume_from else None
     try:
-        with _open(url, headers) as response:
-            if resume_from and response.status != 206:
-                # The server ignored Range and is sending the whole file.
-                # Restart rather than appending a duplicate prefix.
-                logger.info("Server ignored Range header; restarting download")
-                resume_from, digest = 0, hashlib.sha256()
-                if os.path.exists(part_path):
-                    os.unlink(part_path)
-
-            mode = "ab" if resume_from else "wb"
-            with open(part_path, mode) as out:
-                while True:
-                    if cancel.is_set():
-                        raise ComponentCanceled()
-                    chunk = response.read(_CHUNK_BYTES)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-                    digest.update(chunk)
-                    progress(
-                        InstallPhase.DOWNLOADING,
-                        offset_base + out.tell(),
-                        grand_total,
-                    )
-    except (urllib.error.URLError, OSError) as exc:
-        if isinstance(exc, ComponentCanceled):
-            raise
-        raise ComponentError(_describe_network_error(exc)) from exc
-
-    actual_size = os.path.getsize(part_path)
-    if size_bytes and actual_size != size_bytes:
-        raise ComponentError(
-            "The download did not complete "
-            f"({format_size_bytes(actual_size)} of {format_size_bytes(size_bytes)})."
+        download_verified(
+            url,
+            sha256_hex,
+            size_bytes,
+            destination,
+            overall,
+            cancel,
+            opener=_open,
+            describe_error=lambda exc: _describe_network_error(exc, url),
+            keep_partial_on_cancel=True,
         )
-
-    progress(InstallPhase.VERIFYING, offset_base + actual_size, grand_total)
-    if digest.hexdigest() != sha256_hex.lower():
-        # Discard rather than keep: otherwise every retry resumes from the
-        # same corrupt bytes and fails identically forever.
-        os.unlink(part_path)
-        raise ComponentError(
-            "The download failed its integrity check and was discarded. "
-            "Please try again."
-        )
-
-    os.replace(part_path, destination)
+    except DownloadCanceled:
+        raise ComponentCanceled() from None
+    except DownloadError as exc:
+        raise ComponentError(str(exc)) from exc.__cause__
 
 
 def _safe_extract(
@@ -1500,16 +1464,19 @@ def _validate_component_payload(component_id: str, target_dir: str) -> None:
 def _replace_speech_runtime(source: str, destination: str, cancel: threading.Event) -> None:
     # Windows scanners held newly extracted runtime files for about six seconds
     # in installer validation. Retry the atomic swap without exposing a partial tree.
-    for attempt in range(31):
+    def replace() -> None:
         if cancel.is_set():
             raise ComponentCanceled()
-        try:
-            os.replace(source, destination)
-            return
-        except PermissionError:
-            if attempt == 30:
-                raise
-            cancel.wait(.5)
+        os.replace(source, destination)
+
+    retry_while_locked(
+        destination,
+        replace,
+        timeout_s=15.0,
+        poll_s=0.5,
+        locked=lambda exc: isinstance(exc, PermissionError),
+        wait=cancel.wait,
+    )
 
 
 def install_component(component_id: str, entry: dict, progress: ProgressCallback, cancel: threading.Event) -> None:
@@ -1725,13 +1692,9 @@ def _uninstall_component(component_id: str) -> None:
 
 
 def _check_free_space(required_bytes: int) -> None:
-    if required_bytes <= 0:
-        return
-    root = components_root()
-    os.makedirs(root, exist_ok=True)
-    free = shutil.disk_usage(root).free
-    needed = int(required_bytes * 1.15)
-    if free < needed:
+    shortfall = free_space_shortfall(components_root(), required_bytes)
+    if shortfall:
+        needed, free = shortfall
         raise ComponentError(
             f"Not enough disk space: {format_size_bytes(needed)} needed, "
             f"{format_size_bytes(free)} free on this drive."
