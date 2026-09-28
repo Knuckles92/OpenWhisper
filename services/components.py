@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import platform as platform_module
+import re
 import shutil
 import stat
 import subprocess
@@ -643,6 +644,17 @@ def _payload_has_sidecar_bundle(payload_dir: str) -> bool:
     return os.path.isfile(os.path.join(payload_dir, _SIDECAR_BUNDLE_NAME))
 
 
+#: Oldest Pi bundle revision that speaks the host-prompt, request-scoped tool
+#: protocol the sidecar handshake requires (``node22-pi2``, 2026-09-14).
+_MIN_PI_BUNDLE_REVISION = 2
+
+
+def _pi_bundle_outdated(version: object) -> bool:
+    """True for an installed ``node<N>-pi<R>`` bundle older than the protocol."""
+    match = re.fullmatch(r"node\d+-pi(\d+)", str(version or ""))
+    return match is not None and int(match.group(1)) < _MIN_PI_BUNDLE_REVISION
+
+
 def _source_sidecar_payload_dir() -> Optional[str]:
     """Repo ``sidecar/dist`` when running from source and the bundle is built.
 
@@ -664,8 +676,9 @@ def meeting_agent_payload_dir(kind: str = "pi") -> Optional[str]:
     The following legacy resolution order applies to Pi only.
 
     Resolution order:
-        1. Installed ``meeting-agent`` component tree with ``bundle.cjs``
-           and a platform-compatible Node runtime.
+        1. Installed ``meeting-agent`` component tree with ``bundle.cjs``,
+           a platform-compatible Node runtime, and a bundle revision the
+           sidecar handshake accepts.
         2. Source-tree ``sidecar/dist`` when ``bundle.cjs`` has been built.
         3. ``None`` — callers fall back to the direct OpenRouter agent.
 
@@ -696,6 +709,14 @@ def meeting_agent_payload_dir(kind: str = "pi") -> Optional[str]:
             if incompatible:
                 logger.warning(
                     "meeting-agent install is incompatible: %s", incompatible
+                )
+            elif _pi_bundle_outdated(manifest.get("version")):
+                # The handshake would refuse it and leave the meeting without
+                # intelligence; the direct agent keeps insights working until
+                # Downloads updates it.
+                logger.warning(
+                    "meeting-agent %s is out of date; update it from Downloads",
+                    manifest.get("version"),
                 )
             elif not _payload_has_sidecar_bundle(installed):
                 logger.warning(

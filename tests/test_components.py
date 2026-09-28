@@ -488,7 +488,7 @@ def test_meeting_agent_payload_dir_uses_installed_bundle(component_root):
     target = _make_installed(
         component_root,
         ComponentId.MEETING_AGENT,
-        {"version": "node22-pi1", "component_api": 1, "platform": "win_amd64"},
+        {"version": "node22-pi2", "component_api": 1, "platform": "win_amd64"},
     )
     (target / "bundle.cjs").write_text("// stub", encoding="utf-8")
     (target / "node.exe").write_bytes(b"node")
@@ -496,6 +496,45 @@ def test_meeting_agent_payload_dir_uses_installed_bundle(component_root):
         components, "current_platform_tag", return_value="win_amd64"
     ), patch.object(components.sys, "platform", "win32"):
         assert components.meeting_agent_payload_dir() == str(target)
+
+
+def test_meeting_agent_payload_dir_skips_outdated_pi_bundle(component_root, tmp_path):
+    """A pi1 bundle fails the current handshake, so it must not be chosen.
+
+    The resolver falls through to the source build here, and to None (the
+    direct agent) in a frozen build, instead of starting a meeting with
+    intelligence that can never come online.
+    """
+    target = _make_installed(
+        component_root,
+        ComponentId.MEETING_AGENT,
+        {"version": "node22-pi1", "component_api": 1, "platform": "win_amd64"},
+    )
+    (target / "bundle.cjs").write_text("// stub", encoding="utf-8")
+    (target / "node.exe").write_bytes(b"node")
+    with patch.object(
+        components, "current_platform_tag", return_value="win_amd64"
+    ), patch.object(components.sys, "platform", "win32"):
+        with patch.object(components, "_source_sidecar_payload_dir", return_value=None):
+            assert components.meeting_agent_payload_dir() is None
+        with patch.object(
+            components, "_source_sidecar_payload_dir", return_value=str(tmp_path)
+        ):
+            assert components.meeting_agent_payload_dir() == str(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("version", "outdated"),
+    [
+        ("node22-pi1", True),
+        ("node22-pi2", False),
+        ("node24-pi10", False),
+        ("custom-build", False),
+        (None, False),
+    ],
+)
+def test_pi_bundle_outdated(version, outdated):
+    assert components._pi_bundle_outdated(version) is outdated
 
 
 def test_meeting_agent_payload_dir_ignores_install_without_bundle(component_root):
