@@ -71,19 +71,26 @@ def format_meeting_started_at(value: Any) -> str:
     return started.strftime("%b %d, %Y · %I:%M %p") if started else "Unknown date"
 
 
-def meeting_duration_s(meeting: Dict[str, Any]) -> Optional[float]:
+def meeting_duration_s(
+    meeting: Dict[str, Any], *, running: bool = False,
+) -> Optional[float]:
     """Recorded meeting seconds: wall time from start to end minus pauses.
 
     Args:
         meeting: Meeting row with ``started_at``, ``ended_at`` and
             ``paused_total_s``.
+        running: The meeting is still live, so without an ``ended_at`` it
+            counts up to now.
 
     Returns:
-        Non-negative seconds, or None when either timestamp is missing.
+        Non-negative seconds, or None when a needed timestamp is missing.
     """
-    elapsed = elapsed_seconds(
-        meeting.get("started_at"), meeting.get("ended_at")
-    )
+    if running and not meeting.get("ended_at"):
+        elapsed = seconds_since(meeting.get("started_at"))
+    else:
+        elapsed = elapsed_seconds(
+            meeting.get("started_at"), meeting.get("ended_at")
+        )
     if elapsed is None:
         return None
     try:

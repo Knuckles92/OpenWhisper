@@ -16,7 +16,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from meeting.time_utils import utc_now_iso
+# Re-exported as ``now_iso``, the name the state modules stamp items with.
+from meeting.time_utils import utc_now_iso as now_iso
 
 #: Cards rendered on the dashboard. ``timeline`` items use ``data.start_s``;
 #: ``action_items`` use ``data.owner_participant_id``; ``risks`` may carry
@@ -52,11 +53,6 @@ FINALIZATION_STATUSES = (
 _TERMINAL_MEETING_STATUSES = frozenset({
     "ended", "failed", "needs_recovery",
 })
-
-
-def now_iso() -> str:
-    """Current UTC instant; legacy persisted naive values remain readable."""
-    return utc_now_iso()
 
 
 def new_id(prefix: str) -> str:

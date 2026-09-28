@@ -55,10 +55,6 @@ def interval_iou(
     return inter / union
 
 
-def _now_iso() -> str:
-    return utc_now_iso()
-
-
 def _session_to_dict(row: MeetingSession) -> Dict[str, Any]:
     return {
         "id": row.id, "title": row.title, "status": row.status,
@@ -479,7 +475,7 @@ class SqlMeetingRepository:
 
     def heartbeat(self, meeting_id: str) -> None:
         self.update_meeting(
-            meeting_id, app_pid=os.getpid(), app_heartbeat_at=_now_iso()
+            meeting_id, app_pid=os.getpid(), app_heartbeat_at=utc_now_iso()
         )
 
     def find_interrupted_meetings(self) -> List[Dict[str, Any]]:
@@ -613,7 +609,7 @@ class SqlMeetingRepository:
     def add_segments(self, segments: List[TranscriptSegment]) -> None:
         if not segments:
             return
-        created = _now_iso()
+        created = utc_now_iso()
         with self._db.get_session() as session:
             for seg in segments:
                 session.add(MeetingSegment(
@@ -642,7 +638,7 @@ class SqlMeetingRepository:
         Returns:
             Canonical stored segment rows and whether this call committed them.
         """
-        created = _now_iso()
+        created = utc_now_iso()
         with self._db.get_session() as session:
             chunk = session.query(MeetingAudioChunk).filter(
                 MeetingAudioChunk.id == chunk_id,
@@ -807,7 +803,7 @@ class SqlMeetingRepository:
         Returns:
             Stored new/kept rows, deleted ids, and ``old_id -> new_id`` map.
         """
-        created = _now_iso()
+        created = utc_now_iso()
         with self._db.get_session() as session:
             meeting = session.get(MeetingSession, meeting_id)
             old_rows = session.query(MeetingSegment).filter(
@@ -956,7 +952,7 @@ class SqlMeetingRepository:
                        results: List[OpResult], actor_type: str,
                        actor_id: Optional[str]) -> None:
         """Persist applied ops: audit events, entity mirrors, state snapshot."""
-        ts = _now_iso()
+        ts = utc_now_iso()
         with self._db.get_session() as session:
             for result in results:
                 undo_seq = result.op.get("_undo_event_seq")

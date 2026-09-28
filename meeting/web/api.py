@@ -35,7 +35,7 @@ from meeting.persist.data_lifecycle import delete_meeting_data
 from meeting.state.custom_reports import MAX_REQUEST_CHARS
 from meeting.state.schema import MeetingState, parse_state_json
 from meeting.stored import compact_finalization_list_fields, load_state, open_store
-from meeting.time_utils import elapsed_seconds, seconds_since
+from meeting.time_utils import meeting_duration_s
 from meeting.web.auth import resolve_role
 from meeting.web.ws import WsHub
 
@@ -125,23 +125,6 @@ def _remember_cloud_choice(enabled: bool) -> None:
         logger.warning("Could not persist the AI insights toggle", exc_info=True)
 
 
-def _meeting_duration_s(meeting: Dict[str, Any]) -> Optional[float]:
-    """Wall time minus pause credit; a running meeting counts up to now."""
-    if meeting.get("ended_at"):
-        elapsed = elapsed_seconds(meeting.get("started_at"), meeting.get("ended_at"))
-    elif str(meeting.get("status") or "") in _RUNNING_STATUSES:
-        elapsed = seconds_since(meeting.get("started_at"))
-    else:
-        return None
-    if elapsed is None:
-        return None
-    try:
-        paused = float(meeting.get("paused_total_s") or 0.0)
-    except (TypeError, ValueError):
-        paused = 0.0
-    return max(0.0, elapsed - paused)
-
-
 def _meeting_digest(meeting: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Counts and people for a History row, read from the saved snapshot.
 
@@ -209,7 +192,9 @@ def _public_meeting(
         return {}
     public = {key: meeting.get(key) for key in _PUBLIC_MEETING_KEYS}
     public["display_title"] = meeting_display_title(meeting)
-    public["duration_s"] = _meeting_duration_s(meeting)
+    public["duration_s"] = meeting_duration_s(
+        meeting, running=str(meeting.get("status") or "") in _RUNNING_STATUSES,
+    )
     digest = _meeting_digest(meeting)
     if digest is not None:
         public["digest"] = digest
