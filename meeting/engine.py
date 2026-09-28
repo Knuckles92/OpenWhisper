@@ -54,7 +54,7 @@ SHUTDOWN_DRAIN_TIMEOUT_S = 30.0
 #: sidecar fails earlier if Pi emits no ``subscribe`` progress for
 #: ``CONSOLIDATION_STALL_S``. Used for shutdown join, not the live stall.
 CONSOLIDATION_TIMEOUT_S = 900.0
-#: How long end/cancel waits for an in-flight ``start()`` to finish before
+#: How long end waits for an in-flight ``start()`` to finish before
 #: unwinding a partially built pipeline anyway.
 START_WAIT_TIMEOUT_S = 120.0
 #: Guest display names are clamped to this length.
@@ -119,7 +119,7 @@ class MeetingEngine:
     """Single-meeting orchestrator; also the agent's ``AgentToolHost``.
 
     Lifecycle: construct → ``start()`` → (``pause()``/``resume()``/
-    ``set_cloud_enabled()`` while live) → ``end()`` or ``cancel()`` →
+    ``set_cloud_enabled()`` while live) → ``end()`` →
     ``shutdown()`` on app exit. ``end()`` returns immediately and finalizes on
     a worker thread; the web server stays up serving the final state until
     ``shutdown()``.
@@ -146,7 +146,7 @@ class MeetingEngine:
 
         self._lifecycle_lock = threading.RLock()
         self._active = False
-        # True for the whole of start(); end/cancel wait it out rather than
+        # True for the whole of start(); end waits it out rather than
         # tearing down a pipeline that is still being built.
         self._starting = False
         self._start_thread_id: Optional[int] = None
@@ -438,7 +438,7 @@ class MeetingEngine:
             logger.exception("Ephemeral finalization emit failed")
 
     def is_active(self) -> bool:
-        """True from a successful ``start()`` until end/cancel completes."""
+        """True from a successful ``start()`` until ``end()`` completes."""
         return self._active
 
     def start(self) -> Dict[str, Any]:
@@ -620,7 +620,7 @@ class MeetingEngine:
     def pause(self) -> None:
         """Freeze the meeting clock and mark the meeting paused."""
         with self._lifecycle_lock:
-            # Reject once end/cancel has claimed the session so we cannot
+            # Reject once end has claimed the session so we cannot
             # overwrite a terminal status with "paused".
             if (not self._active or self._end_thread is not None
                     or self.store is None):
@@ -656,8 +656,8 @@ class MeetingEngine:
     def _await_start(self, timeout_s: float = START_WAIT_TIMEOUT_S) -> None:
         """Block until an in-flight ``start()`` has finished.
 
-        ``start()`` claims the session before it builds anything, so an end or
-        cancel arriving in that window would otherwise unwind a half-built
+        ``start()`` claims the session before it builds anything, so an end
+        arriving in that window would otherwise unwind a half-built
         pipeline while ``start()`` kept bringing capture, ASR, the server, and
         the agent up for an already-finished meeting.
 
@@ -1541,61 +1541,6 @@ class MeetingEngine:
                 "meeting_id": self.meeting_id, "canceled": False,
                 "status": status, "error": str(exc),
             })
-
-    def cancel(self) -> None:
-        """Discard the session fast: no drain, no consolidation.
-
-        The meeting row is marked ``failed``; spooled audio and any
-        already-transcribed segments are kept on disk/DB (nothing deleted).
-        """
-        self._await_start()
-        with self._lifecycle_lock:
-            if not self._active or self._end_thread is not None:
-                return
-            self._active = False
-        # Stop agent mutations before teardown so in-flight tools cannot land.
-        self.revoke_agent_writes()
-        self._stop_capture()
-        scheduler = self._scheduler
-        self._scheduler = None
-        if scheduler is not None:
-            try:
-                scheduler.stop()
-            except Exception:
-                logger.exception("Scheduler stop failed during cancel")
-        if self._agent_core is not None:
-            try:
-                self._agent_core.cancel()
-            except Exception:
-                logger.exception("Agent cancel failed")
-        self._shutdown_agent_core()
-        self._stop_asr("cancel")
-        # After ASR is down: releases each spool's writer thread and leaves
-        # the last partial chunk on disk as a recoverable pending row.
-        self._flush_spools()
-        self.clock.pause()
-        self._stop_heartbeat()
-        try:
-            self.repository.update_meeting(
-                self.meeting_id, status="failed", ended_at=now_iso(),
-                paused_total_s=self.clock.paused_total_s(),
-            )
-        except Exception:
-            logger.exception("Failed to persist canceled status")
-        if self.store is not None:
-            self.store.update_runtime_fields(status="failed")
-            self._set_finalization(
-                "unavailable",
-                "Meeting was canceled before final insights could run.",
-                emit=False,
-            )
-        self._broadcast({"type": "meeting_ended", "status": "failed"})
-        self._emit_status()
-        self._emit("ended", {
-            "meeting_id": self.meeting_id,
-            "canceled": True,
-            "status": "failed",
-        })
 
     def wait_for_end(self) -> None:
         """Wait for the end worker without interrupting its remaining passes."""

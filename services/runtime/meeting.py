@@ -1030,31 +1030,6 @@ class MeetingRuntime:
             {"active": True, "paused": False, "status": "ending"}
         )
 
-    def cancel_meeting(self) -> None:
-        engine = self._engine
-        if engine is None:
-            return
-        self.controller.meeting_status_update.emit("Canceling meeting...")
-        threading.Thread(
-            target=self._cancel_worker, name="meeting-cancel", daemon=True
-        ).start()
-
-    def _cancel_worker(self) -> None:
-        try:
-            engine = self._engine
-            if engine is not None:
-                engine.cancel()
-            self._shutdown_engine()
-        except Exception as exc:
-            logger.error(f"Failed to cancel meeting: {exc}")
-        finally:
-            self.controller.meeting_active = False
-            self.controller.restore_local_engine()
-            self.controller.meeting_status_update.emit("Meeting canceled")
-            self.controller.meeting_state_changed.emit(
-                {"active": False, "status": "canceled"}
-            )
-
     def retry_insights(self) -> None:
         self.retry_finalization("failed")
 

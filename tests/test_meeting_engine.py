@@ -723,17 +723,6 @@ class TestEndLifecycle:
             engine.meeting_id
         )
 
-    def test_cancel_also_announces_the_released_model(
-            self, make_engine, repo, fakes):
-        """A canceled meeting must not strand the released dictation engine."""
-        engine = make_engine(cloud_enabled=False)
-        engine.start()
-
-        engine.cancel()
-
-        assert events_of(engine, "asr_released")
-        assert FakeAsr.instances[-1].stops == 1
-
     def test_end_event_precedes_slow_consolidation(
             self, make_engine, repo, fakes):
         from meeting.agent.scheduler import ConsolidationOutcome
