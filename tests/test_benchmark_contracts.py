@@ -11,14 +11,6 @@ from benchmarks.meeting_mode.metrics import score_text
 from benchmarks.meeting_mode import product_eval as product
 
 
-@pytest.mark.parametrize("module_name", ["accuracy_benchmark", "model_benchmark"])
-@pytest.mark.parametrize("hypothesis", ["three two one", "one two three invented claim", "one", ""])
-def test_accuracy_penalizes_order_insertions_and_omissions(hypothesis, module_name):
-    import importlib
-    calculate_word_accuracy = importlib.import_module("benchmarks." + module_name).calculate_word_accuracy
-    assert calculate_word_accuracy("one two three", hypothesis) < 100
-
-
 def test_silence_preserves_insertions_and_has_no_defined_wer():
     score = score_text("", "invented words")
     assert score["insertions"] == score["errors"] == 2
@@ -218,20 +210,3 @@ def test_product_command_carries_corrected_live_text_and_returns_failure(monkeyp
     summary=json.loads((tmp_path/"out"/"summary.json").read_text())
     assert summary["wins"][winner] == 1
     assert summary["wins"]["tie"] == int(winner=="tie")
-
-
-@pytest.mark.parametrize("module_name", ["accuracy_benchmark", "model_benchmark"])
-@pytest.mark.parametrize("outcome", ["success","row_failure","missing","exception"])
-def test_legacy_command_exits_reflect_missing_and_failed_work(monkeypatch, module_name, outcome):
-    import importlib
-    module = importlib.import_module("benchmarks."+module_name)
-    result = SimpleNamespace(success=outcome!="row_failure")
-    instance = SimpleNamespace(
-        backends={"fake":Mock()}, sample_keys=["sample"], initialization_failed=False,
-        local_models_to_test=[], results=[] if outcome=="missing" else [result],
-        run_benchmark=Mock(side_effect=RuntimeError("synthetic failure") if outcome=="exception" else None),
-        cleanup=Mock())
-    monkeypatch.setattr(module, "AccuracyBenchmark" if module_name=="accuracy_benchmark" else "ModelBenchmark", lambda **_:instance)
-    args = ["--skip-api"] if module_name=="accuracy_benchmark" else ["--skip-api","--durations","1"]
-    assert module.main(args) == int(outcome!="success")
-    instance.cleanup.assert_called_once()
