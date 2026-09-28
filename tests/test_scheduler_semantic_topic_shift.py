@@ -4,24 +4,7 @@ from unittest.mock import patch
 
 from meeting.agent import scheduler as scheduler_mod
 from meeting.agent.scheduler import CheckpointScheduler
-
-
-class FakeClock:
-    def __init__(self, now_s=200.0):
-        self._now = now_s
-
-    def now_s(self):
-        return self._now
-
-
-class FakeEngine:
-    def __init__(self, segments):
-        self.clock = FakeClock()
-        self._segments = list(segments)
-        self.store = None
-
-    def get_transcript(self, after_start_s=-1.0, limit=None):
-        return [s for s in self._segments if float(s["start_s"]) > float(after_start_s)]
+from tests.fakes.scheduler import FakeSchedulerEngine
 
 
 FINANCE = [
@@ -52,7 +35,9 @@ class RecordingJudge:
 
 
 def make(segments, judge):
-    sched = CheckpointScheduler(FakeEngine(segments), agent_core=object(),
+    engine = FakeSchedulerEngine(segments)
+    engine.store = None  # the shift check reads only the clock and transcript
+    sched = CheckpointScheduler(engine, agent_core=object(),
                                 base_interval_s=45.0, min_interval_s=0.05, max_interval_s=60.0,
                                 topic_judge=judge)
     sched._last_fire_mono = time.monotonic() - 5.0

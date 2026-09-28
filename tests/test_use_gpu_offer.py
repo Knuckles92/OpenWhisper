@@ -14,29 +14,16 @@ from services import gpu_info, gpu_setup
 from services.application_controller import ApplicationController
 from services.components import ComponentId
 from services.settings import SettingsKey
+from tests.fakes.settings import InMemorySettings
 from transcriber.local_backend import GpuFallbackCause
 
 PASCAL = {"float32", "int8", "int8_float32"}
 GTX_1050_TI = gpu_info.NvidiaGpu("NVIDIA GeForce GTX 1050 Ti", 4096, (6, 1))
 
 
-class Settings:
-    def __init__(self, **values):
-        self.values = dict(values)
-
-    def get(self, key, default=None):
-        return self.values.get(key, default)
-
-    def save_setting(self, key, value):
-        self.values[key] = value
-
-    def load_all_settings(self):
-        return dict(self.values)
-
-
 @pytest.fixture
 def settings(monkeypatch):
-    store = Settings(**{SettingsKey.WHISPER_DEVICE: "cpu", SettingsKey.WHISPER_MODEL: "auto"})
+    store = InMemorySettings({SettingsKey.WHISPER_DEVICE: "cpu", SettingsKey.WHISPER_MODEL: "auto"})
     monkeypatch.setattr(module, "settings_manager", store)
     monkeypatch.setattr("services.settings.settings_manager", store)
     return store

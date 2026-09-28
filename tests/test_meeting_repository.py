@@ -9,24 +9,7 @@ from datetime import datetime
 
 
 from meeting.interfaces import TranscriptSegment
-
-
-def make_meeting(repo, meeting_id="m_test1"):
-    repo.create_meeting(
-        id=meeting_id, title="Test meeting", status="active",
-        started_at=datetime.now().isoformat(),
-        host_token="host-token", guest_token="guest-token",
-        cloud_enabled=False, spool_dir="/tmp/spool",
-    )
-    return meeting_id
-
-
-def make_segment(meeting_id, seg_id="sg_aaa111", start=1.0, end=3.0,
-                 text="hello world", channel="mic"):
-    return TranscriptSegment(
-        segment_id=seg_id, meeting_id=meeting_id, chunk_id=None,
-        channel=channel, start_s=start, end_s=end, text=text,
-    )
+from tests.helpers import make_meeting, make_segment
 
 
 class TestSchema:

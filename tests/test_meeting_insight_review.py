@@ -338,34 +338,27 @@ def test_background_start_is_nonblocking_and_duplicate_start_is_rejected(monkeyp
         release.set()
 
 
-def test_archive_api_host_action_survives_restart(tmp_path):
+def test_archive_api_host_action_survives_restart(tmp_path, repo):
     from fastapi.testclient import TestClient
-    from meeting.persist.repository import SqlMeetingRepository
     from meeting.web.archive import ArchivedMeetingDashboard
     from meeting.web.server import MeetingWebServer
-    from services.database import DatabaseManager
     store, fake = make_store()
     q = prepare(store, fake)[0]
-    database = DatabaseManager(db_path=str(tmp_path / "review.db"))
-    repo = SqlMeetingRepository(db=database)
     repo.create_meeting(id="synthetic", title="Synthetic review", status="ended", cloud_enabled=True,
                         host_token="test-host", guest_token="test-guest", spool_dir=str(tmp_path),
                         started_at="2026-09-18T10:00:00Z", ended_at="2026-09-18T10:10:00Z",
                         state_json=json.dumps(store.snapshot()), state_seq=store.seq)
     archive = ArchivedMeetingDashboard(repo, repo.get_meeting("synthetic"), spool_root=str(tmp_path))
     server = MeetingWebServer(archive, repo)
-    try:
-        with TestClient(server.app) as client:
-            op = {"op": "review_answer", "question_id": q["id"], "answer": "offered"}
-            route = "/api/meetings/synthetic/review"
-            assert client.post(route, params={"token": "test-guest"}, json=op).status_code == 403
-            response = client.post(route, params={"token": "test-host"}, json=op)
-            assert response.status_code == 200 and response.json()["ok"]
-        reopened = ArchivedMeetingDashboard(repo, repo.get_meeting("synthetic"), spool_root=str(tmp_path))
-        assert reopened.store.snapshot()["insight_review"]["questions"][0]["status"] == "answered"
-        assert reopened.store.snapshot()["cards"]["action_items"][0]["data"]["commitment"] == "offered"
-    finally:
-        database.close()
+    with TestClient(server.app) as client:
+        op = {"op": "review_answer", "question_id": q["id"], "answer": "offered"}
+        route = "/api/meetings/synthetic/review"
+        assert client.post(route, params={"token": "test-guest"}, json=op).status_code == 403
+        response = client.post(route, params={"token": "test-host"}, json=op)
+        assert response.status_code == 200 and response.json()["ok"]
+    reopened = ArchivedMeetingDashboard(repo, repo.get_meeting("synthetic"), spool_root=str(tmp_path))
+    assert reopened.store.snapshot()["insight_review"]["questions"][0]["status"] == "answered"
+    assert reopened.store.snapshot()["cards"]["action_items"][0]["data"]["commitment"] == "offered"
 
 
 def test_later_human_edit_supersedes_old_correction_everywhere():

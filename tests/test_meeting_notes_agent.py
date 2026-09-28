@@ -3,7 +3,6 @@ plus report-view consolidation prompt trimming."""
 from __future__ import annotations
 
 import re
-from types import SimpleNamespace
 
 from meeting.agent.prompts import (
     _CONSOLIDATION_STEPS,
@@ -15,19 +14,10 @@ from meeting.agent.prompts import (
 )
 from meeting.agent.scheduler import CheckpointScheduler
 from meeting.agent.tool_policy import PASS_NOTES, ToolScope, run_tool
-from meeting.interfaces import AgentResult, OpResult
 from meeting.state.patches import OpContext, apply_ops, filter_notes_ops, live_note_ids
 from meeting.state.schema import CARD_KEYS, MeetingState
-
-
-def _seg(seg_id, start_s, text="hello there", channel="mic"):
-    return {
-        "id": seg_id,
-        "start_s": start_s,
-        "end_s": start_s + 2.0,
-        "text": text,
-        "channel": channel,
-    }
+from tests.fakes.agent_core import RecordingAgentTools
+from tests.fakes.scheduler import FakeNotesAgent, FakeNotesEngine, segment
 
 
 class TestNotesState:
@@ -131,7 +121,7 @@ class TestNoteTakerPrompts:
             "participants": {},
         }
         prompt = build_notes_user_prompt(
-            state, [_seg("sg_new", 95.0, "We agreed to try OAuth.")],
+            state, [segment("sg_new", 95.0, "We agreed to try OAuth.")],
         )
         assert "## CURRENT NOTES PAGE" in prompt
         assert "it_note1" in prompt and "rev=2" in prompt
@@ -146,24 +136,9 @@ class TestNoteTakerPrompts:
         assert "(no new segments)" in prompt
 
 
-class _Tools:
-    def __init__(self) -> None:
-        self.ops = []
-
-    def apply_agent_ops(self, ops):
-        self.ops.extend(ops)
-        return [OpResult(ok=True, op=op) for op in ops]
-
-    def ask_question(self, text, evidence):
-        return OpResult(ok=True, op={"op": "ask_question"})
-
-    def resolve_question(self, question_id, answer_text, confidence, evidence):
-        return OpResult(ok=True, op={"op": "resolve_question"})
-
-
 class TestNotesToolScope:
     def test_notes_scope_rejects_everything_but_live_notes_ops(self):
-        tools = _Tools()
+        tools = RecordingAgentTools()
         scope = ToolScope(pass_kind=PASS_NOTES, note_ids=frozenset({"it_note1"}))
 
         _, results = run_tool(tools, "patch_state", {"ops": [
@@ -260,68 +235,18 @@ class TestNotesPatchOps:
 
 # Scheduler cadence
 
-class FakeStore:
-    def __init__(self):
-        self._snapshot = {
-            "meeting_id": "m_test",
-            "seq": 1,
-            "cards": {},
-            "topic": {"current": "seeded topic", "history": []},
-            "rolling_summary": "seeded summary",
-        }
-
-    def snapshot(self):
-        return dict(self._snapshot)
-
-
-class FakeEngine:
-    def __init__(self, segments=None):
-        # Cadence tests model an ongoing meeting after the initial warm-up.
-        self.clock = SimpleNamespace(now_s=lambda: 200.0)
-        self.store = FakeStore()
-        self._segments = list(segments or [])
-
-    def get_transcript(self, after_start_s=-1.0, limit=None):
-        items = [
-            s for s in self._segments
-            if float(s.get("start_s") or 0.0) > float(after_start_s)
-        ]
-        if limit is not None:
-            items = items[:limit]
-        return items
-
-
-class FakeAgent:
-    def __init__(self, fail_times=0):
-        self.calls = []
-        self._fail_left = fail_times
-
-    def checkpoint(self, payload):
-        self.calls.append(payload)
-        if self._fail_left > 0:
-            self._fail_left -= 1
-            return AgentResult(ok=False, error="forced")
-        return AgentResult(
-            ok=True,
-            op_results=[OpResult(ok=True, op={"op": "add_item"}, seq=1)],
-        )
-
-    def is_healthy(self):
-        return True
-
-
 class TestSchedulerNotesPass:
     def test_notes_pass_fires_for_any_core(self):
-        agent = FakeAgent()
-        sched = CheckpointScheduler(FakeEngine([_seg("sg_1", 10.0)]), agent)
+        agent = FakeNotesAgent()
+        sched = CheckpointScheduler(FakeNotesEngine([segment("sg_1", 10.0)]), agent)
         sched._successful_checkpoints = 6
         sched._maybe_fire_notes()
         assert len(agent.calls) == 1
 
     def test_notes_payload_carries_flag_and_consumes_segments(self):
-        agent = FakeAgent()
+        agent = FakeNotesAgent()
         sched = CheckpointScheduler(
-            FakeEngine([_seg("sg_1", 10.0), _seg("sg_2", 20.0)]), agent,
+            FakeNotesEngine([segment("sg_1", 10.0), segment("sg_2", 20.0)]), agent,
         )
         sched._successful_checkpoints = 2
         sched._maybe_fire_notes()
@@ -340,16 +265,16 @@ class TestSchedulerNotesPass:
         assert len(agent.calls) == 1
 
     def test_notes_seed_after_first_checkpoint(self):
-        agent = FakeAgent()
-        sched = CheckpointScheduler(FakeEngine([_seg("sg_1", 10.0)]), agent)
+        agent = FakeNotesAgent()
+        sched = CheckpointScheduler(FakeNotesEngine([segment("sg_1", 10.0)]), agent)
         sched._successful_checkpoints = 1
         sched._maybe_fire_notes()
         assert len(agent.calls) == 1
         assert agent.calls[0].is_notes
 
     def test_failed_notes_pass_leaves_segments_for_retry(self):
-        agent = FakeAgent(fail_times=1)
-        sched = CheckpointScheduler(FakeEngine([_seg("sg_1", 10.0)]), agent)
+        agent = FakeNotesAgent(fail_times=1)
+        sched = CheckpointScheduler(FakeNotesEngine([segment("sg_1", 10.0)]), agent)
         sched._successful_checkpoints = 2
 
         sched._maybe_fire_notes()  # fails
@@ -367,8 +292,8 @@ class TestSchedulerNotesPass:
         assert sched._notes_max_sent_start_s == 10.0
 
     def test_notes_pass_skipped_without_new_segments(self):
-        agent = FakeAgent()
-        sched = CheckpointScheduler(FakeEngine([]), agent)
+        agent = FakeNotesAgent()
+        sched = CheckpointScheduler(FakeNotesEngine([]), agent)
         sched._successful_checkpoints = 5
         sched._maybe_fire_notes()
         assert agent.calls == []

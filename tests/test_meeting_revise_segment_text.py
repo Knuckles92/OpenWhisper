@@ -5,15 +5,11 @@ from datetime import datetime
 
 
 from meeting.interfaces import TranscriptSegment
-from meeting.persist.repository import SqlMeetingRepository
 from meeting.state.patches import OpContext, apply_ops
 from meeting.state.schema import MeetingState
 from meeting.state.store import MeetingStateStore
-from services.database import DatabaseManager
 
-def _repo(tmp_path):
-    db = DatabaseManager(db_path=str(tmp_path / "meet.db"))
-    repo = SqlMeetingRepository(db)
+def _seed_meeting(repo, tmp_path):
     mid = "m_polish"
     repo.create_meeting(
         id=mid,
@@ -36,7 +32,7 @@ def _repo(tmp_path):
             text="helo world",
         )
     ])
-    return repo, mid
+    return mid
 
 def test_revise_segment_text_rejects_missing_evidence():
     state = MeetingState(meeting_id="m1", title="t")
@@ -67,8 +63,8 @@ def test_revise_segment_text_rejects_untrusted_human_client():
     assert not results[0].ok
     assert results[0].reason == "agent_only"
 
-def test_revise_segment_text_applies_via_store(tmp_path):
-    repo, mid = _repo(tmp_path)
+def test_revise_segment_text_applies_via_store(tmp_path, repo):
+    mid = _seed_meeting(repo, tmp_path)
     state = MeetingState(meeting_id=mid, title="t")
     store = MeetingStateStore(
         state,
