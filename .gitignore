@@ -70,8 +70,10 @@ sidecar/dist/
 sidecar-opencode/dist/
 
 # Editor / tool state
+.DS_Store
 .claude/settings.local.json
 .claude/settings.local.json.bak
+.claude/launch.json
 .vscode/settings.json
 .cursor/worktrees.json
 .pi/
