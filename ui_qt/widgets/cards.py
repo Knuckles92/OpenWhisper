@@ -119,9 +119,6 @@ class HeaderCard(Card):
         """Height of the body captured at the last collapse (resize delta)."""
         return self._content_height
 
-    def toggle_collapsed(self):
-        self.set_collapsed(not self._collapsed)
-
     def _on_section_toggled(self, expanded: bool):
         self.set_collapsed(not expanded)
 

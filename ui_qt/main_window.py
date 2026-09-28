@@ -330,7 +330,6 @@ class MainWindow(QMainWindow):
         self._compact_mode = False
         self._full_geometry = None
 
-        self._collapsed_width = config.MAIN_WINDOW_DEFAULT_WIDTH
         self._sidebar_width = config.MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH
         self._geometry_format = "collapsed_content_v1"
 
@@ -1218,7 +1217,6 @@ class MainWindow(QMainWindow):
         # frame can hold the main content area at a constant width. Works
         # mid-animation too: the sidebar's current width is subtracted out.
         self._sidebar_base_width = self.width() - self.history_sidebar.width()
-        self._collapsed_width = max(self.minimumWidth(), self._sidebar_base_width)
 
         # The sidebar's single animation drives the window width via
         # width_animated -> _on_sidebar_width_animated.
@@ -1562,7 +1560,6 @@ class MainWindow(QMainWindow):
         )
         if history_expanded:
             width = max(self.minimumWidth(), width - self._sidebar_width)
-        self._collapsed_width = width
 
         saved_height = (
             self._transcription_tab_height
@@ -1638,7 +1635,6 @@ class MainWindow(QMainWindow):
                         if width <= config.MAIN_WINDOW_DEFAULT_WIDTH or migrated_expanded_width:
                             width = config.MAIN_WINDOW_DEFAULT_WIDTH
                         height = max(self.minimumHeight(), min(geo['height'], max_height))
-                        self._collapsed_width = width
                         self._transcription_tab_height = height
                         restore_width = width
                         if (

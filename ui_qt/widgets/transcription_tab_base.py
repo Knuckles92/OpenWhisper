@@ -28,6 +28,7 @@ from ui_qt.utils.collapse_animation import (
 )
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.markdown_render import PREVIEW_STYLE, render_markdown
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.cards import HeaderCard
 from ui_qt.widgets.downloads_label import DownloadsLabel
 from ui_qt.widgets.engine_field import (
@@ -990,9 +991,7 @@ class TranscriptionTabBase(QWidget):
         self.version_toggle.setVisible(visible)
         text = self.transcript_text
         if bool(text.property("headed")) != visible:
-            text.setProperty("headed", visible)
-            text.style().unpolish(text)
-            text.style().polish(text)
+            set_style_property(text, "headed", visible)
 
     def set_transcription_stats(
         self,

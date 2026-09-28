@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui_qt.overlay_state import OverlayState
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.animated_progress_bar import AnimatedProgressBar
 from ui_qt.widgets.eliding_label import ElidingLabel
 
@@ -121,9 +122,7 @@ class _StepChip(QWidget):
             return
         self._state = state
         for widget in (self.dot, self.title):
-            widget.setProperty("stepState", state)
-            widget.style().unpolish(widget)
-            widget.style().polish(widget)
+            set_style_property(widget, "stepState", state)
 
 
 class TranscriptionProgressPanel(QFrame):
@@ -147,7 +146,6 @@ class TranscriptionProgressPanel(QFrame):
         self.setObjectName("uploadProgressPanel")
         self._stage: Optional[ProgressStage] = None
         self._started_at: Optional[float] = None
-        self._with_cleanup = True
         self._batch_total = 1
         self._batch_position = 1
 
@@ -238,7 +236,6 @@ class TranscriptionProgressPanel(QFrame):
             total_files: Files in the job. More than one turns the bar
                 determinate and shows the position label.
         """
-        self._with_cleanup = with_cleanup
         self._batch_total = max(1, total_files)
         self._batch_position = 1
         self.steps[2].setVisible(with_cleanup)
@@ -267,9 +264,7 @@ class TranscriptionProgressPanel(QFrame):
     def set_stage(self, stage: ProgressStage, detail: Optional[str] = None) -> None:
         self._stage = stage
         self.title_label.setText(_STAGE_TITLES[stage])
-        self.title_label.setProperty("stage", stage.value)
-        self.title_label.style().unpolish(self.title_label)
-        self.title_label.style().polish(self.title_label)
+        set_style_property(self.title_label, "stage", stage.value)
         if detail is not None:
             self.detail_label.setText(detail)
         self._apply_steps(stage)
@@ -301,9 +296,9 @@ class TranscriptionProgressPanel(QFrame):
     def set_stop_enabled(self, enabled: bool) -> None:
         self.stop_btn.setEnabled(enabled)
 
-    def set_large_file(self, file_size_mb: float, is_splitting: bool) -> None:
-        stage = ProgressStage.SPLITTING if is_splitting else ProgressStage.PREPARING
-        self.set_stage(stage, detail=f"{file_size_mb:.1f} MB file")
+    def set_large_file(self, file_size_mb: float) -> None:
+        """Show that a large file is being split into chunks."""
+        self.set_stage(ProgressStage.SPLITTING, detail=f"{file_size_mb:.1f} MB file")
 
     def apply_overlay_state(self, state: OverlayState) -> bool:
         """Map a routed overlay state onto the stepper.

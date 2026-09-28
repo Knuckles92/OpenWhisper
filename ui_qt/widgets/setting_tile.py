@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 
@@ -137,10 +138,7 @@ class SettingTile(TileBase):
             self.setCursor(cursor)
 
     def _sync_checked_property(self, checked: bool) -> None:
-        self.setProperty("checked", bool(checked))
-        style = self.style()
-        style.unpolish(self)
-        style.polish(self)
+        set_style_property(self, "checked", bool(checked))
 
 
 class FieldTile(TileBase):

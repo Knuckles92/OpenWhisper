@@ -6,11 +6,10 @@ holds a setting of its own and cannot drift out of sync with the pages it
 summarizes. Settings composes an :class:`OverviewSummary` and hands it over.
 """
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Dict, List, Tuple
 
 from PyQt6.QtCore import QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QIcon, QKeyEvent, QMouseEvent, QPainter, QPainterPath
+from PyQt6.QtGui import QKeyEvent, QMouseEvent, QPainter, QPainterPath
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -21,18 +20,15 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import bundle_root
 from services.format_utils import format_size_bytes
+from ui_qt.utils.icons import tabler_icon
 from ui_qt.utils.palette import token_color
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 #: Storage bar colours, in backend legend order.
 _BACKEND_TOKENS = ("accent", "success", "purple", "warning-text-soft", "accent-cyan")
-
-
-def _icon(filename: str) -> QIcon:
-    return QIcon(str(Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / filename))
 
 
 @dataclass
@@ -81,7 +77,7 @@ class OverviewCard(QFrame):
         glyph = QLabel()
         glyph.setObjectName("overviewCardIcon")
         glyph.setFixedSize(14, 14)
-        glyph.setPixmap(_icon(icon).pixmap(13, 13))
+        glyph.setPixmap(tabler_icon(icon).pixmap(13, 13))
         top.addWidget(glyph)
         self.eyebrow_label = QLabel(eyebrow.upper())
         self.eyebrow_label.setObjectName("overviewEyebrow")
@@ -112,9 +108,7 @@ class OverviewCard(QFrame):
         self.value_label.setText(value)
         self.detail_label.setText(detail)
         self.detail_label.setVisible(bool(detail))
-        self.value_label.setProperty("muted", muted)
-        self.value_label.style().unpolish(self.value_label)
-        self.value_label.style().polish(self.value_label)
+        set_style_property(self.value_label, "muted", muted)
         self.setToolTip(f"{self.role_label.text()}: {value}" if value else "")
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:

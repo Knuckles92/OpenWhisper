@@ -3,12 +3,11 @@ import math
 import random
 import sys
 import time
-from dataclasses import dataclass
 from typing import Optional, List
 from PyQt6.QtWidgets import QApplication, QWidget
 from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, pyqtSignal, QPoint
 from PyQt6.QtGui import (
-    QPainter, QPainterPath, QColor, QBrush, QPen,
+    QPainter, QPainterPath, QColor, QPen,
     QFont, QFontMetrics, QCursor
 )
 from config import config
@@ -17,49 +16,10 @@ from ui_qt.utils.overlay_position import (
     max_height_for_anchor,
     preferred_overlay_position,
 )
-from ui_qt.utils.palette import current_palette, token_color
-from ui_qt.waveform_styles import BaseWaveformStyle, ParticleStyle
+from ui_qt.utils.palette import token_color
+from ui_qt.waveform_styles import Particle, ParticleStyle, round_pen
 
 logger = logging.getLogger(__name__)
-
-
-def _round_pen(color: QColor, width: float) -> QPen:
-    """Pen with round caps/joins so drawn glyph strokes look polished."""
-    return QPen(
-        color, width, Qt.PenStyle.SolidLine,
-        Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin,
-    )
-
-
-@dataclass
-class LargeFileOverlayInfo:
-    file_size_mb: float = 0.0
-    chunk_count: int = 0
-
-
-class STTParticle:
-    def __init__(self, x: float, y: float, vx: float, vy: float, hue: float):
-        self.x = x
-        self.y = y
-        self.vx = vx
-        self.vy = vy
-        self.hue = hue
-        self.life = 1.0
-        self.size = random.uniform(2.0, 4.0)
-
-    def update(self, dt: float, damping: float = 0.98) -> bool:
-        self.x += self.vx * dt
-        self.y += self.vy * dt
-        self.vx *= damping
-        self.vy *= damping
-        self.life -= dt * 0.5
-        return self.life > 0
-
-    def get_color(self) -> QColor:
-        alpha = int(255 * self.life)
-        if current_palette().is_dark:
-            return QColor.fromHsv(int(self.hue) % 360, 200, 230, alpha)
-        return QColor.fromHsv(int(self.hue) % 360, 235, 205, alpha)
 
 
 class WaveformOverlay(QWidget):
@@ -76,7 +36,6 @@ class WaveformOverlay(QWidget):
     STATE_STT_DISABLE = "stt_disable"
     STATE_COPIED = "copied"
     STATE_LARGE_FILE_SPLITTING = "large_file_splitting"
-    STATE_LARGE_FILE_PROCESSING = "large_file_processing"
 
     def __init__(self):
         super().__init__()
@@ -106,16 +65,16 @@ class WaveformOverlay(QWidget):
         self.audio_levels: List[float] = [0.0] * 20
         self.animation_time = 0.0
         self.cancel_progress = 0.0
-        self.stt_particles: List[STTParticle] = []
+        self.stt_particles: List[Particle] = []
         self._streaming_preview_text: str = ""
         self._streaming_font_size = resolve_streaming_overlay_font_size()
         # Cursor anchor used to keep the overlay on-screen as it grows.
         self._anchor_pos: Optional[QPoint] = None
 
-        self.large_file_info = LargeFileOverlayInfo()
+        self.large_file_size_mb = 0.0
 
         style_config = config.WAVEFORM_STYLE_CONFIGS.get('particle', {})
-        self.style: BaseWaveformStyle = ParticleStyle(
+        self.style = ParticleStyle(
             self.overlay_width, self.overlay_height, style_config
         )
 
@@ -139,21 +98,17 @@ class WaveformOverlay(QWidget):
             rect = self.rect()
 
             if self.current_state == self.STATE_RECORDING:
-                if self.style:
-                    self.style.draw_recording_state(painter, rect, "Recording...")
+                self.style.draw_recording_state(painter, rect, "Recording...")
             elif self.current_state == self.STATE_STREAMING:
                 self._draw_streaming_state(painter, rect)
             elif self.current_state == self.STATE_PROCESSING:
-                if self.style:
-                    self.style.draw_processing_state(painter, rect, "Processing...")
+                self.style.draw_processing_state(painter, rect, "Processing...")
             elif self.current_state == self.STATE_TRANSCRIBING:
-                if self.style:
-                    self.style.draw_transcribing_state(painter, rect, "Transcribing...")
+                self.style.draw_transcribing_state(painter, rect, "Transcribing...")
             elif self.current_state == self.STATE_CLEANING:
                 self._draw_cleaning_state(painter)
             elif self.current_state == self.STATE_CANCELING:
-                if self.style:
-                    self.style.draw_canceling_state(painter, rect, "Canceled")
+                self.style.draw_canceling_state(painter, rect, "Canceled")
             elif self.current_state == self.STATE_STT_ENABLE:
                 self._draw_stt_enable_state(painter)
             elif self.current_state == self.STATE_STT_DISABLE:
@@ -162,8 +117,6 @@ class WaveformOverlay(QWidget):
                 self._draw_copied_state(painter)
             elif self.current_state == self.STATE_LARGE_FILE_SPLITTING:
                 self._draw_large_file_splitting_state(painter)
-            elif self.current_state == self.STATE_LARGE_FILE_PROCESSING:
-                self._draw_large_file_processing_state(painter)
         except Exception as e:
             logger.error(f"Error drawing waveform frame: {e}", exc_info=True)
             try:
@@ -185,15 +138,14 @@ class WaveformOverlay(QWidget):
         particle_height = min(self._base_height, rect.height())
         particle_rect = QRect(0, 0, rect.width(), particle_height)
         status = "Listening..." if not self._streaming_preview_text else ""
-        if self.style:
-            # Keep particle physics in the compact recording band even when the
-            # overlay grows to fit preview text.
-            previous_height = self.style.height
-            self.style.height = self._base_height
-            try:
-                self.style.draw_recording_state(painter, particle_rect, status)
-            finally:
-                self.style.height = previous_height
+        # Keep particle physics in the compact recording band even when the
+        # overlay grows to fit preview text.
+        previous_height = self.style.height
+        self.style.height = self._base_height
+        try:
+            self.style.draw_recording_state(painter, particle_rect, status)
+        finally:
+            self.style.height = previous_height
 
         if self._streaming_preview_text:
             self._draw_streaming_preview_text(painter, rect)
@@ -327,7 +279,7 @@ class WaveformOverlay(QWidget):
     def _draw_particle_swarm(self, painter: QPainter):
         painter.setPen(Qt.PenStyle.NoPen)
         for particle in self.stt_particles:
-            color = particle.get_color()
+            color = particle.get_fading_color()
             painter.setBrush(color)
             size = particle.size * particle.life
             painter.drawEllipse(QRectF(
@@ -354,7 +306,7 @@ class WaveformOverlay(QWidget):
         if self.animation_time > 0.4:
             progress = min(1.0, (self.animation_time - 0.4) / 0.3)
             alpha = int(200 * progress)
-            painter.setPen(_round_pen(token_color("success", alpha), 3))
+            painter.setPen(round_pen(token_color("success", alpha), 3))
             painter.drawLine(int(w // 2 - 15), int(h // 2), int(w // 2 - 5), int(h // 2 + 10))
             painter.drawLine(int(w // 2 - 5), int(h // 2 + 10), int(w // 2 + 15), int(h // 2 - 10))
 
@@ -372,7 +324,7 @@ class WaveformOverlay(QWidget):
             progress = min(1.0, (self.animation_time - 0.1) / 0.2)
             alpha = int(200 * progress)
             x_size = 15
-            painter.setPen(_round_pen(token_color("danger", alpha), 3))
+            painter.setPen(round_pen(token_color("danger", alpha), 3))
             painter.drawLine(w // 2 - x_size, h // 2 - x_size, w // 2 + x_size, h // 2 + x_size)
             painter.drawLine(w // 2 + x_size, h // 2 - x_size, w // 2 - x_size, h // 2 + x_size)
 
@@ -391,14 +343,14 @@ class WaveformOverlay(QWidget):
             alpha = int(220 * progress)
 
             icon_color = token_color("accent-cyan", alpha)
-            painter.setPen(_round_pen(icon_color, 2))
+            painter.setPen(round_pen(icon_color, 2))
 
             cx, cy = w // 2, h // 2 - 5
             painter.drawRoundedRect(cx - 12, cy - 10, 24, 28, 3, 3)
 
             painter.drawRect(cx - 6, cy - 14, 12, 6)
 
-            painter.setPen(_round_pen(icon_color, 1.5))
+            painter.setPen(round_pen(icon_color, 1.5))
             painter.drawLine(cx - 7, cy + 2, cx + 7, cy + 2)
             painter.drawLine(cx - 7, cy + 8, cx + 5, cy + 8)
 
@@ -444,22 +396,19 @@ class WaveformOverlay(QWidget):
 
     @staticmethod
     def _draw_sparkle(painter: QPainter, cx: float, cy: float, size: float, color: QColor):
-        painter.setPen(_round_pen(color, 2))
+        painter.setPen(round_pen(color, 2))
         painter.drawLine(int(cx), int(cy - size), int(cx), int(cy + size))
         painter.drawLine(int(cx - size), int(cy), int(cx + size), int(cy))
 
         accent = QColor(color)
         accent.setAlpha(int(color.alpha() * 0.55))
         diag = size * 0.45
-        painter.setPen(_round_pen(accent, 1.5))
+        painter.setPen(round_pen(accent, 1.5))
         painter.drawLine(int(cx - diag), int(cy - diag), int(cx + diag), int(cy + diag))
         painter.drawLine(int(cx - diag), int(cy + diag), int(cx + diag), int(cy - diag))
 
-    def set_large_file_info(self, file_size_mb: float, chunk_count: int = 0):
-        self.large_file_info = LargeFileOverlayInfo(
-            file_size_mb=file_size_mb,
-            chunk_count=chunk_count,
-        )
+    def set_large_file_info(self, file_size_mb: float):
+        self.large_file_size_mb = file_size_mb
 
     def _draw_large_file_splitting_state(self, painter: QPainter):
         rect = self.rect()
@@ -471,7 +420,7 @@ class WaveformOverlay(QWidget):
         blade_angle = 12 + 8 * math.sin(progress * math.pi * 2)
 
         amber = token_color("warning")
-        painter.setPen(_round_pen(amber, 3))
+        painter.setPen(round_pen(amber, 3))
 
         painter.drawLine(
             int(center_x - 18), int(center_y - blade_angle),
@@ -487,42 +436,7 @@ class WaveformOverlay(QWidget):
 
         painter.setPen(QPen(amber))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        text = f"Splitting ({self.large_file_info.file_size_mb:.1f} MB)..."
-        painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, text)
-
-    def _draw_large_file_processing_state(self, painter: QPainter):
-        rect = self.rect()
-        w, h = rect.width(), rect.height()
-
-        progress = (self.animation_time * 0.5) % 1.0
-        center_x, center_y = w // 2, h // 2 - 10
-        radius = 18
-
-        cyan = token_color("accent-cyan")
-        painter.setPen(_round_pen(cyan, 2))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-
-        painter.drawEllipse(center_x - radius, center_y - radius, radius * 2, radius * 2)
-
-        hand_angle = progress * 2 * math.pi - math.pi / 2
-        hand_length = radius - 5
-        hand_x = center_x + int(hand_length * math.cos(hand_angle))
-        hand_y = center_y + int(hand_length * math.sin(hand_angle))
-        painter.drawLine(center_x, center_y, hand_x, hand_y)
-
-        hour_angle = progress * 2 * math.pi / 12 - math.pi / 2
-        hour_length = radius - 10
-        hour_x = center_x + int(hour_length * math.cos(hour_angle))
-        hour_y = center_y + int(hour_length * math.sin(hour_angle))
-        painter.setPen(_round_pen(cyan, 3))
-        painter.drawLine(center_x, center_y, hour_x, hour_y)
-
-        painter.setBrush(QBrush(cyan))
-        painter.drawEllipse(center_x - 3, center_y - 3, 6, 6)
-
-        painter.setPen(QPen(cyan))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        text = f"Processing ({self.large_file_info.file_size_mb:.1f} MB)..."
+        text = f"Splitting ({self.large_file_size_mb:.1f} MB)..."
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, text)
 
     def _update_animation(self):
@@ -532,8 +446,7 @@ class WaveformOverlay(QWidget):
 
         self.animation_time += delta_time
 
-        if self.style:
-            self.style.update_animation_time(delta_time)
+        self.style.update_animation_time(delta_time)
 
         if self.current_state == self.STATE_CANCELING:
             self.cancel_progress = min(1.0, self.animation_time / 0.8)
@@ -552,7 +465,7 @@ class WaveformOverlay(QWidget):
             self.cancel_progress = 0.0
             self.last_frame_time = time.time()  # Reset to prevent huge delta on first frame
 
-            if state == self.STATE_CANCELING and self.style:
+            if state == self.STATE_CANCELING:
                 self.style.set_canceling_start_time(time.time())
 
             if state == self.STATE_STT_ENABLE:
@@ -638,7 +551,7 @@ class WaveformOverlay(QWidget):
                 vx = math.cos(angle) * speed
                 vy = math.sin(angle) * speed
 
-            particle = STTParticle(x, y, vx, vy, hue)
+            particle = Particle(x, y, vx, vy, hue=hue)
             particle.size = random.uniform(*size_range)
             self.stt_particles.append(particle)
 
@@ -672,10 +585,7 @@ class WaveformOverlay(QWidget):
 
     def update_audio_levels(self, levels: List[float]):
         self.audio_levels = levels[:20]
-
-        if self.style:
-            current_level = sum(levels) / len(levels) if levels else 0.0
-            self.style.update_audio_levels(self.audio_levels, current_level)
+        self.style.update_audio_levels(self.audio_levels)
 
     def hide(self):
         """Hide the overlay and stop animations."""

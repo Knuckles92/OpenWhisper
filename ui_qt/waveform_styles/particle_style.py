@@ -5,21 +5,33 @@ import time
 from typing import Dict, Any, List, Optional
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont
 from PyQt6.QtCore import QRect, QRectF, Qt
-from .base_style import BaseWaveformStyle, round_pen
 from ui_qt.utils.palette import current_palette, token_color
 
 
+def round_pen(color: QColor, width: float) -> QPen:
+    """Pen with round caps/joins so drawn glyph strokes look polished."""
+    return QPen(
+        color, width, Qt.PenStyle.SolidLine,
+        Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin,
+    )
+
+
 class Particle:
-    def __init__(self, x: float, y: float, vx: float = 0, vy: float = 0):
+    def __init__(
+        self,
+        x: float,
+        y: float,
+        vx: float = 0,
+        vy: float = 0,
+        hue: Optional[float] = None,
+    ):
         self.x = x
         self.y = y
         self.vx = vx
         self.vy = vy
         self.life = 1.0
-        self.max_life = 1.0
         self.size = random.uniform(1.5, 4.0)
-        self.color_hue = random.uniform(0, 360)
-        self.birth_time = 0
+        self.color_hue = random.uniform(0, 360) if hue is None else hue
 
     def update(self, dt: float, gravity: float = 0, damping: float = 0.99):
         self.x += self.vx * dt
@@ -43,19 +55,31 @@ class Particle:
             int(hue) % 360, 235, 205, max(0, min(255, int(self.life * 255)))
         )
 
+    def get_fading_color(self) -> QColor:
+        """Colour that fades out by alpha on both themes.
 
-class ParticleStyle(BaseWaveformStyle):
+        The overlay's status-glyph swarms use this so their particles thin out
+        around the glyph instead of darkening into the pill.
+        """
+        alpha = int(255 * self.life)
+        if current_palette().is_dark:
+            return QColor.fromHsv(int(self.color_hue) % 360, 200, 230, alpha)
+        return QColor.fromHsv(int(self.color_hue) % 360, 235, 205, alpha)
+
+
+class ParticleStyle:
     """Particle waveform driven by audio energy."""
 
     def __init__(self, width: int, height: int, config: Dict[str, Any]):
-        super().__init__(width, height, config)
+        self.width = width
+        self.height = height
 
-        self._display_name = "Particle Storm"
-        self._description = "Physics-based particles responding to audio"
+        self.animation_time = 0.0
+        self.audio_levels: List[float] = []
+        self._canceling_start_time: Optional[float] = None
 
         self.max_particles = config.get('max_particles', 500)
         self.emission_rate = config.get('emission_rate', 100)
-        self.particle_life = config.get('particle_life', 2.0)
 
         self.gravity = config.get('gravity', 20)
         self.damping = config.get('damping', 0.98)
@@ -68,11 +92,31 @@ class ParticleStyle(BaseWaveformStyle):
         self.color_shift_speed = config.get('color_shift_speed', 50)
 
         self.particles: List[Particle] = []
-        self.last_frame_time = 0
         self.cancel_particles: List[Particle] = []
         self._cancel_initialized = False
         self._last_cancel_progress = 1.0
         self._last_cancel_update: Optional[float] = None
+
+    def update_audio_levels(self, levels: List[float]):
+        self.audio_levels = levels.copy() if levels else []
+
+    def update_animation_time(self, delta_time: float):
+        """Advance animation time by ``delta_time`` seconds."""
+        self.animation_time += delta_time
+
+    def get_cancellation_progress(self) -> float:
+        """Return cancellation progress from 0.0 to 1.0."""
+        from config import config
+
+        if self._canceling_start_time is None:
+            return 0.0
+        cancellation_duration = config.CANCELLATION_ANIMATION_DURATION_MS / 1000.0
+        elapsed = time.time() - self._canceling_start_time
+        return min(1.0, max(0.0, elapsed / cancellation_duration))
+
+    def set_canceling_start_time(self, start_time: float):
+        """Set the cancellation start timestamp from ``time.time()``."""
+        self._canceling_start_time = start_time
 
     def draw_recording_state(self, painter: QPainter, rect: QRect, message: str = "Recording..."):
         dt = 1/30
@@ -183,14 +227,6 @@ class ParticleStyle(BaseWaveformStyle):
         else:
             self._last_cancel_progress = progress
 
-    def draw_stt_enable_state(self, painter: QPainter, rect: QRect, message: str = "STT Enabled"):
-        """Draw STT enable state."""
-        self._draw_text(painter, rect, message)
-
-    def draw_stt_disable_state(self, painter: QPainter, rect: QRect, message: str = "STT Disabled"):
-        """Draw STT disable state."""
-        self._draw_text(painter, rect, message)
-
     def _emit_audio_particles(self, count: int, audio_energy: float):
         for _ in range(min(count, self.max_particles - len(self.particles))):
             x = random.uniform(20, self.width - 20)
@@ -205,7 +241,7 @@ class ParticleStyle(BaseWaveformStyle):
             self.particles.append(particle)
 
     def _update_particles(self, dt: float, audio_energy: float = 0.0,
-                         vortex_mode: bool = False, stream_mode: bool = False, converge_mode: bool = False):
+                         vortex_mode: bool = False, converge_mode: bool = False):
         center_x = self.width // 2
         center_y = self.height // 2
 
@@ -253,20 +289,6 @@ class ParticleStyle(BaseWaveformStyle):
                 if particle.update(dt, 0, 1.0):
                     alive_particles.append(particle)
 
-            elif stream_mode:
-                turbulence_x = math.sin(self.animation_time * 2 + particle.y * 0.1) * self.turbulence_strength
-                turbulence_y = math.cos(self.animation_time * 1.5 + particle.x * 0.1) * self.turbulence_strength * 0.5
-
-                particle.vx += turbulence_x * dt
-                particle.vy += turbulence_y * dt
-
-                if (particle.x < -10 or particle.x > self.width + 10 or
-                    particle.y < -10 or particle.y > self.height + 10):
-                    continue
-
-                if particle.update(dt, self.gravity * 0.3, self.damping):
-                    alive_particles.append(particle)
-
             else:
                 turbulence_multiplier = 1.0 + audio_energy * 2
                 turbulence_x = (math.sin(self.animation_time * 3 + particle.x * 0.1) *
@@ -291,12 +313,7 @@ class ParticleStyle(BaseWaveformStyle):
                 if particle.update(dt, self.gravity, self.damping):
                     alive_particles.append(particle)
 
-        valid_particles = []
-        for p in alive_particles:
-            if isinstance(p, Particle) and hasattr(p, 'x') and hasattr(p, 'y'):
-                valid_particles.append(p)
-
-        self.particles = valid_particles
+        self.particles = alive_particles
         if len(self.particles) > self.max_particles:
             self.particles = self.particles[-self.max_particles:]
 
@@ -304,28 +321,20 @@ class ParticleStyle(BaseWaveformStyle):
         painter.setPen(Qt.PenStyle.NoPen)
 
         for particle in self.particles:
-            try:
-                if not hasattr(particle, 'x') or not hasattr(particle, 'y'):
-                    continue
+            color = particle.get_qcolor()
+            painter.setBrush(color)
 
-                color = particle.get_qcolor()
-                painter.setBrush(color)
+            size = particle.size * particle.life
+            painter.drawEllipse(QRectF(particle.x - size, particle.y - size, size * 2, size * 2))
 
-                size = particle.size * particle.life
-                painter.drawEllipse(QRectF(particle.x - size, particle.y - size, size * 2, size * 2))
-
-                if self.glow_effect and particle.life > 0.5:
-                    glow_color = QColor(color)
-                    glow_color.setAlpha(100)
-                    painter.setBrush(Qt.BrushStyle.NoBrush)
-                    painter.setPen(QPen(glow_color, 1))
-                    glow_size = size + 1
-                    painter.drawEllipse(QRectF(particle.x - glow_size, particle.y - glow_size, glow_size * 2, glow_size * 2))
-                    painter.setPen(Qt.PenStyle.NoPen)
-            except (AttributeError, TypeError) as e:
-                import logging
-                logging.debug(f"Skipping invalid particle: {e}")
-                continue
+            if self.glow_effect and particle.life > 0.5:
+                glow_color = QColor(color)
+                glow_color.setAlpha(100)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.setPen(QPen(glow_color, 1))
+                glow_size = size + 1
+                painter.drawEllipse(QRectF(particle.x - glow_size, particle.y - glow_size, glow_size * 2, glow_size * 2))
+                painter.setPen(Qt.PenStyle.NoPen)
 
     def _draw_text(self, painter: QPainter, rect: QRect, message: str):
         painter.setPen(token_color("overlay-text"))

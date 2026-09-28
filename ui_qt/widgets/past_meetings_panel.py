@@ -16,6 +16,8 @@ from meeting.content import (
 from meeting.time_utils import format_meeting_duration, format_meeting_started_at
 from services.settings import SettingsKey, settings_manager
 from ui_qt.utils.file_reveal import open_folder_in_file_manager
+from ui_qt.utils.restyle import set_style_property
+from ui_qt.widgets.context_menu import context_menu
 
 from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont
@@ -37,32 +39,6 @@ from PyQt6.QtWidgets import (
 logger = logging.getLogger(__name__)
 
 _NON_HISTORICAL_STATUSES = {"active", "paused", "ending"}
-_MENU_STYLESHEET = """
-    QMenu {
-        background-color: rgba(@surface-rgb, 0.95);
-        color: @text;
-        border: 1px solid rgba(@overlay-rgb, 0.1);
-        border-radius: 10px;
-        padding: 6px;
-    }
-    QMenu::item {
-        padding: 8px 28px 8px 14px;
-        border-radius: 6px;
-        font-size: 13px;
-    }
-    QMenu::item:selected {
-        background-color: @accent;
-        color: @on-accent;
-    }
-    QMenu::separator {
-        background-color: rgba(@overlay-rgb, 0.08);
-        height: 1px;
-        margin: 4px 8px;
-    }
-    QMenu::item:disabled {
-        color: @text-secondary;
-    }
-"""
 
 def _record_sync():
     from services.remote_records.sync import record_sync
@@ -176,11 +152,7 @@ class PastMeetingItem(QFrame):
         if pill:
             label, tone = pill
             self.insights_pill.setText(label)
-            self.insights_pill.setProperty("pillTone", tone)
-            style = self.insights_pill.style()
-            if style is not None:
-                style.unpolish(self.insights_pill)
-                style.polish(self.insights_pill)
+            set_style_property(self.insights_pill, "pillTone", tone)
             self.insights_pill.show()
         else:
             self.insights_pill.hide()
@@ -207,12 +179,7 @@ class PastMeetingItem(QFrame):
 
     def set_selected(self, selected: bool) -> None:
         """Mark this tile as the meeting shown on the Meeting Mode tab."""
-        self.setProperty("selected", bool(selected))
-        style = self.style()
-        if style is not None:
-            style.unpolish(self)
-            style.polish(self)
-        self.update()
+        set_style_property(self, "selected", bool(selected))
 
     def _has_transcript(self) -> bool:
         summary = dict(self.meeting.get("content_summary") or {})
@@ -244,8 +211,7 @@ class PastMeetingItem(QFrame):
             )
 
     def _show_context_menu(self, pos) -> None:
-        menu = QMenu(self)
-        menu.setStyleSheet(_MENU_STYLESHEET)
+        menu = context_menu(self)
         if self.stored_on:
             open_action = menu.addAction(f"Open (from {self.stored_on})")
             open_action.triggered.connect(self._emit_selected)
@@ -460,8 +426,7 @@ class PastMeetingsPanel(QWidget):
         layout.addWidget(self.scroll_area, stretch=1)
 
     def _build_header_menu(self) -> QMenu:
-        menu = QMenu(self)
-        menu.setStyleSheet(_MENU_STYLESHEET)
+        menu = context_menu(self)
         refresh = menu.addAction("Refresh")
         refresh.triggered.connect(self.refresh)
         has_meetings = bool(self._meetings)

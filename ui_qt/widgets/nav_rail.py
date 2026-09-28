@@ -19,6 +19,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui_qt.utils.restyle import set_style_property
+
 _KEY_ROLE = Qt.ItemDataRole.UserRole
 
 
@@ -96,12 +98,8 @@ class _RailItem(QWidget):
         An item widget covers the view's own selection painting, so the state
         has to live on this widget for the stylesheet to see it.
         """
-        self.setProperty("selected", selected)
         for widget in (self, self.name_label, self.value_label):
-            widget.setProperty("selected", selected)
-            widget.style().unpolish(widget)
-            widget.style().polish(widget)
-            widget.update()
+            set_style_property(widget, "selected", selected)
 
 
 class NavRail(QListWidget):
@@ -160,9 +158,6 @@ class NavRail(QListWidget):
         """Return a destination's display name."""
         row = self._rows.get(key)
         return row.name_label.text() if row is not None else ""
-
-    def is_selected(self, key: str) -> bool:
-        return bool(self._rows[key].property("selected")) if key in self._rows else False
 
     def select(self, key: str) -> None:
         item = self._items.get(key)

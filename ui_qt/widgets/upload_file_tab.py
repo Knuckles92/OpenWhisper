@@ -3,11 +3,10 @@ import logging
 import os
 import threading
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable, Optional
 
 from PyQt6.QtCore import QMimeData, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QFont, QIcon, QMouseEvent, QPixmap
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QFont, QMouseEvent
 from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -19,7 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import bundle_root, config
+from config import config
 from services.audio_processor import AudioFilePreview, audio_processor
 from services.batch_upload import (
     BatchItem,
@@ -37,6 +36,9 @@ from services.settings import (
     settings_manager,
 )
 from ui_qt.overlay_state import OverlayState
+from ui_qt.utils.icons import tabler_icon as _tabler_icon
+from ui_qt.utils.icons import tabler_pixmap as _tabler_pixmap
+from ui_qt.utils.restyle import set_style_property as _repolish
 from ui_qt.widgets.buttons import Button, PrimaryButton
 from ui_qt.widgets.decode_label import DecodeLabel
 from ui_qt.widgets.eliding_label import ElidingLabel
@@ -85,21 +87,6 @@ _ROW_STATE_TEXT = {
     "done": "Done",
     "failed": "Failed",
 }
-
-
-def _tabler_pixmap(name: str, size: int) -> QPixmap:
-    path = Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / name
-    return QIcon(str(path)).pixmap(QSize(size, size))
-
-
-def _tabler_icon(name: str) -> QIcon:
-    return QIcon(str(Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / name))
-
-
-def _repolish(widget: QWidget, prop: str, value: str) -> None:
-    widget.setProperty(prop, value)
-    widget.style().unpolish(widget)
-    widget.style().polish(widget)
 
 
 def _is_supported_audio(path: str) -> bool:
@@ -1017,7 +1004,6 @@ class UploadFileTab(TranscriptionTabBase):
         # Mirrors of the single queued file, kept for the single-file callers.
         self._audio_path: str | None = None
         self._preview: AudioFilePreview | None = None
-        self._cancel_pending = False
         # What the last drop left out (non-audio, duplicates) or what the last
         # Transcribe removed; shown in the queue header until the next drop,
         # clear, or job.
@@ -1087,13 +1073,11 @@ class UploadFileTab(TranscriptionTabBase):
             self.file_info_card.finish_transcribing(success=False)
             self._unlock_engine()
             return
-        if state is OverlayState.CANCELING:
-            self._cancel_pending = True
         self.file_info_card.progress.apply_overlay_state(state)
 
-    def set_large_file_stage(self, file_size_mb: float, is_splitting: bool) -> None:
+    def set_large_file_stage(self, file_size_mb: float) -> None:
         if self.is_transcribing:
-            self.file_info_card.progress.set_large_file(file_size_mb, is_splitting)
+            self.file_info_card.progress.set_large_file(file_size_mb)
 
     def set_batch_progress(self, position: int, total: int, source_name: str) -> None:
         """A file of the running batch is starting (1-based position)."""
@@ -1450,7 +1434,6 @@ class UploadFileTab(TranscriptionTabBase):
         failed = stripped.startswith("Error:")
         copyable = bool(stripped) and stripped != EMPTY_ASR_MESSAGE and not failed
         self.file_info_card.finish_transcribing(success=not failed)
-        self._cancel_pending = False
         self._unlock_engine()
         self.file_info_card.set_copy_enabled(copyable)
         self.expand_btn.setVisible(copyable)
@@ -1537,7 +1520,6 @@ class UploadFileTab(TranscriptionTabBase):
         self._items = []
         self._audio_path = None
         self._preview = None
-        self._cancel_pending = False
         self._queue_note = ""
         card = self.file_info_card
         card.hide()
@@ -1549,12 +1531,6 @@ class UploadFileTab(TranscriptionTabBase):
         card.set_ready(True)
         self.drop_zone.show()
         self._unlock_engine()
-
-    def set_file(self, audio_path: str):
-        self._on_file_selected(audio_path)
-
-    def set_files(self, audio_paths: list[str]):
-        self._on_files_selected(list(audio_paths), 0)
 
     def open_file_browser(self):
         self.drop_zone.open_file_browser()

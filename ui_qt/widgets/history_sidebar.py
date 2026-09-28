@@ -10,7 +10,7 @@ import os
 import threading
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QFrame, QMenu, QApplication, QLineEdit, QSizePolicy,
+    QScrollArea, QFrame, QApplication, QLineEdit, QSizePolicy,
     QMessageBox, QCheckBox, QComboBox, QGridLayout,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, pyqtProperty, QTimer, QUrl
@@ -26,37 +26,11 @@ from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_EASING,
 )
 from ui_qt.utils.file_reveal import reveal_in_file_manager
+from ui_qt.widgets.context_menu import context_menu
 from ui_qt.widgets.past_meetings_panel import PastMeetingsPanel
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
-
-_MENU_STYLESHEET = """
-    QMenu {
-        background-color: rgba(@surface-rgb, 0.95);
-        color: @text;
-        border: 1px solid rgba(@overlay-rgb, 0.1);
-        border-radius: 10px;
-        padding: 6px;
-    }
-    QMenu::item {
-        padding: 8px 28px 8px 14px;
-        border-radius: 6px;
-        font-size: 13px;
-    }
-    QMenu::item:selected {
-        background-color: @accent;
-        color: @on-accent;
-    }
-    QMenu::separator {
-        background-color: rgba(@overlay-rgb, 0.08);
-        height: 1px;
-        margin: 4px 8px;
-    }
-    QMenu::item:disabled {
-        color: @text-secondary;
-    }
-"""
 
 _MODEL_DISPLAY_NAMES = {
     'local_whisper': 'Local',
@@ -428,8 +402,7 @@ class HistoryItemWidget(QFrame):
         """)
 
     def _show_context_menu(self, pos):
-        menu = QMenu(self)
-        menu.setStyleSheet(_MENU_STYLESHEET)
+        menu = context_menu(self)
 
         if self.entry.raw_text:
             copy_fixed = menu.addAction("Copy Fixed")
@@ -1148,8 +1121,7 @@ class HistorySidebar(QWidget):
         return f"\n\nThis computer's entries on {host} are deleted too."
 
     def _show_header_menu(self):
-        menu = QMenu(self)
-        menu.setStyleSheet(_MENU_STYLESHEET)
+        menu = context_menu(self)
 
         export_action = menu.addAction("Export history…")
         export_action.triggered.connect(self._on_export_history)

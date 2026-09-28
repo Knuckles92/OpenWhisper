@@ -1,6 +1,8 @@
 """
 Modern button components for PyQt6 UI.
 """
+from typing import Optional
+
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -21,6 +23,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QFont, QPainter, QPen
 
 from ui_qt.utils.palette import token_color
+from ui_qt.utils.restyle import set_style_property
 
 
 class HotkeyHoverHint(QWidget):
@@ -211,10 +214,7 @@ class Button(QPushButton):
         if self._active == active:
             return
         self._active = active
-        self.setProperty("inactive", not active)
-        self.style().unpolish(self)
-        self.style().polish(self)
-        self.update()
+        set_style_property(self, "inactive", not active)
         self.setCursor(
             Qt.CursorShape.PointingHandCursor if active else Qt.CursorShape.ArrowCursor
         )
@@ -259,6 +259,34 @@ class Button(QPushButton):
             event.ignore()
             return
         super().keyPressEvent(event)
+
+def fit_compact_button(button: Button, width: Optional[int] = None) -> None:
+    """Size a shared button for compact dialog chrome, at least 34 px tall.
+
+    Sizes are floors, never caps below what the polished label needs, so
+    descenders and the link arrow are not clipped.
+
+    Args:
+        button: The button to size.
+        width: Minimum width; the button is fixed to that or its label's
+            width, whichever is larger. ``0`` lets it stretch freely, and
+            ``None`` leaves its width alone.
+    """
+    button.set_base_minimum_size(width or 0, 34)
+    button.ensurePolished()
+    height = max(34, button.sizeHint().height())
+    button.setMinimumHeight(height)
+    button.setMaximumHeight(height)
+    if width is None:
+        return
+    if width:
+        fitted = max(width, button.minimumWidth(), button.sizeHint().width())
+        button.setMinimumWidth(fitted)
+        button.setMaximumWidth(fitted)
+    else:
+        button.setMinimumWidth(0)
+        button.setMaximumWidth(16777215)
+
 
 class PrimaryButton(Button):
     """Primary action button with gradient."""

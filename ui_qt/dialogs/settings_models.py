@@ -14,11 +14,9 @@ with its own settings (AI cleanup, the Overview).
 import logging
 import sys
 import threading
-from pathlib import Path
 from typing import Callable, Dict, Optional
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
-from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
@@ -30,7 +28,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import bundle_root, config
+from config import config
 from services.components import (
     component_coordinator,
     current_platform_tag,
@@ -83,6 +81,12 @@ from ui_qt.dialogs.settings_destinations import (
     RUNTIME,
     VOICE_MODEL,
 )
+from ui_qt.dialogs.settings_fields import (
+    group_title,
+    settings_caption,
+    settings_field,
+)
+from ui_qt.utils.icons import design_icon as _design_icon
 from ui_qt.widgets import Button, ElidingComboBox, InfoTile
 from ui_qt.widgets.local_model_picker import LocalModelPicker
 from ui_qt.widgets.nav_rail import NavRail
@@ -102,14 +106,6 @@ _ENGINE_CAPTIONS = {
 
 #: Downloads filter value for the Whisper family.
 WHISPER_FILTER = "local_whisper"
-
-
-def _design_icon(filename: str) -> QIcon:
-    path = Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / filename
-    icon = QIcon(str(path))
-    # Preserve the semantic icon color for disabled current-state buttons.
-    icon.addPixmap(icon.pixmap(24, 24), QIcon.Mode.Disabled, QIcon.State.Off)
-    return icon
 
 
 def _display_name_for_backend(model_value: str) -> str:
@@ -205,26 +201,9 @@ class ModelAssignments(QObject):
 
     # ---- construction helpers ----
 
-    def _field(self, label: str, widget: QWidget) -> QWidget:
-        """Wrap a control with its field label."""
-        wrapper = QWidget()
-        wrapper.setObjectName("modelManagerFieldGroup")
-        col = QVBoxLayout(wrapper)
-        col.setContentsMargins(0, 0, 0, 0)
-        col.setSpacing(5)
-        caption = QLabel(label)
-        caption.setObjectName("textModelFieldLabel")
-        col.addWidget(caption)
-        col.addWidget(widget)
-        return wrapper
-
-    @staticmethod
-    def _group_title(layout: QVBoxLayout, text: str) -> QLabel:
-        # Qt stylesheets have no text-transform, so the eyebrow case is set here.
-        caption = QLabel(text.upper())
-        caption.setObjectName("settingsTileGroupTitle")
-        layout.addWidget(caption)
-        return caption
+    _field = staticmethod(settings_field)
+    _group_title = staticmethod(group_title)
+    _caption = staticmethod(settings_caption)
 
     @staticmethod
     def _card(layout: QVBoxLayout) -> QVBoxLayout:
@@ -253,12 +232,6 @@ class ModelAssignments(QObject):
         note.setObjectName("textModelFootnote")
         layout.addWidget(note, stretch=1)
         return card
-
-    @staticmethod
-    def _caption(text: str) -> WrappedLabel:
-        label = WrappedLabel(text)
-        label.setObjectName("infoLabel")
-        return label
 
     def _say(self, text: str) -> None:
         self.message_label.setText(text)
