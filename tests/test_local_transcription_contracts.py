@@ -136,7 +136,7 @@ def test_worker_job_shows_the_split_a_backend_reports(tmp_path):
     runtime._run_transcription_job(str(path))
 
     assert calls == [str(path)]
-    controller.large_file_detected.emit.assert_called_once_with(30.0, True)
+    controller.large_file_detected.emit.assert_called_once_with(30.0)
     assert _statuses(controller) == ["Splitting large file (30.0 MB)..."]
     assert OverlayState.TRANSCRIBING not in [
         call.args[0] for call in controller.overlay_state_update.emit.call_args_list

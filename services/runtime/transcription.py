@@ -636,7 +636,7 @@ class TranscriptionRuntime:
             self.controller.status_update.emit("Transcribing...")
             return
         logger.info(f"Large file ({file_size_mb:.2f} MB), backend splits it")
-        self.controller.large_file_detected.emit(file_size_mb, True)
+        self.controller.large_file_detected.emit(file_size_mb)
         self.controller.status_update.emit(
             f"Splitting large file ({file_size_mb:.1f} MB)..."
         )

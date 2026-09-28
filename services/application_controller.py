@@ -107,7 +107,7 @@ class ApplicationController(QObject):
     batch_completed = pyqtSignal(object)
     # (file size in MB, will be split) for a large file inside a batch. The
     # single-file path announces this on the caller thread before submitting.
-    large_file_detected = pyqtSignal(float, bool)
+    large_file_detected = pyqtSignal(float)
     status_update = pyqtSignal(str)
     stt_state_changed = pyqtSignal(bool)
     recording_state_changed = pyqtSignal(bool)

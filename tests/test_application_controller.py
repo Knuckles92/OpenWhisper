@@ -369,7 +369,6 @@ class DummyOverlay:
     STATE_STT_ENABLE = "stt_on"
     STATE_STT_DISABLE = "stt_off"
     STATE_LARGE_FILE_SPLITTING = "splitting"
-    STATE_LARGE_FILE_PROCESSING = "processing"
 
     def __init__(self):
         self.large_file_info = None
@@ -480,13 +479,10 @@ class DummyUIController:
         self.batch_item_events.append((position, success))
         self.batch_item_transcripts.append(transcript)
 
-    def show_large_file_state(self, file_size_mb, is_splitting):
-        self.large_file_states.append((file_size_mb, is_splitting))
+    def show_large_file_state(self, file_size_mb):
+        self.large_file_states.append(file_size_mb)
         self.overlay.set_large_file_info(file_size_mb)
-        if is_splitting:
-            self.overlay.show_at_cursor(self.overlay.STATE_LARGE_FILE_SPLITTING)
-        else:
-            self.overlay.show_at_cursor(self.overlay.STATE_LARGE_FILE_PROCESSING)
+        self.overlay.show_at_cursor(self.overlay.STATE_LARGE_FILE_SPLITTING)
 
     def start_recording(self):
         """Mirror UIController.start_recording, including refusal rollback."""
@@ -1205,7 +1201,7 @@ class TestApplicationController:
         assert worker.__name__ == "transcribe_audio_file"
         worker(*args)
 
-        assert controller.ui_controller.large_file_states == [(30.0, True)]
+        assert controller.ui_controller.large_file_states == [30.0]
         assert self.history_manager.entries[0]["text"] == "api chunks"
 
     def test_local_engine_takes_a_large_upload_in_one_pass_with_no_notice(self):
@@ -2014,7 +2010,7 @@ class TestApplicationController:
         controller.upload_audio_files(request)
         self._run_batch(controller)
 
-        assert controller.ui_controller.large_file_states == [(30.0, True), (30.0, True)]
+        assert controller.ui_controller.large_file_states == [30.0, 30.0]
         assert [e["text"] for e in self.history_manager.entries] == ["api chunks", "api chunks"]
 
     def test_batch_failure_in_one_file_keeps_the_others_in_separate_mode(self):

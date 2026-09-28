@@ -595,12 +595,10 @@ class UIController(QObject):
         tab.set_progress_state(state)
         return True
 
-    def show_large_file_state(self, file_size_mb: float, is_splitting: bool = True) -> None:
+    def show_large_file_state(self, file_size_mb: float) -> None:
         """Announce a file being split: inline for an upload job, on the overlay otherwise.
 
-        ``is_splitting`` rides along from ``large_file_detected(float, bool)``,
-        which only fires for files the OpenAI backend splits, so it is always
-        True and not read.
+        ``large_file_detected`` only fires for files the backend splits.
         """
         if self._upload_job_active():
             self.main_window.upload_file_tab.set_large_file_stage(file_size_mb)
