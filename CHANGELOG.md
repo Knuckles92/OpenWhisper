@@ -45,6 +45,7 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 - A consolidation that times out always reports the timeout, even when the canceled call returns during its grace period.
 
 ### Removed
+- **The packaged OpenCode meeting agent** — a Bun-based OpenCode component was built but never published in Downloads; OpenCode now runs as the user's own installed agent instead (see Added). Its sidecar, packaging script, catalog entry, and component leases are gone, about 2,700 lines, and **Agent core** under the built-in engine lists only Pi and Direct.
 - **Rolling transcript revisions** — the experimental pass that rewrote live meeting transcripts has been off since August because it made some meetings worse (by up to 4.9 points of word error rate). Its code and the meeting benchmark's `--enable-revisions` option are gone.
 - **The fallback meeting dashboard** — a source checkout whose `webui` bundle is missing now shows a one-line build instruction instead of an older built-in dashboard.
 - **Developer benchmarks and probes nobody runs** — the one-off TypeSafe probe scripts, the Gemini audio evaluations, the legacy accuracy and model benchmarks (use `scripts/benchmark_local_asr*.py`), and old audio probe scripts. The AMI human-label harness that the TypeSafe thresholds cite stays.
