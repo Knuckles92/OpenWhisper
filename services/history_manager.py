@@ -45,10 +45,6 @@ class RecordingInfo:
     def formatted_timestamp(self) -> str:
         return format_timestamp(self.timestamp)
 
-    @property
-    def formatted_size(self) -> str:
-        return format_file_size(self.size_bytes)
-
 
 class HistoryManager:
     """Manages transcription history and saved recordings."""

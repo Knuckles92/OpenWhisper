@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import bundle_root
+from config import bundle_root, config
 from services.audio_processor import AudioFilePreview, audio_processor
 from services.batch_upload import (
     BatchItem,
@@ -1164,14 +1164,19 @@ class UploadFileTab(TranscriptionTabBase):
     def _start_previews(self, paths: list[str]) -> None:
         """Read file facts off the UI thread; results come back by path.
 
-        ``preview_file`` decodes the whole file, so a run of long files would
-        otherwise freeze the window once per file. One worker per drop keeps
-        a ten-file drop from decoding ten files at once.
+        ``preview_file`` decodes the whole of a file the engine will split, to
+        count its chunks, so a run of long files would otherwise freeze the
+        window once per file. One worker per drop keeps a ten-file drop from
+        decoding ten files at once.
         """
+        engine_splits = self._engine_splits_files()
+
         def worker() -> None:
             for path in paths:
                 try:
-                    result: object = audio_processor.preview_file(path)
+                    result: object = audio_processor.preview_file(
+                        path, engine_splits=engine_splits
+                    )
                 except FileNotFoundError:
                     result = "File not found"
                 except ValueError as exc:
@@ -1193,7 +1198,9 @@ class UploadFileTab(TranscriptionTabBase):
         if isinstance(result, AudioFilePreview):
             item.preview = result
             item.error = None
-            item.state = "pending"
+            if item.state == "reading":
+                # A re-read for another engine keeps a finished job's state.
+                item.state = "pending"
             logger.info(f"File loaded: {result.file_name}")
         else:
             message = str(result)
@@ -1208,6 +1215,47 @@ class UploadFileTab(TranscriptionTabBase):
             item.error = message
             item.state = "failed"
         self._render()
+        # The engine may have changed while this file was being read.
+        self._refresh_chunk_estimates()
+
+    def _engine_splits_files(self) -> bool:
+        """Whether the selected engine uploads a file over the limit in chunks.
+
+        Only the OpenAI API does (``OpenAIBackend.large_file_size_mb``); every
+        other engine takes a file of any size in one pass, so its preview
+        needs no chunk count and no decode.
+        """
+        return config.MODEL_VALUE_MAP.get(self.current_model) == "api"
+
+    def _refresh_chunk_estimates(self) -> None:
+        """Re-read the queued files whose chunk count the engine changes.
+
+        That is a file over the upload limit read for an engine that splits
+        it, now queued for one that does not, or the other way round.
+        """
+        if self.is_transcribing:
+            return
+        engine_splits = self._engine_splits_files()
+        stale = [
+            item for item in self._items
+            if item.preview is not None
+            and item.preview.over_upload_limit
+            and item.preview.needs_splitting != engine_splits
+        ]
+        if not stale:
+            return
+        for item in stale:
+            item.preview = None
+        self._render()
+        self._start_previews([item.path for item in stale])
+
+    def _on_backend_changed(self, display_name: str):
+        super()._on_backend_changed(display_name)
+        self._refresh_chunk_estimates()
+
+    def set_backend(self, display_name: str):
+        super().set_backend(display_name)
+        self._refresh_chunk_estimates()
 
     def _item_for(self, path: str) -> Optional[QueueItem]:
         key = QueueItem(path).key

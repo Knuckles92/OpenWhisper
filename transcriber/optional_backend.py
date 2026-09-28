@@ -53,10 +53,6 @@ class LocalSpeechBackend(TranscriptionBackend):
         return BACKENDS[self.backend_id]
 
     @property
-    def requires_file_splitting(self):
-        return False
-
-    @property
     def is_model_missing(self):
         return not cache.is_cached(self.model_name)
 
