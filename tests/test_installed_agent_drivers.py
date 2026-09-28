@@ -223,6 +223,20 @@ def test_a_signed_out_claude_reads_as_a_sign_in_hint(server, monkeypatch):
     assert not outcome.ok and "not signed in" in outcome.error
 
 
+def test_a_run_that_lingers_after_its_result_still_finishes(server, monkeypatch):
+    import time
+
+    monkeypatch.setattr(drivers, "_help_text", lambda agent, *args: CLAUDE_HELP)
+    monkeypatch.setattr(drivers, "_DONE_GRACE_S", 0.5)
+    monkeypatch.setenv("FAKE_TOOL_CALL", json.dumps(PATCH_CALL))
+    driver = ClaudeCodeDriver(InstalledAgent("claude_code", "fake", "9.0.0"))
+    driver.start(server)
+    monkeypatch.setattr(driver, "build", _FakeCli("claude-linger").build(driver.build))
+    started = time.monotonic()
+    outcome = driver.run_pass(_request(Recorder()))
+    assert outcome.ok and time.monotonic() - started < 15
+
+
 def test_a_silent_agent_stalls_and_a_cancel_stops_it(server, monkeypatch):
     monkeypatch.setattr(drivers, "_help_text", lambda agent, *args: CLAUDE_HELP)
     driver = ClaudeCodeDriver(InstalledAgent("claude_code", "fake", "9.0.0"))

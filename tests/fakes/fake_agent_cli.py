@@ -4,7 +4,8 @@ Run as ``python fake_agent_cli.py <mode> <the driver's argv...>``. It reads
 the MCP URL and token from the same arguments the real CLI would, makes the
 ``tools/call`` in ``FAKE_TOOL_CALL`` (JSON ``{"name", "arguments"}``) over
 HTTP, and prints the events that CLI prints. Modes: ``claude``, ``codex``,
-``claude-fail`` (a signed-out result), ``hang`` (never finishes).
+``claude-fail`` (a signed-out result), ``claude-linger`` (keeps running
+after its result), ``hang`` (never finishes).
 """
 import json
 import os
@@ -66,6 +67,8 @@ def main():
               "total_cost_usd": 0.001,
               "usage": {"input_tokens": 100, "cache_read_input_tokens": 50,
                         "output_tokens": 20}})
+        if mode == "claude-linger":
+            time.sleep(60)  # a helper holding stdout open after the result
         return
     if mode == "codex":
         overrides = dict(

@@ -64,6 +64,8 @@ EVENT_KINDS = ("start", "thinking", "writing", "tool", "turn", "retry", "settled
 _TOKEN_ENV = "OPENWHISPER_MCP_TOKEN"
 _STDERR_TAIL = 20
 _HELP_TIMEOUT_S = 15.0
+#: How long a headless run may linger after reporting its result.
+_DONE_GRACE_S = 5.0
 
 
 class AgentUnavailable(RuntimeError):
@@ -362,10 +364,18 @@ class HeadlessDriver:
         for thread in threads:
             thread.start()
         started = time.monotonic()
+        done_at: Optional[float] = None
         reader = threads[1]
         while reader.is_alive():
             reader.join(0.25)
             now = time.monotonic()
+            if state.done:
+                # A helper the agent started can hold stdout open after the
+                # run has reported its result; don't wait on it.
+                done_at = done_at or now
+                if now - done_at >= _DONE_GRACE_S:
+                    kill_process_tree(proc)
+                    break
             if request.cancel_event.is_set():
                 kill_process_tree(proc)
                 return PassOutcome(ok=False, canceled=True, error="canceled",
@@ -832,7 +842,9 @@ class OpenCodeDriver:
         self._ready = False
 
     def healthy(self) -> bool:
-        return not self._closed and self._conn is not None and self._conn.alive
+        # A dead process is started again by the next pass, so only a closed
+        # driver is unhealthy; repeated failures reach the scheduler's count.
+        return not self._closed and self._server is not None and self._server.running
 
     def close(self) -> None:
         self._closed = True
