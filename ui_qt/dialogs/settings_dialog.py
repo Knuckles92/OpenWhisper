@@ -99,6 +99,7 @@ from services.text_llm import (
 )
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
+from ui_qt.dialogs.settings_binder import SettingsBinder
 from ui_qt.dialogs.settings_destinations import (
     ADVANCED,
     API_KEYS,
@@ -348,6 +349,10 @@ class SettingsDialog(QDialog):
         self._retention_commit_timer.setInterval(800)
         self._retention_commit_timer.timeout.connect(self._commit_retention)
         self._confirming_retention = False
+        # Controls whose change only saves their key. _load_settings loads the
+        # first group and _load_meeting_settings the second.
+        self._bindings = SettingsBinder(self._persist)
+        self._meeting_bindings = SettingsBinder(self._persist)
 
         self._setup_ui()
         self.setMinimumSize(self.MINIMUM_SIZE)
@@ -886,24 +891,29 @@ class SettingsDialog(QDialog):
             layout, "Updates", [self.update_check_tile, self.update_notify_tile]
         )
 
-        self.auto_paste_check.toggled.connect(
-            lambda checked: self._persist(SettingsKey.AUTO_PASTE, bool(checked))
+        self._bindings.checkbox(
+            self.auto_paste_check,
+            SettingsKey.AUTO_PASTE,
+            lambda settings: settings.get(SettingsKey.AUTO_PASTE, True),
         )
-        self.copy_clipboard_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.COPY_CLIPBOARD, bool(checked)
-            )
+        self._bindings.checkbox(
+            self.copy_clipboard_check,
+            SettingsKey.COPY_CLIPBOARD,
+            lambda settings: settings.get(SettingsKey.COPY_CLIPBOARD, True),
         )
-        self.minimize_tray_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.MINIMIZE_TRAY, bool(checked)
-            )
+        self._bindings.checkbox(
+            self.minimize_tray_check,
+            SettingsKey.MINIMIZE_TRAY,
+            lambda settings: (
+                self._tray_available
+                and settings.get(SettingsKey.MINIMIZE_TRAY, True)
+            ),
         )
         self.update_check_check.toggled.connect(self._on_update_check_toggled)
-        self.update_notify_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.UPDATE_NOTIFY_ENABLED, bool(checked)
-            )
+        self._bindings.checkbox(
+            self.update_notify_check,
+            SettingsKey.UPDATE_NOTIFY_ENABLED,
+            resolve_update_notify_enabled,
         )
 
     def _refresh_accessibility_status(self):
@@ -1314,10 +1324,10 @@ class SettingsDialog(QDialog):
         )
         self.meeting_past_recall_check = self.meeting_past_recall_tile.checkbox
         self.meeting_past_recall_check.setObjectName("meetingPastRecallCheck")
-        self.meeting_past_recall_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.MEETING_PAST_RECALL_ENABLED, bool(checked)
-            )
+        self._meeting_bindings.checkbox(
+            self.meeting_past_recall_check,
+            SettingsKey.MEETING_PAST_RECALL_ENABLED,
+            resolve_meeting_past_recall_enabled,
         )
 
         self.meeting_context_folder_tile = SettingTile(
@@ -1333,10 +1343,10 @@ class SettingsDialog(QDialog):
         self.meeting_context_folder_check.setObjectName(
             "meetingContextFolderCheck"
         )
-        self.meeting_context_folder_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED, bool(checked)
-            )
+        self._meeting_bindings.checkbox(
+            self.meeting_context_folder_check,
+            SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED,
+            resolve_meeting_context_folder_enabled,
         )
 
         folder_row = QHBoxLayout()
@@ -1414,10 +1424,12 @@ class SettingsDialog(QDialog):
         )
         self.typesafe_topic_shift_check = self.typesafe_topic_shift_tile.checkbox
         self.typesafe_topic_shift_check.setObjectName("typesafeTopicShiftCheck")
-        self.typesafe_topic_shift_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, bool(checked)
-            )
+        self._meeting_bindings.checkbox(
+            self.typesafe_topic_shift_check,
+            SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED,
+            lambda settings: settings.get(
+                SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, True
+            ) is True,
         )
 
         self.typesafe_voice_commands_tile = SettingTile(
@@ -1433,10 +1445,12 @@ class SettingsDialog(QDialog):
         self.typesafe_voice_commands_check.setObjectName(
             "typesafeVoiceCommandsCheck"
         )
-        self.typesafe_voice_commands_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, bool(checked)
-            )
+        self._meeting_bindings.checkbox(
+            self.typesafe_voice_commands_check,
+            SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED,
+            lambda settings: settings.get(
+                SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, False
+            ) is True,
         )
         self.typesafe_feature_tiles = {}
         for feature, key, title, description in (
@@ -1450,7 +1464,11 @@ class SettingsDialog(QDialog):
              "Send a minute of transcript to TypeSafe/Jev to mark decisions, disagreement, dated commitments, numbers and takeaways (key insights, lessons learned and conclusions). Click a pulse to play that moment."),
         ):
             tile = SettingTile(title, description, design_icon("bolt-green.svg"))
-            tile.checkbox.toggled.connect(lambda checked, setting=key: self._persist(setting, bool(checked)))
+            self._meeting_bindings.checkbox(
+                tile.checkbox,
+                key,
+                lambda settings, key=key: settings.get(key, False) is True,
+            )
             self.typesafe_feature_tiles[feature] = tile
         self._tile_group(
             layout,
@@ -1476,10 +1494,10 @@ class SettingsDialog(QDialog):
             design_icon("microphone-blue.svg"),
         )
         self.meeting_end_redecode_check = self.meeting_end_redecode_tile.checkbox
-        self.meeting_end_redecode_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.MEETING_END_REDECODE, bool(checked)
-            )
+        self._meeting_bindings.checkbox(
+            self.meeting_end_redecode_check,
+            SettingsKey.MEETING_END_REDECODE,
+            resolve_meeting_end_redecode,
         )
 
         self.meeting_end_polish_tile = SettingTile(
@@ -1489,10 +1507,10 @@ class SettingsDialog(QDialog):
             design_icon("stack-purple.svg"),
         )
         self.meeting_end_polish_check = self.meeting_end_polish_tile.checkbox
-        self.meeting_end_polish_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.MEETING_END_POLISH, bool(checked)
-            )
+        self._meeting_bindings.checkbox(
+            self.meeting_end_polish_check,
+            SettingsKey.MEETING_END_POLISH,
+            resolve_meeting_end_polish,
         )
 
         self.meeting_end_report_tile = SettingTile(
@@ -1521,9 +1539,10 @@ class SettingsDialog(QDialog):
         self.meeting_review_sensitivity = ElidingComboBox()
         self.meeting_review_sensitivity.addItem("Normal", "normal")
         self.meeting_review_sensitivity.addItem("Thorough", "thorough")
-        self.meeting_review_sensitivity.currentIndexChanged.connect(
-            lambda _: self._persist(SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY,
-                                    self.meeting_review_sensitivity.currentData())
+        self._meeting_bindings.combo(
+            self.meeting_review_sensitivity,
+            SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY,
+            lambda settings: resolve_meeting_insight_review(settings)["sensitivity"],
         )
         review_row.addWidget(
             settings_field("Sensitivity", self.meeting_review_sensitivity)
@@ -1637,7 +1656,11 @@ class SettingsDialog(QDialog):
         self.meeting_port_spinbox.setMinimumWidth(120)
         # Save the finished port, not 8, 80, and 808 on the way to 8080.
         self.meeting_port_spinbox.setKeyboardTracking(False)
-        self.meeting_port_spinbox.valueChanged.connect(self._on_meeting_port_changed)
+        self._meeting_bindings.spin(
+            self.meeting_port_spinbox,
+            SettingsKey.MEETING_SERVER_PORT,
+            resolve_meeting_server_port,
+        )
         self.meeting_port_tile = FieldTile(
             "Dashboard port",
             "Automatic lets the meeting server pick a free port each session. "
@@ -2223,10 +2246,10 @@ class SettingsDialog(QDialog):
             design_icon("microphone-blue.svg"),
         )
         self.meeting_redecode_coverage_guard_check = self.meeting_redecode_coverage_guard_tile.checkbox
-        self.meeting_redecode_coverage_guard_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.MEETING_REDECODE_COVERAGE_GUARD, bool(checked)
-            )
+        self._meeting_bindings.checkbox(
+            self.meeting_redecode_coverage_guard_check,
+            SettingsKey.MEETING_REDECODE_COVERAGE_GUARD,
+            resolve_meeting_redecode_coverage_guard,
         )
         self._tile_group(
             layout, "Meeting re-transcription", [self.meeting_redecode_coverage_guard_tile],
@@ -2899,9 +2922,6 @@ class SettingsDialog(QDialog):
             self.meeting_bind_combo.currentData(),
         )
 
-    def _on_meeting_port_changed(self, value: int) -> None:
-        self._persist(SettingsKey.MEETING_SERVER_PORT, int(value))
-
     def _on_developer_mode_changed(self, checked: bool) -> None:
         if not self._persist(SettingsKey.DEVELOPER_MODE, bool(checked)):
             return
@@ -3401,46 +3421,19 @@ class SettingsDialog(QDialog):
         })
 
     def _load_meeting_settings(self, settings: dict) -> None:
-        review = resolve_meeting_insight_review(settings)
+        self._meeting_bindings.load(settings)
         self.meeting_review_check.setChecked(
             settings.get(SettingsKey.MEETING_INSIGHT_REVIEW) is True
             and settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == "typesafe-text-v1"
         )
-        self.meeting_review_sensitivity.setCurrentIndex(
-            self.meeting_review_sensitivity.findData(review["sensitivity"]))
-
         bind_index = self.meeting_bind_combo.findData(
             resolve_meeting_server_bind(settings)
         )
         self.meeting_bind_combo.setCurrentIndex(max(0, bind_index))
-        self.meeting_port_spinbox.setValue(resolve_meeting_server_port(settings))
-        self.meeting_past_recall_check.setChecked(
-            resolve_meeting_past_recall_enabled(settings)
-        )
         self.typesafe_enabled_check.setChecked(resolve_typesafe_enabled(settings))
-        self.typesafe_topic_shift_check.setChecked(
-            settings.get(SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, True) is True
-        )
-        self.typesafe_voice_commands_check.setChecked(
-            settings.get(SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, False) is True
-        )
-        for feature, tile in self.typesafe_feature_tiles.items():
-            tile.checkbox.setChecked(settings.get(f"typesafe_{feature}_enabled", False) is True)
         self._update_typesafe_feature_tiles()
-        self.meeting_context_folder_check.setChecked(
-            resolve_meeting_context_folder_enabled(settings)
-        )
         self.meeting_context_folder_path.setText(
             resolve_meeting_context_folder_path(settings)
-        )
-        self.meeting_redecode_coverage_guard_check.setChecked(
-            resolve_meeting_redecode_coverage_guard(settings)
-        )
-        self.meeting_end_redecode_check.setChecked(
-            resolve_meeting_end_redecode(settings)
-        )
-        self.meeting_end_polish_check.setChecked(
-            resolve_meeting_end_polish(settings)
         )
         self.meeting_end_report_check.setChecked(
             resolve_meeting_end_report(settings)
@@ -3615,12 +3608,7 @@ class SettingsDialog(QDialog):
         try:
             settings = settings_manager.load_all_settings()
 
-            self.auto_paste_check.setChecked(
-                settings.get(SettingsKey.AUTO_PASTE, True)
-            )
-            self.copy_clipboard_check.setChecked(
-                settings.get(SettingsKey.COPY_CLIPBOARD, True)
-            )
+            self._bindings.load(settings)
             self.transcript_cleanup_check.setChecked(
                 settings.get(
                     SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
@@ -3636,15 +3624,8 @@ class SettingsDialog(QDialog):
             )
 
             self._update_cleanup_prompt_ui()
-            self.minimize_tray_check.setChecked(
-                self._tray_available
-                and settings.get(SettingsKey.MINIMIZE_TRAY, True)
-            )
             self.update_check_check.setChecked(
                 resolve_update_check_enabled(settings)
-            )
-            self.update_notify_check.setChecked(
-                resolve_update_notify_enabled(settings)
             )
             self.update_notify_tile.setEnabled(
                 self.update_check_check.isChecked()
@@ -3691,8 +3672,7 @@ class SettingsDialog(QDialog):
             logger.info("Settings loaded successfully")
         except Exception as e:
             logger.error("Failed to load settings: %s", e)
-            self.auto_paste_check.setChecked(True)
-            self.copy_clipboard_check.setChecked(True)
+            self._bindings.load({})
             self.transcript_cleanup_check.setChecked(
                 config.TRANSCRIPT_CLEANUP_ENABLED
             )
@@ -3700,9 +3680,7 @@ class SettingsDialog(QDialog):
             self._saved_cleanup_prompt = config.TRANSCRIPT_CLEANUP_PROMPT
             self.cleanup_rules_list.clear()
             self._update_cleanup_prompt_ui()
-            self.minimize_tray_check.setChecked(self._tray_available)
             self.update_check_check.setChecked(config.UPDATE_CHECK_ENABLED)
-            self.update_notify_check.setChecked(config.UPDATE_NOTIFY_ENABLED)
             self.update_notify_tile.setEnabled(
                 self.update_check_check.isChecked()
             )
