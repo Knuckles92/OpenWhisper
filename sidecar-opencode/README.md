@@ -23,7 +23,10 @@ router; it does not open a listening socket. See the [official SDK docs](https:/
 - Only the five existing meeting tools are registered. OpenCode's default tools and agents are
   removed. Custom tools use codemode: false, so the model calls them directly. Python checks
   the request ID, generation, cancellation, pass policy, evidence, revisions, and human edits.
-- sessions.interrupt({continue: false}) cancels actual execution. Aborting the activity stream
+- Errors the SDK classifies as transient (rate limits, provider overload, dropped streams) get
+  up to three retries of at most 10 s each, matching Pi's automatic retry. Other provider errors
+  fail the pass at once. Python's pass deadline and cancellation still bound every retry.
+- sessions.interrupt({resume: false}) cancels actual execution. Aborting the activity stream
   alone is insufficient. Late tool results cannot update a newer pass or emit its progress.
 - OpenCode's database stays in memory. Config, cache, state, and temporary paths are private
   to the sidecar; ambient CLI settings, credential variables, and Bun preloads are excluded.

@@ -6,6 +6,21 @@ import { providerConfig } from "./provider";
 import { SDK_VERSION } from "./versions";
 
 type Active = { id: string; requestId: string; systemPrompt: string; canceled: boolean };
+type RetryDecision = { retry: false } | { retry: true; delay: number };
+/** Retries after the first failed model request, matching Pi's automatic retry count. */
+export const MAX_PROVIDER_RETRIES = 3;
+export const MAX_RETRY_DELAY_MS = 10_000;
+
+/**
+ * The SDK proposes a retry only for errors it classifies as transient (rate limits, provider
+ * overload, dropped streams), with backoff and Retry-After. Keep a few short ones; Python's
+ * pass deadline and cancellation still bound the whole pass. `attempt` is 2 on the first retry.
+ */
+export function retryDecision(attempt: number, proposed: RetryDecision): RetryDecision {
+  if (!proposed.retry || attempt > MAX_PROVIDER_RETRIES + 1) return { retry: false };
+  return { retry: true, delay: Math.min(Math.max(0, proposed.delay), MAX_RETRY_DELAY_MS) };
+}
+
 export async function createSession(options: CreateSessionOptions): Promise<HarnessSession> {
   const directory = process.env.OPENWHISPER_OPENCODE_ROOT;
   if (!directory) throw new Error("OpenCode requires an isolated runtime directory");
@@ -53,8 +68,10 @@ export async function createSession(options: CreateSessionOptions): Promise<Harn
         event.options.maxTokens = options.modelMetadata?.max_output_tokens ?? 4096;
       });
       await ctx.session.hook("retry", event => {
-        // Python owns retries and deadlines; never hide a provider failure in an unbounded loop.
-        event.decision = { retry: false };
+        const request = active;
+        event.decision = request && !request.canceled && request.id === event.sessionID
+          ? retryDecision(event.attempt, event.decision) : { retry: false };
+        if (event.decision.retry) options.onEvent?.({ type: "auto_retry_start" });
       });
     },
   });

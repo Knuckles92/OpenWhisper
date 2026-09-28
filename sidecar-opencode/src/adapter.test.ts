@@ -7,6 +7,8 @@ import type { CreateSessionOptions, HarnessSession } from "../../sidecar/src/ses
 
 let root: string;
 let createSession: typeof import("./adapter").createSession;
+let retryDecision: typeof import("./adapter").retryDecision;
+let MAX_PROVIDER_RETRIES: number, MAX_RETRY_DELAY_MS: number;
 beforeAll(async () => {
   root = await mkdtemp(path.join(tmpdir(), "openwhisper-opencode-tests-"));
   process.env.OPENWHISPER_OPENCODE_ROOT = root;
@@ -16,7 +18,7 @@ beforeAll(async () => {
     process.env[key] = path.join(root, key);
     await mkdir(process.env[key]!, { recursive: true });
   }
-  ({ createSession } = await import("./adapter"));
+  ({ createSession, retryDecision, MAX_PROVIDER_RETRIES, MAX_RETRY_DELAY_MS } = await import("./adapter"));
 }, 30000);
 afterAll(async () => { await rm(root, { force: true, recursive: true }); });
 
@@ -120,21 +122,61 @@ for (const protocol of ["chat", "responses", "anthropic", "google"]) {
   }, 30000);
 }
 
-for (const status of [401, 429, 500]) {
+function providerError(status: number) {
+  return Response.json({ error: { message: "private provider diagnostic synthetic-secret", type: "api_error" } }, { status });
+}
+
+for (const status of [400, 401]) {
   test("HTTP " + status + " fails once without leaking provider body or retrying", async () => {
     let calls = 0;
-    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch() {
-      calls++;
-      return Response.json({ error: { message: "private provider diagnostic synthetic-secret", type: "api_error" } }, { status });
-    } });
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch() { calls++; return providerError(status); } });
     const session = await createSession({ ...base, baseUrl: "http://127.0.0.1:" + server.port + "/v1" });
     try {
-      await expect(session.runTurn("Update", context)).rejects.toThrow("OpenCode model turn failed");
+      const failure = session.runTurn("Update", context);
+      await expect(failure).rejects.toThrow("OpenCode model turn failed (HTTP " + status + ")");
+      await expect(failure).rejects.not.toThrow("synthetic-secret");
       expect(calls).toBe(1);
       expect(session.isBusy()).toBe(false);
     } finally { await session.dispose(); server.stop(true); }
   }, 30000);
 }
+
+test("retry policy follows the SDK's transient classification with a bounded count and delay", () => {
+  expect(retryDecision(2, { retry: false })).toEqual({ retry: false });
+  expect(retryDecision(2, { retry: true, delay: 2100 })).toEqual({ retry: true, delay: 2100 });
+  expect(retryDecision(MAX_PROVIDER_RETRIES + 1, { retry: true, delay: 900_000 })).toEqual({ retry: true, delay: MAX_RETRY_DELAY_MS });
+  expect(retryDecision(MAX_PROVIDER_RETRIES + 2, { retry: true, delay: 10 })).toEqual({ retry: false });
+});
+
+test("a rate-limited request is retried and reported as retry activity", async () => {
+  let calls = 0;
+  let applied = 0;
+  const progress: any[] = [];
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch() {
+    calls++;
+    return calls === 1 ? providerError(429) : reply("chat", applied > 0);
+  } });
+  const session = await createSession({ ...base, baseUrl: "http://127.0.0.1:" + server.port + "/v1",
+    tools: [{ ...tool, execute: async () => { applied++; return { text: "Applied" }; } }],
+    onEvent: event => progress.push(event) });
+  try {
+    expect((await session.runTurn("Update", context)).aborted).toBe(false);
+    expect(applied).toBe(1);
+    expect(calls).toBe(3);
+    expect(progress.some(e => e.type === "auto_retry_start")).toBe(true);
+  } finally { await session.dispose(); server.stop(true); }
+}, 30000);
+
+test("a persistent provider outage stops after the bounded retries", async () => {
+  let calls = 0;
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch() { calls++; return providerError(503); } });
+  const session = await createSession({ ...base, baseUrl: "http://127.0.0.1:" + server.port + "/v1" });
+  try {
+    await expect(session.runTurn("Update", context)).rejects.toThrow("OpenCode model turn failed (HTTP 503)");
+    expect(calls).toBe(MAX_PROVIDER_RETRIES + 1);
+    expect(session.isBusy()).toBe(false);
+  } finally { await session.dispose(); server.stop(true); }
+}, 45000);
 
 test("cancellation interrupts a stalled provider and next pass starts cleanly", async () => {
   let started!: () => void;
