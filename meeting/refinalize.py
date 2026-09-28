@@ -25,7 +25,9 @@ from meeting.finalization import (
     STEP_ORDER,
     SpeakerPassGate,
     failed_steps_message,
+    insights_ready_message,
     make_step as _make_step,
+    saved_state_detail,
     speaker_pass_gate,
     summary_stats,
 )
@@ -1040,8 +1042,7 @@ def rerun_finalization(
                     store, repository, meeting_id, meeting,
                 )
                 _set_step(
-                    steps, "finalize", "completed",
-                    f"Saved {stats['segments']} segments ({stats['words']} words)",
+                    steps, "finalize", "completed", saved_state_detail(stats),
                 )
             except Exception as exc:
                 logger.exception("Finalize retry failed for %s", meeting_id)
@@ -1052,14 +1053,7 @@ def rerun_finalization(
                 steps, cloud_enabled=cloud_enabled,
             )
             if status == "completed" and stats:
-                parts = [f"{stats['segments']} segments"]
-                if stats.get("key_points"):
-                    parts.append(f"{stats['key_points']} key points")
-                if stats.get("action_items"):
-                    parts.append(f"{stats['action_items']} action items")
-                if stats.get("decisions"):
-                    parts.append(f"{stats['decisions']} decisions")
-                message = f"Final insights ready — {', '.join(parts)}."
+                message = insights_ready_message(stats)
             finalization = _persist_finalization(
                 store,
                 status=status,
@@ -1080,20 +1074,11 @@ def rerun_finalization(
             }
 
     stats = _collect_summary_stats(store, repository, meeting_id, meeting)
-    if not any(step.get("id") == "finalize" for step in steps):
-        steps.append(_make_step("finalize", "completed"))
-        _set_step(
-            steps, "finalize", "completed",
-            f"Saved {stats['segments']} segments ({stats['words']} words)",
-        )
-    elif not any(
+    if not any(
         step.get("id") == "finalize" and step.get("status") == "completed"
         for step in steps
     ):
-        _set_step(
-            steps, "finalize", "completed",
-            f"Saved {stats['segments']} segments ({stats['words']} words)",
-        )
+        _set_step(steps, "finalize", "completed", saved_state_detail(stats))
     status, message = _overall_from_steps(steps, cloud_enabled=cloud_enabled)
     finalization = _persist_finalization(
         store,

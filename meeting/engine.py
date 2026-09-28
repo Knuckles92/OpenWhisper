@@ -27,7 +27,8 @@ from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 from meeting.clock import MeetingClock
 from meeting.finalization import (
-    POLISH_TIMEOUT_S, make_step, failed_steps_message, speaker_pass_gate,
+    POLISH_TIMEOUT_S, make_step, failed_steps_message, insights_ready_message,
+    saved_state_detail, speaker_pass_gate,
 )
 from meeting.interfaces import (
     CHANNEL_LOOPBACK,
@@ -1098,25 +1099,14 @@ class MeetingEngine:
                     _update_step(
                         "finalize",
                         "completed",
-                        f"Saved {summary_stats['segments']} segments ({summary_stats['words']} words)",
+                        saved_state_detail(summary_stats),
                     )
 
                     if any(s.get("status") == "failed" for s in steps):
                         status = "failed"
                         final_msg = failed_steps_message(steps)
-                    elif status == "completed":
-                        if not want_report:
-                            final_msg = message
-                        else:
-                            parts = [f"{summary_stats['segments']} segments"]
-                            if summary_stats["key_points"]:
-                                parts.append(f"{summary_stats['key_points']} key points")
-                            if summary_stats["action_items"]:
-                                parts.append(f"{summary_stats['action_items']} action items")
-                            if summary_stats["decisions"]:
-                                parts.append(f"{summary_stats['decisions']} decisions")
-                            summary_line = ", ".join(parts)
-                            final_msg = f"Final insights ready — {summary_line}." if summary_line else "Final insights are ready."
+                    elif status == "completed" and want_report:
+                        final_msg = insights_ready_message(summary_stats)
                     else:
                         final_msg = message
 

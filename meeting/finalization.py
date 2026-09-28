@@ -241,6 +241,24 @@ def summary_stats(
     }
 
 
+def saved_state_detail(stats: dict[str, Any]) -> str:
+    """The finalize step's detail once the meeting state is saved."""
+    return f"Saved {stats['segments']} segments ({stats['words']} words)"
+
+
+def insights_ready_message(stats: dict[str, Any]) -> str:
+    """The card's headline once the final report is ready."""
+    parts = [f"{stats['segments']} segments"]
+    for key, label in (
+        ("key_points", "key points"),
+        ("action_items", "action items"),
+        ("decisions", "decisions"),
+    ):
+        if stats.get(key):
+            parts.append(f"{stats[key]} {label}")
+    return f"Final insights ready — {', '.join(parts)}."
+
+
 def sparse_redecode_detail(new_words: int, old_words: int) -> str:
     return (
         f"Re-transcription produced {new_words} words versus {old_words} in the "

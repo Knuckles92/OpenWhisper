@@ -5,8 +5,10 @@ import pytest
 
 from meeting.finalization import (
     failed_steps_message,
+    insights_ready_message,
     make_step,
     run_agent_call,
+    saved_state_detail,
     speaker_pass_gate,
 )
 from meeting.interfaces import AgentResult
@@ -26,6 +28,15 @@ def test_failure_summary_preserves_reason_and_multiple_failed_stages():
 def test_legacy_failure_without_detail_and_success():
     assert "polish failed" in failed_steps_message([{"id": "polish", "status": "failed"}])
     assert failed_steps_message([make_step("polish", "completed")]) == ""
+
+
+def test_ready_messages_name_only_what_was_found():
+    stats = {"segments": 32, "words": 410, "key_points": 4,
+             "action_items": 0, "decisions": 1}
+    assert insights_ready_message(stats) == (
+        "Final insights ready — 32 segments, 4 key points, 1 decisions."
+    )
+    assert saved_state_detail(stats) == "Saved 32 segments (410 words)"
 
 
 class TestSpeakerPassGate:
