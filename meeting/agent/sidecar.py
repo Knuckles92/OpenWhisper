@@ -312,10 +312,6 @@ class SidecarAgent:
     change the notes page and a polish pass only transcript text.
     """
 
-    #: Tool calls always need an active request id. This flag additionally
-    #: drops progress notifications that do not name an active request.
-    require_request_scope = False
-
     def __init__(self, payload_dir: str) -> None:
         self._payload_dir = payload_dir
         self._cfg: Optional[AgentConfig] = None
@@ -708,12 +704,9 @@ class SidecarAgent:
             )
         return AgentResult(ok=True, op_results=op_results, usage=usage)
 
-    def _bundle_path(self) -> str:
-        return os.path.join(self._payload_dir, _BUNDLE_NAME)
-
     def _resolve_node_cmd(self) -> List[str]:
         """Build the argv to launch the sidecar bundle."""
-        bundle = self._bundle_path()
+        bundle = os.path.join(self._payload_dir, _BUNDLE_NAME)
         if not os.path.isfile(bundle):
             raise RuntimeError(f"sidecar bundle not found: {bundle}")
         if sys.platform.startswith("win"):
@@ -781,9 +774,6 @@ class SidecarAgent:
         finally:
             client.close()
 
-    def _process_cwd(self) -> Optional[str]:
-        return None
-
     def _build_env(self, api_key: str) -> Dict[str, str]:
         """Environment for the sidecar child process."""
         assert self._cfg is not None
@@ -822,7 +812,6 @@ class SidecarAgent:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=env,
-                cwd=self._process_cwd(),
                 creationflags=creationflags,
                 text=True,
                 encoding="utf-8",
@@ -1263,17 +1252,6 @@ class SidecarAgent:
                 msg.get("method"),
             )
 
-    def _validate_hello(self, params: Dict[str, Any]) -> bool:
-        """True when the harness speaks the current host protocol.
-
-        The host writes every prompt and scopes every tool call to its
-        checkpoint; a bundle that cannot do both is out of date.
-        """
-        return (
-            params.get("host_prompt") == 1
-            and params.get("request_scoped_tools") == 1
-        )
-
     def _handle_notification(self, method: str, params: Any,
                              generation: Optional[int] = None) -> None:
         if not isinstance(params, dict):
@@ -1292,7 +1270,12 @@ class SidecarAgent:
                 and len(token) == len(expected)
                 and hmac.compare_digest(token, expected)
             )
-            current = self._validate_hello(params)
+            # The host writes every prompt and scopes every tool call to its
+            # checkpoint; a bundle that cannot do both is out of date.
+            current = (
+                params.get("host_prompt") == 1
+                and params.get("request_scoped_tools") == 1
+            )
             ok = token_ok and protocol == _PROTOCOL_VERSION and current
             self._hello_seen = True
             self._hello_ok = bool(ok)
@@ -1300,7 +1283,7 @@ class SidecarAgent:
                 token_ok and protocol == _PROTOCOL_VERSION and not current
             )
             self._text_protocols = params.get("text_protocols", []) if ok else []
-            version = params.get("harness_version") or params.get("pi_version")
+            version = params.get("pi_version")
             if isinstance(version, str):
                 self._pi_version = version
             if not ok:
@@ -1324,13 +1307,6 @@ class SidecarAgent:
                 logger.info("sidecar: %s", text)
             return
         if method == "progress":
-            if self.require_request_scope:
-                with self._lock:
-                    request = params.get("request_id")
-                    if (request not in self._active_request_ids
-                            or request in self._revoked_requests
-                            or (generation is not None and generation != self._restart_generation)):
-                        return
             event = str(params.get("event") or "update")
             delta = str(params.get("delta") or "")
             tool = str(params.get("tool") or "")
