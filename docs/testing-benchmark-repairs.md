@@ -93,9 +93,8 @@ It separates first decode from warmed samples. scripts/benchmark_local_asr_corpu
 adds per-group and corpus edit counts. The legacy speed script is explicitly a
 single-decode smoke benchmark, not a warmed performance comparison.
 
-To run the collected large-file check, set OPENWHISPER_LARGE_AUDIO to an existing
-WAV larger than the configured threshold and OPENWHISPER_LARGE_REFERENCE to its
-UTF-8 transcript, then run pytest tests/test_large_transcription.py. It requires
-an installed local model, does not synthesize audio under pytest, and requires
-ordered WER at most 50%. Production dispatch is tested separately with deterministic
-backends; this optional check measures actual backend decoding.
+The opt-in large-file check described here (`tests/test_large_transcription.py`,
+gated behind `OPENWHISPER_LARGE_AUDIO`/`OPENWHISPER_LARGE_REFERENCE`) was later
+removed as an orphaned manual script. Production dispatch is tested separately
+with deterministic backends; use `scripts/benchmark_local_asr.py` for actual
+backend decoding measurements against a real audio file.
