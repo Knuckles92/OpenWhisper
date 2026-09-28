@@ -924,6 +924,84 @@ QFrame#settingsTile QCheckBox::indicator:checked:disabled {
     border-color: @accent-muted;
 }
 
+/* Meeting intelligence: who runs AI insights. The tiles paint their own
+   cards (lift, glow, scan shimmer); these rules set their type. */
+QWidget#agentPicker,
+QWidget#agentTileGrid,
+QWidget#agentTile {
+    background-color: transparent;
+}
+
+QWidget#agentMark {
+    font-size: 13px;
+}
+
+QWidget#agentStatusPill {
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QLabel#agentTileName {
+    color: @slate-text;
+    background-color: transparent;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+QLabel#agentTileName[muted="true"] {
+    color: @slate-text-3;
+}
+
+QLabel#agentTileDetail {
+    color: @slate-text-3;
+    background-color: transparent;
+    font-size: 12px;
+}
+
+QLabel#agentTileDetail[tone="muted"] {
+    color: @slate-text-4;
+}
+
+QLabel#agentTileDetail[tone="warning"] {
+    color: @warning-text;
+}
+
+QPushButton#agentTileLink {
+    color: @accent-soft;
+    background-color: transparent;
+    border: none;
+    padding: 0px;
+    min-height: 0px;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: left;
+}
+
+QPushButton#agentTileLink:hover {
+    color: @accent-hover;
+    text-decoration: underline;
+}
+
+QPushButton#agentLookAgainButton {
+    color: @accent-soft;
+    background-color: transparent;
+    border: 1px solid @slate-border;
+    border-radius: 9px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#agentLookAgainButton:hover {
+    background-color: @accent-tint;
+    border-color: @accent-tint-border;
+}
+
+QPushButton#agentLookAgainButton:disabled {
+    color: @slate-text-4;
+    border-color: @slate-border-subtle;
+}
+
 /* Integrated Hotkeys destination */
 QFrame#hotkeyInstructionCard,
 QFrame#hotkeyShortcutCard {
