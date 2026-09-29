@@ -26,6 +26,8 @@ Use a [packaged release](#install) with bundled Python and dependencies, or [run
 - **AI cleanup:** Apply spelling and style rules or reusable [cleanup profiles](docs/cleanup-profiles.md), with separate text-model choices for dictation and meetings.
 - **One Settings window:** An Overview of what is running, each model choice on the page for the feature it powers, local models and runtimes under Downloads, and Ctrl+K search across every setting, model, and help note.
 - **History:** Search, retranscribe, and export transcripts as Markdown, plain text, or JSON. See [export format support](docs/export-support.md) for what each format includes.
+- **Agent history API (preview):** Start an opt-in local, authenticated API to search saved transcriptions and meetings, retrieve notes, and cite transcript segments. See [API setup and reference](docs/agent-api.md).
+- **MCP for your agent:** Enable **Settings → MCP** to connect an agent to saved history, transcripts, and meeting insights. Includes live server status, a local URL, and copyable setup prompts, commands, and client configuration. See [MCP setup](docs/mcp.md).
 
 The app also includes microphone selection, a system tray where available, and dark, light, or system-matched themes.
 

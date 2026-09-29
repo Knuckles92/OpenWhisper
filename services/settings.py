@@ -167,6 +167,8 @@ class SettingsKey:
     MEETING_CONTEXT_FOLDER_PATH: Final[str] = "meeting_context_folder_path"
     MEETING_SERVER_BIND: Final[str] = "meeting_server_bind"
     MEETING_SERVER_PORT: Final[str] = "meeting_server_port"
+    MCP_ENABLED: Final[str] = "mcp_enabled"
+    MCP_PORT: Final[str] = "mcp_port"
     # Remote engine (services/remote_asr). Client: the paired host's address,
     # pinned certificate fingerprint and name (the token is in the OS
     # credential store). Host: sharing switch, port, and paired devices,

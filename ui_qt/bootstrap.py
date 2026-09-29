@@ -321,6 +321,10 @@ def main() -> int:
         # Whisper load, HF consent, meeting recovery, and streaming setup
         # run after the window is visible — never on the splash path.
         app_controller.notify_main_ui_ready()
+        from services.agent_mcp.runtime import runtime as mcp_runtime
+        from services.settings import settings_manager
+
+        mcp_runtime.restore(settings_manager)
         if health_token:
             from PyQt6.QtCore import QTimer
 
@@ -351,6 +355,9 @@ def main() -> int:
         logging.exception("Application startup failed")
         raise
     finally:
+        from services.agent_mcp.runtime import runtime as mcp_runtime
+
+        mcp_runtime.stop(wait=True)
         try:
             if loading_screen is not None:
                 loading_screen.destroy()

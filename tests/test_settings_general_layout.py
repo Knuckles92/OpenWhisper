@@ -28,6 +28,7 @@ from ui_qt.dialogs.settings_dialog import (
     DOWNLOADS,
     GENERAL,
     HOTKEYS,
+    MCP,
     MEETING_AFTER,
     MEETING_DASHBOARD,
     MEETING_INTELLIGENCE,
@@ -78,6 +79,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     GENERAL,
                     HOTKEYS,
                     API_KEYS,
+                    MCP,
                     ADVANCED,
                 ),
             )

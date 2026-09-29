@@ -33,6 +33,9 @@ openpyxl>=3.1.0
 # Meeting Mode: dashboard web server (FastAPI + WebSocket over uvicorn)
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
+# Agent access to saved history via the official MCP SDK.
+mcp>=2.2,<3
+httpx>=0.28.1
 # Remote engine: the host serves its speech engine to paired computers over
 # a TLS WebSocket (websockets' threaded server and client). cryptography
 # creates the host's self-signed certificate, which clients pin at pairing.

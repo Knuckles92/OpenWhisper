@@ -39,6 +39,7 @@ def _run_package_self_test() -> None:
         "sounddevice",
         "sqlalchemy.dialects.sqlite",
         "uvicorn",
+        "services.agent_mcp.app",
     ]
     if sys.platform == "win32":
         modules.extend(("keyring.backends.Windows", "keyboard", "soundcard"))
@@ -99,6 +100,10 @@ def _run_package_self_test() -> None:
 
 def _handle_early_cli() -> None:
     """Handle worker and metadata modes before native-library bootstrap."""
+    if sys.argv[1:2] == ["--api"]:
+        from services.agent_api.cli import main
+
+        raise SystemExit(main(sys.argv[2:]))
     if sys.argv[1:] == ["--local-asr-worker"]:
         from services.local_asr.worker import main
 

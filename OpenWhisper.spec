@@ -124,6 +124,9 @@ _COLLECT_PACKAGES = [
     "sounddevice",
     "lxml",
     "uvicorn",
+    "mcp",
+    "mcp_types",
+    "jsonschema_specifications",
     "soundcard",
     # Plugin-style packages whose platform implementations are selected at
     # runtime. SecretStorage/jeepney back Linux's explicit keyring backend;

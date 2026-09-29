@@ -31,6 +31,7 @@ RUNTIME: Final[str] = "runtime"
 GENERAL: Final[str] = "general"
 HOTKEYS: Final[str] = "hotkeys"
 API_KEYS: Final[str] = "api_keys"
+MCP: Final[str] = "mcp"
 ADVANCED: Final[str] = "advanced"
 
 #: Names the retired Model Manager and Downloads windows accepted.

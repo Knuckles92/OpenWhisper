@@ -105,6 +105,21 @@ def test_the_card_shows_the_link_instead_of_the_dot(paired):
     assert not tab.link_glyph.isVisible()
 
 
+def test_the_link_tooltip_names_the_model_once(paired):
+    tab = _remote_tab()
+    tab.set_remote_link(_connected(runtime_status="Parakeet TDT 0.6B v3 | cuda"))
+    tip = "Parakeet TDT 0.6B v3 on CUDA, served by jed at 100.101.102.103:47821."
+    assert tab.link_glyph.toolTip() == tip
+    assert tab.remote_runtime_label.toolTip() == tip
+    # The host's fallback note is news; its restated model and device are not.
+    tab.set_remote_link(_connected(engine_label="Whisper turbo", device="cpu", compute_type="int8",
+                                   runtime_status="turbo | cpu (int8) — GPU unavailable, using CPU"))
+    assert tab.link_glyph.toolTip() == (
+        "Whisper turbo on CPU (int8), served by jed at 100.101.102.103:47821.\nGPU unavailable, using CPU")
+    tab.set_remote_link(_connected(runtime_status="Warming up the GPU"))
+    assert tab.link_glyph.toolTip().endswith("\nWarming up the GPU")
+
+
 def test_the_card_counts_down_to_the_next_try(paired):
     tab = _remote_tab()
     detail = "Couldn't reach 192.168.1.40:47821. Check that the host is on."

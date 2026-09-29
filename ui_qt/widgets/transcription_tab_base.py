@@ -55,6 +55,16 @@ _LIVE_PREVIEW_TIP = (
 )
 
 
+def _host_status_note(status: str) -> str:
+    """What the host's engine status adds to the link tooltip's first line.
+
+    A loaded engine reports ``"model | device (compute)"``, which that line
+    already says; only a note after it, such as a GPU fallback, is news.
+    """
+    summary, _, note = status.partition(" — ")
+    return note.strip() if " | " in summary else status
+
+
 class TranscriptPane(QFrame):
     """The transcript's painted surface, with room for one floating corner action.
 
@@ -742,7 +752,7 @@ class TranscriptionTabBase(QWidget):
             if link.gpu_memory_mib:
                 parts.append(f"{link.gpu_memory_mib / 1024:g} GB VRAM")
         self.remote_runtime_label.setText(" · ".join(parts))
-        self.remote_runtime_label.setToolTip(link.runtime_status or self._link_tooltip())
+        self.remote_runtime_label.setToolTip(self._link_tooltip())
 
     def _link_text(self) -> str:
         link = self._remote_link
@@ -772,9 +782,10 @@ class TranscriptionTabBase(QWidget):
         if link.state == "connected":
             engine = link.engine_label or "Its engine"
             where = f" at {link.address}" if link.address else ""
-            device = f" on {link.device.upper() if link.device == 'cuda' else link.device}" if link.device else ""
+            device = f" on {link.device.upper()}" if link.device else ""
             compute = f" ({link.compute_type})" if link.compute_type else ""
-            detail = f"\n{link.runtime_status}" if link.runtime_status else ""
+            note = _host_status_note(link.runtime_status)
+            detail = f"\n{note}" if note else ""
             return f"{engine}{device}{compute}, served by {link.host}{where}.{detail}"
         if link.state == "offline":
             return f"{link.detail}\nClick the link to try again now.".strip()

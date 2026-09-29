@@ -109,6 +109,7 @@ from ui_qt.dialogs.settings_destinations import (
     DOWNLOADS,
     GENERAL,
     HOTKEYS,
+    MCP,
     MEETING_AFTER,
     MEETING_DASHBOARD,
     MEETING_FAST,
@@ -122,6 +123,7 @@ from ui_qt.dialogs.settings_destinations import (
     resolve_destination,
 )
 from ui_qt.dialogs.settings_downloads import DownloadsPage
+from ui_qt.dialogs.settings_mcp import McpSettingsPage
 from ui_qt.dialogs.settings_models import ModelAssignments
 from ui_qt.dialogs.settings_overview import OverviewPage, OverviewSummary
 from ui_qt.dialogs.settings_remote import RemoteEngineSection
@@ -181,6 +183,11 @@ _HF_POLICY_LABELS = {
 
 #: Destinations reached from search by a name the app used to use.
 _SEARCH_ALIASES = {
+    MCP: (
+        "Connect an agent with MCP",
+        "App › MCP",
+        "model context protocol agent server connection claude cursor history api",
+    ),
     VOICE_MODEL: (
         "Model assignments",
         "Model Manager's choices now sit on Voice model, AI cleanup, Voice & "
@@ -495,6 +502,7 @@ class SettingsDialog(QDialog):
                 (GENERAL, "General", "bolt-green.svg"),
                 (HOTKEYS, "Hotkeys", "keyboard-green.svg"),
                 (API_KEYS, "API keys", "key-blue.svg"),
+                (MCP, "MCP", "server-blue.svg"),
                 (ADVANCED, "Advanced", "box-blue.svg"),
             )),
         ):
@@ -657,6 +665,12 @@ class SettingsDialog(QDialog):
             self._build_api_keys_page,
         )
         self._add_page(
+            MCP,
+            "MCP",
+            "Connect your agent to your OpenWhisper history.",
+            self._build_mcp_page,
+        )
+        self._add_page(
             ADVANCED,
             "Advanced",
             "Meeting re-transcription and developer tools.",
@@ -710,6 +724,11 @@ class SettingsDialog(QDialog):
         area.setWidget(page)
         self._page_scrolls[key] = area
         self.stack.addWidget(area)
+
+    def _build_mcp_page(self, layout: QVBoxLayout) -> None:
+        self.mcp_page = McpSettingsPage(settings_manager)
+        layout.addWidget(self.mcp_page)
+        layout.addStretch()
 
     def _build_downloads_page(self, layout: QVBoxLayout) -> None:
         self.hf_policy_combo = ElidingComboBox()
