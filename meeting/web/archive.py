@@ -1,13 +1,11 @@
 """Read/edit adapter for serving persisted meetings without a live recorder."""
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from meeting.interfaces import OpResult
-from meeting.state.schema import FinalizationState, MeetingState
-from meeting.state.store import MeetingStateStore, repository_segment_lookup
+from meeting.stored import open_store, stored_endpoint
 from meeting.web.auth import generate_token_pair
 
 
@@ -36,61 +34,17 @@ class ArchivedMeetingDashboard:
         self.repository = repository
         self.meeting_id = str(meeting["id"])
         self.model_lease = model_lease
-        stored_endpoint = None
-        raw_endpoint = meeting.get("agent_endpoint_json")
-        if isinstance(raw_endpoint, dict):
-            stored_endpoint = raw_endpoint
-        elif isinstance(raw_endpoint, str) and raw_endpoint.strip():
-            try:
-                parsed = json.loads(raw_endpoint)
-            except Exception:
-                parsed = None
-            if isinstance(parsed, dict):
-                stored_endpoint = parsed
         self.options = SimpleNamespace(
             spool_root=spool_root,
             llm_provider=meeting.get("agent_provider") or llm_provider,
             llm_model=meeting.get("agent_model") or llm_model,
-            llm_endpoint=stored_endpoint or llm_endpoint,
+            llm_endpoint=stored_endpoint(meeting) or llm_endpoint,
             agent_core_kind=agent_core_kind,
             sidecar_payload_dir=sidecar_payload_dir,
         )
-        self.store = MeetingStateStore(
-            self._load_state(meeting),
-            repository=repository,
-            segment_exists=lambda segment_id: repository.segment_exists(
-                self.meeting_id, segment_id
-            ),
-            segment_pinned=lambda segment_id: bool(
-                (repository.get_segment(self.meeting_id, segment_id) or {}).get(
-                    "speaker_pinned"
-                )
-            ),
-            segment_lookup=repository_segment_lookup(repository, self.meeting_id),
-        )
+        # Historical dashboards must never claim work is still in flight.
+        self.store = open_store(repository, self.meeting_id, meeting, historical=True)
         self._server = None
-
-    def _load_state(self, meeting: Dict[str, Any]) -> MeetingState:
-        try:
-            payload = json.loads(meeting.get("state_json") or "{}")
-            if not isinstance(payload, dict):
-                raise ValueError("state snapshot is not an object")
-        except (TypeError, ValueError):
-            payload = {}
-        payload["meeting_id"] = self.meeting_id
-        payload["title"] = str(meeting.get("title") or payload.get("title") or "")
-        payload["status"] = str(meeting.get("status") or payload.get("status") or "ended")
-        payload["cloud_enabled"] = bool(meeting.get("cloud_enabled", False))
-        payload.setdefault("seq", int(meeting.get("state_seq") or 0))
-        # Historical dashboards must never claim consolidation is still in flight.
-        payload["finalization"] = FinalizationState.normalize_historical(
-            payload.get("finalization"),
-            cloud_enabled=payload["cloud_enabled"],
-            meeting_status=payload["status"],
-        ).to_dict()
-        if (payload.get("insight_review") or {}).get("status") == "running":
-            payload["insight_review"].update(status="unavailable", message="Review was interrupted. Retry when ready.")
-        return MeetingState.from_dict(payload)
 
     def attach_server(self, server: Any) -> None:
         """Attach the server after construction so token rotation can update URLs."""

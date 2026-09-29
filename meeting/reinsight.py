@@ -16,12 +16,13 @@ No Qt imports; this package stays standalone-extractable.
 from __future__ import annotations
 
 import logging
-import threading
 import uuid
-from typing import Any, Dict, List, Optional
+from contextlib import contextmanager
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from meeting.agent.base import create_agent_core
 from meeting.agent.prompts import build_system_prompt
+from meeting.finalization import run_agent_call
 from meeting.interfaces import AgentConfig, AgentResult, CheckpointPayload, OpResult
 from meeting.state.repair import repair_meeting_state
 from meeting.state.store import MeetingStateStore
@@ -34,33 +35,87 @@ logger = logging.getLogger(__name__)
 #: after ``CONSOLIDATION_STALL_S`` of silence (no Pi events / tool calls).
 DEFAULT_TIMEOUT_S = 900.0
 
-__all__ = ["rerun_insights", "DEFAULT_TIMEOUT_S"]
+__all__ = [
+    "AgentUnavailable",
+    "StoreToolHost",
+    "stored_agent",
+    "rerun_insights",
+    "DEFAULT_TIMEOUT_S",
+]
 
 
-class _OfflineToolHost:
-    """``AgentToolHost`` for a stored meeting: state patches plus read tools.
+class StoreToolHost:
+    """``AgentToolHost`` over one meeting's state store: patches plus reads.
 
-    Mirrors ``MeetingEngine``'s tool-host implementation op-for-op so the
-    validation layer behaves identically to a live checkpoint. The store is
-    built with a segment handler so system/diarizer speaker ops can persist;
-    the agent still cannot emit ``reassign_segment_speaker`` (agent_forbidden).
+    The live meeting and every headless re-run hand their agent this host,
+    so validation behaves identically in both. The store is built with a
+    segment handler so system/diarizer speaker ops can persist; the agent
+    still cannot emit ``reassign_segment_speaker`` (agent_forbidden).
 
     Attributes:
         applied: Running count of ops the store actually applied.
     """
 
-    def __init__(self, store: MeetingStateStore,
-                 repository: Any = None) -> None:
-        self._store = store
-        self._repository = (
-            repository if repository is not None
-            else getattr(store, "_repository", None)
-        )
+    def __init__(
+        self,
+        store: Optional[MeetingStateStore] = None,
+        repository: Any = None,
+        *,
+        get_store: Optional[Callable[[], Optional[MeetingStateStore]]] = None,
+        writes_allowed: Optional[Callable[[], bool]] = None,
+    ) -> None:
+        """
+        Args:
+            store: A stored meeting's store.
+            repository: Serves evidence and recall lookups; defaults to the
+                store's own.
+            get_store: Returns the live meeting's current store (None while
+                it has none); used instead of ``store``.
+            writes_allowed: Returns False once agent writes are revoked, so
+                a late or canceled agent cannot mutate durable state.
+        """
+        self._current_store = get_store or (lambda: store)
+        if repository is None:
+            repository = getattr(store, "_repository", None)
+        self._repository = repository
+        self._writes_allowed = writes_allowed or (lambda: True)
         self.applied = 0
+
+    def _meeting_id(self) -> str:
+        return str(getattr(self._current_store(), "meeting_id", "") or "")
+
+    def _refusal(self) -> Optional[str]:
+        """Why an agent write must not land now, or None."""
+        if self._current_store() is None:
+            return "inactive"
+        if not self._writes_allowed():
+            return "agent_writes_revoked"
+        return None
 
     def apply_agent_ops(self, ops: List[Dict[str, Any]]) -> List[OpResult]:
         """Validate and apply state-patch ops on behalf of the agent."""
-        return self._record(self._store.apply("agent", "agent", list(ops)))
+        reason = self._refusal()
+        if reason:
+            return [
+                OpResult(ok=False,
+                         op=op if isinstance(op, dict) else {"op": op},
+                         reason=reason)
+                for op in ops
+            ]
+        return self._record(
+            self._current_store().apply("agent", "agent", list(ops))
+        )
+
+    def segment_exists(self, segment_id: str) -> bool:
+        """Exact-match stored-segment lookup for agent evidence repair."""
+        meeting_id = self._meeting_id()
+        if not meeting_id or not hasattr(self._repository, "segment_exists"):
+            return False
+        try:
+            return bool(self._repository.segment_exists(meeting_id, segment_id))
+        except Exception:
+            logger.exception("Segment existence probe failed")
+            return False
 
     def ask_question(self, text: str, evidence: List[str]) -> OpResult:
         """Add a question to the quiet inbox (agent tool)."""
@@ -87,15 +142,10 @@ class _OfflineToolHost:
         """Bounded, consent-gated recall of earlier meeting transcripts."""
         from meeting.recall import search_past_meetings as recall
 
-        current_id = ""
-        try:
-            current_id = self._store.meeting_id
-        except Exception:
-            current_id = ""
         return recall(
             self._repository,
             query=query,
-            current_meeting_id=current_id,
+            current_meeting_id=self._meeting_id(),
             meeting_id=meeting_id,
             limit=limit,
         )
@@ -116,48 +166,79 @@ class _OfflineToolHost:
         )
 
     def _apply_single(self, op: Dict[str, Any]) -> OpResult:
-        return self._record(self._store.apply("agent", "agent", [op]))[0]
+        reason = self._refusal()
+        if reason:
+            return OpResult(ok=False, op=op, reason=reason)
+        return self._record(self._current_store().apply("agent", "agent", [op]))[0]
 
     def _record(self, results: List[OpResult]) -> List[OpResult]:
         self.applied += sum(1 for result in results if result.ok)
         return results
 
 
-def _consolidate(core: Any, payload: CheckpointPayload,
-                 timeout_s: float) -> AgentResult:
-    """Run one bounded ``consolidate`` call on a worker thread.
+class AgentUnavailable(RuntimeError):
+    """No agent core could be created for a headless pass."""
+
+
+@contextmanager
+def stored_agent(
+    meeting_id: str,
+    meeting: Dict[str, Any],
+    tools: StoreToolHost,
+    *,
+    provider: str,
+    model: str,
+    endpoint: Optional[Dict[str, Any]] = None,
+    agent_core_kind: str = "pi",
+    sidecar_payload_dir: Optional[str] = None,
+) -> Iterator[Any]:
+    """A throwaway agent core over a stored meeting, always shut down after.
+
+    The polish retry and the insight re-run both run their pass inside one.
 
     Args:
-        core: The initialized ``AgentCore``.
-        payload: The consolidation payload.
-        timeout_s: Maximum seconds to wait before canceling the agent.
+        meeting_id: The meeting the agent works on.
+        meeting: Its stored row; supplies the recorded endpoint.
+        tools: The host the agent acts through.
+        provider: LLM provider id.
+        model: Model id.
+        endpoint: Endpoint snapshot; the row's when omitted.
+        agent_core_kind: ``pi`` for the bundled sidecar, ``direct`` otherwise.
+        sidecar_payload_dir: Directory holding the Pi sidecar payload.
 
-    Returns:
-        The agent's result, or a failed ``AgentResult`` on timeout or raise.
+    Yields:
+        The initialized core.
+
+    Raises:
+        AgentUnavailable: When no core could be created.
     """
-    box: Dict[str, AgentResult] = {}
-
-    def worker() -> None:
+    try:
+        core = create_agent_core(agent_core_kind, sidecar_payload_dir)
+    except Exception as exc:
+        logger.exception("Agent core unavailable for a re-run of %s", meeting_id)
+        raise AgentUnavailable(str(exc)) from exc
+    try:
+        core.initialize(
+            AgentConfig(
+                meeting_id=meeting_id,
+                provider=provider,
+                model=model,
+                api_key=None,  # resolved inside the agent layer
+                system_prompt=build_system_prompt(),
+                endpoint=endpoint or _meeting_endpoint(meeting),
+            ),
+            tools,
+        )
+        yield core
+    finally:
+        # A leaked sidecar process outlives the request, so shutdown is
+        # unconditional.
         try:
-            box["result"] = core.consolidate(payload)
-        except Exception as exc:
-            logger.exception("Agent consolidate raised during insight re-run")
-            box["result"] = AgentResult(ok=False, error=str(exc))
-
-    thread = threading.Thread(target=worker, name="meeting-reinsight",
-                              daemon=True)
-    thread.start()
-    thread.join(timeout_s)
-    if thread.is_alive():
-        logger.warning("Insight re-run timed out after %.0fs; canceling",
-                       timeout_s)
-        try:
-            core.cancel()
+            core.shutdown()
         except Exception:
-            logger.exception("Agent cancel raised during insight re-run")
-        thread.join(timeout=5.0)
-        return AgentResult(ok=False, error=f"timed out after {timeout_s:.0f}s")
-    return box.get("result") or AgentResult(ok=False, error="no result")
+            logger.exception(
+                "Agent core shutdown failed after a re-run of %s", meeting_id,
+            )
 
 
 def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
@@ -199,53 +280,41 @@ def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
 
     if store is None:
         store = open_store(repository, meeting_id, meeting)
-    tools = _OfflineToolHost(store, repository)
-
-    try:
-        core = create_agent_core(agent_core_kind, sidecar_payload_dir)
-    except Exception as exc:
-        logger.exception("Agent core unavailable for insight re-run")
-        return {"ok": False, "state": store.snapshot(), "applied": 0,
-                "error": str(exc)}
+    tools = StoreToolHost(store, repository)
 
     ok = False
     error: Optional[str] = None
     try:
-        core.initialize(
-            AgentConfig(
-                meeting_id=meeting_id,
-                provider=provider,
-                model=model,
-                api_key=None,  # resolved inside the agent layer
-                system_prompt=build_system_prompt(),
-                endpoint=endpoint or _meeting_endpoint(meeting),
-            ),
-            tools,
-        )
-        payload = CheckpointPayload(
-            request_id=uuid.uuid4().hex,
-            state_snapshot=store.snapshot(),
-            new_segments=segments,
-            is_consolidation=True,
-        )
-        logger.info(
-            "Re-running insights for meeting %s over %d segments "
-            "(core=%s provider=%s model=%s)",
-            meeting_id, len(segments), agent_core_kind, provider, model,
-        )
-        result = _consolidate(core, payload, timeout_s)
-        ok = bool(result.ok)
-        error = None if ok else (result.error or "agent failed")
+        with stored_agent(
+            meeting_id, meeting, tools,
+            provider=provider, model=model, endpoint=endpoint,
+            agent_core_kind=agent_core_kind,
+            sidecar_payload_dir=sidecar_payload_dir,
+        ) as core:
+            payload = CheckpointPayload(
+                request_id=uuid.uuid4().hex,
+                state_snapshot=store.snapshot(),
+                new_segments=segments,
+                is_consolidation=True,
+            )
+            logger.info(
+                "Re-running insights for meeting %s over %d segments "
+                "(core=%s provider=%s model=%s)",
+                meeting_id, len(segments), agent_core_kind, provider, model,
+            )
+            result = run_agent_call(
+                lambda: core.consolidate(payload),
+                cancel=core.cancel, timeout_s=timeout_s,
+                name="meeting-reinsight",
+            ) or AgentResult(ok=False, error=f"timed out after {timeout_s:.0f}s")
+            ok = bool(result.ok)
+            error = None if ok else (result.error or "agent failed")
+    except AgentUnavailable as exc:
+        return {"ok": False, "state": store.snapshot(), "applied": 0,
+                "error": str(exc)}
     except Exception as exc:
         logger.exception("Insight re-run failed for meeting %s", meeting_id)
         error = str(exc)
-    finally:
-        # A leaked sidecar process outlives the request, so shutdown is
-        # unconditional.
-        try:
-            core.shutdown()
-        except Exception:
-            logger.exception("Agent core shutdown failed after insight re-run")
 
     # Structural repair: gpt-4o-mini often ships key points + summary but
     # leaves timeline empty. Promote evidenced key points (or sample the

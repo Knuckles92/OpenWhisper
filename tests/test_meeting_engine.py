@@ -18,6 +18,12 @@ import pytest
 
 from meeting.interfaces import AgentResult, SpooledChunk, TranscriptSegment
 
+# Load the real diarize package before the ``fakes`` fixture shadows its
+# clustering module: importing ``meeting.diarize.*`` afterwards would run the
+# package ``__init__`` against the fake and fail, but only when this file runs
+# on its own.
+import meeting.diarize.cloud_pass  # noqa: F401,E402
+
 # Fakes
 
 class FakeSource:
@@ -62,11 +68,10 @@ class FakeAsr:
     instances = []
 
     def __init__(self, model, meeting_id, repository, language=None,
-                 enable_revisions=True, term_rules=None):
+                 term_rules=None):
         self.model = model
         self.meeting_id = meeting_id
         self.language = language
-        self.enable_revisions = enable_revisions
         self.term_rules = term_rules
         self.is_available = True
         self.on_segments = None
@@ -156,6 +161,7 @@ class FakeAgentCore:
 
     def initialize(self, cfg, tools):
         self.config = cfg
+        self.tools = tools
 
     def checkpoint(self, payload):
         return AgentResult(ok=True)
@@ -226,19 +232,7 @@ class FakeScheduler:
             message="Final insights are ready.",
         )
 
-# Fixtures
-
-@pytest.fixture
-def db(tmp_path):
-    from services.database import DatabaseManager
-    manager = DatabaseManager(db_path=str(tmp_path / "test.db"))
-    yield manager
-    manager.close()
-
-@pytest.fixture
-def repo(db):
-    from meeting.persist.repository import SqlMeetingRepository
-    return SqlMeetingRepository(db=db)
+# Fixtures (``db`` and ``repo`` come from conftest)
 
 @pytest.fixture
 def fakes(monkeypatch):
@@ -541,7 +535,6 @@ class TestIntelligenceHealth:
 
         assert fakes.cores == []
         assert fakes.schedulers == []
-        assert fakes.asr[0].enable_revisions is False
         assert engine.store.with_state(lambda s: s.intelligence_online) is False
 
     def test_asr_receives_pinned_meeting_language(self, make_engine, fakes):
@@ -724,17 +717,6 @@ class TestEndLifecycle:
         assert events_of(engine, "asr_released")[-1]["meeting_id"] == (
             engine.meeting_id
         )
-
-    def test_cancel_also_announces_the_released_model(
-            self, make_engine, repo, fakes):
-        """A canceled meeting must not strand the released dictation engine."""
-        engine = make_engine(cloud_enabled=False)
-        engine.start()
-
-        engine.cancel()
-
-        assert events_of(engine, "asr_released")
-        assert FakeAsr.instances[-1].stops == 1
 
     def test_end_event_precedes_slow_consolidation(
             self, make_engine, repo, fakes):
@@ -945,6 +927,57 @@ class TestEndLifecycle:
         assert not fakes.schedulers
         fin = engine.store.with_state(lambda s: s.finalization.to_dict())
         assert fin["status"] == "disabled"
+
+    def test_redecode_labels_speakers_with_the_meetings_own_diarizer(
+            self, make_engine, repo, fakes, monkeypatch):
+        created = []
+        fakes.modules["meeting.diarize.clustering"].create_diarizer = (
+            lambda *args, **kwargs: created.append(args) or fakes.diarizer
+        )
+        monkeypatch.setattr(
+            "meeting.asr.offline.load_channel_session",
+            lambda spool_dir, channel, chunks=None: (
+                np.zeros(16000 * 4, dtype=np.int16), 16000, 0.0,
+            ),
+        )
+        engine = make_engine(cloud_enabled=False, end_redecode=True)
+        engine.start()
+        meeting_id = engine.meeting_id
+        fakes.diarizer.next_participant = "p_guest"
+        fakes.asr[0].offline_segments = [
+            TranscriptSegment(
+                segment_id="sg_mic", meeting_id=meeting_id, chunk_id=None,
+                channel="mic", start_s=0.0, end_s=1.0, text="from me",
+            ),
+            TranscriptSegment(
+                segment_id="sg_sys", meeting_id=meeting_id, chunk_id=None,
+                channel="loopback", start_s=1.0, end_s=2.0, text="from them",
+            ),
+        ]
+
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+
+        rows = {row["id"]: row for row in repo.get_segments(meeting_id)}
+        assert rows["sg_mic"]["speaker_participant_id"] == engine._me_participant_id
+        assert rows["sg_sys"]["speaker_participant_id"] == "p_guest"
+        assert fakes.diarizer.assigned == ["sg_sys"]
+        assert len(created) == 1  # the live one; End never builds another
+        redecode_steps = [
+            step
+            for payload in events_of(engine, "status")
+            for step in (payload.get("finalization") or {}).get("steps") or []
+            if step["id"] == "redecode"
+        ]
+        assert redecode_steps[-1] == {
+            "id": "redecode", "name": "Audio Re-transcription",
+            "status": "completed",
+            "detail": "High-accuracy re-decoding complete",
+        }
+        segment_events = events_of(engine, "segments")
+        assert segment_events and {
+            row["id"] for row in segment_events[-1]["items"]
+        } == {"sg_mic", "sg_sys"}
 
     def test_cloud_on_polishes_draft_without_offline_replace(
             self, make_engine, repo, fakes):
@@ -1511,12 +1544,13 @@ class TestCloudSpeakerStep:
         from services import openai_retirement
 
         message = openai_retirement.SPEAKER_MODEL_RETIRED_MESSAGE
-        cloud_pass = types.ModuleType("meeting.diarize.cloud_pass")
-        cloud_pass.run_cloud_speaker_pass = lambda *args, **kwargs: {
-            "ok": False, "retired": True, "applied": 0, "created": 0,
-            "error": message,
-        }
-        monkeypatch.setitem(sys.modules, "meeting.diarize.cloud_pass", cloud_pass)
+        monkeypatch.setattr(
+            "meeting.diarize.cloud_pass.run_cloud_speaker_pass",
+            lambda *args, **kwargs: {
+                "ok": False, "retired": True, "applied": 0, "created": 0,
+                "error": message,
+            },
+        )
         engine = make_engine(
             cloud_enabled=False,
             speaker_id_backend="openai",
@@ -1529,6 +1563,99 @@ class TestCloudSpeakerStep:
         assert result["ok"] is False
         assert result["skipped"] is True
         assert result["error"] == message
+
+    def test_eligible_end_uploads_once_and_reports_labels(
+            self, make_engine, monkeypatch):
+        uploads = []
+        monkeypatch.setattr(
+            "meeting.diarize.cloud_pass.run_cloud_speaker_pass",
+            lambda *args, **kwargs: uploads.append(kwargs) or {
+                "ok": True, "applied": 2, "created": 1, "windows": 1,
+            },
+        )
+        monkeypatch.setattr(
+            "services.transcript_cleanup.find_api_key", lambda provider: "sk-test",
+        )
+        engine = make_engine(
+            cloud_enabled=False,
+            speaker_id_backend="openai",
+            speaker_id_audio_consent=True,
+        )
+        engine.start()
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+
+        assert [call["api_key"] for call in uploads] == ["sk-test"]
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        steps = {step["id"]: step for step in fin["steps"]}
+        assert steps["speaker_id"]["status"] == "completed"
+        assert steps["speaker_id"]["detail"] == "Updated 2 speaker labels"
+        assert fin["status"] == "completed"
+        assert fin["message"] == (
+            "Speaker identification finished. "
+            "AI insights are off for this meeting."
+        )
+
+    @pytest.mark.parametrize("backend,consent,reason", [
+        ("openai", False, "consent"),
+        ("local", True, "not set to OpenAI"),
+    ])
+    def test_refused_gate_never_uploads_or_claims_to(
+            self, make_engine, monkeypatch, backend, consent, reason):
+        uploads = []
+        monkeypatch.setattr(
+            "meeting.diarize.cloud_pass.run_cloud_speaker_pass",
+            lambda *args, **kwargs: uploads.append(kwargs) or {"ok": True},
+        )
+        monkeypatch.setattr(
+            "services.transcript_cleanup.find_api_key", lambda provider: "sk-test",
+        )
+        engine = make_engine(
+            cloud_enabled=False,
+            speaker_id_backend=backend,
+            speaker_id_audio_consent=consent,
+        )
+        engine.start()
+        announced = []
+        result = engine._run_cloud_speaker_pass(
+            on_start=lambda: announced.append(True),
+        )
+
+        assert uploads == []
+        assert announced == []
+        assert result["skipped"] is True
+        assert reason in result["error"]
+
+class TestAgentToolHost:
+    """The live agent acts through the same host as a re-run's agent."""
+
+    def test_live_writes_follow_the_engine_gate(self, make_engine, fakes, repo):
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+        repo.add_segments([TranscriptSegment(
+            segment_id="sg_said", meeting_id=engine.meeting_id, chunk_id=None,
+            channel="mic", start_s=0.0, end_s=1.0, text="Ship it Friday",
+        )])
+        tools = fakes.cores[0].tools
+
+        [landed] = tools.apply_agent_ops([
+            {"op": "set_topic", "text": "Launch", "evidence": ["sg_said"]},
+        ])
+        assert landed.ok
+        assert engine.store.snapshot()["topic"]["current"] == "Launch"
+        assert tools.segment_exists("sg_said") is True
+        assert tools.segment_exists("sg_never") is False
+
+        engine.revoke_agent_writes()
+        [refused] = tools.apply_agent_ops([
+            {"op": "set_topic", "text": "Too late", "evidence": ["sg_said"]},
+        ])
+        assert refused.reason == "agent_writes_revoked"
+        assert tools.ask_question("Why?", ["sg_said"]).reason == (
+            "agent_writes_revoked"
+        )
+        assert engine.store.snapshot()["topic"]["current"] == "Launch"
+
 
 def test_engine_module_has_no_dead_recent_text_api():
     """The unused topic-shift buffer is gone (the scheduler reads the DB)."""

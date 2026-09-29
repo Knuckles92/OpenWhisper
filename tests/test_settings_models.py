@@ -24,6 +24,7 @@ from services.settings import (
     TranscriptCleanupProvider,
     default_transcript_cleanup_model,
 )
+from tests.fakes.settings import InMemorySettings
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as dialog_module
@@ -87,39 +88,6 @@ def _cached(repo_id, size_bytes):
 
 BASE_REPO = "Systran/faster-whisper-base"
 TINY_REPO = "Systran/faster-whisper-tiny"
-
-
-class _FakeSettings:
-    """In-memory settings store that matches the Model Manager call surface."""
-
-    def __init__(self, values):
-        self.values = values
-
-    def get(self, key, default=None):
-        return self.values.get(key, default)
-
-    def save_setting(self, key, value):
-        self.values[key] = value
-
-    def load_all_settings(self):
-        return dict(self.values)
-
-    def save_all_settings(self, settings):
-        self.values.clear()
-        self.values.update(settings)
-
-    def update_settings(self, updates, *, remove=()):
-        self.values.update(updates)
-        for key in remove:
-            self.values.pop(key, None)
-        return dict(self.values)
-
-    def mutate_settings(self, mutator):
-        result = mutator(self.values)
-        return result
-
-    def load_model_selection(self):
-        return self.values.get(SettingsKey.SELECTED_MODEL, "local_whisper")
 
 
 def _isolated_settings(isolated):
@@ -194,7 +162,7 @@ class _DialogTestCase:
         api_keys=None,
     ):
         values = self._settings_values(active_model, extra_settings)
-        fake_settings = _FakeSettings(values)
+        fake_settings = InMemorySettings(values)
         patchers = [
             patch.object(
                 dialog_module, "scan_cached_models", return_value=cached or {}
@@ -681,20 +649,30 @@ class TestMeetingDestinations(_DialogTestCase):
             MeetingSpeakerIdBackend.OFF
         )
 
-    def test_speaker_id_status_points_at_downloads_when_not_installed(self):
+    def test_speaker_id_status_explains_first_meeting_download(self):
+        """No Downloads row exists: the first meeting fetches the model."""
+        dialog, _values = self._make_meeting_dialog()
+        with patch.object(dialog_module, "speaker_model_path", return_value=None):
+            dialog.refresh_component_state()
+        status = dialog.speaker_id_status.text()
+        assert "Hugging Face" in status
+        assert "next meeting" in status
+        assert "Downloads" not in status
+
+    def test_speaker_id_status_reports_a_cached_model(self):
         dialog, _values = self._make_meeting_dialog()
         with patch.object(
-            dialog_module.component_coordinator,
-            "describe",
-            side_effect=RuntimeError("unavailable"),
+            dialog_module, "speaker_model_path", return_value="C:/cache/model.onnx"
         ):
             dialog.refresh_component_state()
-        assert "Downloads" in dialog.speaker_id_status.text()
+        assert "is ready" in dialog.speaker_id_status.text()
 
     def test_refresh_component_state_enables_pi_after_install(self):
         with patch.object(
             dialog_module, "meeting_agent_payload_dir", return_value=None
-        ):
+        ), patch.object(
+            dialog_module, "meeting_agent_needs_update", return_value=False
+        ), patch.object(dialog_module, "is_frozen", return_value=False):
             dialog, _values = self._make_meeting_dialog()
         item = dialog.meeting_agent_core_combo.model().item(0)
         assert item is not None
@@ -707,6 +685,24 @@ class TestMeetingDestinations(_DialogTestCase):
             dialog.refresh_component_state()
         assert item.isEnabled()
         assert dialog.meeting_agent_core_combo.itemText(0) == "Pi (sidecar)"
+
+    def test_pi_label_says_why_it_is_unavailable(self):
+        with patch.object(dialog_module, "meeting_agent_payload_dir", return_value=None):
+            dialog, _values = self._make_meeting_dialog()
+        combo = dialog.meeting_agent_core_combo
+        for needs_update, frozen, label in (
+            (True, True, "Pi (update from Downloads)"),
+            (True, False, "Pi (update from Downloads)"),
+            (False, True, "Pi (install from Downloads)"),
+            (False, False, "Pi (sidecar not built)"),
+        ):
+            with patch.object(dialog_module, "meeting_agent_payload_dir", return_value=None), \
+                    patch.object(dialog_module, "meeting_agent_needs_update",
+                                 return_value=needs_update), \
+                    patch.object(dialog_module, "is_frozen", return_value=frozen):
+                dialog.refresh_component_state()
+            assert combo.itemText(0) == label
+            assert not combo.model().item(0).isEnabled()
 
     def test_refresh_component_state_restores_saved_pi_core(self):
         with patch.object(
@@ -738,6 +734,30 @@ class TestMeetingDestinations(_DialogTestCase):
             dialog.refresh_component_state()
         assert combo.model().item(index).isEnabled()
         assert combo.currentData() == MeetingAgentCore.OPENCODE
+
+    def test_opencode_label_says_why_it_is_unavailable(self):
+        with patch.object(dialog_module, "meeting_agent_payload_dir", return_value=None):
+            dialog, _values = self._make_meeting_dialog()
+        combo = dialog.meeting_agent_core_combo
+        index = combo.findData(MeetingAgentCore.OPENCODE)
+        published = "services.components.component_is_published"
+        for tag, offered, label in (
+            ("darwin_arm64", False, "OpenCode v2 (Windows and Linux only)"),
+            ("linux_aarch64", False, "OpenCode v2 (not in Downloads yet)"),
+            ("win_amd64", True, "OpenCode v2 (install from Downloads)"),
+        ):
+            with patch.object(dialog_module, "current_platform_tag", return_value=tag), \
+                    patch(published, return_value=offered), \
+                    patch.object(dialog_module, "meeting_agent_payload_dir", return_value=None):
+                dialog.refresh_component_state()
+            assert combo.itemText(index) == label
+            assert not combo.model().item(index).isEnabled()
+        with patch.object(dialog_module, "meeting_agent_payload_dir",
+                          side_effect=lambda kind="pi": "/opt/opencode" if kind == "opencode" else None):
+            dialog.refresh_component_state()
+        assert combo.itemText(index) == "OpenCode v2"
+        assert combo.model().item(index).isEnabled()
+        assert "beta" not in dialog_module.agent_core_label(MeetingAgentCore.OPENCODE)
 
 
 class TestSharedRuntime(_DialogTestCase):
@@ -1025,7 +1045,7 @@ class TestNewTextProviders(_DialogTestCase):
         assert picker.provider_requirement.text() == "No API key required"
 
 def test_meeting_remote_source_is_independent_and_preserves_local_model():
-    settings = _FakeSettings({SettingsKey.SELECTED_MODEL: "local_whisper",
+    settings = InMemorySettings({SettingsKey.SELECTED_MODEL: "local_whisper",
                               SettingsKey.MEETING_WHISPER_MODEL: "tiny"})
     with _isolated_settings(settings):
         host = _Host(lambda: "base")
@@ -1049,7 +1069,7 @@ def test_meeting_remote_source_is_independent_and_preserves_local_model():
 def test_meeting_remote_settings_link_and_unpaired_connection_check(monkeypatch):
     from ui_qt.dialogs.settings_destinations import REMOTE_ENGINE
     from tests.test_remote_engine import _wait_for
-    settings = _FakeSettings({SettingsKey.MEETING_ASR_SOURCE: "remote"})
+    settings = InMemorySettings({SettingsKey.MEETING_ASR_SOURCE: "remote"})
     with _isolated_settings(settings):
         host = _Host(lambda: None)
         selected = []

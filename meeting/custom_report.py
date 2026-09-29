@@ -31,6 +31,8 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from meeting.context_folder import context_folder_enabled
+from meeting.recall import past_recall_enabled
 from meeting.state.custom_reports import (
     MAX_MESSAGE_CHARS,
     MAX_REPORT_CHARS,
@@ -578,24 +580,6 @@ def _tool_schemas(*, past_recall: bool, context_files: bool) -> List[Dict[str, A
     return tools
 
 
-def _past_recall_enabled() -> bool:
-    try:
-        from services.settings import resolve_meeting_past_recall_enabled
-
-        return bool(resolve_meeting_past_recall_enabled())
-    except Exception:
-        return False
-
-
-def _context_files_enabled() -> bool:
-    try:
-        from services.settings import resolve_meeting_context_folder_enabled
-
-        return bool(resolve_meeting_context_folder_enabled())
-    except Exception:
-        return False
-
-
 def _make_dispatcher(
     corpus: TranscriptCorpus,
     repository: Any,
@@ -707,6 +691,7 @@ def generate_report(
             f"Keep the request under {MAX_REQUEST_CHARS} characters."
         )
 
+    from meeting.agent.base import merge_usage
     from services.text_generation import TextGenerationError, generate
 
     if client is None or profile is None:
@@ -718,8 +703,8 @@ def generate_report(
     participants = state.get("participants") or {}
     corpus = TranscriptCorpus(segments or [], participants)
     meeting_id = str(state.get("meeting_id") or meeting.get("id") or "")
-    past_recall = bool(repository is not None and _past_recall_enabled())
-    context_files = _context_files_enabled()
+    past_recall = bool(repository is not None and past_recall_enabled())
+    context_files = context_folder_enabled()
     tools = _tool_schemas(past_recall=past_recall, context_files=context_files)
     if not _supports_tools(profile, model):
         # Without tool calls the model gets one shot at whatever the prompt
@@ -774,7 +759,7 @@ def generate_report(
                 "text endpoint and retry."
             ) from exc
 
-        _merge_usage(usage, result.usage)
+        merge_usage(usage, result.usage)
         markdown = (result.text or "").strip() or markdown
         calls = list(result.tool_calls or [])
         if not calls:
@@ -837,15 +822,6 @@ def _clean_markdown(markdown: str) -> str:
     if len(text) > MAX_REPORT_CHARS:
         text = text[:MAX_REPORT_CHARS].rstrip() + "\n\n*(Report truncated.)*"
     return text
-
-
-def _merge_usage(total: Dict[str, Any], usage: Any) -> None:
-    if usage is None:
-        return
-    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
-        value = getattr(usage, key, None)
-        if isinstance(value, int):
-            total[key] = total.get(key, 0) + value
 
 
 def _supports_tools(profile: Any, model: str) -> bool:

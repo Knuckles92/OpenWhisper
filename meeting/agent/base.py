@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from typing import Any, Dict, Optional
 
 # Re-exported for convenience so agent implementations and the engine can do
 # ``from meeting.agent.base import AgentCore, AgentToolHost``.
@@ -19,11 +19,6 @@ logger = logging.getLogger(__name__)
 
 #: File name of the compiled Pi sidecar bundle inside its payload directory.
 SIDECAR_BUNDLE_NAME = "bundle.cjs"
-
-_ENV_KEYS = {
-    "openrouter": "OPENROUTER_API_KEY",
-    "openai": "OPENAI_API_KEY",
-}
 
 #: How long a consolidation pass may stay silent (no Pi events, no tool
 #: calls) before we treat it as hung. Flash-class reasoning can sit this
@@ -41,35 +36,41 @@ __all__ = [
     "CONSOLIDATION_TIMEOUT_CAP_S",
     "create_agent_core",
     "find_provider_api_key",
+    "merge_usage",
 ]
 
 
-def find_provider_api_key(provider: str) -> Optional[str]:
-    """Resolve the API key for an LLM provider.
-
-    Prefers the app's shared resolution (environment variables plus the
-    ``.env`` file) via ``services.transcript_cleanup.find_api_key``; falls
-    back to plain environment variables when the ``meeting`` package is used
-    standalone and the services layer is unavailable.
+def find_provider_api_key(provider: str, endpoint: Optional[Any] = None) -> Optional[str]:
+    """Resolve the API key a meeting's text endpoint needs.
 
     Args:
         provider: Profile id (``openrouter``, ``openai``, or ``custom_…``).
+        endpoint: The meeting's persisted endpoint snapshot, when it has one.
 
     Returns:
-        The API key string, or None when no key is available.
+        The API key string, a placeholder for auth-free endpoints, or None
+        when a required key is missing.
     """
-    try:
-        from services.transcript_cleanup import find_api_key
+    from services.text_llm import profile_from_agent_config, resolve_api_key
 
-        key = find_api_key(provider)
-        if key:
-            return key
-    except Exception:
-        logger.debug(
-            "services.transcript_cleanup unavailable; falling back to "
-            "environment variables for the %s API key", provider,
-        )
-    return os.getenv(_ENV_KEYS.get(provider, "OPENAI_API_KEY"))
+    return resolve_api_key(profile_from_agent_config(provider, endpoint))
+
+
+def merge_usage(total: Dict[str, Any], usage: Any) -> None:
+    """Add one model response's token usage to a running ``total``.
+
+    Args:
+        total: Accumulator; gains ``prompt_tokens``, ``completion_tokens``,
+            ``total_tokens`` and a ``requests`` count.
+        usage: The response's usage object, or None when it reported none.
+    """
+    if usage is None:
+        return
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = getattr(usage, key, None)
+        if isinstance(value, int):
+            total[key] = total.get(key, 0) + value
+    total["requests"] = total.get("requests", 0) + 1
 
 
 def create_agent_core(kind: str, payload_dir: Optional[str] = None) -> AgentCore:
@@ -91,7 +92,7 @@ def create_agent_core(kind: str, payload_dir: Optional[str] = None) -> AgentCore
 
     if kind == "opencode":
         if not payload_dir:
-            raise RuntimeError("Install OpenCode v2 (beta) from Downloads to enable meeting intelligence.")
+            raise RuntimeError("Install OpenCode v2 from Downloads to enable meeting intelligence.")
         from meeting.agent.opencode_sidecar import OpenCodeSidecarAgent
         return OpenCodeSidecarAgent(payload_dir)
 

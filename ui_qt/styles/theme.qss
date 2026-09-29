@@ -1721,7 +1721,8 @@ QComboBox#engineFieldPrimary:disabled {
 }
 
 QComboBox#engineField::drop-down,
-QComboBox#engineFieldPrimary::drop-down {
+QComboBox#engineFieldPrimary::drop-down,
+QComboBox#hostModelCombo::drop-down {
     border: none;
     background-color: transparent;
     width: 20px;
@@ -1730,7 +1731,8 @@ QComboBox#engineFieldPrimary::drop-down {
 /* The global fallback draws its arrow from two borders, which reads as a stray
    corner mark at this field size. */
 QComboBox#engineField::down-arrow,
-QComboBox#engineFieldPrimary::down-arrow {
+QComboBox#engineFieldPrimary::down-arrow,
+QComboBox#hostModelCombo::down-arrow {
     image: url(ui_qt/assets/tabler/chevron-down-gray@icon-suffix.svg);
     border: none;
     width: 14px;
@@ -1747,59 +1749,30 @@ QLabel#engineResolvedLabel {
     background-color: transparent;
 }
 
-/* Host model notice: quiet inset surface, with a separate, compact action. */
-QFrame#remoteModelNotice {
-    background-color: rgba(@accent-rgb, 0.045);
-    border: 1px solid rgba(@accent-rgb, 0.16);
-    border-radius: 10px;
-}
-
-QWidget#remoteModelNoticeCopy {
-    background: transparent;
-}
-
-QLabel#remoteModelNoticeIcon {
-    background-color: rgba(@accent-rgb, 0.10);
+/* Manage host models: a footer link, like the model manager links, with its
+   download glyph (and a dot when the host can install something) painted in
+   the left padding by RemoteModelNotice. */
+QPushButton#remoteModelNotice {
+    color: @accent;
+    background-color: transparent;
     border: none;
-    border-radius: 9px;
-    padding: 7px;
-    image: url(ui_qt/assets/tabler/download-blue.svg);
-}
-
-QLabel#remoteModelNoticeTitle {
-    color: @text-body;
-    font-size: 12px;
-    font-weight: 600;
-    background: transparent;
-}
-
-QLabel#remoteModelNoticeDetail {
-    color: @text-secondary-strong;
     font-size: 11px;
-    background: transparent;
+    font-weight: 600;
+    padding: 0 0 0 19px;
+    min-height: 0;
 }
 
-QPushButton#remoteModelNoticeButton {
+QPushButton#remoteModelNotice:hover {
     color: @accent-soft;
-    background-color: rgba(@accent-rgb, 0.09);
-    border: 1px solid rgba(@accent-rgb, 0.18);
-    border-radius: 7px;
-    padding: 7px 11px;
-    font-size: 11px;
-    font-weight: 600;
+    text-decoration: underline;
 }
 
-QPushButton#remoteModelNoticeButton:hover {
-    background-color: rgba(@accent-rgb, 0.17);
-    border-color: rgba(@accent-rgb, 0.35);
+QPushButton#remoteModelNotice:focus {
+    text-decoration: underline;
 }
 
-QPushButton#remoteModelNoticeButton:pressed {
-    background-color: rgba(@accent-rgb, 0.24);
-}
-
-QPushButton#remoteModelNoticeButton:focus {
-    border-color: @accent;
+QPushButton#remoteModelNotice:pressed {
+    color: @accent;
 }
 
 QWidget#remoteServingRow {

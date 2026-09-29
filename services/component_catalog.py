@@ -15,10 +15,6 @@ NVIDIA_CUBLAS_URL: Final[str] = "https://developer.nvidia.com/cublas"
 NVIDIA_PYPI_URL: Final[str] = "https://pypi.org/project/nvidia-cublas-cu12/"
 PI_HOME_URL: Final[str] = "https://pi.dev"
 NODEJS_URL: Final[str] = "https://nodejs.org"
-WESPEAKER_REPO_URL: Final[str] = "https://github.com/wenet-e2e/wespeaker"
-WESPEAKER_MODEL_URL: Final[str] = (
-    "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM"
-)
 
 
 @dataclass(frozen=True)
@@ -155,12 +151,18 @@ _CATALOG: dict[str, ComponentDetails] = {
     ),
     "meeting-agent-opencode": ComponentDetails(
         component_id="meeting-agent-opencode",
-        display_name="OpenCode v2 (beta)",
-        summary="An optional meeting intelligence engine using your selected text provider and model.",
+        display_name="OpenCode v2",
+        summary=(
+            "An alternative meeting agent core, built on the OpenCode v2 SDK, that uses "
+            "your selected text provider and model."
+        ),
         description=(
-            "OpenCode maintains meeting cards, notes, questions, and final reports. "
-            "It uses the provider and credentials configured in OpenWhisper. "
-            "Only the meeting tools are exposed to the model."
+            "A portable Bun runtime plus the OpenCode v2 SDK, embedded in a supervised "
+            "sidecar. Selected as the agent core in Models → Meeting, it maintains meeting "
+            "cards, notes, questions, and final reports. It uses the provider, model, and "
+            "credentials configured in OpenWhisper, and needs no OpenCode account or CLI. "
+            "Only the five meeting tools are exposed to the model; OpenCode's own shell, "
+            "file, and web tools are removed. Pi remains the default agent core."
         ),
         origin_name="OpenCode",
         origin_url="https://opencode.ai/v2/docs/build/sdk/",
@@ -170,59 +172,23 @@ _CATALOG: dict[str, ComponentDetails] = {
         source_label="GitHub ↗",
         maintainer="OpenWhisper (integration); OpenCode (SDK); Bun (runtime)",
         family="Meeting intelligence",
-        requires="Windows x64 and a configured text model with tool support.",
+        requires="A configured text model with tool support. Used by Meeting Mode.",
         payload="Portable Bun runtime, OpenCode v2 SDK, and the meeting sidecar",
         local_format="A self-contained component folder",
         license="Bun and OpenCode MIT; dependency notices included in the download",
-        best_for="Trying OpenCode's agent loop for meeting intelligence.",
+        best_for="Meeting Mode with OpenCode's agent loop instead of Pi's.",
         limitations=(
-            "OpenCode v2 is beta; the app uses a tested SDK and runtime version.",
-            "Windows x64 only in this release.",
-            "If the engine fails, recording continues and meeting intelligence is marked unavailable.",
+            "The app pins a tested OpenCode SDK and Bun version; updates arrive as new "
+            "component versions.",
+            "Offered on Windows x64 and Linux x86_64/aarch64. macOS is not supported.",
+            "Larger than the Pi agent: up to 130 MB to download and 470 MB installed.",
+            "If the engine fails, recording continues and meeting intelligence is marked "
+            "unavailable; it does not switch to another agent core.",
             "Finish active meeting and report jobs before updating or removing this component.",
         ),
-        compact_tags="OpenCode v2 · Beta",
+        compact_tags="OpenCode v2 agent",
         source_note=_SOURCE_NOTE,
         source_urls=("https://opencode.ai/v2/docs/build/sdk/", "https://bun.sh"),
-    ),
-    "speaker-id": ComponentDetails(
-        component_id="speaker-id",
-        display_name="Speaker Identification",
-        summary=(
-            "Speaker-embedding model (WeSpeaker ONNX) that separates remote "
-            "voices into individual speakers during Meeting Mode."
-        ),
-        description=(
-            "A WeSpeaker ResNet34-LM ONNX speaker-embedding model. During "
-            "Meeting Mode it embeds remote voices so the Other channel can "
-            "be split into individual speakers. This payload is listed but "
-            "not offered in Downloads until the archive is published."
-        ),
-        origin_name="WeSpeaker",
-        origin_url=WESPEAKER_REPO_URL,
-        origin_label="Original ↗",
-        source_name="Wespeaker/wespeaker-voxceleb-resnet34-LM",
-        source_url=WESPEAKER_MODEL_URL,
-        source_label="Hugging Face ↗",
-        maintainer="WeSpeaker (model); OpenWhisper (Meeting Mode integration)",
-        family="Speaker embeddings",
-        requires="Meeting Mode. Local ONNX runtime.",
-        payload="WeSpeaker ResNet34-LM ONNX embedding model",
-        local_format="ONNX model file in the component folder",
-        license="Apache-2.0 (WeSpeaker)",
-        best_for=(
-            "Meetings with several remote speakers where Me/Others channel "
-            "labels are not enough."
-        ),
-        limitations=(
-            "Not published in this build — the row stays hidden until the "
-            "pinned archive is ready.",
-            "Adds a local ONNX model of about 26 MB.",
-            "Labels are embeddings, not guaranteed identities.",
-        ),
-        compact_tags="ONNX",
-        source_note=_SOURCE_NOTE,
-        source_urls=(WESPEAKER_MODEL_URL, WESPEAKER_REPO_URL),
     ),
 }
 

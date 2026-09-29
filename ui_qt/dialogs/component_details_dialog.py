@@ -24,6 +24,7 @@ from services.components import component_coordinator
 from services.format_utils import format_size_bytes
 from ui_qt.utils.app_icon import app_icon
 from ui_qt.widgets import Button
+from ui_qt.widgets.buttons import fit_compact_button
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 
@@ -115,30 +116,22 @@ class ComponentDetailsDialog(QDialog):
         actions.setSpacing(8)
         self.source_button = Button(self._details.source_label)
         self.source_button.setObjectName("downloadsRepoButton")
-        self._compact_button(self.source_button)
+        fit_compact_button(self.source_button)
         self.source_button.clicked.connect(self._open_source)
         actions.addWidget(self.source_button, stretch=1)
 
         self.origin_button = Button(self._details.origin_label)
         self.origin_button.setObjectName("downloadsOriginButton")
-        self._compact_button(self.origin_button)
+        fit_compact_button(self.origin_button)
         self.origin_button.clicked.connect(self._open_origin)
         actions.addWidget(self.origin_button, stretch=1)
 
         close_button = Button("Close")
         close_button.setObjectName("downloadsCloseButton")
-        self._compact_button(close_button)
+        fit_compact_button(close_button)
         close_button.clicked.connect(self.accept)
         actions.addWidget(close_button)
         layout.addLayout(actions)
-
-    @staticmethod
-    def _compact_button(button: Button) -> None:
-        button.set_base_minimum_size(0, 34)
-        button.ensurePolished()
-        height = max(34, button.sizeHint().height())
-        button.setMinimumHeight(height)
-        button.setMaximumHeight(height)
 
     def _render(self) -> None:
         details = self._details

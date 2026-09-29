@@ -3,11 +3,10 @@ import logging
 import os
 import threading
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable, Optional
 
 from PyQt6.QtCore import QMimeData, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QFont, QIcon, QMouseEvent, QPixmap
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QFont, QMouseEvent
 from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -19,7 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import bundle_root
+from config import config
 from services.audio_processor import AudioFilePreview, audio_processor
 from services.batch_upload import (
     BatchItem,
@@ -37,6 +36,9 @@ from services.settings import (
     settings_manager,
 )
 from ui_qt.overlay_state import OverlayState
+from ui_qt.utils.icons import tabler_icon as _tabler_icon
+from ui_qt.utils.icons import tabler_pixmap as _tabler_pixmap
+from ui_qt.utils.restyle import set_style_property as _repolish
 from ui_qt.widgets.buttons import Button, PrimaryButton
 from ui_qt.widgets.decode_label import DecodeLabel
 from ui_qt.widgets.eliding_label import ElidingLabel
@@ -85,21 +87,6 @@ _ROW_STATE_TEXT = {
     "done": "Done",
     "failed": "Failed",
 }
-
-
-def _tabler_pixmap(name: str, size: int) -> QPixmap:
-    path = Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / name
-    return QIcon(str(path)).pixmap(QSize(size, size))
-
-
-def _tabler_icon(name: str) -> QIcon:
-    return QIcon(str(Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / name))
-
-
-def _repolish(widget: QWidget, prop: str, value: str) -> None:
-    widget.setProperty(prop, value)
-    widget.style().unpolish(widget)
-    widget.style().polish(widget)
 
 
 def _is_supported_audio(path: str) -> bool:
@@ -1017,7 +1004,6 @@ class UploadFileTab(TranscriptionTabBase):
         # Mirrors of the single queued file, kept for the single-file callers.
         self._audio_path: str | None = None
         self._preview: AudioFilePreview | None = None
-        self._cancel_pending = False
         # What the last drop left out (non-audio, duplicates) or what the last
         # Transcribe removed; shown in the queue header until the next drop,
         # clear, or job.
@@ -1087,13 +1073,11 @@ class UploadFileTab(TranscriptionTabBase):
             self.file_info_card.finish_transcribing(success=False)
             self._unlock_engine()
             return
-        if state is OverlayState.CANCELING:
-            self._cancel_pending = True
         self.file_info_card.progress.apply_overlay_state(state)
 
-    def set_large_file_stage(self, file_size_mb: float, is_splitting: bool) -> None:
+    def set_large_file_stage(self, file_size_mb: float) -> None:
         if self.is_transcribing:
-            self.file_info_card.progress.set_large_file(file_size_mb, is_splitting)
+            self.file_info_card.progress.set_large_file(file_size_mb)
 
     def set_batch_progress(self, position: int, total: int, source_name: str) -> None:
         """A file of the running batch is starting (1-based position)."""
@@ -1164,14 +1148,19 @@ class UploadFileTab(TranscriptionTabBase):
     def _start_previews(self, paths: list[str]) -> None:
         """Read file facts off the UI thread; results come back by path.
 
-        ``preview_file`` decodes the whole file, so a run of long files would
-        otherwise freeze the window once per file. One worker per drop keeps
-        a ten-file drop from decoding ten files at once.
+        ``preview_file`` decodes the whole of a file the engine will split, to
+        count its chunks, so a run of long files would otherwise freeze the
+        window once per file. One worker per drop keeps a ten-file drop from
+        decoding ten files at once.
         """
+        engine_splits = self._engine_splits_files()
+
         def worker() -> None:
             for path in paths:
                 try:
-                    result: object = audio_processor.preview_file(path)
+                    result: object = audio_processor.preview_file(
+                        path, engine_splits=engine_splits
+                    )
                 except FileNotFoundError:
                     result = "File not found"
                 except ValueError as exc:
@@ -1193,7 +1182,9 @@ class UploadFileTab(TranscriptionTabBase):
         if isinstance(result, AudioFilePreview):
             item.preview = result
             item.error = None
-            item.state = "pending"
+            if item.state == "reading":
+                # A re-read for another engine keeps a finished job's state.
+                item.state = "pending"
             logger.info(f"File loaded: {result.file_name}")
         else:
             message = str(result)
@@ -1208,6 +1199,47 @@ class UploadFileTab(TranscriptionTabBase):
             item.error = message
             item.state = "failed"
         self._render()
+        # The engine may have changed while this file was being read.
+        self._refresh_chunk_estimates()
+
+    def _engine_splits_files(self) -> bool:
+        """Whether the selected engine uploads a file over the limit in chunks.
+
+        Only the OpenAI API does (``OpenAIBackend.large_file_size_mb``); every
+        other engine takes a file of any size in one pass, so its preview
+        needs no chunk count and no decode.
+        """
+        return config.MODEL_VALUE_MAP.get(self.current_model) == "api"
+
+    def _refresh_chunk_estimates(self) -> None:
+        """Re-read the queued files whose chunk count the engine changes.
+
+        That is a file over the upload limit read for an engine that splits
+        it, now queued for one that does not, or the other way round.
+        """
+        if self.is_transcribing:
+            return
+        engine_splits = self._engine_splits_files()
+        stale = [
+            item for item in self._items
+            if item.preview is not None
+            and item.preview.over_upload_limit
+            and item.preview.needs_splitting != engine_splits
+        ]
+        if not stale:
+            return
+        for item in stale:
+            item.preview = None
+        self._render()
+        self._start_previews([item.path for item in stale])
+
+    def _on_backend_changed(self, display_name: str):
+        super()._on_backend_changed(display_name)
+        self._refresh_chunk_estimates()
+
+    def set_backend(self, display_name: str):
+        super().set_backend(display_name)
+        self._refresh_chunk_estimates()
 
     def _item_for(self, path: str) -> Optional[QueueItem]:
         key = QueueItem(path).key
@@ -1402,7 +1434,6 @@ class UploadFileTab(TranscriptionTabBase):
         failed = stripped.startswith("Error:")
         copyable = bool(stripped) and stripped != EMPTY_ASR_MESSAGE and not failed
         self.file_info_card.finish_transcribing(success=not failed)
-        self._cancel_pending = False
         self._unlock_engine()
         self.file_info_card.set_copy_enabled(copyable)
         self.expand_btn.setVisible(copyable)
@@ -1489,7 +1520,6 @@ class UploadFileTab(TranscriptionTabBase):
         self._items = []
         self._audio_path = None
         self._preview = None
-        self._cancel_pending = False
         self._queue_note = ""
         card = self.file_info_card
         card.hide()
@@ -1501,12 +1531,6 @@ class UploadFileTab(TranscriptionTabBase):
         card.set_ready(True)
         self.drop_zone.show()
         self._unlock_engine()
-
-    def set_file(self, audio_path: str):
-        self._on_file_selected(audio_path)
-
-    def set_files(self, audio_paths: list[str]):
-        self._on_files_selected(list(audio_paths), 0)
 
     def open_file_browser(self):
         self.drop_zone.open_file_browser()

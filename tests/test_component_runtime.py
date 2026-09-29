@@ -127,22 +127,6 @@ def test_meeting_agent_activates_without_a_bin_directory(
     assert recorded_registrations == []
 
 
-def test_speaker_id_activates_without_a_bin_directory(
-    component_root, recorded_registrations
-):
-    target = component_root / components.ComponentId.SPEAKER_ID
-    _write_manifest(target, {"version": "wespeaker-1"})
-    (target / "model.onnx").write_bytes(b"onnx")
-
-    ok, reason = component_runtime.activate_component(
-        components.ComponentId.SPEAKER_ID
-    )
-
-    assert ok is True
-    assert reason == ""
-    assert recorded_registrations == []
-
-
 def test_gpu_without_bin_reports_missing_library_folder(
     component_root, recorded_registrations
 ):

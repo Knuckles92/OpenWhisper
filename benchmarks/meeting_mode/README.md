@@ -1,7 +1,7 @@
 # Meeting Mode dogfood benchmark
 
 This benchmark runs the production Meeting Mode chunking, faster-whisper
-decode, rolling revision, and SQLite segment persistence paths against ten
+decode, and SQLite segment persistence paths against ten
 complete, naturally occurring AMI research meetings with manual word-level
 transcripts.
 
@@ -42,8 +42,7 @@ Results are resumable per meeting and written below the ignored `results/`
 directory. Pass `--force` to discard cached results for selected meetings.
 The default run pins no language; pass `--language en` when the language is
 known, as a user can in Meeting settings. Use `--draft-prompt-words 0` only to
-reproduce the context-free ablation. Rolling rewrites are off by default;
-`--enable-revisions` opts into that experimental research path.
+reproduce the context-free ablation.
 
 ## Metric
 
@@ -54,8 +53,8 @@ from shifting the alignment for the remainder of an hour and avoids arbitrary
 whole-meeting alignment across overlapping speakers. Case and punctuation are
 ignored; fillers and spoken lexical content are retained.
 
-Both the initial live draft and the final rolling-revised transcript are
-scored. When `--offline-pass` is on (the default), a post-meeting clean
+Both the initial live draft and the final transcript as persisted to SQLite
+are scored. When `--offline-pass` is on (the default), a post-meeting clean
 re-decode of the continuous session audio is scored beside them. Runtime
 factor (wall-clock seconds / audio seconds) is recorded for the live path,
 the offline pass, and the combined end-of-meeting cost.

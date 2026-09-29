@@ -89,9 +89,6 @@ def _call_with_deadline(
         raise outcome["error"]
     return outcome["value"]
 
-# Back-compat aliases.
-CLEANUP_MODEL = config.TRANSCRIPT_CLEANUP_MODEL
-CLEANUP_SYSTEM_PROMPT = config.TRANSCRIPT_CLEANUP_PROMPT
 
 _PROVIDER_ENV_KEYS = {
     TranscriptCleanupProvider.OPENAI: "OPENAI_API_KEY",

@@ -4,11 +4,10 @@ import sys
 import tempfile
 import threading
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Callable, Dict, Optional
 
 from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QIcon, QKeySequence, QShortcut
+from PyQt6.QtGui import QFont, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -32,7 +31,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import bundle_root, config
+from config import config
 from services.components import component_coordinator
 from services.credentials import (
     MAX_API_KEY_LEN,
@@ -89,6 +88,7 @@ from services.settings import (
     resolve_transcript_cleanup_rules,
     resolve_update_check_enabled,
     resolve_update_notify_enabled,
+    setting_value,
     settings_manager,
 )
 from services.text_llm import (
@@ -100,6 +100,7 @@ from services.text_llm import (
 )
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
+from ui_qt.dialogs.settings_binder import SettingsBinder
 from ui_qt.dialogs.settings_destinations import (
     ADVANCED,
     API_KEYS,
@@ -123,6 +124,11 @@ from ui_qt.dialogs.settings_destinations import (
     resolve_destination,
 )
 from ui_qt.dialogs.settings_downloads import DownloadsPage
+from ui_qt.dialogs.settings_fields import (
+    group_title,
+    settings_caption,
+    settings_field,
+)
 from ui_qt.dialogs.settings_mcp import McpSettingsPage
 from ui_qt.dialogs.settings_models import ModelAssignments
 from ui_qt.dialogs.settings_overview import OverviewPage, OverviewSummary
@@ -137,6 +143,8 @@ from ui_qt.dialogs.settings_search import (
 )
 from ui_qt.utils.app_icon import app_icon
 from ui_qt.utils.font_scale import current_ui_font_scale
+from ui_qt.utils.icons import design_icon
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets import (
     Button,
     DangerButton,
@@ -148,6 +156,7 @@ from ui_qt.widgets import (
     SettingTile,
     WrappedLabel,
 )
+from ui_qt.widgets.buttons import fit_compact_button
 from ui_qt.widgets.hotkey_capture import HotkeyCaptureInput, HotkeyCaptureThread
 from ui_qt.widgets.cleanup_profiles_panel import CleanupProfilesPanel
 from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
@@ -205,13 +214,6 @@ _SEARCH_ALIASES = {
         "cloud insights ai insights meeting model llm",
     ),
 }
-
-
-def _design_icon(filename: str) -> QIcon:
-    path = Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / filename
-    icon = QIcon(str(path))
-    icon.addPixmap(icon.pixmap(24, 24), QIcon.Mode.Disabled, QIcon.State.Off)
-    return icon
 
 
 class _SettingsPage(QWidget):
@@ -355,6 +357,10 @@ class SettingsDialog(QDialog):
         self._retention_commit_timer.setInterval(800)
         self._retention_commit_timer.timeout.connect(self._commit_retention)
         self._confirming_retention = False
+        # Controls whose change only saves their key. _load_settings loads the
+        # first group and _load_meeting_settings the second.
+        self._bindings = SettingsBinder(self._persist)
+        self._meeting_bindings = SettingsBinder(self._persist)
 
         self._setup_ui()
         self.setMinimumSize(self.MINIMUM_SIZE)
@@ -451,7 +457,7 @@ class SettingsDialog(QDialog):
         search_row.setSpacing(8)
         search_icon = QLabel()
         search_icon.setObjectName("settingsRailSearchIcon")
-        search_icon.setPixmap(_design_icon("search-slate.svg").pixmap(14, 14))
+        search_icon.setPixmap(design_icon("search-slate.svg").pixmap(14, 14))
         search_row.addWidget(search_icon)
         search_text = QLabel("Search settings")
         search_text.setObjectName("settingsRailSearchText")
@@ -473,7 +479,7 @@ class SettingsDialog(QDialog):
         self._rail_icons: Dict[str, str] = {}
 
         def destination(key: str, name: str, icon: str, group: str) -> None:
-            self.rail.add_destination(key, name, _design_icon(icon))
+            self.rail.add_destination(key, name, design_icon(icon))
             self._rail_groups[key] = group
             self._rail_icons[key] = icon
 
@@ -568,7 +574,7 @@ class SettingsDialog(QDialog):
             "Remote engine",
             "Transcribe dictation and meetings with another computer's engine over your network or "
             "Tailscale, or share this computer's engine with computers you pair.",
-            lambda layout: self.remote_section.build(self, layout, _design_icon),
+            lambda layout: self.remote_section.build(self, layout, design_icon),
         )
         self._add_page(
             RECORDING,
@@ -683,7 +689,7 @@ class SettingsDialog(QDialog):
         footer.addWidget(self.message_label, stretch=1)
         close_btn = Button("Close")
         close_btn.setObjectName("modelManagerCloseButton")
-        self._compact_button(close_btn, 110)
+        fit_compact_button(close_btn, 110)
         close_btn.clicked.connect(self.close)
         footer.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignBottom)
         layout.addLayout(footer)
@@ -757,43 +763,6 @@ class SettingsDialog(QDialog):
         )
         layout.addWidget(self.downloads, stretch=1)
 
-    def _field(self, label: str, widget: QWidget) -> QWidget:
-        wrapper = QWidget()
-        wrapper.setObjectName("modelManagerFieldGroup")
-        col = QVBoxLayout(wrapper)
-        col.setContentsMargins(0, 0, 0, 0)
-        col.setSpacing(5)
-        caption = QLabel(label)
-        caption.setObjectName("textModelFieldLabel")
-        col.addWidget(caption)
-        col.addWidget(widget)
-        return wrapper
-
-    @staticmethod
-    def _caption(text: str) -> WrappedLabel:
-        label = WrappedLabel(text)
-        label.setObjectName("infoLabel")
-        return label
-
-    @staticmethod
-    def _compact_button(button: Button, width: int) -> None:
-        button.set_base_minimum_size(width, 34)
-        button.ensurePolished()
-        height = max(34, button.sizeHint().height())
-        button.setMinimumHeight(height)
-        button.setMaximumHeight(height)
-        fitted = max(width, button.minimumWidth(), button.sizeHint().width())
-        button.setMinimumWidth(fitted)
-        button.setMaximumWidth(fitted)
-
-    @staticmethod
-    def _section_title(layout: QVBoxLayout, title: str) -> QLabel:
-        # Qt stylesheets have no text-transform, so the eyebrow case is set here.
-        caption = QLabel(title.upper())
-        caption.setObjectName("settingsTileGroupTitle")
-        layout.addWidget(caption)
-        return caption
-
     def _tile_group(
         self,
         layout: QVBoxLayout,
@@ -808,10 +777,10 @@ class SettingsDialog(QDialog):
         A trailing odd tile spans the rest of its row so no column is left
         empty. Returns the caption and intro labels for callers that gate them.
         """
-        caption = self._section_title(layout, title)
+        caption = group_title(layout, title)
         intro_label = None
         if intro:
-            intro_label = self._caption(intro)
+            intro_label = settings_caption(intro)
             layout.addWidget(intro_label)
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
@@ -836,7 +805,7 @@ class SettingsDialog(QDialog):
         self.auto_paste_tile = SettingTile(
             "Paste into the active window",
             auto_paste_description,
-            _design_icon("bolt-green.svg"),
+            design_icon("bolt-green.svg"),
         )
         self.auto_paste_check = self.auto_paste_tile.checkbox
 
@@ -844,7 +813,7 @@ class SettingsDialog(QDialog):
             "Copy to the clipboard",
             "Keeps the transcript on the clipboard when auto-paste is off or "
             "unavailable. A successful paste restores what was there before.",
-            _design_icon("stack-slate.svg"),
+            design_icon("stack-slate.svg"),
         )
         self.copy_clipboard_check = self.copy_clipboard_tile.checkbox
 
@@ -852,7 +821,7 @@ class SettingsDialog(QDialog):
             "Minimize to the system tray on close",
             "Closing the window keeps OpenWhisper running in the tray, so "
             "hotkeys and recording stay available.",
-            _design_icon("box-blue.svg"),
+            design_icon("box-blue.svg"),
         )
         self.minimize_tray_check = self.minimize_tray_tile.checkbox
         if not self._tray_available:
@@ -865,7 +834,7 @@ class SettingsDialog(QDialog):
             "Check for updates automatically",
             "Looks for new OpenWhisper releases in the background. Nothing "
             "is installed without your approval.",
-            _design_icon("refresh-blue.svg"),
+            design_icon("refresh-blue.svg"),
         )
         self.update_check_check = self.update_check_tile.checkbox
         self.update_check_check.setObjectName("updateCheckEnabledCheck")
@@ -874,7 +843,7 @@ class SettingsDialog(QDialog):
             "Notify me about updates",
             "Opens the update dialog when a newer release is found. Requires "
             "automatic checks.",
-            _design_icon("info-blue.svg"),
+            design_icon("info-blue.svg"),
         )
         self.update_notify_check = self.update_notify_tile.checkbox
         self.update_notify_check.setObjectName("updateNotifyEnabledCheck")
@@ -893,7 +862,7 @@ class SettingsDialog(QDialog):
             "Theme",
             "Dark, light, or match your operating system.",
             self.ui_theme_combo,
-            _design_icon("box-blue.svg"),
+            design_icon("box-blue.svg"),
         )
 
         self.ui_font_scale_combo = ElidingComboBox()
@@ -915,7 +884,7 @@ class SettingsDialog(QDialog):
             "Text size in windows and dialogs. The live preview overlay "
             "has its own under Recording.",
             self.ui_font_scale_combo,
-            _design_icon("typography-blue.svg"),
+            design_icon("typography-blue.svg"),
         )
 
         self._tile_group(
@@ -942,24 +911,29 @@ class SettingsDialog(QDialog):
             layout, "Updates", [self.update_check_tile, self.update_notify_tile]
         )
 
-        self.auto_paste_check.toggled.connect(
-            lambda checked: self._persist(SettingsKey.AUTO_PASTE, bool(checked))
+        self._bindings.checkbox(
+            self.auto_paste_check,
+            SettingsKey.AUTO_PASTE,
+            lambda settings: setting_value(SettingsKey.AUTO_PASTE, settings),
         )
-        self.copy_clipboard_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.COPY_CLIPBOARD, bool(checked)
-            )
+        self._bindings.checkbox(
+            self.copy_clipboard_check,
+            SettingsKey.COPY_CLIPBOARD,
+            lambda settings: setting_value(SettingsKey.COPY_CLIPBOARD, settings),
         )
-        self.minimize_tray_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.MINIMIZE_TRAY, bool(checked)
-            )
+        self._bindings.checkbox(
+            self.minimize_tray_check,
+            SettingsKey.MINIMIZE_TRAY,
+            lambda settings: (
+                self._tray_available
+                and setting_value(SettingsKey.MINIMIZE_TRAY, settings)
+            ),
         )
         self.update_check_check.toggled.connect(self._on_update_check_toggled)
-        self.update_notify_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.UPDATE_NOTIFY_ENABLED, bool(checked)
-            )
+        self._bindings.checkbox(
+            self.update_notify_check,
+            SettingsKey.UPDATE_NOTIFY_ENABLED,
+            resolve_update_notify_enabled,
         )
 
     def _refresh_accessibility_status(self):
@@ -1031,7 +1005,7 @@ class SettingsDialog(QDialog):
             "Input device",
             "The microphone used for dictation and meetings.",
             self.audio_device_combo,
-            _design_icon("microphone-blue.svg"),
+            design_icon("microphone-blue.svg"),
         )
         self._tile_group(layout, "Microphone", [self.audio_device_tile])
 
@@ -1056,7 +1030,7 @@ class SettingsDialog(QDialog):
             "limit is passed; the newest recording is always kept. "
             "Transcription history text is kept separately.",
             self.recording_retention_combo,
-            _design_icon("box-blue.svg"),
+            design_icon("box-blue.svg"),
         )
 
         self.max_recordings_label = QLabel("Number to keep:")
@@ -1100,7 +1074,7 @@ class SettingsDialog(QDialog):
             self.max_recordings_mb_label, self.max_recordings_mb_spinbox
         )
         self.recording_retention_tile.add_body_layout(retention_form)
-        self.recordings_usage_label = self._caption("")
+        self.recordings_usage_label = settings_caption("")
         self.recording_retention_tile.add_body(self.recordings_usage_label)
         self._tile_group(
             layout, "Saved recordings", [self.recording_retention_tile]
@@ -1113,7 +1087,7 @@ class SettingsDialog(QDialog):
             "loaded model; Local Whisper uses a separate tiny.en preview model. "
             "The final transcript uses your selected model and follows the "
             "General paste and clipboard settings.",
-            _design_icon("bolt-green.svg"),
+            design_icon("bolt-green.svg"),
         )
         self.streaming_enabled_check = self.streaming_enabled_tile.checkbox
         self.streaming_enabled_check.toggled.connect(
@@ -1163,7 +1137,7 @@ class SettingsDialog(QDialog):
             "Runs the selected chat model on each dictated transcript after "
             "transcription, together with your learned rules. The provider's "
             "key lives under API keys.",
-            _design_icon("stack-purple.svg"),
+            design_icon("stack-purple.svg"),
         )
         self.transcript_cleanup_check = self.transcript_cleanup_tile.checkbox
         self.transcript_cleanup_check.toggled.connect(
@@ -1171,7 +1145,7 @@ class SettingsDialog(QDialog):
         )
         self._tile_group(layout, "AI cleanup", [self.transcript_cleanup_tile])
 
-        self._section_title(layout, "Model")
+        group_title(layout, "Model")
         self.cleanup_model_tile = self.models.build_cleanup_model_section(layout)
         layout.addSpacing(6)
 
@@ -1188,18 +1162,18 @@ class SettingsDialog(QDialog):
             "Cleanup prompt",
             "Instructions the model follows when rewriting a transcript.",
             self.cleanup_prompt_edit,
-            _design_icon("typography-blue.svg"),
+            design_icon("typography-blue.svg"),
         )
 
         cleanup_btn_row = QHBoxLayout()
         cleanup_btn_row.setContentsMargins(0, 0, 0, 0)
         cleanup_btn_row.setSpacing(8)
         self.cleanup_prompt_edit_btn = Button("Open editor…")
-        self._compact_button(self.cleanup_prompt_edit_btn, 120)
+        fit_compact_button(self.cleanup_prompt_edit_btn, 120)
         self.cleanup_prompt_edit_btn.clicked.connect(self._open_cleanup_prompt_editor)
         cleanup_btn_row.addWidget(self.cleanup_prompt_edit_btn)
         self.cleanup_prompt_reset_btn = Button("Reset to default")
-        self._compact_button(self.cleanup_prompt_reset_btn, 140)
+        fit_compact_button(self.cleanup_prompt_reset_btn, 140)
         self.cleanup_prompt_reset_btn.clicked.connect(self._reset_cleanup_prompt)
         cleanup_btn_row.addWidget(self.cleanup_prompt_reset_btn)
         cleanup_btn_row.addStretch()
@@ -1228,7 +1202,7 @@ class SettingsDialog(QDialog):
             "Learned rules only apply when cleanup runs. Teaching and "
             "editing stay locked until you turn on Clean up transcripts "
             "with AI.",
-            _design_icon("info-warning.svg"),
+            design_icon("info-warning.svg"),
         )
         self.cleanup_rules_gate_tile.setProperty("kind", "notice")
         self.open_cleanup_btn = QPushButton("Open Cleanup")
@@ -1247,7 +1221,7 @@ class SettingsDialog(QDialog):
             "Type or dictate an instruction in your own words. Your AI "
             "cleanup model rewrites it as a clear rule, and you review it "
             "before it's saved.",
-            _design_icon("plus-blue.svg"),
+            design_icon("plus-blue.svg"),
         )
         rule_input_row = QHBoxLayout()
         rule_input_row.setContentsMargins(0, 0, 0, 0)
@@ -1305,7 +1279,7 @@ class SettingsDialog(QDialog):
             "Your rules",
             "Select a rule or double-click it to edit. Every rule applies to "
             "AI cleanup, and to profiles set to also apply learned rules.",
-            _design_icon("stack-slate.svg"),
+            design_icon("stack-slate.svg"),
         )
         self.cleanup_rules_count = QLabel()
         self.cleanup_rules_count.setObjectName("cleanupRulesCount")
@@ -1357,7 +1331,7 @@ class SettingsDialog(QDialog):
         self._update_cleanup_prompt_ui()
 
     def _build_meeting_intelligence_page(self, layout: QVBoxLayout) -> None:
-        self._section_title(layout, "Model")
+        group_title(layout, "Model")
         self.meeting_model_tile = self.models.build_meeting_model_section(layout)
         layout.addSpacing(6)
 
@@ -1366,14 +1340,14 @@ class SettingsDialog(QDialog):
             "Off by default. The agent can look up names and prior decisions "
             "from stored meetings. Excerpts leave this machine the same way "
             "the current transcript does.",
-            _design_icon("stack-purple.svg"),
+            design_icon("stack-purple.svg"),
         )
         self.meeting_past_recall_check = self.meeting_past_recall_tile.checkbox
         self.meeting_past_recall_check.setObjectName("meetingPastRecallCheck")
-        self.meeting_past_recall_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.MEETING_PAST_RECALL_ENABLED, bool(checked)
-            )
+        self._meeting_bindings.checkbox(
+            self.meeting_past_recall_check,
+            SettingsKey.MEETING_PAST_RECALL_ENABLED,
+            resolve_meeting_past_recall_enabled,
         )
 
         self.meeting_context_folder_tile = SettingTile(
@@ -1381,7 +1355,7 @@ class SettingsDialog(QDialog):
             "Choose a local folder, for example an Obsidian vault. Matched "
             "excerpts leave this machine the same way the current transcript "
             "does. Images, audio, and video are not read.",
-            _design_icon("stack-slate.svg"),
+            design_icon("stack-slate.svg"),
         )
         self.meeting_context_folder_check = (
             self.meeting_context_folder_tile.checkbox
@@ -1389,10 +1363,10 @@ class SettingsDialog(QDialog):
         self.meeting_context_folder_check.setObjectName(
             "meetingContextFolderCheck"
         )
-        self.meeting_context_folder_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED, bool(checked)
-            )
+        self._meeting_bindings.checkbox(
+            self.meeting_context_folder_check,
+            SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED,
+            resolve_meeting_context_folder_enabled,
         )
 
         folder_row = QHBoxLayout()
@@ -1434,7 +1408,7 @@ class SettingsDialog(QDialog):
         self.typesafe_key_notice = InfoTile(
             "No TypeSafe API key",
             "",
-            _design_icon("info-warning.svg"),
+            design_icon("info-warning.svg"),
         )
         self.typesafe_key_notice.setProperty("kind", "notice")
         self.open_typesafe_key_btn = QPushButton("Add a key")
@@ -1455,7 +1429,7 @@ class SettingsDialog(QDialog):
             "Off by default. Answers narrow yes/no questions about a minute of "
             "transcript in about 0.2 s; never writes text. Key: API keys → "
             "TypeSafe.",
-            _design_icon("bolt-green.svg"),
+            design_icon("bolt-green.svg"),
         )
         self.typesafe_enabled_check = self.typesafe_enabled_tile.checkbox
         self.typesafe_enabled_check.setObjectName("typesafeEnabledCheck")
@@ -1466,14 +1440,14 @@ class SettingsDialog(QDialog):
             "Fire early checkpoints on a judged topic change instead of "
             "word overlap. Doubled precision on human-labelled meetings; "
             "falls back to word overlap when no answer arrives.",
-            _design_icon("stack-purple.svg"),
+            design_icon("stack-purple.svg"),
         )
         self.typesafe_topic_shift_check = self.typesafe_topic_shift_tile.checkbox
         self.typesafe_topic_shift_check.setObjectName("typesafeTopicShiftCheck")
-        self.typesafe_topic_shift_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, bool(checked)
-            )
+        self._meeting_bindings.checkbox(
+            self.typesafe_topic_shift_check,
+            SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED,
+            lambda settings: setting_value(SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, settings) is True,
         )
 
         self.typesafe_voice_commands_tile = SettingTile(
@@ -1481,7 +1455,7 @@ class SettingsDialog(QDialog):
             "\"Note taker, mark that as a decision\", \"…add an action item\", "
             "\"…put that in the notes\", \"…new topic: budget\". Only segments "
             "naming the assistant are judged. Recap updates notes; \"replace X with Y\" applies a reversible transcript correction.",
-            _design_icon("stack-slate.svg"),
+            design_icon("stack-slate.svg"),
         )
         self.typesafe_voice_commands_check = (
             self.typesafe_voice_commands_tile.checkbox
@@ -1489,10 +1463,10 @@ class SettingsDialog(QDialog):
         self.typesafe_voice_commands_check.setObjectName(
             "typesafeVoiceCommandsCheck"
         )
-        self.typesafe_voice_commands_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, bool(checked)
-            )
+        self._meeting_bindings.checkbox(
+            self.typesafe_voice_commands_check,
+            SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED,
+            lambda settings: setting_value(SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, settings) is True,
         )
         self.typesafe_feature_tiles = {}
         for feature, key, title, description in (
@@ -1505,8 +1479,12 @@ class SettingsDialog(QDialog):
             ("highlights", SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED, "Live highlight pulses",
              "Send a minute of transcript to TypeSafe/Jev to mark decisions, disagreement, dated commitments, numbers and takeaways (key insights, lessons learned and conclusions). Click a pulse to play that moment."),
         ):
-            tile = SettingTile(title, description, _design_icon("bolt-green.svg"))
-            tile.checkbox.toggled.connect(lambda checked, setting=key: self._persist(setting, bool(checked)))
+            tile = SettingTile(title, description, design_icon("bolt-green.svg"))
+            self._meeting_bindings.checkbox(
+                tile.checkbox,
+                key,
+                lambda settings, key=key: settings.get(key, False) is True,
+            )
             self.typesafe_feature_tiles[feature] = tile
         self._tile_group(
             layout,
@@ -1529,33 +1507,33 @@ class SettingsDialog(QDialog):
             "Re-transcribe the full recording",
             "After End, recut the continuous session audio on longer quiet "
             "gaps and run Whisper again. Live capture is unchanged.",
-            _design_icon("microphone-blue.svg"),
+            design_icon("microphone-blue.svg"),
         )
         self.meeting_end_redecode_check = self.meeting_end_redecode_tile.checkbox
-        self.meeting_end_redecode_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.MEETING_END_REDECODE, bool(checked)
-            )
+        self._meeting_bindings.checkbox(
+            self.meeting_end_redecode_check,
+            SettingsKey.MEETING_END_REDECODE,
+            resolve_meeting_end_redecode,
         )
 
         self.meeting_end_polish_tile = SettingTile(
             "Clean up the transcript with the LLM",
             "Rewrites the finished transcript for readability. Needs AI "
             "insights on for the meeting.",
-            _design_icon("stack-purple.svg"),
+            design_icon("stack-purple.svg"),
         )
         self.meeting_end_polish_check = self.meeting_end_polish_tile.checkbox
-        self.meeting_end_polish_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.MEETING_END_POLISH, bool(checked)
-            )
+        self._meeting_bindings.checkbox(
+            self.meeting_end_polish_check,
+            SettingsKey.MEETING_END_POLISH,
+            resolve_meeting_end_polish,
         )
 
         self.meeting_end_report_tile = SettingTile(
             "Write the final report",
             "Topic, summary, and cards, generated once live captions finish. "
             "Needs AI insights on for the meeting.",
-            _design_icon("check-green.svg"),
+            design_icon("check-green.svg"),
         )
         self.meeting_end_report_check = self.meeting_end_report_tile.checkbox
         self.meeting_end_report_check.toggled.connect(
@@ -1569,7 +1547,7 @@ class SettingsDialog(QDialog):
             "highest-priority questions, then choose Review more to see the rest. No audio is sent. "
             "Requires AI insights, TypeSafe fast judgments on the Fast judgments page, "
             "and a TypeSafe API key (Settings → API keys or TYPESAFE_API_KEY).",
-            _design_icon("check-green.svg"),
+            design_icon("check-green.svg"),
         )
         self.meeting_review_check = self.meeting_review_tile.checkbox
         self.meeting_review_check.toggled.connect(self._on_meeting_review_toggled)
@@ -1577,12 +1555,13 @@ class SettingsDialog(QDialog):
         self.meeting_review_sensitivity = ElidingComboBox()
         self.meeting_review_sensitivity.addItem("Normal", "normal")
         self.meeting_review_sensitivity.addItem("Thorough", "thorough")
-        self.meeting_review_sensitivity.currentIndexChanged.connect(
-            lambda _: self._persist(SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY,
-                                    self.meeting_review_sensitivity.currentData())
+        self._meeting_bindings.combo(
+            self.meeting_review_sensitivity,
+            SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY,
+            lambda settings: resolve_meeting_insight_review(settings)["sensitivity"],
         )
         review_row.addWidget(
-            self._field("Sensitivity", self.meeting_review_sensitivity)
+            settings_field("Sensitivity", self.meeting_review_sensitivity)
         )
         self.meeting_review_tile.add_body_layout(review_row)
 
@@ -1605,17 +1584,17 @@ class SettingsDialog(QDialog):
             "Ribbon",
             "Timeline walk. Adds timeline beats and polished minutes, which "
             "is the main token cost.",
-            _design_icon("stack-slate.svg"),
+            design_icon("stack-slate.svg"),
         )
         self.meeting_report_brief_tile = SettingTile(
             "Brief",
             "One-page editorial summary. Reuses the same cards as Signal.",
-            _design_icon("box-blue.svg"),
+            design_icon("box-blue.svg"),
         )
         self.meeting_report_signal_tile = SettingTile(
             "Signal",
             "One-screen glance. Reuses the same cards as Brief.",
-            _design_icon("bolt-green.svg"),
+            design_icon("bolt-green.svg"),
         )
         self.meeting_report_ribbon_check = self.meeting_report_ribbon_tile.checkbox
         self.meeting_report_brief_check = self.meeting_report_brief_tile.checkbox
@@ -1647,7 +1626,7 @@ class SettingsDialog(QDialog):
             )
         )
 
-        self.meeting_report_views_hint = self._caption(
+        self.meeting_report_views_hint = settings_caption(
             "At least one view is required. Ribbon stays on."
         )
         self.meeting_report_views_hint.hide()
@@ -1671,7 +1650,7 @@ class SettingsDialog(QDialog):
             "Localhost keeps the live dashboard on this computer. Sharing "
             "serves it to other devices on your local network.",
             self.meeting_bind_combo,
-            _design_icon("box-blue.svg"),
+            design_icon("box-blue.svg"),
         )
 
         self.meeting_bind_warning = WrappedLabel(
@@ -1693,13 +1672,17 @@ class SettingsDialog(QDialog):
         self.meeting_port_spinbox.setMinimumWidth(120)
         # Save the finished port, not 8, 80, and 808 on the way to 8080.
         self.meeting_port_spinbox.setKeyboardTracking(False)
-        self.meeting_port_spinbox.valueChanged.connect(self._on_meeting_port_changed)
+        self._meeting_bindings.spin(
+            self.meeting_port_spinbox,
+            SettingsKey.MEETING_SERVER_PORT,
+            resolve_meeting_server_port,
+        )
         self.meeting_port_tile = FieldTile(
             "Dashboard port",
             "Automatic lets the meeting server pick a free port each session. "
             "Pick a fixed port only if you need a stable link.",
             self.meeting_port_spinbox,
-            _design_icon("bolt-green.svg"),
+            design_icon("bolt-green.svg"),
             compact=True,
         )
         self._tile_group(layout, "Port", [self.meeting_port_tile])
@@ -1715,7 +1698,7 @@ class SettingsDialog(QDialog):
             "Credential",
             "Choose the provider whose key you want to save or test.",
             self.api_key_combo,
-            _design_icon("key-blue.svg"),
+            design_icon("key-blue.svg"),
         )
 
         status_row = QHBoxLayout()
@@ -1731,7 +1714,7 @@ class SettingsDialog(QDialog):
         )
         status_row.addWidget(self.api_key_status, stretch=1)
         self.api_key_credential_tile.add_body_layout(status_row)
-        self.api_key_uses_caption = self._caption("")
+        self.api_key_uses_caption = settings_caption("")
         self.api_key_credential_tile.add_body(self.api_key_uses_caption)
         self._tile_group(
             layout, "Credential", [self.api_key_credential_tile], columns=1
@@ -1740,7 +1723,7 @@ class SettingsDialog(QDialog):
         self.api_key_entry_tile = InfoTile(
             "Add or replace a key",
             self._api_key_store_copy(),
-            _design_icon("plus-blue.svg"),
+            design_icon("plus-blue.svg"),
         )
         self.api_key_store_caption = self.api_key_entry_tile.description_label
 
@@ -1781,15 +1764,15 @@ class SettingsDialog(QDialog):
         buttons.setSpacing(8)
         self.api_key_save_button = PrimaryButton("Save key")
         self.api_key_save_button.setObjectName("apiKeySaveButton")
-        self._compact_button(self.api_key_save_button, 120)
+        fit_compact_button(self.api_key_save_button, 120)
         self.api_key_save_button.clicked.connect(self._save_api_key)
         self.api_key_test_button = Button("Test")
         self.api_key_test_button.setObjectName("apiKeyTestButton")
-        self._compact_button(self.api_key_test_button, 90)
+        fit_compact_button(self.api_key_test_button, 90)
         self.api_key_test_button.clicked.connect(self._test_api_key)
         self.api_key_remove_button = DangerButton("Remove saved key")
         self.api_key_remove_button.setObjectName("apiKeyRemoveButton")
-        self._compact_button(self.api_key_remove_button, 160)
+        fit_compact_button(self.api_key_remove_button, 160)
         self.api_key_remove_button.clicked.connect(self._remove_api_key)
         buttons.addWidget(self.api_key_save_button)
         buttons.addWidget(self.api_key_test_button)
@@ -1906,10 +1889,8 @@ class SettingsDialog(QDialog):
                 text = "No key set."
         self.api_key_status.setText(text)
         icon = "check-green.svg" if tone == "success" else "info-warning.svg"
-        self.api_key_status_icon.setPixmap(_design_icon(icon).pixmap(16, 16))
-        self.api_key_status.setProperty("tone", tone)
-        self.api_key_status.style().unpolish(self.api_key_status)
-        self.api_key_status.style().polish(self.api_key_status)
+        self.api_key_status_icon.setPixmap(design_icon(icon).pixmap(16, 16))
+        set_style_property(self.api_key_status, "tone", tone)
         self._render_api_key_uses(name)
         self._update_api_key_controls()
 
@@ -2101,7 +2082,7 @@ class SettingsDialog(QDialog):
         instruction_icon = QLabel()
         instruction_icon.setObjectName("hotkeyInstructionIcon")
         instruction_icon.setFixedSize(18, 18)
-        instruction_icon.setPixmap(_design_icon("info-blue.svg").pixmap(16, 16))
+        instruction_icon.setPixmap(design_icon("info-blue.svg").pixmap(16, 16))
         instruction_row.addWidget(
             instruction_icon, alignment=Qt.AlignmentFlag.AlignTop
         )
@@ -2178,7 +2159,7 @@ class SettingsDialog(QDialog):
         actions.addStretch()
         reset_button = Button("Reset to defaults")
         reset_button.setObjectName("hotkeyResetButton")
-        self._compact_button(reset_button, 150)
+        fit_compact_button(reset_button, 150)
         reset_button.clicked.connect(self._confirm_reset_hotkeys)
         actions.addWidget(reset_button)
         layout.addLayout(actions)
@@ -2196,7 +2177,7 @@ class SettingsDialog(QDialog):
         self.record_mode_combo.currentIndexChanged.connect(
             self._on_recording_trigger_mode_changed
         )
-        return self._field("How the record hotkey activates", self.record_mode_combo)
+        return settings_field("How the record hotkey activates", self.record_mode_combo)
 
     def _on_recording_trigger_mode_changed(self, _index: int = 0) -> None:
         mode = self.record_mode_combo.currentData()
@@ -2266,7 +2247,7 @@ class SettingsDialog(QDialog):
         if optional:
             clear_button = Button("Clear")
             clear_button.setObjectName("hotkeyClearButton")
-            self._compact_button(clear_button, 68)
+            fit_compact_button(clear_button, 68)
             clear_button.clicked.connect(self._clear_meeting_hotkey)
             self.clear_meeting_hotkey_button = clear_button
             row.addWidget(clear_button, alignment=Qt.AlignmentFlag.AlignVCenter)
@@ -2278,13 +2259,13 @@ class SettingsDialog(QDialog):
             "Reject a re-transcription with fewer than 80% of the live transcript's "
             "words. Word count does not measure accuracy. Applies after End and "
             "when retrying saved meetings. Off by default.",
-            _design_icon("microphone-blue.svg"),
+            design_icon("microphone-blue.svg"),
         )
         self.meeting_redecode_coverage_guard_check = self.meeting_redecode_coverage_guard_tile.checkbox
-        self.meeting_redecode_coverage_guard_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.MEETING_REDECODE_COVERAGE_GUARD, bool(checked)
-            )
+        self._meeting_bindings.checkbox(
+            self.meeting_redecode_coverage_guard_check,
+            SettingsKey.MEETING_REDECODE_COVERAGE_GUARD,
+            resolve_meeting_redecode_coverage_guard,
         )
         self._tile_group(
             layout, "Meeting re-transcription", [self.meeting_redecode_coverage_guard_tile],
@@ -2296,7 +2277,7 @@ class SettingsDialog(QDialog):
             "demo opens the dashboard with a fake transcript so you can test "
             "end-of-meeting cleanup and the final report without recording a "
             "real meeting.",
-            _design_icon("bolt-green.svg"),
+            design_icon("bolt-green.svg"),
         )
         self.developer_mode_check = self.developer_mode_tile.checkbox
         self.developer_mode_check.setObjectName("developerModeCheck")
@@ -2410,9 +2391,7 @@ class SettingsDialog(QDialog):
                 card = card.parentWidget()
             self._clear_search_flash()
             if card is not None:
-                card.setProperty("searchHit", True)
-                card.style().unpolish(card)
-                card.style().polish(card)
+                set_style_property(card, "searchHit", True)
                 self._search_flash = card
                 self._search_flash_timer.start()
             focus = next(
@@ -2433,9 +2412,7 @@ class SettingsDialog(QDialog):
         if card is None:
             return
         try:
-            card.setProperty("searchHit", False)
-            card.style().unpolish(card)
-            card.style().polish(card)
+            set_style_property(card, "searchHit", False)
         except RuntimeError:
             pass  # The card was destroyed with its page.
 
@@ -2793,28 +2770,19 @@ class SettingsDialog(QDialog):
         return reply == QMessageBox.StandardButton.Yes
 
     def _load_retention_settings(self, settings: dict) -> None:
-        retention_mode = settings.get(
-            SettingsKey.RECORDING_RETENTION_MODE,
-            RecordingRetentionMode.CUSTOM,
-        )
+        retention_mode = setting_value(SettingsKey.RECORDING_RETENTION_MODE, settings)
         retention_index = self.recording_retention_combo.findData(retention_mode)
         if retention_index < 0:
             retention_index = self.recording_retention_combo.findData(
                 RecordingRetentionMode.CUSTOM
             )
         self.recording_retention_combo.setCurrentIndex(max(0, retention_index))
-        max_recordings = settings.get(
-            SettingsKey.MAX_SAVED_RECORDINGS,
-            config.MAX_SAVED_RECORDINGS,
-        )
+        max_recordings = setting_value(SettingsKey.MAX_SAVED_RECORDINGS, settings)
         try:
             self.max_recordings_spinbox.setValue(max(1, int(max_recordings)))
         except (TypeError, ValueError):
             self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
-        max_recordings_mb = settings.get(
-            SettingsKey.MAX_SAVED_RECORDINGS_MB,
-            config.MAX_SAVED_RECORDINGS_MB,
-        )
+        max_recordings_mb = setting_value(SettingsKey.MAX_SAVED_RECORDINGS_MB, settings)
         try:
             self.max_recordings_mb_spinbox.setValue(int(max_recordings_mb))
         except (TypeError, ValueError):
@@ -2960,9 +2928,6 @@ class SettingsDialog(QDialog):
             SettingsKey.MEETING_SERVER_BIND,
             self.meeting_bind_combo.currentData(),
         )
-
-    def _on_meeting_port_changed(self, value: int) -> None:
-        self._persist(SettingsKey.MEETING_SERVER_PORT, int(value))
 
     def _on_developer_mode_changed(self, checked: bool) -> None:
         if not self._persist(SettingsKey.DEVELOPER_MODE, bool(checked)):
@@ -3117,9 +3082,7 @@ class SettingsDialog(QDialog):
 
     def _set_rule_mic_recording(self, recording: bool) -> None:
         button = self.cleanup_rule_mic_btn
-        button.setProperty("recording", recording)
-        button.style().unpolish(button)
-        button.style().polish(button)
+        set_style_property(button, "recording", recording)
         button.setText("Stop" if recording else "Dictate")
         button.setToolTip(
             "Stop and transcribe · Esc throws the recording away"
@@ -3465,46 +3428,19 @@ class SettingsDialog(QDialog):
         })
 
     def _load_meeting_settings(self, settings: dict) -> None:
-        review = resolve_meeting_insight_review(settings)
+        self._meeting_bindings.load(settings)
         self.meeting_review_check.setChecked(
             settings.get(SettingsKey.MEETING_INSIGHT_REVIEW) is True
             and settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == "typesafe-text-v1"
         )
-        self.meeting_review_sensitivity.setCurrentIndex(
-            self.meeting_review_sensitivity.findData(review["sensitivity"]))
-
         bind_index = self.meeting_bind_combo.findData(
             resolve_meeting_server_bind(settings)
         )
         self.meeting_bind_combo.setCurrentIndex(max(0, bind_index))
-        self.meeting_port_spinbox.setValue(resolve_meeting_server_port(settings))
-        self.meeting_past_recall_check.setChecked(
-            resolve_meeting_past_recall_enabled(settings)
-        )
         self.typesafe_enabled_check.setChecked(resolve_typesafe_enabled(settings))
-        self.typesafe_topic_shift_check.setChecked(
-            settings.get(SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, True) is True
-        )
-        self.typesafe_voice_commands_check.setChecked(
-            settings.get(SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, False) is True
-        )
-        for feature, tile in self.typesafe_feature_tiles.items():
-            tile.checkbox.setChecked(settings.get(f"typesafe_{feature}_enabled", False) is True)
         self._update_typesafe_feature_tiles()
-        self.meeting_context_folder_check.setChecked(
-            resolve_meeting_context_folder_enabled(settings)
-        )
         self.meeting_context_folder_path.setText(
             resolve_meeting_context_folder_path(settings)
-        )
-        self.meeting_redecode_coverage_guard_check.setChecked(
-            resolve_meeting_redecode_coverage_guard(settings)
-        )
-        self.meeting_end_redecode_check.setChecked(
-            resolve_meeting_end_redecode(settings)
-        )
-        self.meeting_end_polish_check.setChecked(
-            resolve_meeting_end_polish(settings)
         )
         self.meeting_end_report_check.setChecked(
             resolve_meeting_end_report(settings)
@@ -3679,17 +3615,9 @@ class SettingsDialog(QDialog):
         try:
             settings = settings_manager.load_all_settings()
 
-            self.auto_paste_check.setChecked(
-                settings.get(SettingsKey.AUTO_PASTE, True)
-            )
-            self.copy_clipboard_check.setChecked(
-                settings.get(SettingsKey.COPY_CLIPBOARD, True)
-            )
+            self._bindings.load(settings)
             self.transcript_cleanup_check.setChecked(
-                settings.get(
-                    SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
-                    config.TRANSCRIPT_CLEANUP_ENABLED,
-                )
+                setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings)
             )
             prompt = resolve_transcript_cleanup_prompt(settings)
             self.cleanup_prompt_edit.setPlainText(prompt)
@@ -3700,15 +3628,8 @@ class SettingsDialog(QDialog):
             )
 
             self._update_cleanup_prompt_ui()
-            self.minimize_tray_check.setChecked(
-                self._tray_available
-                and settings.get(SettingsKey.MINIMIZE_TRAY, True)
-            )
             self.update_check_check.setChecked(
                 resolve_update_check_enabled(settings)
-            )
-            self.update_notify_check.setChecked(
-                resolve_update_notify_enabled(settings)
             )
             self.update_notify_tile.setEnabled(
                 self.update_check_check.isChecked()
@@ -3722,9 +3643,7 @@ class SettingsDialog(QDialog):
 
             self._load_retention_settings(settings)
 
-            streaming_enabled = settings.get(
-                SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED
-            )
+            streaming_enabled = setting_value(SettingsKey.STREAMING_ENABLED, settings)
             self.streaming_enabled_check.setChecked(streaming_enabled)
             self.streaming_font_size_spinbox.setValue(
                 resolve_streaming_overlay_font_size(settings)
@@ -3755,8 +3674,7 @@ class SettingsDialog(QDialog):
             logger.info("Settings loaded successfully")
         except Exception as e:
             logger.error("Failed to load settings: %s", e)
-            self.auto_paste_check.setChecked(True)
-            self.copy_clipboard_check.setChecked(True)
+            self._bindings.load({})
             self.transcript_cleanup_check.setChecked(
                 config.TRANSCRIPT_CLEANUP_ENABLED
             )
@@ -3764,9 +3682,7 @@ class SettingsDialog(QDialog):
             self._saved_cleanup_prompt = config.TRANSCRIPT_CLEANUP_PROMPT
             self.cleanup_rules_list.clear()
             self._update_cleanup_prompt_ui()
-            self.minimize_tray_check.setChecked(self._tray_available)
             self.update_check_check.setChecked(config.UPDATE_CHECK_ENABLED)
-            self.update_notify_check.setChecked(config.UPDATE_NOTIFY_ENABLED)
             self.update_notify_tile.setEnabled(
                 self.update_check_check.isChecked()
             )

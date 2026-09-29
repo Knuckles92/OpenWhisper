@@ -138,12 +138,13 @@ def test_spotlight_excludes_navigation_and_unreviewed_repair_samples():
     assert "raw" in [item["id"] for item in select_spotlight_items(cards)]
 
 
-def test_agent_rewrite_of_legacy_sample_returns_to_spotlight_and_undo_restores_it():
+def test_agent_rewrite_of_legacy_sample_returns_to_spotlight_and_undo_restores_it(repo):
     from meeting.state.schema import MeetingState
     from meeting.state.store import MeetingStateStore
-    from tests.test_meeting_state import FakeRepository
+    from tests.helpers import make_meeting
 
-    store = MeetingStateStore(MeetingState(meeting_id="m_rewrite"), repository=FakeRepository())
+    make_meeting(repo, "m_rewrite")
+    store = MeetingStateStore(MeetingState(meeting_id="m_rewrite"), repository=repo)
     add = store.apply("system", "state_repair", [{
         "op": "add_item", "card": "key_points", "text": "Let's take a look at this.",
         "evidence": ["sg_known"],

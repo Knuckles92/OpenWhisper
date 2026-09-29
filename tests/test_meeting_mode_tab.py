@@ -875,6 +875,73 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.app.processEvents()
         self.assertTrue(self.tab.finalization_retry_button.isHidden())
 
+    def _completed_with_speaker_gate(self, offered, reason, steps=None):
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {
+                "status": "completed",
+                "message": "Final insights are ready.",
+                "steps": steps or [],
+                "content_summary": {
+                    "meeting_status": "ended",
+                    "has_audio": True,
+                    "has_transcript": True,
+                    "can_rerun_speakers": True,
+                    "speaker_rerun_offered": offered,
+                    "speaker_rerun_reason": reason,
+                },
+            },
+        })
+        self.app.processEvents()
+
+    def test_on_device_labels_hide_speaker_rerun(self):
+        """Nothing offers an upload the settings would refuse."""
+        self._completed_with_speaker_gate(
+            False, "Speaker identification is not set to OpenAI.",
+        )
+        self.assertTrue(self.tab.finalization_retry_speakers_button.isHidden())
+
+    def test_missing_consent_disables_speaker_rerun_with_reason(self):
+        self._completed_with_speaker_gate(
+            True, "Audio-upload consent has not been given.",
+        )
+        button = self.tab.finalization_retry_speakers_button
+        self.assertFalse(button.isHidden())
+        self.assertFalse(button.isEnabled())
+        self.assertEqual(
+            button.toolTip(), "Audio-upload consent has not been given.",
+        )
+
+    def test_eligible_speaker_rerun_is_enabled(self):
+        self._completed_with_speaker_gate(True, "")
+        button = self.tab.finalization_retry_speakers_button
+        self.assertFalse(button.isHidden())
+        self.assertTrue(button.isEnabled())
+
+    def test_refused_speaker_step_rerun_is_disabled_with_reason(self):
+        from PyQt6.QtWidgets import QPushButton
+
+        self._completed_with_speaker_gate(
+            False, "Speaker identification is not set to OpenAI.",
+            steps=[
+                {"id": "speaker_id", "name": "Speaker Identification",
+                 "status": "completed", "detail": "Updated 3 speaker labels"},
+                {"id": "finalize", "name": "State Finalization",
+                 "status": "completed", "detail": "Done"},
+            ],
+        )
+        actions = [
+            button for button in
+            self.tab.finalization_steps_widget.findChildren(QPushButton)
+            if button.accessibleName() == "Run again Speaker Identification"
+        ]
+        self.assertEqual(len(actions), 1)
+        self.assertFalse(actions[0].isEnabled())
+        self.assertEqual(
+            actions[0].toolTip(), "Speaker identification is not set to OpenAI.",
+        )
+
     def test_multi_step_progress_rendering(self):
         """Multi-step finalization renders step badge, determinate progress, details, and step rows."""
         steps = [

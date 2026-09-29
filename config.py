@@ -251,6 +251,10 @@ class AppConfig:
     MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT: int = MAIN_WINDOW_DEFAULT_HEIGHT
     MAIN_WINDOW_COMPACT_WIDTH: int = 420
     MAIN_WINDOW_COMPACT_HEIGHT: int = 250
+    # Host Mode's first size; the dashboard's stat tiles sit four across at
+    # this width. Clamped to the screen, and remembered once resized.
+    MAIN_WINDOW_HOST_DEFAULT_WIDTH: int = 780
+    MAIN_WINDOW_HOST_DEFAULT_HEIGHT: int = 780
 
     # Waveform overlay settings
     WAVEFORM_OVERLAY_WIDTH: int = 300
@@ -502,7 +506,6 @@ class AppConfig:
     # Meeting Mode defaults
     MEETING_WHISPER_MODEL: str = "auto"
     MEETING_LANGUAGE: str = "auto"
-    MEETING_LLM_PROVIDER: str = "openrouter"
     MEETING_LLM_MODEL: str = "openrouter/free"
     MEETING_AGENT_CORE: str = "pi"
     MEETING_SPEAKER_ID_BACKEND: str = "local"

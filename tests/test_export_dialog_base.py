@@ -131,3 +131,100 @@ def test_changing_format_during_scope_animation_finishes_both_sections(export_di
     assert dialog.selected_panel.maximumHeight() == UNLIMITED_HEIGHT
     assert dialog.filters_panel.maximumHeight() == UNLIMITED_HEIGHT
     assert dialog.markdown_only_hint.isVisible()
+
+
+def test_format_values_match_both_export_services():
+    from meeting.export import bulk
+    from services import history_export
+    from ui_qt.dialogs import export_dialog_base as base
+
+    for name in ("FORMAT_MARKDOWN", "FORMAT_TXT", "FORMAT_JSON"):
+        assert getattr(base, name) == getattr(bulk, name)
+        assert getattr(base, name) == getattr(history_export, name)
+
+
+def _run_worker(dialog, per_item):
+    """Run the export worker inline and return what it emitted."""
+    from unittest.mock import patch
+
+    from PyQt6.QtWidgets import QMessageBox
+
+    emitted = []
+    dialog.export_finished.connect(lambda count, out: emitted.append((count, out)))
+    dialog.export_failed.connect(lambda message: emitted.append(("failed", message)))
+    targets = dialog._resolve_targets()
+    with patch.object(QMessageBox, "information"), patch.object(QMessageBox, "warning"):
+        dialog._export_worker({
+            "targets": targets,
+            "fmt": dialog._current_format(),
+            "per_item": per_item,
+            "output": dialog.path_edit.text().strip(),
+            "options": dialog._include_options(),
+        })
+    return emitted
+
+
+@pytest.mark.parametrize("per_item", [False, True])
+def test_history_worker_passes_include_options_to_writers(
+    monkeypatch, tmp_path, per_item
+):
+    calls = []
+    monkeypatch.setattr(
+        "ui_qt.dialogs.history_export_dialog.render_export_document",
+        lambda entries, fmt, **kw: calls.append(("doc", entries, fmt, kw)) or "doc",
+    )
+    monkeypatch.setattr(
+        "ui_qt.dialogs.history_export_dialog.write_per_entry_files",
+        lambda entries, fmt, out, **kw: calls.append(("files", entries, fmt, kw)),
+    )
+    app = QApplication.instance() or QApplication([])
+    entries = [{"id": "a", "preview_text": "Alpha"}, {"id": "b", "preview_text": "Beta"}]
+    dialog = HistoryExportDialog(entry_provider=lambda: entries)
+    try:
+        dialog.include_raw_check.setChecked(False)
+        dialog.path_edit.setText(str(tmp_path / "out.md"))
+        emitted = _run_worker(dialog, per_item)
+        kind, written, fmt, options = calls[0]
+        assert kind == ("files" if per_item else "doc")
+        assert [entry["id"] for entry in written] == ["a", "b"]
+        assert fmt == "markdown"
+        assert options == {"include_cleaned": True, "include_raw": False}
+        assert emitted == [(2, str(tmp_path / "out.md"))]
+        if not per_item:
+            assert (tmp_path / "out.md").read_text(encoding="utf-8") == "doc"
+    finally:
+        dialog.deleteLater()
+        app.sendPostedEvents(dialog, QEvent.Type.DeferredDelete)
+
+
+@pytest.mark.parametrize("per_item", [False, True])
+def test_meeting_worker_loads_entries_and_skips_missing(
+    monkeypatch, tmp_path, per_item
+):
+    calls = []
+    monkeypatch.setattr(
+        "ui_qt.dialogs.meeting_export_dialog.render_export_document",
+        lambda entries, fmt, **kw: calls.append(("doc", entries, fmt, kw)) or "doc",
+    )
+    monkeypatch.setattr(
+        "ui_qt.dialogs.meeting_export_dialog.write_per_meeting_files",
+        lambda entries, fmt, out, **kw: calls.append(("files", entries, fmt, kw)),
+    )
+    app = QApplication.instance() or QApplication([])
+    meetings = [{"id": "a", "title": "Alpha"}, {"id": "b", "title": "Beta"}]
+    loaded = {"a": {"meeting": "a"}}
+    dialog = MeetingExportDialog(
+        meeting_provider=lambda: meetings, entry_loader=loaded.get
+    )
+    try:
+        dialog.include_intelligence_check.setChecked(False)
+        dialog.path_edit.setText(str(tmp_path / "out.md"))
+        emitted = _run_worker(dialog, per_item)
+        kind, written, fmt, options = calls[0]
+        assert kind == ("files" if per_item else "doc")
+        assert written == [{"meeting": "a"}]
+        assert options == {"include_transcript": True, "include_intelligence": False}
+        assert emitted == [(1, str(tmp_path / "out.md"))]
+    finally:
+        dialog.deleteLater()
+        app.sendPostedEvents(dialog, QEvent.Type.DeferredDelete)

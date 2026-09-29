@@ -2,9 +2,9 @@
 
 Owns one meeting's whole pipeline — capture sources, chunk spools, the
 dedicated ASR engine, the diarizer, the state store, the web server, and the
-intelligence layer (agent core + checkpoint scheduler) — and implements the
-``AgentToolHost`` protocol so the agent's only authority is validated state
-patches.
+intelligence layer (agent core + checkpoint scheduler). The agent acts only
+through a ``StoreToolHost`` over the meeting's store, so its only authority is
+validated state patches.
 
 No Qt imports; the Qt runtime observes the engine through ``add_listener``.
 Sibling subsystem imports (``meeting.capture``, ``meeting.asr``,
@@ -23,11 +23,12 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 from meeting.clock import MeetingClock
 from meeting.finalization import (
-    POLISH_TIMEOUT_S, make_step, failed_steps_message, sparse_redecode_detail,
+    POLISH_TIMEOUT_S, make_step, failed_steps_message, insights_ready_message,
+    saved_state_detail, speaker_pass_gate,
 )
 from meeting.interfaces import (
     CHANNEL_LOOPBACK,
@@ -48,15 +49,13 @@ logger = logging.getLogger(__name__)
 HEARTBEAT_INTERVAL_S = 10.0
 #: ASR drain budget for a normal, user-initiated end.
 END_DRAIN_TIMEOUT_S = 300.0
-#: Cap on the forced end-of-meeting ASR polish so consolidation can start.
-END_REVISE_TIMEOUT_S = 20.0
 #: Shorter drain budget when the whole app is shutting down.
 SHUTDOWN_DRAIN_TIMEOUT_S = 30.0
 #: Worst-case wait for the post-end consolidation pass (hard wall). The
 #: sidecar fails earlier if Pi emits no ``subscribe`` progress for
 #: ``CONSOLIDATION_STALL_S``. Used for shutdown join, not the live stall.
 CONSOLIDATION_TIMEOUT_S = 900.0
-#: How long end/cancel waits for an in-flight ``start()`` to finish before
+#: How long end waits for an in-flight ``start()`` to finish before
 #: unwinding a partially built pipeline anyway.
 START_WAIT_TIMEOUT_S = 120.0
 #: Guest display names are clamped to this length.
@@ -118,10 +117,10 @@ class MeetingEngineOptions:
 
 
 class MeetingEngine:
-    """Single-meeting orchestrator; also the agent's ``AgentToolHost``.
+    """Single-meeting orchestrator.
 
     Lifecycle: construct → ``start()`` → (``pause()``/``resume()``/
-    ``set_cloud_enabled()`` while live) → ``end()`` or ``cancel()`` →
+    ``set_cloud_enabled()`` while live) → ``end()`` →
     ``shutdown()`` on app exit. ``end()`` returns immediately and finalizes on
     a worker thread; the web server stays up serving the final state until
     ``shutdown()``.
@@ -148,7 +147,7 @@ class MeetingEngine:
 
         self._lifecycle_lock = threading.RLock()
         self._active = False
-        # True for the whole of start(); end/cancel wait it out rather than
+        # True for the whole of start(); end waits it out rather than
         # tearing down a pipeline that is still being built.
         self._starting = False
         self._start_thread_id: Optional[int] = None
@@ -394,6 +393,30 @@ class MeetingEngine:
             self._emit_status()
         return True
 
+    def publish_finalization(self, finalization: Dict[str, Any]) -> bool:
+        """Show a finalization snapshot that a retry computed elsewhere.
+
+        A retry of the meeting this engine still serves writes to the stored
+        state; publishing through the engine keeps its dashboard in step.
+
+        Args:
+            finalization: A ``FinalizationState``-shaped mapping.
+
+        Returns:
+            True when the snapshot was persisted.
+        """
+        payload = dict(finalization or {})
+        return self._set_finalization(
+            str(payload.get("status") or "running"),
+            str(payload.get("message") or ""),
+            stage=str(payload.get("stage") or ""),
+            current_step=int(payload.get("current_step") or 0),
+            total_steps=int(payload.get("total_steps") or 0),
+            step_details=str(payload.get("step_details") or ""),
+            steps=list(payload.get("steps") or []),
+            summary_stats=dict(payload.get("summary_stats") or {}),
+        )
+
     def _adopt_untitled_title_from_topic(self) -> None:
         """Copy topic.current into title when the host never named the meeting."""
         if self.store is None:
@@ -440,7 +463,7 @@ class MeetingEngine:
             logger.exception("Ephemeral finalization emit failed")
 
     def is_active(self) -> bool:
-        """True from a successful ``start()`` until end/cancel completes."""
+        """True from a successful ``start()`` until ``end()`` completes."""
         return self._active
 
     def start(self) -> Dict[str, Any]:
@@ -622,7 +645,7 @@ class MeetingEngine:
     def pause(self) -> None:
         """Freeze the meeting clock and mark the meeting paused."""
         with self._lifecycle_lock:
-            # Reject once end/cancel has claimed the session so we cannot
+            # Reject once end has claimed the session so we cannot
             # overwrite a terminal status with "paused".
             if (not self._active or self._end_thread is not None
                     or self.store is None):
@@ -658,8 +681,8 @@ class MeetingEngine:
     def _await_start(self, timeout_s: float = START_WAIT_TIMEOUT_S) -> None:
         """Block until an in-flight ``start()`` has finished.
 
-        ``start()`` claims the session before it builds anything, so an end or
-        cancel arriving in that window would otherwise unwind a half-built
+        ``start()`` claims the session before it builds anything, so an end
+        arriving in that window would otherwise unwind a half-built
         pipeline while ``start()`` kept bringing capture, ASR, the server, and
         the agent up for an already-finished meeting.
 
@@ -701,19 +724,6 @@ class MeetingEngine:
             except Exception:
                 logger.exception("ASR drain failed at meeting end")
                 drained = False
-            # Flush deferred rolling revises before consolidation sees the
-            # transcript, while the Whisper model is still loaded — but
-            # bound the wait so a long polish queue cannot delay insights.
-            run_pending = getattr(self._asr, "run_pending_revises", None)
-            if drained and callable(run_pending):
-                revise_deadline = time.monotonic() + END_REVISE_TIMEOUT_S
-                try:
-                    for outcome in run_pending(
-                        force=True, deadline_mono=revise_deadline,
-                    ):
-                        self._publish_revise_result(outcome)
-                except Exception:
-                    logger.exception("End-of-meeting ASR revise flush failed")
         return drained
 
     def _finalization_summary_stats(self) -> Dict[str, Any]:
@@ -942,12 +952,13 @@ class MeetingEngine:
             speaker_skipped = False
             speaker_error = ""
             if will_speaker_id:
-                _update_step(
-                    "speaker_id",
-                    "running",
-                    "Uploading system audio for speaker labels…",
-                    message="Identifying speakers…",
-                )
+                def _announce_upload() -> None:
+                    _update_step(
+                        "speaker_id",
+                        "running",
+                        "Uploading system audio for speaker labels…",
+                        message="Identifying speakers…",
+                    )
 
                 def _speaker_progress(detail: str, curr: int, total: int) -> None:
                     _update_step(
@@ -962,6 +973,7 @@ class MeetingEngine:
                 try:
                     speaker_result = self._run_cloud_speaker_pass(
                         progress_cb=_speaker_progress,
+                        on_start=_announce_upload,
                     )
                 except Exception:
                     logger.exception("Cloud speaker identification failed")
@@ -969,23 +981,12 @@ class MeetingEngine:
                         "ok": False, "skipped": False,
                         "error": "Speaker identification failed.",
                     }
+                from meeting.refinalize import speaker_step_outcome
+
                 speaker_ok = bool(speaker_result.get("ok"))
                 speaker_skipped = bool(speaker_result.get("skipped"))
                 speaker_error = str(speaker_result.get("error") or "")
-                if speaker_ok:
-                    applied = int(speaker_result.get("applied") or 0)
-                    detail = (
-                        f"Updated {applied} speaker label"
-                        f"{'' if applied == 1 else 's'}"
-                    )
-                    step_status = "completed"
-                elif speaker_skipped:
-                    detail = speaker_error or "Speaker identification skipped."
-                    step_status = "completed"
-                else:
-                    detail = speaker_error or "Speaker identification failed."
-                    step_status = "failed"
-                _update_step("speaker_id", step_status, detail)
+                _update_step("speaker_id", *speaker_step_outcome(speaker_result))
 
             if run_cloud and not complete and not offline_ok:
                 run_cloud = False
@@ -1098,25 +1099,14 @@ class MeetingEngine:
                     _update_step(
                         "finalize",
                         "completed",
-                        f"Saved {summary_stats['segments']} segments ({summary_stats['words']} words)",
+                        saved_state_detail(summary_stats),
                     )
 
                     if any(s.get("status") == "failed" for s in steps):
                         status = "failed"
                         final_msg = failed_steps_message(steps)
-                    elif status == "completed":
-                        if not want_report:
-                            final_msg = message
-                        else:
-                            parts = [f"{summary_stats['segments']} segments"]
-                            if summary_stats["key_points"]:
-                                parts.append(f"{summary_stats['key_points']} key points")
-                            if summary_stats["action_items"]:
-                                parts.append(f"{summary_stats['action_items']} action items")
-                            if summary_stats["decisions"]:
-                                parts.append(f"{summary_stats['decisions']} decisions")
-                            summary_line = ", ".join(parts)
-                            final_msg = f"Final insights ready — {summary_line}." if summary_line else "Final insights are ready."
+                    elif status == "completed" and want_report:
+                        final_msg = insights_ready_message(summary_stats)
                     else:
                         final_msg = message
 
@@ -1220,71 +1210,49 @@ class MeetingEngine:
         *,
         progress_cb: Optional[Callable[[str, int, int], None]] = None,
         transcribe_fn: Optional[Callable[..., Any]] = None,
+        on_start: Optional[Callable[[], None]] = None,
     ) -> Dict[str, Any]:
         """Upload loopback audio and relabel speakers. Never raises.
 
+        Args:
+            progress_cb: Optional ``cb(detail, current, total)``.
+            transcribe_fn: Injectable decoder (tests); stands in for the key.
+            on_start: Called once the gate allows the upload, before it.
+
         Returns:
-            ``{ok, skipped, applied, error}``. ``skipped`` is True when the
-            backend, consent, or API key is missing, or OpenAI has retired
-            the diarization model.
+            ``refinalize.run_speaker_pass``'s result. ``skipped`` is True
+            when the backend, consent, or API key is missing, or OpenAI has
+            retired the diarization model.
         """
-        if self.options.speaker_id_backend != "openai":
-            return {
-                "ok": False, "skipped": True, "applied": 0,
-                "error": "Speaker identification is not set to OpenAI.",
-            }
-        if not self.options.speaker_id_audio_consent:
-            return {
-                "ok": False, "skipped": True, "applied": 0,
-                "error": "Audio-upload consent has not been given.",
-            }
-        if not self.meeting_id or self.store is None:
+        def _openai_key() -> str:
+            from services.transcript_cleanup import find_api_key
+
+            return find_api_key("openai") or ""
+
+        gate = speaker_pass_gate(
+            backend=self.options.speaker_id_backend,
+            consent=self.options.speaker_id_audio_consent,
+            find_key=None if transcribe_fn is not None else _openai_key,
+        )
+        if gate.ok and (not self.meeting_id or self.store is None):
             return {
                 "ok": False, "skipped": False, "applied": 0,
                 "error": "Meeting is not ready for speaker identification.",
             }
-        api_key = ""
-        if transcribe_fn is None:
-            try:
-                from services.transcript_cleanup import find_api_key
-
-                api_key = find_api_key("openai") or ""
-            except Exception:
-                logger.exception("Could not resolve the OpenAI API key")
-                api_key = ""
-            if not api_key:
-                return {
-                    "ok": False, "skipped": True, "applied": 0,
-                    "error": "No OpenAI API key is configured.",
-                }
         try:
-            from meeting.diarize.cloud_pass import run_cloud_speaker_pass
+            from meeting.refinalize import run_speaker_pass
         except Exception as exc:
             logger.exception("Cloud speaker pass unavailable")
             return {
                 "ok": False, "skipped": False, "applied": 0, "error": str(exc),
             }
-        spool_dir = self._spool_dir or ""
-        try:
-            result = run_cloud_speaker_pass(
-                self.repository, self.meeting_id, self.store, spool_dir,
-                api_key=api_key,
-                transcribe_fn=transcribe_fn,
-                progress_cb=progress_cb,
-            )
-        except Exception as exc:
-            logger.exception("Cloud speaker pass raised")
-            return {
-                "ok": False, "skipped": False, "applied": 0, "error": str(exc),
-            }
-        return {
-            "ok": bool(result.get("ok")),
-            # OpenAI retired the model early: on-device labels stand.
-            "skipped": bool(result.get("retired")),
-            "applied": int(result.get("applied") or 0),
-            "created": int(result.get("created") or 0),
-            "error": result.get("error"),
-        }
+        return run_speaker_pass(
+            self.repository, self.meeting_id, self.store, self._spool_dir or "",
+            gate=gate,
+            transcribe_fn=transcribe_fn,
+            progress_cb=progress_cb,
+            on_start=on_start,
+        )
 
     def _run_offline_final_pass(
         self,
@@ -1292,6 +1260,9 @@ class MeetingEngine:
         progress_cb: Optional[Callable[[str, int, int], None]] = None,
     ) -> bool:
         """Re-decode session audio, replace the draft transcript, refresh UI.
+
+        The same ``rerun_redecode`` a retry runs, fed by the meeting's own
+        ASR engine and diarizer while they are still loaded.
 
         Returns:
             True when a non-empty offline transcript was committed.
@@ -1305,80 +1276,24 @@ class MeetingEngine:
         transcribe = getattr(asr, "transcribe_offline_session", None)
         if not callable(transcribe):
             return False
-        spool_dir = self._spool_dir or ""
-        try:
-            chunks = self.repository.get_audio_chunks(self.meeting_id)
-        except Exception:
-            logger.exception("Could not load audio chunks for offline ASR")
-            chunks = []
-        try:
-            decoded = list(transcribe(spool_dir, chunks, progress_cb=progress_cb) or [])
-        except Exception:
-            logger.exception("Offline session transcription failed")
-            return False
-        if not decoded:
-            return False
-        try:
-            existing = self.get_transcript()
-        except Exception:
-            existing = []
-        new_words = sum(len(seg.text.split()) for seg in decoded)
-        old_words = sum(
-            len(str(row.get("text") or "").split()) for row in existing
-        )
-        if self.options.redecode_coverage_guard and old_words and new_words < 0.8 * old_words:
-            self._offline_failure_detail = sparse_redecode_detail(new_words, old_words)
-            logger.warning(
-                "Keeping live draft transcript: offline pass has %d words vs "
-                "draft %d (AMI IN1009 guard: do not replace a sparser decode)",
-                new_words, old_words,
-            )
-            return False
-        try:
-            self._assign_speakers_from_session(decoded, spool_dir, chunks)
-        except Exception:
-            logger.exception("Offline speaker assignment failed")
-        replace = getattr(self.repository, "replace_final_transcript", None)
-        if not callable(replace):
-            return False
-        try:
-            rows, deleted, _id_map = replace(self.meeting_id, decoded)
-        except Exception:
-            logger.exception("Final transcript replace failed")
-            return False
-        mark_done = getattr(self.repository, "mark_chunks_done", None)
-        if callable(mark_done):
-            try:
-                mark_done(self.meeting_id)
-            except Exception:
-                logger.exception("Could not mark chunks done after offline ASR")
-        self._reload_store_from_repository()
-        # The re-decode replaced every segment id; the repository remapped
-        # evidence anchors onto the new transcript where an overlap match
-        # exists. Proposed items that kept at least one live anchor stay on
-        # the dashboard — their content is grounded in the actual meeting and
-        # the final consolidation reconciles it. Only ghost-anchored items are
-        # stripped. live_notes is deliberately kept whole: it provides
-        # structured context for the final consolidation pass (and preserves
-        # meeting notes when final report is off).
-        from meeting.state.schema import CARD_KEYS
+        from meeting.refinalize import rerun_redecode
 
-        self._strip_proposed_cards(
-            cards=tuple(
-                key for key in CARD_KEYS
-                if key not in ("user_notes", "live_notes")
-            ),
-            keep_evidenced=True,
+        result = rerun_redecode(
+            self.repository,
+            self.meeting_id,
+            store=self.store,
+            transcribe_fn=transcribe,
+            progress_cb=progress_cb,
+            redecode_coverage_guard=self.options.redecode_coverage_guard,
+            speaker_id_backend=self.options.speaker_id_backend,
+            diarizer=self._diarizer,
         )
-        # The end-of-capture repair ran against the draft transcript; timeline
-        # coverage and summary fallbacks are rebuilt from the final one.
-        if self.store is not None:
-            try:
-                from meeting.state.repair import repair_meeting_state
-
-                repair_meeting_state(self.store, rows)
-            except Exception:
-                logger.exception("State repair after offline ASR failed")
+        if not result.get("ok"):
+            if result.get("kept_draft"):
+                self._offline_failure_detail = str(result.get("error") or "")
+            return False
+        rows = list(result.get("rows") or [])
+        deleted = list(result.get("removed_ids") or [])
         payload = {"items": rows, "removed_ids": deleted}
         self._emit("segments", payload)
         self._broadcast({"type": "segments", **payload})
@@ -1387,108 +1302,6 @@ class MeetingEngine:
             len(rows), len(deleted),
         )
         return True
-
-    def _reload_store_from_repository(self) -> None:
-        """Reload live state after the repository rewrote evidence ids."""
-        if self.store is None or not self.meeting_id:
-            return
-        try:
-            meeting = self.repository.get_meeting(self.meeting_id)
-        except Exception:
-            logger.exception("Could not reload meeting after transcript replace")
-            return
-        raw = (meeting or {}).get("state_json") or ""
-        if not raw:
-            return
-        try:
-            data = json.loads(raw)
-        except (TypeError, ValueError):
-            logger.warning("Corrupt state_json after transcript replace")
-            return
-        try:
-            self.store.replace_document(MeetingState.from_dict(data))
-        except Exception:
-            logger.exception("Could not replace live meeting state document")
-
-    def _strip_proposed_cards(
-        self,
-        cards: Optional[Iterable[str]] = None,
-        keep_evidenced: bool = False,
-    ) -> None:
-        """Remove agent-only proposed cards so consolidation starts clean.
-
-        Args:
-            cards: Card keys to strip; defaults to every card except the
-                human-only ``user_notes``.
-            keep_evidenced: Skip proposed items that still carry at least one
-                evidence anchor (used after the offline re-decode, where the
-                repository remapped surviving anchors onto the new transcript
-                and consolidation should reconcile grounded live items rather
-                than rebuild from scratch).
-        """
-        if self.store is None:
-            return
-        from meeting.state.schema import CARD_KEYS, CardItem
-
-        keys = tuple(cards) if cards is not None else CARD_KEYS
-        snapshot = self.store.snapshot()
-        ops: List[Dict[str, Any]] = []
-        cards_snapshot = snapshot.get("cards") or {}
-        for key in keys:
-            if key == "user_notes":
-                continue
-            for item in cards_snapshot.get(key) or []:
-                if not isinstance(item, dict):
-                    continue
-                if item.get("status") != "proposed" or CardItem.from_dict(item).protected:
-                    continue
-                if keep_evidenced and (item.get("evidence") or []):
-                    continue
-                ops.append({
-                    "op": "remove_item",
-                    "id": item.get("id"),
-                    "base_revision": item.get("revision", 1),
-                })
-        if not ops:
-            return
-        try:
-            self.store.apply("system", "finalization", ops)
-        except Exception:
-            logger.exception("Could not strip proposed cards before report")
-
-    def _assign_speakers_from_session(
-        self,
-        segments: List[TranscriptSegment],
-        spool_dir: str,
-        chunks: List[Dict[str, Any]],
-    ) -> None:
-        """Assign Me/diarizer labels using session audio instead of chunks."""
-        try:
-            from meeting.asr.offline import load_channel_session
-            from meeting.diarize.assign import assign_from_frames, refresh_labels
-        except Exception:
-            logger.exception(
-                "Offline speaker helpers unavailable; skipping diarization"
-            )
-            return
-
-        by_channel: Dict[str, List[TranscriptSegment]] = {}
-        for seg in segments:
-            if seg.channel == CHANNEL_MIC:
-                seg.speaker_participant_id = self._me_participant_id
-                seg.speaker_source = "channel"
-            elif seg.channel == CHANNEL_LOOPBACK:
-                by_channel.setdefault(seg.channel, []).append(seg)
-        if not by_channel or self._diarizer is None:
-            return
-        for channel, channel_segments in by_channel.items():
-            frames, rate, origin = load_channel_session(spool_dir, channel, chunks)
-            if frames is None or frames.size == 0:
-                continue
-            labeled = assign_from_frames(
-                self._diarizer, channel_segments, frames, rate, origin,
-            )
-            refresh_labels(self._diarizer, labeled)
 
     def _finish_failed_end(
         self,
@@ -1556,61 +1369,6 @@ class MeetingEngine:
                 "meeting_id": self.meeting_id, "canceled": False,
                 "status": status, "error": str(exc),
             })
-
-    def cancel(self) -> None:
-        """Discard the session fast: no drain, no consolidation.
-
-        The meeting row is marked ``failed``; spooled audio and any
-        already-transcribed segments are kept on disk/DB (nothing deleted).
-        """
-        self._await_start()
-        with self._lifecycle_lock:
-            if not self._active or self._end_thread is not None:
-                return
-            self._active = False
-        # Stop agent mutations before teardown so in-flight tools cannot land.
-        self.revoke_agent_writes()
-        self._stop_capture()
-        scheduler = self._scheduler
-        self._scheduler = None
-        if scheduler is not None:
-            try:
-                scheduler.stop()
-            except Exception:
-                logger.exception("Scheduler stop failed during cancel")
-        if self._agent_core is not None:
-            try:
-                self._agent_core.cancel()
-            except Exception:
-                logger.exception("Agent cancel failed")
-        self._shutdown_agent_core()
-        self._stop_asr("cancel")
-        # After ASR is down: releases each spool's writer thread and leaves
-        # the last partial chunk on disk as a recoverable pending row.
-        self._flush_spools()
-        self.clock.pause()
-        self._stop_heartbeat()
-        try:
-            self.repository.update_meeting(
-                self.meeting_id, status="failed", ended_at=now_iso(),
-                paused_total_s=self.clock.paused_total_s(),
-            )
-        except Exception:
-            logger.exception("Failed to persist canceled status")
-        if self.store is not None:
-            self.store.update_runtime_fields(status="failed")
-            self._set_finalization(
-                "unavailable",
-                "Meeting was canceled before final insights could run.",
-                emit=False,
-            )
-        self._broadcast({"type": "meeting_ended", "status": "failed"})
-        self._emit_status()
-        self._emit("ended", {
-            "meeting_id": self.meeting_id,
-            "canceled": True,
-            "status": "failed",
-        })
 
     def wait_for_end(self) -> None:
         """Wait for the end worker without interrupting its remaining passes."""
@@ -2257,11 +2015,6 @@ class MeetingEngine:
                 self.meeting_id,
                 self.repository,
                 language=None if language == "auto" else language,
-                # Real-meeting evaluation found rolling rewrites improved some
-                # meetings but degraded others by up to 4.9 absolute WER.
-                # A durable record must prefer the stable draft until a
-                # no-reference quality gate is proven trustworthy.
-                enable_revisions=False,
                 term_rules=self._active_term_rules,
                 **({"remote": self.options.asr_remote,
                     "on_connection_status": self._on_asr_connection_status}
@@ -2363,91 +2116,6 @@ class MeetingEngine:
         signals = getattr(self, "_live_signals", None)
         if signals is not None:
             signals.observe(rows, frontier=frontier)
-        self._maybe_revise_transcript(chunk)
-
-    def _maybe_revise_transcript(self, chunk: SpooledChunk) -> None:
-        """Schedule and run a bounded rolling re-decode for recent audio."""
-        asr = self._asr
-        if asr is None:
-            return
-        frontier = float(chunk.start_s) + float(chunk.duration_s)
-        schedule = getattr(asr, "schedule_revise", None)
-        run_pending = getattr(asr, "run_pending_revises", None)
-        if not callable(schedule) or not callable(run_pending):
-            return
-        try:
-            schedule(chunk.channel, frontier)
-            # A rolling re-decode must never jump ahead of even one queued
-            # draft chunk; the ASR engine also enforces this internally.
-            if getattr(asr, "backlog_depth", lambda: 0)() > 0:
-                return
-            for outcome in run_pending():
-                self._publish_revise_result(outcome)
-        except Exception:
-            logger.exception("Rolling transcript revise failed")
-
-    def _publish_revise_result(self, outcome: Dict[str, Any]) -> None:
-        """Assign speakers for new revise rows and broadcast upserts/removals."""
-        items = list(outcome.get("items") or [])
-        removed_ids = list(outcome.get("removed_ids") or [])
-        if not items and not removed_ids:
-            return
-
-        # Re-run speaker assignment for rows that still lack a participant.
-        needing = []
-        for row in items:
-            if row.get("speaker_participant_id") or row.get("speaker_pinned"):
-                continue
-            needing.append(TranscriptSegment(
-                segment_id=row["id"],
-                meeting_id=self.meeting_id,
-                chunk_id=row.get("chunk_id"),
-                channel=row.get("channel") or CHANNEL_MIC,
-                start_s=float(row.get("start_s") or 0.0),
-                end_s=float(row.get("end_s") or 0.0),
-                text=row.get("text") or "",
-            ))
-        if needing:
-            try:
-                self._assign_speakers(needing)
-            except Exception:
-                logger.exception("Speaker assignment failed for revise batch")
-            for seg in needing:
-                if not seg.speaker_participant_id:
-                    continue
-                try:
-                    self.repository.update_segment_speaker(
-                        self.meeting_id,
-                        seg.segment_id,
-                        seg.speaker_participant_id,
-                        seg.speaker_source,
-                        False,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to persist revise speaker for %s", seg.segment_id
-                    )
-                for row in items:
-                    if row.get("id") == seg.segment_id:
-                        row["speaker_participant_id"] = seg.speaker_participant_id
-                        row["speaker_source"] = seg.speaker_source
-                        break
-
-        verifier = getattr(self, "_citation_verifier", None)
-        if verifier is not None:
-            verifier.invalidate([r["id"] for r in items] + removed_ids)
-        signals = getattr(self, "_live_signals", None)
-        if signals is not None:
-            signals.observe(items)
-        payload = {"items": items, "removed_ids": removed_ids}
-        self._emit("segments", payload)
-        self._broadcast({"type": "segments", **payload})
-        scheduler = self._scheduler
-        if scheduler is not None and items:
-            try:
-                scheduler.notify_revised([row.get("id") for row in items])
-            except Exception:
-                logger.exception("Scheduler notify failed after revise")
 
     def _assign_speakers(self, segments: List[TranscriptSegment]) -> None:
         """Mic segments become 'Me'; loopback segments go to the diarizer."""
@@ -2618,6 +2286,7 @@ class MeetingEngine:
         try:
             from meeting.agent.base import create_agent_core
             from meeting.agent.scheduler import CheckpointScheduler
+            from meeting.reinsight import StoreToolHost
             if self._agent_core is None:
                 system_prompt = ""
                 try:
@@ -2637,7 +2306,11 @@ class MeetingEngine:
                         system_prompt=system_prompt,
                         endpoint=self.options.llm_endpoint,
                     ),
-                    self,
+                    StoreToolHost(
+                        get_store=lambda: self.store,
+                        repository=self.repository,
+                        writes_allowed=self.agent_writes_allowed,
+                    ),
                 )
                 self._agent_core = created_core
                 # Duck-typed: cores without session events (the direct
@@ -3260,90 +2933,3 @@ class MeetingEngine:
         return self.repository.get_segments(
             self.meeting_id, after_start_s=after_start_s, limit=limit
         )
-
-    def apply_agent_ops(self, ops: List[Dict[str, Any]]) -> List[OpResult]:
-        """Validate and apply state-patch ops on behalf of the agent."""
-        if self.store is None:
-            return [
-                OpResult(ok=False,
-                         op=op if isinstance(op, dict) else {"op": op},
-                         reason="inactive")
-                for op in ops
-            ]
-        if not self.agent_writes_allowed():
-            return [
-                OpResult(
-                    ok=False,
-                    op=op if isinstance(op, dict) else {"op": op},
-                    reason="agent_writes_revoked",
-                )
-                for op in ops
-            ]
-        return self.store.apply("agent", "agent", list(ops))
-
-    def segment_exists(self, segment_id: str) -> bool:
-        """Exact-match stored-segment lookup for agent evidence repair."""
-        repository = getattr(self, "repository", None)
-        meeting_id = getattr(self, "meeting_id", None)
-        if not meeting_id or not hasattr(repository, "segment_exists"):
-            return False
-        try:
-            return bool(repository.segment_exists(meeting_id, segment_id))
-        except Exception:
-            logger.exception("Segment existence probe failed")
-            return False
-
-    def ask_question(self, text: str, evidence: List[str]) -> OpResult:
-        """Add a question to the quiet inbox (agent tool)."""
-        return self._apply_single_agent_op({
-            "op": "ask_question", "text": text,
-            "evidence": list(evidence or []),
-        })
-
-    def resolve_question(self, question_id: str, answer_text: str,
-                         confidence: float, evidence: List[str]) -> OpResult:
-        """Answer an open question from audio evidence (agent tool)."""
-        return self._apply_single_agent_op({
-            "op": "resolve_question", "question_id": question_id,
-            "answer_text": answer_text, "confidence": confidence,
-            "evidence": list(evidence or []),
-        })
-
-    def search_past_meetings(
-        self,
-        query: str = "",
-        meeting_id: Optional[str] = None,
-        limit: int = 10,
-    ) -> Dict[str, Any]:
-        """Bounded, consent-gated recall of earlier meeting transcripts."""
-        from meeting.recall import search_past_meetings as recall
-
-        return recall(
-            getattr(self, "repository", None),
-            query=query,
-            current_meeting_id=getattr(self, "meeting_id", None) or "",
-            meeting_id=meeting_id,
-            limit=limit,
-        )
-
-    def search_context_files(
-        self,
-        query: str = "",
-        relative_path: Optional[str] = None,
-        limit: int = 10,
-    ) -> Dict[str, Any]:
-        """Bounded, consent-gated search of the configured knowledge folder."""
-        from meeting.context_folder import search_context_files as search
-
-        return search(
-            query=query,
-            relative_path=relative_path,
-            limit=limit,
-        )
-
-    def _apply_single_agent_op(self, op: Dict[str, Any]) -> OpResult:
-        if self.store is None:
-            return OpResult(ok=False, op=op, reason="inactive")
-        if not self.agent_writes_allowed():
-            return OpResult(ok=False, op=op, reason="agent_writes_revoked")
-        return self.store.apply("agent", "agent", [op])[0]

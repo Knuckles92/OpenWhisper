@@ -23,7 +23,6 @@ from PyQt6.QtGui import QColor
 
 DARK: Final[str] = "dark"
 LIGHT: Final[str] = "light"
-THEMES: Final[tuple[str, ...]] = (DARK, LIGHT)
 
 _TOKEN_RE = re.compile(r"@([a-z][a-z0-9]*(?:-[a-z0-9]+)*)")
 _RGB_TRIPLE_RE = re.compile(r"^\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*$")

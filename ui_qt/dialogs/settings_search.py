@@ -7,11 +7,10 @@ makes the question "which part of the app owns this?" irrelevant.
 """
 import html
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from PyQt6.QtCore import QEvent, QObject, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QIcon, QKeySequence, QPainter
+from PyQt6.QtGui import QColor, QKeySequence, QPainter
 from PyQt6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -24,7 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import bundle_root
+from ui_qt.utils.icons import tabler_icon
 from ui_qt.utils.palette import token_color
 from ui_qt.widgets.setting_tile import TileBase
 
@@ -41,10 +40,6 @@ SECTION_TITLES = {
 SECTION_LIMITS = {SETTING: 6, MODEL: 5, HELP: 3}
 
 _ENTRY_ROLE = Qt.ItemDataRole.UserRole
-
-
-def _icon(filename: str) -> QIcon:
-    return QIcon(str(Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / filename))
 
 
 @dataclass
@@ -248,7 +243,7 @@ class _ResultRow(QWidget):
         glyph.setObjectName("settingsSearchIcon")
         glyph.setFixedSize(28, 28)
         glyph.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        glyph.setPixmap(_icon(entry.icon).pixmap(15, 15))
+        glyph.setPixmap(tabler_icon(entry.icon).pixmap(15, 15))
         row.addWidget(glyph)
         copy = QVBoxLayout()
         copy.setContentsMargins(0, 0, 0, 0)
@@ -295,7 +290,7 @@ class SearchPalette(QWidget):
         self.input = QLineEdit()
         self.input.setObjectName("settingsSearchInput")
         self.input.setPlaceholderText("Search settings, models, and help")
-        self.input.addAction(_icon("search-slate.svg"), QLineEdit.ActionPosition.LeadingPosition)
+        self.input.addAction(tabler_icon("search-slate.svg"), QLineEdit.ActionPosition.LeadingPosition)
         self.input.textChanged.connect(self._run_query)
         self.input.installEventFilter(self)
         column.addWidget(self.input)

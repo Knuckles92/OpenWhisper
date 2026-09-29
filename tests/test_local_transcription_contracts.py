@@ -89,19 +89,58 @@ def test_saved_recording_dispatch_guards_and_releases_claim(tmp_path, monkeypatc
         submit.assert_not_called()
 
 
-@pytest.mark.parametrize("large,requires_split", [(False,False),(False,True),(True,False),(True,True)])
-def test_worker_dispatch_uses_backend_splitting_policy(monkeypatch, large, requires_split):
-    from services.runtime import transcription
-    backend = SimpleNamespace(is_available=lambda:True, requires_file_splitting=requires_split)
-    controller = SimpleNamespace(current_backend=backend, large_file_detected=Mock(), status_update=Mock())
-    runtime = transcription.TranscriptionRuntime(controller)
-    monkeypatch.setattr(transcription.audio_processor, "check_file_size", lambda _: (large,30))
-    runtime.transcribe_audio_file = Mock()
-    runtime.transcribe_large_audio_file = Mock()
-    runtime._run_transcription_job("saved.wav")
-    selected = runtime.transcribe_large_audio_file if large and requires_split else runtime.transcribe_audio_file
-    selected.assert_called_once_with("saved.wav")
-    other = runtime.transcribe_audio_file if large and requires_split else runtime.transcribe_large_audio_file
-    other.assert_not_called()
-    if large:
-        controller.large_file_detected.emit.assert_called_once_with(30, requires_split)
+def _worker_runtime(backend):
+    from services.runtime.transcription import TranscriptionRuntime
+    controller = Mock(current_backend=backend, _pending_file_size=None, _pending_audio_path=None)
+    runtime = TranscriptionRuntime(controller)
+    runtime._maybe_cleanup_transcript = lambda raw: (raw, None, None)
+    return runtime, controller
+
+
+def _statuses(controller):
+    return [call.args[0] for call in controller.status_update.emit.call_args_list]
+
+
+def test_local_engine_takes_a_file_over_the_api_limit_whole(backend, tmp_path):
+    """OpenAI's upload limit must not split, or announce, a local transcription."""
+    from ui_qt.overlay_state import OverlayState
+    path = tmp_path / "long-meeting.wav"
+    with open(path, "wb") as handle:
+        handle.truncate(int((config.MAX_FILE_SIZE_MB + 1) * 1024 * 1024))
+    info = SimpleNamespace(language="en", language_probability=1.0)
+    backend.model.transcribe.return_value = (iter([SimpleNamespace(text="all of it")]), info)
+    runtime, controller = _worker_runtime(backend)
+
+    runtime._run_transcription_job(str(path))
+
+    assert backend.model.transcribe.call_args.args == (str(path),)
+    controller.large_file_detected.emit.assert_not_called()
+    controller.overlay_state_update.emit.assert_any_call(OverlayState.TRANSCRIBING)
+    assert _statuses(controller) == ["Transcribing..."]
+    controller.transcription_completed.emit.assert_called_once_with("all of it", None, None)
+
+
+def test_worker_job_shows_the_split_a_backend_reports(tmp_path):
+    """The runtime only shows a split; the backend does it, inside transcribe."""
+    from ui_qt.overlay_state import OverlayState
+    path = tmp_path / "saved.wav"
+    path.write_bytes(b"RIFF" + bytes(64))
+    calls = []
+    backend = SimpleNamespace(
+        is_available=lambda: True,
+        large_file_size_mb=lambda _path: 30.0,
+        transcribe=lambda audio_path: calls.append(audio_path) or "chunked text",
+    )
+    runtime, controller = _worker_runtime(backend)
+
+    runtime._run_transcription_job(str(path))
+
+    assert calls == [str(path)]
+    controller.large_file_detected.emit.assert_called_once_with(30.0)
+    assert _statuses(controller) == ["Splitting large file (30.0 MB)..."]
+    assert OverlayState.TRANSCRIBING not in [
+        call.args[0] for call in controller.overlay_state_update.emit.call_args_list
+    ], "the backend's own progress moves the overlay on once the split is done"
+    runtime.report_backend_progress("Transcribing 3 chunks...", True)
+    controller.overlay_state_update.emit.assert_called_with(OverlayState.TRANSCRIBING)
+    assert _statuses(controller)[-1] == "Transcribing 3 chunks..."

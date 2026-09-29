@@ -11,40 +11,47 @@ No Qt imports; this package stays standalone-extractable.
 from __future__ import annotations
 
 import functools
-import json
 import logging
 import threading
-import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from meeting.diarize import cloud_pass
 from meeting.finalization import (
     POLISH_TIMEOUT_S,
-    polish_blocks,
+    polish_transcript,
     sparse_redecode_detail,
     STEP_DETAILS,
     STEP_NAMES,
     STEP_ORDER,
+    SpeakerPassGate,
     failed_steps_message,
+    insights_ready_message,
     make_step as _make_step,
+    saved_state_detail,
+    speaker_pass_gate,
     summary_stats,
 )
 from meeting.interfaces import (
+    CHANNEL_LOOPBACK,
     CHANNEL_MIC,
-    AgentConfig,
-    AgentResult,
-    CheckpointPayload,
     TranscriptSegment,
 )
 from meeting.reinsight import (
     DEFAULT_TIMEOUT_S,
-    _OfflineToolHost,
+    AgentUnavailable,
+    StoreToolHost,
+    stored_agent,
 )
-from meeting.respeaker import rerun_speakers
 from meeting.stored import (
-    meeting_endpoint as _meeting_endpoint,
     open_store as _open_store,
 )
-from meeting.state.schema import CARD_KEYS, CardItem, FinalizationState, MeetingState
+from meeting.state.schema import (
+    CARD_KEYS,
+    CardItem,
+    FinalizationState,
+    MeetingState,
+    parse_state_json,
+)
 from meeting.state.store import MeetingStateStore
 from meeting.time_utils import meeting_duration_s
 
@@ -61,12 +68,17 @@ TranscribeFn = Callable[..., Any]
 #: rather than importing the app's controller keeps ``meeting`` usable
 #: standalone, and keeps the "who owns the engine" policy in the services layer.
 ModelLease = Tuple[Callable[[], bool], Callable[[], None]]
+#: ``rerun_redecode``'s default: build a diarizer from the speaker model.
+_NEW_DIARIZER: Any = object()
 
 __all__ = [
     "FinalizationBusyError",
     "rerun_finalization",
     "rerun_redecode",
     "rerun_polish",
+    "rerun_speakers",
+    "run_speaker_pass",
+    "speaker_step_outcome",
     "ModelLease",
     "acquire_model_lease",
     "release_model_lease",
@@ -77,20 +89,27 @@ __all__ = [
 ]
 
 
-def _reload_store(store: MeetingStateStore, repository: Any,
-                  meeting_id: str) -> None:
-    """Reload the in-memory document after an out-of-band SQLite write."""
+def reload_store(store: MeetingStateStore, repository: Any,
+                 meeting_id: str) -> None:
+    """Reload the in-memory document after an out-of-band SQLite write.
+
+    A transcript replace rewrites evidence ids in ``state_json`` directly, so
+    the store must pick those up before anything else writes through it.
+    """
     try:
         meeting = repository.get_meeting(meeting_id)
     except Exception:
         logger.exception("Could not reload meeting %s after a pipeline write",
                          meeting_id)
         return
-    raw = (meeting or {}).get("state_json") or ""
-    if not raw:
+    raw = (meeting or {}).get("state_json")
+    data = parse_state_json(raw)
+    if data is None:
+        if raw:
+            logger.warning("Corrupt state_json for %s after a pipeline write",
+                           meeting_id)
         return
     try:
-        data = json.loads(raw)
         store.replace_document(MeetingState.from_dict(data))
     except Exception:
         logger.exception("Could not replace stored meeting state for %s",
@@ -111,8 +130,16 @@ def _me_participant_id(store: MeetingStateStore) -> Optional[str]:
     return None
 
 
-def _strip_unevidenced_proposed(store: MeetingStateStore) -> None:
-    """Drop ghost-anchored proposed cards after a transcript replace."""
+def strip_unevidenced_proposed(store: MeetingStateStore) -> None:
+    """Drop ghost-anchored proposed cards after a transcript replace.
+
+    The re-decode replaced every segment id; the repository remapped
+    evidence onto the new transcript where an overlap match exists. Proposed
+    items that kept an anchor stay, since their content is grounded in the
+    meeting and consolidation reconciles it. ``live_notes`` stays whole: it
+    gives the final consolidation structured context, and keeps meeting
+    notes when the final report is off. Human-touched items are protected.
+    """
     snapshot = store.snapshot()
     ops: List[Dict[str, Any]] = []
     cards_snapshot = snapshot.get("cards") or {}
@@ -139,59 +166,64 @@ def _strip_unevidenced_proposed(store: MeetingStateStore) -> None:
         logger.exception("Could not strip unevidenced proposed cards")
 
 
-def _assign_mic_speakers(
+def assign_session_speakers(
     segments: Sequence[TranscriptSegment],
+    *,
     me_id: Optional[str],
-) -> None:
-    if not me_id:
-        return
-    for seg in segments:
-        if getattr(seg, "channel", None) == CHANNEL_MIC:
-            seg.speaker_participant_id = me_id
-            seg.speaker_source = "channel"
-
-
-def _try_diarize(
-    segments: List[TranscriptSegment],
-    store: MeetingStateStore,
-    repository: Any,
-    meeting_id: str,
+    diarizer: Any,
     spool_dir: str,
     chunks: List[Dict[str, Any]],
 ) -> None:
-    """Best-effort loopback diarization; never raises to the caller."""
+    """Label re-decoded segments: Me on the mic, the diarizer on system audio.
+
+    System audio is labeled from the whole session recording rather than
+    chunk by chunk. Never raises.
+
+    Args:
+        segments: Fresh segments; labels are set in place.
+        me_id: The meeting's "me" participant.
+        diarizer: Labels system audio; ``None`` leaves it channel-labeled.
+        spool_dir: Directory holding the session audio.
+        chunks: Registered chunk rows for the concat fallback.
+    """
+    loopback = []
+    for seg in segments:
+        if seg.channel == CHANNEL_MIC and me_id:
+            seg.speaker_participant_id = me_id
+            seg.speaker_source = "channel"
+        elif seg.channel == CHANNEL_LOOPBACK:
+            loopback.append(seg)
+    if diarizer is None or not loopback:
+        return
     try:
         from meeting.asr.offline import load_channel_session
         from meeting.diarize.assign import assign_from_frames, refresh_labels
-        from meeting.diarize.clustering import create_diarizer
-        from meeting.interfaces import CHANNEL_LOOPBACK
-        from services.components import speaker_model_path
+
+        frames, rate, origin = load_channel_session(
+            spool_dir, CHANNEL_LOOPBACK, chunks,
+        )
+        if frames is None or getattr(frames, "size", 0) == 0:
+            return
+        labeled = assign_from_frames(diarizer, loopback, frames, rate, origin)
+        refresh_labels(diarizer, labeled)
     except Exception:
-        logger.exception("Offline speaker helpers unavailable")
-        return
+        logger.exception("Offline speaker assignment failed")
+
+
+def _new_offline_diarizer(
+    store: MeetingStateStore, repository: Any, meeting_id: str,
+) -> Any:
+    """A fresh diarizer for a stored meeting, or None when unavailable."""
     try:
-        diarizer = create_diarizer(
+        from meeting.diarize.clustering import create_diarizer
+        from services.components import speaker_model_path
+
+        return create_diarizer(
             speaker_model_path(), store, repository, meeting_id,
         )
     except Exception:
         logger.exception("Could not create a diarizer for redecode retry")
-        return
-    if diarizer is None:
-        return
-    loopback = [seg for seg in segments if seg.channel == CHANNEL_LOOPBACK]
-    if not loopback:
-        return
-    try:
-        frames, rate, origin = load_channel_session(
-            spool_dir, CHANNEL_LOOPBACK, chunks,
-        )
-    except Exception:
-        logger.exception("Could not load loopback audio for diarization")
-        return
-    if frames is None or getattr(frames, "size", 0) == 0:
-        return
-    labeled = assign_from_frames(diarizer, loopback, frames, rate, origin)
-    refresh_labels(diarizer, labeled)
+        return None
 
 
 def _word_count(rows: Sequence[Any]) -> int:
@@ -390,12 +422,16 @@ def rerun_redecode(
     progress_cb: Optional[Callable[[str, int, int], None]] = None,
     model_lease: Optional[ModelLease] = None,
     redecode_coverage_guard: bool = False,
+    speaker_id_backend: str = "local",
+    diarizer: Any = _NEW_DIARIZER,
 ) -> Dict[str, Any]:
     """Re-decode session audio and replace the stored draft transcript.
 
-    Keeps the live draft when the new pass is empty. The optional coverage
-    guard also rejects results with fewer than 80% of the draft's words. Human-pinned speakers and evidenced cards survive
-    ``replace_final_transcript``.
+    Live End runs this with the meeting's own ASR engine as
+    ``transcribe_fn``; a retry loads a model. Keeps the live draft when the
+    new pass is empty. The optional coverage guard also rejects results with
+    fewer than 80% of the draft's words. Human-pinned speakers and evidenced
+    cards survive ``replace_final_transcript``.
 
     Args:
         repository: A ``MeetingRepository``.
@@ -403,16 +439,24 @@ def rerun_redecode(
         store: Optional existing store; built from ``state_json`` otherwise.
         asr_model_name: Whisper model name used when ``transcribe_fn`` is omitted.
         language: Optional ISO-639-1 language pin.
-        transcribe_fn: Injectable decoder (tests).
+        transcribe_fn: ``(spool_dir, chunks, progress_cb=)`` decoder; the
+            live meeting's ``transcribe_offline_session``, or a test fake.
         progress_cb: Optional window-progress callback.
         model_lease: Optional ``(acquire, release)`` pair invoked around the
             Whisper load. The app passes its dictation-engine lease here so
             only one model is ever resident; ``meeting`` itself stays
             independent of the services layer.
+        redecode_coverage_guard: Keep the draft when the new pass is sparse.
+        speaker_id_backend: ``off`` leaves system audio unlabeled, as a live
+            meeting with speaker identification off does.
+        diarizer: Labels system audio. By default a fresh one is built from
+            the speaker model; live End passes the meeting's own, or None.
 
     Returns:
-        ``{ok, error}``. Failures are reported here, not raised, except
-        unknown-meeting ``ValueError``.
+        ``{ok, error}``, plus the stored ``rows`` and ``removed_ids`` on
+        success and ``kept_draft`` when the coverage guard refused the pass.
+        Failures are reported here, not raised, except unknown-meeting
+        ``ValueError``.
     """
     meeting = repository.get_meeting(meeting_id)
     if meeting is None:
@@ -473,7 +517,7 @@ def rerun_redecode(
                 progress_cb=progress_cb,
             ) or [])
     except Exception as exc:
-        logger.exception("Redeocde transcription failed for %s", meeting_id)
+        logger.exception("Redecode transcription failed for %s", meeting_id)
         return {"ok": False, "error": str(exc)}
     finally:
         if backend is not None:
@@ -494,20 +538,31 @@ def rerun_redecode(
     if redecode_coverage_guard and old_words and new_words < 0.8 * old_words:
         logger.warning(
             "Keeping live draft transcript for %s: offline pass has %d words "
-            "vs draft %d",
+            "vs draft %d (AMI IN1009 guard: do not replace a sparser decode)",
             meeting_id, new_words, old_words,
         )
         return {
             "ok": False,
             "error": sparse_redecode_detail(new_words, old_words),
+            "kept_draft": True,
         }
-    _assign_mic_speakers(decoded, _me_participant_id(store))
-    _try_diarize(decoded, store, repository, meeting_id, spool_dir, chunks)
+    if speaker_id_backend == "off":
+        diarizer = None
+    elif diarizer is _NEW_DIARIZER:
+        diarizer = (
+            _new_offline_diarizer(store, repository, meeting_id)
+            if any(seg.channel == CHANNEL_LOOPBACK for seg in decoded)
+            else None
+        )
+    assign_session_speakers(
+        decoded, me_id=_me_participant_id(store), diarizer=diarizer,
+        spool_dir=spool_dir, chunks=chunks,
+    )
     replace = getattr(repository, "replace_final_transcript", None)
     if not callable(replace):
         return {"ok": False, "error": "Transcript replace is unavailable."}
     try:
-        replace(meeting_id, decoded)
+        rows, removed_ids, _id_map = replace(meeting_id, decoded)
     except Exception as exc:
         logger.exception("Final transcript replace failed for %s", meeting_id)
         return {"ok": False, "error": str(exc)}
@@ -516,42 +571,18 @@ def rerun_redecode(
         try:
             mark_done(meeting_id)
         except Exception:
-            logger.exception("Could not mark chunks done after redecode retry")
-    _reload_store(store, repository, meeting_id)
-    _strip_unevidenced_proposed(store)
+            logger.exception("Could not mark chunks done after a redecode")
+    reload_store(store, repository, meeting_id)
+    strip_unevidenced_proposed(store)
+    # Repair ran against the draft at End; timeline coverage and summary
+    # fallbacks are rebuilt from the final transcript.
     try:
         from meeting.state.repair import repair_meeting_state
 
-        repair_meeting_state(store, repository.get_segments(meeting_id))
+        repair_meeting_state(store, rows)
     except Exception:
-        logger.exception("State repair after redecode retry failed")
-    return {"ok": True, "error": None}
-
-
-def _run_checkpoint(core: Any, payload: CheckpointPayload,
-                    timeout_s: float) -> AgentResult:
-    box: Dict[str, AgentResult] = {}
-
-    def worker() -> None:
-        try:
-            box["result"] = core.checkpoint(payload)
-        except Exception as exc:
-            logger.exception("Agent polish raised during finalization retry")
-            box["result"] = AgentResult(ok=False, error=str(exc))
-
-    thread = threading.Thread(target=worker, name="meeting-repolish",
-                              daemon=True)
-    thread.start()
-    thread.join(timeout_s)
-    if thread.is_alive():
-        logger.warning("Polish retry timed out after %.0fs; canceling", timeout_s)
-        try:
-            core.cancel()
-        except Exception:
-            logger.exception("Agent cancel raised during polish retry")
-        thread.join(timeout=5.0)
-        return AgentResult(ok=False, error=f"timed out after {timeout_s:.0f}s")
-    return box.get("result") or AgentResult(ok=False, error="no result")
+        logger.exception("State repair after a redecode failed")
+    return {"ok": True, "error": None, "rows": rows, "removed_ids": removed_ids}
 
 
 def rerun_polish(
@@ -591,68 +622,103 @@ def rerun_polish(
     segments = repository.get_segments(meeting_id)
     if not segments:
         return {"ok": True, "applied": 0, "error": None}
-    blocks = polish_blocks(segments)
+    tools = StoreToolHost(store, repository)
     try:
-        from meeting.agent.base import create_agent_core
-        from meeting.agent.prompts import build_system_prompt
-
-        core = create_agent_core(agent_core_kind, sidecar_payload_dir)
-    except Exception as exc:
-        logger.exception("Agent core unavailable for polish retry")
-        return {"ok": False, "applied": 0, "error": str(exc)}
-    tools = _OfflineToolHost(store, repository)
-    applied_before = tools.applied
-    try:
-        core.initialize(
-            AgentConfig(
-                meeting_id=meeting_id,
-                provider=provider,
-                model=model,
-                api_key=None,
-                system_prompt=build_system_prompt(),
-                endpoint=endpoint or _meeting_endpoint(meeting),
-            ),
-            tools,
-        )
-        total = len(blocks)
-        for idx, block in enumerate(blocks, 1):
-            if progress_cb is not None:
-                try:
-                    progress_cb(
-                        f"Cleaning transcript formatting and grammar "
-                        f"(block {idx}/{total}, {len(block)} segments)...",
-                        idx,
-                        total,
-                    )
-                except Exception:
-                    logger.exception("Polish retry progress callback failed")
-            payload = CheckpointPayload(
-                request_id=uuid.uuid4().hex,
-                state_snapshot=store.snapshot(),
-                new_segments=block,
-                is_polish=True,
+        with stored_agent(
+            meeting_id, meeting, tools,
+            provider=provider, model=model, endpoint=endpoint,
+            agent_core_kind=agent_core_kind,
+            sidecar_payload_dir=sidecar_payload_dir,
+        ) as core:
+            error = polish_transcript(
+                core, store, segments,
+                timeout_s=timeout_s, progress_cb=progress_cb,
             )
-            result = _run_checkpoint(core, payload, timeout_s)
-            if not result.ok:
-                # Earlier blocks may already have persisted edits.  Report the
-                # pass as incomplete so finalization remains retryable instead
-                # of presenting a partially polished transcript as finished.
-                return {
-                    "ok": False,
-                    "applied": tools.applied - applied_before,
-                    "error": result.error or "transcript cleanup failed",
-                }
-        return {"ok": True, "applied": tools.applied - applied_before,
-                "error": None}
+    except AgentUnavailable as exc:
+        return {"ok": False, "applied": 0, "error": str(exc)}
     except Exception as exc:
         logger.exception("Polish retry failed for meeting %s", meeting_id)
-        return {"ok": False, "applied": tools.applied - applied_before,
-                "error": str(exc)}
-    finally:
-        try:
-            core.shutdown()
-        except Exception:
-            logger.exception("Agent core shutdown failed after polish retry")
+        error = str(exc)
+    return {"ok": error is None, "applied": tools.applied, "error": error}
+
+
+def run_speaker_pass(
+    repository: Any,
+    meeting_id: str,
+    store: MeetingStateStore,
+    spool_dir: str,
+    *,
+    gate: SpeakerPassGate,
+    transcribe_fn: Optional[TranscribeFn] = None,
+    progress_cb: Optional[Callable[[str, int, int], None]] = None,
+    on_start: Optional[Callable[[], None]] = None,
+) -> Dict[str, Any]:
+    """Upload system audio and relabel speakers when ``gate`` allows it.
+
+    Live End, the finalization retry, and the dashboard's re-run all come
+    through here. Never raises.
+
+    Args:
+        repository: A ``MeetingRepository``.
+        meeting_id: The meeting to relabel.
+        store: The meeting's store; built with a segment handler so relabels
+            persist and broadcast.
+        spool_dir: Directory holding the meeting's session audio.
+        gate: From ``speaker_pass_gate``; nothing is uploaded unless ``ok``.
+        transcribe_fn: Injectable decoder (tests).
+        progress_cb: Optional ``cb(detail, current, total)``.
+        on_start: Called once the upload is about to begin.
+
+    Returns:
+        ``{ok, skipped, applied, created, windows, error}``. ``skipped`` means
+        the gate refused or OpenAI retired the model early; either way the
+        on-device labels stand.
+    """
+    if not gate.ok:
+        return {
+            "ok": False, "skipped": True, "applied": 0, "created": 0,
+            "windows": 0, "error": gate.reason,
+        }
+    if on_start is not None:
+        on_start()
+    try:
+        result = cloud_pass.run_cloud_speaker_pass(
+            repository, meeting_id, store, spool_dir,
+            api_key=gate.api_key,
+            transcribe_fn=transcribe_fn,
+            progress_cb=progress_cb,
+        )
+    except Exception as exc:
+        logger.exception("Cloud speaker pass raised for %s", meeting_id)
+        result = {"ok": False, "error": str(exc)}
+    logger.info(
+        "Speaker pass for meeting %s finished: ok=%s applied=%s",
+        meeting_id, result.get("ok"), result.get("applied"),
+    )
+    return {
+        "ok": bool(result.get("ok")),
+        "skipped": bool(result.get("retired")),
+        "applied": int(result.get("applied") or 0),
+        "created": int(result.get("created") or 0),
+        "windows": int(result.get("windows") or 0),
+        "error": result.get("error"),
+    }
+
+
+def speaker_step_outcome(result: Dict[str, Any]) -> Tuple[str, str]:
+    """``(status, detail)`` for the speaker step; a skip is not a failure."""
+    if result.get("ok"):
+        count = int(result.get("applied") or 0)
+        return "completed", (
+            f"Updated {count} speaker label{'' if count == 1 else 's'}"
+        )
+    if result.get("skipped"):
+        return "completed", (
+            str(result.get("error") or "") or "Speaker identification skipped."
+        )
+    return "failed", (
+        str(result.get("error") or "") or "Speaker identification failed."
+    )
 
 
 class FinalizationBusyError(RuntimeError):
@@ -693,6 +759,52 @@ def _one_run_per_meeting(fn: Callable[..., Dict[str, Any]]) -> Callable[..., Dic
 
 
 @_one_run_per_meeting
+def rerun_speakers(
+    repository: Any,
+    meeting_id: str,
+    *,
+    gate: SpeakerPassGate,
+    store: Optional[MeetingStateStore] = None,
+    spool_dir: Optional[str] = None,
+    transcribe_fn: Optional[TranscribeFn] = None,
+    progress_cb: Optional[Callable[[str, int, int], None]] = None,
+) -> Dict[str, Any]:
+    """Relabel a finished meeting's speakers from its system-audio recording.
+
+    Someone who renames a speaker can re-run this: the new name becomes a
+    reference clip for the next pass.
+
+    Args:
+        repository: A ``MeetingRepository``.
+        meeting_id: The meeting to relabel.
+        gate: From ``speaker_pass_gate``; nothing is uploaded unless ``ok``.
+        store: Optional existing ``MeetingStateStore``.
+        spool_dir: Override for the meeting's stored spool directory.
+        transcribe_fn: Injectable decoder (tests).
+        progress_cb: Optional progress callback.
+
+    Returns:
+        ``run_speaker_pass``'s result plus the post-pass ``state`` snapshot.
+
+    Raises:
+        ValueError: When the meeting is unknown.
+        FinalizationBusyError: When post-meeting steps of this meeting are
+            already running.
+    """
+    meeting = repository.get_meeting(meeting_id)
+    if meeting is None:
+        raise ValueError("unknown meeting")
+    if store is None:
+        store = _open_store(repository, meeting_id, meeting)
+    result = run_speaker_pass(
+        repository, meeting_id, store,
+        spool_dir or meeting.get("spool_dir") or "",
+        gate=gate, transcribe_fn=transcribe_fn, progress_cb=progress_cb,
+    )
+    return {**result, "state": store.snapshot()}
+
+
+@_one_run_per_meeting
 def rerun_finalization(
     repository: Any,
     meeting_id: str,
@@ -708,6 +820,8 @@ def rerun_finalization(
     asr_model_name: str = "auto",
     language: Optional[str] = None,
     transcribe_fn: Optional[TranscribeFn] = None,
+    speaker_id_backend: str = "local",
+    speaker_audio_consent: bool = False,
     speaker_api_key: Optional[str] = None,
     speaker_transcribe_fn: Optional[TranscribeFn] = None,
     progress_cb: Optional[ProgressCb] = None,
@@ -730,8 +844,13 @@ def rerun_finalization(
         asr_model_name: Whisper model used for redecode.
         language: Optional ASR language pin.
         transcribe_fn: Injectable offline decoder (tests).
+        speaker_id_backend: Current speaker-identification setting. ``off``
+            also skips re-diarizing a redecoded transcript.
+        speaker_audio_consent: Whether the user approved uploading meeting
+            audio. The speaker step skips without it.
         speaker_api_key: OpenAI key for speaker identification.
-        speaker_transcribe_fn: Injectable speaker decoder (tests).
+        speaker_transcribe_fn: Injectable speaker decoder (tests); stands in
+            for the key, never for the backend or consent.
         progress_cb: Receives each persisted finalization snapshot.
 
     Returns:
@@ -799,6 +918,7 @@ def rerun_finalization(
                 progress_cb=_offline_progress,
                 model_lease=model_lease,
                 redecode_coverage_guard=redecode_coverage_guard,
+                speaker_id_backend=speaker_id_backend,
             )
             if result.get("ok"):
                 _set_step(
@@ -812,10 +932,13 @@ def rerun_finalization(
                     last_error,
                 )
         elif step_id == "speaker_id":
-            _running(
-                "speaker_id",
-                "Uploading system audio for speaker labels…",
-                "Identifying speakers…",
+            gate = speaker_pass_gate(
+                backend=speaker_id_backend,
+                consent=speaker_audio_consent,
+                find_key=(
+                    None if speaker_transcribe_fn is not None
+                    else lambda: speaker_api_key
+                ),
             )
 
             def _speaker_progress(detail: str, curr: int, total: int) -> None:
@@ -825,36 +948,22 @@ def rerun_finalization(
                     f"Identifying speakers (window {curr}/{total})…",
                 )
 
-            if not speaker_api_key and speaker_transcribe_fn is None:
-                last_error = "No OpenAI API key is configured."
-                _set_step(steps, "speaker_id", "failed", last_error)
-            else:
-                try:
-                    result = rerun_speakers(
-                        repository,
-                        meeting_id,
-                        api_key=speaker_api_key or "",
-                        store=store,
-                        spool_dir=meeting.get("spool_dir") or "",
-                        transcribe_fn=speaker_transcribe_fn,
-                        progress_cb=_speaker_progress,
-                    )
-                except Exception as exc:
-                    logger.exception("Speaker retry failed for %s", meeting_id)
-                    result = {"ok": False, "error": str(exc)}
-                if result.get("ok"):
-                    applied += int(result.get("applied") or 0)
-                    count = int(result.get("applied") or 0)
-                    _set_step(
-                        steps, "speaker_id", "completed",
-                        f"Updated {count} speaker label"
-                        f"{'' if count == 1 else 's'}",
-                    )
-                else:
-                    last_error = (
-                        result.get("error") or "Speaker identification failed."
-                    )
-                    _set_step(steps, "speaker_id", "failed", last_error)
+            result = run_speaker_pass(
+                repository, meeting_id, store, meeting.get("spool_dir") or "",
+                gate=gate,
+                transcribe_fn=speaker_transcribe_fn,
+                progress_cb=_speaker_progress,
+                on_start=lambda: _running(
+                    "speaker_id",
+                    "Uploading system audio for speaker labels…",
+                    "Identifying speakers…",
+                ),
+            )
+            status, detail = speaker_step_outcome(result)
+            applied += int(result.get("applied") or 0)
+            if status == "failed":
+                last_error = detail
+            _set_step(steps, "speaker_id", status, detail)
         elif step_id == "polish":
             _running(
                 "polish",
@@ -933,8 +1042,7 @@ def rerun_finalization(
                     store, repository, meeting_id, meeting,
                 )
                 _set_step(
-                    steps, "finalize", "completed",
-                    f"Saved {stats['segments']} segments ({stats['words']} words)",
+                    steps, "finalize", "completed", saved_state_detail(stats),
                 )
             except Exception as exc:
                 logger.exception("Finalize retry failed for %s", meeting_id)
@@ -945,14 +1053,7 @@ def rerun_finalization(
                 steps, cloud_enabled=cloud_enabled,
             )
             if status == "completed" and stats:
-                parts = [f"{stats['segments']} segments"]
-                if stats.get("key_points"):
-                    parts.append(f"{stats['key_points']} key points")
-                if stats.get("action_items"):
-                    parts.append(f"{stats['action_items']} action items")
-                if stats.get("decisions"):
-                    parts.append(f"{stats['decisions']} decisions")
-                message = f"Final insights ready — {', '.join(parts)}."
+                message = insights_ready_message(stats)
             finalization = _persist_finalization(
                 store,
                 status=status,
@@ -973,20 +1074,11 @@ def rerun_finalization(
             }
 
     stats = _collect_summary_stats(store, repository, meeting_id, meeting)
-    if not any(step.get("id") == "finalize" for step in steps):
-        steps.append(_make_step("finalize", "completed"))
-        _set_step(
-            steps, "finalize", "completed",
-            f"Saved {stats['segments']} segments ({stats['words']} words)",
-        )
-    elif not any(
+    if not any(
         step.get("id") == "finalize" and step.get("status") == "completed"
         for step in steps
     ):
-        _set_step(
-            steps, "finalize", "completed",
-            f"Saved {stats['segments']} segments ({stats['words']} words)",
-        )
+        _set_step(steps, "finalize", "completed", saved_state_detail(stats))
     status, message = _overall_from_steps(steps, cloud_enabled=cloud_enabled)
     finalization = _persist_finalization(
         store,

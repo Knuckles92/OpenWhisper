@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Optional
 
 from config import config
 from services.hotkey_manager import is_accessibility_trusted, send_paste
-from services.audio_processor import audio_processor
 from services.history_manager import history_manager
 from services.transcript_cleanup import (
     CANCELED_REASON,
@@ -29,6 +28,7 @@ from services.batch_upload import (
     join_raw_parts,
 )
 from services.settings import (
+    SETTING_DEFAULTS,
     SettingsKey,
     compose_transcript_cleanup_prompt,
     resolve_transcript_cleanup_model,
@@ -36,6 +36,7 @@ from services.settings import (
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
     resolve_transcript_cleanup_rules,
+    setting_value,
     settings_manager,
 )
 
@@ -168,7 +169,7 @@ class TranscriptionRuntime:
             # Auto-paste copies the user's clipboard so it can put it back.
             # Take that copy while the user speaks instead of in front of the
             # paste; it is queued to the Qt thread and never delays this start.
-            if settings_manager.get(SettingsKey.AUTO_PASTE, True):
+            if settings_manager.get(SettingsKey.AUTO_PASTE, SETTING_DEFAULTS[SettingsKey.AUTO_PASTE]):
                 self.controller.ui_controller.prefetch_clipboard_snapshot()
             return True
         else:
@@ -305,32 +306,13 @@ class TranscriptionRuntime:
             self.on_transcription_error(f"Failed to process audio: {exc}")
 
     def _run_transcription_job(self, audio_path: str) -> None:
-        """Split-or-not dispatch for a job already on a worker thread.
+        """Transcribe on the worker thread this job already runs on.
 
         The mirror of ``_submit_transcription_job``, which runs on the Qt
-        thread and therefore reports the large-file notice with a direct UI
-        call and hands the work to the executor. Here both differ: the notice
-        goes through ``large_file_detected`` (wired to the same UI method),
-        and the transcription runs inline because this already is the worker.
+        thread and hands the same work to the executor.
         """
         self._require_backend_ready()
-        needs_splitting, file_size_mb = audio_processor.check_file_size(audio_path)
-        should_split = (
-            needs_splitting and self.controller.current_backend.requires_file_splitting
-        )
-
-        if needs_splitting:
-            self.controller.large_file_detected.emit(file_size_mb, should_split)
-            self.controller.status_update.emit(
-                f"Splitting large file ({file_size_mb:.1f} MB)..."
-                if should_split
-                else f"Processing large file ({file_size_mb:.1f} MB)..."
-            )
-
-        if should_split:
-            self.transcribe_large_audio_file(audio_path)
-        else:
-            self.transcribe_audio_file(audio_path)
+        self.transcribe_audio_file(audio_path)
 
     def toggle_recording(self) -> None:
         logger.info(
@@ -635,37 +617,39 @@ class TranscriptionRuntime:
             return None
 
     def _transcribe_path(self, audio_path: str) -> str:
-        """ASR for one file of a batch, on the worker thread.
-
-        The single-file path decides split-or-not on the caller thread before
-        submitting and reports the large-file notice with a direct UI call;
-        here both happen on the worker, so the notice goes through a signal.
-        """
+        """ASR for one file of a batch, on the worker thread."""
         backend = self.controller.current_backend
         self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
-        needs_splitting, file_size_mb = audio_processor.check_file_size(audio_path)
-        if needs_splitting:
-            should_split = bool(getattr(backend, "requires_file_splitting", False))
-            self.controller.large_file_detected.emit(file_size_mb, should_split)
-            if should_split:
-                self.controller.status_update.emit(
-                    f"Splitting large file ({file_size_mb:.1f} MB)..."
-                )
-                try:
-                    return self._transcribe_split(audio_path)
-                finally:
-                    try:
-                        audio_processor.cleanup_temp_files()
-                    except Exception as cleanup_error:
-                        logger.warning(
-                            f"Failed to cleanup temp files: {cleanup_error}"
-                        )
-            self.controller.status_update.emit(
-                f"Processing large file ({file_size_mb:.1f} MB)..."
-            )
-        self.controller.overlay_state_update.emit(OverlayState.TRANSCRIBING)
-        self.controller.status_update.emit("Transcribing...")
+        self._announce_transcription(backend, audio_path)
         return backend.transcribe(audio_path)
+
+    def _announce_transcription(self, backend, audio_path: str) -> None:
+        """Show the stage a file starts in, from the worker thread.
+
+        A backend that splits this file (the OpenAI API, over its upload
+        limit) starts with the large-file notice, and reports the steps after
+        it through ``report_backend_progress``; every other file goes straight
+        to transcribing, whatever its size.
+        """
+        probe = getattr(backend, "large_file_size_mb", None)
+        file_size_mb = probe(audio_path) if probe is not None else None
+        if file_size_mb is None:
+            self.controller.overlay_state_update.emit(OverlayState.TRANSCRIBING)
+            self.controller.status_update.emit("Transcribing...")
+            return
+        logger.info(f"Large file ({file_size_mb:.2f} MB), backend splits it")
+        self.controller.large_file_detected.emit(file_size_mb)
+        self.controller.status_update.emit(
+            f"Splitting large file ({file_size_mb:.1f} MB)..."
+        )
+
+    def report_backend_progress(
+        self, message: str, transcribing: bool = False
+    ) -> None:
+        """A backend's step inside ``transcribe`` (its ``on_progress``)."""
+        if transcribing:
+            self.controller.overlay_state_update.emit(OverlayState.TRANSCRIBING)
+        self.controller.status_update.emit(message)
 
     def on_batch_complete(self, result: BatchResult) -> None:
         request = result.request
@@ -806,10 +790,7 @@ class TranscriptionRuntime:
         self._last_cleanup_failure = None
         profile = self._recording_profile
         settings = self._profile_settings if profile else settings_manager.load_all_settings()
-        enabled = profile is not None or settings.get(
-            SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
-            config.TRANSCRIPT_CLEANUP_ENABLED,
-        )
+        enabled = profile is not None or setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings)
         if not enabled or not raw or not raw.strip():
             return raw, None, None
 
@@ -870,10 +851,9 @@ class TranscriptionRuntime:
         try:
             if self.controller._pending_file_size is None:
                 self.controller._pending_file_size = os.path.getsize(audio_path)
-            self.controller.overlay_state_update.emit(OverlayState.TRANSCRIBING)
-            self.controller.status_update.emit("Transcribing...")
-            self.controller._transcription_start_time = time.time()
             backend = self.controller.current_backend
+            self._announce_transcription(backend, audio_path)
+            self.controller._transcription_start_time = time.time()
             # Windows decoded while recording aren't this pass's time, so
             # only the requests from here on count toward the stats line.
             mark = backend.timing_mark() if getattr(backend, "is_remote", False) else None
@@ -936,49 +916,6 @@ class TranscriptionRuntime:
         text = self.controller.streaming_runtime.finalize_streaming_text()
         if text:
             self.controller._pending_streaming_text = text
-
-    def _transcribe_split(self, audio_path: str) -> str:
-        """Split a large file and transcribe the chunks; caller cleans temp files."""
-        def progress_callback(message: str) -> None:
-            self.controller.status_update.emit(message)
-
-        chunk_files = audio_processor.split_audio_file(
-            audio_path, progress_callback
-        )
-        if not chunk_files:
-            raise Exception("Failed to split audio file")
-
-        self.controller.overlay_state_update.emit(OverlayState.TRANSCRIBING)
-        self.controller.status_update.emit(
-            f"Transcribing {len(chunk_files)} chunks..."
-        )
-        return self.controller.current_backend.transcribe_chunks(chunk_files)
-
-    def transcribe_large_audio_file(self, audio_path: str) -> None:
-        if self.controller._pending_file_size is None:
-            self.controller._pending_file_size = os.path.getsize(audio_path)
-        self.controller._transcription_start_time = time.time()
-        try:
-            raw = self._transcribe_split(audio_path)
-            self.controller._transcription_elapsed = (
-                time.time() - self.controller._transcription_start_time
-            )
-            self.controller._transcription_start_time = None
-            self._complete_preview_fallback(audio_path, raw)
-            self._raise_if_canceled()
-            fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(raw)
-            self._raise_if_canceled()
-            self.controller.transcription_completed.emit(fixed, raw_text, cleanup_info)
-        except Exception as exc:
-            logger.error(f"Large audio transcription failed: {exc}")
-            self.controller.transcription_failed.emit(str(exc))
-        finally:
-            try:
-                audio_processor.cleanup_temp_files()
-            except Exception as cleanup_error:
-                logger.warning(
-                    f"Failed to cleanup temp files: {cleanup_error}"
-                )
 
     def on_transcription_complete(
         self,
@@ -1128,8 +1065,8 @@ class TranscriptionRuntime:
                 paste itself succeeded.
         """
         settings = settings_manager.load_all_settings()
-        copy_clipboard = settings.get(SettingsKey.COPY_CLIPBOARD, True)
-        auto_paste = settings.get(SettingsKey.AUTO_PASTE, True)
+        copy_clipboard = setting_value(SettingsKey.COPY_CLIPBOARD, settings)
+        auto_paste = setting_value(SettingsKey.AUTO_PASTE, settings)
 
         def _status(text: str) -> None:
             self.controller.ui_controller.set_status(text + status_suffix)
@@ -1273,11 +1210,6 @@ class TranscriptionRuntime:
             ):
                 self.controller.reload_whisper_model()
 
-    def show_large_file_state(self, file_size_mb: float, is_splitting: bool) -> None:
-        self.controller.ui_controller.show_large_file_state(
-            file_size_mb, is_splitting
-        )
-
     def _require_backend_ready(self) -> None:
         backend = self.controller.current_backend
         from transcriber.optional_backend import LocalSpeechBackend
@@ -1298,35 +1230,4 @@ class TranscriptionRuntime:
 
     def _submit_transcription_job(self, audio_path: str) -> None:
         self._require_backend_ready()
-
-        needs_splitting, file_size_mb = audio_processor.check_file_size(audio_path)
-        should_split = (
-            needs_splitting and self.controller.current_backend.requires_file_splitting
-        )
-
-        if should_split:
-            logger.info(
-                f"Large file ({file_size_mb:.2f} MB), backend requires splitting"
-            )
-            self.show_large_file_state(file_size_mb, is_splitting=True)
-            self.controller.status_update.emit(
-                f"Splitting large file ({file_size_mb:.1f} MB)..."
-            )
-            self.controller.executor.submit(
-                self.transcribe_large_audio_file, audio_path
-            )
-        elif needs_splitting:
-            logger.info(
-                f"Large file ({file_size_mb:.2f} MB), processing without splitting"
-            )
-            self.show_large_file_state(file_size_mb, is_splitting=False)
-            self.controller.status_update.emit(
-                f"Processing large file ({file_size_mb:.1f} MB)..."
-            )
-            self.controller.executor.submit(
-                self.transcribe_audio_file, audio_path
-            )
-        else:
-            self.controller.executor.submit(
-                self.transcribe_audio_file, audio_path
-            )
+        self.controller.executor.submit(self.transcribe_audio_file, audio_path)

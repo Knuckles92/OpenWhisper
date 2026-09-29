@@ -1,8 +1,7 @@
 """Secure installation of optional downloadable components.
 
 This file is the only catalog of component download URLs. Each archive pins an
-immutable URL and SHA-256; ``urllib`` is used because it honors Windows proxy
-settings and enterprise trust roots.
+immutable URL and SHA-256, fetched by ``services.verified_download``.
 
 The app installer is not listed here — Help → Check for Updates uses GitHub
 ``/releases/latest``. ``MEETING_AGENT_RELEASE_TAG`` hosts the sidecar zip and
@@ -18,6 +17,7 @@ import json
 import logging
 import os
 import platform as platform_module
+import re
 import shutil
 import stat
 import subprocess
@@ -26,17 +26,27 @@ import tarfile
 import tempfile
 import threading
 import urllib.error
-import urllib.request
+import urllib.parse
 import zipfile
 import copy
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Callable, Dict, Final, Mapping, Optional, Set, Tuple
 
-from _version import __version__
 from config import bundle_root, components_root, is_frozen, local_app_dir
 from services.component_catalog import get_component_details
 from services.format_utils import format_size_bytes
+from services.verified_download import (
+    DownloadCanceled,
+    DownloadError,
+    download_verified,
+    open_url,
+)
+from services.verified_files import (
+    free_space_shortfall,
+    retry_while_locked,
+    sha256_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -134,8 +144,7 @@ _BUILTIN_GPU_ARCHIVES_LINUX: Final[Tuple[dict, ...]] = (
     },
 )
 
-# TODO(meeting-mode): placeholder digest — replace with the real SHA-256 pinned
-# at release time once the speaker-id payload is published.
+# An all-zero digest marks an archive that is not published yet.
 _PLACEHOLDER_SHA256: Final[str] = "0" * 64
 
 # Version of the meeting-agent payload (portable Node LTS + the built
@@ -148,9 +157,6 @@ MEETING_AGENT_RELEASE_TAG: Final[str] = "v2.6.01"
 PLATFORM_WIN_AMD64: Final[str] = "win_amd64"
 PLATFORM_LINUX_X86_64: Final[str] = "linux_x86_64"
 PLATFORM_LINUX_AARCH64: Final[str] = "linux_aarch64"
-
-# Version of the speaker-id payload (WeSpeaker-family ONNX embedding model).
-SPEAKER_ID_COMPONENT_VERSION: Final[str] = "wespeaker-v1"
 
 # Official WeSpeaker ResNet34-LM ONNX (~26.5 MB). Input is Kaldi 80-dim
 # fbank [1, T, 80] — the same tensor ``meeting.diarize.embedder`` builds.
@@ -254,24 +260,6 @@ _BUILTIN_MEETING_AGENT_BY_PLATFORM: Final[Dict[str, dict]] = {
     },
 }
 
-# Back-compat alias used by older tests/docs.
-_BUILTIN_MEETING_AGENT_ARCHIVES: Final[Tuple[dict, ...]] = tuple(
-    _BUILTIN_MEETING_AGENT_BY_PLATFORM[PLATFORM_WIN_AMD64]["archives"]
-)
-
-_BUILTIN_SPEAKER_ID_ARCHIVES: Final[Tuple[dict, ...]] = (
-    {
-        "name": f"speaker-id-win_amd64-{SPEAKER_ID_COMPONENT_VERSION}.zip",
-        "url": (
-            "https://openwhisper.fiorilabs.tech/components/"
-            f"speaker-id-win_amd64-{SPEAKER_ID_COMPONENT_VERSION}.zip"
-        ),
-        "sha256": _PLACEHOLDER_SHA256,
-        "size_bytes": 28_000_000,
-        "extract": "zip",
-    },
-)
-
 # Version of the gpu-accel payload. Derived from the CUDA libraries it carries,
 # NOT from the application version: the payload is unchanged by an app release,
 # and an app-derived version would report "update available" after every release.
@@ -335,19 +323,6 @@ _BUILTIN_CATALOG_RAW: Final[dict] = {
         "meeting-agent": {
             "platforms": dict(_BUILTIN_MEETING_AGENT_BY_PLATFORM),
         },
-        "speaker-id": {
-            "platforms": {
-                PLATFORM_WIN_AMD64: {
-                    "published": False,
-                    "version": SPEAKER_ID_COMPONENT_VERSION,
-                    "component_api": COMPONENT_API,
-                    "platform": PLATFORM_WIN_AMD64,
-                    # TODO(meeting-mode): measure once the payload exists.
-                    "install_bytes": 30_000_000,
-                    "archives": _BUILTIN_SPEAKER_ID_ARCHIVES,
-                },
-            },
-        },
     },
 }
 
@@ -376,9 +351,7 @@ _REQUIRED_GPU_SHARED_OBJECTS: Final[Tuple[str, ...]] = (
     "libcublasLt.so.12",
 )
 
-_USER_AGENT: Final[str] = f"OpenWhisper/{__version__}"
 _CHUNK_BYTES: Final[int] = 1 << 20
-_NETWORK_TIMEOUT_S: Final[int] = 30
 # Written last, so its presence means "this tree is complete".
 _SENTINEL_NAME: Final[str] = ".installed"
 _MANIFEST_NAME: Final[str] = "manifest.json"
@@ -390,12 +363,9 @@ class ComponentId:
     GPU_ACCEL: Final[str] = "gpu-accel"
     MEETING_AGENT: Final[str] = "meeting-agent"
     MEETING_AGENT_OPENCODE: Final[str] = "meeting-agent-opencode"
-    SPEAKER_ID: Final[str] = "speaker-id"
     ASR_NVIDIA_CPU: Final[str] = "asr-nvidia-cpu"
     ASR_NVIDIA_CUDA: Final[str] = "asr-nvidia-cuda"
     ASR_NVIDIA_VULKAN: Final[str] = "asr-nvidia-vulkan"
-    ASR_QWEN: Final[str] = "asr-qwen"
-    ASR_MOONSHINE: Final[str] = "asr-moonshine"
 
 
 class ComponentState:
@@ -503,16 +473,13 @@ def catalog_entry_for_platform(
     if root is None:
         return None
     platforms = root.get("platforms")
-    if isinstance(platforms, Mapping):
-        tag = platform_tag if platform_tag is not None else current_platform_tag()
-        if not tag:
-            return None
-        entry = platforms.get(tag)
-        if not isinstance(entry, Mapping):
-            return None
-        return _thaw_catalog_value(entry)
-    # Schema 1 fallback: a flat entry already carries platform/archives.
-    return _thaw_catalog_value(root)
+    tag = platform_tag if platform_tag is not None else current_platform_tag()
+    if not isinstance(platforms, Mapping) or not tag:
+        return None
+    entry = platforms.get(tag)
+    if not isinstance(entry, Mapping):
+        return None
+    return _thaw_catalog_value(entry)
 
 
 def available_component_ids(
@@ -521,8 +488,8 @@ def available_component_ids(
     """Components that can be installed on this platform.
 
     GPU Acceleration (the CUDA libraries Local Whisper loads) is offered on
-    Windows x64 and Linux x86_64. The meeting agent is offered on Windows x64
-    and Linux x86_64/aarch64. Linux x86_64 also offers the native NVIDIA
+    Windows x64 and Linux x86_64. The Pi and OpenCode meeting agents are
+    offered on Windows x64 and Linux x86_64/aarch64. Linux x86_64 also offers the native NVIDIA
     Speech CPU and CUDA runtimes, and the Vulkan one to a computer whose
     NVIDIA GPU is older than Turing (or that already has it); Apple Silicon
     Macs offer the CPU one.
@@ -538,7 +505,6 @@ def available_component_ids(
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
             ComponentId.MEETING_AGENT_OPENCODE,
-            ComponentId.SPEAKER_ID,
             *RUNTIME_IDS,
         )
     elif tag == PLATFORM_LINUX_X86_64:
@@ -547,6 +513,7 @@ def available_component_ids(
         candidates = (
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
+            ComponentId.MEETING_AGENT_OPENCODE,
             ComponentId.ASR_NVIDIA_CPU,
             ComponentId.ASR_NVIDIA_CUDA,
         )
@@ -554,7 +521,7 @@ def available_component_ids(
                 or nvidia_gpu_runtime() == ComponentId.ASR_NVIDIA_VULKAN):
             candidates += (ComponentId.ASR_NVIDIA_VULKAN,)
     elif tag == PLATFORM_LINUX_AARCH64:
-        candidates = (ComponentId.MEETING_AGENT,)
+        candidates = (ComponentId.MEETING_AGENT, ComponentId.MEETING_AGENT_OPENCODE)
     elif tag == "darwin_arm64":
         candidates = (ComponentId.ASR_NVIDIA_CPU,)
     else:
@@ -645,6 +612,25 @@ def _payload_has_sidecar_bundle(payload_dir: str) -> bool:
     return os.path.isfile(os.path.join(payload_dir, _SIDECAR_BUNDLE_NAME))
 
 
+#: Oldest Pi bundle revision that speaks the host-prompt, request-scoped tool
+#: protocol the sidecar handshake requires (``node22-pi2``, 2026-09-14).
+_MIN_PI_BUNDLE_REVISION = 2
+
+
+def _pi_bundle_outdated(version: object) -> bool:
+    """True for an installed ``node<N>-pi<R>`` bundle older than the protocol."""
+    match = re.fullmatch(r"node\d+-pi(\d+)", str(version or ""))
+    return match is not None and int(match.group(1)) < _MIN_PI_BUNDLE_REVISION
+
+
+def meeting_agent_needs_update() -> bool:
+    """True when the installed Pi bundle is too old for the sidecar handshake."""
+    if not is_installed(ComponentId.MEETING_AGENT):
+        return False
+    manifest = read_manifest(ComponentId.MEETING_AGENT)
+    return manifest is not None and _pi_bundle_outdated(manifest.get("version"))
+
+
 def _source_sidecar_payload_dir() -> Optional[str]:
     """Repo ``sidecar/dist`` when running from source and the bundle is built.
 
@@ -666,8 +652,9 @@ def meeting_agent_payload_dir(kind: str = "pi") -> Optional[str]:
     The following legacy resolution order applies to Pi only.
 
     Resolution order:
-        1. Installed ``meeting-agent`` component tree with ``bundle.cjs``
-           and a platform-compatible Node runtime.
+        1. Installed ``meeting-agent`` component tree with ``bundle.cjs``,
+           a platform-compatible Node runtime, and a bundle revision the
+           sidecar handshake accepts.
         2. Source-tree ``sidecar/dist`` when ``bundle.cjs`` has been built.
         3. ``None`` — callers fall back to the direct OpenRouter agent.
 
@@ -698,6 +685,14 @@ def meeting_agent_payload_dir(kind: str = "pi") -> Optional[str]:
             if incompatible:
                 logger.warning(
                     "meeting-agent install is incompatible: %s", incompatible
+                )
+            elif _pi_bundle_outdated(manifest.get("version")):
+                # The handshake would refuse it and leave the meeting without
+                # intelligence; the direct agent keeps insights working until
+                # Downloads updates it.
+                logger.warning(
+                    "meeting-agent %s is out of date; update it from Downloads",
+                    manifest.get("version"),
                 )
             elif not _payload_has_sidecar_bundle(installed):
                 logger.warning(
@@ -755,16 +750,6 @@ def _env_speaker_model_path() -> Optional[str]:
     return None
 
 
-def _installed_speaker_model_path() -> Optional[str]:
-    if not is_installed(ComponentId.SPEAKER_ID):
-        return None
-    found = _first_onnx_file(component_dir(ComponentId.SPEAKER_ID))
-    if found:
-        return found
-    logger.warning("speaker-id component is installed but contains no .onnx model")
-    return None
-
-
 def _source_speaker_model_path() -> Optional[str]:
     if is_frozen():
         return None
@@ -776,11 +761,9 @@ def speaker_model_path() -> Optional[str]:
 
     Resolution order:
         1. ``OPENWHISPER_SPEAKER_MODEL`` (file or directory containing ``.onnx``)
-        2. Installed ``speaker-id`` component (usable even while unpublished,
-           matching :func:`meeting_agent_payload_dir`)
-        3. Per-user cache written by :func:`ensure_speaker_model`
-        4. Source-tree ``models/speaker-id`` when not frozen
-        5. ``None`` — callers download via :func:`ensure_speaker_model` or
+        2. Per-user cache written by :func:`ensure_speaker_model`
+        3. Source-tree ``models/speaker-id`` when not frozen
+        4. ``None`` — callers download via :func:`ensure_speaker_model` or
            fall back to channel-level Me/Others labels
 
     Returns:
@@ -788,7 +771,6 @@ def speaker_model_path() -> Optional[str]:
     """
     return (
         _env_speaker_model_path()
-        or _installed_speaker_model_path()
         or _first_onnx_file(speaker_model_cache_dir())
         or _source_speaker_model_path()
     )
@@ -813,12 +795,7 @@ def _speaker_model_download_allowed() -> bool:
 def _verify_speaker_model(path: str) -> None:
     if not os.path.isfile(path):
         raise ComponentError("The speaker model download produced no file.")
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for block in iter(lambda: handle.read(_CHUNK_BYTES), b""):
-            digest.update(block)
-    actual = digest.hexdigest()
-    if actual != SPEAKER_MODEL_SHA256:
+    if sha256_file(path) != SPEAKER_MODEL_SHA256:
         try:
             os.unlink(path)
         except OSError:
@@ -1055,12 +1032,9 @@ ProgressCallback = Callable[[str, int, int], None]
 
 
 def _open(url: str, extra_headers: Optional[Dict[str, str]] = None):
-    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    for key, value in (extra_headers or {}).items():
-        request.add_header(key, value)
     from services.http_tls import verified_context
 
-    return urllib.request.urlopen(request, timeout=_NETWORK_TIMEOUT_S, context=verified_context())
+    return open_url(url, extra_headers, context=verified_context())
 
 
 def _rmtree(path: str) -> None:
@@ -1068,18 +1042,22 @@ def _rmtree(path: str) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _describe_network_error(exc: Exception) -> str:
+def _describe_network_error(exc: Exception, url: str = "") -> str:
     """Translate a urllib failure into something a user can act on."""
     import ssl
 
-    if isinstance(exc, ssl.SSLCertVerificationError):
-        # Name the host the app actually contacts. Component payloads are
-        # fetched from PyPI and nowhere else, so listing our own domains here
-        # would send a blocked user to allowlist hosts that are never used.
+    # urllib reports a failed handshake as a URLError wrapping the SSL error.
+    if isinstance(exc, ssl.SSLCertVerificationError) or isinstance(
+        getattr(exc, "reason", None), ssl.SSLCertVerificationError
+    ):
+        # Name the host being contacted: payloads come from PyPI, nodejs.org,
+        # GitHub and Hugging Face, so a fixed list would send a blocked user
+        # to allowlist hosts this download never touches.
+        host = urllib.parse.urlsplit(url).hostname if url else None
         return (
             "The download server's certificate could not be verified. This is "
             "usually caused by network security software that inspects HTTPS "
-            "traffic. Ask your IT team to allow files.pythonhosted.org."
+            f"traffic. Ask your IT team to allow {host or 'the download server'}."
         )
     if isinstance(exc, urllib.error.HTTPError):
         return f"The download server returned an error ({exc.code} {exc.reason})."
@@ -1100,10 +1078,13 @@ def _download_verified(
 ) -> None:
     """Fetch ``url`` to ``destination``, resuming and verifying its hash.
 
+    A canceled transfer stays in ``<destination>.part`` so the next attempt
+    resumes it; see :func:`services.verified_download.download_verified`.
+
     Args:
         url: Archive URL.
         sha256_hex: Expected SHA-256, lowercase hex.
-        size_bytes: Expected size, used as a cheap pre-hash check.
+        size_bytes: Exact expected size.
         destination: Final path for the verified archive.
         progress: Progress sink.
         cancel: Set to abort; checked once per chunk.
@@ -1114,67 +1095,25 @@ def _download_verified(
         ComponentCanceled: The cancel event was set.
         ComponentError: The download was incomplete or failed verification.
     """
-    part_path = destination + ".part"
-    digest = hashlib.sha256()
-    resume_from = os.path.getsize(part_path) if os.path.exists(part_path) else 0
+    def overall(phase: str, done: int, _total: int) -> None:
+        progress(phase, offset_base + done, grand_total)
 
-    if resume_from:
-        # Re-hash what is already on disk. Without this the running digest
-        # would only cover the newly fetched bytes and the final comparison
-        # would be meaningless.
-        with open(part_path, "rb") as handle:
-            for block in iter(lambda: handle.read(_CHUNK_BYTES), b""):
-                digest.update(block)
-
-    headers = {"Range": f"bytes={resume_from}-"} if resume_from else None
     try:
-        with _open(url, headers) as response:
-            if resume_from and response.status != 206:
-                # The server ignored Range and is sending the whole file.
-                # Restart rather than appending a duplicate prefix.
-                logger.info("Server ignored Range header; restarting download")
-                resume_from, digest = 0, hashlib.sha256()
-                if os.path.exists(part_path):
-                    os.unlink(part_path)
-
-            mode = "ab" if resume_from else "wb"
-            with open(part_path, mode) as out:
-                while True:
-                    if cancel.is_set():
-                        raise ComponentCanceled()
-                    chunk = response.read(_CHUNK_BYTES)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-                    digest.update(chunk)
-                    progress(
-                        InstallPhase.DOWNLOADING,
-                        offset_base + out.tell(),
-                        grand_total,
-                    )
-    except (urllib.error.URLError, OSError) as exc:
-        if isinstance(exc, ComponentCanceled):
-            raise
-        raise ComponentError(_describe_network_error(exc)) from exc
-
-    actual_size = os.path.getsize(part_path)
-    if size_bytes and actual_size != size_bytes:
-        raise ComponentError(
-            "The download did not complete "
-            f"({format_size_bytes(actual_size)} of {format_size_bytes(size_bytes)})."
+        download_verified(
+            url,
+            sha256_hex,
+            size_bytes,
+            destination,
+            overall,
+            cancel,
+            opener=_open,
+            describe_error=lambda exc: _describe_network_error(exc, url),
+            keep_partial_on_cancel=True,
         )
-
-    progress(InstallPhase.VERIFYING, offset_base + actual_size, grand_total)
-    if digest.hexdigest() != sha256_hex.lower():
-        # Discard rather than keep: otherwise every retry resumes from the
-        # same corrupt bytes and fails identically forever.
-        os.unlink(part_path)
-        raise ComponentError(
-            "The download failed its integrity check and was discarded. "
-            "Please try again."
-        )
-
-    os.replace(part_path, destination)
+    except DownloadCanceled:
+        raise ComponentCanceled() from None
+    except DownloadError as exc:
+        raise ComponentError(str(exc)) from exc.__cause__
 
 
 def _safe_extract(
@@ -1553,16 +1492,19 @@ def _validate_component_payload(component_id: str, target_dir: str) -> None:
 def _replace_speech_runtime(source: str, destination: str, cancel: threading.Event) -> None:
     # Windows scanners held newly extracted runtime files for about six seconds
     # in installer validation. Retry the atomic swap without exposing a partial tree.
-    for attempt in range(31):
+    def replace() -> None:
         if cancel.is_set():
             raise ComponentCanceled()
-        try:
-            os.replace(source, destination)
-            return
-        except PermissionError:
-            if attempt == 30:
-                raise
-            cancel.wait(.5)
+        os.replace(source, destination)
+
+    retry_while_locked(
+        destination,
+        replace,
+        timeout_s=15.0,
+        poll_s=0.5,
+        locked=lambda exc: isinstance(exc, PermissionError),
+        wait=cancel.wait,
+    )
 
 
 def install_component(component_id: str, entry: dict, progress: ProgressCallback, cancel: threading.Event) -> None:
@@ -1778,13 +1720,9 @@ def _uninstall_component(component_id: str) -> None:
 
 
 def _check_free_space(required_bytes: int) -> None:
-    if required_bytes <= 0:
-        return
-    root = components_root()
-    os.makedirs(root, exist_ok=True)
-    free = shutil.disk_usage(root).free
-    needed = int(required_bytes * 1.15)
-    if free < needed:
+    shortfall = free_space_shortfall(components_root(), required_bytes)
+    if shortfall:
+        needed, free = shortfall
         raise ComponentError(
             f"Not enough disk space: {format_size_bytes(needed)} needed, "
             f"{format_size_bytes(free)} free on this drive."
@@ -1864,27 +1802,13 @@ class ComponentCoordinator:
         for event in events:
             event.set()
 
-    def fetch_catalog(self, force: bool = False) -> Optional[Mapping]:
-        """Return a read-only view of the component catalog.
+    def fetch_catalog(self) -> Optional[Mapping]:
+        """Return a read-only view of the built-in component catalog.
 
         :meth:`catalog_entry` returns a mutable copy of one entry; copying the
         whole catalog here instead cost Settings a deep copy per component.
-
-        The catalog ships in the application (:data:`_BUILTIN_CATALOG`) and
-        needs no network access: its entries point at immutable upstream URLs
-        (PyPI wheels, nodejs.org, GitHub Release assets) with pinned SHA-256
-        digests, so there is nothing to resolve at runtime.
-
-        An earlier design fetched a catalog from the project website and treated
-        the built-in copy as a fallback. That inverted reality — the website
-        serves its SPA shell for unknown paths, so the remote branch never once
-        succeeded, while costing a wasted request and a warning per session. It
-        also made every install look outdated, because the permanently-failed
-        remote flag suppressed update detection. Regenerate the pinned entries
-        with ``python scripts/build_component.py gpu-accel`` or
-        ``python scripts/build_component.py meeting-agent``.
-
-        ``force`` remains accepted for call compatibility.
+        The catalog ships in the application and needs no network access: its
+        entries pin immutable upstream URLs and SHA-256 digests.
         """
         return _BUILTIN_CATALOG
 
@@ -1892,7 +1816,6 @@ class ComponentCoordinator:
         catalog = self.fetch_catalog()
         if not catalog:
             return None
-        # Prefer the platform-specific schema-2 entry for this host.
         return catalog_entry_for_platform(component_id, catalog=catalog)
 
     def describe(self, component_id: str) -> ComponentInfo:

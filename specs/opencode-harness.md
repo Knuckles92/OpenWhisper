@@ -26,11 +26,11 @@ default and its component is unchanged.
 5. Add the optional settings selection and payload resolver for live meetings,
    refinalization, and archive insight regeneration. Missing OpenCode is an explicit
    intelligence failure; it does not silently choose Pi or Direct.
-6. Build a Windows x64 component containing the tested Bun binary, locked production
-   dependencies, bundle, inventory, notices, and offline self-test. Verify before atomic
-   installation and prevent replacement during active local jobs.
+6. Build Windows x64, Linux x86_64, and Linux aarch64 components, each containing the tested
+   Bun binary, locked production dependencies, bundle, inventory, notices, and offline
+   self-test. Verify before atomic installation and prevent replacement during active local jobs.
 7. Add SDK wire/lifecycle tests, Python authority/lifecycle tests, UI selection tests,
-   packaged integration tests, Windows CI, and a selectable synthetic product evaluator.
+   packaged integration tests, Windows and Linux CI, and a selectable synthetic product evaluator.
 8. Run local checks and the synthetic configured-model evaluation, inspect the archive,
    publish an immutable component asset, and activate the measured Downloads catalog pin.
 
@@ -57,24 +57,22 @@ test completion; record any pending approval or failed check before activating D
 
 ## Implementation status
 
-Implemented steps 1–7. The Windows component has been built from the frozen dependency
-lockfile and passes the offline SDK self-test. The full Python suite passed 2,367 tests and
-379 subtests, with 40 skips. Pi's 8 TypeScript tests and OpenCode's 11 SDK tests pass, as do
-both TypeScript checks and the repository's Python correctness check.
+Steps 1–7 are implemented; step 8 waits only on uploading the release assets.
 
-The synthetic configured-model evaluation is awaiting explicit approval to send the script's
-invented meeting text through OpenRouter using google/gemini-3.8-flash and the configured API
-key. Automatic approval review rejected that run because the payload and destination needed
-specific authorization. No recorded meetings are involved.
-
-The component archive and measured catalog metadata are staged locally. The catalog's
-published flag remains false until the remaining evaluation/release check is settled and the
-immutable release URL is verified. The source build is available for selection locally.
-
-
-The real component installer also passed a complete local archive installation, payload
-resolution, and uninstall in an isolated component directory. No external download or model
-call was made in that check. Final focused checks passed 75 harness/UI tests and 139
-component/UI tests (one platform skip). The staged archive is 141,497,663 bytes, installs
-527,680,768 bytes, and has SHA-256
-b9b7669ad1985ff3e9b1a88ae107648b526ec52b77bcc8bc2576cc8a2fc00377.
+- **SDK.** Pinned to the stable `@opencode/sdk`, `@opencode/core`, and `@opencode/plugin`
+  2.0.18 (npm `latest`), replacing the 0.0.0-dev-19291 build, with Bun 1.3.14.
+- **Consolidation.** The benchmark row "cancelled at 120 s, no items" came from the probe's own
+  120 s cancel timer. OpenCode uses the same sidecar budget as Pi: 300 s without activity and a
+  900 s cap, with reasoning, text, and tool events resetting the silence clock. Real
+  DeepSeek V4.1 Flash consolidations of the synthetic meeting completed in 92 s and 167 s on
+  Windows and in 47 s on Linux, keeping the corrected deadline, cap, and decisions.
+  `live_agent_eval.py` now includes that pass under the real budget.
+- **Retries.** Transient provider errors get up to three short retries, matching Pi's
+  automatic retry; the adapter previously failed a pass on the first 429 or 5xx.
+- **Platforms.** Windows x64 and Linux x86_64 payloads were built and self-tested locally (the
+  Linux one in WSL Ubuntu 24.04, through the real installer, the Python supervisor with a mock
+  provider, and one real OpenRouter consolidation). The aarch64 payload is built and verified in
+  CI on a native Arm runner. macOS is not offered.
+- **Release.** Each platform stays unpublished in `services/opencode_catalog.py` until its
+  archive is uploaded under `component-opencode-2.0.18-1`, downloaded back, and pinned with
+  `scripts/build_opencode_component.py --pin`.

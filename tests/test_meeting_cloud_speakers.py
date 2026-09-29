@@ -385,7 +385,8 @@ def test_cloud_decoder_internal_typeerror_is_not_retried(repo, monkeypatch):
 
 class TestRespeaker:
     def test_rerun_speakers_uses_headless_store(self, repo, monkeypatch):
-        from meeting.respeaker import rerun_speakers
+        from meeting.finalization import SpeakerPassGate
+        from meeting.refinalize import rerun_speakers
 
         meeting_id = _seed_meeting(repo)
         frames = np.zeros(16000 * 4, dtype=np.int16)
@@ -395,7 +396,8 @@ class TestRespeaker:
         )
 
         result = rerun_speakers(
-            repo, meeting_id, api_key="sk-test",
+            repo, meeting_id,
+            gate=SpeakerPassGate(ok=True, offered=True, api_key="sk-test"),
             transcribe_fn=lambda mp3_bytes, **kwargs: [
                 {"speaker": "speaker_0", "start": 0.0, "end": 2.0}
             ],
@@ -407,7 +409,28 @@ class TestRespeaker:
         assert row["speaker_participant_id"]
 
     def test_unknown_meeting_raises(self, repo):
-        from meeting.respeaker import rerun_speakers
+        from meeting.finalization import SpeakerPassGate
+        from meeting.refinalize import rerun_speakers
 
         with pytest.raises(ValueError, match="unknown meeting"):
-            rerun_speakers(repo, "m_missing", api_key="sk-test")
+            rerun_speakers(repo, "m_missing", gate=SpeakerPassGate(ok=True))
+
+    def test_refused_gate_uploads_nothing(self, repo, monkeypatch):
+        from meeting.finalization import SpeakerPassGate
+        from meeting.refinalize import rerun_speakers
+
+        meeting_id = _seed_meeting(repo)
+        uploads = []
+        monkeypatch.setattr(
+            "meeting.diarize.cloud_pass.run_cloud_speaker_pass",
+            lambda *args, **kwargs: uploads.append(kwargs) or {"ok": True},
+        )
+
+        result = rerun_speakers(
+            repo, meeting_id,
+            gate=SpeakerPassGate(ok=False, reason="Audio-upload consent has not been given."),
+        )
+
+        assert uploads == []
+        assert result["skipped"] is True
+        assert result["error"] == "Audio-upload consent has not been given."

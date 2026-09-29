@@ -38,6 +38,7 @@ from services.settings import (
 )
 from ui_qt.utils.palette import token_color
 from ui_qt.utils.release_notes import render_release_notes_html
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets import (
     AnimatedProgressBar,
     Button,
@@ -523,9 +524,7 @@ class AppUpdateDialog(QDialog):
     def _set_body_tone(self, tone: str) -> None:
         if self.body_label.property("tone") == tone:
             return
-        self.body_label.setProperty("tone", tone)
-        self.body_label.style().unpolish(self.body_label)
-        self.body_label.style().polish(self.body_label)
+        set_style_property(self.body_label, "tone", tone)
 
     def _progress_detail_text(self, phase: str, done: int, total: int) -> str:
         # Only the download phase counts bytes; the others count archive

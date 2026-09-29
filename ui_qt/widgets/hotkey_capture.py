@@ -7,6 +7,7 @@ from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QLineEdit
 
 from services.hotkey_manager import USE_PYNPUT_BACKEND
+from ui_qt.utils.restyle import set_style_property
 
 if USE_PYNPUT_BACKEND:
     from services.hotkey_manager import (
@@ -46,9 +47,7 @@ class HotkeyCaptureInput(QLineEdit):
         super().mousePressEvent(event)
 
     def set_capturing(self, capturing: bool) -> None:
-        self.setProperty("capturing", capturing)
-        self.style().unpolish(self)
-        self.style().polish(self)
+        set_style_property(self, "capturing", capturing)
 
 
 if USE_PYNPUT_BACKEND:

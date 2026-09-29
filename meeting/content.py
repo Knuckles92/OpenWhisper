@@ -1,11 +1,11 @@
 """Derived content capabilities for persisted Meeting Mode sessions."""
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from meeting.state.patches import MAX_NAME_LEN
+from meeting.stored import finalization_from_meeting_row, stored_state_dict
 
 logger = logging.getLogger(__name__)
 
@@ -17,14 +17,7 @@ def _meeting_state_dict(meeting: Dict[str, Any]) -> Dict[str, Any]:
     state = meeting.get("state")
     if isinstance(state, dict):
         return state
-    raw = meeting.get("state_json")
-    if not raw:
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except (TypeError, ValueError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+    return stored_state_dict(meeting)
 
 
 def meeting_display_title(meeting: Dict[str, Any]) -> str:
@@ -83,8 +76,6 @@ def meeting_insights_pill(
     if bool((meeting.get("content_summary") or {}).get("is_empty", False)):
         return ("Empty", "warning")
     try:
-        from meeting.state.schema import finalization_from_meeting_row
-
         fin = finalization_from_meeting_row(meeting)
     except Exception:
         logger.debug(

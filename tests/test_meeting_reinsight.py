@@ -8,8 +8,9 @@ from datetime import datetime
 import pytest
 
 
-from meeting.interfaces import AgentResult, TranscriptSegment
+from meeting.interfaces import TranscriptSegment
 from meeting.reinsight import rerun_insights
+from tests.fakes.agent_core import ReplayAgentCore
 
 
 def make_meeting(repo, meeting_id="m_rerun", state_json=None):
@@ -33,42 +34,6 @@ def add_transcript(repo, meeting_id):
                           channel="loopback", start_s=2.0, end_s=4.0,
                           text="Agreed, Friday works."),
     ])
-
-
-class FakeAgentCore:
-    """Minimal ``AgentCore`` that replays a fixed op batch (or raises)."""
-
-    def __init__(self, ops=None, raises=None):
-        self.ops = ops or []
-        self.raises = raises
-        self.cfg = None
-        self.tools = None
-        self.payload = None
-        self.shutdown_calls = 0
-        self.canceled = False
-
-    def initialize(self, cfg, tools):
-        self.cfg = cfg
-        self.tools = tools
-
-    def checkpoint(self, payload):
-        raise AssertionError("re-run must not fire rolling checkpoints")
-
-    def consolidate(self, payload):
-        self.payload = payload
-        if self.raises:
-            raise RuntimeError(self.raises)
-        results = self.tools.apply_agent_ops(self.ops)
-        return AgentResult(ok=True, op_results=results)
-
-    def cancel(self):
-        self.canceled = True
-
-    def is_healthy(self):
-        return True
-
-    def shutdown(self):
-        self.shutdown_calls += 1
 
 
 def install_core(monkeypatch, core):
@@ -98,7 +63,7 @@ class TestHappyPath:
     def test_ops_land_and_persist(self, repo, monkeypatch):
         make_meeting(repo)
         add_transcript(repo, "m_rerun")
-        core = FakeAgentCore(ops=[
+        core = ReplayAgentCore(ops=[
             {"op": "add_item", "card": "key_points",
              "text": "Budget review ships Friday", "evidence": ["sg_1"]},
             {"op": "set_topic", "text": "Budget review", "evidence": ["sg_2"]},
@@ -145,7 +110,7 @@ class TestHappyPath:
     def test_agent_receives_full_transcript_and_prompt(self, repo, monkeypatch):
         make_meeting(repo)
         add_transcript(repo, "m_rerun")
-        core = FakeAgentCore()
+        core = ReplayAgentCore()
         install_core(monkeypatch, core)
 
         rerun_insights(repo, "m_rerun", provider="openrouter", model="test/model")
@@ -167,7 +132,7 @@ class TestHappyPath:
         ))
         make_meeting(repo, state_json=json.dumps(state.to_dict()))
         add_transcript(repo, "m_rerun")
-        core = FakeAgentCore(ops=[
+        core = ReplayAgentCore(ops=[
             {"op": "update_item", "id": "it_human", "base_revision": 1,
              "set": {"text": "Agent overwrite"}},
         ])
@@ -193,7 +158,7 @@ class TestFailure:
     def test_agent_error_is_reported_not_raised(self, repo, monkeypatch):
         make_meeting(repo)
         add_transcript(repo, "m_rerun")
-        core = FakeAgentCore(raises="model exploded")
+        core = ReplayAgentCore(raises="model exploded")
         install_core(monkeypatch, core)
 
         result = rerun_insights(repo, "m_rerun", provider="openrouter", model="m")
@@ -222,6 +187,29 @@ class TestFailure:
         assert "no core" in result["error"]
         assert result["applied"] == 0
 
+    @pytest.mark.parametrize("pass_name", ["insights", "polish"])
+    def test_core_that_fails_to_start_is_still_shut_down(
+            self, repo, monkeypatch, pass_name):
+        """A half-started sidecar must not outlive the request."""
+        from meeting.refinalize import rerun_polish
+
+        make_meeting(repo)
+        add_transcript(repo, "m_rerun")
+
+        class BrokenCore(ReplayAgentCore):
+            def initialize(self, cfg, tools):
+                raise RuntimeError("sidecar handshake failed")
+
+        core = BrokenCore()
+        install_core(monkeypatch, core)
+        rerun = rerun_insights if pass_name == "insights" else rerun_polish
+
+        result = rerun(repo, "m_rerun", provider="openrouter", model="m")
+
+        assert result["ok"] is False
+        assert "handshake failed" in result["error"]
+        assert core.shutdown_calls == 1
+
 
 class TestReadTools:
     def test_offline_host_exposes_context_folder_search(
@@ -231,7 +219,7 @@ class TestReadTools:
         add_transcript(repo, "m_rerun")
         seen = {}
 
-        class Core(FakeAgentCore):
+        class Core(ReplayAgentCore):
             def consolidate(self, payload):
                 seen.update(self.tools.search_context_files(query="budget"))
                 return super().consolidate(payload)
@@ -249,3 +237,22 @@ class TestReadTools:
         assert result["ok"] is True
         assert seen.get("disabled") is True
         assert seen.get("hits") == []
+
+    def test_offline_host_checks_evidence_like_a_live_one(
+        self, repo, monkeypatch,
+    ):
+        """The agent's evidence repair sees stored segments on a re-run too."""
+        make_meeting(repo)
+        add_transcript(repo, "m_rerun")
+        seen = {}
+
+        class Core(ReplayAgentCore):
+            def consolidate(self, payload):
+                seen["known"] = self.tools.segment_exists("sg_1")
+                seen["unknown"] = self.tools.segment_exists("sg_missing")
+                return super().consolidate(payload)
+
+        install_core(monkeypatch, Core())
+        rerun_insights(repo, "m_rerun", provider="openrouter", model="m")
+
+        assert seen == {"known": True, "unknown": False}

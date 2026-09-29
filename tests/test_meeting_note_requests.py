@@ -10,8 +10,8 @@ from meeting.agent.scheduler import CheckpointScheduler
 from meeting.interfaces import AgentResult, OpResult
 from meeting.web.api import create_app
 from meeting.web.ws import WsHub
-from tests.test_meeting_notes_agent import FakeAgent, FakeEngine, _seg
-from tests.test_meeting_web_auth import FakeEngine as WebEngine, FakeRepo, HOST_TOKEN, GUEST_TOKEN
+from tests.fakes.scheduler import FakeNotesAgent, FakeNotesEngine, segment
+from tests.fakes.meeting_web import GUEST_TOKEN, HOST_TOKEN, FakeWebEngine, FakeWebRepo
 
 
 def test_prompt_includes_user_context_but_not_deleted_notes():
@@ -31,9 +31,8 @@ def test_adjustment_replaces_automatic_append_instructions():
 
 
 def test_request_runs_without_new_speech_and_preserves_watermarks():
-    agent = FakeAgent()
-    agent.supports_notes_pass = True
-    engine = FakeEngine([_seg("sg_old", 10)])
+    agent = FakeNotesAgent()
+    engine = FakeNotesEngine([segment("sg_old", 10)])
     scheduler = CheckpointScheduler(engine, agent)
     scheduler.start()
     try:
@@ -52,14 +51,13 @@ def test_request_runs_without_new_speech_and_preserves_watermarks():
 
 def test_requests_are_serial_and_queued_request_is_settled_on_stop():
     entered, release = threading.Event(), threading.Event()
-    agent = FakeAgent()
-    agent.supports_notes_pass = True
+    agent = FakeNotesAgent()
     def checkpoint(payload):
         entered.set()
         release.wait(timeout=3)
         return AgentResult(ok=True)
     agent.checkpoint = checkpoint
-    scheduler = CheckpointScheduler(FakeEngine([]), agent)
+    scheduler = CheckpointScheduler(FakeNotesEngine([]), agent)
     scheduler.start()
     try:
         first = scheduler.request_note_adjustment("First")
@@ -78,9 +76,8 @@ def test_requests_are_serial_and_queued_request_is_settled_on_stop():
 
 
 def test_agent_failure_reaches_requester():
-    agent = FakeAgent(fail_times=1)
-    agent.supports_notes_pass = True
-    scheduler = CheckpointScheduler(FakeEngine([]), agent)
+    agent = FakeNotesAgent(fail_times=1)
+    scheduler = CheckpointScheduler(FakeNotesEngine([]), agent)
     scheduler.start()
     try:
         assert not scheduler.request_note_adjustment("Shorten").result(timeout=3).ok
@@ -90,7 +87,7 @@ def test_agent_failure_reaches_requester():
 
 @pytest.mark.parametrize("token", [HOST_TOKEN, GUEST_TOKEN])
 def test_request_api_auth_validation_and_result(token):
-    engine, repo = WebEngine(), FakeRepo()
+    engine, repo = FakeWebEngine(), FakeWebRepo()
     calls = []
     def request(text):
         calls.append(text)

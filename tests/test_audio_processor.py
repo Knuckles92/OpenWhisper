@@ -57,9 +57,10 @@ class TestPreviewCost:
 
         processor._load_audio_metadata = fail
 
-        preview = processor.preview_file(path)
+        preview = processor.preview_file(path, engine_splits=True)
 
         assert preview.needs_splitting is False
+        assert preview.over_upload_limit is False
         assert preview.sample_rate == 44100
         assert preview.channels == 1
         assert preview.duration_seconds == pytest.approx(2.0, abs=0.05)
@@ -71,7 +72,7 @@ class TestPreviewCost:
     ):
         path = write_wav(tmp_path / "stereo.wav", seconds=1.0, channels=2)
 
-        preview = processor.preview_file(path)
+        preview = processor.preview_file(path, engine_splits=False)
 
         assert preview.channels == 2
         assert preview.duration_seconds == pytest.approx(1.0, abs=0.05)
@@ -88,12 +89,31 @@ class TestPreviewCost:
             decoded.append(p) or original(p)
         )
 
-        preview = processor.preview_file(path)
+        preview = processor.preview_file(path, engine_splits=True)
 
         assert decoded == [path]
         assert preview.needs_splitting is True
         assert preview.estimated_chunks >= 1
         assert sum(preview.chunk_durations) == pytest.approx(3.0, abs=0.05)
+
+    def test_large_file_for_a_one_pass_engine_is_read_from_the_header(
+        self, processor, tmp_path, monkeypatch
+    ):
+        """Only an engine that splits needs split points; the rest skip the decode."""
+        path = write_wav(tmp_path / "big.wav", seconds=3.0, rate=44100)
+        monkeypatch.setattr(config, "MAX_FILE_SIZE_MB", 0.05)
+
+        def fail(*_):
+            raise AssertionError("preview decoded a file no engine will split")
+
+        processor._load_audio_metadata = fail
+
+        preview = processor.preview_file(path, engine_splits=False)
+
+        assert preview.over_upload_limit is True
+        assert preview.needs_splitting is False
+        assert preview.estimated_chunks == 1
+        assert preview.duration_seconds == pytest.approx(3.0, abs=0.05)
 
     def test_header_without_duration_falls_back_to_decoding(
         self, processor, tmp_path, monkeypatch
@@ -139,7 +159,7 @@ class TestPreviewCost:
 class TestPreviewErrors:
     def test_missing_file_raises_file_not_found(self, processor, tmp_path):
         with pytest.raises(FileNotFoundError):
-            processor.preview_file(str(tmp_path / "nope.wav"))
+            processor.preview_file(str(tmp_path / "nope.wav"), engine_splits=False)
 
     def test_unreadable_file_raises_value_error(self, processor, tmp_path):
         """The Upload tab turns this into an inline notice, not a crash."""
@@ -147,7 +167,7 @@ class TestPreviewErrors:
         path.write_bytes(b"not audio at all")
 
         with pytest.raises(ValueError):
-            processor.preview_file(str(path))
+            processor.preview_file(str(path), engine_splits=False)
 
 
 class TestSplitting:

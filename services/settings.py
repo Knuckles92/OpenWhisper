@@ -5,7 +5,8 @@ import logging
 import tempfile
 import threading
 from datetime import date
-from typing import Callable, Dict, Any, Final, List, Tuple, Optional, TypeVar
+from types import MappingProxyType
+from typing import Callable, Dict, Any, Final, List, Mapping, Tuple, Optional, TypeVar
 from config import config
 from services import openai_retirement
 from services.batch_upload import BatchRelation
@@ -56,7 +57,7 @@ def resolve_api_transcription_model(
     legacy = settings.get(SettingsKey.SELECTED_MODEL)
     if isinstance(legacy, str) and legacy in LEGACY_API_MODELS:
         return serving_api_model(LEGACY_API_MODELS[legacy], today)
-    return config.DEFAULT_API_MODEL
+    return SETTING_DEFAULTS[SettingsKey.API_TRANSCRIPTION_MODEL]
 
 
 # Bump whenever the Linux preview disclosure changes meaning. Persisting the
@@ -74,6 +75,10 @@ class SettingsKey:
     WINDOW_GEOMETRY: Final[str] = "window_geometry"
     COMPACT_WINDOW_GEOMETRY: Final[str] = "compact_window_geometry"
     COMPACT_MODE: Final[str] = "compact_mode"
+    # View → Host Mode: the main window shows the host dashboard instead of
+    # the recording tabs, with its own window position and size.
+    HOST_MODE: Final[str] = "host_mode"
+    HOST_WINDOW_GEOMETRY: Final[str] = "host_window_geometry"
     AUTO_PASTE: Final[str] = "auto_paste"
     MACOS_ACCESSIBILITY_INTRO_SEEN: Final[str] = "macos_accessibility_intro_seen"
     COPY_CLIPBOARD: Final[str] = "copy_clipboard"
@@ -406,6 +411,92 @@ class HuggingFaceAccessPolicy:
     ALL: Final[Tuple[str, ...]] = (ASK, ALWAYS, NEVER)
 
 
+#: The default of every scalar setting, taken from ``config`` wherever config
+#: defines it. Resolvers fall back to these, and call sites read them through
+#: :func:`setting_value` instead of repeating literals.
+SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
+    # Dictation and window
+    SettingsKey.SELECTED_MODEL: config.DEFAULT_BACKEND,
+    SettingsKey.API_TRANSCRIPTION_MODEL: config.DEFAULT_API_MODEL,
+    SettingsKey.AUTO_PASTE: True,
+    SettingsKey.COPY_CLIPBOARD: True,
+    SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN: False,
+    SettingsKey.COMPACT_MODE: False,
+    SettingsKey.HOST_MODE: False,
+    SettingsKey.MINIMIZE_TRAY: True,
+    SettingsKey.RECORDING_TRIGGER_MODE: config.RECORDING_TRIGGER_MODE,
+    SettingsKey.STREAMING_ENABLED: config.STREAMING_ENABLED,
+    SettingsKey.STREAMING_CHUNK_DURATION: config.STREAMING_CHUNK_DURATION_SEC,
+    SettingsKey.STREAMING_OVERLAY_FONT_SIZE: config.STREAMING_OVERLAY_FONT_SIZE,
+    SettingsKey.UI_FONT_SCALE: config.UI_FONT_SCALE,
+    SettingsKey.UI_THEME: config.UI_THEME,
+    SettingsKey.QUICK_RECORD_PROFILE: "",
+    SettingsKey.DEVELOPER_MODE: config.DEVELOPER_MODE,
+    # Local engines
+    SettingsKey.WHISPER_MODEL: config.DEFAULT_WHISPER_MODEL,
+    SettingsKey.WHISPER_DEVICE: config.FASTER_WHISPER_DEVICE,
+    SettingsKey.WHISPER_COMPUTE_TYPE: config.FASTER_WHISPER_COMPUTE_TYPE,
+    SettingsKey.WHISPER_GPU_OFFER_DECLINED: False,
+    SettingsKey.LOCAL_ASR_LANGUAGE: "en",
+    # Transcript cleanup and uploads. With no saved choice, cleanup uses
+    # OpenRouter's free router; config.TRANSCRIPT_CLEANUP_MODEL is the OpenAI
+    # profile's default model, not this setting's.
+    SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: config.TRANSCRIPT_CLEANUP_ENABLED,
+    SettingsKey.TRANSCRIPT_CLEANUP_PROMPT: config.TRANSCRIPT_CLEANUP_PROMPT,
+    SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: config.TRANSCRIPT_CLEANUP_PROVIDER,
+    SettingsKey.TRANSCRIPT_CLEANUP_MODEL: config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL,
+    SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT: config.TRANSCRIPT_CLEANUP_MODEL_SORT,
+    SettingsKey.TRANSCRIPT_CLEANUP_REASONING: config.TRANSCRIPT_CLEANUP_REASONING,
+    SettingsKey.TRANSCRIPT_BATCH_RELATION: config.TRANSCRIPT_BATCH_RELATION,
+    SettingsKey.TRANSCRIPT_BATCH_CUSTOM_COMBINE: config.TRANSCRIPT_BATCH_CUSTOM_COMBINE,
+    # History and recordings
+    SettingsKey.RECORDING_RETENTION_MODE: RecordingRetentionMode.CUSTOM,
+    SettingsKey.MAX_SAVED_RECORDINGS: config.MAX_SAVED_RECORDINGS,
+    SettingsKey.MAX_SAVED_RECORDINGS_MB: config.MAX_SAVED_RECORDINGS_MB,
+    SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE: True,
+    SettingsKey.CONFIRM_MEETING_DELETE: True,
+    # Meeting Mode
+    SettingsKey.MEETING_WHISPER_MODEL: config.MEETING_WHISPER_MODEL,
+    SettingsKey.MEETING_LANGUAGE: config.MEETING_LANGUAGE,
+    SettingsKey.MEETING_LLM_PROVIDER: TranscriptCleanupProvider.OPENROUTER,
+    SettingsKey.MEETING_LLM_MODEL: config.MEETING_LLM_MODEL,
+    SettingsKey.MEETING_AGENT_CORE: config.MEETING_AGENT_CORE,
+    SettingsKey.MEETING_SPEAKER_ID_BACKEND: config.MEETING_SPEAKER_ID_BACKEND,
+    SettingsKey.MEETING_END_REDECODE: config.MEETING_END_REDECODE,
+    SettingsKey.MEETING_REDECODE_COVERAGE_GUARD: False,
+    SettingsKey.MEETING_END_POLISH: config.MEETING_END_POLISH,
+    SettingsKey.MEETING_END_REPORT: config.MEETING_END_REPORT,
+    SettingsKey.MEETING_REPORT_RIBBON: config.MEETING_REPORT_RIBBON,
+    SettingsKey.MEETING_REPORT_BRIEF: config.MEETING_REPORT_BRIEF,
+    SettingsKey.MEETING_REPORT_SIGNAL: config.MEETING_REPORT_SIGNAL,
+    SettingsKey.MEETING_INSIGHT_REVIEW: False,
+    SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY: "normal",
+    SettingsKey.MEETING_CLOUD_CONSENT_GIVEN: False,
+    SettingsKey.MEETING_CLOUD_LAST_ENABLED: False,
+    SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: False,
+    SettingsKey.MEETING_UNSUPPORTED_PLATFORM_ACK: False,
+    SettingsKey.MEETING_MODE_INTRO_SEEN: False,
+    SettingsKey.MEETING_PAST_RECALL_ENABLED: False,
+    SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED: False,
+    SettingsKey.MEETING_CONTEXT_FOLDER_PATH: "",
+    SettingsKey.MEETING_SERVER_BIND: config.MEETING_SERVER_BIND,
+    SettingsKey.MEETING_SERVER_PORT: config.MEETING_SERVER_PORT,
+    # TypeSafe: every feature is off until chosen, except topic shifts,
+    # which only apply once TypeSafe itself is on.
+    SettingsKey.TYPESAFE_ENABLED: False,
+    SettingsKey.TYPESAFE_CITATIONS_ENABLED: False,
+    SettingsKey.TYPESAFE_SEMANTIC_SEARCH_ENABLED: False,
+    SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED: False,
+    SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED: False,
+    SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED: True,
+    SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED: False,
+    # In-app updater
+    SettingsKey.UPDATE_CHECK_ENABLED: config.UPDATE_CHECK_ENABLED,
+    SettingsKey.UPDATE_NOTIFY_ENABLED: config.UPDATE_NOTIFY_ENABLED,
+    SettingsKey.UPDATE_SKIPPED_VERSION: "",
+})
+
+
 _HF_HUB_OFFLINE_ENV: Final[str] = "HF_HUB_OFFLINE"
 _HF_HUB_OFFLINE_TRUTHY: Final[Tuple[str, ...]] = ("1", "on", "true", "yes")
 
@@ -574,7 +665,7 @@ class SettingsManager:
         except Exception as e:
             logger.warning(f"Failed to load model selection: {e}")
 
-        return config.DEFAULT_BACKEND
+        return SETTING_DEFAULTS[SettingsKey.SELECTED_MODEL]
 
     def save_model_selection(self, model_value: str) -> None:
         """Validate and save a backend selection."""
@@ -660,6 +751,119 @@ def is_hf_hub_offline_env_set() -> bool:
 settings_manager = SettingsManager()
 
 
+def setting_value(key: str, settings: Optional[Mapping[str, Any]] = None) -> Any:
+    """Return the stored value of ``key``, or its default when unset.
+
+    Unvalidated, like ``settings.get(key, default)``; a resolver validates.
+    ``settings`` is a loaded mapping; None reads the settings file.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    return settings.get(key, SETTING_DEFAULTS[key])
+
+
+def resolve_bool_setting(
+    key: str, settings: Optional[Mapping[str, Any]] = None,
+) -> bool:
+    """Return ``key``'s stored bool, or its default when unset or not a bool."""
+    raw = setting_value(key, settings)
+    return raw if isinstance(raw, bool) else SETTING_DEFAULTS[key]
+
+
+def resolve_choice_setting(
+    key: str,
+    choices: Tuple[Any, ...],
+    settings: Optional[Mapping[str, Any]] = None,
+) -> Any:
+    """Return ``key``'s stored value when it is one of ``choices``, else its default."""
+    raw = setting_value(key, settings)
+    return raw if raw in choices else SETTING_DEFAULTS[key]
+
+
+def _int_setting(key: str, settings: Optional[Mapping[str, Any]]) -> int:
+    raw = setting_value(key, settings)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return SETTING_DEFAULTS[key]
+
+
+def _bool_resolver(key: str) -> Callable[..., bool]:
+    def resolve(settings: Optional[Mapping[str, Any]] = None) -> bool:
+        return resolve_bool_setting(key, settings)
+
+    resolve.__doc__ = (
+        f"Return the ``{key}`` setting, or {SETTING_DEFAULTS[key]} when unset "
+        "or not a bool."
+    )
+    return resolve
+
+
+def _choice_resolver(key: str, choices: Tuple[Any, ...]) -> Callable[..., Any]:
+    def resolve(settings: Optional[Mapping[str, Any]] = None) -> Any:
+        return resolve_choice_setting(key, choices, settings)
+
+    resolve.__doc__ = (
+        f"Return the ``{key}`` setting when it is one of {choices}, else "
+        f"{SETTING_DEFAULTS[key]!r}."
+    )
+    return resolve
+
+
+# Settings with a fixed set of values: the stored one when valid, else the
+# default. Each is called as ``resolve_x(settings=None)``.
+resolve_recording_trigger_mode = _choice_resolver(
+    SettingsKey.RECORDING_TRIGGER_MODE, RecordingTriggerMode.ALL)
+resolve_ui_theme = _choice_resolver(SettingsKey.UI_THEME, UiTheme.ALL)
+resolve_transcript_cleanup_reasoning = _choice_resolver(
+    SettingsKey.TRANSCRIPT_CLEANUP_REASONING, TranscriptCleanupReasoning.ALL)
+resolve_transcript_batch_relation = _choice_resolver(
+    SettingsKey.TRANSCRIPT_BATCH_RELATION, BatchRelation.ALL)
+resolve_meeting_agent_core = _choice_resolver(
+    SettingsKey.MEETING_AGENT_CORE, MeetingAgentCore.ALL)
+resolve_meeting_server_bind = _choice_resolver(
+    SettingsKey.MEETING_SERVER_BIND, MeetingServerBind.ALL)
+
+# On/off settings: the stored bool, else the default.
+resolve_transcript_batch_custom_combine = _bool_resolver(
+    SettingsKey.TRANSCRIPT_BATCH_CUSTOM_COMBINE)
+resolve_developer_mode = _bool_resolver(SettingsKey.DEVELOPER_MODE)
+resolve_update_check_enabled = _bool_resolver(SettingsKey.UPDATE_CHECK_ENABLED)
+resolve_update_notify_enabled = _bool_resolver(SettingsKey.UPDATE_NOTIFY_ENABLED)
+# Meeting consents and acknowledgements, off until given. On unsupported
+# platforms (old macOS, unsupported Linux architectures, other OSes) the
+# Meeting Mode tab stays muted until the ack is granted once; supported Linux
+# uses the versioned resolve_meeting_linux_preview_ack instead.
+resolve_meeting_audio_upload_consent = _bool_resolver(
+    SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN)
+resolve_meeting_cloud_consent = _bool_resolver(SettingsKey.MEETING_CLOUD_CONSENT_GIVEN)
+resolve_meeting_unsupported_platform_ack = _bool_resolver(
+    SettingsKey.MEETING_UNSUPPORTED_PLATFORM_ACK)
+resolve_meeting_mode_intro_seen = _bool_resolver(SettingsKey.MEETING_MODE_INTRO_SEEN)
+# Off by default. Past recall lets AI insights send excerpts of earlier
+# meetings to the model, and the context folder excerpts of files in that
+# folder; each is separate from the current meeting's AI insights consent.
+resolve_meeting_past_recall_enabled = _bool_resolver(
+    SettingsKey.MEETING_PAST_RECALL_ENABLED)
+resolve_meeting_context_folder_enabled = _bool_resolver(
+    SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED)
+# End-of-meeting steps and report views. The coverage guard is an opt-in
+# word-count safeguard for live and retried re-transcription.
+resolve_meeting_end_redecode = _bool_resolver(SettingsKey.MEETING_END_REDECODE)
+resolve_meeting_redecode_coverage_guard = _bool_resolver(
+    SettingsKey.MEETING_REDECODE_COVERAGE_GUARD)
+resolve_meeting_end_polish = _bool_resolver(SettingsKey.MEETING_END_POLISH)
+resolve_meeting_end_report = _bool_resolver(SettingsKey.MEETING_END_REPORT)
+resolve_meeting_report_ribbon = _bool_resolver(SettingsKey.MEETING_REPORT_RIBBON)
+resolve_meeting_report_brief = _bool_resolver(SettingsKey.MEETING_REPORT_BRIEF)
+resolve_meeting_report_signal = _bool_resolver(SettingsKey.MEETING_REPORT_SIGNAL)
+# TypeSafe is a separate remote decision service: each judgment sends a short
+# excerpt of text and gets a typed answer back, not generated text. Off by
+# default; every TypeSafe feature also needs it, and meeting features need
+# the meeting's cloud consent too.
+resolve_typesafe_enabled = _bool_resolver(SettingsKey.TYPESAFE_ENABLED)
+
+
 def resolve_max_saved_recordings(
     settings: Optional[Dict[str, Any]] = None,
 ) -> Optional[int]:
@@ -667,19 +871,10 @@ def resolve_max_saved_recordings(
     if settings is None:
         settings = settings_manager.load_all_settings()
 
-    mode = settings.get(
-        SettingsKey.RECORDING_RETENTION_MODE,
-        RecordingRetentionMode.CUSTOM,
-    )
+    mode = setting_value(SettingsKey.RECORDING_RETENTION_MODE, settings)
     if mode in (RecordingRetentionMode.KEEP_ALL, RecordingRetentionMode.SIZE_LIMIT):
         return None
-
-    raw = settings.get(SettingsKey.MAX_SAVED_RECORDINGS, config.MAX_SAVED_RECORDINGS)
-    try:
-        count = int(raw)
-    except (TypeError, ValueError):
-        count = config.MAX_SAVED_RECORDINGS
-    return max(1, count)
+    return max(1, _int_setting(SettingsKey.MAX_SAVED_RECORDINGS, settings))
 
 
 def resolve_max_saved_recordings_bytes(
@@ -693,27 +888,8 @@ def resolve_max_saved_recordings_bytes(
     if mode != RecordingRetentionMode.SIZE_LIMIT:
         return None
 
-    raw = settings.get(
-        SettingsKey.MAX_SAVED_RECORDINGS_MB, config.MAX_SAVED_RECORDINGS_MB
-    )
-    try:
-        megabytes = int(raw)
-    except (TypeError, ValueError):
-        megabytes = config.MAX_SAVED_RECORDINGS_MB
+    megabytes = _int_setting(SettingsKey.MAX_SAVED_RECORDINGS_MB, settings)
     return max(1, megabytes) * 1024 * 1024
-
-
-def resolve_recording_trigger_mode(
-    settings: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Return a valid record hotkey activation mode."""
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-
-    mode = settings.get(SettingsKey.RECORDING_TRIGGER_MODE)
-    if mode in RecordingTriggerMode.ALL:
-        return mode
-    return config.RECORDING_TRIGGER_MODE
 
 
 def resolve_ui_font_scale(
@@ -723,27 +899,10 @@ def resolve_ui_font_scale(
     if settings is None:
         settings = settings_manager.load_all_settings()
 
-    raw = settings.get(SettingsKey.UI_FONT_SCALE, config.UI_FONT_SCALE)
-    try:
-        percent = int(raw)
-    except (TypeError, ValueError):
-        return config.UI_FONT_SCALE
+    percent = _int_setting(SettingsKey.UI_FONT_SCALE, settings)
     if percent in UiFontScale.ALL:
         return percent
-    return config.UI_FONT_SCALE
-
-
-def resolve_ui_theme(
-    settings: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Return a valid ``UiTheme`` value, defaulting to the shipped dark theme."""
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-
-    theme = settings.get(SettingsKey.UI_THEME, config.UI_THEME)
-    if theme in UiTheme.ALL:
-        return theme
-    return config.UI_THEME
+    return SETTING_DEFAULTS[SettingsKey.UI_FONT_SCALE]
 
 
 def resolve_streaming_overlay_font_size(
@@ -753,14 +912,7 @@ def resolve_streaming_overlay_font_size(
     if settings is None:
         settings = settings_manager.load_all_settings()
 
-    raw = settings.get(
-        SettingsKey.STREAMING_OVERLAY_FONT_SIZE,
-        config.STREAMING_OVERLAY_FONT_SIZE,
-    )
-    try:
-        size = int(raw)
-    except (TypeError, ValueError):
-        size = config.STREAMING_OVERLAY_FONT_SIZE
+    size = _int_setting(SettingsKey.STREAMING_OVERLAY_FONT_SIZE, settings)
     return max(10, min(48, size))
 
 
@@ -774,7 +926,7 @@ def resolve_transcript_cleanup_prompt(
     prompt = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_PROMPT)
     if isinstance(prompt, str) and prompt.strip():
         return prompt.strip()
-    return config.TRANSCRIPT_CLEANUP_PROMPT
+    return SETTING_DEFAULTS[SettingsKey.TRANSCRIPT_CLEANUP_PROMPT]
 
 
 def _known_text_llm_profile_ids(
@@ -827,10 +979,7 @@ def _resolve_text_llm_assignment(
         and model.strip()
     ):
         return provider, model.strip()
-    return (
-        TranscriptCleanupProvider.OPENROUTER,
-        config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL,
-    )
+    return SETTING_DEFAULTS[provider_key], SETTING_DEFAULTS[model_key]
 
 
 def resolve_transcript_cleanup_provider(
@@ -857,19 +1006,6 @@ def resolve_transcript_cleanup_model(
     return model
 
 
-def resolve_transcript_cleanup_reasoning(
-    settings: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Return a valid cleanup reasoning level."""
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-
-    reasoning = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_REASONING)
-    if reasoning in TranscriptCleanupReasoning.ALL:
-        return reasoning
-    return config.TRANSCRIPT_CLEANUP_REASONING
-
-
 def resolve_transcript_cleanup_rules(
     settings: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
@@ -890,19 +1026,6 @@ def resolve_transcript_cleanup_rules(
     return rules[: config.MAX_TRANSCRIPT_CLEANUP_RULES]
 
 
-def resolve_transcript_batch_relation(
-    settings: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Return the last multi-file relation preset, or the default."""
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-
-    relation = settings.get(SettingsKey.TRANSCRIPT_BATCH_RELATION)
-    if relation in BatchRelation.ALL:
-        return relation
-    return config.TRANSCRIPT_BATCH_RELATION
-
-
 def resolve_transcript_batch_custom_instructions(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
@@ -914,16 +1037,6 @@ def resolve_transcript_batch_custom_instructions(
     if not isinstance(raw, str):
         return ""
     return raw.strip()[: config.MAX_TRANSCRIPT_BATCH_INSTRUCTION_CHARS]
-
-
-def resolve_transcript_batch_custom_combine(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    return _resolve_bool_setting(
-        settings,
-        SettingsKey.TRANSCRIPT_BATCH_CUSTOM_COMBINE,
-        config.TRANSCRIPT_BATCH_CUSTOM_COMBINE,
-    )
 
 
 def resolve_meeting_asr_source(settings: Optional[Dict[str, Any]] = None) -> str:
@@ -947,7 +1060,7 @@ def resolve_meeting_whisper_model(
     model = settings.get(SettingsKey.MEETING_WHISPER_MODEL)
     if isinstance(model, str) and model in config.WHISPER_MODEL_CHOICES:
         return model
-    return config.MEETING_WHISPER_MODEL
+    return SETTING_DEFAULTS[SettingsKey.MEETING_WHISPER_MODEL]
 
 
 def resolve_meeting_language(
@@ -962,7 +1075,7 @@ def resolve_meeting_language(
         language = language.strip().lower()
         if language in MeetingLanguage.ALL:
             return language
-    return config.MEETING_LANGUAGE
+    return SETTING_DEFAULTS[SettingsKey.MEETING_LANGUAGE]
 
 
 def resolve_meeting_llm_provider(
@@ -1022,19 +1135,6 @@ def resolve_meeting_llm_model(
     return model
 
 
-def resolve_meeting_agent_core(
-    settings: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Return a valid meeting agent core kind."""
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-
-    core = settings.get(SettingsKey.MEETING_AGENT_CORE)
-    if core in MeetingAgentCore.ALL:
-        return core
-    return config.MEETING_AGENT_CORE
-
-
 def resolve_meeting_speaker_id_backend(
     settings: Optional[Dict[str, Any]] = None,
     today: Optional[date] = None,
@@ -1052,40 +1152,7 @@ def resolve_meeting_speaker_id_backend(
         return MeetingSpeakerIdBackend.LOCAL
     if backend in MeetingSpeakerIdBackend.ALL:
         return backend
-    return config.MEETING_SPEAKER_ID_BACKEND
-
-
-def resolve_meeting_audio_upload_consent(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether the user has approved uploading meeting audio."""
-    return _resolve_bool_setting(
-        settings, SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN, False,
-    )
-
-
-def resolve_meeting_cloud_consent(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether the user accepted sending meeting text to the AI provider."""
-    return _resolve_bool_setting(
-        settings, SettingsKey.MEETING_CLOUD_CONSENT_GIVEN, False,
-    )
-
-
-def resolve_meeting_unsupported_platform_ack(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether the user acknowledged unsupported-platform Meeting Mode.
-
-    Off by default. On unsupported platforms (old macOS, unsupported Linux
-    architectures, and other OSes) the Meeting Mode tab stays muted until this
-    is granted once; later launches skip the warning. Implementation-ready
-    Linux uses the versioned preview acknowledgement below instead.
-    """
-    return _resolve_bool_setting(
-        settings, SettingsKey.MEETING_UNSUPPORTED_PLATFORM_ACK, False,
-    )
+    return SETTING_DEFAULTS[SettingsKey.MEETING_SPEAKER_ID_BACKEND]
 
 
 def resolve_meeting_linux_preview_ack(
@@ -1106,50 +1173,11 @@ def resolve_meeting_linux_preview_ack(
     )
 
 
-def resolve_meeting_mode_intro_seen(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether the first-visit Meeting Mode intro was dismissed.
-
-    Off by default. After Skip or Got it, later visits do not show it.
-    """
-    return _resolve_bool_setting(
-        settings, SettingsKey.MEETING_MODE_INTRO_SEEN, False,
-    )
-
-
-def resolve_meeting_past_recall_enabled(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether meeting agents may search past transcripts.
-
-    Off by default. When enabled, AI insights may send excerpts from
-    earlier meetings to the model. Distinct from AI insights consent,
-    which covers only the current meeting.
-    """
-    return _resolve_bool_setting(
-        settings, SettingsKey.MEETING_PAST_RECALL_ENABLED, False,
-    )
-
-
 #: Names participants can use to address the note-taking assistant. The
 #: bare word "whisper" is deliberately absent: it is ordinary speech.
 DEFAULT_VOICE_COMMAND_NAMES: Final[Tuple[str, ...]] = (
     "note taker", "notetaker", "assistant", "openwhisper", "open whisper",
 )
-
-
-def resolve_typesafe_enabled(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether TypeSafe fast judgments may run at all.
-
-    Off by default. TypeSafe is a separate remote decision service: each
-    judgment sends a short excerpt of text and receives a typed answer, not
-    generated text. Every feature below also requires this switch, and
-    meeting features additionally require the meeting's cloud consent.
-    """
-    return _resolve_bool_setting(settings, SettingsKey.TYPESAFE_ENABLED, False)
 
 
 def resolve_typesafe_feature_enabled(feature: str, settings=None) -> bool:
@@ -1159,8 +1187,8 @@ def resolve_typesafe_feature_enabled(feature: str, settings=None) -> bool:
         "question_radar": SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED,
         "highlights": SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED,
     }
-    return resolve_typesafe_enabled(settings) and _resolve_bool_setting(
-        settings, keys[feature], False,
+    return resolve_typesafe_enabled(settings) and resolve_bool_setting(
+        keys[feature], settings,
     )
 
 
@@ -1172,8 +1200,8 @@ def resolve_typesafe_topic_shift_enabled(
     On by default once TypeSafe is enabled; the lexical Jaccard rule remains
     the fallback whenever a judgment is unavailable.
     """
-    return resolve_typesafe_enabled(settings) and _resolve_bool_setting(
-        settings, SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, True,
+    return resolve_typesafe_enabled(settings) and resolve_bool_setting(
+        SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, settings,
     )
 
 
@@ -1184,8 +1212,8 @@ def resolve_typesafe_voice_commands_enabled(
 
     Off by default. Only segments that name the assistant are ever judged.
     """
-    return resolve_typesafe_enabled(settings) and _resolve_bool_setting(
-        settings, SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, False,
+    return resolve_typesafe_enabled(settings) and resolve_bool_setting(
+        SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, settings,
     )
 
 
@@ -1206,20 +1234,6 @@ def resolve_typesafe_voice_command_names(
     return names or DEFAULT_VOICE_COMMAND_NAMES
 
 
-def resolve_meeting_context_folder_enabled(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether meeting agents may search a local knowledge folder.
-
-    Off by default. When enabled, AI insights may send excerpts from
-    files in the configured folder to the model. Distinct from both
-    AI insights consent and past-meeting recall.
-    """
-    return _resolve_bool_setting(
-        settings, SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED, False,
-    )
-
-
 def resolve_meeting_context_folder_path(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
@@ -1230,7 +1244,7 @@ def resolve_meeting_context_folder_path(
     """
     if settings is None:
         settings = settings_manager.load_all_settings()
-    raw = settings.get(SettingsKey.MEETING_CONTEXT_FOLDER_PATH, "")
+    raw = setting_value(SettingsKey.MEETING_CONTEXT_FOLDER_PATH, settings)
     if not isinstance(raw, str):
         return ""
     cleaned = raw.strip()
@@ -1242,124 +1256,16 @@ def resolve_meeting_context_folder_path(
     return os.path.normpath(expanded)
 
 
-def _resolve_bool_setting(
-    settings: Optional[Dict[str, Any]],
-    key: str,
-    default: bool,
-) -> bool:
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-    raw = settings.get(key, default)
-    if isinstance(raw, bool):
-        return raw
-    return default
-
-
-def resolve_developer_mode(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether developer tools (demo meeting, etc.) are unlocked."""
-    return _resolve_bool_setting(
-        settings, SettingsKey.DEVELOPER_MODE, config.DEVELOPER_MODE,
-    )
-
-
-def resolve_update_check_enabled(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether background GitHub update checks are allowed."""
-    return _resolve_bool_setting(
-        settings, SettingsKey.UPDATE_CHECK_ENABLED, config.UPDATE_CHECK_ENABLED,
-    )
-
-
-def resolve_update_notify_enabled(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether an update-available dialog may be shown automatically."""
-    return _resolve_bool_setting(
-        settings,
-        SettingsKey.UPDATE_NOTIFY_ENABLED,
-        config.UPDATE_NOTIFY_ENABLED,
-    )
-
-
 def resolve_update_skipped_version(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Return the release version the user dismissed with Later, if any."""
     if settings is None:
         settings = settings_manager.load_all_settings()
-    raw = settings.get(SettingsKey.UPDATE_SKIPPED_VERSION, "")
+    raw = setting_value(SettingsKey.UPDATE_SKIPPED_VERSION, settings)
     if not isinstance(raw, str):
         return ""
     return raw.strip()
-
-
-def resolve_meeting_end_redecode(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether End should re-decode session audio with longer pauses."""
-    return _resolve_bool_setting(
-        settings, SettingsKey.MEETING_END_REDECODE, config.MEETING_END_REDECODE,
-    )
-
-
-def resolve_meeting_redecode_coverage_guard(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Opt-in word-count safeguard for live and retried re-transcription."""
-    return _resolve_bool_setting(
-        settings, SettingsKey.MEETING_REDECODE_COVERAGE_GUARD, False,
-    )
-
-
-def resolve_meeting_end_polish(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether End should run the LLM transcript polish."""
-    return _resolve_bool_setting(
-        settings, SettingsKey.MEETING_END_POLISH, config.MEETING_END_POLISH,
-    )
-
-
-def resolve_meeting_end_report(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether End should run the sidecar final report."""
-    return _resolve_bool_setting(
-        settings, SettingsKey.MEETING_END_REPORT, config.MEETING_END_REPORT,
-    )
-
-
-DEFAULT_REPORT_VIEWS: Final[Tuple[str, ...]] = ("ribbon", "brief", "signal")
-
-
-def resolve_meeting_report_ribbon(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether the Ribbon report view is enabled."""
-    return _resolve_bool_setting(
-        settings, SettingsKey.MEETING_REPORT_RIBBON, config.MEETING_REPORT_RIBBON,
-    )
-
-
-def resolve_meeting_report_brief(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether the Brief report view is enabled."""
-    return _resolve_bool_setting(
-        settings, SettingsKey.MEETING_REPORT_BRIEF, config.MEETING_REPORT_BRIEF,
-    )
-
-
-def resolve_meeting_report_signal(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether the Signal report view is enabled."""
-    return _resolve_bool_setting(
-        settings, SettingsKey.MEETING_REPORT_SIGNAL, config.MEETING_REPORT_SIGNAL,
-    )
 
 
 def resolve_meeting_report_views(
@@ -1370,28 +1276,17 @@ def resolve_meeting_report_views(
     Falls back to ``("ribbon",)`` when every view is off so a meeting never
     ends with an empty report.
     """
-    views = tuple(
-        name for name, key, default in (
-            ("ribbon", SettingsKey.MEETING_REPORT_RIBBON, config.MEETING_REPORT_RIBBON),
-            ("brief", SettingsKey.MEETING_REPORT_BRIEF, config.MEETING_REPORT_BRIEF),
-            ("signal", SettingsKey.MEETING_REPORT_SIGNAL, config.MEETING_REPORT_SIGNAL),
-        )
-        if _resolve_bool_setting(settings, key, default)
-    )
-    return views or ("ribbon",)
-
-
-def resolve_meeting_server_bind(
-    settings: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Return a valid dashboard bind mode."""
     if settings is None:
         settings = settings_manager.load_all_settings()
-
-    bind = settings.get(SettingsKey.MEETING_SERVER_BIND)
-    if bind in MeetingServerBind.ALL:
-        return bind
-    return config.MEETING_SERVER_BIND
+    views = tuple(
+        name for name, key in (
+            ("ribbon", SettingsKey.MEETING_REPORT_RIBBON),
+            ("brief", SettingsKey.MEETING_REPORT_BRIEF),
+            ("signal", SettingsKey.MEETING_REPORT_SIGNAL),
+        )
+        if resolve_bool_setting(key, settings)
+    )
+    return views or ("ribbon",)
 
 
 def resolve_meeting_server_port(
@@ -1401,11 +1296,7 @@ def resolve_meeting_server_port(
     if settings is None:
         settings = settings_manager.load_all_settings()
 
-    raw = settings.get(SettingsKey.MEETING_SERVER_PORT, config.MEETING_SERVER_PORT)
-    try:
-        port = int(raw)
-    except (TypeError, ValueError):
-        port = config.MEETING_SERVER_PORT
+    port = _int_setting(SettingsKey.MEETING_SERVER_PORT, settings)
     return max(0, min(65535, port))
 
 
@@ -1423,10 +1314,10 @@ def compose_transcript_cleanup_prompt(base_prompt: str, rules: List[str]) -> str
 def resolve_meeting_insight_review(settings=None):
     if settings is None:
         settings = settings_manager.load_all_settings()
-    enabled = _resolve_bool_setting(settings, SettingsKey.MEETING_INSIGHT_REVIEW, False)
+    enabled = resolve_bool_setting(SettingsKey.MEETING_INSIGHT_REVIEW, settings)
     consent = settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == "typesafe-text-v1"
-    sensitivity = settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY, "normal")
-    if sensitivity not in ("normal", "thorough"):
-        sensitivity = "normal"
+    sensitivity = resolve_choice_setting(
+        SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY, ("normal", "thorough"), settings,
+    )
     return {"enabled": enabled and consent and resolve_typesafe_enabled(settings), "consent": "typesafe-text-v1" if consent else "",
             "sensitivity": sensitivity}

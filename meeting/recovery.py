@@ -20,7 +20,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from meeting.interfaces import CHANNELS, SpooledChunk
 from meeting.refinalize import acquire_model_lease, release_model_lease
-from meeting.state.schema import FinalizationState, now_iso
+from meeting.state.schema import FinalizationState, now_iso, parse_state_json
+from meeting.stored import finalization_from_meeting_row
 from meeting.time_utils import seconds_since
 
 logger = logging.getLogger(__name__)
@@ -488,8 +489,6 @@ def find_recoverable_meetings(repository: Any) -> List[Dict[str, Any]]:
     except Exception:
         logger.exception("Failed to scan for interrupted meetings")
         return []
-    from meeting.state.schema import finalization_from_meeting_row
-
     recoverable = []
     for meeting in candidates:
         if not is_session_dead(meeting):
@@ -652,11 +651,13 @@ def _mark_ended(repository: Any, meeting: Dict[str, Any]) -> None:
     fields: Dict[str, Any] = {"status": "ended", "ended_at": now_iso()}
     state_json = meeting.get("state_json")
     if state_json:
-        try:
-            state = json.loads(state_json)
-            if not isinstance(state, dict):
-                raise ValueError("state snapshot is not an object")
-            state["status"] = "ended"
+        # Patch the raw document so keys this version does not model survive.
+        state = parse_state_json(state_json)
+        if state is None:
+            logger.warning("Unparseable state_json on meeting %s; "
+                           "leaving snapshot untouched", meeting.get("id"))
+        else:
+            state = dict(state, status="ended")
             cloud_enabled = bool(
                 meeting.get("cloud_enabled", state.get("cloud_enabled", False))
             )
@@ -667,9 +668,6 @@ def _mark_ended(repository: Any, meeting: Dict[str, Any]) -> None:
                 meeting_status="ended",
             ).to_dict()
             fields["state_json"] = json.dumps(state, ensure_ascii=False)
-        except (TypeError, ValueError):
-            logger.warning("Unparseable state_json on meeting %s; "
-                           "leaving snapshot untouched", meeting.get("id"))
     try:
         repository.update_meeting(meeting["id"], **fields)
     except Exception:

@@ -12,6 +12,7 @@ from PyQt6.QtGui import QFont
 
 from config import config
 from services.settings import (
+    SETTING_DEFAULTS,
     LEGACY_STREAMING_KEYS,
     SettingsKey,
     api_model_choices,
@@ -28,6 +29,7 @@ from ui_qt.utils.collapse_animation import (
 )
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.markdown_render import PREVIEW_STYLE, render_markdown
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.cards import HeaderCard
 from ui_qt.widgets.downloads_label import DownloadsLabel
 from ui_qt.widgets.engine_field import (
@@ -276,12 +278,10 @@ class TranscriptionTabBase(QWidget):
         self.remote_runtime_label.hide()
         engine_layout.addWidget(self.remote_runtime_label)
 
-        self.remote_management_row = RemoteModelNotice()
-        self.remote_dependency_label = self.remote_management_row.detail_label
-        self.remote_manage_button = self.remote_management_row.manage_button
+        # On the footer line, so the Remote card is as tall as the others.
+        self.remote_manage_button = RemoteModelNotice()
         self.remote_manage_button.clicked.connect(lambda: self.help_requested.emit("remote_models"))
-        self.remote_management_row.hide()
-        engine_layout.addWidget(self.remote_management_row)
+        self.remote_manage_button.hide()
 
         self.status_dot = StatusDot(diameter=16)
         # Stands in for the dot while Remote is selected.
@@ -317,6 +317,7 @@ class TranscriptionTabBase(QWidget):
         footer_row.addWidget(self.status_dot)
         footer_row.addWidget(self.link_glyph)
         footer_row.addWidget(self.resolved_label, stretch=1)
+        footer_row.addWidget(self.remote_manage_button)
         footer_row.addSpacing(6)
         footer_row.addWidget(self.cleanup_check)
         footer_row.addSpacing(6)
@@ -439,7 +440,7 @@ class TranscriptionTabBase(QWidget):
     def load_cleanup_setting(self):
         enabled = settings_manager.get(
             SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
-            config.TRANSCRIPT_CLEANUP_ENABLED,
+            SETTING_DEFAULTS[SettingsKey.TRANSCRIPT_CLEANUP_ENABLED],
         )
         self.cleanup_check.blockSignals(True)
         self.cleanup_check.setChecked(bool(enabled))
@@ -468,7 +469,7 @@ class TranscriptionTabBase(QWidget):
     def load_live_preview_setting(self):
         enabled = settings_manager.get(
             SettingsKey.STREAMING_ENABLED,
-            config.STREAMING_ENABLED,
+            SETTING_DEFAULTS[SettingsKey.STREAMING_ENABLED],
         )
         self._live_preview_wanted = bool(enabled)
         self._sync_live_preview()
@@ -840,7 +841,7 @@ class TranscriptionTabBase(QWidget):
         self.api_model_field.setVisible(not visible and not remote)
         self.remote_model_field.setVisible(remote)
         self.remote_engine.setVisible(remote)
-        self.remote_management_row.setVisible(remote)
+        self.remote_manage_button.setVisible(remote)
         self._show_remote_runtime()
         if remote:
             self._show_remote_models()
@@ -857,7 +858,7 @@ class TranscriptionTabBase(QWidget):
         self.remote_engine.set_state(choices)
         dependencies = (getattr(choices, "runtime", None) or {}).get("dependencies", [])
         missing = [item["label"] for item in dependencies if item.get("installable")]
-        self.remote_management_row.set_available(missing)
+        self.remote_manage_button.set_available(missing)
         self._show_remote_models()
         # The host's engine decides whether the Remote engine can preview.
         self._sync_live_preview()
@@ -1001,9 +1002,7 @@ class TranscriptionTabBase(QWidget):
         self.version_toggle.setVisible(visible)
         text = self.transcript_text
         if bool(text.property("headed")) != visible:
-            text.setProperty("headed", visible)
-            text.style().unpolish(text)
-            text.style().polish(text)
+            set_style_property(text, "headed", visible)
 
     def set_transcription_stats(
         self,

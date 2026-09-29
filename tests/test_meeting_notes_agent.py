@@ -3,10 +3,7 @@ plus report-view consolidation prompt trimming."""
 from __future__ import annotations
 
 import re
-from types import SimpleNamespace
 
-from meeting.agent.openrouter_direct import DirectOpenRouterAgent
-from meeting.agent.pi_sidecar import PiSidecarAgent
 from meeting.agent.prompts import (
     _CONSOLIDATION_STEPS,
     build_checkpoint_user_prompt,
@@ -16,19 +13,11 @@ from meeting.agent.prompts import (
     build_system_prompt,
 )
 from meeting.agent.scheduler import CheckpointScheduler
-from meeting.interfaces import AgentResult, OpResult
+from meeting.agent.tool_policy import PASS_NOTES, ToolScope, run_tool
 from meeting.state.patches import OpContext, apply_ops, filter_notes_ops, live_note_ids
 from meeting.state.schema import CARD_KEYS, MeetingState
-
-
-def _seg(seg_id, start_s, text="hello there", channel="mic"):
-    return {
-        "id": seg_id,
-        "start_s": start_s,
-        "end_s": start_s + 2.0,
-        "text": text,
-        "channel": channel,
-    }
+from tests.fakes.agent_core import RecordingAgentTools
+from tests.fakes.scheduler import FakeNotesAgent, FakeNotesEngine, segment
 
 
 class TestNotesState:
@@ -132,7 +121,7 @@ class TestNoteTakerPrompts:
             "participants": {},
         }
         prompt = build_notes_user_prompt(
-            state, [_seg("sg_new", 95.0, "We agreed to try OAuth.")],
+            state, [segment("sg_new", 95.0, "We agreed to try OAuth.")],
         )
         assert "## CURRENT NOTES PAGE" in prompt
         assert "it_note1" in prompt and "rev=2" in prompt
@@ -147,33 +136,12 @@ class TestNoteTakerPrompts:
         assert "(no new segments)" in prompt
 
 
-class _Tools:
-    def __init__(self) -> None:
-        self.ops = []
+class TestNotesToolScope:
+    def test_notes_scope_rejects_everything_but_live_notes_ops(self):
+        tools = RecordingAgentTools()
+        scope = ToolScope(pass_kind=PASS_NOTES, note_ids=frozenset({"it_note1"}))
 
-    def apply_agent_ops(self, ops):
-        self.ops.extend(ops)
-        return [OpResult(ok=True, op=op) for op in ops]
-
-    def ask_question(self, text, evidence):
-        return OpResult(ok=True, op={"op": "ask_question"})
-
-    def resolve_question(self, question_id, answer_text, confidence, evidence):
-        return OpResult(ok=True, op={"op": "resolve_question"})
-
-
-class TestDirectAgentNotesMode:
-    def test_direct_agent_declares_notes_support(self):
-        assert DirectOpenRouterAgent.supports_notes_pass is True
-
-    def test_notes_mode_filters_to_live_notes_ops(self):
-        tools = _Tools()
-        agent = DirectOpenRouterAgent()
-        agent._tools = tools
-        agent._notes_mode = True
-        agent._notes_item_ids = frozenset({"it_note1"})
-
-        results = agent._dispatch_tool_call("patch_state", {"ops": [
+        _, results = run_tool(tools, "patch_state", {"ops": [
             {
                 "op": "add_item", "card": "live_notes",
                 "text": "new block", "evidence": ["sg_1"],
@@ -193,15 +161,18 @@ class TestDirectAgentNotesMode:
             {
                 "op": "set_topic", "text": "must not apply", "evidence": ["sg_1"],
             },
-        ]})
-        question = agent._dispatch_tool_call("ask_question", {
+        ]}, scope)
+        question, question_results = run_tool(tools, "ask_question", {
             "text": "must not apply", "evidence": ["sg_1"],
-        })
+        }, scope)
 
         assert [op["op"] for op in tools.ops] == ["add_item", "update_item"]
         assert tools.ops[0]["card"] == "live_notes"
-        assert len(results) == 2
-        assert question == []
+        assert [r.reason for r in results] == [
+            None, "notes_only", None, "notes_only", "notes_only",
+        ]
+        assert question["reason"] == "notes_only"
+        assert [r.ok for r in question_results] == [False]
 
 
 class TestNotesPatchOps:
@@ -264,72 +235,18 @@ class TestNotesPatchOps:
 
 # Scheduler cadence
 
-class FakeStore:
-    def __init__(self):
-        self._snapshot = {
-            "meeting_id": "m_test",
-            "seq": 1,
-            "cards": {},
-            "topic": {"current": "seeded topic", "history": []},
-            "rolling_summary": "seeded summary",
-        }
-
-    def snapshot(self):
-        return dict(self._snapshot)
-
-
-class FakeEngine:
-    def __init__(self, segments=None):
-        # Cadence tests model an ongoing meeting after the initial warm-up.
-        self.clock = SimpleNamespace(now_s=lambda: 200.0)
-        self.store = FakeStore()
-        self._segments = list(segments or [])
-
-    def get_transcript(self, after_start_s=-1.0, limit=None):
-        items = [
-            s for s in self._segments
-            if float(s.get("start_s") or 0.0) > float(after_start_s)
-        ]
-        if limit is not None:
-            items = items[:limit]
-        return items
-
-
-class FakeAgent:
-    def __init__(self, fail_times=0):
-        self.calls = []
-        self._fail_left = fail_times
-
-    def checkpoint(self, payload):
-        self.calls.append(payload)
-        if self._fail_left > 0:
-            self._fail_left -= 1
-            return AgentResult(ok=False, error="forced")
-        return AgentResult(
-            ok=True,
-            op_results=[OpResult(ok=True, op={"op": "add_item"}, seq=1)],
-        )
-
-    def is_healthy(self):
-        return True
-
-
 class TestSchedulerNotesPass:
-    def test_notes_pass_fires_only_for_supporting_cores(self):
-        for supports in (True, False):
-            agent = FakeAgent()
-            if supports:
-                agent.supports_notes_pass = True
-            sched = CheckpointScheduler(FakeEngine([_seg("sg_1", 10.0)]), agent)
-            sched._successful_checkpoints = 6
-            sched._maybe_fire_notes()
-            assert len(agent.calls) == (1 if supports else 0)
+    def test_notes_pass_fires_for_any_core(self):
+        agent = FakeNotesAgent()
+        sched = CheckpointScheduler(FakeNotesEngine([segment("sg_1", 10.0)]), agent)
+        sched._successful_checkpoints = 6
+        sched._maybe_fire_notes()
+        assert len(agent.calls) == 1
 
     def test_notes_payload_carries_flag_and_consumes_segments(self):
-        agent = FakeAgent()
-        agent.supports_notes_pass = True
+        agent = FakeNotesAgent()
         sched = CheckpointScheduler(
-            FakeEngine([_seg("sg_1", 10.0), _seg("sg_2", 20.0)]), agent,
+            FakeNotesEngine([segment("sg_1", 10.0), segment("sg_2", 20.0)]), agent,
         )
         sched._successful_checkpoints = 2
         sched._maybe_fire_notes()
@@ -348,18 +265,16 @@ class TestSchedulerNotesPass:
         assert len(agent.calls) == 1
 
     def test_notes_seed_after_first_checkpoint(self):
-        agent = FakeAgent()
-        agent.supports_notes_pass = True
-        sched = CheckpointScheduler(FakeEngine([_seg("sg_1", 10.0)]), agent)
+        agent = FakeNotesAgent()
+        sched = CheckpointScheduler(FakeNotesEngine([segment("sg_1", 10.0)]), agent)
         sched._successful_checkpoints = 1
         sched._maybe_fire_notes()
         assert len(agent.calls) == 1
         assert agent.calls[0].is_notes
 
     def test_failed_notes_pass_leaves_segments_for_retry(self):
-        agent = FakeAgent(fail_times=1)
-        agent.supports_notes_pass = True
-        sched = CheckpointScheduler(FakeEngine([_seg("sg_1", 10.0)]), agent)
+        agent = FakeNotesAgent(fail_times=1)
+        sched = CheckpointScheduler(FakeNotesEngine([segment("sg_1", 10.0)]), agent)
         sched._successful_checkpoints = 2
 
         sched._maybe_fire_notes()  # fails
@@ -377,9 +292,8 @@ class TestSchedulerNotesPass:
         assert sched._notes_max_sent_start_s == 10.0
 
     def test_notes_pass_skipped_without_new_segments(self):
-        agent = FakeAgent()
-        agent.supports_notes_pass = True
-        sched = CheckpointScheduler(FakeEngine([]), agent)
+        agent = FakeNotesAgent()
+        sched = CheckpointScheduler(FakeNotesEngine([]), agent)
         sched._successful_checkpoints = 5
         sched._maybe_fire_notes()
         assert agent.calls == []
@@ -473,23 +387,17 @@ class TestSharedNotesFilter:
         assert live_note_ids({}) == frozenset()
         assert live_note_ids({"cards": {}}) == frozenset()
 
-    def test_both_agent_cores_declare_notes_support(self):
-        assert DirectOpenRouterAgent.supports_notes_pass is True
-        assert PiSidecarAgent.supports_notes_pass is True
 
+class TestRedecodeStrip:
+    """A re-decode keeps the notes page and every grounded proposed item."""
 
-class TestEngineNotesStrip:
-    """Proposed notes are stripped only when consolidation rebuilds them."""
+    def _store(self):
+        from meeting.state.schema import CardItem
+        from meeting.state.store import MeetingStateStore
 
-    def _engine(self):
-        from meeting.engine import MeetingEngine, MeetingEngineOptions
-
-        engine = MeetingEngine(MeetingEngineOptions(), repository=object())
         state = MeetingState(meeting_id="m_strip")
 
         def _add(card, item_id, status="proposed", pinned=False):
-            from meeting.state.schema import CardItem
-
             state.cards[card].append(CardItem(
                 id=item_id, card=card, text=f"text {item_id}",
                 status=status, pinned=pinned,
@@ -500,42 +408,19 @@ class TestEngineNotesStrip:
         _add("live_notes", "it_note_pin", pinned=True)
         _add("key_points", "it_key_prop")
         _add("key_points", "it_key_edit", status="confirmed")
-
-        from meeting.state.store import MeetingStateStore
-
-        engine.store = MeetingStateStore(state)
-        return engine, state
+        return MeetingStateStore(state)
 
     def _statuses(self, state, card):
         # The store applies copy-on-write, so read post-strip state through it.
-        live = [
-            item for item in state["cards"].get(card, [])
-        ]
-        return {item["id"]: item["status"] for item in live}
-
-    def test_notes_only_strip_removes_only_unprotected_notes(self):
-        engine, state = self._engine()
-        engine._strip_proposed_cards(cards=("live_notes",))
-        snap = engine.store.snapshot()
-        assert self._statuses(snap, "live_notes") == {
-            "it_note_prop": "removed",
-            "it_note_edit": "edited",
-            "it_note_pin": "proposed",
-        }
-        # Other cards untouched by a notes-only strip.
-        assert self._statuses(snap, "key_points") == {
-            "it_key_prop": "proposed", "it_key_edit": "confirmed",
-        }
+        return {item["id"]: item["status"] for item in state["cards"].get(card, [])}
 
     def test_redecode_strip_keeps_live_notes(self):
-        from meeting.state.schema import CARD_KEYS
+        from meeting.refinalize import strip_unevidenced_proposed
 
-        engine, state = self._engine()
-        engine._strip_proposed_cards(cards=tuple(
-            key for key in CARD_KEYS if key not in ("user_notes", "live_notes")
-        ))
+        store = self._store()
+        strip_unevidenced_proposed(store)
         # The notes page survives the re-decode strip entirely...
-        snap = engine.store.snapshot()
+        snap = store.snapshot()
         assert self._statuses(snap, "live_notes") == {
             "it_note_prop": "proposed",
             "it_note_edit": "edited",
@@ -546,23 +431,10 @@ class TestEngineNotesStrip:
             "it_key_prop": "removed", "it_key_edit": "confirmed",
         }
 
-    def test_default_strip_covers_all_cards_but_user_notes(self):
-        engine, state = self._engine()
-        engine._strip_proposed_cards()
-        snap = engine.store.snapshot()
-        assert self._statuses(snap, "live_notes") == {
-            "it_note_prop": "removed",
-            "it_note_edit": "edited",
-            "it_note_pin": "proposed",
-        }
-        assert self._statuses(snap, "key_points") == {
-            "it_key_prop": "removed", "it_key_edit": "confirmed",
-        }
-
     def test_redecode_strip_keeps_evidenced_proposed_items(self):
-        from meeting.state.schema import CARD_KEYS, CardItem, MeetingState
+        from meeting.refinalize import strip_unevidenced_proposed
+        from meeting.state.schema import CardItem
         from meeting.state.store import MeetingStateStore
-        from meeting.engine import MeetingEngine, MeetingEngineOptions
 
         state = MeetingState(meeting_id="m_redecode")
         state.cards["key_points"].extend([
@@ -582,23 +454,14 @@ class TestEngineNotesStrip:
         state.cards["live_notes"].append(CardItem(
             id="it_note_ghost", card="live_notes", text="note", evidence=[],
         ))
-        engine = MeetingEngine(
-            MeetingEngineOptions(), repository=object(),
-        )
-        engine.store = MeetingStateStore(state)
-        engine._strip_proposed_cards(
-            cards=tuple(
-                key for key in CARD_KEYS
-                if key not in ("user_notes", "live_notes")
-            ),
-            keep_evidenced=True,
-        )
-        assert self._statuses(engine.store.snapshot(), "key_points") == {
+        store = MeetingStateStore(state)
+        strip_unevidenced_proposed(store)
+        assert self._statuses(store.snapshot(), "key_points") == {
             "it_key_alive": "proposed",
             "it_key_ghost": "removed",
             "it_key_edit": "edited",
         }
-        assert self._statuses(engine.store.snapshot(), "live_notes") == {
+        assert self._statuses(store.snapshot(), "live_notes") == {
             "it_note_ghost": "proposed",
         }
 
@@ -656,3 +519,24 @@ def test_checkpoint_prompt_reads_report_views():
     assert "Populate the timeline card" not in prompt
     assert "professional minutes" not in prompt
     assert "Make decisions and action items complete" in prompt
+
+
+def test_state_render_lists_open_questions_oldest_first():
+    from meeting.agent.prompts import render_state_compact
+
+    rendered = render_state_compact({"questions": [
+        {"id": "q_2", "text": "Who owns QA?", "status": "open", "asked_at": "2"},
+        {"id": "q_1", "text": "Budget?", "status": "open", "asked_at": "1",
+         "suggested_answer": "$500", "suggested_confidence": 0.5},
+        {"id": "q_3", "text": "Settled", "status": "resolved", "asked_at": "0"},
+    ]})
+    block = rendered[rendered.index("Open questions (2/7):"):]
+    assert block.index("[q_1]") < block.index("[q_2]")
+    assert "(confidence 0.50): $500" in block
+    assert "q_3" not in block
+    assert "You may open 5 more question(s)." in block
+    assert "confidence >= 0.8" in block
+    assert render_state_compact({}).rstrip().endswith(
+        "over asking new ones."
+    )
+    assert "Open questions: none." in render_state_compact({})

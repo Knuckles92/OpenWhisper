@@ -9,11 +9,9 @@ inside the model combo marks the assignment, so the only place that reports what
 is in use is the value itself. A search fragment left in the editor is not a
 choice — it reverts when focus leaves without Enter or a pick from the list.
 """
-from pathlib import Path
 from typing import List, Optional
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -22,7 +20,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import bundle_root
 from services.settings import (
     TranscriptCleanupModelSort,
     TranscriptCleanupProvider,
@@ -38,16 +35,11 @@ from services.text_llm import (
     get_profile,
 )
 from services.transcript_cleanup import find_api_key
+from ui_qt.utils.icons import design_icon
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.buttons import Button
 from ui_qt.widgets.no_wheel import ElidingComboBox
 from ui_qt.widgets.searchable_combo import SearchableComboBox
-
-
-def _design_icon(filename: str) -> QIcon:
-    path = Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / filename
-    icon = QIcon(str(path))
-    icon.addPixmap(icon.pixmap(24, 24), QIcon.Mode.Disabled, QIcon.State.Off)
-    return icon
 
 
 class TextModelPicker(QWidget):
@@ -187,7 +179,7 @@ class TextModelPicker(QWidget):
         self.model_combo = SearchableComboBox()
         self.model_combo.setObjectName("textModelCombo")
         self.model_combo.setMinimumHeight(40)
-        self._model_icon = _design_icon("box-blue.svg")
+        self._model_icon = design_icon("box-blue.svg")
         self.model_combo.setIconSize(QSize(20, 20))
         self.model_combo.currentTextChanged.connect(self._on_model_changed)
         self.model_combo.textActivated.connect(self._on_model_activated)
@@ -199,7 +191,7 @@ class TextModelPicker(QWidget):
 
         self.refresh_button = Button("Refresh")
         self.refresh_button.setObjectName("textModelRefreshButton")
-        self.refresh_button.setIcon(_design_icon("refresh-blue.svg"))
+        self.refresh_button.setIcon(design_icon("refresh-blue.svg"))
         self.refresh_button.setIconSize(QSize(16, 16))
         self.refresh_button.set_base_minimum_size(100, 40)
         self.refresh_button.setMaximumHeight(40)
@@ -262,12 +254,12 @@ class TextModelPicker(QWidget):
 
     def _reload_provider_combo(self) -> None:
         icons = {
-            TranscriptCleanupProvider.OPENAI: _design_icon("box-blue.svg"),
-            TranscriptCleanupProvider.OPENROUTER: _design_icon(
+            TranscriptCleanupProvider.OPENAI: design_icon("box-blue.svg"),
+            TranscriptCleanupProvider.OPENROUTER: design_icon(
                 "stack-purple.svg"
             ),
         }
-        custom_icon = _design_icon("stack-slate.svg")
+        custom_icon = design_icon("stack-slate.svg")
         self.provider_combo.blockSignals(True)
         self.provider_combo.clear()
         for profile in self._profiles:
@@ -375,14 +367,11 @@ class TextModelPicker(QWidget):
         if profile is not None and profile.id in NEW_PROFILE_IDS and not available:
             text = "Key needed in Settings → API keys"
         self.provider_requirement.setText(text)
-        credential_icon = _design_icon(
+        credential_icon = design_icon(
             "check-green.svg" if available else "info-warning.svg"
         )
         self.provider_credential_icon.setPixmap(credential_icon.pixmap(16, 16))
-        self.provider_requirement.setProperty("available", available)
-        self.provider_requirement.style().unpolish(self.provider_requirement)
-        self.provider_requirement.style().polish(self.provider_requirement)
-        self.provider_requirement.update()
+        set_style_property(self.provider_requirement, "available", available)
 
     def _staged_model(self) -> str:
         """Return the model this picker shows for the selected endpoint."""

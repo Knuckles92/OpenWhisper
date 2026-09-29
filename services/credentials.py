@@ -226,10 +226,6 @@ class CredentialStore:
         logger.info("Removed %s from %s", name, self.status().backend_name)
         return True
 
-    def forget_cached(self) -> None:
-        with self._lock:
-            self._cache.clear()
-
 
 _store = CredentialStore()
 

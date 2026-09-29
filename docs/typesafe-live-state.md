@@ -63,13 +63,12 @@ Measure time until an accepted task appears, time until a genuinely settled conc
 
 ## Artifacts and validation
 
-- Probe: `benchmarks/meeting_mode/typesafe_live_state_probe.py`.
 - Frozen original loop: `benchmarks/meeting_mode/results/typesafe-real-20260918/live-state-loop.json`.
 - Adaptive follow-up: `benchmarks/meeting_mode/results/typesafe-real-20260918/live-state-evidence-first.json`.
 - Compact versionable results: linked above.
-- Offline tests: `tests/test_typesafe_live_state_probe.py`; expected labels cannot enter requests, memory is copied, future evidence is rejected, and the confidence gate cannot silently promote an uncertain result.
+- The probe script and its offline tests were later removed as a one-off; at the time they confirmed expected labels could not enter requests, memory was copied, future evidence was rejected, and the confidence gate could not silently promote an uncertain result.
 
-The focused new and existing real-meeting suite passed 12 tests; Ruff checks passed. Live execution requires `--live`; `--evidence-first` selects the follow-up, and existing results cannot be overwritten. A 180-second process deadline bounds this research runner. All data sent was from the previously verified public AMI corpus. Production code, UI and settings remain unchanged.
+The focused new and existing real-meeting suite passed 12 tests at the time; Ruff checks passed. Production code, UI and settings remain unchanged.
 
 ## Optional review of uncertain insights
 

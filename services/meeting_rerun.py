@@ -2,14 +2,47 @@
 
 The desktop Retry button, the dashboard's re-run action, and crash recovery
 all resume the same pipeline, so they resolve provider, model, endpoint, ASR
-language, and the speaker key here rather than each picking their own.
+language, and the speaker-pass gate here rather than each picking their own.
 """
 from __future__ import annotations
 
-import logging
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from meeting.finalization import SpeakerPassGate
+
+
+def _openai_key() -> str:
+    from services.transcript_cleanup import find_api_key
+
+    return find_api_key("openai") or ""
+
+
+def resolve_speaker_pass(
+    settings: Optional[Dict[str, Any]] = None,
+) -> "SpeakerPassGate":
+    """Whether saved settings allow uploading system audio to OpenAI now.
+
+    The key is looked up only when the backend and consent already allow the
+    pass, and the returned gate carries it only when ``ok``.
+
+    Args:
+        settings: Loaded settings mapping; read from disk when omitted.
+    """
+    from meeting.finalization import speaker_pass_gate
+    from services.settings import (
+        resolve_meeting_audio_upload_consent,
+        resolve_meeting_speaker_id_backend,
+        settings_manager,
+    )
+
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    return speaker_pass_gate(
+        backend=resolve_meeting_speaker_id_backend(settings),
+        consent=resolve_meeting_audio_upload_consent(settings),
+        find_key=_openai_key,
+    )
 
 
 def rerun_options(
@@ -20,7 +53,8 @@ def rerun_options(
 
     The meeting's recorded provider, model, endpoint, and ASR model win so a
     retry matches the original run; current settings fill anything the row
-    did not record.
+    did not record. Speaker settings are always current: consent withdrawn
+    since the meeting must stop a retry from uploading its audio.
 
     Args:
         meeting: The stored meeting row.
@@ -35,10 +69,12 @@ def rerun_options(
     from services.components import meeting_agent_payload_dir
     from services.settings import (
         resolve_meeting_agent_core,
+        resolve_meeting_audio_upload_consent,
         resolve_meeting_language,
         resolve_meeting_llm_model,
         resolve_meeting_llm_provider,
         resolve_meeting_redecode_coverage_guard,
+        resolve_meeting_speaker_id_backend,
         resolve_meeting_whisper_model,
         settings_manager,
     )
@@ -51,13 +87,6 @@ def rerun_options(
     remote = saved_remote_route(meeting)
     provider = meeting.get("agent_provider") or resolve_meeting_llm_provider(settings)
     agent_core_kind = resolve_meeting_agent_core(settings)
-    try:
-        from services.transcript_cleanup import find_api_key
-
-        speaker_api_key = find_api_key("openai") or ""
-    except Exception:
-        logger.exception("Could not look up the OpenAI key for speaker labels")
-        speaker_api_key = ""
     return {
         "provider": provider,
         "model": meeting.get("agent_model") or resolve_meeting_llm_model(settings),
@@ -72,6 +101,8 @@ def rerun_options(
         ),
         "language": (remote.get("language", "auto") if remote is not None
                      else resolve_meeting_language(settings)),
-        "speaker_api_key": speaker_api_key,
+        "speaker_id_backend": resolve_meeting_speaker_id_backend(settings),
+        "speaker_audio_consent": resolve_meeting_audio_upload_consent(settings),
+        "speaker_api_key": resolve_speaker_pass(settings).api_key,
         "redecode_coverage_guard": resolve_meeting_redecode_coverage_guard(settings),
     }

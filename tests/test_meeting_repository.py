@@ -9,24 +9,7 @@ from datetime import datetime
 
 
 from meeting.interfaces import TranscriptSegment
-
-
-def make_meeting(repo, meeting_id="m_test1"):
-    repo.create_meeting(
-        id=meeting_id, title="Test meeting", status="active",
-        started_at=datetime.now().isoformat(),
-        host_token="host-token", guest_token="guest-token",
-        cloud_enabled=False, spool_dir="/tmp/spool",
-    )
-    return meeting_id
-
-
-def make_segment(meeting_id, seg_id="sg_aaa111", start=1.0, end=3.0,
-                 text="hello world", channel="mic"):
-    return TranscriptSegment(
-        segment_id=seg_id, meeting_id=meeting_id, chunk_id=None,
-        channel=channel, start_s=start, end_s=end, text=text,
-    )
+from tests.helpers import make_meeting, make_segment
 
 
 class TestSchema:
@@ -294,6 +277,13 @@ class TestSegments:
         seg = repo.get_segment("m_test1", "sg_1")
         assert seg["speaker_participant_id"] is None
         assert seg["speaker_pinned"] is True
+
+    def test_unreadable_state_does_not_block_transcript_reads(self, repo):
+        make_meeting(repo)
+        repo.add_segments([make_segment("m_test1", "sg_1", 0.0, 2.0, "first")])
+        repo.update_meeting("m_test1", state_json="{not json")
+
+        assert [s["text"] for s in repo.get_segments("m_test1")] == ["first"]
 
     def test_keyset_paging_handles_equal_timestamps(self, repo):
         make_meeting(repo)

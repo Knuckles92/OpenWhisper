@@ -16,7 +16,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from meeting.time_utils import utc_now_iso
+# Re-exported as ``now_iso``, the name the state modules stamp items with.
+from meeting.time_utils import utc_now_iso as now_iso
 
 #: Cards rendered on the dashboard. ``timeline`` items use ``data.start_s``;
 #: ``action_items`` use ``data.owner_participant_id``; ``risks`` may carry
@@ -54,14 +55,30 @@ _TERMINAL_MEETING_STATUSES = frozenset({
 })
 
 
-def now_iso() -> str:
-    """Current UTC instant; legacy persisted naive values remain readable."""
-    return utc_now_iso()
-
-
 def new_id(prefix: str) -> str:
     """Short unique id with a type prefix (``it_``, ``q_``, ``p_``, ``sg_``)."""
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+
+def parse_state_json(raw: Any) -> Optional[Dict[str, Any]]:
+    """Parse a saved ``state_json`` document.
+
+    Args:
+        raw: ``state_json`` text, or a mapping a caller already parsed.
+
+    Returns:
+        The document, or None when it is missing, unreadable, or not a JSON
+        object.
+    """
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 @dataclass
@@ -566,58 +583,6 @@ def _coerce_card_deferred(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes"}
     return False
-
-
-def finalization_from_meeting_row(meeting: Dict[str, Any]) -> FinalizationState:
-    """Normalize the insights payload stored on a repository meeting row.
-
-    Args:
-        meeting: Repository meeting dict, possibly including ``state_json``.
-
-    Returns:
-        A historical finalization value safe to show on list UIs.
-    """
-    raw = meeting.get("state_json")
-    data: Dict[str, Any] = {}
-    if isinstance(raw, dict):
-        data = raw
-    elif raw:
-        try:
-            parsed = json.loads(raw)
-        except (TypeError, ValueError):
-            parsed = {}
-        if isinstance(parsed, dict):
-            data = parsed
-    return FinalizationState.normalize_historical(
-        data.get("finalization"),
-        cloud_enabled=bool(
-            data.get("cloud_enabled", meeting.get("cloud_enabled"))
-        ),
-        meeting_status=str(meeting.get("status") or "ended"),
-    )
-
-
-def compact_finalization_list_fields(meeting: Dict[str, Any]) -> Dict[str, Any]:
-    """Public list-row fields derived from a meeting's finalization snapshot.
-
-    Args:
-        meeting: Repository meeting dict.
-
-    Returns:
-        Compact fields safe to expose on meeting-list APIs. Does not include
-        ``state_json`` or step details.
-    """
-    status = str(meeting.get("status") or "ended")
-    fin = finalization_from_meeting_row(meeting)
-    fields: Dict[str, Any] = {
-        "finalization_status": fin.status,
-        "finalization_deferred": bool(fin.card_deferred),
-    }
-    pill = fin.history_pill(meeting_status=status)
-    if pill:
-        fields["insights_pill"] = pill[0]
-        fields["insights_tone"] = pill[1]
-    return fields
 
 
 @dataclass

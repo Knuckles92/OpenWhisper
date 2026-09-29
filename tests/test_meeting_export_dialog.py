@@ -112,7 +112,7 @@ class TestMeetingExportDialog:
             assert os.path.isabs(path)
             assert path.endswith("openwhisper_meetings.md")
             assert os.path.dirname(path) == str(tmp_path)
-            dialog.per_meeting_check.setChecked(True)
+            dialog.per_item_check.setChecked(True)
             folder = dialog._default_path()
             assert folder.endswith("meetings_export")
         finally:

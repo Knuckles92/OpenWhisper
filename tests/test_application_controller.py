@@ -204,8 +204,6 @@ class FakeHotkeyManager:
 
 
 class FakeLocalBackend:
-    requires_file_splitting = False
-
     def __init__(self, model_name=None, load=True, **_kwargs):
         self.model_name = model_name or "base"
         self.device_info = "cpu"
@@ -227,9 +225,6 @@ class FakeLocalBackend:
     def transcribe(self, audio_path):
         return f"local:{audio_path}"
 
-    def transcribe_chunks(self, chunk_files):
-        return " ".join(chunk_files)
-
     def cancel_transcription(self):
         self.is_transcribing = False
 
@@ -250,7 +245,9 @@ class FakeLocalBackend:
 
 
 class FakeOpenAIBackend:
-    requires_file_splitting = True
+    #: A test sets this to make every file one this backend splits.
+    split_size_mb = None
+    on_progress = None
 
     def __init__(self, model_type):
         self.model_type = model_type
@@ -260,10 +257,13 @@ class FakeOpenAIBackend:
     def is_available(self):
         return True
 
-    def transcribe(self, audio_path):
-        return f"api:{audio_path}"
+    def large_file_size_mb(self, _audio_path):
+        return self.split_size_mb
 
-    def transcribe_chunks(self, chunk_files):
+    def transcribe(self, audio_path):
+        if self.split_size_mb is None:
+            return f"api:{audio_path}"
+        self.on_progress("Transcribing 2 chunks...", True)
         return "api chunks"
 
     def cancel_transcription(self):
@@ -345,25 +345,6 @@ class FakeHistoryManager:
         return "recording_recovered.wav"
 
 
-class FakeAudioProcessor:
-    def __init__(self):
-        self.check_result = (False, 1.0)
-        self.split_calls = []
-
-    def check_file_size(self, _audio_path):
-        return self.check_result
-
-    def split_audio_file(self, audio_path, _callback):
-        self.split_calls.append(audio_path)
-        return [audio_path + ".part1", audio_path + ".part2"]
-
-    def combine_transcriptions(self, transcriptions):
-        return " ".join(transcriptions)
-
-    def cleanup_temp_files(self):
-        self.cleanups = getattr(self, "cleanups", 0) + 1
-
-
 class FakeKeyboard:
     def __init__(self):
         self.sent = []
@@ -388,7 +369,6 @@ class DummyOverlay:
     STATE_STT_ENABLE = "stt_on"
     STATE_STT_DISABLE = "stt_off"
     STATE_LARGE_FILE_SPLITTING = "splitting"
-    STATE_LARGE_FILE_PROCESSING = "processing"
 
     def __init__(self):
         self.large_file_info = None
@@ -499,13 +479,10 @@ class DummyUIController:
         self.batch_item_events.append((position, success))
         self.batch_item_transcripts.append(transcript)
 
-    def show_large_file_state(self, file_size_mb, is_splitting):
-        self.large_file_states.append((file_size_mb, is_splitting))
+    def show_large_file_state(self, file_size_mb):
+        self.large_file_states.append(file_size_mb)
         self.overlay.set_large_file_info(file_size_mb)
-        if is_splitting:
-            self.overlay.show_at_cursor(self.overlay.STATE_LARGE_FILE_SPLITTING)
-        else:
-            self.overlay.show_at_cursor(self.overlay.STATE_LARGE_FILE_PROCESSING)
+        self.overlay.show_at_cursor(self.overlay.STATE_LARGE_FILE_SPLITTING)
 
     def start_recording(self):
         """Mirror UIController.start_recording, including refusal rollback."""
@@ -700,7 +677,7 @@ class DummyUIController:
         self.cleaned_up = True
 
 
-def _install_module_stubs(settings_manager, history_manager, audio_processor, keyboard, db_state):
+def _install_module_stubs(settings_manager, history_manager, keyboard, db_state):
     qtcore_module = types.ModuleType("PyQt6.QtCore")
     qtcore_module.QObject = _QObject
     qtcore_module.QTimer = _QTimer
@@ -785,9 +762,6 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     history_module = types.ModuleType("services.history_manager")
     history_module.history_manager = history_manager
 
-    audio_processor_module = types.ModuleType("services.audio_processor")
-    audio_processor_module.audio_processor = audio_processor
-
     streaming_module = types.ModuleType("services.streaming_transcriber")
     streaming_module.StreamingTranscriber = FakeStreamingTranscriber
     streaming_module.NativeStreamingTranscriber = FakeNativeStreamingTranscriber
@@ -815,7 +789,6 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
         "services.settings": settings_module,
         "services.hf_access": hf_access_module,
         "services.history_manager": history_module,
-        "services.audio_processor": audio_processor_module,
         "services.streaming_transcriber": streaming_module,
         "services.database": database_module,
         "keyboard": keyboard_module,
@@ -827,7 +800,6 @@ class TestApplicationController:
     def _setup(self, monkeypatch):
         self.settings = FakeSettingsManager()
         self.history_manager = FakeHistoryManager()
-        self.audio_processor = FakeAudioProcessor()
         self.keyboard = FakeKeyboard()
         self.db_state = {"closed": False}
 
@@ -848,7 +820,6 @@ class TestApplicationController:
         module_stubs = _install_module_stubs(
             self.settings,
             self.history_manager,
-            self.audio_processor,
             self.keyboard,
             self.db_state,
         )
@@ -1171,12 +1142,11 @@ class TestApplicationController:
         assert not controller._pending_streaming_setup
         assert "Live preview" in controller.ui_controller.statuses[-1]
 
-    def test_stop_recording_chooses_normal_or_split_transcription_path(self):
+    def test_stop_recording_announces_a_split_only_for_a_backend_that_splits(self):
         """The whole teardown is one worker, so drive it and watch the effect.
 
-        Asserting on the transcript rather than on a submitted function name:
-        the split decision now happens inside the worker, not as a second
-        executor submission.
+        Either way the runtime makes one ``transcribe`` call; splitting is the
+        backend's own business, and the runtime only shows it.
         """
         controller = self._create_controller()
         transcripts = []
@@ -1185,7 +1155,6 @@ class TestApplicationController:
         )
 
         controller.recorder.is_recording = True
-        self.audio_processor.check_result = (False, 1.0)
         controller.stop_recording()
         assert len(controller.executor.submissions) == 1
         finish, args = controller.executor.submissions[0]
@@ -1194,38 +1163,62 @@ class TestApplicationController:
 
         # A local backend never splits, so this is one straight transcribe.
         assert transcripts == [f"local:{config.RECORDED_AUDIO_FILE}"]
-        assert self.audio_processor.split_calls == []
+        assert controller.ui_controller.large_file_states == []
 
         # The second half models a later job, after the first result completed.
         controller.transcription_runtime._finish_job()
 
         controller.executor = FakeExecutor()
-        controller.current_backend = controller.transcription_backends["api"]
+        api = controller.transcription_backends["api"]
+        api.split_size_mb = 30.0
+        controller.current_backend = api
         controller.recorder.is_recording = True
-        self.audio_processor.check_result = (True, 30.0)
         controller.stop_recording()
         assert len(controller.executor.submissions) == 1
         finish, args = controller.executor.submissions[0]
         finish(*args)
 
-        # An API backend does split, and the notice still reaches the overlay
-        # — now over large_file_detected rather than a direct UI call.
-        assert self.audio_processor.split_calls == [config.RECORDED_AUDIO_FILE]
+        # The API backend splits, the notice reaches the overlay over
+        # large_file_detected, and the backend's own steps reach the status.
+        assert transcripts[-1] == "api chunks"
         assert controller.ui_controller.overlay.large_file_info == 30.0
         assert controller.ui_controller.overlay.STATE_LARGE_FILE_SPLITTING in controller.ui_controller.overlay.shown_states
+        statuses = controller.ui_controller.statuses
+        assert "Splitting large file (30.0 MB)..." in statuses
+        assert "Transcribing 2 chunks..." in statuses
 
     def test_upload_reports_large_file_through_the_ui_controller(self):
         """The Upload tab decides whether the notice goes inline or on the overlay."""
         controller = self._create_controller()
         audio_path = Path(self.temp_dir.name) / "upload.wav"
         audio_path.write_bytes(b"0" * 256)
-        controller.current_backend = controller.transcription_backends["api"]
-        self.audio_processor.check_result = (True, 30.0)
+        api = controller.transcription_backends["api"]
+        api.split_size_mb = 30.0
+        controller.current_backend = api
 
         controller.upload_audio_file(str(audio_path), 12.0)
+        worker, args = controller.executor.submissions[0]
+        assert worker.__name__ == "transcribe_audio_file"
+        worker(*args)
 
-        assert controller.ui_controller.large_file_states == [(30.0, True)]
-        assert controller.executor.submissions[0][0].__name__ == "transcribe_large_audio_file"
+        assert controller.ui_controller.large_file_states == [30.0]
+        assert self.history_manager.entries[0]["text"] == "api chunks"
+
+    def test_local_engine_takes_a_large_upload_in_one_pass_with_no_notice(self):
+        """OpenAI's upload limit is no reason to split, or warn, for a local engine."""
+        controller = self._create_controller()
+        audio_path = Path(self.temp_dir.name) / "long.wav"
+        with open(audio_path, "wb") as handle:
+            handle.truncate(int((config.MAX_FILE_SIZE_MB + 1) * 1024 * 1024))
+
+        controller.upload_audio_file(str(audio_path), 1800.0)
+        worker, args = controller.executor.submissions[0]
+        worker(*args)
+
+        assert controller.ui_controller.large_file_states == []
+        assert controller.ui_controller.overlay.shown_states == []
+        assert not any("large file" in status for status in controller.ui_controller.statuses)
+        assert self.history_manager.entries[0]["text"] == f"local:{audio_path}"
 
     def test_transcription_complete_saves_history_and_resets_pending_state(self):
         controller = self._create_controller()
@@ -1959,7 +1952,6 @@ class TestApplicationController:
 
     def _canceling_backend(self, controller, cancel_on):
         class _Backend:
-            requires_file_splitting = False
             is_transcribing = False
 
             def is_available(self):
@@ -2008,24 +2000,23 @@ class TestApplicationController:
         assert controller.ui_controller.transcription_text == "Error: Transcription canceled"
         assert not controller.transcription_runtime.has_active_job
 
-    def test_batch_routes_large_files_through_split_per_file(self):
+    def test_batch_announces_each_large_file_the_backend_splits(self):
         controller = self._create_controller()
-        controller.current_backend = controller.transcription_backends["api"]
-        self.audio_processor.check_result = (True, 30.0)
+        api = controller.transcription_backends["api"]
+        api.split_size_mb = 30.0
+        controller.current_backend = api
         request = self._batch_request(["a.wav", "b.wav"])
 
         controller.upload_audio_files(request)
         self._run_batch(controller)
 
-        assert controller.ui_controller.large_file_states == [(30.0, True), (30.0, True)]
+        assert controller.ui_controller.large_file_states == [30.0, 30.0]
         assert [e["text"] for e in self.history_manager.entries] == ["api chunks", "api chunks"]
-        assert self.audio_processor.cleanups == 2
 
     def test_batch_failure_in_one_file_keeps_the_others_in_separate_mode(self):
         controller = self._create_controller()
 
         class _Backend:
-            requires_file_splitting = False
             is_transcribing = False
 
             def is_available(self):
@@ -2051,7 +2042,6 @@ class TestApplicationController:
         controller = self._create_controller()
 
         class _Backend:
-            requires_file_splitting = False
             is_transcribing = False
 
             def is_available(self):
@@ -2069,17 +2059,6 @@ class TestApplicationController:
         assert self.history_manager.entries == []
         assert controller.ui_controller.transcription_text.startswith("Error: All 2 files failed")
         assert not controller.transcription_runtime.has_active_job
-
-    def test_transcribe_large_audio_file_still_cleans_temp_files_after_extraction(self):
-        controller = self._create_controller()
-        clip_path = str(Path(self.temp_dir.name) / "big.wav")
-        Path(clip_path).write_bytes(b"x" * 256)
-        controller._pending_source_name = "big.wav"
-
-        controller.transcription_runtime.transcribe_large_audio_file(clip_path)
-
-        assert self.audio_processor.cleanups == 1
-        assert self.history_manager.entries[0]["text"] == f"{clip_path}.part1 {clip_path}.part2"
 
     def test_transcribe_clip_delegates_to_current_backend(self):
         controller = self._create_controller()

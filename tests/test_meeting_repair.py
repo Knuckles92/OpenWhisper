@@ -506,23 +506,38 @@ def test_repair_counts_each_id_once_and_caches():
     )
 
 
-def test_direct_core_repairs_before_dispatch():
-    from meeting.agent.openrouter_direct import DirectOpenRouterAgent
+def test_tool_policy_repairs_before_dispatch():
+    from meeting.agent.tool_policy import ToolScope, repair_evidence, run_tool
+    from meeting.interfaces import OpResult
 
     class FakeHost:
+        def __init__(self):
+            self.ops = []
+            self.evidence = []
+
         def segment_exists(self, sid: str) -> bool:
             return sid in KNOWN
 
-    agent = DirectOpenRouterAgent()
-    agent._tools = FakeHost()  # type: ignore[assignment]
-    agent._citable_ids = list(KNOWN)
-    repaired = agent._repair_ops([
+        def apply_agent_ops(self, ops):
+            self.ops.extend(ops)
+            return [OpResult(ok=True, op=op) for op in ops]
+
+        def ask_question(self, text, evidence):
+            self.evidence.append(evidence)
+            return OpResult(ok=True, op={"op": "ask_question"})
+
+    host = FakeHost()
+    scope = ToolScope(citable_ids=tuple(KNOWN))
+    run_tool(host, "patch_state", {"ops": [
         {"op": "add_item", "card": "decisions", "text": "x",
          "evidence": ["sg_e991e94d6decd27d03"]},
-    ])
-    assert repaired[0]["evidence"] == ["sg_e991e94d6decd27d036a"]
+    ]}, scope)
+    assert host.ops[0]["evidence"] == ["sg_e991e94d6decd27d036a"]
+    run_tool(host, "ask_question", {
+        "text": "Who?", "evidence": ["sg_e991e94d6decd27d03"],
+    }, scope)
+    assert host.evidence == [["sg_e991e94d6decd27d036a"]]
 
     # Without a citable universe (no payload) nothing is touched.
-    agent._citable_ids = []
     raw = [{"op": "add_item", "evidence": ["sg_e991e94d6decd27d03"]}]
-    assert agent._repair_ops(raw) is raw
+    assert repair_evidence(host, raw, ()) is raw

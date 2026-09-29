@@ -1,12 +1,9 @@
 import logging
-from pathlib import Path
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QLabel
 from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSignal
-from PyQt6.QtGui import QIcon
 
-from config import bundle_root
-
+from ui_qt.utils.icons import tabler_icon
 from ui_qt.widgets.cards import ControlPanel
 from ui_qt.widgets.buttons import SuccessButton, DangerButton, WarningButton
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
@@ -14,7 +11,7 @@ from ui_qt.widgets.wrapped_label import WrappedLabel
 from ui_qt.widgets.engine_field import engine_combo
 from services.cleanup_profiles import load_cleanup_profiles
 from services.hotkey_manager import format_hotkey_display
-from services.settings import SettingsKey, settings_manager
+from services.settings import SettingsKey, setting_value, settings_manager
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +38,8 @@ class QuickRecordTab(TranscriptionTabBase):
 
         self._partial_buffer = []
 
-        icons = Path(bundle_root()) / "ui_qt" / "assets" / "tabler"
-        self._copy_icon = QIcon(str(icons / "copy-gray.svg"))
-        self._copied_icon = QIcon(str(icons / "check-green.svg"))
+        self._copy_icon = tabler_icon("copy-gray.svg")
+        self._copied_icon = tabler_icon("check-green.svg")
         self.copy_button = QPushButton()
         self.collapsed_copy_button = QPushButton("Copy")
         for button in (self.copy_button, self.collapsed_copy_button):
@@ -136,7 +132,7 @@ class QuickRecordTab(TranscriptionTabBase):
 
     def refresh_cleanup_profiles(self) -> None:
         settings = settings_manager.load_all_settings()
-        selected = settings.get(SettingsKey.QUICK_RECORD_PROFILE, "")
+        selected = setting_value(SettingsKey.QUICK_RECORD_PROFILE, settings)
         recording = getattr(self, "is_recording", False)
         active_profile = getattr(self, "_active_cleanup_profile", None)
         if recording:

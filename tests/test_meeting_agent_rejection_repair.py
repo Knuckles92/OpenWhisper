@@ -93,3 +93,28 @@ def test_json_fallback_does_not_retry_human_protection(monkeypatch):
     result = agent._run_json_mode(MagicMock(), "system", "user", 10)
     assert not result.ok
     assert generate.call_count == 1
+
+
+def test_json_fallback_reports_pass_rejections_without_failing(monkeypatch):
+    """A polish pass reports off-job ops but neither retries nor fails on them."""
+    from meeting.agent.tool_policy import PASS_POLISH, ToolScope
+
+    agent = DirectOpenRouterAgent()
+    agent._tools = MagicMock()
+    op = dict(op="set_topic", text="Budget", evidence=["sg_1"])
+    text = json.dumps({"ops": [op]})
+    generate = MagicMock(
+        return_value=SimpleNamespace(
+            text=text,
+            usage=None,
+            assistant_message={"role": "assistant", "content": text},
+        )
+    )
+    monkeypatch.setattr("meeting.agent.openrouter_direct.generate", generate)
+    result = agent._run_json_mode(
+        MagicMock(), "system", "user", 10, scope=ToolScope(pass_kind=PASS_POLISH),
+    )
+    assert result.ok
+    assert [r.reason for r in result.op_results] == ["polish_only"]
+    assert generate.call_count == 1
+    agent._tools.apply_agent_ops.assert_not_called()

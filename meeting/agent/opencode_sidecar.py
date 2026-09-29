@@ -26,11 +26,11 @@ class OpenCodeSidecarAgent(SidecarAgent):
 
     def initialize(self, cfg: AgentConfig, tools: AgentToolHost) -> None:
         from services.components import current_platform_tag
-        if current_platform_tag() != "win_amd64":
-            raise RuntimeError("OpenCode v2 beta currently supports Windows x64 only.")
+        from services.opencode_component import SUPPORTED_PLATFORMS, clean_stale_runtime_dirs
+        if current_platform_tag() not in SUPPORTED_PLATFORMS:
+            raise RuntimeError("OpenCode runs on Windows x64 and Linux x64/ARM64 only.")
         from services.component_leases import acquire_component
         from services.components import ComponentId
-        from services.opencode_component import clean_stale_runtime_dirs
         clean_stale_runtime_dirs()
         self._release_component = acquire_component(ComponentId.MEETING_AGENT_OPENCODE)
         try:
@@ -46,9 +46,10 @@ class OpenCodeSidecarAgent(SidecarAgent):
         return os.path.join(self._payload_dir, "main.mjs")
 
     def _resolve_node_cmd(self) -> list[str]:
-        runtime = os.path.join(self._payload_dir, "bun.exe")
+        from services.opencode_component import runtime_name
+        runtime = os.path.join(self._payload_dir, runtime_name())
         if not os.path.isfile(runtime) or not os.path.isfile(self._bundle_path()):
-            raise RuntimeError("OpenCode runtime is missing. Install OpenCode v2 (beta) from Downloads.")
+            raise RuntimeError("OpenCode runtime is missing. Install OpenCode v2 from Downloads.")
         return [runtime, "--no-install", self._bundle_path()]
 
     def _validate_hello(self, params: dict[str, Any]) -> bool:

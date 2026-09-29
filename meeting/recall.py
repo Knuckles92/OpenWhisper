@@ -52,7 +52,7 @@ def search_past_meetings(
         ``{"ok", "disabled"?, "text", "hits"}``. ``text`` is what the model
         sees. Hits never include ``sg_`` segment ids.
     """
-    if not _recall_enabled():
+    if not past_recall_enabled():
         return _disabled("Past-meeting recall is disabled.")
     if repository is None:
         return _disabled("Past-meeting recall is not available.")
@@ -84,7 +84,8 @@ def search_past_meetings(
         }
 
 
-def _recall_enabled() -> bool:
+def past_recall_enabled() -> bool:
+    """True when the user has opted in to past-meeting recall."""
     try:
         from services.settings import resolve_meeting_past_recall_enabled
 

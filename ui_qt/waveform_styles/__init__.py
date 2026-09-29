@@ -1,4 +1,3 @@
-from .base_style import BaseWaveformStyle
-from .particle_style import ParticleStyle
+from .particle_style import Particle, ParticleStyle, round_pen
 
-__all__ = ['BaseWaveformStyle', 'ParticleStyle']
+__all__ = ["Particle", "ParticleStyle", "round_pen"]

@@ -99,7 +99,7 @@ def search_context_files(
         ``{"ok", "disabled"?, "text", "hits"}``. ``text`` is what the model
         sees. Hits never include ``sg_`` segment ids or absolute paths.
     """
-    if not _folder_enabled():
+    if not context_folder_enabled():
         return _disabled("Knowledge-folder search is disabled.")
     root = _configured_root()
     if root is None:
@@ -128,7 +128,8 @@ def clear_context_folder_cache() -> None:
         _CACHE_ORDER.clear()
 
 
-def _folder_enabled() -> bool:
+def context_folder_enabled() -> bool:
+    """True when the user has opted in to knowledge-folder search."""
     try:
         from services.settings import resolve_meeting_context_folder_enabled
 

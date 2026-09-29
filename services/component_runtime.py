@@ -114,8 +114,8 @@ def activate_component(component_id: str) -> Tuple[bool, str]:
     """Put one installed component into use in this process.
 
     GPU Acceleration registers its ``bin`` directory on the Windows loader
-    path, or preloads its ``lib`` directory on Linux. Meeting-agent and
-    speaker-id have no native ``bin`` tree — a completed install is already
+    path, or preloads its ``lib`` directory on Linux. The meeting agent has
+    no native ``bin`` tree — a completed install is already
     usable, so activation succeeds without ``os.add_dll_directory``. Also
     usable mid-session, right after an install. Never raises.
 

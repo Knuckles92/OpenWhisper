@@ -484,10 +484,38 @@ def test_retry_insights_runs_and_updates_finalization(runtime, monkeypatch):
     assert called[0]["from_step"] == "failed"
     assert rt._finalization["status"] == "completed"
     assert "ready" in rt._finalization["message"]
-    assert fake_engine._set_finalization.called
-    status, message = fake_engine._set_finalization.call_args[0][:2]
-    assert status == "completed"
-    assert message == "Final insights are ready."
+    assert fake_engine.publish_finalization.called
+    published = fake_engine.publish_finalization.call_args[0][0]
+    assert published["status"] == "completed"
+    assert published["message"] == "Final insights are ready."
+
+
+def test_retry_waits_for_a_run_already_holding_the_meeting(runtime, monkeypatch):
+    """A dashboard re-run in progress is neither duplicated nor overwritten."""
+    import meeting.refinalize as refinalize
+
+    rt, controller = runtime
+    controller.meeting_active = False
+    fake_engine = MagicMock()
+    fake_engine.is_active.return_value = False
+    fake_engine.meeting_id = "m_busy"
+    rt._engine = fake_engine
+    rt._repo = MagicMock()
+    started = []
+    monkeypatch.setattr(
+        "meeting.refinalize.rerun_finalization",
+        lambda *args, **kwargs: started.append(kwargs) or {"ok": True},
+    )
+    monkeypatch.setattr(refinalize, "_running_meetings", {"m_busy"})
+    notes = []
+    controller.meeting_status_update.connect(notes.append)
+
+    rt.retry_insights()
+
+    assert rt.is_finalizing is False
+    assert started == []
+    assert notes == ["Post-meeting steps are already running for this meeting."]
+    fake_engine.publish_finalization.assert_not_called()
 
 
 def test_retry_after_engine_teardown_uses_card_meeting(runtime, monkeypatch):
@@ -790,6 +818,170 @@ def test_retry_finalization_from_worker_uses_signal(runtime, monkeypatch):
     assert qapp is not None
     qapp.processEvents()
     assert refreshed == [True]
+
+
+def _speaker_retry_meeting(repo, meeting_id="m_speakers"):
+    from datetime import datetime
+
+    from meeting.interfaces import TranscriptSegment
+    from meeting.state.schema import FinalizationState, MeetingState
+
+    state = MeetingState(
+        meeting_id=meeting_id, status="ended", cloud_enabled=False,
+        finalization=FinalizationState(
+            status="failed",
+            message="Speaker Identification failed.",
+            steps=[
+                {"id": "speaker_id", "name": "Speaker Identification",
+                 "status": "failed", "detail": "api down"},
+                {"id": "finalize", "name": "State Finalization",
+                 "status": "completed", "detail": "Done"},
+            ],
+            total_steps=2,
+        ),
+    )
+    repo.create_meeting(
+        id=meeting_id, title="Sync", status="ended",
+        started_at=datetime.now().isoformat(),
+        ended_at=datetime.now().isoformat(),
+        host_token="h", guest_token="g", cloud_enabled=False,
+        spool_dir="/tmp/spool", state_json=json.dumps(state.to_dict()),
+        state_seq=0,
+    )
+    repo.add_segments([
+        TranscriptSegment(
+            segment_id="sg_lb", meeting_id=meeting_id, chunk_id=None,
+            channel="loopback", start_s=0.0, end_s=2.0, text="hello",
+        ),
+    ])
+    return meeting_id
+
+
+def _wait_for_retry(rt):
+    import time
+
+    for _ in range(250):
+        if not rt.is_finalizing:
+            return
+        time.sleep(0.02)
+    raise AssertionError("retry did not finish")
+
+
+@pytest.mark.parametrize("saved", [
+    {SettingsKey.MEETING_SPEAKER_ID_BACKEND: MeetingSpeakerIdBackend.OPENAI,
+     SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: False},
+    {SettingsKey.MEETING_SPEAKER_ID_BACKEND: MeetingSpeakerIdBackend.LOCAL,
+     SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: True},
+], ids=["openai-without-consent", "on-device-labels"])
+def test_desktop_speaker_retry_never_uploads_when_ineligible(
+        runtime, repo, monkeypatch, saved):
+    rt, controller = runtime
+    controller.meeting_active = False
+    rt._engine = None
+    rt._repo = repo
+    rt._card_meeting_id = _speaker_retry_meeting(repo)
+    monkeypatch.setattr(
+        _RUNTIME_GLOBALS["settings_manager"], "load_all_settings",
+        lambda: dict(saved),
+    )
+    monkeypatch.setattr(
+        "services.transcript_cleanup.find_api_key", lambda provider: "sk-test",
+    )
+    uploads = []
+    monkeypatch.setattr(
+        "meeting.diarize.cloud_pass.run_cloud_speaker_pass",
+        lambda *args, **kwargs: uploads.append(kwargs) or {"ok": True},
+    )
+    notes = []
+    controller.meeting_status_update.connect(notes.append)
+
+    # The Re-run speakers button refuses before starting anything.
+    rt.retry_speakers()
+    assert rt.is_finalizing is False
+    assert notes[-1] in {
+        "Audio-upload consent has not been given.",
+        "Speaker identification is not set to OpenAI.",
+    }
+
+    # Retrying the failed speaker step reaches the pipeline, which skips it.
+    rt.retry_finalization("failed")
+    _wait_for_retry(rt)
+
+    assert uploads == []
+    steps = {step["id"]: step for step in rt._finalization["steps"]}
+    assert steps["speaker_id"]["status"] == "completed"
+    assert rt._finalization["status"] != "failed"
+
+
+def test_desktop_speaker_retry_uploads_when_eligible(runtime, repo, monkeypatch):
+    rt, controller = runtime
+    controller.meeting_active = False
+    rt._engine = None
+    rt._repo = repo
+    rt._card_meeting_id = _speaker_retry_meeting(repo)
+    monkeypatch.setattr(
+        _RUNTIME_GLOBALS["settings_manager"], "load_all_settings",
+        lambda: {
+            SettingsKey.MEETING_SPEAKER_ID_BACKEND: MeetingSpeakerIdBackend.OPENAI,
+            SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: True,
+        },
+    )
+    monkeypatch.setattr(
+        "services.transcript_cleanup.find_api_key", lambda provider: "sk-test",
+    )
+    uploads = []
+    monkeypatch.setattr(
+        "meeting.diarize.cloud_pass.run_cloud_speaker_pass",
+        lambda *args, **kwargs: uploads.append(kwargs) or {
+            "ok": True, "applied": 1,
+        },
+    )
+
+    rt.retry_speakers()
+    _wait_for_retry(rt)
+
+    assert [call["api_key"] for call in uploads] == ["sk-test"]
+
+
+def test_content_summary_names_what_blocks_a_speaker_rerun(runtime, monkeypatch):
+    rt, _controller = runtime
+    monkeypatch.setattr(
+        _RUNTIME_GLOBALS["settings_manager"], "load_all_settings",
+        lambda: {
+            SettingsKey.MEETING_SPEAKER_ID_BACKEND: MeetingSpeakerIdBackend.OPENAI,
+            SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: False,
+        },
+    )
+    assert rt._speaker_rerun_fields() == {
+        "speaker_rerun_offered": True,
+        "speaker_rerun_reason": "Audio-upload consent has not been given.",
+    }
+    monkeypatch.setattr(
+        _RUNTIME_GLOBALS["settings_manager"], "load_all_settings",
+        lambda: {SettingsKey.MEETING_SPEAKER_ID_BACKEND: MeetingSpeakerIdBackend.LOCAL},
+    )
+    assert rt._speaker_rerun_fields()["speaker_rerun_offered"] is False
+
+
+def test_rerun_options_hand_over_the_key_only_when_eligible(monkeypatch):
+    from services.meeting_rerun import rerun_options
+
+    monkeypatch.setattr(
+        "services.transcript_cleanup.find_api_key", lambda provider: "sk-test",
+    )
+    refused = rerun_options({}, {
+        SettingsKey.MEETING_SPEAKER_ID_BACKEND: MeetingSpeakerIdBackend.OPENAI,
+        SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: False,
+    })
+    allowed = rerun_options({}, {
+        SettingsKey.MEETING_SPEAKER_ID_BACKEND: MeetingSpeakerIdBackend.OPENAI,
+        SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: True,
+    })
+
+    assert refused["speaker_api_key"] == ""
+    assert refused["speaker_audio_consent"] is False
+    assert allowed["speaker_api_key"] == "sk-test"
+    assert allowed["speaker_id_backend"] == MeetingSpeakerIdBackend.OPENAI
 
 
 def test_show_past_meeting_hydrates_without_opening_browser(runtime, monkeypatch):

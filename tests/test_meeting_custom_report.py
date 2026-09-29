@@ -26,7 +26,7 @@ from meeting.state.custom_reports import MAX_REQUEST_CHARS, WORKER_ACTOR
 from meeting.state.schema import MAX_CUSTOM_REPORTS, FinalizationState, MeetingState
 from meeting.state.store import MeetingStateStore
 from meeting.web.ws import WsHub
-from tests.test_meeting_web_auth import GUEST_TOKEN, HOST_TOKEN, FakeRepo
+from tests.fakes.meeting_web import GUEST_TOKEN, HOST_TOKEN, FakeWebEngine, FakeWebRepo
 
 PAST_ID = "m_past"
 
@@ -450,15 +450,15 @@ class TestGeneration:
     def test_past_meeting_recall_is_offered_only_when_it_is_enabled(self, monkeypatch):
         import meeting.custom_report as module
 
-        monkeypatch.setattr(module, "_past_recall_enabled", lambda: False)
-        monkeypatch.setattr(module, "_context_files_enabled", lambda: False)
+        monkeypatch.setattr(module, "past_recall_enabled", lambda: False)
+        monkeypatch.setattr(module, "context_folder_enabled", lambda: False)
         result, seen = self._run(monkeypatch, [_turn("# Brief\n\nbody")], repository=object())
         names = {tool["function"]["name"] for tool in seen[0]["tools"]}
         assert names == {"search_transcript", "read_transcript"}
         assert result["sources"]["past_meetings"] is False
 
-        monkeypatch.setattr(module, "_past_recall_enabled", lambda: True)
-        monkeypatch.setattr(module, "_context_files_enabled", lambda: True)
+        monkeypatch.setattr(module, "past_recall_enabled", lambda: True)
+        monkeypatch.setattr(module, "context_folder_enabled", lambda: True)
         result, seen = self._run(monkeypatch, [_turn("# Brief\n\nbody")], repository=object())
         names = {tool["function"]["name"] for tool in seen[0]["tools"]}
         assert "search_past_meetings" in names and "search_context_files" in names
@@ -587,7 +587,7 @@ class TestExport:
         assert demoted.endswith("###### deep")
 
 
-class ReportRepo(FakeRepo):
+class ReportRepo(FakeWebRepo):
     """A repository holding one ended meeting alongside the active one."""
 
     leave_running = False
@@ -622,7 +622,6 @@ class ReportRepo(FakeRepo):
 def api_client(monkeypatch):
     from meeting.web import api as api_module
     from meeting.web.api import create_app
-    from tests.test_meeting_web_auth import FakeEngine
 
     started = []
 
@@ -645,7 +644,7 @@ def api_client(monkeypatch):
         )
 
     monkeypatch.setattr(api_module, "start_custom_report", fake_start)
-    engine, repo = FakeEngine(), ReportRepo()
+    engine, repo = FakeWebEngine(), ReportRepo()
     with TestClient(create_app(engine, repo, WsHub(engine, repo))) as client:
         yield client, repo, started, engine
 

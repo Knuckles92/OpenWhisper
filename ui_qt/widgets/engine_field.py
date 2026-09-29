@@ -13,6 +13,7 @@ from PyQt6.QtGui import QConicalGradient, QPainter, QPen
 from PyQt6.QtWidgets import QComboBox, QLabel, QVBoxLayout, QWidget
 
 from ui_qt.utils.palette import token_color
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.no_wheel import ElidingComboBox
 
 #: A non-editable QComboBox reports its widest item as a minimum width, which
@@ -139,9 +140,7 @@ class StatusFieldCombo(ElidingComboBox):
         switched explicitly or the value stays pushed right off an absent dot.
         """
         self._dot.setVisible(visible)
-        self.setProperty("dot", "true" if visible else "false")
-        self.style().unpolish(self)
-        self.style().polish(self)
+        set_style_property(self, "dot", "true" if visible else "false")
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

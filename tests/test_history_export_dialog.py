@@ -119,7 +119,7 @@ class TestHistoryExportDialog:
             assert os.path.isabs(path)
             assert path.endswith("openwhisper_history.md")
             assert os.path.dirname(path) == str(tmp_path)
-            dialog.per_entry_check.setChecked(True)
+            dialog.per_item_check.setChecked(True)
             folder = dialog._default_path()
             assert folder.endswith("history_export")
         finally:

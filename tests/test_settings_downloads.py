@@ -25,6 +25,7 @@ from services.component_catalog import PI_HOME_URL, get_component_details
 from services.components import ComponentId, ComponentInfo, ComponentState
 from services.hf_access import CachedModelInfo, get_hf_cache_dir
 from services.settings import SettingsKey
+from tests.fakes.settings import InMemorySettings
 from ui_qt.dialogs import settings_downloads as dialog_module
 from ui_qt.dialogs import component_details_dialog as component_dialog_module
 from ui_qt.dialogs.component_details_dialog import ComponentDetailsDialog
@@ -46,24 +47,6 @@ def _cached(repo_id, size_bytes):
 
 BASE_REPO = "Systran/faster-whisper-base"
 TINY_REPO = "Systran/faster-whisper-tiny"
-
-
-class _FakeSettings:
-    def __init__(self, values):
-        self.values = values
-
-    def get(self, key, default=None):
-        return self.values.get(key, default)
-
-    def save_setting(self, key, value):
-        self.values[key] = value
-
-    def load_all_settings(self):
-        return dict(self.values)
-
-    def save_all_settings(self, settings):
-        self.values.clear()
-        self.values.update(settings)
 
 
 class _DialogTestCase:
@@ -97,7 +80,7 @@ class _DialogTestCase:
                 dialog_module, "scan_cached_models", return_value=cached or {}
             ),
             patch.object(
-                dialog_module, "settings_manager", _FakeSettings(values)
+                dialog_module, "settings_manager", InMemorySettings(values)
             ),
             patch.object(
                 dialog_module,

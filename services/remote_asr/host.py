@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
 
 from services.remote_asr import protocol, tailscale
+from services.remote_asr.activity import HostActivity
 from services.remote_asr.engines import HostEngine, UnavailableEngine
 from services.remote_asr.tls import HostIdentity, server_context
 
@@ -153,6 +154,8 @@ class _Client:
     engine_identity: tuple = ()
     #: Handling any request of this client's, a model switch included.
     in_request: bool = False
+    #: When it connected, by the wall clock (for the host dashboard).
+    since: float = 0.0
 
 
 class SpeechHost:
@@ -216,6 +219,8 @@ class SpeechHost:
         self._pairing: Optional[_Pairing] = None
         self._clients: Dict[str, _Client] = {}
         self.port: Optional[int] = None
+        #: What paired computers asked of this host since sharing started.
+        self.activity = HostActivity()
 
     # ---- lifecycle ----
 
@@ -249,6 +254,7 @@ class SpeechHost:
                 target=server.serve_forever, name="RemoteEngineHost", daemon=True
             )
             self._thread.start()
+            self.activity.reset()
         logger.info("Remote engine host listening on %s:%s", bind, self.port)
         self._emit("state", {})
         return self.port
@@ -311,7 +317,7 @@ class SpeechHost:
         with self._lock:
             return [
                 {"device_id": c.device_id, "name": c.name, "address": c.address,
-                 "busy": c.busy}
+                 "busy": c.busy, "since": c.since}
                 for c in self._clients.values()
             ]
 
@@ -510,6 +516,7 @@ class SpeechHost:
             "host": self._host_info(),
         })
         ws.close()
+        self.activity.paired(device["id"], device["name"], via)
         self._emit("paired", {"name": device["name"]})
         self._emit("devices", {})
 
@@ -602,8 +609,9 @@ class SpeechHost:
                 return
             self._clients[connection_id] = _Client(
                 device["id"], device["name"], address, time.monotonic(), ws,
-                engine_identity=identity,
+                engine_identity=identity, since=time.time(),
             )
+        self.activity.connected(device["id"], device["name"])
         self._emit("clients", {})
         streams: set = set()
         try:
@@ -633,6 +641,7 @@ class SpeechHost:
                     logger.debug("Could not cancel remote stream %s", session, exc_info=True)
             with self._lock:
                 self._clients.pop(connection_id, None)
+            self.activity.disconnected(device["id"], device["name"])
             self._emit("clients", {})
 
     def _dispatch(self, frame, engine: HostEngine, identity: tuple,
@@ -697,8 +706,19 @@ class SpeechHost:
                 result = current.describe()
             else:
                 raise ValueError(f"Unknown operation: {op!r}")
+            # Counted before the busy flag clears, so the "activity" event
+            # that clearing sends already sees it.
+            if op == "transcribe":
+                self.activity.transcribed(device_id, device_name,
+                                          len(audio) / protocol.SAMPLE_RATE,
+                                          time.perf_counter() - started)
+            elif op == "stream":
+                self.activity.previewed(device_id, device_name)
         except Exception as exc:
-            return {"id": request_id, "error": str(exc) or type(exc).__name__}
+            error = str(exc) or type(exc).__name__
+            if decodes:
+                self.activity.failed(device_id, device_name, error)
+            return {"id": request_id, "error": error}
         finally:
             if decodes:
                 self._set_busy(connection_id, False)
@@ -799,5 +819,6 @@ class SpeechHost:
                       else self._select_model(family, model, device_name))
         except Exception as exc:
             return {"id": request_id, "error": str(exc) or type(exc).__name__}
+        self.activity.switched(device_name, str((engine or {}).get("label") or model))
         self._emit("engine", {"family": family, "model": model, "by": device_name})
         return {"id": request_id, "result": {"engine": engine, "models": self._model_list()}}

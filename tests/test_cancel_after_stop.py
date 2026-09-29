@@ -31,8 +31,7 @@ def _runtime(tmp_path, monkeypatch, final_text="Hello there."):
     controller._pending_audio_path = None
     controller._transcription_start_time = None
     controller.current_backend = SimpleNamespace(
-        is_available=lambda: True, requires_file_splitting=False,
-        transcribe=lambda _path: final_text)
+        is_available=lambda: True, transcribe=lambda _path: final_text)
     controller.recorder.is_recording = True
     controller.recorder.wait_for_stop_completion.return_value = True
     controller.recorder.has_recording_data.return_value = True

@@ -14,11 +14,9 @@ with its own settings (AI cleanup, the Overview).
 import logging
 import sys
 import threading
-from pathlib import Path
 from typing import Callable, Dict, Optional
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
-from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
@@ -30,13 +28,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import bundle_root, config
+from config import config, is_frozen
 from services.components import (
-    ComponentId,
-    ComponentState,
     component_coordinator,
     current_platform_tag,
+    meeting_agent_needs_update,
     meeting_agent_payload_dir,
+    speaker_model_path,
 )
 from services import openai_retirement
 from services.hf_access import (
@@ -46,6 +44,7 @@ from services.hf_access import (
     scan_cached_models,
 )
 from services.settings import (
+    SETTING_DEFAULTS,
     MeetingAgentCore,
     MeetingLanguage,
     MeetingSpeakerIdBackend,
@@ -68,6 +67,7 @@ from services.settings import (
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
+    setting_value,
     settings_manager,
 )
 from services.text_llm import (
@@ -84,6 +84,12 @@ from ui_qt.dialogs.settings_destinations import (
     RUNTIME,
     VOICE_MODEL,
 )
+from ui_qt.dialogs.settings_fields import (
+    group_title,
+    settings_caption,
+    settings_field,
+)
+from ui_qt.utils.icons import design_icon as _design_icon
 from ui_qt.widgets import Button, ElidingComboBox, InfoTile
 from ui_qt.widgets.local_model_picker import LocalModelPicker
 from ui_qt.widgets.nav_rail import NavRail
@@ -105,14 +111,6 @@ _ENGINE_CAPTIONS = {
 WHISPER_FILTER = "local_whisper"
 
 
-def _design_icon(filename: str) -> QIcon:
-    path = Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / filename
-    icon = QIcon(str(path))
-    # Preserve the semantic icon color for disabled current-state buttons.
-    icon.addPixmap(icon.pixmap(24, 24), QIcon.Mode.Disabled, QIcon.State.Off)
-    return icon
-
-
 def _display_name_for_backend(model_value: str) -> str:
     names = {value: display for display, value in config.MODEL_VALUE_MAP.items()}
     return names.get(model_value) or names[config.DEFAULT_BACKEND]
@@ -123,8 +121,14 @@ def agent_core_label(core: str) -> str:
     if core == MeetingAgentCore.PI:
         return "Pi (sidecar)"
     if core == MeetingAgentCore.OPENCODE:
-        return "OpenCode v2 (beta)"
+        return "OpenCode v2"
     return "Direct (no sidecar)"
+
+
+def _opencode_in_downloads() -> bool:
+    """Whether Downloads offers the OpenCode component on this platform."""
+    from services.components import ComponentId, component_is_published
+    return component_is_published(ComponentId.MEETING_AGENT_OPENCODE)
 
 
 def speaker_id_label(backend: str) -> str:
@@ -206,26 +210,9 @@ class ModelAssignments(QObject):
 
     # ---- construction helpers ----
 
-    def _field(self, label: str, widget: QWidget) -> QWidget:
-        """Wrap a control with its field label."""
-        wrapper = QWidget()
-        wrapper.setObjectName("modelManagerFieldGroup")
-        col = QVBoxLayout(wrapper)
-        col.setContentsMargins(0, 0, 0, 0)
-        col.setSpacing(5)
-        caption = QLabel(label)
-        caption.setObjectName("textModelFieldLabel")
-        col.addWidget(caption)
-        col.addWidget(widget)
-        return wrapper
-
-    @staticmethod
-    def _group_title(layout: QVBoxLayout, text: str) -> QLabel:
-        # Qt stylesheets have no text-transform, so the eyebrow case is set here.
-        caption = QLabel(text.upper())
-        caption.setObjectName("settingsTileGroupTitle")
-        layout.addWidget(caption)
-        return caption
+    _field = staticmethod(settings_field)
+    _group_title = staticmethod(group_title)
+    _caption = staticmethod(settings_caption)
 
     @staticmethod
     def _card(layout: QVBoxLayout) -> QVBoxLayout:
@@ -254,12 +241,6 @@ class ModelAssignments(QObject):
         note.setObjectName("textModelFootnote")
         layout.addWidget(note, stretch=1)
         return card
-
-    @staticmethod
-    def _caption(text: str) -> WrappedLabel:
-        label = WrappedLabel(text)
-        label.setObjectName("infoLabel")
-        return label
 
     def _say(self, text: str) -> None:
         self.message_label.setText(text)
@@ -489,11 +470,7 @@ class ModelAssignments(QObject):
         self.meeting_agent_core_combo = ElidingComboBox()
         self.meeting_agent_core_combo.setObjectName("meetingAgentCoreCombo")
         self.meeting_agent_core_combo.setMinimumHeight(40)
-        pi_label = (
-            "Pi (sidecar)" if self._pi_payload_available
-            else "Pi (sidecar not built)"
-        )
-        self.meeting_agent_core_combo.addItem(pi_label, MeetingAgentCore.PI)
+        self.meeting_agent_core_combo.addItem(self._pi_label(), MeetingAgentCore.PI)
         model = self.meeting_agent_core_combo.model()
         item = model.item(0) if hasattr(model, "item") else None
         if item is not None:
@@ -514,7 +491,9 @@ class ModelAssignments(QObject):
         self.meeting_model_tile = InfoTile(
             "Chat model",
             "Runs live cards, the note taker, polish, summaries, and the final "
-            "report. Install Pi or OpenCode from Downloads.",
+            "report. "
+            + ("Install Pi or OpenCode from Downloads." if _opencode_in_downloads()
+               else "Install Pi from Downloads."),
             _design_icon("box-blue.svg"),
         )
         self.meeting_model_tile.add_body(self.meeting_model_picker)
@@ -563,12 +542,24 @@ class ModelAssignments(QObject):
         )
         self._built.add(RUNTIME)
 
+    def _pi_label(self) -> str:
+        if self._pi_payload_available:
+            return "Pi (sidecar)"
+        if meeting_agent_needs_update():
+            return "Pi (update from Downloads)"
+        if is_frozen():
+            return "Pi (install from Downloads)"
+        return "Pi (sidecar not built)"
+
     def _opencode_label(self) -> str:
         if self._opencode_payload_available:
-            return "OpenCode v2 (beta)"
-        if current_platform_tag() != "win_amd64":
-            return "OpenCode v2 (beta — Windows x64 only)"
-        return "OpenCode v2 (beta — install from Downloads)"
+            return "OpenCode v2"
+        from services.opencode_component import SUPPORTED_PLATFORMS
+        if current_platform_tag() not in SUPPORTED_PLATFORMS:
+            return "OpenCode v2 (Windows and Linux only)"
+        if not _opencode_in_downloads():
+            return "OpenCode v2 (not in Downloads yet)"
+        return "OpenCode v2 (install from Downloads)"
 
     # ---- navigation hooks ----
 
@@ -1173,7 +1164,7 @@ class ModelAssignments(QObject):
 
         sort = settings_manager.get(
             SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT,
-            config.TRANSCRIPT_CLEANUP_MODEL_SORT,
+            SETTING_DEFAULTS[SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT],
         )
         if sort not in TranscriptCleanupModelSort.ALL:
             sort = config.TRANSCRIPT_CLEANUP_MODEL_SORT
@@ -1251,8 +1242,8 @@ class ModelAssignments(QObject):
         blocker = self.api_model_combo.blockSignals(True)
         self.api_model_combo.setCurrentIndex(max(0, api_index))
         self.api_model_combo.blockSignals(blocker)
-        device = settings.get(SettingsKey.WHISPER_DEVICE, "auto")
-        compute = settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, "auto")
+        device = setting_value(SettingsKey.WHISPER_DEVICE, settings)
+        compute = setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings)
         if self.device_combo.findText(str(device)) < 0:
             device = "auto"
         blocker = self.device_combo.blockSignals(True)
@@ -1384,30 +1375,25 @@ class ModelAssignments(QObject):
                 "February 26, 2027; after that, on-device labels are used."
             )
             return
-        try:
-            info = component_coordinator.describe(ComponentId.SPEAKER_ID)
-            installed = info.state in (
-                ComponentState.INSTALLED,
-                ComponentState.UPDATE_AVAILABLE,
-                ComponentState.EXTERNAL,
-            )
-        except Exception:
-            installed = False
-        if installed:
+        # The model is not a Downloads component: the first meeting that
+        # needs it fetches it into a per-user cache (ensure_speaker_model).
+        if speaker_model_path():
             self.speaker_id_status.setText(
-                "On-device WeSpeaker (voxceleb_resnet34_LM.onnx) is available."
+                "On-device WeSpeaker (voxceleb_resnet34_LM.onnx) is ready on "
+                "this computer."
             )
         else:
             self.speaker_id_status.setText(
-                "On-device WeSpeaker (voxceleb_resnet34_LM.onnx). Install "
-                "Speaker Identification from Downloads if live labels are "
-                "missing."
+                "On-device WeSpeaker (voxceleb_resnet34_LM.onnx, about 26 MB) "
+                "downloads from Hugging Face when your next meeting starts. "
+                "If Hugging Face access is set to Never connect, meetings use "
+                "Me/Others channel labels instead."
             )
 
     # ---- refresh ----
 
     def _sync_pi_core_availability(self, settings: Optional[dict] = None) -> None:
-        """Refresh the Pi combo after a meeting-agent install or remove.
+        """Refresh the Pi and OpenCode items after a component install or remove.
 
         Settings is non-modal and cached, so ``_pi_payload_available`` cannot
         stay as the value computed in ``__init__``.
@@ -1417,10 +1403,7 @@ class ModelAssignments(QObject):
         combo = getattr(self, "meeting_agent_core_combo", None)
         if combo is None:
             return
-        combo.setItemText(
-            0,
-            "Pi (sidecar)" if self._pi_payload_available else "Pi (sidecar not built)",
-        )
+        combo.setItemText(0, self._pi_label())
         model = combo.model()
         item = model.item(0) if hasattr(model, "item") else None
         if item is not None:
@@ -1492,7 +1475,7 @@ class ModelAssignments(QObject):
         self._cached = dict(cached)
         settings = self._settings_snapshot()
         active_model = settings_manager.get(
-            SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL
+            SettingsKey.WHISPER_MODEL, SETTING_DEFAULTS[SettingsKey.WHISPER_MODEL]
         )
         if active_model not in config.WHISPER_MODEL_CHOICES:
             active_model = config.DEFAULT_WHISPER_MODEL

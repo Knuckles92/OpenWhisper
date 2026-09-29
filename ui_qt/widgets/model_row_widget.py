@@ -11,9 +11,7 @@ from typing import Optional
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QAbstractButton,
     QCheckBox,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -29,28 +27,21 @@ from services.hf_access import (
 )
 from services.local_asr.catalog import backend_of
 from ui_qt.utils.fuzzy_match import fuzzy_match
+from ui_qt.utils.restyle import repolish, set_style_property
 from ui_qt.widgets.buttons import Button, DangerButton, PrimaryButton
+from ui_qt.widgets.download_row import DownloadRow, row_style
 from ui_qt.widgets.eliding_label import ElidingLabel
 
 logger = logging.getLogger(__name__)
 
-# Cohesive row stylesheet. Child labels must set an explicit transparent
-# background — the global ``QWidget { background-color: @bg }`` rule
-# otherwise paints window-coloured rectangles on top of the row fill.
-_ROW_STYLE = """
-    QFrame#modelRow {
-        background-color: @slate-surface;
-        border: 1px solid @slate-border;
-        border-radius: 12px;
-    }
-    QFrame#modelRow:hover {
-        background-color: @slate-surface-hover;
-        border: 1px solid @slate-border-strong;
-    }
-    QFrame#modelRow:focus {
-        border: 1px solid @accent-tint-border;
-        outline: none;
-    }
+# Everything but the model-only rules comes from the shared row stylesheet.
+_ROW_STYLE = row_style(
+    "modelRow",
+    primary="modelDownloadButton",
+    secondary="modelSetActiveButton",
+    remove="modelDeleteButton",
+    progress="modelRowProgress",
+    state_rules="""
     QFrame#modelRow[active="true"] {
         background-color: @accent-tint;
         border: 1px solid @accent-tint-border;
@@ -58,42 +49,12 @@ _ROW_STYLE = """
     QFrame#modelRow[active="true"]:hover {
         background-color: @accent-tint-strong;
         border: 1px solid @accent-tint-border-strong;
-    }
-    QFrame#modelRow[selected="true"],
-    QFrame#modelRow[selected="true"]:hover {
-        background-color: @accent-tint-strong;
-        border: 1px solid @accent-tint-border-strong;
-    }
-    QLabel#modelRowName {
-        color: @slate-text;
-        background-color: transparent;
-        border: none;
-        font-weight: 600;
-    }
-    QLabel#modelRowSummary {
-        color: @slate-text-3;
-        background-color: transparent;
-        border: none;
-    }
-    QLabel#modelRowSize {
-        color: @slate-text-2;
-        background-color: transparent;
-        border: none;
-    }
+    }""",
+    extra="""
     QLabel#modelRowSize[muted="true"] {
         color: @slate-text-4;
     }
-    QLabel#modelRowBadge {
-        background-color: rgba(@slate-text-3-rgb, 0.12);
-        color: @slate-text-2;
-        border: 1px solid rgba(@slate-text-3-rgb, 0.28);
-        border-radius: 6px;
-        padding: 2px 8px;
-        font-size: 10px;
-        font-weight: 600;
-    }
-    QLabel#modelRowBadge[tone="active"],
-    QLabel#modelRowBadge[tone="downloading"] {
+    QLabel#modelRowBadge[tone="active"] {
         background-color: rgba(@accent-rgb, 0.14);
         color: @accent-soft;
         border: 1px solid rgba(@accent-rgb, 0.28);
@@ -121,30 +82,6 @@ _ROW_STYLE = """
         font-size: 10px;
         font-weight: 600;
     }
-    QPushButton#modelDownloadButton,
-    QPushButton#modelSetActiveButton,
-    QPushButton#modelDeleteButton {
-        border-radius: 7px;
-        padding: 4px 10px;
-        font-size: 11px;
-        font-weight: 600;
-        min-height: 28px;
-        max-height: 28px;
-    }
-    QPushButton#modelDownloadButton {
-        background-color: rgba(@accent-rgb, 0.18);
-        color: @accent-soft;
-        border: 1px solid rgba(@accent-rgb, 0.32);
-    }
-    QPushButton#modelDownloadButton:hover {
-        background-color: rgba(@accent-rgb, 0.28);
-        border: 1px solid rgba(@accent-rgb, 0.5);
-    }
-    QPushButton#modelDownloadButton:disabled {
-        background-color: @slate-raised;
-        color: @slate-text-disabled;
-        border: 1px solid @slate-border-subtle;
-    }
     QPushButton#modelSetActiveButton {
         background-color: @slate-raised;
         color: @slate-text;
@@ -154,34 +91,15 @@ _ROW_STYLE = """
         background-color: @slate-raised;
         border: 1px solid @slate-border-hover;
     }
-    QPushButton#modelDeleteButton {
-        background-color: transparent;
-        color: @danger-text-soft;
-        border: 1px solid @slate-border-strong;
-    }
-    QPushButton#modelDeleteButton:hover {
-        background-color: rgba(@danger-rgb, 0.14);
-        border: 1px solid rgba(@danger-rgb, 0.45);
-    }
     QPushButton#modelDeleteButton:disabled {
         color: @slate-text-disabled;
         border: 1px solid @slate-border-subtle;
     }
-    QProgressBar#modelRowProgress {
-        background-color: @slate-raised;
-        border: none;
-        border-radius: 3px;
-        min-height: 6px;
-        max-height: 6px;
-    }
-    QProgressBar#modelRowProgress::chunk {
-        background-color: @accent;
-        border-radius: 3px;
-    }
-"""
+""",
+)
 
 
-class ModelRowWidget(QFrame):
+class ModelRowWidget(DownloadRow):
     """One row in the Settings → Downloads model list.
 
     The row is "dumb": it renders the state handed to :meth:`update_state`
@@ -192,7 +110,6 @@ class ModelRowWidget(QFrame):
     download_clicked = pyqtSignal(str)
     delete_clicked = pyqtSignal(str)
     set_active_clicked = pyqtSignal(str)
-    details_requested = pyqtSignal(str)
     selection_toggled = pyqtSignal(str, bool)
 
     def __init__(self, model_name: str, parent=None):
@@ -201,23 +118,23 @@ class ModelRowWidget(QFrame):
         Args:
             model_name: Concrete faster-whisper model name (e.g. ``"base"``).
         """
-        super().__init__(parent)
+        super().__init__(
+            model_name,
+            object_name="modelRow",
+            style=_ROW_STYLE,
+            tooltip="Click to view technical details",
+            accessible_name=f"{model_name} model",
+            accessible_description=(
+                "Open technical details. Model management actions are separate."
+            ),
+            parent=parent,
+        )
         self.model_name = model_name
         self.repo_id = resolve_model_repo(model_name)
         self.backend = backend_of(model_name)
         self.is_cached = False
         self.is_active = False
         self.sort_size_bytes = 0
-
-        self.setObjectName("modelRow")
-        self.setStyleSheet(_ROW_STYLE)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setToolTip("Click to view technical details")
-        self.setAccessibleName(f"{model_name} model")
-        self.setAccessibleDescription(
-            "Open technical details. Model management actions are separate."
-        )
         self._setup_ui()
 
     def _setup_ui(self):
@@ -318,29 +235,8 @@ class ModelRowWidget(QFrame):
         family = "Distilled" if self.model_name.startswith("distil-") else ""
         return " / ".join(part for part in (language, family) if part)
 
-    @staticmethod
-    def _compact_button(button, width: int) -> None:
-        button.set_base_minimum_size(width, 28)
-        button.setMinimumWidth(width)
-        button.setMaximumWidth(width)
-        button.setMinimumHeight(28)
-        button.setMaximumHeight(28)
-        button.setFont(QFont("Segoe UI", 10))
-
-    def _set_badge(self, text: str, tone: str):
-        """Update badge text and dynamic tone property for QSS styling."""
-        self.badge.setText(text)
-        self.badge.setProperty("tone", tone)
-        # Re-polish so the dynamic property selector takes effect.
-        self.badge.style().unpolish(self.badge)
-        self.badge.style().polish(self.badge)
-        self.badge.update()
-
     def _set_active_style(self, active: bool) -> None:
-        self.setProperty("active", active)
-        self.style().unpolish(self)
-        self.style().polish(self)
-        self.update()
+        set_style_property(self, "active", active)
 
     def update_state(
         self,
@@ -387,8 +283,7 @@ class ModelRowWidget(QFrame):
                 MODEL_DOWNLOAD_SIZE_MB.get(self.model_name, float("inf"))
                 * 1_000_000
             )
-        self.size_label.style().unpolish(self.size_label)
-        self.size_label.style().polish(self.size_label)
+        repolish(self.size_label)
 
         if downloading:
             self._set_badge("Downloading…", "downloading")
@@ -476,31 +371,3 @@ class ModelRowWidget(QFrame):
 
     def matches_filter(self, text: str) -> bool:
         return fuzzy_match(text, self.model_name) or fuzzy_match(text, self.repo_id)
-
-    @staticmethod
-    def _is_action_child(widget) -> bool:
-        while widget is not None:
-            if isinstance(widget, QAbstractButton):
-                return True
-            widget = widget.parentWidget()
-        return False
-
-    def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            child = self.childAt(event.position().toPoint())
-            if not self._is_action_child(child):
-                self.details_requested.emit(self.model_name)
-                event.accept()
-                return
-        super().mouseReleaseEvent(event)
-
-    def keyPressEvent(self, event) -> None:
-        if event.key() in (
-            Qt.Key.Key_Return,
-            Qt.Key.Key_Enter,
-            Qt.Key.Key_Space,
-        ):
-            self.details_requested.emit(self.model_name)
-            event.accept()
-            return
-        super().keyPressEvent(event)
