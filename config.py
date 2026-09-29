@@ -251,6 +251,10 @@ class AppConfig:
     MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT: int = MAIN_WINDOW_DEFAULT_HEIGHT
     MAIN_WINDOW_COMPACT_WIDTH: int = 420
     MAIN_WINDOW_COMPACT_HEIGHT: int = 250
+    # Host Mode's first size; the dashboard's stat tiles sit four across at
+    # this width. Clamped to the screen, and remembered once resized.
+    MAIN_WINDOW_HOST_DEFAULT_WIDTH: int = 780
+    MAIN_WINDOW_HOST_DEFAULT_HEIGHT: int = 780
 
     # Waveform overlay settings
     WAVEFORM_OVERLAY_WIDTH: int = 300

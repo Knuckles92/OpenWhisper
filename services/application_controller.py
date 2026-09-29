@@ -390,6 +390,7 @@ class ApplicationController(QObject):
         self.ui_controller.get_loaded_local_model = self.get_loaded_local_model
         self.ui_controller.get_remote_models = self.remote_models
         self.ui_controller.on_remote_model_selected = self.select_remote_model
+        self.ui_controller.on_host_model_selected = self.select_host_model
         self.ui_controller.on_remote_runtime_selected = self.select_remote_runtime
         self.ui_controller.get_missing_local_runtime = self.get_missing_local_runtime
         self.ui_controller.on_dictation_transcribe = self.transcribe_clip
@@ -1069,17 +1070,31 @@ class ApplicationController(QObject):
         finally:
             request.done.set()
 
-    def _switch_engine_to(self, family: str, model: str, device_name: str, *, runtime: Optional[dict] = None,
+    def select_host_model(self, family: str, model: str) -> Optional[str]:
+        """Host Mode's engine picker: serve another model ready on this computer.
+
+        Switches the way a paired computer's request does, so every view
+        follows. Returns why it can't, or None once the switch is under way.
+        """
+        try:
+            return self._switch_engine_to(family, model, None)
+        except Exception as exc:
+            logger.exception("Switching the served model failed")
+            return f"Couldn't switch models: {exc}"
+
+    def _switch_engine_to(self, family: str, model: str, device_name: Optional[str], *,
+                          runtime: Optional[dict] = None,
                           target_device: Optional[str] = None) -> Optional[str]:
         """Select a model here as the user would; returns why not, or None once queued.
 
         Persists the model the way the engine fields do, selects its backend
         through the main window so every view follows, and queues the reload
-        whose end ``_engine_settled`` reports.
+        whose end ``_engine_settled`` reports. ``device_name`` is the paired
+        computer that asked, or None when it was asked for on this computer.
         """
         from services.local_asr.catalog import BACKENDS, MODELS, WHISPER_BACKEND
 
-        name = socket.gethostname()
+        name = socket.gethostname() if device_name else "This computer"
         if self.is_meeting_active():
             return f"{name} is running a meeting. Change its model after the meeting ends."
         if self.recorder.is_recording or self.is_transcribing():
@@ -1115,7 +1130,10 @@ class ApplicationController(QObject):
             label = f"Whisper {model}"
         else:
             return f"{name} can't run {model}."
-        logger.info("Paired computer %s switched this computer to %s", device_name, label)
+        if device_name:
+            logger.info("Paired computer %s switched this computer to %s", device_name, label)
+        else:
+            logger.info("Host Mode switched this computer to %s", label)
         if self._current_model_name != family:
             display = next(key for key, value in config.MODEL_VALUE_MAP.items() if value == family)
             self.ui_controller.select_transcription_backend(display)
@@ -1126,7 +1144,8 @@ class ApplicationController(QObject):
         if (runtime is None and target_device is None and family == WHISPER_BACKEND and whisper is not None and whisper.is_available()
                 and whisper.last_loaded_model == model and not self._reload_pending):
             return None  # Selecting the backend was all it took.
-        self._reload_note = f"Switching to {label} for {device_name}..."
+        self._reload_note = (f"Switching to {label} for {device_name}..." if device_name
+                             else f"Switching to {label}...")
         self.reload_whisper_model()
         return None
 

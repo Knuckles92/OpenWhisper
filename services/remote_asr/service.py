@@ -527,6 +527,22 @@ class RemoteEngineService:
             host = self._host
         return host.connected_clients() if host is not None and host.running else []
 
+    def host_activity(self, events: Optional[int] = None) -> dict:
+        """What paired computers asked of this host since sharing started.
+
+        In memory and cheap, like ``connected_clients()``; the last session's
+        counts stay readable after sharing stops, until it starts again.
+        """
+        from services.remote_asr.activity import empty_snapshot
+
+        with self._lock:
+            host = self._host
+        return host.activity.snapshot(events) if host is not None else empty_snapshot()
+
+    def engine_state(self) -> dict:
+        """``describe()`` of the engine this computer would share, even while sharing is off."""
+        return self._engine().describe()
+
     def host_state(self) -> dict:
         from services.remote_asr.host import DeviceRegistry
 

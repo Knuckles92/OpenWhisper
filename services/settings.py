@@ -75,6 +75,10 @@ class SettingsKey:
     WINDOW_GEOMETRY: Final[str] = "window_geometry"
     COMPACT_WINDOW_GEOMETRY: Final[str] = "compact_window_geometry"
     COMPACT_MODE: Final[str] = "compact_mode"
+    # View → Host Mode: the main window shows the host dashboard instead of
+    # the recording tabs, with its own window position and size.
+    HOST_MODE: Final[str] = "host_mode"
+    HOST_WINDOW_GEOMETRY: Final[str] = "host_window_geometry"
     AUTO_PASTE: Final[str] = "auto_paste"
     MACOS_ACCESSIBILITY_INTRO_SEEN: Final[str] = "macos_accessibility_intro_seen"
     COPY_CLIPBOARD: Final[str] = "copy_clipboard"
@@ -416,6 +420,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.COPY_CLIPBOARD: True,
     SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN: False,
     SettingsKey.COMPACT_MODE: False,
+    SettingsKey.HOST_MODE: False,
     SettingsKey.MINIMIZE_TRAY: True,
     SettingsKey.RECORDING_TRIGGER_MODE: config.RECORDING_TRIGGER_MODE,
     SettingsKey.STREAMING_ENABLED: config.STREAMING_ENABLED,

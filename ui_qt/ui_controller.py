@@ -145,7 +145,7 @@ class UIController(QObject):
         self.on_hf_policy_changed: Optional[Callable] = None
         self.on_api_keys_changed: Optional[Callable] = None
         # RemoteEngineService, set by the application controller.
-        self.remote_engine = None
+        self._remote_engine = None
         self.on_model_download_requested: Optional[Callable] = None
         self.on_model_delete_requested: Optional[Callable] = None
         self.on_model_batch_download: Optional[Callable] = None
@@ -156,6 +156,8 @@ class UIController(QObject):
         # where a choice goes, as (family, model).
         self.get_remote_models: Optional[Callable] = None
         self.on_remote_model_selected: Optional[Callable[[str, str], None]] = None
+        # Host Mode's engine picker: (family, model) -> why not, or None.
+        self.on_host_model_selected: Optional[Callable[[str, str], Optional[str]]] = None
         self.on_remote_runtime_selected: Optional[Callable] = None
         # Reconnect to the paired computer now (the link was clicked).
         self.on_remote_retry: Optional[Callable[[], None]] = None
@@ -206,6 +208,17 @@ class UIController(QObject):
 
         self._setup_connections()
 
+    @property
+    def remote_engine(self):
+        """The controller's ``RemoteEngineService``; it's created after this window."""
+        return self._remote_engine
+
+    @remote_engine.setter
+    def remote_engine(self, service) -> None:
+        self._remote_engine = service
+        # Host Mode's dashboard reads the same service.
+        self.main_window.host_dashboard.bind(service)
+
     def _setup_connections(self):
         self.main_window.record_toggled.connect(self._on_record_toggled)
         self.main_window.quick_record_tab.profiles_requested.connect(self.open_cleanup_profiles)
@@ -213,6 +226,7 @@ class UIController(QObject):
         self.main_window.model_changed.connect(self._on_model_changed)
         self.main_window.whisper_engine_changed.connect(self._on_whisper_engine_changed)
         self.main_window.remote_model_selected.connect(self._on_remote_model_selected)
+        self.main_window.host_model_selected.connect(self._on_host_model_selected)
         self.main_window.remote_runtime_selected.connect(self._on_remote_runtime_selected)
         self.main_window.remote_retry_requested.connect(self._on_remote_retry)
         self.main_window.live_preview_changed.connect(self._on_live_preview_changed)
@@ -466,6 +480,15 @@ class UIController(QObject):
         if self.on_remote_model_selected:
             self.on_remote_model_selected(family, model)
 
+    def _on_host_model_selected(self, family: str, model: str) -> None:
+        logger.info("Host model chosen: %s/%s", family, model)
+        if self.on_host_model_selected is None:
+            error = "Switching models isn't available in this window."
+        else:
+            error = self.on_host_model_selected(family, model)
+        if error:
+            self.main_window.host_dashboard.show_engine_error(error)
+
     def _on_remote_runtime_selected(self, family: str, model: str, changes: dict) -> None:
         if self.on_remote_runtime_selected:
             self.on_remote_runtime_selected(family, model, changes)
@@ -494,6 +517,7 @@ class UIController(QObject):
         """
         self.main_window.quick_record_tab.set_engine_busy(busy)
         self.main_window.upload_file_tab.set_engine_busy(busy)
+        self.main_window.host_dashboard.set_engine_busy(busy)
         if not busy:
             self.refresh_model_views()
 
@@ -1497,6 +1521,9 @@ class UIController(QObject):
             self.main_window.upload_file_tab.set_status("Copy failed")
 
     def switch_to_tab(self, index: int):
+        # A meeting starting here needs its tab, even on a host.
+        if self.main_window.host_mode:
+            self.main_window.set_host_mode(False)
         self.main_window.tabbed_content.set_current_index(index)
 
     def switch_to_meeting_mode(self):
