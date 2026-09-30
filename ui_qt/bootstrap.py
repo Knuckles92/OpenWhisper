@@ -80,6 +80,9 @@ def setup_logging() -> None:
         handlers=handlers,
         force=True,
     )
+    from services.diagnostics import install_failure_capture
+
+    install_failure_capture()
     _enable_crash_logging()
     _install_qt_message_handler()
 
@@ -306,6 +309,9 @@ def main() -> int:
 
         ui_controller.show_main_window()
         profiler.mark("main_window_shown")
+        from services.diagnostics import record_metrics
+
+        record_metrics(startup_to_window_s=profiler.events[-1][1])
 
         from services.app_update_apply import (
             parse_health_token,

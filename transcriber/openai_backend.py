@@ -1,7 +1,7 @@
 """OpenAI API transcription backend."""
 import logging
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from typing import TYPE_CHECKING, Optional, List
 from .base import TranscriptionBackend
 from config import config
@@ -56,9 +56,9 @@ class OpenAIBackend(TranscriptionBackend):
     def _initialize_client(self):
         if self.api_key:
             try:
-                from openai import OpenAI
+                from services.isolated import IsolatedOpenAIClient
 
-                self.client = OpenAI(api_key=self.api_key)
+                self.client = IsolatedOpenAIClient(api_key=self.api_key)
                 logger.info("OpenAI client initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize OpenAI client: {e}")
@@ -92,6 +92,8 @@ class OpenAIBackend(TranscriptionBackend):
             return self._request_transcript(audio_path, config.DEFAULT_API_MODEL)
 
     def _request_transcript(self, audio_path: str, api_model: str) -> str:
+        if self.should_cancel:
+            raise RuntimeError("Transcription canceled")
         with open(audio_path, "rb") as audio_file:
             response = self.client.audio.transcriptions.create(
                 model=api_model,
@@ -109,13 +111,14 @@ class OpenAIBackend(TranscriptionBackend):
 
     def transcribe(self, audio_path: str) -> str:
         """Transcribe a file, uploading one over the size limit in chunks."""
-        self.prepare_client()
-        if not self.is_available():
-            raise Exception("OpenAI API is not available (no API key or client initialization failed)")
-
         try:
             self.is_transcribing = True
             self.reset_cancel_flag()
+            self.prepare_client()
+            if self.should_cancel:
+                raise RuntimeError("Transcription canceled")
+            if not self.is_available():
+                raise Exception("OpenAI API is not available (no API key or client initialization failed)")
 
             api_model = self._get_api_model_name()
             logger.info(f"Using OpenAI API model: {api_model}")
@@ -152,6 +155,9 @@ class OpenAIBackend(TranscriptionBackend):
     def update_api_key(self, api_key: Optional[str]):
         """Replace the API key; the next request rebuilds the client."""
         with self._client_lock:
+            if self.client is not None:
+                self.client.close()
+                self.client = None
             self.api_key = api_key
             self._client_pending = True
 
@@ -172,7 +178,7 @@ class OpenAIBackend(TranscriptionBackend):
 
         try:
             chunk_files = audio_processor.split_audio_file(
-                audio_path, self._report_progress
+                audio_path, self._report_progress, should_cancel=lambda: self.should_cancel
             )
             if not chunk_files:
                 raise Exception("Failed to split audio file")
@@ -219,17 +225,20 @@ class OpenAIBackend(TranscriptionBackend):
             with ThreadPoolExecutor(
                 max_workers=workers, thread_name_prefix="chunk-upload"
             ) as pool:
-                # executor.map keeps results in submission order, which the
-                # combined transcript depends on, and re-raises the first
-                # failure once the in-flight uploads have finished.
-                transcriptions = list(
-                    pool.map(
-                        lambda chunk: self._transcribe_one_chunk(
-                            chunk, api_model
-                        ),
-                        chunk_files,
-                    )
-                )
+                futures = [pool.submit(self._transcribe_one_chunk, chunk, api_model)
+                           for chunk in chunk_files]
+                done, _ = wait(futures, return_when=FIRST_EXCEPTION)
+                failed = next((future for future in futures
+                               if future in done and future.exception() is not None), None)
+                if failed is not None:
+                    # A rejected chunk must not wait out an unrelated stalled
+                    # upload. Close the process-backed client before joining
+                    # this pool, and preserve the original request failure.
+                    for future in futures:
+                        future.cancel()
+                    self.cancel_transcription()
+                    failed.result()
+                transcriptions = [future.result() for future in futures]
 
         from services.audio_processor import audio_processor
         return audio_processor.combine_transcriptions(transcriptions)
@@ -245,9 +254,17 @@ class OpenAIBackend(TranscriptionBackend):
                 self.client.close()
                 self.client = None
 
+                self._client_pending = True
+
                 logger.info(f"OpenAI backend ({self.model_type}) cleaned up successfully")
         except Exception as e:
             logger.debug(f"Error during OpenAI backend cleanup: {e}")
+
+    def cancel_transcription(self):
+        super().cancel_transcription()
+        # Killing upload workers interrupts DNS, upload, and response reads.
+        # A new job gets a fresh client and cancellation state.
+        self.cleanup()
 
     @property
     def name(self) -> str:

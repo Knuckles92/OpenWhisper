@@ -15,6 +15,7 @@ from typing import Iterator, Optional, Tuple
 ORIGINATOR = "OpenWhisper"
 SOFTWARE = "OpenWhisper"
 BEXT_SIZE = 602
+COPY_BLOCK_BYTES = 1024 * 1024
 
 _BEXT_DATE = slice(320, 330)
 _BEXT_TIME = slice(330, 338)
@@ -29,30 +30,78 @@ def stamp_wav_origination(path: str, when: datetime) -> bool:
     """Append LIST INFO and bext origination. Return True if the file changed.
 
     Files that are not RIFF/WAVE, or that already have ``bext`` or LIST INFO,
-    are left untouched.
+    are left untouched. Scan chunk headers and stream-copy the original audio
+    into an atomic replacement, keeping memory bounded for long recordings.
     """
-    with open(path, "rb") as handle:
-        data = handle.read()
-
-    if not _is_wave(data) or _has_bext_or_info(data):
-        return False
-
-    stamped = data + _list_info_chunk(when) + _bext_chunk(when)
-    stamped = _with_riff_size(stamped)
-
-    directory = os.path.dirname(os.path.abspath(path)) or os.curdir
-    fd, temp_path = tempfile.mkstemp(suffix=".wav", dir=directory)
+    temp_path = None
+    fd = None
     try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(stamped)
-            handle.flush()
-            os.fsync(handle.fileno())
+        with open(path, "rb") as source:
+            header = source.read(12)
+            if not _is_wave(header):
+                return False
+            source_size = os.fstat(source.fileno()).st_size
+            aligned_end = 12
+            for chunk_id, offset, size in _scan_chunk_headers(source, source_size):
+                if chunk_id == b"bext":
+                    return False
+                if chunk_id == b"LIST" and size >= 4:
+                    source.seek(offset)
+                    if source.read(4) == b"INFO":
+                        return False
+                aligned_end = offset + size + (size & 1)
+            # Python's wave writer can omit the final pad byte for odd-length
+            # 8-bit PCM. Insert it before adding another RIFF chunk.
+            padding = b"\x00" if aligned_end > source_size else b""
+            metadata = padding + _list_info_chunk(when) + _bext_chunk(when)
+            riff_size = source_size + len(metadata) - 8
+            if riff_size > 0xFFFFFFFF:
+                raise WavMetadataError("Recording is too large for RIFF metadata")
+            directory = os.path.dirname(os.path.abspath(path)) or os.curdir
+            fd, temp_path = tempfile.mkstemp(suffix=".wav", dir=directory)
+            destination = os.fdopen(fd, "wb")
+            fd = None  # ownership transferred to destination
+            with destination:
+                destination.write(header[:4] + struct.pack("<I", riff_size) + header[8:])
+                source.seek(12)
+                remaining = source_size - 12
+                while remaining:
+                    block = source.read(min(COPY_BLOCK_BYTES, remaining))
+                    if not block:
+                        raise WavMetadataError("Recording was truncated during metadata copy")
+                    destination.write(block)
+                    remaining -= len(block)
+                destination.write(metadata)
+                destination.flush()
+                os.fsync(destination.fileno())
+        # Close the source before replacing it, including on Windows.
         os.replace(temp_path, path)
     except Exception:
-        if os.path.exists(temp_path):
+        if fd is not None:
+            os.close(fd)
+        if temp_path is not None and os.path.exists(temp_path):
             os.remove(temp_path)
         raise
     return True
+
+
+def _scan_chunk_headers(handle, length: int) -> Iterator[Tuple[bytes, int, int]]:
+    """Yield chunk ID, payload offset and size without reading audio payloads."""
+    offset = 12
+    while offset < length:
+        if offset + 8 > length:
+            raise WavMetadataError("Truncated RIFF chunk header")
+        handle.seek(offset)
+        header = handle.read(8)
+        if len(header) != 8:
+            raise WavMetadataError("Truncated RIFF chunk header")
+        chunk_id, size = struct.unpack("<4sI", header)
+        start = offset + 8
+        end = start + size
+        if end > length:
+            raise WavMetadataError("Truncated RIFF chunk payload")
+        yield chunk_id, start, size
+        offset = end + (size & 1)
 
 
 def read_info_icrd(path: str) -> Optional[str]:

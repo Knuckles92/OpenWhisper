@@ -83,6 +83,8 @@ class TranscriptionRuntime:
         self._profile_settings = None
         # Decodes a long dictation's completed windows while it is recorded.
         self._incremental = IncrementalDictation()
+        self._stop_started_at = 0.0
+        self._cancel_started_at = 0.0
 
     @property
     def has_active_job(self) -> bool:
@@ -90,10 +92,14 @@ class TranscriptionRuntime:
         with self._job_lock:
             return self._job_active
 
+    def begin_shutdown(self) -> None:
+        self._cancel_requested.set()
+        self._incremental.discard()
+
     def _claim_job(self) -> bool:
         """Atomically reserve the single transcription workflow slot."""
         with self._job_lock:
-            if self._job_active:
+            if self._job_active or getattr(self.controller, '_shutting_down', False) is True:
                 return False
             self._job_active = True
             self._cancel_requested.clear()
@@ -113,6 +119,11 @@ class TranscriptionRuntime:
             backend.reset_cancel_flag()
 
     def _finish_job(self) -> None:
+        self._stop_started_at = 0.0
+        if self._cancel_started_at:
+            from services.diagnostics import record_metrics
+            record_metrics(cancel_s=time.monotonic() - self._cancel_started_at)
+            self._cancel_started_at = 0.0
         with self._job_lock:
             self._recording_profile = None
             self._profile_settings = None
@@ -123,6 +134,32 @@ class TranscriptionRuntime:
         message = f"A transcription is already in progress — wait before {action}"
         self.controller.status_update.emit(message)
         logger.info(message)
+
+    def recover_recordings(self) -> None:
+        """Startup worker: make interrupted dictation audio available in Recordings."""
+        from services.isolated import cleanup_orphaned_preview_audio
+        from services.recording_journal import recover_recordings
+        cleanup_orphaned_preview_audio()
+        recovered = recover_recordings(config.RECORDED_AUDIO_FILE, config.RECORDINGS_FOLDER)
+        if recovered:
+            self.controller.status_update.emit(
+                f'Recovered {len(recovered)} interrupted recording(s) in Recordings'
+            )
+
+    def on_capture_error(self, message: str) -> None:
+        """Qt slot: stop previews and preserve partial audio, never auto-paste it."""
+        recorder = self.controller.recorder
+        if (getattr(recorder, 'last_capture_error', None) != message
+                or getattr(recorder, 'capture_canceled', False) is True):
+            return  # queued notification from a canceled/replaced capture
+        self.controller.recording_state_changed.emit(False)
+        self.controller.status_update.emit(message + ' — preserving captured audio')
+        self.controller.streaming_runtime.cancel_streaming_session()
+        self._incremental.discard()
+        if self.has_active_job:
+            return  # finish_recording_job observes last_capture_error after the save
+        if self._claim_job():
+            self.controller.executor.submit(self.finish_recording_job)
 
     def start_recording(self, profile_id: str = "") -> bool:
         with self._capture_lock:
@@ -211,6 +248,7 @@ class TranscriptionRuntime:
         self.controller.recording_state_changed.emit(False)
         self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
         self.controller.status_update.emit("Processing...")
+        self._stop_started_at = time.monotonic()
 
         # Reserve the workflow before post-roll/save work.  Once the recorder
         # flips to inactive, an upload can arrive from another UI thread; a
@@ -260,24 +298,24 @@ class TranscriptionRuntime:
 
             if not self.controller.recorder.has_recording_data():
                 logger.error("No recording data available")
-                self.on_transcription_error("No audio data recorded")
+                self.controller.transcription_failed.emit("No audio data recorded")
                 return
 
             if not self.controller.recorder.save_recording():
                 logger.error("Failed to save recording")
-                self.on_transcription_error("Failed to save audio file")
+                self.controller.transcription_failed.emit("Failed to save audio file; recovery copy kept")
                 return
 
             if not os.path.exists(config.RECORDED_AUDIO_FILE):
                 logger.error(f"Audio file not found: {config.RECORDED_AUDIO_FILE}")
-                self.on_transcription_error("Audio file not created")
+                self.controller.transcription_failed.emit("Audio file not created")
                 return
 
             file_size = os.path.getsize(config.RECORDED_AUDIO_FILE)
             logger.info(f"Audio file size: {file_size} bytes")
             if file_size < 100:
                 logger.error(f"Audio file too small: {file_size} bytes")
-                self.on_transcription_error("Audio file is empty or corrupted")
+                self.controller.transcription_failed.emit("Audio file is empty or corrupted")
                 return
 
             self.controller._pending_audio_path = config.RECORDED_AUDIO_FILE
@@ -289,6 +327,11 @@ class TranscriptionRuntime:
                 f"Quick Record · {self._recording_profile.name}"
                 if self._recording_profile else "Quick Record"
             )
+
+            capture_error = getattr(self.controller.recorder, 'last_capture_error', None)
+            if isinstance(capture_error, str) and capture_error:
+                self.controller.transcription_failed.emit(capture_error)
+                return
 
             if self._cancel_requested.is_set():
                 # Cancel landed while the preview stopped or the WAV saved,
@@ -303,7 +346,7 @@ class TranscriptionRuntime:
             self._run_transcription_job(config.RECORDED_AUDIO_FILE)
         except Exception as exc:
             logger.error(f"Failed to start transcription: {exc}")
-            self.on_transcription_error(f"Failed to process audio: {exc}")
+            self.controller.transcription_failed.emit(f"Failed to process audio: {exc}")
 
     def _run_transcription_job(self, audio_path: str) -> None:
         """Transcribe on the worker thread this job already runs on.
@@ -311,6 +354,7 @@ class TranscriptionRuntime:
         The mirror of ``_submit_transcription_job``, which runs on the Qt
         thread and hands the same work to the executor.
         """
+        self._raise_if_canceled()
         self._require_backend_ready()
         self.transcribe_audio_file(audio_path)
 
@@ -330,6 +374,9 @@ class TranscriptionRuntime:
 
     def _cancel(self) -> None:
         logger.info(f"Cancel called. Recording: {self.controller.recorder.is_recording}")
+        self._cancel_started_at = time.monotonic() if (
+            self.controller.recorder.is_recording or self.has_active_job
+        ) else 0.0
 
         if self.controller.recorder.is_recording:
             self._cancel_recording()
@@ -357,6 +404,10 @@ class TranscriptionRuntime:
         self.controller.overlay_state_update.emit(OverlayState.CANCELING)
         self.controller.status_update.emit("Recording canceled")
         logger.info("Recording canceled")
+        if not self.has_active_job and self._cancel_started_at:
+            from services.diagnostics import record_metrics
+            record_metrics(cancel_s=time.monotonic() - self._cancel_started_at)
+            self._cancel_started_at = 0.0
 
     def _cancel_transcription(self) -> None:
         self.controller.current_backend.cancel_transcription()
@@ -719,47 +770,43 @@ class TranscriptionRuntime:
             self._finish_job()
             return
 
-        try:
-            model_info = self._model_info_for_history()
-            if request.combine:
-                history_manager.add_entry(
-                    text=result.combined_text,
+        entries = []
+        model_info = self._model_info_for_history()
+        if request.combine:
+            entries.append(dict(
+                text=result.combined_text,
+                model=model_info,
+                source_audio_path=None,
+                transcription_time=result.effective_transcription_time_s,
+                audio_duration=result.total_duration_seconds,
+                file_size=result.total_file_size,
+                raw_text=result.combined_raw_text,
+                cleanup_provider=result.combined_cleanup_provider,
+                cleanup_model=result.combined_cleanup_model,
+                source_name=batch_source_name(
+                    [r.item.source_name for r in result.items]
+                ),
+            ))
+        else:
+            for r in saveable:
+                entries.append(dict(
+                    text=r.text,
                     model=model_info,
                     source_audio_path=None,
-                    transcription_time=result.effective_transcription_time_s,
-                    audio_duration=result.total_duration_seconds,
-                    file_size=result.total_file_size,
-                    raw_text=result.combined_raw_text,
-                    cleanup_provider=result.combined_cleanup_provider,
-                    cleanup_model=result.combined_cleanup_model,
-                    source_name=batch_source_name(
-                        [r.item.source_name for r in result.items]
-                    ),
-                )
-            else:
-                for r in saveable:
-                    history_manager.add_entry(
-                        text=r.text,
-                        model=model_info,
-                        source_audio_path=None,
-                        transcription_time=r.elapsed_s,
-                        audio_duration=r.item.duration_seconds,
-                        file_size=r.file_size,
-                        raw_text=r.raw_text,
-                        cleanup_provider=r.cleanup_provider,
-                        cleanup_model=r.cleanup_model,
-                        source_name=r.item.source_name,
-                    )
-            ui.refresh_history()
-            logger.info("Batch transcription saved to history")
-        except Exception as exc:
-            logger.error(f"Failed to save batch transcription to history: {exc}")
+                    transcription_time=r.elapsed_s,
+                    audio_duration=r.item.duration_seconds,
+                    file_size=r.file_size,
+                    raw_text=r.raw_text,
+                    cleanup_provider=r.cleanup_provider,
+                    cleanup_model=r.cleanup_model,
+                    source_name=r.item.source_name,
+                ))
 
         if result.canceled:
             ui.set_status(
                 f"Canceled — kept {len(saveable)} of {len(request.items)} files"
             )
-            self._finish_job()
+            self._queue_history(entries)
             return
 
         status = "Ready"
@@ -770,7 +817,7 @@ class TranscriptionRuntime:
                 f" — AI cleanup failed ({result.cleanup_error}); showing raw text"
             )
         ui.set_status(status)
-        self._finish_job()
+        self._queue_history(entries)
 
     def _maybe_cleanup_transcript(
         self,
@@ -849,6 +896,7 @@ class TranscriptionRuntime:
 
     def transcribe_audio_file(self, audio_path: str) -> None:
         try:
+            self._raise_if_canceled()
             if self.controller._pending_file_size is None:
                 self.controller._pending_file_size = os.path.getsize(audio_path)
             backend = self.controller.current_backend
@@ -923,6 +971,10 @@ class TranscriptionRuntime:
         raw_text: Optional[str] = None,
         cleanup_info: Optional[CleanupInfo] = None,
     ) -> None:
+        if self._stop_started_at:
+            from services.diagnostics import record_metrics
+            record_metrics(stop_to_result_s=time.monotonic() - self._stop_started_at)
+            self._stop_started_at = 0.0
         if self._deliver_to_clipboard and self._cancel_requested.is_set():
             # The cancel arrived between the worker's emit and this slot.
             self.on_transcription_error("Transcription canceled")
@@ -987,9 +1039,7 @@ class TranscriptionRuntime:
             self._finish_job()
             return
 
-        def _save_history() -> None:
-            try:
-                history_manager.add_entry(
+        entry = dict(
                     text=transcript,
                     model=self._model_info_for_history(),
                     source_audio_path=self.controller._pending_audio_path,
@@ -1000,13 +1050,7 @@ class TranscriptionRuntime:
                     cleanup_provider=cleanup_info.provider if cleanup_info else None,
                     cleanup_model=cleanup_info.model if cleanup_info else None,
                     source_name=source_name,
-                )
-                self.controller.ui_controller.refresh_history()
-                logger.info("Transcription saved to history")
-            except Exception as exc:
-                logger.error(f"Failed to save transcription to history: {exc}")
-            finally:
-                self._clear_pending_audio_metadata()
+        )
 
         cleanup_notice = (
             f" — {self._recording_profile.name} formatting failed "
@@ -1014,25 +1058,58 @@ class TranscriptionRuntime:
             if self._recording_profile and self._last_cleanup_failure else ""
         )
         if not self._deliver_to_clipboard:
-            _save_history()
             self.controller.ui_controller.set_status("Ready" + cleanup_notice)
-            self._finish_job()
+            self._queue_history([entry])
             return
 
-        # Paste first: persisting copies the WAV into Recordings (with an
-        # fsync), may prune the oldest one, and inserts the row, which held
-        # the paste keystroke back 5-8 ms installed and ~90 ms on a cold
-        # source run. History sets no status, so the paste outcome stays the
-        # visible one. The target reads the clipboard after the keystroke,
-        # while this thread saves; stage_text hands the text to Windows first
-        # so a Win32 reader need not wait (OLE readers such as Office still do).
+        # Deliver immediately; copying retained audio, fsync, and SQLite writes
+        # run on a worker while Qt and the target application remain responsive.
         try:
             self._apply_clipboard_and_paste(transcript, status_suffix=cleanup_notice)
         finally:
-            try:
-                _save_history()
-            finally:
-                self._finish_job()
+            self._queue_history([entry])
+
+    def _queue_history(self, entries: list[dict]) -> None:
+        """Snapshot metadata before queuing; keep the slot until persistence ends.
+
+        Keeping the slot also prevents Quick Record from replacing its WAV while
+        the writer copies it. Clipboard delivery and Qt repaint do not wait on IO.
+        """
+        try:
+            self.controller.persistence_executor.submit(self._persist_history, entries)
+        except Exception as exc:
+            self.on_history_persisted(dict(error=f'History could not be saved: {exc}'))
+
+    def _persist_history(self, entries: list[dict]) -> None:
+        error = ''
+        try:
+            for fields in entries:
+                entry = history_manager.add_entry(**fields)
+                source = fields.get('source_audio_path')
+                if source and os.path.isfile(source):
+                    if not getattr(entry, 'audio_file', None):
+                        error = 'Transcript saved, but audio could not be retained; recovery copy kept'
+                    elif os.path.abspath(source) == os.path.abspath(config.RECORDED_AUDIO_FILE):
+                        acknowledge = getattr(self.controller.recorder, 'acknowledge_recording', None)
+                        if acknowledge:
+                            acknowledge()
+        except Exception as exc:
+            logger.exception('Failed to save transcription to history')
+            error = f'History could not be saved: {exc}. Copy the transcript before closing.'
+        self.controller.history_persisted.emit(dict(error=error, refresh=True))
+
+    def on_history_persisted(self, outcome: dict) -> None:
+        """Qt slot for persistence completion; failures must not look like success."""
+        try:
+            if outcome.get('refresh'):
+                self.controller.ui_controller.refresh_history()
+            if outcome.get('error'):
+                self.controller.ui_controller.set_status(outcome['error'])
+        except Exception:
+            logger.exception('Could not refresh saved transcription history')
+        finally:
+            self._clear_pending_audio_metadata()
+            self._finish_job()
 
     def _clear_pending_audio_metadata(self) -> None:
         """Drop one-shot metadata attached to the current transcription job."""
@@ -1146,16 +1223,9 @@ class TranscriptionRuntime:
         _status("Ready")
 
     def on_transcription_error(self, error_message: str) -> None:
-        recovery_name = None
+        self._stop_started_at = 0.0
         pending_audio = self.controller._pending_audio_path
-        if pending_audio and os.path.isfile(pending_audio):
-            try:
-                recovery_name = history_manager.preserve_recording(pending_audio)
-            except Exception as exc:
-                logger.error("Failed to preserve audio after transcription error: %s", exc)
         status = f"Error: {error_message}"
-        if recovery_name:
-            status += f" — audio saved in Recordings as {recovery_name}"
         self.controller.ui_controller.set_status(status)
         self.controller.ui_controller.set_transcript(f"Error: {error_message}")
         self.controller.overlay_state_update.emit(OverlayState.NONE)
@@ -1163,8 +1233,30 @@ class TranscriptionRuntime:
         self.controller._transcription_elapsed = None
         self.controller._remote_timing = None
         self.controller.ui_controller.discard_clipboard_prefetch()
+        if pending_audio:
+            try:
+                self.controller.persistence_executor.submit(self._preserve_failed_audio, pending_audio, status)
+                return
+            except Exception:
+                logger.exception('Could not queue failed recording preservation')
         self._clear_pending_audio_metadata()
         self._finish_job()
+
+    def _preserve_failed_audio(self, path: str, status: str) -> None:
+        try:
+            name = history_manager.preserve_recording(path)
+            if name:
+                status += f' — audio saved in Recordings as {name}'
+                if os.path.abspath(path) == os.path.abspath(config.RECORDED_AUDIO_FILE):
+                    acknowledge = getattr(self.controller.recorder, 'acknowledge_recording', None)
+                    if acknowledge:
+                        acknowledge()
+            elif os.path.isfile(path):
+                status += ' — audio retention failed; original and recovery copy kept'
+        except Exception:
+            logger.exception('Failed to preserve audio after transcription error')
+            status += ' — could not retain audio; recovery copy kept'
+        self.controller.history_persisted.emit(dict(error=status))
 
     def on_model_changed(self, model_name: str) -> None:
         if self.controller.is_meeting_active():
@@ -1229,5 +1321,6 @@ class TranscriptionRuntime:
             )
 
     def _submit_transcription_job(self, audio_path: str) -> None:
+        self._raise_if_canceled()
         self._require_backend_ready()
         self.controller.executor.submit(self.transcribe_audio_file, audio_path)

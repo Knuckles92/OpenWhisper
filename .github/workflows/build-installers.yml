@@ -67,6 +67,12 @@ jobs:
       - name: Build and verify
         shell: pwsh
         run: .\scripts\build_installer.ps1 -Clean
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: frozen-health-windows
+          path: build/release-health.json
+          if-no-files-found: ignore
       - name: Verify frozen setup helper protocol
         shell: pwsh
         env:
@@ -156,6 +162,12 @@ jobs:
         run: xvfb-run -a ./venv/bin/python -m pytest
       - name: Build and verify
         run: ./scripts/build_installer.sh --clean
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: frozen-health-linux
+          path: build/release-health.json
+          if-no-files-found: ignore
       - name: Smoke-test package lifecycle in clean Ubuntu
         run: |
           artifacts=(installer/Output/OpenWhisper-*-linux-amd64.deb)
@@ -276,6 +288,12 @@ jobs:
       - name: Build and verify DMG
         # Ad-hoc signed and unnotarized by design. No Apple Developer secrets.
         run: ./scripts/build_installer_macos.sh --clean
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: frozen-health-macos
+          path: build/release-health.json
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: openwhisper-macos

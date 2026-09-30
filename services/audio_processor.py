@@ -5,16 +5,13 @@ import numpy as np
 import tempfile
 import logging
 import shutil
+from contextlib import closing
 from dataclasses import dataclass, field
 from typing import Callable, List, Tuple, Optional
 from config import config
 from services.format_utils import format_audio_duration
 
 logger = logging.getLogger(__name__)
-
-INT16_MIN = -32768
-INT16_MAX = 32767
-
 
 @dataclass
 class AudioFilePreview:
@@ -58,8 +55,8 @@ def _moving_average(samples: np.ndarray, window: int) -> np.ndarray:
     """Centered boxcar mean — ``np.convolve(x, ones(w)/w, "same")``, in O(n).
 
     ``np.convolve`` is a direct O(n·w) sum, and the 0.1 s window here is 4410
-    taps: smoothing a ten-minute recording measured 8.8 s, and it runs once on
-    drop and again on transcribe. Differencing a cumulative sum gives the same
+    taps: smoothing a ten-minute recording measured 8.8 s in the old full-file
+    path. Differencing a cumulative sum gives the same
     values in one pass — measured 156 ms for that file, 57x faster, agreeing
     with ``np.convolve`` to 3e-8. That is nine orders of magnitude under
     ``SILENCE_THRESHOLD``, so split points do not move.
@@ -131,17 +128,10 @@ class AudioProcessor:
             engine_splits: Whether the engine that will transcribe the file
                 splits one over the upload limit (only the OpenAI API does).
 
-        Only a file that engine will split is decoded, to find its split
-        points. Everything the card shows for a file taken in one pass —
-        duration, sample rate, channels — is in the container header, so
-        decoding one to read three numbers buys nothing and is paid on every
-        drop.
-
-        The saving tracks the codec, not the file size: a ten-minute AAC
-        recording measured 604 ms to decode against 3.4 ms to read the header,
-        and that gap grows with duration. WAV is only about 2x, being little
-        more than a PCM copy, but voice memos arriving as m4a/mp3 are the
-        common case.
+        Use the header for every engine, including files that need splitting.
+        Chunk counts are estimates based on decoded PCM size; silence-aware
+        boundaries are chosen only when transcription actually starts. A
+        missing duration requires a streaming count, never a full-file array.
         """
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
@@ -151,23 +141,19 @@ class AudioProcessor:
         file_size_mb = file_size_bytes / (1024 * 1024)
         needs_splitting = engine_splits and file_size_mb > config.MAX_FILE_SIZE_MB
 
-        chunk_durations = []
+        try:
+            duration_seconds, sample_rate, channels = self._probe_audio_header(
+                audio_path
+            )
+        except Exception as e:
+            raise ValueError(f"Failed to read audio file: {e}") from e
+
         if needs_splitting:
-            try:
-                audio_data, sample_rate, channels = self._load_audio_metadata(
-                    audio_path
-                )
-            except Exception as e:
-                raise ValueError(f"Failed to read audio file: {e}")
-
-            duration_seconds = len(audio_data) / sample_rate
-            split_points = self._find_split_points(audio_data, sample_rate)
-
-            if not split_points:
-                split_points = self._generate_time_based_splits(len(audio_data), sample_rate)
-
+            total_samples = round(duration_seconds * sample_rate)
+            split_points = self._generate_time_based_splits(total_samples, sample_rate)
+            chunk_durations = []
             start_idx = 0
-            for end_idx in split_points + [len(audio_data)]:
+            for end_idx in split_points + [total_samples]:
                 chunk_samples = end_idx - start_idx
                 chunk_duration = chunk_samples / sample_rate
                 chunk_durations.append(chunk_duration)
@@ -175,13 +161,6 @@ class AudioProcessor:
 
             estimated_chunks = len(chunk_durations)
         else:
-            try:
-                duration_seconds, sample_rate, channels = self._probe_audio_header(
-                    audio_path
-                )
-            except Exception as e:
-                raise ValueError(f"Failed to read audio file: {e}")
-
             estimated_chunks = 1
             chunk_durations = [duration_seconds]
 
@@ -200,36 +179,80 @@ class AudioProcessor:
             chunk_durations=chunk_durations
         )
 
-    def split_audio_file(self, audio_path: str, progress_callback: Optional[Callable[[str], None]] = None) -> List[str]:
-        """Split an audio file at silence points, with time-based fallback."""
+    def split_audio_file(
+        self, audio_path: str,
+        progress_callback: Optional[Callable[[str], None]] = None,
+        should_cancel: Optional[Callable[[], bool]] = None,
+    ) -> List[str]:
+        """Decode once, retaining at most one upload window plus one frame.
+
+        The buffer includes both overlaps and the WAV header in its size
+        budget. One extra sample provides lookahead so an exact-sized final
+        chunk does not create an extra chunk containing only overlap.
+        """
+        def check_cancel():
+            if should_cancel is not None and should_cancel():
+                raise RuntimeError("Transcription canceled")
+
+        chunk_files = []
+        temp_dir = None
         try:
+            check_cancel()
             if progress_callback:
-                progress_callback("Loading audio file...")
+                progress_callback("Decoding and splitting audio...")
+            temp_dir = tempfile.mkdtemp(prefix="audio_chunks_")
+            # Register immediately: a failed write can leave a partial file.
+            self.temp_files.append(temp_dir)
 
-            audio_data, sample_rate = self._load_audio_data(audio_path)
-
-            if progress_callback:
-                progress_callback("Analyzing audio for optimal split points...")
-
-            split_points = self._find_split_points(audio_data, sample_rate)
-
-            if not split_points:
-                logger.warning("No suitable silence points found, using time-based splitting")
+            def save_chunk(samples, rate):
+                check_cancel()
+                filename = os.path.join(temp_dir, f"chunk_{len(chunk_files):03d}.wav")
+                self._save_audio_chunk(samples, rate, filename)
+                chunk_files.append(filename)
                 if progress_callback:
-                    progress_callback("Generating time-based splits...")
-                split_points = self._generate_time_based_splits(len(audio_data), sample_rate)
+                    progress_callback(f"Created audio chunk {len(chunk_files)}...")
 
-            if progress_callback:
-                progress_callback(f"Creating {len(split_points)} audio chunks...")
-
-            chunk_files = self._create_chunks(audio_data, sample_rate, split_points, audio_path)
+            pending = None
+            count = prefix = 0
+            with closing(self._iter_audio_blocks(audio_path, should_cancel)) as blocks:
+                for samples, sample_rate, _channels in blocks:
+                    check_cancel()
+                    if pending is None:
+                        max_samples, overlap = self._chunk_limits(sample_rate)
+                        pending = np.empty(max_samples + 1, dtype=np.int16)
+                    cursor = 0
+                    while cursor < len(samples):
+                        check_cancel()
+                        take = min(len(pending) - count, len(samples) - cursor)
+                        pending[count:count + take] = samples[cursor:cursor + take]
+                        count += take
+                        cursor += take
+                        if count <= max_samples:
+                            continue
+                        boundary = self._chunk_boundary(
+                            pending[:max_samples], sample_rate, prefix, overlap, should_cancel
+                        )
+                        save_chunk(pending[:boundary + overlap], sample_rate)
+                        retain = boundary - overlap
+                        remaining = count - retain
+                        pending[:remaining] = pending[retain:count].copy()
+                        count = remaining
+                        prefix = overlap
+                if count:
+                    save_chunk(pending[:count], sample_rate)
+            check_cancel()
 
             logger.info(f"Successfully split audio into {len(chunk_files)} chunks")
             return chunk_files
 
         except Exception as e:
             logger.error(f"Failed to split audio file: {e}")
-            self.cleanup_temp_files()
+            # Only this operation's files are owned here; another completed
+            # operation may still be uploading files from the same processor.
+            if temp_dir is not None:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                if temp_dir in self.temp_files:
+                    self.temp_files.remove(temp_dir)
             raise
 
     def _load_audio_data(self, audio_path: str) -> Tuple[np.ndarray, int]:
@@ -263,87 +286,111 @@ class AudioProcessor:
             return duration_seconds, sample_rate, channels
 
         logger.info(
-            "No duration in the header of %s; falling back to a full decode",
+            "No duration in the header of %s; counting decoded samples",
             os.path.basename(audio_path),
         )
-        audio_data, sample_rate, channels = self._load_audio_metadata(audio_path)
-        return len(audio_data) / sample_rate, sample_rate, channels
+        total_samples = 0
+        for samples, sample_rate, channels in self._iter_audio_blocks(audio_path):
+            total_samples += len(samples)
+        return total_samples / sample_rate, sample_rate, channels
 
-    def _load_audio_metadata(self, audio_path: str) -> Tuple[np.ndarray, int, int]:
+    def _iter_audio_blocks(self, audio_path: str, should_cancel=None):
+        """Yield native-rate mono int16 PCM with the source's channel count.
+
+        Explicit conversion handles packed/planar layouts and integer/float
+        formats. Multiplying decoded integer PCM by 32767 corrupts samples;
+        flattening packed stereo doubles duration. FFmpeg handles both here.
+        """
         import av
 
-        container = av.open(audio_path)
-
-        if not container.streams.audio:
-            raise ValueError("No audio stream found in file")
-
-        stream = container.streams.audio[0]
-        sample_rate = stream.rate
-        channels = stream.channels
-
-        frames = []
-        for frame in container.decode(audio=0):
-            arr = frame.to_ndarray()
-            frames.append(arr)
-
-        container.close()
-
-        if not frames:
+        found_audio = False
+        with av.open(audio_path) as container:
+            if not container.streams.audio:
+                raise ValueError("No audio stream found in file")
+            stream = container.streams.audio[0]
+            sample_rate = stream.rate
+            channels = stream.channels
+            if not sample_rate or sample_rate <= 0:
+                raise ValueError("Invalid audio sample rate")
+            converter = av.AudioResampler(format="s16", layout="mono", rate=sample_rate)
+            for frame in container.decode(audio=0):
+                if should_cancel is not None and should_cancel():
+                    raise RuntimeError("Transcription canceled")
+                frame.pts = None
+                for converted in converter.resample(frame):
+                    samples = converted.to_ndarray().reshape(-1)
+                    if samples.size:
+                        found_audio = True
+                        yield samples, sample_rate, channels
+            for converted in converter.resample(None):
+                if should_cancel is not None and should_cancel():
+                    raise RuntimeError("Transcription canceled")
+                samples = converted.to_ndarray().reshape(-1)
+                if samples.size:
+                    found_audio = True
+                    yield samples, sample_rate, channels
+        if not found_audio:
             raise ValueError("No audio frames found in file")
 
-        # PyAV returns shape (channels, samples) for planar formats
-        audio_float = np.concatenate(frames, axis=1 if len(frames[0].shape) > 1 else 0)
+    def _load_audio_metadata(self, audio_path: str) -> Tuple[np.ndarray, int, int]:
+        """Compatibility helper; preview and splitting use bounded streaming."""
+        pieces = []
+        for samples, sample_rate, channels in self._iter_audio_blocks(audio_path):
+            pieces.append(samples)
+        return np.concatenate(pieces), sample_rate, channels
 
-        if len(audio_float.shape) > 1 and audio_float.shape[0] > 1:
-            audio_float = np.mean(audio_float, axis=0)
-        elif len(audio_float.shape) > 1:
-            audio_float = audio_float[0]
+    def _chunk_limits(self, sample_rate: int) -> Tuple[int, int]:
+        # A mono PCM WAV written by wave has a 44-byte header.
+        max_samples = (int(config.MAX_FILE_SIZE_MB * 1024 * 1024) - 44) // 2
+        if max_samples < 4:
+            raise ValueError("Upload size limit is too small for a WAV file")
+        overlap = min(max(0, int(config.OVERLAP_DURATION_SEC * sample_rate)), max_samples // 4)
+        return max_samples, overlap
 
-        audio_data = (audio_float * INT16_MAX).clip(INT16_MIN, INT16_MAX).astype(np.int16)
-
-        return audio_data, sample_rate, channels
+    def _chunk_boundary(self, samples, sample_rate, prefix, overlap, should_cancel=None):
+        """Pick a silence inside one bounded window or use its last safe cut."""
+        end = len(samples) - overlap
+        # Leave room to advance even if the configured minimum duration is
+        # longer than a permitted upload (e.g. very high sample rates).
+        minimum = max(1, int(config.MIN_CHUNK_DURATION_SEC * sample_rate))
+        start = max(overlap + 1, prefix + 1, min(prefix + minimum, end))
+        silence_samples = max(1, int(config.SILENCE_DURATION_SEC * sample_rate))
+        if end - start >= silence_samples:
+            absolute = np.abs(samples.astype(np.float32)) / 32768.0
+            smooth = _moving_average(absolute, max(1, int(0.1 * sample_rate)))
+            boundary = self._find_best_silence(
+                smooth, start, end, silence_samples, sample_rate, should_cancel
+            )
+            if boundary is not None:
+                return boundary
+        return end
 
     def _find_split_points(self, audio_data: np.ndarray, sample_rate: int) -> List[int]:
-        max_chunk_samples = int((config.MAX_FILE_SIZE_MB * 1024 * 1024) / 2)
-        min_chunk_samples = int(config.MIN_CHUNK_DURATION_SEC * sample_rate)
-        silence_samples = int(config.SILENCE_DURATION_SEC * sample_rate)
-
-        audio_abs = np.abs(audio_data.astype(np.float32)) / 32767.0
-
-        window_size = int(0.1 * sample_rate)
-        audio_smooth = _moving_average(audio_abs, window_size)
-
+        """Array compatibility helper using the same bounded split windows."""
+        max_samples, overlap = self._chunk_limits(sample_rate)
         split_points = []
-        last_split = 0
-
-        search_start = min_chunk_samples
-        while search_start < len(audio_data):
-            search_end = min(search_start + max_chunk_samples - min_chunk_samples, len(audio_data))
-
-            best_split = self._find_best_silence(audio_smooth, search_start, search_end,
-                                               silence_samples, sample_rate)
-
-            if best_split is not None:
-                split_points.append(best_split)
-                last_split = best_split
-                search_start = best_split + min_chunk_samples
-            else:
-                forced_split = min(last_split + max_chunk_samples, len(audio_data) - 1)
-                split_points.append(forced_split)
-                last_split = forced_split
-                search_start = forced_split + min_chunk_samples
-
+        start = prefix = 0
+        while len(audio_data) - start > max_samples:
+            boundary = start + self._chunk_boundary(
+                audio_data[start:start + max_samples], sample_rate, prefix, overlap
+            )
+            split_points.append(boundary)
+            start = boundary - overlap
+            prefix = overlap
         return split_points
 
     def _find_best_silence(self, audio_smooth: np.ndarray, start: int, end: int,
-                          silence_samples: int, sample_rate: int) -> Optional[int]:
+                          silence_samples: int, sample_rate: int,
+                          should_cancel=None) -> Optional[int]:
         # Search from the end of the range backwards to prefer later splits
-        search_range = range(end - silence_samples, start, -int(0.1 * sample_rate))
+        search_range = range(end - silence_samples, start, -max(1, int(0.1 * sample_rate)))
 
         best_silence_start = None
         best_silence_quality = float('inf')
 
         for i in search_range:
+            if should_cancel is not None and should_cancel():
+                raise RuntimeError("Transcription canceled")
             if i + silence_samples >= len(audio_smooth):
                 continue
 
@@ -361,25 +408,22 @@ class AudioProcessor:
         return best_silence_start
 
     def _generate_time_based_splits(self, total_samples: int, sample_rate: int) -> List[int]:
-        # Target duration per chunk (slightly less than max to account for overhead)
-        target_duration = (config.MAX_FILE_SIZE_MB * 0.8) * 1024 * 1024 / (2 * sample_rate)
-        target_samples = int(target_duration * sample_rate)
-
+        max_samples, overlap = self._chunk_limits(sample_rate)
         split_points = []
         current_pos = 0
-
-        while current_pos + target_samples < total_samples:
-            current_pos += target_samples
-            split_points.append(current_pos)
-
+        while total_samples - current_pos > max_samples:
+            boundary = current_pos + max_samples - overlap
+            split_points.append(boundary)
+            current_pos = boundary - overlap
         return split_points
 
     def _create_chunks(self, audio_data: np.ndarray, sample_rate: int,
                       split_points: List[int], original_file: str) -> List[str]:
         chunk_files = []
-        overlap_samples = int(config.OVERLAP_DURATION_SEC * sample_rate)
+        _max_samples, overlap_samples = self._chunk_limits(sample_rate)
 
         temp_dir = tempfile.mkdtemp(prefix="audio_chunks_")
+        self.temp_files.append(temp_dir)
 
         start_idx = 0
         for i, end_idx in enumerate(split_points + [len(audio_data)]):
@@ -401,7 +445,6 @@ class AudioProcessor:
                         f"({len(chunk_data)/sample_rate:.1f}s, "
                         f"{os.path.getsize(chunk_filename)/(1024*1024):.1f}MB)")
 
-        self.temp_files.append(temp_dir)
         return chunk_files
 
     def _save_audio_chunk(self, audio_data: np.ndarray, sample_rate: int, filename: str):

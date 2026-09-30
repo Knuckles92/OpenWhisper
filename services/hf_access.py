@@ -131,6 +131,33 @@ def _progress_tqdm_class(progress_callback: Callable[[int, int], None]):
 def download_model_files(
     model_name: str,
     progress_callback: Optional[Callable[[int, int], None]] = None,
+    *,
+    cancel: Optional[threading.Event] = None,
+) -> str:
+    """Download in an isolated worker so shutdown also interrupts stalled I/O.
+
+    Progress and cancellation belong to this attempt. The cache's incomplete
+    files remain resumable; only normal verified completion marks a model
+    installed. Callers still own consent and keep this call off the UI thread.
+    """
+    import sys
+    from services.local_asr.process import SpeechProcess
+
+    if cancel is not None and cancel.is_set():
+        raise RuntimeError("Model download canceled")
+    worker = SpeechProcess(sys.executable, isolated=True)
+    try:
+        result = worker.request("download_model", model=model_name, timeout=24 * 3600.,
+                                cancel=cancel, progress=progress_callback)
+        invalidate_cached_models_snapshot()
+        return result["path"]
+    finally:
+        worker.close()
+
+
+def _download_model_files_in_process(
+    model_name: str,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> str:
     """Download a model from Hugging Face into the local cache.
 

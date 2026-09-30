@@ -203,7 +203,7 @@ class TestFileInfoCard:
         card = FileInfoCard()
         card.set_preview(_preview(needs_splitting=True, estimated_chunks=5))
 
-        assert card.chunk_label.text() == "5 chunks"
+        assert card.chunk_label.text() == "About 5 chunks"
         assert card.chunk_label.property("tone") == "warn"
 
     def test_set_transcribing_swaps_the_footer_for_progress(self):
@@ -1653,7 +1653,7 @@ class TestRemoteModelField:
 
 class TestChunkCountFollowsTheEngine:
     """Only the OpenAI API splits a file over its upload limit, so only it
-    gets a chunk count, and only it pays for the decode that finds one."""
+    gets an estimated chunk count. Preview never decodes either engine."""
 
     @pytest.fixture
     def long_wav(self, tmp_path, monkeypatch):
@@ -1702,17 +1702,17 @@ class TestChunkCountFollowsTheEngine:
 
         assert label.text().endswith(" chunks")
         assert label.property("tone") == "warn"
-        assert decodes == [long_wav]
+        assert decodes == []
 
         with _inline_threads():
             tab.set_backend("Parakeet")
         assert label.text() == "One pass"
-        assert decodes == [long_wav]
+        assert decodes == []
 
         with _inline_threads():
             tab.choose_backend("API")
         assert label.text().endswith(" chunks")
-        assert decodes == [long_wav, long_wav]
+        assert decodes == []
 
     def test_a_reread_keeps_finished_rows_and_skips_small_files(
         self, long_wav, decodes, tmp_path
@@ -1734,4 +1734,4 @@ class TestChunkCountFollowsTheEngine:
         assert rows[1].chunk_chip.text() == "One pass"
         assert [row.state for row in rows] == ["done", "done"]
         assert tab._items[1].preview is previews[1], "a small file is not re-read"
-        assert decodes == [long_wav]
+        assert decodes == []
