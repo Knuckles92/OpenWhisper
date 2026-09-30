@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 from unittest.mock import Mock
+import sys
 
 import pytest
 from PyQt6.QtCore import QPoint, QSize, Qt
@@ -299,7 +300,8 @@ def test_wayland_settings_capture_does_not_start_native_listener(monkeypatch):
         Qt.Key.Key_R,
         Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
     )
-    assert applied.call_args[0][0]["record_toggle"] == "ctrl+shift+r"
+    modifier = "cmd" if sys.platform == "darwin" else "ctrl"
+    assert applied.call_args[0][0]["record_toggle"] == f"{modifier}+shift+r"
     assert not field._capturing
     thread.assert_not_called()
     dialog.close()
