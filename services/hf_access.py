@@ -17,7 +17,11 @@ from typing import Callable, Dict, Final, Optional, Set, Tuple
 # is used throughout this module's own messages.
 from services.format_utils import format_size_bytes
 # Re-exported for the Downloads rows; the catalog owns the sizes.
-from services.model_catalog import MODEL_DOWNLOAD_SIZE_MB, format_download_mb
+from services.model_catalog import (
+    MODEL_DOWNLOAD_SIZE_MB,
+    MODEL_REPOSITORIES,
+    format_download_mb,
+)
 from services.settings import (
     HuggingFaceAccessPolicy,
     is_hf_hub_offline_env_set,
@@ -56,14 +60,7 @@ class ConsentAction:
 
 def resolve_model_repo(model_name: str) -> str:
     """Resolve a faster-whisper name to its Hugging Face repository ID."""
-    from services.local_asr.catalog import MODELS, artifacts
-    if model_name in MODELS:
-        return artifacts(model_name)["repo"]
-    try:
-        from faster_whisper.utils import _MODELS
-        return _MODELS.get(model_name, model_name)
-    except Exception:
-        return model_name
+    return MODEL_REPOSITORIES.get(model_name, model_name)
 
 
 def format_download_size(model_name: str) -> Optional[str]:

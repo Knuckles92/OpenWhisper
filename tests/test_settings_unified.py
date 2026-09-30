@@ -4,8 +4,10 @@ Settings hosts what used to be three windows. These tests pin the parts that
 only exist because of that: legacy destination names, the Overview landing
 page, the Downloads rail value, and the Ctrl+K palette across every page.
 """
+import builtins
 import os
 import tempfile
+import threading
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -73,7 +75,7 @@ def make_dialog():
     stacks = []
     temp = tempfile.TemporaryDirectory()
 
-    def build(values=None, cached=None):
+    def build(values=None, cached=None, *, background_cache_scan=False):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
         store.save_all_settings(values or {})
         stack = ExitStack()
@@ -89,7 +91,7 @@ def make_dialog():
         stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
         stacks.append(stack)
         dialog = settings_dialog_module.SettingsDialog(
-            get_loaded_model=lambda: None, background_cache_scan=False
+            get_loaded_model=lambda: None, background_cache_scan=background_cache_scan
         )
         return dialog, store
 
@@ -115,6 +117,76 @@ class TestRouting:
         # Model and download refreshes each ask for a rail redraw; the
         # Overview behind it is rebuilt once, after they all finish.
         assert overview.call_count == 1
+
+    def test_opening_settings_keeps_runtime_imports_off_the_ui_thread(
+        self, make_dialog, monkeypatch
+    ):
+        started = threading.Event()
+        release = threading.Event()
+        probes = []
+        ui_imports = []
+        original_import = builtins.__import__
+
+        def import_checked(name, *args, **kwargs):
+            if (
+                name.split(".", 1)[0] in {"faster_whisper", "ctranslate2", "torch"}
+                and threading.current_thread() is threading.main_thread()
+            ):
+                ui_imports.append(name)
+                raise ImportError("Speech runtimes must stay off the UI thread")
+            return original_import(name, *args, **kwargs)
+
+        def slow_runtime(backend, device):
+            probes.append(threading.current_thread())
+            started.set()
+            assert release.wait(5)
+            return "asr-nvidia-cpu", "cpu"
+
+        monkeypatch.setattr(builtins, "__import__", import_checked)
+        monkeypatch.setattr("services.local_asr.catalog.resolve_runtime", slow_runtime)
+        try:
+            dialog, _store = make_dialog(
+                {SettingsKey.SELECTED_MODEL: "parakeet"}, background_cache_scan=True
+            )
+            assert started.wait(2)
+            dialog.show()
+            QApplication.instance().processEvents()
+            dialog.select_destination(GENERAL)
+            dialog.select_destination(VOICE_MODEL)
+            dialog.refresh()
+            assert dialog.isVisible()
+            assert not ui_imports
+            assert len(probes) == 1
+            assert probes[0] is not threading.main_thread()
+            assert "Parakeet" in dialog.models.engine_inventory_label.text()
+        finally:
+            release.set()
+            for probe in probes:
+                probe.join(2)
+        QApplication.instance().processEvents()
+        assert "NVIDIA Speech CPU" in dialog.models.engine_inventory_label.text()
+        dialog.close()
+
+    def test_runtime_result_cannot_overwrite_a_new_device_selection(self, make_dialog):
+        with patch.object(models_module.ModelAssignments, "_check_engine_runtime"):
+            dialog, store = make_dialog(
+                {SettingsKey.SELECTED_MODEL: "parakeet"}, background_cache_scan=True
+            )
+            models = dialog.models
+            store.save_setting("local_asr_devices", {"parakeet": "cpu"})
+            models._refresh_engine_inventory()
+            current = models.engine_inventory_label.text()
+
+            models._on_engine_runtime_checked(("parakeet", "auto"), " · Old runtime.")
+            assert models.engine_inventory_label.text() == current
+
+            models._on_engine_runtime_checked(("parakeet", "cpu"), " · CPU runtime.")
+            assert models.engine_inventory_label.text().endswith(" · CPU runtime.")
+
+            store.save_setting(SettingsKey.SELECTED_MODEL, "api")
+            models.refresh_engine_selection()
+            models._on_engine_runtime_checked(("parakeet", "cpu"), " · Late result.")
+            assert models.engine_inventory_label.text() == ""
 
     @pytest.mark.parametrize("alias, destination", [
         ("ondemand", VOICE_MODEL),

@@ -165,6 +165,7 @@ class ModelAssignments(QObject):
     assignments_changed = pyqtSignal()
     _text_models_loaded = pyqtSignal(str, str, list, str, object)
     _cache_scan_finished = pyqtSignal(int, object)
+    _engine_runtime_checked = pyqtSignal(object, str)
     _meeting_remote_checked = pyqtSignal(str)
 
     COMPUTE_CHOICES = ("auto", "float16", "float32", "int8")
@@ -189,6 +190,8 @@ class ModelAssignments(QObject):
         self._get_loaded_model = get_loaded_model
         self._background_cache_scan = bool(background_cache_scan)
         self._cache_scan_generation = 0
+        self._engine_runtime_pending = set()
+        self._engine_runtime_labels = {}
         self._cached: Dict[str, CachedModelInfo] = {}
         self._text_models_cache: Dict[tuple, list] = {}
         self._catalog_tokens = {}
@@ -206,6 +209,7 @@ class ModelAssignments(QObject):
         self._built = set()
         self._text_models_loaded.connect(self._on_text_models_loaded)
         self._cache_scan_finished.connect(self._on_cache_scan_finished)
+        self._engine_runtime_checked.connect(self._on_engine_runtime_checked)
         self._meeting_remote_checked.connect(self._on_meeting_remote_checked)
 
     # ---- construction helpers ----
@@ -1300,12 +1304,10 @@ class ModelAssignments(QObject):
                 present = sum(1 for repo in repos if repo in self._cached)
                 text = f"{present} of {len(repos)} Whisper models on this computer."
             else:
-                from services.components import is_installed
                 from services.local_asr.cache import is_cached
                 from services.local_asr.catalog import (
                     BACKENDS,
                     MODELS,
-                    resolve_runtime,
                     selected_device,
                 )
                 keys = [key for key, model in MODELS.items() if model.backend == backend]
@@ -1315,16 +1317,55 @@ class ModelAssignments(QObject):
                     f"{present} of {len(keys)} {BACKENDS[backend]} {noun} on this "
                     "computer"
                 )
-                component, _device = resolve_runtime(
-                    backend, selected_device(backend, self._settings_snapshot())
-                )
-                name = component_coordinator.describe(component).display_name
-                state = "installed" if is_installed(component) else "not installed"
-                text += f" · {name} {state}."
+                key = (backend, selected_device(backend, self._settings_snapshot()))
+                self._engine_inventory_prefix = text
+                text += self._engine_runtime_labels.get(key, ".")
+                self._engine_inventory_label_key = key
+                self.engine_inventory_label.setText(text)
+                if key not in self._engine_runtime_pending:
+                    self._engine_runtime_pending.add(key)
+                    if self._background_cache_scan:
+                        threading.Thread(
+                            target=self._check_engine_runtime,
+                            args=(key,),
+                            name="settings-engine-runtime",
+                            daemon=True,
+                        ).start()
+                    else:
+                        self._check_engine_runtime(key)
+                return
         except Exception:
             logger.debug("Engine inventory lookup failed", exc_info=True)
             text = "Open Downloads to see which models are on this computer."
         self.engine_inventory_label.setText(text)
+
+    def _check_engine_runtime(self, key: tuple) -> None:
+        # Auto detection can import CTranslate2/PyTorch. Keep it off the Qt
+        # thread even when the user only opens Overview or General.
+        try:
+            from services.components import is_installed
+            from services.local_asr.catalog import resolve_runtime
+
+            component, _device = resolve_runtime(*key)
+            name = component_coordinator.describe(component).display_name
+            state = "installed" if is_installed(component) else "not installed"
+            label = f" · {name} {state}."
+        except Exception:
+            logger.debug("Engine runtime lookup failed", exc_info=True)
+            label = ". Open Downloads to check its runtime."
+        try:
+            self._engine_runtime_checked.emit(key, label)
+        except RuntimeError:
+            pass  # Settings was destroyed while detection was running.
+
+    def _on_engine_runtime_checked(self, key: tuple, label: str) -> None:
+        self._engine_runtime_pending.discard(key)
+        self._engine_runtime_labels[key] = label
+        if (
+            self.engine_combo.currentData() == key[0]
+            and getattr(self, "_engine_inventory_label_key", None) == key
+        ):
+            self.engine_inventory_label.setText(self._engine_inventory_prefix + label)
 
     def _refresh_meeting_runtime_label(self) -> None:
         if resolve_meeting_asr_source(self._settings_snapshot()) == "remote":

@@ -46,6 +46,12 @@ class TestHelpers:
         # Unknown names (custom repos, paths) pass through unchanged
         assert resolve_model_repo("me/my-model") == "me/my-model"
 
+    def test_bundled_repositories_match_faster_whisper_aliases(self):
+        from faster_whisper.utils import _MODELS
+
+        for name, repo in _MODELS.items():
+            assert resolve_model_repo(name) == repo
+
     def test_is_model_cached_local_directory(self):
         """A local model directory counts as cached without any lookup."""
         with tempfile.TemporaryDirectory() as tmp:

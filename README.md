@@ -24,10 +24,10 @@ Use a [packaged release](#install) with bundled Python and dependencies, or [run
 - **Audio files:** Transcribe one file or a queue, keep results separate or combine them, and copy the output when ready.
 - **Meetings:** Capture microphone and system audio, follow a live dashboard, review searchable transcripts and AI insights, play recordings, and export. Available on Windows and macOS 13+; Linux system audio is a [preview](docs/linux-system-audio.md).
 - **AI cleanup:** Apply spelling and style rules or reusable [cleanup profiles](docs/cleanup-profiles.md), with separate text-model choices for dictation and meetings.
-- **One Settings window:** An Overview of what is running, each model choice on the page for the feature it powers, local models and runtimes under Downloads, and Ctrl+K search across every setting, model, and help note.
+- **Settings:** Choose models, manage downloads, and find settings with Ctrl+K search.
 - **History:** Search, retranscribe, and export transcripts as Markdown, plain text, or JSON. See [export format support](docs/export-support.md) for what each format includes.
-- **Agent history API (preview):** Start an opt-in local, authenticated API to search saved transcriptions and meetings, retrieve notes, and cite transcript segments. See [API setup and reference](docs/agent-api.md).
-- **MCP for your agent:** Enable **Settings → MCP** to connect an agent to saved history, transcripts, and meeting insights. Includes live server status, a local URL, and copyable setup prompts, commands, and client configuration. See [MCP setup](docs/mcp.md).
+- **Agent history API (preview):** Search saved transcripts and meeting notes through an opt-in, authenticated local API. See [API setup](docs/agent-api.md).
+- **MCP:** Enable **Settings → MCP** to connect an agent to history, transcripts, and meeting insights. See [MCP setup](docs/mcp.md).
 
 The app also includes microphone selection, a system tray where available, and dark, light, or system-matched themes.
 
@@ -55,11 +55,13 @@ Downloads include `SHA256SUMS.txt` for verification. Compare your file's hash us
 
 ### macOS permissions
 
-Allow **Microphone** for recording, **Screen & System Audio Recording** for meeting system audio, and **Accessibility** for auto-paste under **System Settings → Privacy & Security**. Without Accessibility, you can still copy transcripts. **Settings → General → Set up auto-paste** shows the exact app to allow; if permission stops working after an update, remove its old entry, add that app again, and restart.
+In **System Settings → Privacy & Security**, allow **Microphone** for recording, **Screen & System Audio Recording** for meeting audio, and **Accessibility** for auto-paste. You can copy transcripts without Accessibility.
+
+**Settings → General → Set up auto-paste** shows which app to allow. If permission breaks after an update, remove its old entry, add the app again, and restart.
 
 ## Run from source
 
-Run OpenWhisper directly from a source checkout on Windows, macOS, or Linux. You'll need **Git** and **Python 3.11 or 3.12**; the steps below install the app's dependencies in a virtual environment. This also supports Intel Macs and Linux distributions without native packages.
+You'll need **Git** and **Python 3.11 or 3.12**. Source installs support Windows, macOS (including Intel Macs), and Linux distributions without native packages.
 
 ### One-time setup
 
@@ -92,7 +94,7 @@ On Linux, install Python's venv and development packages and a C compiler if nee
 
 ### Launch the app
 
-After setup, use these commands whenever you want to run OpenWhisper. Run them from your `OpenWhisper` checkout folder.
+Run these commands from your `OpenWhisper` checkout folder:
 
 **Windows (PowerShell):**
 
@@ -107,7 +109,7 @@ python main.py
 ./scripts/openwhisper
 ```
 
-The macOS/Linux launcher selects the project's virtual environment automatically. On macOS, it also lets Accessibility setup identify the correct app bundle. After launch, follow [Get started](#get-started) to choose a model and microphone.
+The macOS/Linux launcher selects the virtual environment and handles macOS app-bundle identification for Accessibility. Then follow [Get started](#get-started).
 
 ### Optional: launch from any terminal
 
@@ -115,13 +117,13 @@ To register `ow` and `openwhisper`, run `.\install.cmd` in PowerShell on Windows
 
 ### Optional: develop with uv
 
-Contributors can use `uv sync` and `uv run python main.py` without activating a virtual environment. See [development with uv](CONTRIBUTING.md#development-with-uv) for setup, tests, and NVIDIA GPU support. The pip instructions above and packaged releases do not require uv.
+Contributors can use `uv sync` and `uv run python main.py`. See [development with uv](CONTRIBUTING.md#development-with-uv) for setup, tests, and GPU support.
 
 ## GPU acceleration
 
-For Local Whisper, install **GPU Acceleration** from **Downloads → Components** on Windows or Linux x86_64. When Local Whisper finds an NVIDIA GPU without these libraries, it offers **Use this GPU**, which installs them, downloads the model the card should run, and loads it on the GPU. Source installs can instead run `python -m pip install -r requirements-gpu.txt` in the activated virtual environment. Both need an NVIDIA driver providing CUDA 12 (525+); the CUDA Toolkit is not required. macOS uses CPU.
+For Local Whisper on Windows or Linux x86_64, install **GPU Acceleration** from **Downloads → Components**, or choose **Use this GPU** when prompted. Requires an NVIDIA driver providing CUDA 12 (525+); the CUDA Toolkit is not needed. macOS uses CPU.
 
-On **Auto**, Local Whisper picks the compute type the card supports and has room for: float16 on RTX cards, int8_float32 on GTX 10-series and older cards, which have no float16. The log names the choice before loading, and **Downloads** gives each model's memory estimate for this computer's GPU. For example, turbo needs about 1.4 GB on a 4 GB GTX 1050 Ti.
+Source installs can use `python -m pip install -r requirements-gpu.txt` in the activated virtual environment. **Auto** selects a compatible compute type; **Downloads** shows GPU memory estimates.
 
 Other speech engines use their own runtimes from Downloads. The Meeting Intelligence Agent is also a separate component, available on Windows and Linux.
 
@@ -132,13 +134,13 @@ Use **Help → Check for Updates**. Windows applies an in-app update or opens se
 ## Get started
 
 1. Open **Settings → Voice model** and choose a speech backend. New Windows x64 installs default to Parakeet; other platforms default to Local Whisper. Existing choices are preserved.
-2. Download the selected model and any required runtime through **Settings → Downloads** (**Get models and runtimes** on the Voice model page opens it filtered to your engine), or add an OpenAI key in **Settings → API keys** for cloud transcription.
+2. Download the model and runtime through **Settings → Downloads**, or add an OpenAI key in **Settings → API keys** for cloud transcription.
 3. Choose your microphone in **Settings → Recording**. On macOS, grant the [required permissions](#macos-permissions).
 4. Use **Quick Record** or the recording hotkey. Stop recording to transcribe; dictation follows your clipboard and auto-paste settings. **Upload File** results stay in the app and have Copy buttons.
 
-For meetings, open **Meeting Mode**. Before starting, you can write an optional brief saying what you want out of the meeting — the AI note taker and the live copilot read it on every pass, so a request like "capture who objected to the vendor and why" is watched for as the meeting reaches it. The host can change it on the dashboard at any time. After local transcription finishes, **Continue in the background** lets you start another meeting while cleanup and reports finish; results remain in Past Meetings. Optional [insight review](docs/meeting-insight-review.md) uses TypeSafe to ask a few questions about uncertain commitments, owners, deadlines, or decisions; your answers update the insights and notes.
+For meetings, open **Meeting Mode**. Add an optional brief to guide AI notes and the live copilot; you can edit it during the meeting. After transcription, **Continue in the background** lets you start another meeting while reports finish. Find results in **Past Meetings**.
 
-Optional [fast judgments](docs/typesafe-fast-judgments.md) add advisory citation checks, meaning-based history search, an open-question radar, and clickable highlight pulses. Enable them individually under **Meeting Mode → Fast judgments**. Spoken instructions also support recaps and reversible term corrections.
+Optional [insight review](docs/meeting-insight-review.md) helps clarify uncertain decisions and commitments. [Fast judgments](docs/typesafe-fast-judgments.md) add citation checks, meaning-based history search, and live meeting cues; enable them under **Meeting Mode → Fast judgments**.
 
 ### Hotkeys
 
@@ -151,29 +153,13 @@ Change shortcuts and choose **Toggle** or **Push and hold** in **Settings → Ho
 | Enable/disable program | `Ctrl+Alt+Numpad *` | `Control+Option+Shift+R` |
 | Minimize to tray | `Ctrl+Alt+M` | `Control+Option+M` |
 
-On X11 Linux, hotkeys also reach the focused app. Omarchy uses compositor-owned desktop shortcuts and Hyprland's paste dispatcher. Other native Wayland desktops retain focused-window shortcuts and manual clipboard paste; blocking X11 hooks are disabled. On macOS, auto-paste requires Accessibility permission; normal global hotkeys do not.
+On X11 Linux, hotkeys also reach the focused app. Omarchy supports desktop shortcuts and auto-paste; other native Wayland desktops use focused-window shortcuts and manual paste. macOS auto-paste requires Accessibility permission; global hotkeys do not.
 
 ### Omarchy / Hyprland
 
-OpenWhisper automatically selects its Omarchy interface on Omarchy 3 and 4. It uses a compact application header, square controls, and the desktop's [shared palette](https://github.com/omacom/omarchy/blob/quattro/docs/theming.md). The existing recording, uploads, meetings, host dashboard, and settings remain available without a Quickshell extension or another UI runtime.
+OpenWhisper adapts to Omarchy 3 and 4 with a compact interface and desktop colors. Hyprland manages window placement and sizing; Omarchy mode supports desktop shortcuts and auto-paste on Hyprland 0.55+.
 
-Hyprland owns window placement and sizing. Switching views, opening History, or using Compact Mode changes the content inside the current tile; it no longer animates or restores the outer window's geometry. Small tiles scroll, the splash uses an opaque surface, and shortcut hints use native Qt popups. The in-app recording indicator stays within the window; the optional native bar widget provides recording status and live text while working in another app.
-
-Omarchy windows omit the top-right minimize, maximize, and close controls, including Qt's fallback titlebars on dialogs. Use Hyprland's window commands, the application menu, or the footer's Hide and Quit actions. Settings can shrink without forcing a larger surface: overflowing forms scroll, overview cards stack, and search fits the current window. Tray restore preserves maximized and fullscreen state.
-
-New Omarchy installations follow the desktop colors automatically. An existing explicit Dark or Light preference is preserved: choose **Settings → General → Theme → Omarchy desktop** (or **Match system**) to follow the current Omarchy palette. Theme changes are picked up within about two seconds, including replacement of the theme directory. Both the Omarchy 4 XDG state path and Omarchy 3 config path are supported. Qt uses Fusion control metrics and the compositor's display scale independently of GTK's `GDK_SCALE`.
-
-On Hyprland 0.55+, Omarchy mode registers the configured record, cancel, enable/disable, tray, meeting, and cleanup-profile shortcuts through the compositor. Both press and release are supported for push-and-hold. Existing Hyprland bindings are preserved: conflicting shortcuts remain available inside OpenWhisper, and Settings reports the conflict. Bindings refresh after a compositor configuration reload and are removed on normal app exit. This requires `hyprctl` and `gdbus`; it never edits the user's Hyprland configuration. Auto-paste dispatches Ctrl+V to the focused destination, or Ctrl+Shift+V in recognized terminals. Keep that destination focused when stopping dictation.
-
-The Omarchy 4 bar companion is in [`integrations/omarchy`](integrations/omarchy). Copy that folder to `~/.config/omarchy/plugins/org.openwhisper.controls`, then run `omarchy-shell shell rescanPlugins` and `omarchy plugin enable org.openwhisper.controls --section right`. Click its microphone to record/stop, right-click to cancel, or middle-click to open the app. Bar clicks behave like the app's buttons, including when keyboard shortcuts are paused or use push-and-hold. Its live preview uses Omarchy's own anchored popup, palette, font, and sizing components. Status is private to the current user under `$XDG_RUNTIME_DIR/openwhisper`; previews expire when the app stops responding. Disable it with `omarchy plugin disable org.openwhisper.controls`.
-
-For testing, launch with `OPENWHISPER_UI=omarchy ow` to select this interface explicitly, or `OPENWHISPER_UI=classic ow` for the classic appearance. Wayland sizing and popup protections remain enabled with either appearance. Omarchy 3 theme locations are supported; desktop shortcut and bar integration are validated on Omarchy 4 / Hyprland 0.56.
-
-Implementation references include [Omawrite's live palette handling](https://github.com/omacom/omawrite/blob/master/src/backend.cpp), [Omacut's Qt application window](https://github.com/omacom/omacut/blob/master/src/Main.qml), and [Omarchy's anchored popup sizing](https://github.com/omacom/omarchy/blob/quattro/shell/Ui/PopupCard.qml). OpenWhisper uses its existing Qt Widgets runtime; shell plugins and application windows have different focus and placement requirements.
-
-Developers can run `python scripts/qa_omarchy_ui.py --extended --output /tmp/openwhisper-ui-captures` inside a Hyprland 0.55+ session. It creates disposable settings/history, exercises every Settings destination, window modes, repeated resizing/reopening, tray restoration, common dialogs, menus, indicators, font scales, and themes. It compares Qt and compositor dimensions and verifies keypad callbacks through Hyprland, writing screenshots plus a JSON report without starting an engine or recording audio. The basic probe without `--extended` also works on earlier Hyprland versions.
-
-With the main app stopped, `python scripts/qa_omarchy_controls.py` separately checks D-Bus actions, temporary compositor bindings, shortcut capture/re-registration, native Wayland paste into a disposable text field, and binding cleanup. It restores the clipboard and does not use the microphone.
+Choose **Settings → General → Theme → Omarchy desktop** to follow your desktop palette. An optional [Omarchy 4 bar widget](integrations/omarchy) provides recording controls, status, and live text.
 
 ## Speech models
 
@@ -205,17 +191,17 @@ The host's selected engine handles transcription. Traffic is encrypted and limit
 
 ### AI cleanup and meeting intelligence
 
-Speech recognition and text processing use separate models. Choose the cleanup model on **Settings → AI cleanup** and the meeting model on **Settings → Intelligence**; each is set independently. Text providers include OpenAI, OpenRouter, Ollama, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints.
+Choose separate text models in **Settings → AI cleanup** and **Settings → Intelligence**. Providers include OpenAI, OpenRouter, Ollama, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. Ollama needs a separately managed server.
 
-Add credentials in **Settings → API keys**; they are stored in the OS credential store. Environment variables or a `.env` file provide a fallback when no key is saved: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENCODE_GO_API_KEY`, and `OPENCODE_ZEN_API_KEY`. Add custom endpoints from either chat-model picker. Ollama requires a separately managed server.
+Add credentials in **Settings → API keys**; keys use the OS credential store. Environment variables or `.env` provide a fallback: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENCODE_GO_API_KEY`, and `OPENCODE_ZEN_API_KEY`.
 
-Enable cleanup in **Settings → AI cleanup**, teach spelling and style in **Learned rules**, and use [Profiles](docs/cleanup-profiles.md) for formats such as emails or support tickets. Meeting settings control intelligence, end-of-meeting processing, and dashboard sharing.
+Enable cleanup in **Settings → AI cleanup**, teach spelling and style in **Learned rules**, and use [Profiles](docs/cleanup-profiles.md) for reusable formats.
 
 ### Offline use
 
 Downloaded speech models load from the local cache without network metadata checks. Install any required runtime before going offline.
 
-**Settings → Downloads → When a model is missing from this computer** controls missing-model downloads: ask first (default), always allow, or never connect unless you approve a one-time override. Setting `HF_HUB_OFFLINE=1` before launch blocks model downloads entirely. This controls model downloads; cloud transcription and remote text providers still require a network connection.
+Choose whether to ask, allow, or block missing-model downloads in **Settings → Downloads → When a model is missing from this computer**. Set `HF_HUB_OFFLINE=1` before launch to block model downloads entirely. Cloud transcription and remote text providers still need a network connection.
 
 <details>
 <summary>More screenshots</summary>

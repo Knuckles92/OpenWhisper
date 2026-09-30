@@ -391,6 +391,15 @@ for _key, _model in SPEECH_MODELS.items():
     )
 MODEL_CATALOG: Final[Mapping[str, ModelDetails]] = MappingProxyType(_CATALOG)
 
+# Keep display and cache lookups independent of faster-whisper's package
+# import, which also initializes CTranslate2 and its optional converters.
+MODEL_REPOSITORIES: Final[Mapping[str, str]] = MappingProxyType({
+    "large": _CATALOG["large-v3"].repository_id,
+    "large-v3-turbo": _CATALOG["turbo"].repository_id,
+    "distil-large-v3.5": "distil-whisper/distil-large-v3.5-ct2",
+    **{name: details.repository_id for name, details in _CATALOG.items()},
+})
+
 #: Approximate download sizes (MB) by model name, bundled so the consent
 #: dialog never contacts Hugging Face just to show an estimate: every catalog
 #: model, plus the faster-whisper names the catalog does not list.
