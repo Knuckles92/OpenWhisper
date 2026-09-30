@@ -8,6 +8,8 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+## [2.6.10] - 2026-09-29
+
 ### Added
 - **Host Mode** — **View → Host Mode** (Ctrl+Shift+H) is for a computer that only shares its engine with paired computers. It replaces Quick Record, Upload File, Meeting Mode and the History sidebar with a dashboard of what a host needs to see. The choice is remembered, and the dashboard keeps its own window size and position, the way Compact Mode does.
   - Whether sharing is on, with a button to start or stop it. The dashboard shows the address and port computers reach, the Tailscale name and address, and the identity a pairing computer should match. A port that is already in use is shown with its reason.
