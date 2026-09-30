@@ -190,8 +190,10 @@ class ModelAssignments(QObject):
         self._get_loaded_model = get_loaded_model
         self._background_cache_scan = bool(background_cache_scan)
         self._cache_scan_generation = 0
-        self._engine_runtime_pending = set()
-        self._engine_runtime_labels = {}
+        self._engine_runtime_pending: set[tuple[str, str]] = set()
+        self._engine_runtime_labels: Dict[tuple[str, str], str] = {}
+        self._engine_inventory_label_key: Optional[tuple[str, str]] = None
+        self._engine_inventory_prefix = ""
         self._cached: Dict[str, CachedModelInfo] = {}
         self._text_models_cache: Dict[tuple, list] = {}
         self._catalog_tokens = {}
@@ -1339,7 +1341,7 @@ class ModelAssignments(QObject):
             text = "Open Downloads to see which models are on this computer."
         self.engine_inventory_label.setText(text)
 
-    def _check_engine_runtime(self, key: tuple) -> None:
+    def _check_engine_runtime(self, key: tuple[str, str]) -> None:
         # Auto detection can import CTranslate2/PyTorch. Keep it off the Qt
         # thread even when the user only opens Overview or General.
         try:
@@ -1358,12 +1360,12 @@ class ModelAssignments(QObject):
         except RuntimeError:
             pass  # Settings was destroyed while detection was running.
 
-    def _on_engine_runtime_checked(self, key: tuple, label: str) -> None:
+    def _on_engine_runtime_checked(self, key: tuple[str, str], label: str) -> None:
         self._engine_runtime_pending.discard(key)
         self._engine_runtime_labels[key] = label
         if (
             self.engine_combo.currentData() == key[0]
-            and getattr(self, "_engine_inventory_label_key", None) == key
+            and self._engine_inventory_label_key == key
         ):
             self.engine_inventory_label.setText(self._engine_inventory_prefix + label)
 
