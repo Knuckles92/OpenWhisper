@@ -157,7 +157,11 @@ for package in _COLLECT_PACKAGES:
     # absent. collect_all() warns for a missing package, so skip it cleanly.
     if find_spec(package) is None:
         continue
-    pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
+    # MCP's optional CLI exits when its unneeded CLI dependencies are absent.
+    pkg_datas, pkg_binaries, pkg_hidden = collect_all(
+        package,
+        filter_submodules=lambda name: name != "mcp.cli" and not name.startswith("mcp.cli."),
+    )
     datas += pkg_datas
     binaries += pkg_binaries
     hiddenimports += pkg_hidden
