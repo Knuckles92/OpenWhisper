@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from config import config
+from services.desktop_session import is_wayland_session
 from services._hotkey_common import (
     Debouncer,
     format_hotkey_string,
@@ -211,7 +212,7 @@ _DISPLAY_MAIN_KEYS: Dict[str, str] = {
 
 
 def format_hotkey_display(hotkey_string: str) -> str:
-    """Format a canonical hotkey string for on-screen display (macOS symbols)."""
+    """Use macOS symbols on macOS and readable modifier names on Linux."""
     if not hotkey_string:
         return ""
 
@@ -219,13 +220,21 @@ def format_hotkey_display(hotkey_string: str) -> str:
     if main_key is None:
         return hotkey_string
 
-    parts = [_DISPLAY_MODIFIERS[m] for m in _ALL_MODIFIERS if m in modifiers]
+    symbols = _DISPLAY_MODIFIERS if sys.platform == "darwin" else {
+        "cmd": "Super", "ctrl": "Ctrl", "alt": "Alt", "shift": "Shift",
+    }
+    parts = [symbols[m] for m in _ALL_MODIFIERS if m in modifiers]
     if len(main_key) == 1:
         main_display = main_key.upper()
     else:
-        main_display = _DISPLAY_MAIN_KEYS.get(main_key, main_key.title())
+        main_display = (
+            _DISPLAY_MAIN_KEYS.get(main_key, main_key.title())
+            if sys.platform == "darwin" else main_key.replace("_", " ").title()
+        )
     parts.append(main_display)
-    return "".join(parts)
+    if sys.platform != "darwin" and main_display.startswith("Kp "):
+        parts[-1] = "Num " + main_display[3:]
+    return ("" if sys.platform == "darwin" else "+").join(parts)
 
 
 def is_accessibility_trusted() -> bool:
@@ -426,6 +435,13 @@ def send_paste() -> None:
     for the host process to post synthetic key events on macOS.
     """
     global _paste_controller
+    if is_wayland_session():
+        from services import hyprland
+
+        if hyprland.available():
+            hyprland.send_paste()
+            return
+        raise RuntimeError("This Wayland compositor does not support OpenWhisper auto-paste")
     keyboard_module = _load_pynput_keyboard()
     if _paste_controller is None:
         _paste_controller = keyboard_module.Controller()
@@ -487,6 +503,14 @@ class HotkeyManager:
         # A rehook may miss the release while stopped, so forget held state.
         self._record_key_held = False
         self._profile_held.clear()
+        if is_wayland_session():
+            # DISPLAY on Wayland points to XWayland. Its blocking Xlib hook
+            # cannot observe native clients; use ActiveWindowHotkeyFilter.
+            self.backend_available = False
+            self.backend_name = "unavailable"
+            self.backend_error = "Wayland uses focused-window shortcuts; global X11 hooks are disabled."
+            logger.info(self.backend_error)
+            return
 
         if self._use_carbon and self._setup_carbon_hotkeys():
             self.backend_available = True

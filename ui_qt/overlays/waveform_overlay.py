@@ -5,10 +5,10 @@ import sys
 import time
 from typing import Optional, List
 from PyQt6.QtWidgets import QApplication, QWidget
-from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, pyqtSignal, QPoint
+from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, pyqtSignal, QPoint, QPointF
 from PyQt6.QtGui import (
     QPainter, QPainterPath, QColor, QPen,
-    QFont, QFontMetrics, QCursor
+    QFont, QFontMetrics, QCursor, QTextLayout
 )
 from config import config
 from services.settings import resolve_streaming_overlay_font_size
@@ -37,15 +37,20 @@ class WaveformOverlay(QWidget):
     STATE_COPIED = "copied"
     STATE_LARGE_FILE_SPLITTING = "large_file_splitting"
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._embedded = parent is not None
 
         self.setWindowFlags(
+            Qt.WindowType.Widget if self._embedded else
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.Tool
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, not self._embedded)
+        if self._embedded:
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            parent.installEventFilter(self)
         if sys.platform == "darwin":
             # On macOS, Qt Tool windows are hidden whenever the app is not the
             # frontmost application (or when its main window is minimized). During
@@ -87,6 +92,8 @@ class WaveformOverlay(QWidget):
         self.hidden_timer = QTimer()
         self.hidden_timer.setSingleShot(True)
         self.hidden_timer.timeout.connect(self.hide)
+        if self._embedded:
+            self.hide()
 
     def paintEvent(self, event):
         try:
@@ -173,6 +180,31 @@ class WaveformOverlay(QWidget):
         text_rect = QRect(10, top, rect.width() - 20, max(20, rect.height() - top - 8))
         painter.setPen(QPen(token_color("overlay-text")))
         painter.setFont(self._streaming_preview_font())
+        if self._embedded:
+            key = (self._streaming_preview_text, text_rect.width(), self._streaming_font_size)
+            if getattr(self, "_preview_layout_key", None) != key:
+                self._preview_layout_key = key
+                self._preview_layout = QTextLayout(key[0], self._streaming_preview_font())
+                self._preview_lines = []
+                self._preview_layout.beginLayout()
+                while True:
+                    line = self._preview_layout.createLine()
+                    if not line.isValid():
+                        break
+                    line.setLineWidth(text_rect.width())
+                    self._preview_lines.append(line)
+                self._preview_layout.endLayout()
+            visible, height = [], 0
+            for line in reversed(self._preview_lines):
+                if height + line.height() > text_rect.height():
+                    break
+                visible.append(line)
+                height += line.height()
+            y = text_rect.bottom() - height + 1
+            for line in reversed(visible):
+                line.draw(painter, QPointF(text_rect.left(), y))
+                y += line.height()
+            return
         painter.drawText(
             text_rect,
             int(
@@ -209,6 +241,10 @@ class WaveformOverlay(QWidget):
 
     def _reposition_near_anchor(self):
         """Move the overlay near its anchor while keeping it fully on-screen."""
+        if self._embedded:
+            parent = self.parentWidget()
+            self.move(max(0, parent.width() - self.width() - 16), max(0, parent.height() - self.height() - 64))
+            return
         if self._anchor_pos is None:
             return
         available = self._available_geometry_for_anchor()
@@ -225,6 +261,8 @@ class WaveformOverlay(QWidget):
 
     def _effective_streaming_max_height(self) -> int:
         """Soft config max, further limited by free space near the anchor."""
+        if self._embedded:
+            return min(self._streaming_max_height, max(self._base_height, self.parentWidget().height() // 3))
         available = self._available_geometry_for_anchor()
         if available is None or self._anchor_pos is None:
             return self._streaming_max_height
@@ -267,6 +305,11 @@ class WaveformOverlay(QWidget):
             self._reposition_near_anchor()
 
     def _draw_background(self, painter: QPainter):
+        if self._embedded:
+            painter.fillRect(self.rect(), token_color("bg"))
+            painter.setPen(QPen(token_color("border"), 1))
+            painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+            return
         # Inset by half the pen width so the 1px border isn't clipped.
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         path = QPainterPath()
@@ -612,9 +655,13 @@ class WaveformOverlay(QWidget):
         Args:
             state: Optional state to set. If None, uses current state or RECORDING as default.
         """
+        if self._embedded and not self.parentWidget().isVisible():
+            return
         self._anchor_pos = QCursor.pos()
         self._reposition_near_anchor()
         self.show()
+        if self._embedded:
+            self.raise_()
 
         if state is not None:
             self.set_state(state)
@@ -628,3 +675,14 @@ class WaveformOverlay(QWidget):
         self.timer.stop()
         self.hidden_timer.stop()
         event.accept()
+
+    def eventFilter(self, obj, event):
+        from PyQt6.QtCore import QEvent
+
+        if self._embedded and obj is self.parentWidget():
+            if event.type() == QEvent.Type.Resize:
+                self._apply_streaming_height()
+                self._reposition_near_anchor()
+            elif event.type() == QEvent.Type.Hide:
+                self.hide()
+        return super().eventFilter(obj, event)

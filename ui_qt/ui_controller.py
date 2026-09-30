@@ -112,7 +112,9 @@ class UIController(QObject):
         )
 
         self.main_window = MainWindow()
-        self.overlay = WaveformOverlay()
+        from ui_qt.utils.desktop import is_wayland
+
+        self.overlay = WaveformOverlay(self.main_window if is_wayland() else None)
         self.tray_manager = SystemTrayManager(self.main_window)
         self.main_window.set_tray_available(self.tray_manager.available)
         self._dock_icon_sync = None

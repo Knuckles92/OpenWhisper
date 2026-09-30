@@ -1,0 +1,20 @@
+Tool: built-in image_gen
+
+Use case: precise-object-edit / layout cleanup.
+Edit the supplied OpenWhisper Tokyo Night desktop advertisement according to these exact instructions. This is a minimal cleanup; preserve the smooth modern headline typography and the rest of the composition.
+
+REMOVE:
+1. Remove the ENTIRE decorative terminal box in the lower-left, including its rectangular background, border, folder icons, prompt/cursor symbols, separator characters, and large outlined OMARCHY wordmark. Restore a seamless continuation of the existing sunset mountain/road wallpaper behind the removed box. Do not move or change the main OpenWhisper app window.
+2. Remove the short pale horizontal divider line under "Your Omarchy." in the upper-left.
+3. Remove BOTH small uppercase labels under that line: "OMARCHY PREVIEW" and "TOKYO NIGHT". Restore the wallpaper cleanly in their place. Do not replace them with other text.
+
+RELOCATE THREE WORDS ONLY:
+Keep the useful platform names that used to be inside the small terminal: "Arch Linux", "Hyprland", "Wayland".
+Place them directly on the wallpaper in the bottom-left corner, about 3% inset from the left and bottom edges, as one understated line:
+"Arch Linux · Hyprland · Wayland"
+Use small but comfortably readable, smooth clean sans-serif lettering in solid opaque pale lavender/cream. No box, pill, panel, dark rectangle, border, drop shadow, logo or glow behind it. It should be quiet and secondary but crisp, not faded into illegibility. Do not include the word OMARCHY in this corner caption.
+
+LOCK ALL REMAINING ELEMENTS:
+The large upper-left "OpenWhisper" headline and the two tagline lines "Your voice." / "Your Omarchy." stay exactly as in the source: same wording, smooth modern sans-serif font, colors, size, position and line breaks.
+Preserve the full main app UI image exactly: location, size, aspect ratio, controls, text, colors, thin frame. Preserve the desktop top bar, pink/purple sunset wallpaper, sun, mountain silhouettes, deer, trees and winding road. Preserve the overall 4:3 crop.
+No new marketing text, no additional logos, no changes inside the app, no window movement, no resizing or new objects. The finished result should feel cleaner and more spacious, with only the main headline, the real app window, and a discreet platform caption on the desktop wallpaper.

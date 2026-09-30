@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QObject, Qt
 from PyQt6.QtWidgets import QProxyStyle, QStyle, QWidget
+from ui_qt.utils.desktop import is_wayland
 
 
 class SnappyTooltipStyle(QProxyStyle):
@@ -45,6 +46,9 @@ class RoundedTooltipFilter(QObject):
             and isinstance(obj, QWidget)
             and obj.inherits("QTipLabel")
         ):
+            if is_wayland():
+                obj.setStyleSheet("QToolTip { border-radius: 0px; }")
+                return False
             obj.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
             # The native drop shadow is drawn for the rectangular window,
             # which would reintroduce square corners around the tooltip.

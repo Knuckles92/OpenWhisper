@@ -6,8 +6,8 @@ settings copy. Results say where they live ("Dictation › Voice model"), which
 makes the question "which part of the app owns this?" irrelevant.
 """
 import html
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from PyQt6.QtCore import QEvent, QObject, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QKeySequence, QPainter
@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -50,10 +51,10 @@ class SearchEntry:
     title: str
     detail: str
     destination: str
-    target: Optional[QWidget] = None
+    target: QWidget | None = None
     model_name: str = ""
     component_id: str = ""
-    badges: Tuple[str, ...] = ()
+    badges: tuple[str, ...] = ()
     keywords: str = ""
     icon: str = "box-blue.svg"
 
@@ -73,7 +74,7 @@ class PageSource:
     icon: str
 
 
-def _tokens(query: str) -> List[str]:
+def _tokens(query: str) -> list[str]:
     return [token for token in query.casefold().split() if token]
 
 
@@ -88,7 +89,7 @@ def _score(entry: SearchEntry, query: str, tokens: Sequence[str]) -> int:
     return 3
 
 
-def match_entries(entries: Iterable[SearchEntry], query: str) -> List[SearchEntry]:
+def match_entries(entries: Iterable[SearchEntry], query: str) -> list[SearchEntry]:
     """Entries containing every query word, best first, capped per section."""
     query = " ".join(query.split()).casefold()
     tokens = _tokens(query)
@@ -96,7 +97,7 @@ def match_entries(entries: Iterable[SearchEntry], query: str) -> List[SearchEntr
         return []
     hits = [entry for entry in entries if all(t in entry.haystack() for t in tokens)]
     hits.sort(key=lambda entry: (_score(entry, query, tokens), len(entry.title)))
-    ordered: List[SearchEntry] = []
+    ordered: list[SearchEntry] = []
     for kind in (SETTING, MODEL, HELP):
         ordered.extend([entry for entry in hits if entry.kind == kind][: SECTION_LIMITS[kind]])
     return ordered
@@ -154,9 +155,9 @@ def build_index(
     pages: Sequence[PageSource],
     downloads=None,
     extra: Sequence[SearchEntry] = (),
-) -> List[SearchEntry]:
+) -> list[SearchEntry]:
     """Walk every destination (and the model catalog) into search entries."""
-    entries: List[SearchEntry] = []
+    entries: list[SearchEntry] = []
     for page in pages:
         entries.append(SearchEntry(
             SETTING, page.title, f"{page.crumb} · {page.subtitle}",
@@ -196,7 +197,7 @@ def build_index(
     return entries
 
 
-def _catalog_entries(downloads) -> List[SearchEntry]:
+def _catalog_entries(downloads) -> list[SearchEntry]:
     from services.local_asr.catalog import BACKENDS, MODELS
     entries = []
     for name, row in downloads.rows.items():
@@ -236,6 +237,8 @@ class _ResultRow(QWidget):
         self.setObjectName("settingsSearchRow")
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         color = token_color("accent-soft").name()
+        self._tokens = tokens
+        self._highlight_color = color
         row = QHBoxLayout(self)
         row.setContentsMargins(10, 7, 12, 7)
         row.setSpacing(12)
@@ -249,13 +252,21 @@ class _ResultRow(QWidget):
         copy.setContentsMargins(0, 0, 0, 0)
         copy.setSpacing(1)
         title = QLabel(highlight(entry.title, tokens, color))
+        self._title_label = title
+        self._title_text = entry.title
         title.setObjectName("settingsSearchTitle")
         title.setTextFormat(Qt.TextFormat.RichText)
         copy.addWidget(title)
         detail_text = _snippet(entry.detail, tokens) if entry.kind == HELP else entry.detail
         detail = QLabel(highlight(detail_text, tokens, color))
+        self._detail_label = detail
+        self._detail_text = detail_text
         detail.setObjectName("settingsSearchDetail")
         detail.setTextFormat(Qt.TextFormat.RichText)
+        for label, text in ((title, entry.title), (detail, detail_text)):
+            label.setMinimumWidth(0)
+            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            label.setToolTip(text)
         copy.addWidget(detail)
         row.addLayout(copy, stretch=1)
         for badge in entry.badges:
@@ -263,6 +274,13 @@ class _ResultRow(QWidget):
             pill.setObjectName("settingsSearchBadge")
             pill.setProperty("tone", "ok" if badge in ("Downloaded", "Installed") else "use")
             row.addWidget(pill)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.layout().activate()
+        for label, text in ((self._title_label, self._title_text), (self._detail_label, self._detail_text)):
+            visible = label.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, label.width())
+            label.setText(highlight(visible, self._tokens, self._highlight_color))
 
 
 class SearchPalette(QWidget):
@@ -273,12 +291,13 @@ class SearchPalette(QWidget):
     PANEL_WIDTH = 640
     RESULTS_MAX_HEIGHT = 380
 
-    def __init__(self, host: QWidget, index: Callable[[], List[SearchEntry]]):
+    def __init__(self, host: QWidget, index: Callable[[], list[SearchEntry]]):
         super().__init__(host)
         self.setObjectName("settingsSearchOverlay")
         self._host = host
         self._index_provider = index
-        self._entries: List[SearchEntry] = []
+        self._entries: list[SearchEntry] = []
+        self._result_height = 0
         self.hide()
 
         self.panel = QFrame(self)
@@ -310,6 +329,7 @@ class SearchPalette(QWidget):
         column.addWidget(self.empty_label)
 
         footer = QWidget()
+        self.footer = footer
         footer.setObjectName("settingsSearchFooter")
         hints = QHBoxLayout(footer)
         hints.setContentsMargins(16, 8, 16, 9)
@@ -344,10 +364,18 @@ class SearchPalette(QWidget):
 
     def _place(self) -> None:
         self.setGeometry(self._host.rect())
-        width = min(self.PANEL_WIDTH, max(360, self.width() - 80))
+        width = min(self.PANEL_WIDTH, max(1, self.width() - 32))
         self.panel.setFixedWidth(width)
+        self.footer.setVisible(width >= 480 and self.height() >= 280)
+        chrome = self.input.sizeHint().height()
+        if self.footer.isVisible():
+            chrome += self.footer.sizeHint().height()
+        self.results.setFixedHeight(min(
+            self._result_height, max(48, self.height() - chrome - 32),
+        ))
         self.panel.adjustSize()
-        self.panel.move((self.width() - width) // 2, 58)
+        top = max(8, min(58, self.height() - self.panel.height() - 8))
+        self.panel.move((self.width() - width) // 2, top)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self._host and event.type() == QEvent.Type.Resize and self.isVisible():
@@ -382,7 +410,7 @@ class SearchPalette(QWidget):
 
     # ---- results ----
 
-    def current_entries(self) -> List[SearchEntry]:
+    def current_entries(self) -> list[SearchEntry]:
         """The entries now listed, in order (headers excluded)."""
         entries = []
         for index in range(self.results.count()):
@@ -427,8 +455,8 @@ class SearchPalette(QWidget):
             self.results.sizeHintForRow(index) + 2 * self.results.spacing()
             for index in range(self.results.count())
         )
-        self.results.setFixedHeight(min(self.RESULTS_MAX_HEIGHT, height + 12))
-        self.panel.adjustSize()
+        self._result_height = min(self.RESULTS_MAX_HEIGHT, height + 12)
+        self._place()
 
     def _move(self, step: int) -> None:
         count = self.results.count()
@@ -456,7 +484,7 @@ def shortcut_text(sequence: str = "Ctrl+K") -> str:
     return QKeySequence(sequence).toString(QKeySequence.SequenceFormat.NativeText)
 
 
-def keyword_entries(entries: Dict[str, Tuple[str, str, str]]) -> List[SearchEntry]:
+def keyword_entries(entries: dict[str, tuple[str, str, str]]) -> list[SearchEntry]:
     """Alias entries: ``{destination: (title, detail, keywords)}``."""
     return [
         SearchEntry(SETTING, title, detail, destination, keywords=keywords)

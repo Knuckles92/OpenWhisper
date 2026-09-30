@@ -1,0 +1,15 @@
+Tool: built-in image_gen
+
+Use case: precise-object-edit / typography replacement.
+EDIT the supplied OpenWhisper Omarchy desktop advertisement. The user explicitly DISLIKES THE BLOCKY PIXEL TYPE at the upper left. Replace that typography style completely, not merely sharpen it.
+
+CHANGE:
+Replace the large upper-left "OpenWhisper" title and the two tagline lines "Your voice." and "Your Omarchy." with beautifully typeset, smooth modern sans-serif lettering. Think a premium clean neo-grotesk / Inter / Helvetica-style typeface, bold for OpenWhisper and semibold or bold for the two tagline lines. The characters must have continuous smooth curves, true round counters, natural diagonal strokes, clean antialiased outlines, balanced kerning, and no stair-step pixels.
+Absolutely NO pixel font, blocky 8-bit lettering, terminal display font, bitmap type, squared-off rounded letters, ASCII headline or retro game typography in this upper-left marketing text.
+Keep the same exact words, line breaks, overall location, visual scale, and colors: warm pale cream "OpenWhisper", pale periwinkle "Your voice." and "Your Omarchy.". It can be naturally a little less wide if the new font requires it; preserve the balanced layout and generous whitespace. No extreme condensed or extended font.
+Also make the small upper-left "OMARCHY PREVIEW" and "TOKYO NIGHT" labels smooth clean sans-serif, with restrained tracking, preserving their exact words and positions. Keep the small horizontal divider.
+
+PRESERVE ALL OTHER CONTENT:
+Keep the 4:3 canvas; identical pink/purple sunset winding-road wallpaper, sun, mountains, deer and trees; native Omarchy bar at the top; exact app window size, placement, layout, controls, colors, and all UI text; keep the SMALLER terminal in its current bottom-left position and current size, including its large OMARCHY wordmark and three readable Arch Linux / Hyprland / Wayland lines.
+The stylized OMARCHY wordmark INSIDE the terminal can stay as it is: the user's correction targets the large marketing headline and tagline above, not the desktop terminal.
+Do not redesign the picture, change the colors, add text, move the windows, enlarge the app, add a monitor frame, or alter the background. This is a precise switch from pixelated marketing typography to smooth polished modern typography. Crisp text is the priority.

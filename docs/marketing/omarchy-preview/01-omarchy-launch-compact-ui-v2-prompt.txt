@@ -1,0 +1,21 @@
+Tool: built-in image_gen
+
+Use case: precise-object-edit / screenshot compositing.
+Edit IMAGE 1, the OpenWhisper Omarchy launch poster. The user loves the rest of this design and only dislikes how excessively wide and squat the embedded app window is.
+
+IMAGE ROLES:
+Image 1 is the edit target, preserve the complete poster design.
+Image 2 is a real narrower OpenWhisper UI screenshot, used ONLY as guidance for the natural compact spacing and proportions of the app. The app's model values in image 1 (Parakeet etc.) should remain unchanged.
+
+CHANGE ONLY THE EMBEDDED APP WINDOW:
+- Make the app panel substantially narrower, about 35% narrower than its current width, while keeping approximately its current height (or at most 5% taller).
+- Target a natural compact desktop window around 1.35:1 width-to-height, approximately 690 px wide by 510 px high relative to the original 1672x940 canvas.
+- Keep the panel horizontally centered underneath the headline, with its top and bottom in nearly the same places as now.
+- Reduce excess horizontal empty space inside the window. Reflow/compact its layout using the real narrow screenshot as guidance. Do NOT simply squeeze the pixels: text, icons, buttons and logo must keep their natural, undistorted proportions. Keep the UI text and controls crisp and generously readable, roughly their current type size.
+- Preserve the app's recognizable header, OMARCHY tag, three tabs, Parakeet engine row, recording buttons, transcription label, and Hide / Settings / Quit footer. Do not add new elements or desktop window-control buttons.
+- Preserve the delicate periwinkle frame and soft shadow. The result should feel like a well-proportioned, focused native desktop app, not a stretched banner.
+- Reveal/continue the same existing fine waveform artwork and dark texture in the space freed on both sides of the app window.
+
+LOCK EVERYTHING ELSE:
+Keep the output canvas the same 16:9 landscape composition. Keep the microphone logo, OpenWhisper wordmark, exact enormous two-line headline "Your voice." / "At home on Omarchy.", all typography, positions, colors, technical label "HYPRLAND · WAYLAND · QUICKSHELL", vertical "OMARCHY PREVIEW" text, the border registration marks, subtle paper texture, lighting and wave artwork unchanged outside the edited panel region.
+Do NOT redesign or restyle the overall poster. Do not turn the whole graphic square or portrait. Do not add new copy, a second window, a laptop mockup, extra features, perspective, or ornamental elements. This is one surgical composition fix to the app window's proportions.

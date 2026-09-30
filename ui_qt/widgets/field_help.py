@@ -1,10 +1,17 @@
 """Interactive field help that remains open while its links are in use."""
 from PyQt6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QCursor, QPainter, QPen
-from PyQt6.QtWidgets import QFrame, QLabel, QPushButton, QSizePolicy, QVBoxLayout
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+)
 
+from ui_qt.utils.desktop import is_wayland
 from ui_qt.utils.palette import token_color
-
 
 _CARD_FLAGS = (
     Qt.WindowType.ToolTip
@@ -25,10 +32,11 @@ class HelpCard(QFrame):
     RADIUS = 10
 
     def __init__(self, parent=None):
-        super().__init__(parent, _CARD_FLAGS)
+        self._embedded = is_wayland()
+        super().__init__(parent, Qt.WindowType.Widget if self._embedded else _CARD_FLAGS)
         self.setObjectName("fieldHelpCard")
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, not self._embedded)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
     def paintEvent(self, event):
@@ -37,7 +45,11 @@ class HelpCard(QFrame):
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         painter.setPen(QPen(token_color("border-hover"), 1.0))
         painter.setBrush(token_color("surface-hover"))
-        painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
+        if self._embedded:
+            painter.fillRect(self.rect(), token_color("surface-hover"))
+            painter.drawRect(rect)
+        else:
+            painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
 
 
 class FieldHelp(QPushButton):
@@ -115,11 +127,13 @@ class FieldHelp(QPushButton):
         place ``move(mapToGlobal(...))`` in the middle of the page.
         """
         host = self.window()
-        if self.card.parent() is host and self.card.isWindow():
+        embedded = self.card._embedded
+        if self.card.parent() is host and self.card.isWindow() != embedded:
             return
-        self.card.setParent(host, _CARD_FLAGS)
+        self.card.setParent(host, Qt.WindowType.Widget if embedded else _CARD_FLAGS)
+        host.installEventFilter(self)
         self.card.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-        self.card.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.card.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, not embedded)
         self.card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
     def _size_card(self):
@@ -127,6 +141,8 @@ class FieldHelp(QPushButton):
 
         screen = self.screen().availableGeometry()
         width = min(round(360 * current_ui_font_scale()), max(160, screen.width()))
+        if self.card._embedded:
+            width = min(width, max(160, self.window().width() - 24))
         inner = max(80, width - 28)
         self._body.setFixedWidth(inner)
         for link in self.links:
@@ -135,6 +151,12 @@ class FieldHelp(QPushButton):
         self.card.adjustSize()
 
     def _card_position(self) -> QPoint:
+        if self.card._embedded:
+            host = self.window()
+            point = self.mapTo(host, QPoint(0, self.height() + 4))
+            point.setX(max(8, min(point.x(), host.width() - self.card.width() - 8)))
+            point.setY(max(8, min(point.y(), host.height() - self.card.height() - 8)))
+            return point
         point = self.mapToGlobal(QPoint(0, self.height() + 4))
         screen = self.screen().availableGeometry()
         point.setX(max(screen.left(), min(point.x(), screen.right() - self.card.width() + 1)))
@@ -158,7 +180,9 @@ class FieldHelp(QPushButton):
         point = QCursor.pos()
         over_caption = self.rect().contains(self.mapFromGlobal(point))
         over_card = self.card.rect().adjusted(-8, -8, 8, 8).contains(self.card.mapFromGlobal(point))
-        if not over_caption and not over_card and not self.card.isActiveWindow():
+        focused = QApplication.focusWidget()
+        active = (focused is not None and self.card.isAncestorOf(focused)) if self.card._embedded else self.card.isActiveWindow()
+        if not over_caption and not over_card and not active:
             self.card.hide()
             self._dismiss_timer.stop()
 
@@ -209,6 +233,11 @@ class FieldHelp(QPushButton):
         super().hideEvent(event)
 
     def eventFilter(self, watched, event):
+        if self.card._embedded and watched is self.window() and event.type() in (
+            QEvent.Type.Resize, QEvent.Type.Hide, QEvent.Type.WindowDeactivate,
+        ):
+            self.card.hide()
+            self._dismiss_timer.stop()
         if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
             self.card.hide()
             self._dismiss_timer.stop()

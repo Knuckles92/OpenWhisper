@@ -22,6 +22,7 @@ from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_EASING,
     UNLIMITED_HEIGHT,
 )
+from ui_qt.utils.desktop import compositor_managed, without_window_buttons
 
 logger = logging.getLogger(__name__)
 
@@ -307,6 +308,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("OpenWhisper")
+        self._compositor_managed = compositor_managed()
 
         # Keep the explicit Window type flag: setWindowFlags() replaces *all*
         # flags, and a bare FramelessWindowHint drops the top-level Window type.
@@ -314,6 +316,7 @@ class MainWindow(QMainWindow):
         # front after hide() (i.e. can't be restored from the tray); on Windows
         # it happens to work either way. Including Window is safe on both.
         self.setWindowFlags(
+            without_window_buttons(Qt.WindowType.Window) if self._compositor_managed else
             Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
         )
         self.setMinimumSize(
@@ -325,6 +328,9 @@ class MainWindow(QMainWindow):
             config.MAIN_WINDOW_DEFAULT_WIDTH,
             config.MAIN_WINDOW_DEFAULT_HEIGHT,
         )
+        if self._compositor_managed:
+            self.setMinimumSize(360, 240)
+            self.setMaximumSize(UNLIMITED_HEIGHT, UNLIMITED_HEIGHT)
 
         self.is_recording = False
         self.current_model = config.MODEL_CHOICES[0]
@@ -379,7 +385,8 @@ class MainWindow(QMainWindow):
 
         self.setMouseTracking(True)
         from PyQt6.QtWidgets import QApplication
-        QApplication.instance().installEventFilter(self)
+        if not self._compositor_managed:
+            QApplication.instance().installEventFilter(self)
 
     def _setup_ui(self):
         central_widget = QWidget()
@@ -397,14 +404,31 @@ class MainWindow(QMainWindow):
         outer_layout.setContentsMargins(1, 1, 1, 1)  # 1px margin for border visibility
         outer_layout.setSpacing(0)
 
-        self.title_bar = CustomTitleBar(self)
+        if self._compositor_managed:
+            from ui_qt.widgets.desktop_header import DesktopHeader
+
+            self.title_bar = DesktopHeader(self)
+        else:
+            self.title_bar = CustomTitleBar(self)
         outer_layout.addWidget(self.title_bar)
 
         content_wrapper = QWidget()
         root_layout = QHBoxLayout(content_wrapper)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
-        outer_layout.addWidget(content_wrapper, stretch=1)
+        if self._compositor_managed:
+            from PyQt6.QtWidgets import QScrollArea
+
+            # The viewport follows the configure size even when a tile is
+            # smaller than the contents' minimum size. Nothing paints outside
+            # the allocated surface, and every control remains reachable.
+            self.desktop_scroll = QScrollArea()
+            self.desktop_scroll.setFrameShape(QFrame.Shape.NoFrame)
+            self.desktop_scroll.setWidgetResizable(True)
+            self.desktop_scroll.setWidget(content_wrapper)
+            outer_layout.addWidget(self.desktop_scroll, stretch=1)
+        else:
+            outer_layout.addWidget(content_wrapper, stretch=1)
 
         main_area = QWidget()
         main_area_layout = QVBoxLayout(main_area)
@@ -597,11 +621,12 @@ class MainWindow(QMainWindow):
         footer_layout.setSpacing(0)
         footer_layout.addStretch()
 
-        self.tray_button = Button("Minimize to Tray")
+        self.tray_button = Button("Hide" if self._compositor_managed else "Minimize to Tray")
         self.tray_button.setObjectName("trayButton")
         self.tray_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.tray_button.setFixedHeight(34)
-        self.tray_button.setMinimumWidth(140)
+        self.tray_button.setMinimumWidth(60 if self._compositor_managed else 140)
+        self.tray_button.setToolTip("Hide OpenWhisper in the system tray")
         self.tray_button.setStyleSheet(self._TRAY_BUTTON_STYLE)
         self.tray_button.set_hotkey(
             format_hotkey_display(config.DEFAULT_HOTKEYS["minimize_tray"])
@@ -975,7 +1000,8 @@ class MainWindow(QMainWindow):
         Deferring keeps the check off the state-update path and coalesces the
         bursts of updates the finalization pipeline sends.
         """
-        self._meeting_height_timer.start(0)
+        if not self._compositor_managed:
+            self._meeting_height_timer.start(0)
 
     def _calculate_meeting_mode_window_height(self) -> int:
         """Calculate the total window height needed to display Meeting Mode content."""
@@ -1111,9 +1137,9 @@ class MainWindow(QMainWindow):
             self._resize_animation.stop()
 
         if compact:
-            if self.title_bar._is_maximized:
+            if not self._compositor_managed and self.title_bar._is_maximized:
                 self.title_bar._toggle_maximize()
-            elif self.isMaximized():
+            elif not self._compositor_managed and self.isMaximized():
                 self.showNormal()
 
             self._full_geometry = QRect(self.geometry())
@@ -1125,32 +1151,34 @@ class MainWindow(QMainWindow):
             self.history_edge_tab.hide()
             self.history_sidebar.hide()
             self.title_bar.title_label.hide()
-            self.title_bar.maximize_btn.hide()
-
-            self.setMinimumSize(0, 0)
-            self.setMaximumSize(UNLIMITED_HEIGHT, UNLIMITED_HEIGHT)
-            self.setFixedSize(
-                config.MAIN_WINDOW_COMPACT_WIDTH,
-                config.MAIN_WINDOW_COMPACT_HEIGHT,
-            )
+            if not self._compositor_managed:
+                self.title_bar.maximize_btn.hide()
+                self.setMinimumSize(0, 0)
+                self.setMaximumSize(UNLIMITED_HEIGHT, UNLIMITED_HEIGHT)
+                self.setFixedSize(
+                    config.MAIN_WINDOW_COMPACT_WIDTH,
+                    config.MAIN_WINDOW_COMPACT_HEIGHT,
+                )
             self._restore_compact_geometry()
         else:
             self._save_compact_geometry()
             self._compact_mode = False
 
-            self.setMinimumSize(
-                config.MAIN_WINDOW_MIN_WIDTH,
-                config.MAIN_WINDOW_MIN_HEIGHT,
-            )
-            self.setMaximumSize(config.MAIN_WINDOW_MAX_WIDTH, UNLIMITED_HEIGHT)
+            if not self._compositor_managed:
+                self.setMinimumSize(
+                    config.MAIN_WINDOW_MIN_WIDTH,
+                    config.MAIN_WINDOW_MIN_HEIGHT,
+                )
+                self.setMaximumSize(config.MAIN_WINDOW_MAX_WIDTH, UNLIMITED_HEIGHT)
             self.compact_controller.hide()
             self.tabbed_content.show()
             self.history_edge_tab.show()
             self.history_sidebar.show()
             self.title_bar.title_label.show()
-            self.title_bar.maximize_btn.show()
+            if not self._compositor_managed:
+                self.title_bar.maximize_btn.show()
 
-            if self._full_geometry is not None:
+            if self._full_geometry is not None and not self._compositor_managed:
                 self.setGeometry(self._full_geometry)
             else:
                 self._restore_window_geometry()
@@ -1171,6 +1199,8 @@ class MainWindow(QMainWindow):
             logger.warning(f"Failed to restore compact mode: {e}")
 
     def _save_compact_geometry(self) -> None:
+        if self._compositor_managed:
+            return
         geo = self.geometry()
         try:
             settings_manager.save_setting(
@@ -1181,6 +1211,8 @@ class MainWindow(QMainWindow):
             logger.warning(f"Failed to save compact window geometry: {e}")
 
     def _restore_compact_geometry(self) -> None:
+        if self._compositor_managed:
+            return
         x = self.x()
         y = self.y()
         try:
@@ -1229,9 +1261,9 @@ class MainWindow(QMainWindow):
             and self._resize_animation.state() == QPropertyAnimation.State.Running
         ):
             self._resize_animation.stop()
-        if self.title_bar._is_maximized:
+        if not self._compositor_managed and self.title_bar._is_maximized:
             self.title_bar._toggle_maximize()
-        elif self.isMaximized():
+        elif not self._compositor_managed and self.isMaximized():
             self.showNormal()
 
         if enabled:
@@ -1254,7 +1286,7 @@ class MainWindow(QMainWindow):
             self.history_edge_tab.show()
             self.history_sidebar.show()
             self.title_bar.title_label.setText("OpenWhisper")
-            if self._pre_host_geometry is not None:
+            if self._pre_host_geometry is not None and not self._compositor_managed:
                 self.setGeometry(self._pre_host_geometry)
             else:
                 self._restore_window_geometry()
@@ -1282,6 +1314,8 @@ class MainWindow(QMainWindow):
             logger.warning(f"Failed to restore host mode: {e}")
 
     def _save_host_geometry(self) -> None:
+        if self._compositor_managed:
+            return
         if self.isMaximized() or self.isMinimized():
             return
         geo = self.geometry()
@@ -1294,6 +1328,8 @@ class MainWindow(QMainWindow):
             logger.warning(f"Failed to save host window geometry: {e}")
 
     def _restore_host_geometry(self) -> None:
+        if self._compositor_managed:
+            return
         from PyQt6.QtWidgets import QApplication
 
         target = None
@@ -1346,7 +1382,10 @@ class MainWindow(QMainWindow):
             (self.windowState() & ~Qt.WindowState.WindowMinimized)
             | Qt.WindowState.WindowActive
         )
-        self.showNormal()
+        if self._compositor_managed:
+            self.show()
+        else:
+            self.showNormal()
         self.raise_()
         self.activateWindow()
 
@@ -1392,6 +1431,8 @@ class MainWindow(QMainWindow):
         Args:
             sidebar_width: Current animated width of the history sidebar.
         """
+        if self._compositor_managed:
+            return
         base = getattr(self, '_sidebar_base_width', None)
         if base is None:
             return
@@ -1467,6 +1508,8 @@ class MainWindow(QMainWindow):
             target_width: Target window width.
             target_height: Target window height.
         """
+        if self._compositor_managed:
+            return
         if not hasattr(self, '_resize_animation'):
             self._resize_animation = QPropertyAnimation(self, b"geometry")
             self._resize_animation.setDuration(SECTION_COLLAPSE_DURATION_MS)
@@ -1592,7 +1635,7 @@ class MainWindow(QMainWindow):
             Tuple of (horizontal_edge, vertical_edge) where each is:
             -1 for left/top, 0 for none, 1 for right/bottom.
         """
-        if self._compact_mode:
+        if self._compact_mode or self._compositor_managed:
             return (0, 0)
 
         rect = self.rect()
@@ -1699,6 +1742,8 @@ class MainWindow(QMainWindow):
         super().mouseReleaseEvent(event)
 
     def _schedule_geometry_save(self):
+        if self._compositor_managed:
+            return
         if not self._initial_show_complete:
             return
         if self._geometry_save_timer is None:
@@ -1710,6 +1755,8 @@ class MainWindow(QMainWindow):
         self._geometry_save_timer.start(500)
 
     def _save_geometry(self):
+        if self._compositor_managed:
+            return
         if self.isMaximized() or self.isMinimized():
             return
 
@@ -1753,6 +1800,11 @@ class MainWindow(QMainWindow):
             logger.warning(f"Failed to save window geometry: {e}")
 
     def _restore_window_geometry(self):
+        if self._compositor_managed:
+            if not self._initial_show_complete:
+                available = self.screen().availableGeometry()
+                self.resize(min(960, available.width() - 64), min(680, available.height() - 64))
+            return
         try:
             geo = settings_manager.get(SettingsKey.WINDOW_GEOMETRY)
             if isinstance(geo, dict) and {'x', 'y', 'width', 'height'}.issubset(geo.keys()):

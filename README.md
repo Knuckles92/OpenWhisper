@@ -151,7 +151,29 @@ Change shortcuts and choose **Toggle** or **Push and hold** in **Settings → Ho
 | Enable/disable program | `Ctrl+Alt+Numpad *` | `Control+Option+Shift+R` |
 | Minimize to tray | `Ctrl+Alt+M` | `Control+Option+M` |
 
-On Linux, hotkeys also reach the focused app. Native Wayland limits global hotkeys and auto-paste; use in-app controls and clipboard copy, or an X11 session for those integrations. On macOS, auto-paste requires Accessibility permission; normal global hotkeys do not.
+On X11 Linux, hotkeys also reach the focused app. Omarchy uses compositor-owned desktop shortcuts and Hyprland's paste dispatcher. Other native Wayland desktops retain focused-window shortcuts and manual clipboard paste; blocking X11 hooks are disabled. On macOS, auto-paste requires Accessibility permission; normal global hotkeys do not.
+
+### Omarchy / Hyprland
+
+OpenWhisper automatically selects its Omarchy interface on Omarchy 3 and 4. It uses a compact application header, square controls, and the desktop's [shared palette](https://github.com/omacom/omarchy/blob/quattro/docs/theming.md). The existing recording, uploads, meetings, host dashboard, and settings remain available without a Quickshell extension or another UI runtime.
+
+Hyprland owns window placement and sizing. Switching views, opening History, or using Compact Mode changes the content inside the current tile; it no longer animates or restores the outer window's geometry. Small tiles scroll, the splash uses an opaque surface, and shortcut hints use native Qt popups. The in-app recording indicator stays within the window; the optional native bar widget provides recording status and live text while working in another app.
+
+Omarchy windows omit the top-right minimize, maximize, and close controls, including Qt's fallback titlebars on dialogs. Use Hyprland's window commands, the application menu, or the footer's Hide and Quit actions. Settings can shrink without forcing a larger surface: overflowing forms scroll, overview cards stack, and search fits the current window. Tray restore preserves maximized and fullscreen state.
+
+New Omarchy installations follow the desktop colors automatically. An existing explicit Dark or Light preference is preserved: choose **Settings → General → Theme → Omarchy desktop** (or **Match system**) to follow the current Omarchy palette. Theme changes are picked up within about two seconds, including replacement of the theme directory. Both the Omarchy 4 XDG state path and Omarchy 3 config path are supported. Qt uses Fusion control metrics and the compositor's display scale independently of GTK's `GDK_SCALE`.
+
+On Hyprland 0.55+, Omarchy mode registers the configured record, cancel, enable/disable, tray, meeting, and cleanup-profile shortcuts through the compositor. Both press and release are supported for push-and-hold. Existing Hyprland bindings are preserved: conflicting shortcuts remain available inside OpenWhisper, and Settings reports the conflict. Bindings refresh after a compositor configuration reload and are removed on normal app exit. This requires `hyprctl` and `gdbus`; it never edits the user's Hyprland configuration. Auto-paste dispatches Ctrl+V to the focused destination, or Ctrl+Shift+V in recognized terminals. Keep that destination focused when stopping dictation.
+
+The Omarchy 4 bar companion is in [`integrations/omarchy`](integrations/omarchy). Copy that folder to `~/.config/omarchy/plugins/org.openwhisper.controls`, then run `omarchy-shell shell rescanPlugins` and `omarchy plugin enable org.openwhisper.controls --section right`. Click its microphone to record/stop, right-click to cancel, or middle-click to open the app. Bar clicks behave like the app's buttons, including when keyboard shortcuts are paused or use push-and-hold. Its live preview uses Omarchy's own anchored popup, palette, font, and sizing components. Status is private to the current user under `$XDG_RUNTIME_DIR/openwhisper`; previews expire when the app stops responding. Disable it with `omarchy plugin disable org.openwhisper.controls`.
+
+For testing, launch with `OPENWHISPER_UI=omarchy ow` to select this interface explicitly, or `OPENWHISPER_UI=classic ow` for the classic appearance. Wayland sizing and popup protections remain enabled with either appearance. Omarchy 3 theme locations are supported; desktop shortcut and bar integration are validated on Omarchy 4 / Hyprland 0.56.
+
+Implementation references include [Omawrite's live palette handling](https://github.com/omacom/omawrite/blob/master/src/backend.cpp), [Omacut's Qt application window](https://github.com/omacom/omacut/blob/master/src/Main.qml), and [Omarchy's anchored popup sizing](https://github.com/omacom/omarchy/blob/quattro/shell/Ui/PopupCard.qml). OpenWhisper uses its existing Qt Widgets runtime; shell plugins and application windows have different focus and placement requirements.
+
+Developers can run `python scripts/qa_omarchy_ui.py --extended --output /tmp/openwhisper-ui-captures` inside a Hyprland 0.55+ session. It creates disposable settings/history, exercises every Settings destination, window modes, repeated resizing/reopening, tray restoration, common dialogs, menus, indicators, font scales, and themes. It compares Qt and compositor dimensions and verifies keypad callbacks through Hyprland, writing screenshots plus a JSON report without starting an engine or recording audio. The basic probe without `--extended` also works on earlier Hyprland versions.
+
+With the main app stopped, `python scripts/qa_omarchy_controls.py` separately checks D-Bus actions, temporary compositor bindings, shortcut capture/re-registration, native Wayland paste into a disposable text field, and binding cleanup. It restores the clipboard and does not use the microphone.
 
 ## Speech models
 
@@ -169,27 +191,17 @@ Local model weights and optional runtimes are separate downloads. **Settings →
 
 ### Remote engine
 
-Dictate on a laptop while a desktop or home server with a GPU does the transcription. Both computers run OpenWhisper:
+Use another computer's OpenWhisper engine for dictation, uploads, or meetings:
 
 1. On the computer with the engine, open **Settings → Dictation → Remote engine**, turn on **Share this computer's engine**, and click **Pair a device**. Allow OpenWhisper through the firewall if Windows asks.
 2. On the other computer, open the same page, enter the host's address (shown under the switch) and the six-digit code, and click **Pair**. Check that both screens show the same identity code.
 3. Click **Use for dictation**, or choose **Remote computer** as the recording engine.
 
-The host serves the engine selected on it. Traffic is encrypted, and only paired computers can connect; remove one from **Paired computers** to cut it off.
+The host's selected engine handles transcription. Traffic is encrypted and limited to paired computers; remove access under **Paired computers**.
 
-For meetings, choose **Settings → Meeting Mode → Voice & speakers → Speech engine → Remote computer**, or **Use for meetings** on the Remote engine page. This choice is independent of dictation; **This computer** remains the default and remembers your local meeting model. **Test connection** checks pairing, availability, and meeting support without sending audio. **Configure remote engine → Manage host models** lets you select the host's model and device; those choices affect every connected client. Supported meeting hosts run Whisper, Parakeet, Nemotron, or Moonshine. Native live previews follow the supported host model; Whisper updates through completed meeting chunks. The meeting's **Spoken language** is sent with its audio.
-
-Microphone and system-audio capture, recordings, transcripts, and on-device speaker identification remain on the computer running the meeting. In remote mode, speech audio is sent to the paired host for recognition, including the optional after-meeting re-transcription pass. AI insights and cloud speaker identification keep their separate settings. Keep both computers awake and the host's selected engine available throughout the meeting.
-
-A remote meeting checks its host before recording starts. If the connection drops later, capture continues to local disk, the dashboard shows the outage, and transcription retries automatically. End waits for pending transcription within its normal time budget; unfinished audio remains recoverable from Past Meetings. Recovery and re-transcription reuse the saved host identity, model, and language. If the host changes models, restore the original model to continue. Audio is never silently rerouted to a different paired computer or a local model.
-
-The **Remote computer** engine card in Quick Record and Upload shows the host's model, **Device** (Auto, CPU, or NVIDIA GPU), and Whisper **Quant** setting or the optional engine's **Language**. Choices reflect the host's hardware and installed runtimes. Changes apply to the host and connected clients, and wait while its engine reloads. The card separately shows the device and precision actually running, GPU name and total VRAM when reported, and connection route/latency. Both computers need an updated version for runtime controls; older hosts show read-only runtime details.
-
-**Manage host models** opens a searchable model browser with model details, download sizes, and CPU/GPU readiness. Download model weights, install missing speech runtimes, and choose a model and device to **Use on host**. The host must enable **Allow paired computers to manage models** in Settings → Remote engine. Runtime installs use the host's verified component catalog; model downloads also honor its Hugging Face download policy. Progress, failures, unsupported hardware/platforms, and required host restarts appear in the browser. Downloads and installations continue when it closes. Both computers need an updated version for remote runtime installation; older hosts direct you to their local Downloads page.
-
-The management permission is off by default and applies to all paired computers. For model weights, choose **Always allow downloads** under **Settings → Downloads** on the host, or download the model locally there; `HF_HUB_OFFLINE=1` blocks model downloads. Only bundled models and verified speech dependencies are accepted, with one remote model download and one runtime installation at a time. Accepted work continues after disconnect or permission changes while the host app remains running. Model deletion remains local to the host. The main engine card's existing model and runtime controls remain available without management permission.
-
-**With [Tailscale](https://tailscale.com/download)** on both computers, the laptop also works away from home. Computers on your tailnet that are sharing appear under **Computers on your tailnet**. If both are signed in to the same Tailscale account, click **Connect** and no code is needed; anyone else on your tailnet still uses a code. A computer paired at home over the LAN falls back to the host's Tailscale address when the LAN one is out of reach. The host can turn off code-free pairing with **Pair my Tailscale computers without a code**.
+- **Meetings:** Select **Remote computer** in **Settings → Meeting Mode → Voice & speakers → Speech engine**. Audio goes to the host for transcription; capture, recordings, and transcripts stay on the computer running the meeting.
+- **Host models:** Use **Manage host models** to choose or download a model and install speech runtimes. The host must first enable **Allow paired computers to manage models**.
+- **Away from home:** Install [Tailscale](https://tailscale.com/download) on both computers. Hosts on your tailnet appear in the app; computers on the same Tailscale account can connect without a pairing code when the host allows it.
 
 ### AI cleanup and meeting intelligence
 

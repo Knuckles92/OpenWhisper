@@ -3,6 +3,7 @@ PyQt6 Application base class.
 Handles application initialization and event loop management.
 """
 import logging
+import os
 import sys
 from typing import Optional
 from PyQt6.QtWidgets import QApplication, QMainWindow, QStyleFactory
@@ -18,6 +19,7 @@ from ui_qt.utils.font_scale import (
 )
 from ui_qt.utils.theme_manager import ThemeManager
 from ui_qt.utils.tooltip_filter import RoundedTooltipFilter, SnappyTooltipStyle
+from services.desktop_session import use_omarchy_ui
 
 APP_NAME = "OpenWhisper"
 
@@ -84,11 +86,23 @@ class QtApplication:
 
         self.app = QApplication.instance()
         if self.app is None:
+            if use_omarchy_ui():
+                # Keep inherited GTK/GDK scaling out of Qt style metrics. Qt
+                # still uses the compositor's native per-output buffer scale.
+                os.environ["QT_QPA_PLATFORMTHEME"] = ""
+                # Applies to later dialogs as well as the main window. Keep
+                # xdg-toplevel management; only Qt's fallback titlebar is off.
+                os.environ["QT_WAYLAND_DISABLE_WINDOWDECORATION"] = "1"
+                QApplication.setStyle("Fusion")
             self.app = QApplication([])
 
         # Application-wide icon: inherited by every window and dialog, and
         # used by the taskbar and alt-tab switcher.
         self.app.setWindowIcon(app_icon())
+        from ui_qt.utils.desktop import DesktopWindowFilter
+
+        self._desktop_window_filter = DesktopWindowFilter(self.app)
+        self.app.installEventFilter(self._desktop_window_filter)
 
         # Built on the resolved palette so the loading screen, which paints
         # before any stylesheet is applied, already reads the right colours.
@@ -104,6 +118,33 @@ class QtApplication:
         self.set_theme(preference)
         self.apply_font_scale(resolve_ui_font_scale())
         self.app.styleHints().colorSchemeChanged.connect(self._on_system_scheme_changed)
+        if use_omarchy_ui():
+            from PyQt6.QtCore import QTimer
+
+            # Omarchy atomically replaces its current/theme directory. A file
+            # watcher loses its inode; a cheap coarse check survives every swap.
+            self._desktop_theme_timer = QTimer(self.app)
+            self._desktop_theme_signature = None
+            self._desktop_theme_timer.setInterval(2000)
+            self._desktop_theme_timer.timeout.connect(self._refresh_desktop_theme)
+            self._desktop_theme_timer.start()
+
+    def _refresh_desktop_theme(self) -> None:
+        from services.desktop_session import omarchy_theme_paths
+
+        preference = current_ui_theme_preference()
+        if preference in (UiTheme.SYSTEM, UiTheme.OMARCHY):
+            signature = []
+            for path in omarchy_theme_paths():
+                try:
+                    stat = path.stat()
+                    signature.append((stat.st_ino, stat.st_mtime_ns, stat.st_size))
+                except OSError:
+                    signature.append(None)
+            signature = (preference, tuple(signature))
+            if signature != self._desktop_theme_signature:
+                self._desktop_theme_signature = signature
+                self.set_theme(preference)
 
     def _on_system_scheme_changed(self, _scheme) -> None:
         if current_ui_theme_preference() == UiTheme.SYSTEM:

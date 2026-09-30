@@ -261,12 +261,14 @@ class UiTheme:
     DARK: Final[str] = "dark"
     LIGHT: Final[str] = "light"
     SYSTEM: Final[str] = "system"
+    OMARCHY: Final[str] = "omarchy"
 
-    ALL: Final[Tuple[str, ...]] = (DARK, LIGHT, SYSTEM)
+    ALL: Final[Tuple[str, ...]] = (DARK, LIGHT, SYSTEM, OMARCHY)
     LABELS: Final[Dict[str, str]] = {
         DARK: "Dark",
         LIGHT: "Light",
         SYSTEM: "Match system",
+        OMARCHY: "Omarchy desktop",
     }
 
 
@@ -814,7 +816,16 @@ def _choice_resolver(key: str, choices: Tuple[Any, ...]) -> Callable[..., Any]:
 # default. Each is called as ``resolve_x(settings=None)``.
 resolve_recording_trigger_mode = _choice_resolver(
     SettingsKey.RECORDING_TRIGGER_MODE, RecordingTriggerMode.ALL)
-resolve_ui_theme = _choice_resolver(SettingsKey.UI_THEME, UiTheme.ALL)
+def resolve_ui_theme(settings: Optional[Mapping[str, Any]] = None) -> str:
+    from services.desktop_session import use_omarchy_ui
+
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    if SettingsKey.UI_THEME not in settings and use_omarchy_ui():
+        return UiTheme.OMARCHY
+    return resolve_choice_setting(SettingsKey.UI_THEME, UiTheme.ALL, settings)
+
+
 resolve_transcript_cleanup_reasoning = _choice_resolver(
     SettingsKey.TRANSCRIPT_CLEANUP_REASONING, TranscriptCleanupReasoning.ALL)
 resolve_transcript_batch_relation = _choice_resolver(

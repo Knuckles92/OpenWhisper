@@ -6,11 +6,11 @@ holds a setting of its own and cannot drift out of sync with the pages it
 summarizes. Settings composes an :class:`OverviewSummary` and hands it over.
 """
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
 
 from PyQt6.QtCore import QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QKeyEvent, QMouseEvent, QPainter, QPainterPath
 from PyQt6.QtWidgets import (
+    QBoxLayout,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -35,21 +35,21 @@ _BACKEND_TOKENS = ("accent", "success", "purple", "warning-text-soft", "accent-c
 class OverviewSummary:
     """Everything the Overview shows, composed by Settings."""
 
-    voice: Tuple[str, str] = ("", "")
-    cleanup: Tuple[str, str] = ("", "")
+    voice: tuple[str, str] = ("", "")
+    cleanup: tuple[str, str] = ("", "")
     cleanup_on: bool = False
-    profiles: Tuple[str, str] = ("", "")
-    meeting_voice: Tuple[str, str] = ("", "")
-    intelligence: Tuple[str, str] = ("", "")
-    hotkeys: Tuple[str, str] = ("", "")
-    local_items: List[str] = field(default_factory=list)
-    cloud_items: List[str] = field(default_factory=list)
+    profiles: tuple[str, str] = ("", "")
+    meeting_voice: tuple[str, str] = ("", "")
+    intelligence: tuple[str, str] = ("", "")
+    hotkeys: tuple[str, str] = ("", "")
+    local_items: list[str] = field(default_factory=list)
+    cloud_items: list[str] = field(default_factory=list)
     storage_downloaded: int = 0
     storage_total: int = 0
     storage_bytes: int = 0
-    storage_by_backend: Dict[str, int] = field(default_factory=dict)
+    storage_by_backend: dict[str, int] = field(default_factory=dict)
     storage_checking: bool = False
-    components: List[Tuple[str, bool]] = field(default_factory=list)
+    components: list[tuple[str, bool]] = field(default_factory=list)
     footer: str = ""
 
 
@@ -133,9 +133,9 @@ class StorageBar(QWidget):
         super().__init__(parent)
         self.setObjectName("overviewStorageBar")
         self.setFixedHeight(8)
-        self._segments: List[Tuple[float, str]] = []
+        self._segments: list[tuple[float, str]] = []
 
-    def set_segments(self, sizes: List[int]) -> None:
+    def set_segments(self, sizes: list[int]) -> None:
         total = sum(sizes)
         self._segments = [
             (size / total, _BACKEND_TOKENS[index % len(_BACKEND_TOKENS)])
@@ -168,13 +168,15 @@ class OverviewPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("overviewPage")
-        self.cards: Dict[str, OverviewCard] = {}
+        self.cards: dict[str, OverviewCard] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
         layout.addWidget(self._build_where_strip())
 
         grid = QGridLayout()
+        self._card_grid = grid
+        self._columns = 3
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(12)
@@ -197,6 +199,7 @@ class OverviewPage(QWidget):
         layout.addLayout(grid)
 
         storage_row = QGridLayout()
+        self._storage_grid = storage_row
         storage_row.setContentsMargins(0, 0, 0, 0)
         storage_row.setHorizontalSpacing(12)
         self.storage_card = OverviewCard(
@@ -234,16 +237,40 @@ class OverviewPage(QWidget):
         self.footer_label.setObjectName("overviewFooter")
         layout.addWidget(self.footer_label)
 
+    def resizeEvent(self, event) -> None:
+        from ui_qt.utils.font_scale import current_ui_font_scale
+
+        scale = current_ui_font_scale()
+        columns = max(1, min(3, int((self.width() + 12) // (260 * scale + 12))))
+        if columns != self._columns:
+            self._columns = columns
+            for index, card in enumerate(list(self.cards.values())[:6]):
+                self._card_grid.removeWidget(card)
+                self._card_grid.addWidget(card, index // columns, index % columns)
+            for column in range(3):
+                self._card_grid.setColumnStretch(column, int(column < columns))
+        wide = self.width() >= 650 * scale
+        self._storage_grid.removeWidget(self.components_card)
+        self._storage_grid.addWidget(self.components_card, 0 if wide else 1, 1 if wide else 0)
+        self._storage_grid.setColumnStretch(1, int(wide))
+        self._where_row.setDirection(
+            QBoxLayout.Direction.LeftToRight if wide else QBoxLayout.Direction.TopToBottom
+        )
+        self._where_divider.setVisible(wide)
+        super().resizeEvent(event)
+
     def _build_where_strip(self) -> QWidget:
         strip = QFrame()
         strip.setObjectName("overviewWhere")
         row = QHBoxLayout(strip)
+        self._where_row = row
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
         self.local_title, self.local_list = self._where_half(
             row, "Stays on this computer", "ok"
         )
         divider = QFrame()
+        self._where_divider = divider
         divider.setObjectName("overviewWhereDivider")
         divider.setFixedWidth(1)
         row.addWidget(divider)
@@ -271,7 +298,7 @@ class OverviewPage(QWidget):
         copy = QVBoxLayout()
         copy.setContentsMargins(0, 0, 0, 0)
         copy.setSpacing(2)
-        title_label = QLabel(title)
+        title_label = WrappedLabel(title)
         title_label.setObjectName("overviewWhereTitle")
         copy.addWidget(title_label)
         items = WrappedLabel("")

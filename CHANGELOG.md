@@ -8,6 +8,15 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+### Added
+- **Omarchy interface** — automatically selected on Omarchy, with compact application chrome, square controls, and a live desktop palette shared by the main window and Settings. Supports Omarchy 3 and 4 theme locations; existing explicit Dark/Light preferences are preserved. No Quickshell extension is required.
+- **Omarchy desktop controls** — compositor-owned global shortcuts, including press/release for push-and-hold and cleanup profiles, with conflict detection and no keyboard hook. Hyprland auto-paste supports native applications and recognized terminals. An optional Omarchy 4 bar widget adds record/stop, cancel, open, and live preview using the shell's own UI components.
+
+### Fixed
+- **Omarchy window controls and Settings** — omit client titlebar buttons on the main window and dialogs. Settings no longer forces a 940-pixel minimum on smaller windows; forms scroll, overview cards reflow, and search stays within the window. Tray restore preserves maximized/fullscreen state, and field help stays inside the Wayland app. Shortcut hints distinguish desktop shortcuts from focused-window fallbacks.
+- **Wayland tiling and fractional scaling** — the compositor now owns the main window's geometry. Views, History, and Compact Mode no longer resize the tile, restored off-screen positions are ignored, and small tiles scroll. Omarchy uses Qt Fusion metrics independently of GTK scaling. The splash is opaque and static, shortcut hints avoid unsupported opacity animations, and the recording indicator stays inside the app on Wayland.
+- **Wayland keyboard-hook stalls** — native Wayland sessions no longer initialize or periodically refresh pynput's blocking X11 hook. Focused-window shortcuts remain available, including the default keypad bindings; editing shortcuts uses Qt key events. Linux shortcut labels use Ctrl/Alt/Super rather than macOS symbols. Other Wayland compositors retain focused-window shortcuts and manual paste.
+
 ## [2.6.10] - 2026-09-29
 
 ### Added
