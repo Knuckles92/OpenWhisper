@@ -218,6 +218,8 @@ def test_repeat_stop_keeps_the_first_cap(recorder):
 def test_cleanup_does_not_wait_out_the_post_roll(recorder, caplog):
     assert recorder.start_recording()
     _feed(recorder, _dictation(2.0))
+    # Journal tests cover disk durability; time only the post-roll wakeup here.
+    assert recorder._audio_spool.finish()
     thread = recorder.recording_thread
     started = time.monotonic()
     with caplog.at_level(logging.INFO, logger="services.recorder"):
