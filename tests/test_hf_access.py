@@ -12,7 +12,6 @@ from services.hf_access import (
     HuggingFaceAccessCoordinator,
     _progress_tqdm_class,
     delete_model_from_cache,
-    download_model_files,
     format_download_size,
     format_size_bytes,
     invalidate_cached_models_snapshot,
@@ -86,7 +85,8 @@ class TestHelpers:
         with patch("huggingface_hub.snapshot_download", side_effect=fake_snapshot), patch(
             "faster_whisper.utils._MODELS", {"base": "Systran/faster-whisper-base"}
         ):
-            path = download_model_files("base", progress_callback=lambda *_: None)
+            from services.hf_access import _download_model_files_in_process
+            path = _download_model_files_in_process("base", progress_callback=lambda *_: None)
 
         assert path == "/cache/base"
         assert captured["repo_id"] == "Systran/faster-whisper-base"

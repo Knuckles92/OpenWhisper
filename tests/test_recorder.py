@@ -1,5 +1,4 @@
 import pytest
-import tempfile
 import os
 import wave
 import numpy as np
@@ -13,8 +12,8 @@ from config import config
 
 class TestAudioRecorder:
     @pytest.fixture(autouse=True)
-    def _setup(self):
-        self.temp_dir = tempfile.mkdtemp()
+    def _setup(self, tmp_path):
+        self.temp_dir = str(tmp_path)
         self.test_audio_file = os.path.join(self.temp_dir, "test_audio.wav")
 
         # Mock sounddevice to avoid actual audio hardware
@@ -30,7 +29,6 @@ class TestAudioRecorder:
 
         if os.path.exists(self.test_audio_file):
             os.remove(self.test_audio_file)
-        os.rmdir(self.temp_dir)
 
         if hasattr(self.recorder, 'cleanup'):
             self.recorder.cleanup()
@@ -78,12 +76,12 @@ class TestAudioRecorder:
         assert not self.recorder.has_recording_data()
 
         audio = np.arange(16, dtype=np.int16)
-        self.recorder._audio_callback(audio, len(audio), None, None)
+        self._feed(audio)
         assert self.recorder.has_recording_data()
 
     def test_clear_recording_data(self):
         audio = np.arange(16, dtype=np.int16)
-        self.recorder._audio_callback(audio, len(audio), None, None)
+        self._feed(audio)
 
         self.recorder.clear_recording_data()
         assert not self.recorder.has_recording_data()
@@ -92,7 +90,7 @@ class TestAudioRecorder:
         assert self.recorder.get_recording_duration() == 0.0
 
         audio = np.arange(1000, dtype=np.int16)
-        self.recorder._audio_callback(audio, len(audio), None, None)
+        self._feed(audio)
         expected_duration = len(audio) / config.SAMPLE_RATE
         assert self.recorder.get_recording_duration() == expected_duration
 
@@ -103,7 +101,7 @@ class TestAudioRecorder:
 
     def test_save_recording_with_data(self):
         audio = np.arange(500, dtype=np.int16)
-        self.recorder._audio_callback(audio, len(audio), None, None)
+        self._feed(audio)
         when = datetime(2026, 9, 19, 13, 5, 7)
 
         with patch("services.recorder.datetime") as mock_datetime:
@@ -127,7 +125,7 @@ class TestAudioRecorder:
 
     def test_save_recording_keeps_wav_when_metadata_stamp_fails(self):
         audio = np.arange(32, dtype=np.int16)
-        self.recorder._audio_callback(audio, len(audio), None, None)
+        self._feed(audio)
 
         with patch(
             "services.recorder.stamp_wav_origination",
@@ -141,7 +139,7 @@ class TestAudioRecorder:
 
     def test_save_recording_default_filename(self):
         audio = np.arange(32, dtype=np.int16)
-        self.recorder._audio_callback(audio, len(audio), None, None)
+        self._feed(audio)
 
         result = self.recorder.save_recording()
 
@@ -171,22 +169,27 @@ class TestAudioRecorder:
     def test_audio_callback(self):
         fake_audio = np.array([100, -100, 200, -200], dtype=np.int16)
 
-        self.recorder._audio_callback(fake_audio, len(fake_audio), None, None)
+        self._feed(fake_audio)
 
         assert self.recorder.has_recording_data()
         assert self.recorder._recorded_bytes == len(fake_audio.tobytes())
-        self.recorder._audio_spool.seek(0)
-        assert self.recorder._audio_spool.read() == fake_audio.tobytes()
+        assert self.recorder.read_recorded_bytes(0) == fake_audio.tobytes()
 
-    def test_long_recording_spills_to_disk_and_streams_to_wav(self):
-        with patch("services.recorder.SPOOL_MEMORY_LIMIT_BYTES", 64):
-            recorder = AudioRecorder(output_file=self.test_audio_file)
+    def _feed(self, audio):
+        if self.recorder._audio_spool is None:
+            assert self.recorder.start_recording()
+        self.recorder._audio_callback(audio, len(audio), None, None)
+        self.recorder._audio_spool._queue.join()
+
+    def test_recording_is_journaled_to_disk_and_streams_to_wav(self):
+        recorder = AudioRecorder(output_file=self.test_audio_file)
+        try:
+            assert recorder.start_recording()
             audio = np.arange(256, dtype=np.int16)
             recorder._audio_callback(audio, len(audio), None, None)
-
-            assert recorder._audio_spool._rolled is True
             assert recorder.save_recording()
-
+            assert recorder._audio_spool.path.read_bytes() == audio.tobytes()
             with wave.open(self.test_audio_file, "rb") as wf:
                 assert wf.readframes(len(audio)) == audio.tobytes()
+        finally:
             recorder.cleanup()

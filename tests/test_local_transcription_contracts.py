@@ -10,7 +10,7 @@ from transcriber.local_backend import LocalWhisperBackend
 
 @pytest.fixture
 def backend():
-    backend = LocalWhisperBackend.__new__(LocalWhisperBackend)
+    backend = LocalWhisperBackend(model_name="base", load=False)
     backend.model = Mock()
     backend.should_cancel = False
     backend.is_transcribing = False

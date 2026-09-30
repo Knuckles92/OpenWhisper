@@ -401,7 +401,7 @@ class UploadQueueRow(QFrame):
         self.duration_chip.setText(preview.duration_formatted)
         self.chunk_chip.show()
         if preview.needs_splitting:
-            self.chunk_chip.setText(f"{preview.estimated_chunks} chunks")
+            self.chunk_chip.setText(f"About {preview.estimated_chunks} chunks")
             _repolish(self.chunk_chip, "tone", "warn")
         else:
             self.chunk_chip.setText("One pass")
@@ -827,7 +827,7 @@ class FileInfoCard(QFrame):
         self.channels_chip.setText(channels)
 
         if preview.needs_splitting:
-            self.chunk_label.setText(f"{preview.estimated_chunks} chunks")
+            self.chunk_label.setText(f"About {preview.estimated_chunks} chunks")
             _repolish(self.chunk_label, "tone", "warn")
         else:
             self.chunk_label.setText("One pass")

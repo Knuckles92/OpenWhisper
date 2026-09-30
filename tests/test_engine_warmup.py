@@ -219,6 +219,7 @@ class _Signal:
 def _controller(backend, events):
     """The controller's reload methods bound onto a minimal stand-in."""
     controller = SimpleNamespace(
+        _shutting_down=False,
         _engine_lock=threading.RLock(),
         _reload_in_flight=True,
         _pending_streaming_setup=True,

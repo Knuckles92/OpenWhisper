@@ -76,7 +76,7 @@ def split(monkeypatch):
         def check_file_size(path):
             return (path == LARGE_FILE, size_mb if path == LARGE_FILE else 0.01)
 
-        def split_audio_file(path, progress_callback=None):
+        def split_audio_file(path, progress_callback=None, should_cancel=None):
             record.splits.append(path)
             if progress_callback is not None:
                 progress_callback("Loading audio file...")
@@ -162,7 +162,8 @@ class TestChunkedTranscription:
             backend.transcribe(LARGE_FILE)
 
         assert transcriptions.calls == []
-        assert record.cleanups == 1
+        assert record.splits == []
+        assert record.cleanups == 0  # Canceled before allocating any chunks.
 
     def test_cancel_while_splitting_uploads_nothing(self, chunks, split):
         """The split is the slow local step; a cancel during it saves every upload."""

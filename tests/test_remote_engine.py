@@ -743,6 +743,7 @@ def _controller(backend, events):
     from services.application_controller import ApplicationController
 
     controller = SimpleNamespace(
+        _shutting_down=False,
         _engine_lock=threading.RLock(),
         _reload_in_flight=True,
         _pending_streaming_setup=False,

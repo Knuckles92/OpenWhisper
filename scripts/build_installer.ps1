@@ -189,6 +189,9 @@ Write-Host "    all required assets and native libraries bundled" -ForegroundCol
 Invoke-Native $ExePath @('--self-test') `
     -ErrorMessage "Frozen application self-test failed"
 Write-Host "    frozen application self-test passed" -ForegroundColor Green
+Invoke-Native $Python @('scripts/check_release_health.py', '--executable', $ExePath,
+    '--output', 'build/release-health.json', '--timeout', '45') `
+    -ErrorMessage "Frozen lifecycle/performance gate failed"
 
 # Optional code signing
 $HelperInBundle = Join-Path $DistDir 'OpenWhisperUpdater.exe'

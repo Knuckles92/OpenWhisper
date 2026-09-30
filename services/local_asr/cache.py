@@ -48,8 +48,15 @@ def download(key: str, progress_callback=None, cancel: threading.Event | None = 
     cancel = cancel or threading.Event()
     spec = artifacts(key)
     target = model_dir(key)
+    from filelock import FileLock
+    target.parent.mkdir(parents=True, exist_ok=True)
     total = sum(f["size_bytes"] for f in spec["files"])
-    with _locks[key]:
+    # Downloads run in killable workers. Protect the staging/backup swap
+    # across processes as well as concurrent requests in this interpreter.
+    with _locks[key], FileLock(str(target) + ".lock"):
+        backup = target.with_name(target.name + ".previous")
+        if not target.exists() and backup.exists():
+            os.replace(backup, target)
         if is_cached(key):
             return str(target)
         staging = target.with_name(target.name + ".partial")
@@ -83,7 +90,10 @@ def download(key: str, progress_callback=None, cancel: threading.Event | None = 
 
 
 def delete(key: str) -> None:
-    with _locks[key]:
+    from filelock import FileLock
+    target = model_dir(key)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with _locks[key], FileLock(str(target) + ".lock"):
         for directory in (model_dir(key), model_dir(key).with_name(key + ".partial")):
             if directory.exists():
                 shutil.rmtree(directory)
@@ -100,4 +110,3 @@ def inventory() -> dict:
         )
         for key in MODELS if is_cached(key)
     }
-

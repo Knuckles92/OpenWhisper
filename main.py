@@ -26,7 +26,17 @@ def _run_package_self_test() -> None:
 
     from services.package_checks import check_multiprocessing
 
-    check_multiprocessing()
+    if getattr(sys, "frozen", False):
+        check_multiprocessing()
+    else:
+        # Source spawn reimports this entrypoint as __mp_main__, retaining
+        # --self-test in argv. Use a clean interpreter so the probe cannot
+        # recursively launch self-tests during its own bootstrap.
+        subprocess.run(
+            [sys.executable, "-c", "from services.package_checks import check_multiprocessing; check_multiprocessing()"],
+            cwd=Path(__file__).resolve().parent,
+            check=True, timeout=35,
+        )
 
     modules = [ 
         "av",
@@ -40,6 +50,7 @@ def _run_package_self_test() -> None:
         "sqlalchemy.dialects.sqlite",
         "uvicorn",
         "services.agent_mcp.app",
+        "services.isolated_worker",
     ]
     if sys.platform == "win32":
         modules.extend(("keyring.backends.Windows", "keyboard", "soundcard"))
@@ -94,12 +105,19 @@ def _run_package_self_test() -> None:
     svg_icon = QIcon(str(root / "ui_qt/assets/check.svg"))
     if svg_icon.isNull():
         raise RuntimeError("Qt could not load the bundled SVG image plugin.")
+    from services.release_checks import run_workflow_smoke
+
+    run_workflow_smoke()
     del qt_app
     print("OpenWhisper package self-test passed")
 
 
 def _handle_early_cli() -> None:
     """Handle worker and metadata modes before native-library bootstrap."""
+    if sys.argv[1:2] == ["--diagnostics"]:
+        from services.diagnostics import main as diagnostics_main
+
+        raise SystemExit(diagnostics_main(sys.argv[2:]))
     if sys.argv[1:2] == ["--api"]:
         from services.agent_api.cli import main
 
@@ -118,6 +136,21 @@ def _handle_early_cli() -> None:
 
 def _handle_package_self_test() -> None:
     """Run the import test after platform DLL/library bootstrap is complete."""
+    if sys.argv[1:] == ["--isolated-worker"]:
+        from services.isolated_worker import main as isolated_worker_main
+
+        isolated_worker_main()
+        raise SystemExit(0)
+    if sys.argv[1:2] == ["--workflow-smoke"]:
+        from services.release_checks import run_workflow_smoke
+        import json
+
+        if len(sys.argv) > 3:
+            raise SystemExit("Usage: --workflow-smoke [report.json]")
+        report = run_workflow_smoke()
+        if len(sys.argv) == 3:
+            Path(sys.argv[2]).write_text(json.dumps(report, indent=2), encoding="utf-8")
+        raise SystemExit(0)
     if sys.argv[1:] == ["--self-test"]:
         _run_package_self_test()
         raise SystemExit(0)
@@ -294,6 +327,8 @@ def _register_qt_icu_directories() -> None:
 
 def _early_update_gate() -> None:
     """Wait out a running setup, and refuse a launch the updater owns."""
+    if sys.argv[1:2] in (["--isolated-worker"], ["--self-test"], ["--workflow-smoke"]):
+        return
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
         return
     from services.app_update_apply import (

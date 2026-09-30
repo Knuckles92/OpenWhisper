@@ -397,10 +397,15 @@ class StreamingTranscriber:
             if prepared is None or len(prepared) == 0:
                 return
 
-            segments, _info = model.transcribe(
+            transcribe = getattr(model, "transcribe_cancelable", None)
+            options = {"should_cancel": lambda: self._discard_results} if callable(transcribe) else {}
+            if not callable(transcribe):
+                transcribe = model.transcribe
+            segments, _info = transcribe(
                 prepared,
                 beam_size=1,
                 vad_filter=False,
+                **options,
             )
 
             text_parts = []
