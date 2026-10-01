@@ -41,13 +41,23 @@ class McpSettingsPage(QWidget):
 
         self.enable_tile = SettingTile(
             "Enable MCP",
-            "Let agents on this computer search your saved dictations and meetings. "
+            "Let connected agents search your saved dictations and meetings. "
             "Starts automatically with OpenWhisper when enabled; quitting the app stops access.",
         )
         self.enabled = self.enable_tile.checkbox
         self.enabled.setAccessibleName("Enable MCP")
         self.enabled.toggled.connect(self._toggle)
         layout.addWidget(self.enable_tile)
+
+        self.tailscale_tile = SettingTile(
+            "Allow agents over Tailscale",
+            "Let agents on other computers in your Tailscale network connect with the access token. "
+            "Turn MCP off to change this option. Your local connection remains available.",
+        )
+        self.tailscale_enabled = self.tailscale_tile.checkbox
+        self.tailscale_enabled.setAccessibleName("Allow agents over Tailscale")
+        self.tailscale_enabled.toggled.connect(self._save_tailscale)
+        layout.addWidget(self.tailscale_tile)
 
         status_row = QHBoxLayout()
         self.status_label = WrappedLabel("")
@@ -80,10 +90,20 @@ class McpSettingsPage(QWidget):
         connection_layout.setContentsMargins(0, 0, 0, 0)
         connection_layout.setSpacing(10)
         connection_layout.addWidget(QLabel("Connect your agent"))
+        self.agent_location = ElidingComboBox()
+        self.agent_location.addItems(["This computer", "Another computer (Tailscale)"])
+        self.agent_location.setAccessibleName("Agent computer")
+        self.agent_location.setCurrentIndex(
+            1 if settings.get(SettingsKey.MCP_TAILSCALE_ENABLED, False) is True else 0
+        )
+        self.agent_location.currentIndexChanged.connect(self._render_setup)
+        connection_layout.addWidget(
+            FieldTile("Agent runs on", "", self.agent_location, compact=True)
+        )
         self.url = QLineEdit()
         self.url.setReadOnly(True)
         self.url.setAccessibleName("MCP server URL")
-        self._copy_row(
+        self.copy_url = self._copy_row(
             connection_layout,
             "Server URL",
             self.url,
@@ -223,6 +243,7 @@ class McpSettingsPage(QWidget):
         button.clicked.connect(lambda: self._copy(value()))
         row.addWidget(button)
         layout.addLayout(row)
+        return button
 
     def _copy(self, text):
         if self.server.status().state != "running" or not text:
@@ -245,7 +266,19 @@ class McpSettingsPage(QWidget):
         self.refresh()
 
     def _start(self):
-        self.server.start(self.port.value())
+        if self.settings.get(SettingsKey.MCP_TAILSCALE_ENABLED, False) is True:
+            self.server.start(self.port.value(), tailscale=True)
+        else:
+            self.server.start(self.port.value())
+        self.refresh()
+
+    def _save_tailscale(self, checked):
+        try:
+            self.settings.save_setting(SettingsKey.MCP_TAILSCALE_ENABLED, checked)
+            self._notice = ""
+            self.agent_location.setCurrentIndex(1 if checked else 0)
+        except Exception:
+            self._notice = "Could not save Tailscale access. Try again."
         self.refresh()
 
     def _save_permission(self, key, checked):
@@ -282,13 +315,34 @@ class McpSettingsPage(QWidget):
         self.refresh()
 
     def _render_setup(self):
-        url = self.url.text()
+        status = self.server.status()
+        url = status.url
+        if self.agent_location.currentIndex() == 1:
+            url = getattr(status, "remote_url", "")
+        ready = status.state == "running" and bool(url)
+        self.copy_setup.setEnabled(ready)
+        self.copy_url.setEnabled(ready)
+        if not ready:
+            self.url.setText(
+                "Tailscale access is not enabled"
+                if status.state == "running"
+                else "Enable MCP to get your connection URL"
+            )
+            self.setup_text.setPlainText(
+                "To connect an agent on another computer, turn MCP off, enable "
+                "Allow agents over Tailscale, then turn MCP on again."
+                if status.state == "running" else "Connection instructions appear when MCP is running."
+            )
+            return
+        self.url.setText(url)
         options = (
             agent_prompt(url),
             claude_command(url),
             client_config(url, "<PASTE_TOKEN>"),
         )
-        self.setup_text.setPlainText(options[self.setup_kind.currentIndex()])
+        text = options[self.setup_kind.currentIndex()]
+        if self.setup_text.toPlainText() != text:
+            self.setup_text.setPlainText(text)
 
     def refresh(self):
         status = self.server.status()
@@ -309,6 +363,10 @@ class McpSettingsPage(QWidget):
         self.enabled.blockSignals(True)
         self.enabled.setChecked(saved)
         self.enabled.blockSignals(False)
+        self.tailscale_enabled.blockSignals(True)
+        self.tailscale_enabled.setChecked(preferences.get(SettingsKey.MCP_TAILSCALE_ENABLED) is True)
+        self.tailscale_enabled.blockSignals(False)
+        self.tailscale_tile.setEnabled(status.state in {"stopped", "error"} and not saved)
         self.enable_tile.setEnabled(status.state != "stopping")
         self.port.setEnabled(status.state in {"stopped", "error"} and not saved)
         self.retry.setVisible(status.state == "error" and saved)
@@ -322,10 +380,7 @@ class McpSettingsPage(QWidget):
         self.status_label.setText(f"{labels[status.state]} · {status.message}")
         ready = status.state == "running"
         self.connection.setEnabled(ready)
-        url = status.url if ready else "Enable MCP to get your connection URL"
-        if self.url.text() != url:
-            self.url.setText(url)
-            self._render_setup()
+        self._render_setup()
         self.token.setText(self.server.token() if ready else "")
         if not ready:
             self.setup_text.setPlainText(

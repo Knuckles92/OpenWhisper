@@ -13,7 +13,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from services.agent_mcp.app import create_app
 from services.agent_mcp.runtime import CREDENTIAL_NAME, McpRuntime
-from services.credentials import CredentialStore, memory_backend
+from services.credentials import CredentialStore, memory_backend, store
 from services.database import DatabaseManager
 from services.models import MeetingSegment, MeetingSession, TranscriptionHistory
 from services.settings import SettingsKey, SettingsManager
@@ -443,6 +443,46 @@ def test_runtime_restart_uses_saved_token_and_releases_port(running_server):
     assert server.token() == token
 
 
+@pytest.mark.parametrize("saved_token", [None, TOKEN])
+def test_desktop_restore_uses_default_credentials_and_restarts(
+    mcp_database, mcp_settings, monkeypatch, saved_token
+):
+    from config import config
+
+    monkeypatch.setattr(config, "DATABASE_FILE", str(mcp_database))
+    credentials = store()
+    if saved_token is not None:
+        credentials.set(CREDENTIAL_NAME, saved_token)
+    port = free_port()
+    mcp_settings.update_settings(
+        {SettingsKey.MCP_ENABLED: True, SettingsKey.MCP_PORT: port}
+    )
+    for _ in range(2):
+        server = McpRuntime()
+        server.restore(mcp_settings)
+        try:
+            wait_for(server, "running")
+            token = server.token()
+            assert token
+            assert token == credentials.get(CREDENTIAL_NAME)
+            if saved_token is not None:
+                assert token == saved_token
+            saved_token = token
+            with httpx2.Client(trust_env=False) as client:
+                url = f"http://127.0.0.1:{port}/v1/status"
+                assert client.get(url).status_code == 401
+                assert (
+                    client.get(
+                        url, headers={"Authorization": f"Bearer {token}"}
+                    ).status_code
+                    == 200
+                )
+        finally:
+            server.stop(wait=True)
+        assert server.status().state == "stopped"
+        assert not server.token()
+
+
 def test_occupied_port_and_missing_database_are_recoverable(mcp_database):
     credentials = CredentialStore(memory_backend)
     with socket.socket() as occupied:
@@ -470,3 +510,124 @@ def test_failed_credentials_do_not_start_listener(mcp_database):
     server.start(free_port())
     assert "credential store" in wait_for(server, "error").message
     assert not server.token()
+
+
+def test_tailscale_host_checks_auth_origin_and_peer(mcp_database):
+    host = "100.82.22.3"
+    app = create_app(mcp_database, TOKEN, allowed_hosts=(host, "jed.example.ts.net"))
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+    with TestClient(
+        app, base_url=f"http://{host}", client=("100.65.148.53", 1234)
+    ) as client:
+        assert client.get("/v1/status").status_code == 401
+        assert client.get("/v1/status", headers=headers).status_code == 200
+        assert (
+            client.get(
+                "/v1/status", headers={**headers, "Host": "100.82.22.4"}
+            ).status_code
+            == 403
+        )
+        assert (
+            client.get(
+                "/v1/status", headers={**headers, "Origin": f"http://{host}"}
+            ).status_code
+            == 403
+        )
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "remote-test", "version": "1"},
+            },
+        }
+        response = client.post(
+            "/mcp",
+            json=payload,
+            headers={**headers, "Accept": "application/json, text/event-stream"},
+        )
+        assert response.status_code == 200
+    app = create_app(mcp_database, TOKEN, allowed_hosts=(host,))
+    with TestClient(
+        app, base_url=f"http://{host}", client=("192.168.1.10", 1234)
+    ) as client:
+        assert client.get("/v1/status", headers=headers).status_code == 403
+    app = create_app(mcp_database, TOKEN)
+    with TestClient(app, base_url=f"http://{host}") as client:
+        assert client.get("/v1/status", headers=headers).status_code == 403
+
+
+def test_tailscale_listener_keeps_local_access_and_releases_both_ports(
+    mcp_database, mcp_settings, monkeypatch
+):
+    from services.agent_mcp import runtime as runtime_module
+
+    # A second loopback address exercises the two real sockets without a VPN.
+    monkeypatch.setattr(
+        runtime_module,
+        "_tailscale_address",
+        lambda: ("127.0.0.2", "host.example.ts.net"),
+    )
+    port = free_port()
+    mcp_settings.update_settings(
+        {
+            SettingsKey.MCP_ENABLED: True,
+            SettingsKey.MCP_PORT: port,
+            SettingsKey.MCP_TAILSCALE_ENABLED: True,
+        }
+    )
+    server = McpRuntime(mcp_database, credentials=CredentialStore(memory_backend))
+    server.restore(mcp_settings)
+    try:
+        status = wait_for(server, "running")
+        assert status.remote_url == f"http://127.0.0.2:{port}/mcp"
+        with httpx2.Client(trust_env=False) as client:
+            for host in ("127.0.0.1", "127.0.0.2"):
+                response = client.get(
+                    f"http://{host}:{port}/v1/status",
+                    headers={"Authorization": f"Bearer {server.token()}"},
+                )
+                assert response.status_code == 200
+    finally:
+        server.stop(wait=True)
+    assert not server.status().remote_url
+    for host in ("127.0.0.1", "127.0.0.2"):
+        with socket.socket() as sock:
+            sock.bind((host, port))
+
+
+def test_tailscale_bind_failure_releases_loopback_socket(mcp_database, monkeypatch):
+    import services.agent_mcp.runtime as runtime_module
+
+    monkeypatch.setattr(
+        runtime_module, "_tailscale_address", lambda: ("127.0.0.2", "jed.example")
+    )
+    with socket.socket() as occupied:
+        occupied.bind(("127.0.0.2", 0))
+        occupied.listen()
+        port = occupied.getsockname()[1]
+        server = McpRuntime(mcp_database, credentials=CredentialStore(memory_backend))
+        server.start(port, tailscale=True)
+        assert wait_for(server, "error").state == "error"
+        server.stop()
+        with socket.socket() as released:
+            released.bind(("127.0.0.1", port))
+
+
+def test_unavailable_tailscale_does_not_start_or_fall_back(mcp_database, monkeypatch):
+    from services.remote_asr import tailscale
+
+    for status in (
+        tailscale.TailscaleStatus("stopped"),
+        tailscale.TailscaleStatus("running", address="192.168.1.3"),
+    ):
+        monkeypatch.setattr(tailscale, "status", lambda: status)
+        server = McpRuntime(mcp_database, credentials=CredentialStore(memory_backend))
+        port = free_port()
+        server.start(port, tailscale=True)
+        assert "Tailscale" in wait_for(server, "error").message
+        assert not server.token() and not server.status().remote_url
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", port))

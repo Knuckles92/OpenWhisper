@@ -92,6 +92,13 @@ class RemoteEngineService:
         self._backend_provider = backend_provider
         self._records_root = records_root
         self._records = None
+        from services.remote_asr.host import DeviceRegistry
+        from services.remote_history.channel import HistoryBroker
+
+        self.history = HistoryBroker(DeviceRegistry(
+            remote_settings.load_host_devices, remote_settings.save_host_devices
+        ))
+        self._history_client = None
         self._switch_engine = switch_engine
         self._configure_engine = configure_engine
         self._runtime_lock = threading.Lock()
@@ -282,6 +289,7 @@ class RemoteEngineService:
                 records_enabled=remote_settings.host_keeps_records,
                 records=self.records_request,
                 records_summary=self.records_summary,
+                history=self.history,
             )
         return self._host
 
@@ -583,10 +591,27 @@ class RemoteEngineService:
         return state
 
     def shutdown(self) -> None:
+        if self._history_client is not None:
+            self._history_client.stop()
         with self._lock:
             host = self._host
         if host is not None:
             host.stop()
+
+    def start_client_history(self):
+        if self._history_client is None:
+            from services.remote_history.client import HistoryClient
+
+            self._history_client = HistoryClient()
+        self._history_client.start()
+
+    def set_share_history(self, enabled):
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_CLIENT_HISTORY, enabled is True)
+        if self._history_client is not None:
+            self._history_client.refresh()
+        self._notify("client")
 
     # ---- client ----
 
@@ -605,6 +630,8 @@ class RemoteEngineService:
         host, port = protocol.parse_address(address)
         result = pair_with_host(host, port, code, socket.gethostname(), tailscale=tailscale)
         pairing = remote_settings.save_client_pairing(host, port, result)
+        if self._history_client is not None:
+            self._history_client.refresh()
         logger.info("Paired with remote engine host %s at %s (%s)",
                     pairing.host_name, pairing.address, pairing.via)
         self._notify("client")
@@ -652,6 +679,8 @@ class RemoteEngineService:
 
     def forget_host(self) -> None:
         remote_settings.forget_client_pairing()
+        if self._history_client is not None:
+            self._history_client.refresh()
         self._notify("client")
         if self.on_client_changed is not None:
             self.on_client_changed()

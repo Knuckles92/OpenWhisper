@@ -187,6 +187,7 @@ The host's selected engine handles transcription. Traffic is encrypted and limit
 
 - **Meetings:** Select **Remote computer** in **Settings → Meeting Mode → Voice & speakers → Speech engine**. Audio goes to the host for transcription; capture, recordings, and transcripts stay on the computer running the meeting.
 - **Host models:** Use **Manage host models** to choose or download a model and install speech runtimes. The host must first enable **Allow paired computers to manage models**.
+- **History through the host's MCP:** Enable **Allow the paired host to query this computer's history** on the client to let agents search its saved transcripts and meetings while it is online. Agents use `include_clients`; choose **Both** storage to keep host copies available while this computer is offline. See [direct client queries](docs/mcp.md#query-paired-clients-directly).
 - **Away from home:** Install [Tailscale](https://tailscale.com/download) on both computers. Hosts on your tailnet appear in the app; computers on the same Tailscale account can connect without a pairing code when the host allows it.
 
 ### AI cleanup and meeting intelligence

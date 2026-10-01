@@ -8,6 +8,14 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+### Added
+- **Direct client history queries over MCP** — clients can allow their paired host to search saved history and read transcripts and meeting insights while they are online. Agents opt in with `include_clients`, route reads by device, and receive explicit offline/disabled status. The shared desktop and Omarchy setting is independent of storage; Both retains host copies for offline access.
+- **Copy MCP access token in Host mode** — the main desktop and Omarchy host dashboards now copy the running server's access token directly, with brief confirmation. MCP connection actions stack in narrow windows so all controls remain accessible.
+
+### Fixed
+- **MCP startup** — enabling MCP now opens the system credential store correctly. Startup previously failed before opening history and showed a misleading history-database error.
+- **MCP setup across computers** — optional Tailscale access provides a reachable host URL while keeping localhost available. Settings distinguishes the agent's computer, and Host mode copies the Tailscale setup when enabled. Local prompts identify their originating computer and no longer direct agents to enable an unrelated local OpenWhisper instance.
+
 ## [2.6.11] - 2026-09-29
 
 ### Added

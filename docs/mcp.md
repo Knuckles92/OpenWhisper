@@ -7,7 +7,9 @@ do not need to install Python or start another process.
 
 The page offers:
 
-- **Server URL**, normally `http://127.0.0.1:8767/mcp`.
+- **Agent runs on**, choosing this computer or another computer over Tailscale.
+- **Server URL**, normally `http://127.0.0.1:8767/mcp` for this computer, or the
+  OpenWhisper host's Tailscale address when remote access is enabled.
 - **Access token**, hidden on screen with a separate copy button.
 - **Agent setup prompt**, which tells the agent how to register the server and
   verify it. The prompt asks for the token separately.
@@ -20,8 +22,37 @@ The page offers:
 
 The URL uses **Streamable HTTP**, not a web page. Agents must send
 `Authorization: Bearer <token>`. Browser clients and cloud-hosted agents cannot
-connect directly to this local endpoint. The agent must run on the same computer
-and support Streamable HTTP with custom headers.
+connect directly to a localhost endpoint. The agent must support Streamable HTTP
+with custom headers.
+
+## Agents on another computer
+
+`127.0.0.1` always refers to the agent's own computer. Copying that URL from a
+host such as `jed` into an agent on your Windows computer will not reach `jed`.
+The same-computer prompt identifies its originating computer and tells the agent
+to request remote setup instead of enabling an unrelated local instance.
+
+On the computer running OpenWhisper, turn MCP off, enable **Allow agents over
+Tailscale**, then turn MCP on again. Choose **Another computer (Tailscale)** in
+Settings → MCP to copy its remote URL, prompt, or manual configuration. Both
+computers must be connected to the same Tailscale network. Host mode displays
+the Tailscale URL and its copy-prompt button uses that URL when enabled.
+
+For example, a host with Tailscale address `100.82.22.3` offers
+`http://100.82.22.3:8767/mcp`. Use the access token from **that host's** Settings
+→ MCP. OpenWhisper must stay running on the host; it does not need to run on the
+agent's computer. Localhost remains available for agents on the host itself.
+
+Remote access is off by default. When enabled, MCP binds only to localhost and
+the computer's current Tailscale IPv4 address. Requests require the same bearer
+token, accept only configured host names, reject browser origins, and accept
+only local or Tailscale peer addresses. Tailscale encrypts the connection between
+computers. OpenWhisper does not bind to the LAN or all network interfaces. If
+Tailscale is disconnected or its address changes, reconnect it and restart MCP
+before copying a new remote URL. An SSH tunnel is an alternative for the local
+listener; substituting a LAN address alone will not make it reachable.
+
+## Access token and lifecycle
 
 The token is generated once and saved in the operating system credential store
 under service `OpenWhisper`, account `OPENWHISPER_MCP_TOKEN`. It is separate from
@@ -60,6 +91,41 @@ bounded cursor pagination, literal search, date filters, sanitized response
 schemas, and exclusion of paired-computer records unless `include_remote=true`.
 No tool starts recording, deletes history, edits transcript text, or exposes audio files. Any authorized
 client can opt into remote records already saved in this database.
+
+## Query paired clients directly
+
+On each client, enable **Settings → Remote engine → Allow the paired host to
+query this computer's history**. It is off by default and is independent of
+the storage choice. Both the host and client need a version with this feature.
+The client opens a separate, authenticated connection to its paired host, so
+history queries can run alongside dictation and meetings without opening an
+inbound port on the client.
+
+Use `include_clients: true` on `search_history`, `list_transcriptions`, or
+`list_meetings` to combine host history with live client results. Include
+`include_remote: true` to search copies already stored on the host as well.
+The same record stored by **Both** and returned by its client appears once.
+An optional `device_id` restricts a list or search to one client.
+
+Live results include `device_id`; pass it to `get_transcription`, `get_meeting`,
+`list_meeting_segments`, `get_meeting_segment`, and `get_meeting_insights` when
+retrieving that client's originals. Search resources already include this
+routing parameter. With `include_remote: true`, a matching stored host copy
+can answer a device-specific read while the client is offline.
+
+`get_status` and federated list/search pages include `clients`, with each
+device's name, ID, and status: `online`, `sharing_disabled`, or `unavailable`.
+Offline clients and timeouts yield partial results with explicit availability,
+so an empty page does not imply that every client's history was searched.
+Turning off the client's permission or forgetting the host cuts off new live
+queries. Agents cannot enable that permission themselves.
+
+Direct queries need the client app to be running and reachable. Choose **Both**
+under **Where records are kept**, and **Copy existing records** for earlier
+history, to keep copies searchable when the client is offline. Live queries
+read transcripts and saved insights; they do not transfer audio or save records
+to the host's database. Federated cursors retain their original client set,
+filters, and page size for ten minutes; restart the query after they expire.
 
 ## Optional changes
 

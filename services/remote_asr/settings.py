@@ -158,6 +158,12 @@ def host_keeps_records(settings: Optional[Dict[str, Any]] = None) -> bool:
 RECORD_LOCATIONS = ("local", "host", "both")
 
 
+def client_shares_history(settings: Optional[Dict[str, Any]] = None) -> bool:
+    from services.settings import SettingsKey
+
+    return _settings(settings).get(SettingsKey.REMOTE_CLIENT_HISTORY) is True
+
+
 def records_location(settings: Optional[Dict[str, Any]] = None) -> str:
     """Where this computer keeps its records while paired; "local" by default."""
     from services.settings import SettingsKey

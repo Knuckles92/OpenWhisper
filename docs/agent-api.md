@@ -106,6 +106,21 @@ fetch records that exist only on another computer. This is a selection option,
 not a separate permission: the local bearer token can read the whole selected
 database. Returned `origin_device_id` identifies a remote record's provenance.
 
+The desktop MCP listener also accepts `include_clients=true` on list/search
+endpoints to query online paired clients that enabled history sharing in
+Settings → Remote engine. `device_id` selects one client and routes individual
+reads, meeting segments, and insights to it. Add `include_remote=true` to allow
+matching host-stored copies to answer when that client is offline. Live queries
+read only the client's own records, preventing recursive queries between hosts.
+The standalone `--api` process has no connected-client broker; use the desktop
+MCP listener's `/v1` endpoints for live clients.
+
+Status and federated pages include a `clients` array of `{device_id, name,
+status}`, where status is `online`, `sharing_disabled`, or `unavailable`.
+Unavailable devices produce explicit partial results; device-specific reads
+without a stored fallback return a sanitized availability error. Live records
+carry `device_id`, and search resource URLs contain the routing parameters.
+
 ### Pagination and citations
 
 List and search responses use:
@@ -124,6 +139,12 @@ with deterministic ID tie breakers. Transcript segments sort by `start_s`, then
 ID, so segments at the same timestamp are not skipped. Segment lists also accept
 `start_s` (inclusive) and `end_s` (exclusive), filtering by segment start time in
 seconds from the meeting start.
+
+Federated list/search cursors are kept in memory for ten minutes and retain the
+initial device set. Use the same filters and page size on subsequent requests;
+an expired cursor requires restarting the query. Buffered client previews are
+withheld if sharing is revoked or the client becomes unavailable. Host-stored
+copies and live originals are deduplicated by device, record kind, and ID.
 
 Search returns at most 320 characters of context around each match:
 

@@ -73,6 +73,15 @@ a payload. For decoding operations the payload is the audio as 16 kHz mono
 signed 16-bit little-endian PCM. Dictation audio is recorded as 16-bit and
 resampled to 16-bit before it is decoded, so the conversion loses nothing
 and halves what float32 would send. For ``records_put`` it is file bytes.
+
+Direct history uses a separate paired connection: ``hello`` includes
+``purpose: "history"`` and the client's ``history_enabled`` opt-in. A supporting
+host replies with ``ready.capabilities.client_history: true``, then sends JSON
+``history_query`` messages (id, operation, params). The client returns JSON
+``history_result`` with that id and a public History API result or sanitized
+error code. This channel carries no audio, accepts only read operations, and
+the client rechecks its permission for every query. Older hosts omit the
+capability, so clients close the dedicated connection without sending history.
 """
 from __future__ import annotations
 

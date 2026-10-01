@@ -974,6 +974,7 @@ class ApplicationController(QObject):
         # Records kept on (or copied to) the paired host: after the database
         # is initialized above, on the sync's own thread.
         self.record_sync.start()
+        self.remote_engine.start_client_history()
         self._warm_openai_sdk()
 
     def _warm_openai_sdk(self) -> None:

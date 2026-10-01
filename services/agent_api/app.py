@@ -29,6 +29,8 @@ from services.agent_api.store import (
     NotFound,
     SnapshotUnavailable,
 )
+from services.agent_api.federation import FederatedHistory
+from services.remote_history.channel import ClientUnavailable
 
 Limit = Annotated[int, Query(ge=1, le=100)]
 Cursor = Annotated[str | None, Query(max_length=2048)]
@@ -45,6 +47,8 @@ def _error(status, code, message, headers=None):
 
 def _filters(
     include_remote: bool = False,
+    include_clients: bool = False,
+    device_id: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
     since: datetime | None = None,
     before: datetime | None = None,
 ):
@@ -60,13 +64,14 @@ def _filters(
     since, before = utc(since), utc(before)
     if since and before and since >= before:
         raise InvalidQuery("since must be earlier than before.")
-    return dict(include_remote=include_remote, since=since, before=before)
+    return dict(include_remote=include_remote, include_clients=include_clients, device_id=device_id,
+                since=since, before=before)
 
 
 Filters = Annotated[dict, Depends(_filters)]
 
 
-def create_app(database, token: str) -> FastAPI:
+def create_app(database, token: str, *, allowed_hosts=(), client_history=None) -> FastAPI:
     if (
         not 32 <= len(token) <= 512
         or not token.isascii()
@@ -75,7 +80,8 @@ def create_app(database, token: str) -> FastAPI:
         raise ValueError(
             "OPENWHISPER_API_TOKEN must be 32–512 printable ASCII characters without whitespace."
         )
-    store = HistoryStore(database)
+    store = FederatedHistory(HistoryStore(database), client_history)
+    trusted_hosts = {"127.0.0.1", "localhost", *allowed_hosts}
 
     @asynccontextmanager
     async def lifespan(app):
@@ -105,9 +111,9 @@ def create_app(database, token: str) -> FastAPI:
         # Native agent clients do not need browser origins. Also reject hostile
         # Host headers so this local service cannot be used via DNS rebinding.
         host = request.headers.get("host", "").split(":", 1)[0].lower()
-        if host not in {"127.0.0.1", "localhost"} or "origin" in request.headers:
+        if host not in trusted_hosts or "origin" in request.headers:
             response = _error(
-                403, "forbidden", "Only local, non-browser clients are supported."
+                403, "forbidden", "Only configured, non-browser clients are supported."
             )
         else:
             scheme, _, supplied = request.headers.get("authorization", "").partition(
@@ -135,6 +141,10 @@ def create_app(database, token: str) -> FastAPI:
     @app.exception_handler(NotFound)
     async def not_found(request, exc):
         return _error(404, "not_found", "Record not found.")
+
+    @app.exception_handler(ClientUnavailable)
+    async def client_unavailable(request, exc):
+        return _error(404 if exc.code == "not_found" else 503, exc.code, str(exc))
 
     @app.exception_handler(SnapshotUnavailable)
     async def bad_snapshot(request, exc):
@@ -171,7 +181,7 @@ def create_app(database, token: str) -> FastAPI:
     @app.get("/v1/status", response_model=ApiStatus, operation_id="get_status")
     def status():
         store.check()
-        return ApiStatus()
+        return ApiStatus(clients=store.clients())
 
     @app.get(
         "/v1/transcriptions",
@@ -192,8 +202,8 @@ def create_app(database, token: str) -> FastAPI:
         response_model=Transcription,
         operation_id="get_transcription",
     )
-    def transcription(record_id: str, include_remote: bool = False):
-        return store.transcription(record_id, include_remote=include_remote)
+    def transcription(record_id: str, include_remote: bool = False, device_id: str | None = None):
+        return store.transcription(record_id, include_remote=include_remote, device_id=device_id)
 
     @app.get("/v1/meetings", response_model=Page[Meeting], operation_id="list_meetings")
     def meetings(
@@ -208,8 +218,8 @@ def create_app(database, token: str) -> FastAPI:
     @app.get(
         "/v1/meetings/{meeting_id}", response_model=Meeting, operation_id="get_meeting"
     )
-    def meeting(meeting_id: str, include_remote: bool = False):
-        return store.meeting(meeting_id, include_remote=include_remote)
+    def meeting(meeting_id: str, include_remote: bool = False, device_id: str | None = None):
+        return store.meeting(meeting_id, include_remote=include_remote, device_id=device_id)
 
     @app.get(
         "/v1/meetings/{meeting_id}/segments",
@@ -221,6 +231,7 @@ def create_app(database, token: str) -> FastAPI:
         limit: Limit = 20,
         cursor: Cursor = None,
         include_remote: bool = False,
+        device_id: str | None = None,
         start_s: Annotated[float | None, Query(ge=0, allow_inf_nan=False)] = None,
         end_s: Annotated[float | None, Query(ge=0, allow_inf_nan=False)] = None,
     ):
@@ -234,6 +245,7 @@ def create_app(database, token: str) -> FastAPI:
             limit=limit,
             cursor=cursor,
             include_remote=include_remote,
+            device_id=device_id,
         )
 
     @app.get(
@@ -241,17 +253,17 @@ def create_app(database, token: str) -> FastAPI:
         response_model=Segment,
         operation_id="get_meeting_segment",
     )
-    def segment(meeting_id: str, segment_id: str, include_remote: bool = False):
-        return store.segment(meeting_id, segment_id, include_remote=include_remote)
+    def segment(meeting_id: str, segment_id: str, include_remote: bool = False, device_id: str | None = None):
+        return store.segment(meeting_id, segment_id, include_remote=include_remote, device_id=device_id)
 
     @app.get(
         "/v1/meetings/{meeting_id}/insights",
         response_model=MeetingInsights,
         operation_id="get_meeting_insights",
     )
-    def insights(meeting_id: str, include_remote: bool = False):
+    def insights(meeting_id: str, include_remote: bool = False, device_id: str | None = None):
         """Saved summary, notes, decisions, actions, questions, reports, and evidence IDs."""
-        return store.insights(meeting_id, include_remote=include_remote)
+        return store.insights(meeting_id, include_remote=include_remote, device_id=device_id)
 
     @app.get(
         "/v1/search", response_model=Page[SearchHit], operation_id="search_history"

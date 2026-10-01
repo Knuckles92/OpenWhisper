@@ -78,10 +78,12 @@ def _excerpt(column, query):
     return func.substr(column, start, 320)
 
 
-def _filters(table, timestamp, include_remote=False, since=None, before=None):
+def _filters(table, timestamp, include_remote=False, since=None, before=None, origin_device_id=None):
     clauses = []
     if not include_remote:
         clauses.append(table.c.origin_device_id.is_(None))
+    if origin_device_id is not None:
+        clauses.append(table.c.origin_device_id == origin_device_id)
     if since is not None:
         clauses.append(_time(timestamp) >= func.julianday(since))
     if before is not None:

@@ -196,6 +196,7 @@ class SpeechHost:
         records_enabled: Optional[Callable[[], bool]] = None,
         records: Optional[Callable[[str, dict, bytes, dict], dict]] = None,
         records_summary: Optional[Callable[[str], dict]] = None,
+        history=None,
     ):
         self._engine_provider = engine_provider
         self.registry = registry
@@ -213,6 +214,9 @@ class SpeechHost:
         self._records_enabled = records_enabled or (lambda: False)
         self._records = records
         self._records_summary = records_summary or (lambda _device_id: {})
+        from services.remote_history.channel import HistoryBroker
+
+        self.history = history if history is not None else HistoryBroker(registry)
         self._lock = threading.Lock()
         self._server = None
         self._thread: Optional[threading.Thread] = None
@@ -241,7 +245,7 @@ class SpeechHost:
                 port,
                 ssl=server_context(self.identity),
                 process_request=self._check_path,
-                max_size=protocol.MAX_REQUEST_BYTES,
+                max_size=max(protocol.MAX_REQUEST_BYTES, protocol.MAX_REPLY_BYTES),
                 compression=None,
                 open_timeout=HANDSHAKE_TIMEOUT_S,
                 ping_interval=20,
@@ -249,6 +253,7 @@ class SpeechHost:
                 logger=logging.getLogger("websockets.remote_engine"),
             )
             self._server = server
+            self.history.start()
             self.port = server.socket.getsockname()[1]
             self._thread = threading.Thread(
                 target=server.serve_forever, name="RemoteEngineHost", daemon=True
@@ -260,6 +265,7 @@ class SpeechHost:
         return self.port
 
     def stop(self) -> None:
+        self.history.remove()
         with self._lock:
             server, self._server = self._server, None
             thread, self._thread = self._thread, None
@@ -362,6 +368,7 @@ class SpeechHost:
     def remove_device(self, device_id: str) -> bool:
         """Forget a device and drop its open connections."""
         removed = self.registry.remove(device_id)
+        self.history.remove(device_id)
         with self._lock:
             sockets = [c.ws for c in self._clients.values() if c.device_id == device_id]
         for ws in sockets:
@@ -581,6 +588,9 @@ class SpeechHost:
                 "message": "This computer isn't paired with the host anymore. Pair it again.",
             })
             ws.close(protocol.CLOSE_UNAUTHORIZED, "unauthorized")
+            return
+        if message.get("purpose") == "history":
+            self.history.serve(ws, device, message.get("token"), message.get("history_enabled"))
             return
         engine = self._engine()
         identity = engine.identity

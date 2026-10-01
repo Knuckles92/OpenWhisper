@@ -33,6 +33,8 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
+    QApplication,
+    QBoxLayout,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -1019,9 +1021,40 @@ class HostDashboard(QWidget):
         card.body.addLayout(row)
         self.mcp_detail = _muted(object_name="hostWarning")
         card.body.addWidget(self.mcp_detail)
+        actions = self._mcp_actions = QBoxLayout(QBoxLayout.Direction.TopToBottom)
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(10)
         self.mcp_link = _link("Connect an agent in Settings", "hostMcpLink")
         self.mcp_link.clicked.connect(lambda: self.settings_requested.emit(MCP_DESTINATION))
-        card.body.addWidget(self.mcp_link, 0, Qt.AlignmentFlag.AlignLeft)
+        actions.addWidget(self.mcp_link, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.mcp_copy_token = Button("Copy access token")
+        self.mcp_copy_token.setAccessibleName("Copy MCP access token")
+        self.mcp_copy_token.setObjectName("hostCardButton")
+        self.mcp_copy_token.set_base_minimum_size(110, 36)
+        self.mcp_copy_token.setEnabled(False)
+        self.mcp_copy_token.clicked.connect(self._copy_mcp_access_token)
+        actions.addWidget(self.mcp_copy_token, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.mcp_copy_prompt = Button("Copy agent install prompt")
+        self.mcp_copy_prompt.setAccessibleName("Copy agent install prompt")
+        self.mcp_copy_prompt.setObjectName("hostCardButton")
+        self.mcp_copy_prompt.set_base_minimum_size(110, 36)
+        self.mcp_copy_prompt.setEnabled(False)
+        self.mcp_copy_prompt.clicked.connect(self._copy_mcp_agent_prompt)
+        actions.addWidget(self.mcp_copy_prompt, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        actions.addStretch(1)
+        card.body.addLayout(actions)
+        self._mcp_copy_feedback_timer = QTimer(self)
+        self._mcp_copy_feedback_timer.setSingleShot(True)
+        self._mcp_copy_feedback_timer.setInterval(2000)
+        self._mcp_copy_feedback_timer.timeout.connect(
+            lambda: self.mcp_copy_prompt.setText("Copy agent install prompt")
+        )
+        self._mcp_token_copy_feedback_timer = QTimer(self)
+        self._mcp_token_copy_feedback_timer.setSingleShot(True)
+        self._mcp_token_copy_feedback_timer.setInterval(2000)
+        self._mcp_token_copy_feedback_timer.timeout.connect(
+            lambda: self.mcp_copy_token.setText("Copy access token")
+        )
         card.hide()
         self._layout.addWidget(card)
 
@@ -1144,6 +1177,24 @@ class HostDashboard(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._arrange_stats(4 if event.size().width() >= FOUR_STATS_WIDTH else 2)
+        self._arrange_mcp_actions(event.size().width())
+
+    def _arrange_mcp_actions(self, width: int) -> None:
+        outer = self._layout.contentsMargins()
+        card = self.mcp_card.body.contentsMargins()
+        available = (width - outer.left() - outer.right() - card.left() - card.right()
+                     - self.scroll.verticalScrollBar().sizeHint().width())
+        needed = (self.mcp_link.sizeHint().width() + self._mcp_actions.spacing() * 2
+                  + sum(max(button.minimumWidth(), button.sizeHint().width(),
+                            button.fontMetrics().horizontalAdvance(label) + 40)
+                        for button, label in (
+                            (self.mcp_copy_token, "Copy access token"),
+                            (self.mcp_copy_prompt, "Copy agent install prompt"),
+                        )))
+        self._mcp_actions.setDirection(
+            QBoxLayout.Direction.LeftToRight if available >= needed
+            else QBoxLayout.Direction.TopToBottom
+        )
 
     def _show_unbound(self) -> None:
         set_style_property(self.hero, "state", "off")
@@ -1493,14 +1544,21 @@ class HostDashboard(QWidget):
     def _refresh_mcp(self) -> None:
         server = self._mcp
         if server is None:
+            self.mcp_copy_prompt.setEnabled(False)
+            self.mcp_copy_token.setEnabled(False)
             return
         try:
             status = server.status()
         except Exception:
             logger.debug("Could not read the MCP server's status", exc_info=True)
+            self.mcp_copy_prompt.setEnabled(False)
+            self.mcp_copy_token.setEnabled(False)
             return
         state = getattr(status, "state", "stopped")
-        intro = ("Agents on this computer, such as Claude Code or Cursor, can search "
+        remote_url = getattr(status, "remote_url", "")
+        self.mcp_copy_prompt.setEnabled(state == "running")
+        self.mcp_copy_token.setEnabled(state == "running")
+        intro = (("Agents on this computer and over Tailscale" if remote_url else "Agents on this computer") + ", such as Claude Code or Cursor, can search "
                  "the dictations and meetings saved here. Choose permissions for title "
                  "and settings changes in Settings → MCP.")
         if (self._state or {}).get("keep_records"):
@@ -1508,7 +1566,9 @@ class HostDashboard(QWidget):
         self.mcp_intro.setText(intro)
         detail = self._mcp_notice
         if state == "running":
-            text, dot = f"Running at {status.url}", EngineStatus.READY
+            text, dot = f"Running at {remote_url or status.url}", EngineStatus.READY
+            if not remote_url:
+                detail = detail or "For an agent on another computer, enable Allow agents over Tailscale in Settings → MCP."
         elif state == "starting":
             text, dot = "Starting…", EngineStatus.UNKNOWN
         elif state == "stopping":
@@ -1525,6 +1585,43 @@ class HostDashboard(QWidget):
         self.mcp_detail.setVisible(bool(detail))
         self.mcp_button.setText({"error": "Try again", "stopped": "Turn on"}.get(state, "Turn off"))
         self.mcp_button.setEnabled(state != "stopping")
+
+    def _copy_mcp_access_token(self) -> None:
+        server = self._mcp
+        if server is None:
+            return
+        try:
+            status = server.status()
+            token = server.token() if status.state == "running" else ""
+        except Exception:
+            logger.debug("Could not read the MCP access token", exc_info=True)
+            self.mcp_copy_token.setEnabled(False)
+            return
+        if not token:
+            self._refresh_mcp()
+            return
+        QApplication.clipboard().setText(token)
+        self.mcp_copy_token.setText("Copied")
+        self._mcp_token_copy_feedback_timer.start()
+
+    def _copy_mcp_agent_prompt(self) -> None:
+        server = self._mcp
+        if server is None:
+            return
+        try:
+            status = server.status()
+        except Exception:
+            logger.debug("Could not read the MCP server's status", exc_info=True)
+            self.mcp_copy_prompt.setEnabled(False)
+            return
+        if status.state != "running":
+            self._refresh_mcp()
+            return
+        from services.agent_mcp.setup import agent_prompt
+
+        QApplication.clipboard().setText(agent_prompt(getattr(status, "remote_url", "") or status.url))
+        self.mcp_copy_prompt.setText("Copied")
+        self._mcp_copy_feedback_timer.start()
 
     def _toggle_mcp(self) -> None:
         server = self._mcp

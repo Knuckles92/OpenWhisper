@@ -7,18 +7,27 @@ from pydantic import BaseModel, Field
 T = TypeVar("T")
 
 
+class ClientStatus(BaseModel):
+    device_id: str
+    name: str
+    status: Literal["online", "sharing_disabled", "unavailable"]
+
+
 class Page(BaseModel, Generic[T]):  # noqa: UP046 - source installs support Python 3.11
     items: list[T]
     next_cursor: str | None = None
+    clients: list[ClientStatus] = Field(default_factory=list)
 
 
 class ApiStatus(BaseModel):
     api_version: Literal["1"] = "1"
     read_only: Literal[True] = True
+    clients: list[ClientStatus] = Field(default_factory=list)
 
 
 class TranscriptionSummary(BaseModel):
     id: str
+    device_id: str | None = None
     title: str | None = None
     timestamp: str
     model: str
@@ -38,6 +47,7 @@ class Transcription(TranscriptionSummary):
 
 class Meeting(BaseModel):
     id: str
+    device_id: str | None = None
     title: str
     status: str
     started_at: str
@@ -49,6 +59,7 @@ class Meeting(BaseModel):
 
 class Segment(BaseModel):
     id: str
+    device_id: str | None = None
     meeting_id: str
     start_s: float
     end_s: float
@@ -103,6 +114,7 @@ class Report(BaseModel):
 
 class MeetingInsights(BaseModel):
     meeting_id: str
+    device_id: str | None = None
     state_seq: int
     snapshot_available: bool
     rolling_summary: str = ""
@@ -116,6 +128,8 @@ class MeetingInsights(BaseModel):
 class SearchHit(BaseModel):
     kind: Literal["transcription", "meeting", "segment"]
     id: str
+    device_id: str | None = None
+    origin_device_name: str | None = None
     meeting_id: str | None = None
     title: str
     timestamp: str

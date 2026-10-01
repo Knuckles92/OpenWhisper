@@ -319,8 +319,13 @@ def _page(service, mcp=None):
     return page
 
 
+@pytest.fixture(params=["classic", "omarchy"])
+def host_ui(request, monkeypatch):
+    monkeypatch.setenv("OPENWHISPER_UI", request.param)
+
+
 @pytest.fixture
-def dashboard(service):
+def dashboard(service, host_ui):
     return _page(service)
 
 
@@ -554,6 +559,7 @@ class FakeMcp:
 
     def __init__(self, state="stopped", message="MCP is off."):
         self.calls = []
+        self.access_token = "test-mcp-access-token"
         self._set(state, message)
 
     def _set(self, state, message=""):
@@ -562,6 +568,9 @@ class FakeMcp:
 
     def status(self):
         return self._status
+
+    def token(self):
+        return self.access_token if self._status.state == "running" else ""
 
     def restore(self, settings):
         self.calls.append(("restore", settings.get("mcp_enabled")))
@@ -580,6 +589,8 @@ def mcp_setting(monkeypatch):
 
 def test_without_an_mcp_server_there_is_no_mcp_card(dashboard):
     assert not dashboard.mcp_card.isVisibleTo(dashboard)
+    assert not dashboard.mcp_copy_token.isEnabled()
+    assert not dashboard.mcp_copy_prompt.isEnabled()
 
 
 def test_the_page_finds_the_apps_mcp_server_when_first_shown(service, monkeypatch):
@@ -595,19 +606,22 @@ def test_the_page_finds_the_apps_mcp_server_when_first_shown(service, monkeypatc
     assert page.mcp_status.text() == "Off"
 
 
-def test_mcp_turns_on_and_off_with_the_setting_settings_uses(service, mcp_setting):
+def test_mcp_turns_on_and_off_with_the_setting_settings_uses(service, mcp_setting, host_ui):
     server = FakeMcp()
     page = _page(service, server)
     assert page.mcp_button.text() == "Turn on"
+    assert not page.mcp_copy_token.isEnabled()
     page.mcp_button.click()
     assert settings_manager.get("mcp_enabled") is True
     assert server.calls == [("restore", True)]
     assert page.mcp_status.text() == "Running at http://127.0.0.1:8767/mcp"
     assert page.mcp_button.text() == "Turn off"
+    assert page.mcp_copy_token.isEnabled()
     page.mcp_button.click()
     assert settings_manager.get("mcp_enabled") is False
     assert server.calls[-1] == "stop"
     assert page.mcp_status.text() == "Off"
+    assert not page.mcp_copy_token.isEnabled()
 
 
 def test_mcp_that_couldnt_start_says_why_and_offers_to_try_again(service):
@@ -630,6 +644,104 @@ def test_mcp_says_it_reaches_what_paired_computers_keep_here(service):
     assert opened == ["mcp"]
 
 
+def test_host_copy_prompt_targets_tailscale_and_explains_local_only(service, host_ui):
+    server = FakeMcp("running", "Ready")
+    server._status.remote_url = "http://100.82.22.3:8767/mcp"
+    page = _page(service, server)
+    assert server._status.remote_url in page.mcp_status.text()
+    page.mcp_copy_prompt.click()
+    copied = QApplication.clipboard().text()
+    assert server._status.remote_url in copied
+    assert "same Tailscale network" in copied
+    assert "127.0.0.1" not in copied
+    server._status.remote_url = ""
+    page.refresh()
+    assert "Allow agents over Tailscale" in page.mcp_detail.text()
+    page.mcp_copy_prompt.click()
+    assert "Do not connect to or enable a different" in QApplication.clipboard().text()
+
+
+def test_host_copies_the_current_access_token_with_independent_feedback(service, host_ui):
+    from PyQt6.QtTest import QTest
+
+    server = FakeMcp("running")
+    page = _page(service, server)
+    server.access_token = "updated-mcp-access-token"
+    page._mcp_token_copy_feedback_timer.setInterval(1)
+    page.mcp_copy_token.click()
+    assert QApplication.clipboard().text() == server.access_token
+    assert page.mcp_copy_token.text() == "Copied"
+    assert page.mcp_copy_prompt.text() == "Copy agent install prompt"
+    assert server.access_token not in page.mcp_status.text()
+    assert server.access_token not in page.mcp_detail.text()
+    deadline = time.monotonic() + 1.0
+    while page.mcp_copy_token.text() == "Copied" and time.monotonic() < deadline:
+        QTest.qWait(10)
+    assert page.mcp_copy_token.text() == "Copy access token"
+    page.mcp_copy_prompt.click()
+    assert page.mcp_copy_prompt.text() == "Copied"
+    assert page.mcp_copy_token.text() == "Copy access token"
+    assert server.access_token not in QApplication.clipboard().text()
+
+
+@pytest.mark.parametrize("state", ["stopped", "starting", "stopping", "error"])
+def test_host_does_not_copy_a_token_after_mcp_leaves_running(service, host_ui, state):
+    server = FakeMcp("running")
+    page = _page(service, server)
+    QApplication.clipboard().setText("existing clipboard")
+    server._set(state)
+    page.mcp_copy_token.click()
+    assert QApplication.clipboard().text() == "existing clipboard"
+    assert not page.mcp_copy_token.isEnabled()
+    assert not page.mcp_copy_prompt.isEnabled()
+    assert page.mcp_copy_token.text() == "Copy access token"
+
+
+@pytest.mark.parametrize("failure", ["empty_token", "token_error", "status_error", "unbound"])
+def test_host_token_unavailable_leaves_the_clipboard_unchanged(service, host_ui, failure):
+    server = FakeMcp("running")
+    page = _page(service, server)
+    QApplication.clipboard().setText("existing clipboard")
+    if failure == "empty_token":
+        server.access_token = ""
+    elif failure == "token_error":
+        server.token = Mock(side_effect=RuntimeError("unavailable"))
+    elif failure == "status_error":
+        server.status = Mock(side_effect=RuntimeError("unavailable"))
+        page._refresh_mcp()
+        assert not page.mcp_copy_token.isEnabled()
+        assert not page.mcp_copy_prompt.isEnabled()
+    else:
+        page.bind_mcp(None)
+        assert not page.mcp_copy_token.isEnabled()
+    page._copy_mcp_access_token()
+    assert QApplication.clipboard().text() == "existing clipboard"
+    assert page.mcp_copy_token.text() == "Copy access token"
+
+
+def test_host_mcp_actions_fit_narrow_windows_and_reflow_when_widened(service, host_ui):
+    from PyQt6.QtWidgets import QBoxLayout
+
+    page = _page(service, FakeMcp("running"))
+    page.resize(420, 600)
+    page.show()
+    QApplication.processEvents()
+    assert page.width() == 420
+    assert page._mcp_actions.direction() == QBoxLayout.Direction.TopToBottom
+    buttons = (page.mcp_copy_token, page.mcp_copy_prompt)
+    for button in buttons:
+        assert button.isVisibleTo(page)
+        left = button.mapTo(page.scroll.viewport(), button.rect().topLeft()).x()
+        assert page.scroll.viewport().rect().contains(
+            QRect(left, 0, button.width(), 1)
+        )
+    assert buttons[1].y() > buttons[0].y()
+    page.resize(1200, 600)
+    QApplication.processEvents()
+    assert page._mcp_actions.direction() == QBoxLayout.Direction.LeftToRight
+    assert buttons[1].x() > buttons[0].x()
+
+
 # ---- the main window's view ----
 
 @pytest.fixture
@@ -640,6 +752,20 @@ def window():
     yield main_window
     main_window._force_quit = True
     main_window.close()
+
+
+def test_main_host_window_has_the_shared_mcp_copy_controls(host_ui, window, service):
+    server = FakeMcp("running")
+    page = window.host_dashboard
+    page.run_in_background = lambda work: work()
+    page.bind(service)
+    page.bind_mcp(server)
+    window.set_host_mode(True, persist=False)
+    page.refresh()
+    assert page.mcp_copy_token.isVisibleTo(window)
+    assert page.mcp_copy_prompt.isVisibleTo(window)
+    page.mcp_copy_token.click()
+    assert QApplication.clipboard().text() == server.access_token
 
 
 def test_host_mode_swaps_the_tabs_for_the_dashboard_and_back(window):

@@ -15,12 +15,14 @@ class FakeServer:
     def __init__(self):
         self.current = ServerStatus("stopped", "MCP is off.", DEFAULT_PORT)
         self.starts = []
+        self.tailscale_starts = []
 
     def status(self):
         return self.current
 
-    def start(self, port):
+    def start(self, port, *, tailscale=False):
         self.starts.append(port)
+        self.tailscale_starts.append(tailscale)
         self.current = ServerStatus("starting", "Starting MCP…", port)
 
     def stop(self):
@@ -179,6 +181,57 @@ def test_failed_permission_save_rolls_back_ui_and_preserves_other_grants(
         assert "private-marker" not in page.notice.text()
         page.permission_checks[SettingsKey.MCP_RETITLE_MEETINGS].setChecked(True)
         assert not page.permission_checks[SettingsKey.MCP_RETITLE_MEETINGS].isChecked()
+    finally:
+        page.close()
+        page.deleteLater()
+
+
+def test_tailscale_setup_uses_host_url_and_separate_token(tmp_path):
+    page, settings, server = make_page(tmp_path)
+    try:
+        assert not page.tailscale_enabled.isChecked()
+        page.tailscale_enabled.setChecked(True)
+        assert settings.get(SettingsKey.MCP_TAILSCALE_ENABLED) is True
+        page.enabled.setChecked(True)
+        assert server.tailscale_starts == [True]
+        remote_url = "http://100.82.22.3:8767/mcp"
+        server.current = ServerStatus("running", "Ready", DEFAULT_PORT, remote_url)
+        page.refresh()
+        assert not page.tailscale_tile.isEnabled()
+        assert page.url.text() == remote_url
+        assert "same Tailscale network" in page.setup_text.toPlainText()
+        assert "on the computer running OpenWhisper" in page.setup_text.toPlainText()
+        assert TOKEN not in page.setup_text.toPlainText()
+        page.copy_setup.click()
+        assert remote_url in QApplication.clipboard().text()
+        page.setup_kind.setCurrentIndex(2)
+        assert (
+            json.loads(page.setup_text.toPlainText())["mcpServers"]["openwhisper"][
+                "url"
+            ]
+            == remote_url
+        )
+        page.agent_location.setCurrentIndex(0)
+        assert page.url.text() == server.current.url
+        page.setup_kind.setCurrentIndex(0)
+        assert (
+            "Do not connect to or enable a different" in page.setup_text.toPlainText()
+        )
+    finally:
+        page.close()
+        page.deleteLater()
+
+
+def test_other_computer_setup_is_not_copyable_until_access_enabled(tmp_path):
+    page, _, server = make_page(tmp_path)
+    try:
+        server.current = ServerStatus("running", "Ready", DEFAULT_PORT)
+        page.agent_location.setCurrentIndex(1)
+        page.refresh()
+        assert not page.copy_setup.isEnabled()
+        assert not page.copy_url.isEnabled()
+        assert "Allow agents over Tailscale" in page.setup_text.toPlainText()
+        assert "Register a server" not in page.setup_text.toPlainText()
     finally:
         page.close()
         page.deleteLater()

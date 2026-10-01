@@ -174,6 +174,7 @@ class SettingsKey:
     MEETING_SERVER_PORT: Final[str] = "meeting_server_port"
     MCP_ENABLED: Final[str] = "mcp_enabled"
     MCP_PORT: Final[str] = "mcp_port"
+    MCP_TAILSCALE_ENABLED: Final[str] = "mcp_tailscale_enabled"
     MCP_RETITLE_TRANSCRIPTIONS: Final[str] = "mcp_retitle_transcriptions"
     MCP_RETITLE_MEETINGS: Final[str] = "mcp_retitle_meetings"
     MCP_SETTINGS_ACCESS: Final[str] = "mcp_settings_access"
@@ -195,6 +196,7 @@ class SettingsKey:
     # Client: where this computer's records are kept while paired:
     # "local" (default), "host" (moved there), or "both" (copied there).
     REMOTE_RECORDS_LOCATION: Final[str] = "remote_records_location"
+    REMOTE_CLIENT_HISTORY: Final[str] = "remote_client_history"
     # TypeSafe fast judgments. The master switch gates every remote judgment;
     # each feature has its own switch so one can be trialled at a time.
     TYPESAFE_ENABLED: Final[str] = "typesafe_enabled"
