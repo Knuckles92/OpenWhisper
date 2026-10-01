@@ -24,9 +24,12 @@ class ServerStatus:
 
 
 class McpRuntime:
-    def __init__(self, database=None, *, credentials=None):
+    def __init__(self, database=None, *, credentials=None, settings=None):
         self._database = database
         self._credentials = credentials
+        self._settings = settings
+        self._on_change = None
+        self._meeting_renamer = None
         self._lock = threading.RLock()
         self._thread = None
         self._server = None
@@ -86,6 +89,7 @@ class McpRuntime:
             thread.join(timeout=7)
 
     def restore(self, settings):
+        self._settings = settings
         if settings.get(SettingsKey.MCP_ENABLED, False) is True:
             port = settings.get(SettingsKey.MCP_PORT, DEFAULT_PORT)
             if (
@@ -95,6 +99,14 @@ class McpRuntime:
             ):
                 port = DEFAULT_PORT
             self.start(port)
+
+    def configure_controls(self, *, on_change=None, meeting_renamer=None):
+        """Bind thread-safe desktop handlers before starting the listener."""
+        self._on_change = on_change
+        self._meeting_renamer = meeting_renamer
+
+    def bind_settings(self, settings):
+        self._settings = settings
 
     def _serve(self, port):
         from services.credentials import CredentialStoreError, store
@@ -114,6 +126,7 @@ class McpRuntime:
 
             from config import config
             from services.agent_mcp.app import create_app
+            from services.settings import settings_manager
 
             # Bind ourselves so an occupied port is recoverable, not uvicorn's
             # SystemExit. Windows' exclusive bind prevents a second listener.
@@ -129,6 +142,11 @@ class McpRuntime:
                 self._database or config.DATABASE_FILE,
                 token,
                 enabled=lambda: not self._stop.is_set(),
+                settings=self._settings
+                if self._settings is not None
+                else settings_manager,
+                on_change=self._on_change,
+                meeting_renamer=self._meeting_renamer,
             )
             server = uvicorn.Server(
                 uvicorn.Config(

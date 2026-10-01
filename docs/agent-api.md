@@ -188,7 +188,9 @@ MCP tools map directly to the OpenAPI operations `search_history`,
 `get_transcription`, `list_meetings`, `get_meeting`, `list_meeting_segments`,
 `get_meeting_segment`, and `get_meeting_insights`. The transport-independent
 `HistoryStore` owns retrieval; HTTP owns authentication and request validation.
-There are no write tools, network sharing, OAuth, or per-client scopes yet.
+This standalone API has no write operations, network sharing, OAuth, or
+per-client scopes. The desktop [MCP server](mcp.md) separately offers optional,
+user-permitted title and settings changes; its History API remains read-only.
 
 An agent skill should search narrowly, retrieve primary transcript evidence,
 cite record/segment IDs and timestamps, distinguish proposed insights from

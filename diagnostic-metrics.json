@@ -1,1 +1,1 @@
-{"startup_to_window_s": [7.908158699999603], "captured_frames": [864256], "dropped_frames": [0], "stop_to_result_s": [2.8279999999999745]}
+{"startup_to_window_s": [7.908158699999603, 1.9933764999877894, 1.07459679999738], "captured_frames": [864256, 194560, 276480], "dropped_frames": [0, 0, 0], "stop_to_result_s": [2.8279999999999745, 3.577999999994063, 1.312999999994645], "shutdown_s": [0.10864160000346601]}

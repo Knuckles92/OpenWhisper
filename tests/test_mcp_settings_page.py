@@ -126,3 +126,59 @@ def test_restore_is_opt_in_and_validates_port(tmp_path, monkeypatch):
     )
     server.restore(settings)
     assert starts == [DEFAULT_PORT]
+
+
+def test_permissions_are_individual_persistent_and_configurable_while_off(tmp_path):
+    page, settings, server = make_page(tmp_path)
+    try:
+        assert not any(check.isChecked() for check in page.permission_checks.values())
+        assert not any(check.isChecked() for check in page.setting_checks.values())
+        assert not page.settings_permissions.isEnabled()
+        page.permission_checks[SettingsKey.MCP_RETITLE_TRANSCRIPTIONS].setChecked(True)
+        page.permission_checks[SettingsKey.MCP_SETTINGS_ACCESS].setChecked(True)
+        page.setting_checks[SettingsKey.AUTO_PASTE].setChecked(True)
+        page.setting_checks[SettingsKey.UI_THEME].setChecked(True)
+        assert not server.starts
+        assert settings.get(SettingsKey.MCP_RETITLE_TRANSCRIPTIONS) is True
+        assert settings.get(SettingsKey.MCP_RETITLE_MEETINGS) is None
+        assert settings.get(SettingsKey.MCP_WRITABLE_SETTINGS) == {
+            SettingsKey.AUTO_PASTE: True,
+            SettingsKey.UI_THEME: True,
+        }
+        page.setting_checks[SettingsKey.AUTO_PASTE].setChecked(False)
+        assert (
+            settings.get(SettingsKey.MCP_WRITABLE_SETTINGS)[SettingsKey.UI_THEME]
+            is True
+        )
+        page.permission_checks[SettingsKey.MCP_SETTINGS_ACCESS].setChecked(False)
+        assert not page.settings_permissions.isEnabled()
+        assert page.setting_checks[SettingsKey.UI_THEME].isChecked()
+        page.permission_checks[SettingsKey.MCP_SETTINGS_ACCESS].setChecked(True)
+        assert page.settings_permissions.isEnabled()
+    finally:
+        page.close()
+        page.deleteLater()
+
+
+def test_failed_permission_save_rolls_back_ui_and_preserves_other_grants(
+    tmp_path, monkeypatch
+):
+    page, settings, _ = make_page(tmp_path)
+    try:
+        page.permission_checks[SettingsKey.MCP_SETTINGS_ACCESS].setChecked(True)
+        page.setting_checks[SettingsKey.AUTO_PASTE].setChecked(True)
+
+        def fail(*args):
+            raise OSError("private-marker")
+
+        monkeypatch.setattr(settings, "mutate_settings", fail)
+        page.setting_checks[SettingsKey.UI_THEME].setChecked(True)
+        assert not page.setting_checks[SettingsKey.UI_THEME].isChecked()
+        assert page.setting_checks[SettingsKey.AUTO_PASTE].isChecked()
+        assert "Could not save" in page.notice.text()
+        assert "private-marker" not in page.notice.text()
+        page.permission_checks[SettingsKey.MCP_RETITLE_MEETINGS].setChecked(True)
+        assert not page.permission_checks[SettingsKey.MCP_RETITLE_MEETINGS].isChecked()
+    finally:
+        page.close()
+        page.deleteLater()

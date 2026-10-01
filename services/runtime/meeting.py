@@ -358,6 +358,26 @@ class MeetingRuntime:
             return True
         return self.meeting_busy(meeting_id)
 
+    def retitle_saved_meeting(self, meeting_id: str, title: str) -> None:
+        """Keep MCP title edits consistent with live and historical dashboards."""
+        from services.agent_mcp.controls import ControlError
+
+        with self._lock:
+            if self._archive_starting or self.meeting_busy(meeting_id):
+                raise ControlError("record_busy: Wait for the meeting's current work to finish.")
+            owners = [self._engine, self._archive_dashboard, *self._background_engines.values()]
+            # A matching owner holds the authoritative in-memory state. Other
+            # dashboards may hold a historical review store for this meeting.
+            owners.sort(key=lambda owner: getattr(owner, "meeting_id", None) != meeting_id)
+            servers = [getattr(owner, "_server", None) for owner in owners if owner is not None]
+            server = next((server for server in servers
+                           if server is not None and server.is_running()), None)
+        if server is not None:
+            if not server.retitle_saved_meeting(meeting_id, title):
+                raise ControlError("update_rejected: The meeting title could not be changed.")
+        else:
+            self._repository().rename_meeting(meeting_id, title)
+
     def continue_in_background(self) -> bool:
         """Detach the ended meeting once its local transcription model is free."""
         with self._lock:

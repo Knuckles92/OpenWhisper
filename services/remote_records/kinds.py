@@ -123,7 +123,7 @@ def _row_from_json(model, data, what: str, *, drop=(), fixed=None) -> dict:
 
 _ENTRY_FIELDS = (
     "id", "text", "raw_text", "timestamp", "model", "transcription_time",
-    "audio_duration", "file_size", "cleanup_provider", "cleanup_model", "source_name",
+    "audio_duration", "file_size", "cleanup_provider", "cleanup_model", "source_name", "title",
 )
 
 

@@ -3,6 +3,8 @@
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -11,6 +13,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from services.agent_mcp.controls import SETTING_CONTROLS, writable_settings
 from services.agent_mcp.runtime import DEFAULT_PORT, runtime
 from services.agent_mcp.setup import agent_prompt, claude_command, client_config
 from services.settings import SettingsKey
@@ -29,6 +32,8 @@ class McpSettingsPage(QWidget):
         super().__init__(parent)
         self.settings = settings
         self.server = server if server is not None else runtime
+        if server is None:
+            self.server.bind_settings(settings)
         self._notice = ""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -99,7 +104,7 @@ class McpSettingsPage(QWidget):
         )
         connection_layout.addWidget(
             WrappedLabel(
-                "The token grants read access to your saved history. It is saved in your system "
+                "The token grants access to your saved history and the actions you allow below. It is saved in your system "
                 "credential store. Share it only with agents you trust.",
             )
         )
@@ -133,10 +138,72 @@ class McpSettingsPage(QWidget):
         connection_layout.addLayout(setup_row)
         layout.addWidget(self.connection)
 
+        layout.addWidget(QLabel("Agent permissions"))
         layout.addWidget(
             WrappedLabel(
-                "Read-only access to saved text and meeting insights. Agents cannot start recordings "
-                "or change your data. A cloud-powered agent may send retrieved text to its provider. "
+                "Choose what connected agents may change. New permissions are off by default. "
+                "Turning one off blocks future changes immediately."
+            )
+        )
+        self.permission_checks = {}
+        for key, title, description in (
+            (
+                SettingsKey.MCP_RETITLE_TRANSCRIPTIONS,
+                "Retitle transcription history",
+                "Change display titles while keeping the original text and source filename.",
+            ),
+            (
+                SettingsKey.MCP_RETITLE_MEETINGS,
+                "Retitle saved meetings",
+                "Change titles of finished meetings saved on this computer.",
+            ),
+            (
+                SettingsKey.MCP_SETTINGS_ACCESS,
+                "Allow settings access",
+                "Read supported preferences. Choose each preference agents may change below.",
+            ),
+        ):
+            tile = SettingTile(title, description)
+            check = tile.checkbox
+            check.setAccessibleName(title)
+            check.toggled.connect(
+                lambda checked, key=key: self._save_permission(key, checked)
+            )
+            self.permission_checks[key] = check
+            layout.addWidget(tile)
+
+        self.settings_permissions = QWidget()
+        permissions_layout = QVBoxLayout(self.settings_permissions)
+        permissions_layout.setContentsMargins(0, 0, 0, 0)
+        self.setting_checks = {}
+        groups = {}
+        for control in SETTING_CONTROLS:
+            if control.group not in groups:
+                permissions_layout.addWidget(QLabel(control.group))
+                grid = QGridLayout()
+                grid.setColumnStretch(0, 1)
+                grid.setColumnStretch(1, 1)
+                permissions_layout.addLayout(grid)
+                groups[control.group] = (grid, 0)
+            grid, index = groups[control.group]
+            check = QCheckBox(control.label)
+            check.setAccessibleName(f"Allow agent changes: {control.label}")
+            check.setToolTip(control.effect)
+            check.toggled.connect(
+                lambda checked, key=control.key: self._save_setting_permission(
+                    key, checked
+                )
+            )
+            grid.addWidget(check, index // 2, index % 2)
+            groups[control.group] = (grid, index + 1)
+            self.setting_checks[control.key] = check
+        layout.addWidget(self.settings_permissions)
+
+        layout.addWidget(
+            WrappedLabel(
+                "Agents can read saved text and meeting insights, and use the permissions selected above. "
+                "They cannot start recordings, delete history, edit transcript text, or change their permissions. "
+                "A cloud-powered agent may send retrieved text to its provider. "
                 "The local URL works only for agents running on this computer.",
             )
         )
@@ -181,6 +248,28 @@ class McpSettingsPage(QWidget):
         self.server.start(self.port.value())
         self.refresh()
 
+    def _save_permission(self, key, checked):
+        try:
+            self.settings.save_setting(key, checked)
+            self._notice = ""
+        except Exception:
+            self._notice = "Could not save the agent permission. Try again."
+        self.refresh()
+
+    def _save_setting_permission(self, key, checked):
+        def commit(saved):
+            permissions = saved.get(SettingsKey.MCP_WRITABLE_SETTINGS, {})
+            permissions = dict(permissions) if isinstance(permissions, dict) else {}
+            permissions[key] = checked
+            saved[SettingsKey.MCP_WRITABLE_SETTINGS] = permissions
+
+        try:
+            self.settings.mutate_settings(commit)
+            self._notice = ""
+        except Exception:
+            self._notice = "Could not save the setting permission. Try again."
+        self.refresh()
+
     def _port_changed(self, value):
         try:
             self.settings.save_setting(SettingsKey.MCP_PORT, value)
@@ -203,7 +292,20 @@ class McpSettingsPage(QWidget):
 
     def refresh(self):
         status = self.server.status()
-        saved = self.settings.get(SettingsKey.MCP_ENABLED, False) is True
+        preferences = self.settings.load_all_settings()
+        saved = preferences.get(SettingsKey.MCP_ENABLED, False) is True
+        for key, check in self.permission_checks.items():
+            check.blockSignals(True)
+            check.setChecked(preferences.get(key) is True)
+            check.blockSignals(False)
+        granted = writable_settings(preferences)
+        for key, check in self.setting_checks.items():
+            check.blockSignals(True)
+            check.setChecked(key in granted)
+            check.blockSignals(False)
+        self.settings_permissions.setEnabled(
+            preferences.get(SettingsKey.MCP_SETTINGS_ACCESS) is True
+        )
         self.enabled.blockSignals(True)
         self.enabled.setChecked(saved)
         self.enabled.blockSignals(False)

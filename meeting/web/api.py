@@ -450,14 +450,8 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             headers={"Cache-Control": "no-store"},
         )
 
-    @app.post("/api/meetings/{meeting_id}/rename")
-    async def api_rename_meeting(meeting_id: str, request: Request,
-                                 token: str = "") -> Dict[str, Any]:
-        await _require(token, host_only=True)
-        body = await _json_body(request)
-        title = str(body.get("title") or "").strip()
-        if not title:
-            raise HTTPException(status_code=400, detail="title required")
+    async def retitle_saved_meeting(meeting_id: str, title: str) -> Dict[str, Any]:
+        """Shared local action; callers establish authorization before dispatch."""
         store = getattr(engine, "store", None)
         if store is not None and getattr(engine, "meeting_id", None) == meeting_id:
             results = await asyncio.to_thread(
@@ -477,6 +471,18 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                 await asyncio.to_thread(repository.rename_meeting, meeting_id, title)
                 ok = True
         return {"ok": ok, "title": title}
+
+    app.state.retitle_saved_meeting = retitle_saved_meeting
+
+    @app.post("/api/meetings/{meeting_id}/rename")
+    async def api_rename_meeting(meeting_id: str, request: Request,
+                                 token: str = "") -> Dict[str, Any]:
+        await _require(token, host_only=True)
+        body = await _json_body(request)
+        title = str(body.get("title") or "").strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="title required")
+        return await retitle_saved_meeting(meeting_id, title)
 
     @app.post("/api/meetings/{meeting_id}/review")
     async def api_insight_review(meeting_id: str, request: Request, token: str = "") -> Dict[str, Any]:

@@ -100,6 +100,7 @@ class UIController(QObject):
     transcription_received = pyqtSignal(str, object)  # fixed text, optional raw
     status_changed = pyqtSignal(str)
     audio_levels_updated = pyqtSignal(list)
+    agent_data_changed = pyqtSignal(str, dict)
 
     def __init__(self):
         super().__init__()
@@ -320,6 +321,34 @@ class UIController(QObject):
         self.transcription_received.connect(self._display_transcript)
         self.status_changed.connect(self._apply_status_to_main_window)
         self.audio_levels_updated.connect(self._apply_audio_levels_to_overlay)
+        self.agent_data_changed.connect(self._apply_agent_changes)
+
+    def _apply_agent_changes(self, kind: str, changes: dict) -> None:
+        """Apply MCP notifications on the GUI thread through the usual UI hooks."""
+        if kind != "settings":
+            self.main_window.refresh_history()
+            from services.remote_records.sync import record_sync
+
+            record_sync.record_saved("dictation" if kind == "transcription" else "meeting", changes["id"])
+            return
+        # A user may have changed a preference while this signal was queued.
+        # Refresh from the latest values instead of replaying a stale write.
+        saved = settings_manager.load_all_settings()
+        changes = {key: saved.get(key, value) for key, value in changes.items()}
+        if SettingsKey.UI_THEME in changes:
+            self._apply_ui_theme(changes[SettingsKey.UI_THEME])
+        if SettingsKey.UI_FONT_SCALE in changes:
+            self._apply_ui_font_scale(changes[SettingsKey.UI_FONT_SCALE])
+        if SettingsKey.STREAMING_ENABLED in changes:
+            self._on_settings_streaming_changed()
+        if SettingsKey.STREAMING_OVERLAY_FONT_SIZE in changes:
+            self.overlay.refresh_streaming_font_size()
+        if SettingsKey.TRANSCRIPT_CLEANUP_ENABLED in changes:
+            self.refresh_cleanup_controls()
+        if SettingsKey.RECORDING_TRIGGER_MODE in changes:
+            self._on_settings_recording_trigger_mode_changed(changes[SettingsKey.RECORDING_TRIGGER_MODE])
+        if self._settings_dialog is not None:
+            self._settings_dialog.refresh()
 
     def _on_record_toggled(self, is_recording: bool):
         if is_recording:

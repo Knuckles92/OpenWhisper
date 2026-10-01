@@ -174,6 +174,10 @@ class SettingsKey:
     MEETING_SERVER_PORT: Final[str] = "meeting_server_port"
     MCP_ENABLED: Final[str] = "mcp_enabled"
     MCP_PORT: Final[str] = "mcp_port"
+    MCP_RETITLE_TRANSCRIPTIONS: Final[str] = "mcp_retitle_transcriptions"
+    MCP_RETITLE_MEETINGS: Final[str] = "mcp_retitle_meetings"
+    MCP_SETTINGS_ACCESS: Final[str] = "mcp_settings_access"
+    MCP_WRITABLE_SETTINGS: Final[str] = "mcp_writable_settings"
     # Remote engine (services/remote_asr). Client: the paired host's address,
     # pinned certificate fingerprint and name (the token is in the OS
     # credential store). Host: sharing switch, port, and paired devices,

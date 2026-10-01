@@ -16,6 +16,7 @@ from services.agent_mcp.runtime import CREDENTIAL_NAME, McpRuntime
 from services.credentials import CredentialStore, memory_backend
 from services.database import DatabaseManager
 from services.models import MeetingSegment, MeetingSession, TranscriptionHistory
+from services.settings import SettingsKey, SettingsManager
 
 TOKEN = "mcp-test-token-" + "a" * 32
 DATE = "2026-09-01T12:00:00+00:00"
@@ -100,9 +101,14 @@ def wait_for(server, state):
 
 
 @pytest.fixture
-def running_server(mcp_database):
+def mcp_settings(tmp_path):
+    return SettingsManager(str(tmp_path / "mcp-settings.json"))
+
+
+@pytest.fixture
+def running_server(mcp_database, mcp_settings):
     credentials = CredentialStore(memory_backend)
-    server = McpRuntime(mcp_database, credentials=credentials)
+    server = McpRuntime(mcp_database, credentials=credentials, settings=mcp_settings)
     server.start(free_port())
     try:
         wait_for(server, "running")
@@ -174,8 +180,17 @@ def test_official_client_discovery_retrieval_and_validation(running_server, mode
                     "list_meeting_segments",
                     "get_meeting_segment",
                     "get_meeting_insights",
+                    "get_capabilities",
+                    "get_settings",
+                    "update_settings",
+                    "retitle_transcription",
+                    "retitle_meeting",
                 }
-                assert all(tool.annotations.read_only_hint for tool in tools)
+                writes = {"update_settings", "retitle_transcription", "retitle_meeting"}
+                assert all(
+                    tool.annotations.read_only_hint == (tool.name not in writes)
+                    for tool in tools
+                )
                 status = await client.call_tool("get_status", {})
                 assert not status.is_error
                 search = await client.call_tool(
@@ -237,6 +252,181 @@ def test_official_client_discovery_retrieval_and_validation(running_server, mode
                     ("get_meeting", {"meeting_id": "../status"}),
                 ]:
                     assert (await client.call_tool(name, args)).is_error
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+def test_control_permissions_writes_and_live_revocation(
+    running_server, mcp_settings, mode
+):
+    server, _ = running_server
+
+    async def exercise():
+        async with httpx2.AsyncClient(
+            headers={"Authorization": f"Bearer {server.token()}"}, trust_env=False
+        ) as http:
+            async with Client(
+                streamable_http_client(server.status().url, http_client=http), mode=mode
+            ) as client:
+                caps = (
+                    await client.call_tool("get_capabilities", {})
+                ).structured_content
+                assert caps == {
+                    "retitle_transcriptions": False,
+                    "retitle_meetings": False,
+                    "settings_access": False,
+                    "writable_settings": [],
+                }
+                assert (await client.call_tool("get_status", {})).structured_content[
+                    "read_only"
+                ] is True
+                for name, args in (
+                    ("get_settings", {}),
+                    ("update_settings", {"changes": {SettingsKey.AUTO_PASTE: False}}),
+                    (
+                        "retitle_transcription",
+                        {"record_id": "h_local", "title": "Project plan"},
+                    ),
+                    (
+                        "retitle_meeting",
+                        {"meeting_id": "m_a", "title": "Project meeting"},
+                    ),
+                ):
+                    assert (await client.call_tool(name, args)).is_error
+
+                mcp_settings.update_settings(
+                    {
+                        SettingsKey.MCP_RETITLE_TRANSCRIPTIONS: True,
+                        SettingsKey.MCP_RETITLE_MEETINGS: True,
+                        SettingsKey.MCP_SETTINGS_ACCESS: True,
+                        SettingsKey.MCP_WRITABLE_SETTINGS: {
+                            SettingsKey.AUTO_PASTE: True,
+                            SettingsKey.UI_FONT_SCALE: True,
+                        },
+                        "api_key": "private-marker",
+                    }
+                )
+                settings = await client.call_tool("get_settings", {})
+                assert (await client.call_tool("get_status", {})).structured_content[
+                    "read_only"
+                ] is False
+                assert not settings.is_error
+                assert "private-marker" not in settings.model_dump_json()
+                available = {
+                    item["key"]: item
+                    for item in settings.structured_content["settings"]
+                }
+                assert available[SettingsKey.AUTO_PASTE]["writable"] is True
+                assert available[SettingsKey.UI_FONT_SCALE]["choices"] == [
+                    90,
+                    100,
+                    115,
+                    130,
+                ]
+                assert SettingsKey.MCP_ENABLED not in available
+                result = await client.call_tool(
+                    "update_settings",
+                    {
+                        "changes": {
+                            SettingsKey.AUTO_PASTE: False,
+                            SettingsKey.UI_FONT_SCALE: 115,
+                        }
+                    },
+                )
+                assert not result.is_error, result
+                assert (
+                    result.structured_content["previous"][SettingsKey.AUTO_PASTE]
+                    is True
+                )
+                assert mcp_settings.get(SettingsKey.AUTO_PASTE) is False
+                assert mcp_settings.get(SettingsKey.UI_FONT_SCALE) == 115
+
+                for changes in (
+                    {SettingsKey.AUTO_PASTE: True, SettingsKey.UI_THEME: "light"},
+                    {SettingsKey.AUTO_PASTE: True, SettingsKey.UI_FONT_SCALE: 101},
+                    {SettingsKey.AUTO_PASTE: "true"},
+                    {SettingsKey.UI_FONT_SCALE: True},
+                    {SettingsKey.UI_FONT_SCALE: "100"},
+                    {SettingsKey.MCP_WRITABLE_SETTINGS: "grant me everything"},
+                    {},
+                ):
+                    assert (
+                        await client.call_tool("update_settings", {"changes": changes})
+                    ).is_error
+                    assert mcp_settings.get(SettingsKey.AUTO_PASTE) is False
+                    assert mcp_settings.get(SettingsKey.UI_FONT_SCALE) == 115
+
+                result = await client.call_tool(
+                    "retitle_transcription",
+                    {
+                        "record_id": "h_local",
+                        "title": "  Project plan  ",
+                    },
+                )
+                assert not result.is_error, result
+                record = (
+                    await client.call_tool(
+                        "get_transcription", {"record_id": "h_local"}
+                    )
+                ).structured_content
+                assert record["title"] == "Project plan"
+                assert record["text"] == "Launch Friday"
+                assert record["raw_text"] == "raw launch"
+                hits = (
+                    await client.call_tool("search_history", {"q": "Project plan"})
+                ).structured_content["items"]
+                assert hits[0]["id"] == "h_local"
+                assert hits[0]["matched_field"] == "title"
+                assert hits[0]["title"] == "Project plan"
+                listing = (
+                    await client.call_tool("list_transcriptions", {"q": "Project plan"})
+                ).structured_content
+                assert listing["items"][0]["title"] == "Project plan"
+                result = await client.call_tool(
+                    "retitle_meeting", {"meeting_id": "m_a", "title": "Project meeting"}
+                )
+                assert not result.is_error, result
+                assert (
+                    await client.call_tool("get_meeting", {"meeting_id": "m_a"})
+                ).structured_content["title"] == "Project meeting"
+                for args in (
+                    {"record_id": "h_remote", "title": "Remote"},
+                    {"record_id": "missing", "title": "Missing"},
+                    {"record_id": "../status", "title": "Invalid id"},
+                    {"record_id": "h_local", "title": " "},
+                    {"record_id": "h_local", "title": "New\nline"},
+                    {"record_id": "h_local", "title": "x" * 201},
+                ):
+                    assert (
+                        await client.call_tool("retitle_transcription", args)
+                    ).is_error
+
+                mcp_settings.update_settings(
+                    {
+                        SettingsKey.MCP_RETITLE_TRANSCRIPTIONS: False,
+                        SettingsKey.MCP_RETITLE_MEETINGS: False,
+                        SettingsKey.MCP_WRITABLE_SETTINGS: {},
+                    }
+                )
+                assert (
+                    await client.call_tool(
+                        "retitle_transcription",
+                        {"record_id": "h_local", "title": "Blocked"},
+                    )
+                ).is_error
+                assert (
+                    await client.call_tool(
+                        "retitle_meeting", {"meeting_id": "m_a", "title": "Blocked"}
+                    )
+                ).is_error
+                assert (
+                    await client.call_tool(
+                        "update_settings", {"changes": {SettingsKey.AUTO_PASTE: True}}
+                    )
+                ).is_error
+                mcp_settings.save_setting(SettingsKey.MCP_SETTINGS_ACCESS, False)
+                assert (await client.call_tool("get_settings", {})).is_error
 
     asyncio.run(exercise())
 

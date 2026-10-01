@@ -27,7 +27,7 @@ Use a [packaged release](#install) with bundled Python and dependencies, or [run
 - **Settings:** Choose models, manage downloads, and find settings with Ctrl+K search.
 - **History:** Search, retranscribe, and export transcripts as Markdown, plain text, or JSON. See [export format support](docs/export-support.md) for what each format includes.
 - **Agent history API (preview):** Search saved transcripts and meeting notes through an opt-in, authenticated local API. See [API setup](docs/agent-api.md).
-- **MCP:** Enable **Settings → MCP** to connect an agent to history, transcripts, and meeting insights. See [MCP setup](docs/mcp.md).
+- **MCP:** Enable **Settings → MCP** to connect an agent to history, transcripts, and meeting insights. Optionally allow retitling and choose which settings agents may change. See [MCP setup](docs/mcp.md).
 
 The app also includes microphone selection, a system tray where available, and dark, light, or system-matched themes.
 

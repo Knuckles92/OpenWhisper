@@ -98,7 +98,7 @@ def remote_history_entry(item: dict) -> HistoryEntry:
     """
     fields = {name: item.get(name) for name in (
         "id", "text", "raw_text", "timestamp", "model", "transcription_time",
-        "audio_duration", "file_size", "cleanup_provider", "cleanup_model", "source_name",
+        "audio_duration", "file_size", "cleanup_provider", "cleanup_model", "source_name", "title",
     )}
     entry = HistoryEntry(**fields)
     entry.stored_on = str(item.get("stored_on") or "the host")
@@ -250,8 +250,9 @@ class HistoryItemWidget(QFrame):
             layout.addLayout(chips_row)
 
         source_name = (getattr(self.entry, "source_name", None) or "").strip()
-        if source_name:
-            self.title_label = WrappedLabel(source_name)
+        title = (getattr(self.entry, "title", None) or "").strip() or source_name
+        if title:
+            self.title_label = WrappedLabel(title)
             self.title_label.setObjectName("historyTitle")
             self.title_label.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
             self.title_label.setAlignment(

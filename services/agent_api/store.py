@@ -224,7 +224,7 @@ class HistoryStore:
                 or_(
                     *(
                         _match(H.c[field], q)
-                        for field in ("text", "raw_text", "source_name")
+                        for field in ("text", "raw_text", "source_name", "title")
                     )
                 )
             )
@@ -366,11 +366,13 @@ class HistoryStore:
             field = case(
                 (_match(H.c.text, q), literal("text")),
                 (_match(H.c.raw_text, q), literal("raw_text")),
+                (_match(H.c.title, q), literal("title")),
                 else_=literal("source_name"),
             )
             content = case(
                 (_match(H.c.text, q), H.c.text),
                 (_match(H.c.raw_text, q), H.c.raw_text),
+                (_match(H.c.title, q), H.c.title),
                 else_=H.c.source_name,
             )
             statements.append(
@@ -378,7 +380,7 @@ class HistoryStore:
                     literal("transcription").label("kind"),
                     H.c.id,
                     literal(None).label("meeting_id"),
-                    func.coalesce(H.c.source_name, literal("Transcription")).label(
+                    func.coalesce(H.c.title, H.c.source_name, literal("Transcription")).label(
                         "title"
                     ),
                     H.c.timestamp,
@@ -392,7 +394,7 @@ class HistoryStore:
                     or_(
                         *(
                             _match(H.c[name], q)
-                            for name in ("text", "raw_text", "source_name")
+                            for name in ("text", "raw_text", "source_name", "title")
                         )
                     ),
                     *_filters(H, H.c.timestamp, **filters),

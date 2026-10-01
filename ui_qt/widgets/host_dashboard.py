@@ -1501,7 +1501,8 @@ class HostDashboard(QWidget):
             return
         state = getattr(status, "state", "stopped")
         intro = ("Agents on this computer, such as Claude Code or Cursor, can search "
-                 "the dictations and meetings saved here. They can read, not change.")
+                 "the dictations and meetings saved here. Choose permissions for title "
+                 "and settings changes in Settings → MCP.")
         if (self._state or {}).get("keep_records"):
             intro += " That includes the records paired computers keep here."
         self.mcp_intro.setText(intro)

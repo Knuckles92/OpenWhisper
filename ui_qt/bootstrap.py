@@ -330,6 +330,10 @@ def main() -> int:
         from services.agent_mcp.runtime import runtime as mcp_runtime
         from services.settings import settings_manager
 
+        mcp_runtime.configure_controls(
+            on_change=ui_controller.agent_data_changed.emit,
+            meeting_renamer=app_controller.meeting_runtime.retitle_saved_meeting,
+        )
         mcp_runtime.restore(settings_manager)
         if health_token:
             from PyQt6.QtCore import QTimer

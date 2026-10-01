@@ -70,7 +70,7 @@ class _RailItem(QWidget):
         return self._value
 
     def set_value(self, text: str) -> None:
-        """Show an elided current value, with the full text as a tooltip."""
+        """Show an elided current value beneath the destination name."""
         self._value = text or ""
         metrics = self.value_label.fontMetrics()
         # Leave room for the row margins, icon, and spacing at any rail width.
@@ -85,7 +85,6 @@ class _RailItem(QWidget):
             )
         )
         self.value_label.setVisible(bool(self._value))
-        self.setToolTip(self._value)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

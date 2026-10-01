@@ -19,6 +19,7 @@ class ApiStatus(BaseModel):
 
 class TranscriptionSummary(BaseModel):
     id: str
+    title: str | None = None
     timestamp: str
     model: str
     source_name: str | None = None
