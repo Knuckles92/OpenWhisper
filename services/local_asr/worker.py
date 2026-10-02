@@ -11,6 +11,8 @@ import traceback
 # Embedded Python deliberately ignores the app environment and script directory.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from services.local_asr.languages import native_language_code, qwen_language_name
+
 
 def main():
     protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1)
@@ -65,15 +67,14 @@ def main():
                         samples.frombytes(audio.read())
                 language = request.get("language")
                 if family in ("parakeet", "nemotron", "moonshine"):
+                    language = native_language_code(family, language)
                     if op == "stream":
                         result = {"events": engine.stream(request["session"], samples, language, request.get("finish", False))}
                     else:
                         result = engine.transcribe(samples, language)
                 else:
                     import numpy as np
-                    code = None if language == "auto" else language
-                    if code in ("en", "en-US"):
-                        code = "English"
+                    code = qwen_language_name(language)
                     text = engine.transcribe(audio=(np.asarray(samples, dtype=np.float32), 16000), language=code)[0].text
                     result = dict(text=text, segments=[dict(text=text, start=0., end=len(samples)/16000)] if text else [])
             elif op == "cancel_stream":

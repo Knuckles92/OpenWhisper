@@ -4,7 +4,9 @@ from PyQt6.QtWidgets import QHBoxLayout, QWidget
 
 from ui_qt.widgets.engine_field import engine_combo, engine_field
 
-_LABELS = {"auto": "Auto", "cpu": "CPU", "cuda": "NVIDIA GPU", "en": "English"}
+from services.local_asr.languages import LANGUAGE_LABELS
+
+_LABELS = {**LANGUAGE_LABELS, "cpu": "CPU", "cuda": "NVIDIA GPU"}
 
 
 class RemoteEngineControls(QWidget):

@@ -7,6 +7,7 @@ from PyQt6.QtCore import pyqtSignal
 
 from config import config
 from services.settings import SETTING_DEFAULTS, SettingsKey, setting_value, settings_manager
+from services.local_asr.languages import LANGUAGE_LABELS, language_choices, selected_language
 from ui_qt.widgets.engine_field import engine_combo, engine_field
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ class LocalEngineControls(QWidget):
         )
         self.device_combo = engine_combo(device_choices)
         self.compute_combo = engine_combo(self.COMPUTE_CHOICES)
-        self.language_combo = engine_combo(["English", "Auto"])
+        self.language_combo = engine_combo(())
 
         # Matches the Backend field's share, so Model reads as its peer and the
         # two runtime knobs stay visibly secondary.
@@ -61,7 +62,7 @@ class LocalEngineControls(QWidget):
             'Controls how Whisper stores and calculates model numbers. Start with Auto. int8 uses less memory; float16 is suited to GPUs; float32 uses more memory. Lower precision may affect accuracy.',
             [('Open Settings → Voice model', 'ondemand')], self.help_requested.emit), stretch=1)
         self.language_field = engine_field("Language", self.language_combo,
-            'Choose English for English speech, or Auto to detect another language supported by the model. This transcribes speech in its original language; it does not translate. Moonshine supports English only.',
+            'Choose a language supported by this model, or Auto for language detection. Coverage and accuracy vary by model; this transcribes rather than translates. Moonshine supports English only.',
             [('Open Settings → Voice model', 'ondemand')], self.help_requested.emit)
         layout.addWidget(self.language_field, stretch=1)
         self.language_field.hide()
@@ -94,9 +95,13 @@ class LocalEngineControls(QWidget):
         self.compute_combo.parentWidget().setVisible(backend not in BACKENDS)
         self.language_field.setVisible(backend in BACKENDS)
         self.language_combo.blockSignals(True)
-        self.language_combo.setCurrentText("Auto" if settings_manager.get(SettingsKey.LOCAL_ASR_LANGUAGE, SETTING_DEFAULTS[SettingsKey.LOCAL_ASR_LANGUAGE]) == "auto" and backend != "moonshine" else "English")
+        stored_lang = settings_manager.get(SettingsKey.LOCAL_ASR_LANGUAGE, SETTING_DEFAULTS[SettingsKey.LOCAL_ASR_LANGUAGE])
+        self.language_combo.clear()
+        for code in language_choices(backend):
+            self.language_combo.addItem(LANGUAGE_LABELS[code], code)
+        self.language_combo.setCurrentIndex(self.language_combo.findData(selected_language(backend, stored_lang)))
         self.language_combo.blockSignals(False)
-        self.language_combo.setEnabled(backend != "moonshine")
+        self.language_combo.setEnabled(self.language_combo.count() > 1)
         self.device_combo.setEnabled(backend != "moonshine")
         if backend not in BACKENDS:
             self.load_from_settings()
@@ -110,8 +115,9 @@ class LocalEngineControls(QWidget):
             devices = dict(settings.get(SettingsKey.LOCAL_ASR_DEVICES) or {})
             models[backend] = self.model_combo.currentData()
             devices[backend] = self.device_combo.currentText()
+            lang_code = selected_language(backend, self.language_combo.currentData())
             settings_manager.update_settings({SettingsKey.LOCAL_ASR_MODELS: models, SettingsKey.LOCAL_ASR_DEVICES: devices,
-                SettingsKey.LOCAL_ASR_LANGUAGE: "auto" if self.language_combo.currentText() == "Auto" else "en"})
+                SettingsKey.LOCAL_ASR_LANGUAGE: lang_code})
             self.engine_settings_changed.emit()
             return
         settings = settings_manager.update_settings({

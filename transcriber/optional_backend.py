@@ -223,7 +223,8 @@ class LocalSpeechBackend(TranscriptionBackend):
 
     def request_language(self) -> str:
         """The language a request made without one asks the worker for."""
-        return self._settings().get("local_asr_language", "en")
+        from services.local_asr.languages import selected_language
+        return selected_language(self.backend_id, self._settings().get("local_asr_language", "en"))
 
     def _request_audio(self, op, audio, language=None, **options) -> dict:
         if self.should_cancel:
