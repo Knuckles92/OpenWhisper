@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -436,7 +437,6 @@ def test_retry_insights_blocked_when_active(runtime):
 
 
 def test_retry_insights_runs_and_updates_finalization(runtime, monkeypatch):
-    import time
     rt, controller = runtime
     controller.meeting_active = False
 
@@ -471,14 +471,14 @@ def test_retry_insights_runs_and_updates_finalization(runtime, monkeypatch):
         }
 
     monkeypatch.setattr("meeting.refinalize.rerun_finalization", fake_rerun)
+    published_completion = threading.Event()
+    fake_engine.publish_finalization.side_effect = lambda snapshot: (
+        published_completion.set() if snapshot.get("status") == "completed" else None
+    )
 
     rt.retry_insights()
-
-    # Wait briefly for daemon thread to complete
-    for _ in range(50):
-        if not rt.is_finalizing:
-            break
-        time.sleep(0.02)
+    assert published_completion.wait(5), "retry completion was not published"
+    _wait_for_retry(rt)
 
     assert called
     assert called[0]["from_step"] == "failed"
@@ -1763,3 +1763,345 @@ def test_voice_feedback_reaches_no_desktop_surface(runtime, caplog):
     assert not states and not statuses and not errors
     # Handled deliberately, not by falling through to the unknown-event branch.
     assert "Unhandled meeting engine event" not in caplog.text
+
+
+@pytest.fixture
+def retry_publication(runtime, monkeypatch):
+    import meeting.refinalize as refinalize
+
+    rt, controller = runtime
+    engine = MagicMock()
+    engine.meeting_id = "m_retry_order"
+    engine.is_active.return_value = False
+    rt._engine = engine
+    rt._card_meeting_id = engine.meeting_id
+    rt._repo = MagicMock()
+    rt._repo.get_meeting.return_value = {
+        "id": engine.meeting_id, "status": "ended", "asr_model": "mock",
+    }
+    monkeypatch.setattr("services.meeting_rerun.rerun_options", lambda meeting: {})
+    monkeypatch.setattr(rt, "_meeting_content_summary", lambda *args, **kwargs: {})
+    monkeypatch.setattr(rt, "_wake_record_sync", lambda *args: None)
+    monkeypatch.setattr(rt, "_model_lease", lambda: None)
+    monkeypatch.setattr(refinalize, "_running_meetings", set())
+    workers = []
+    releases = []
+    states = []
+    notes = []
+    controller.meeting_state_changed.connect(lambda payload: states.append(dict(payload)))
+    controller.meeting_status_update.connect(notes.append)
+
+    def publish(snapshot):
+        rt._queue_engine_event(engine, "status", {
+            "status": "ended", "finalization": dict(snapshot),
+        })
+        return True
+
+    engine.publish_finalization.side_effect = publish
+
+    def tracked_thread(*args, **kwargs):
+        worker = threading.Thread(*args, **kwargs)
+        workers.append(worker)
+        return worker
+
+    monkeypatch.setitem(_RUNTIME_GLOBALS, "threading", SimpleNamespace(Thread=tracked_thread))
+    yield SimpleNamespace(
+        rt=rt, engine=engine, workers=workers, releases=releases,
+        refinalize=refinalize, states=states, notes=notes,
+    )
+    for release in releases:
+        release.set()
+    for worker in workers:
+        worker.join(5)
+        assert not worker.is_alive(), "retry worker did not finish"
+    QCoreApplication.instance().processEvents()
+
+
+def _retry_result(message="First retry completed"):
+    return {"ok": True, "finalization": {"status": "completed", "message": message}}
+
+
+@pytest.mark.parametrize("with_engine", [False, True])
+@pytest.mark.parametrize("terminal_progress", [False, True])
+def test_retry_holds_busy_until_terminal_publication(
+    retry_publication, monkeypatch, qapp, with_engine, terminal_progress,
+):
+    p = retry_publication
+    if not with_engine:
+        p.rt._engine = None
+    entered, release = threading.Event(), threading.Event()
+    p.releases.append(release)
+    original = p.rt._publish_finalization
+    terminal_count = 0
+
+    def gated_publish(meeting_id, finalization, **kwargs):
+        nonlocal terminal_count
+        if finalization.get("status") == "completed":
+            terminal_count += 1
+            if terminal_count == (2 if terminal_progress else 1):
+                entered.set()
+                assert release.wait(5), "terminal publication barrier timed out"
+        return original(meeting_id, finalization, **kwargs)
+
+    monkeypatch.setattr(p.rt, "_publish_finalization", gated_publish)
+
+    @p.refinalize._one_run_per_meeting
+    def pipeline(*args, **kwargs):
+        if terminal_progress:
+            kwargs["progress_cb"](_retry_result()["finalization"])
+        return _retry_result()
+
+    monkeypatch.setattr(p.refinalize, "rerun_finalization", pipeline)
+    p.rt.retry_insights()
+    assert entered.wait(5)
+    qapp.processEvents()
+    assert p.refinalize.is_running(p.engine.meeting_id)
+    assert p.rt.is_finalizing
+    assert p.rt.meeting_busy(p.engine.meeting_id)
+    p.rt.retry_insights()
+    assert len(p.workers) == 1
+
+    release.set()
+    p.workers[0].join(5)
+    assert not p.workers[0].is_alive()
+    qapp.processEvents()
+    assert not p.rt.is_finalizing
+    assert not p.rt.meeting_busy(p.engine.meeting_id)
+    assert p.states[-1]["finalization"]["status"] == "completed"
+    if with_engine:
+        assert p.engine.publish_finalization.call_args.args[0]["status"] == "completed"
+
+
+@pytest.mark.parametrize("with_engine", [False, True])
+@pytest.mark.parametrize("terminal_progress", [False, True])
+def test_queued_old_retry_completion_cannot_finish_new_retry(
+    retry_publication, monkeypatch, qapp, with_engine, terminal_progress,
+):
+    p = retry_publication
+    if not with_engine:
+        p.rt._engine = None
+    second_running, release_second = threading.Event(), threading.Event()
+    p.releases.append(release_second)
+    callbacks = []
+
+    @p.refinalize._one_run_per_meeting
+    def pipeline(*args, **kwargs):
+        callbacks.append(kwargs["progress_cb"])
+        run = len(callbacks)
+        if run == 1 and terminal_progress:
+            kwargs["progress_cb"](_retry_result()["finalization"])
+        if run == 2:
+            second_running.set()
+            assert release_second.wait(5), "second retry barrier timed out"
+        return _retry_result(f"Retry {run} completed")
+
+    monkeypatch.setattr(p.refinalize, "rerun_finalization", pipeline)
+    p.rt.retry_insights()
+    p.workers[0].join(5)
+    assert not p.workers[0].is_alive()
+    assert not p.rt.is_finalizing
+    # Leave the first worker's Qt events queued until the second retry starts.
+    p.rt.retry_insights()
+    assert second_running.wait(5)
+    states_before = len(p.states)
+    notes_before = len(p.notes)
+    qapp.processEvents()
+    assert all(
+        state["finalization"]["status"] == "running"
+        for state in p.states[states_before:]
+    )
+    assert not any("completed" in note for note in p.notes[notes_before:])
+    assert p.rt.is_finalizing
+    assert p.rt._finalization["status"] == "running"
+    assert p.refinalize.is_running(p.engine.meeting_id)
+    assert p.states[-1]["finalization"]["status"] == "running"
+
+    states_before = len(p.states)
+    publications_before = p.engine.publish_finalization.call_count
+    callbacks[0](_retry_result("Late first retry callback")["finalization"])
+    qapp.processEvents()
+    assert p.engine.publish_finalization.call_count == publications_before
+    assert len(p.states) == states_before
+    assert p.rt.is_finalizing
+
+    release_second.set()
+    p.workers[1].join(5)
+    assert not p.workers[1].is_alive()
+    qapp.processEvents()
+    assert not p.rt.is_finalizing
+    assert p.rt._finalization["message"] == "Retry 2 completed"
+    assert p.states[-1]["finalization"]["message"] == "Retry 2 completed"
+
+
+def test_retry_failure_releases_ownership_after_publishing(
+    retry_publication, monkeypatch, qapp,
+):
+    p = retry_publication
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("synthetic retry failure")
+
+    monkeypatch.setattr(p.refinalize, "rerun_finalization", fail)
+    p.rt.retry_insights()
+    p.workers[0].join(5)
+    assert not p.workers[0].is_alive()
+    qapp.processEvents()
+    assert not p.rt.is_finalizing
+    assert not p.rt.meeting_busy(p.engine.meeting_id)
+    assert p.states[-1]["finalization"]["status"] == "failed"
+    assert "synthetic retry failure" in p.states[-1]["finalization"]["message"]
+
+    monkeypatch.setattr(p.refinalize, "rerun_finalization", lambda *args, **kwargs: _retry_result())
+    p.rt.retry_insights()
+    p.workers[1].join(5)
+    assert not p.workers[1].is_alive()
+    qapp.processEvents()
+    assert not p.rt.is_finalizing
+    assert p.states[-1]["finalization"]["status"] == "completed"
+
+
+@pytest.mark.parametrize("with_engine", [False, True])
+def test_retry_keeps_shared_claim_through_publication(
+    retry_publication, monkeypatch, qapp, with_engine,
+):
+    p = retry_publication
+    if not with_engine:
+        p.rt._engine = None
+    entered, release = threading.Event(), threading.Event()
+    p.releases.append(release)
+    original = p.rt._publish_finalization
+
+    def publish(meeting_id, finalization, **kwargs):
+        if finalization.get("status") == "completed":
+            entered.set()
+            assert release.wait(5), "publication barrier timed out"
+        return original(meeting_id, finalization, **kwargs)
+
+    monkeypatch.setattr(p.rt, "_publish_finalization", publish)
+
+    @p.refinalize._one_run_per_meeting
+    def pipeline(*args, **kwargs):
+        return _retry_result()
+
+    monkeypatch.setattr(p.refinalize, "rerun_finalization", pipeline)
+    p.rt.retry_insights()
+    assert entered.wait(5)
+    with pytest.raises(p.refinalize.FinalizationBusyError):
+        pipeline(p.rt._repo, p.engine.meeting_id)
+    assert p.rt.meeting_busy(p.engine.meeting_id)
+    release.set()
+    p.workers[0].join(5)
+    assert not p.workers[0].is_alive()
+    qapp.processEvents()
+    assert not p.refinalize.is_running(p.engine.meeting_id)
+    assert pipeline(p.rt._repo, p.engine.meeting_id)["ok"]
+
+
+@pytest.mark.parametrize("with_engine", [False, True])
+def test_new_dashboard_claim_discards_queued_desktop_completion(
+    retry_publication, monkeypatch, qapp, with_engine,
+):
+    p = retry_publication
+    if not with_engine:
+        p.rt._engine = None
+    callbacks = []
+
+    @p.refinalize._one_run_per_meeting
+    def pipeline(*args, **kwargs):
+        callbacks.append(kwargs["progress_cb"])
+        return _retry_result()
+
+    monkeypatch.setattr(p.refinalize, "rerun_finalization", pipeline)
+    p.rt.retry_insights()
+    p.workers[0].join(5)
+    assert not p.workers[0].is_alive()
+    dashboard_claim = p.refinalize.FinalizationClaim(p.engine.meeting_id)
+    try:
+        states_before = len(p.states)
+        publications_before = p.engine.publish_finalization.call_count
+        qapp.processEvents()
+        callbacks[0](_retry_result("Late desktop callback")["finalization"])
+        qapp.processEvents()
+        assert len(p.states) == states_before
+        assert p.engine.publish_finalization.call_count == publications_before
+        assert p.rt.meeting_busy(p.engine.meeting_id)
+    finally:
+        dashboard_claim.release()
+
+
+def test_failed_retry_publication_releases_shared_claim(
+    retry_publication, monkeypatch, qapp,
+):
+    p = retry_publication
+    original = p.rt._publish_finalization
+
+    def publish(meeting_id, finalization, **kwargs):
+        if finalization.get("status") == "completed":
+            raise RuntimeError("synthetic publication failure")
+        return original(meeting_id, finalization, **kwargs)
+
+    monkeypatch.setattr(p.rt, "_publish_finalization", publish)
+    monkeypatch.setattr(p.refinalize, "rerun_finalization", lambda *args, **kwargs: _retry_result())
+    p.rt.retry_insights()
+    p.workers[0].join(5)
+    assert not p.workers[0].is_alive()
+    qapp.processEvents()
+    assert not p.rt.is_finalizing
+    assert not p.rt.meeting_busy(p.engine.meeting_id)
+    assert not p.refinalize.is_running(p.engine.meeting_id)
+    assert p.states[-1]["finalization"]["status"] == "completed"
+    claim = p.refinalize.FinalizationClaim(p.engine.meeting_id)
+    claim.release()
+
+
+def test_lost_retry_admission_does_not_queue_an_unowned_snapshot(
+    retry_publication, monkeypatch, qapp,
+):
+    p = retry_publication
+    original_claim = p.refinalize.FinalizationClaim
+    competing = []
+
+    def lose_admission(meeting_id):
+        competing.append(original_claim(meeting_id))
+        raise p.refinalize.FinalizationBusyError("another dashboard won admission")
+
+    monkeypatch.setattr(p.refinalize, "FinalizationClaim", lose_admission)
+    monkeypatch.setattr(p.rt, "_stored_finalization", lambda meeting_id: _retry_result()["finalization"])
+    p.rt.retry_insights()
+    p.workers[0].join(5)
+    assert not p.workers[0].is_alive()
+    assert len(competing) == 1
+    competing[0].release()
+    newer = original_claim(p.engine.meeting_id)
+    try:
+        qapp.processEvents()
+        p.engine.publish_finalization.assert_not_called()
+        p.engine.allow_agent_writes.assert_not_called()
+        p.engine.revoke_agent_writes.assert_not_called()
+        assert not any("finalization" in state for state in p.states)
+        assert p.rt.meeting_busy(p.engine.meeting_id)
+    finally:
+        newer.release()
+
+
+def test_progress_after_retry_returns_cannot_reopen_finished_run(
+    retry_publication, monkeypatch, qapp,
+):
+    p = retry_publication
+    callbacks = []
+
+    def pipeline(*args, **kwargs):
+        callbacks.append(kwargs["progress_cb"])
+        return _retry_result()
+
+    monkeypatch.setattr(p.refinalize, "rerun_finalization", pipeline)
+    p.rt.retry_insights()
+    p.workers[0].join(5)
+    assert not p.workers[0].is_alive()
+    qapp.processEvents()
+    publications_before = p.engine.publish_finalization.call_count
+    callbacks[0]({"status": "running", "message": "Late progress"})
+    qapp.processEvents()
+    assert p.engine.publish_finalization.call_count == publications_before
+    assert not p.rt.is_finalizing
+    assert p.states[-1]["finalization"]["status"] == "completed"
