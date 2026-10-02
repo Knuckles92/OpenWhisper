@@ -90,10 +90,23 @@ _ROUTES = {
     },
 }
 
+_OPENAI_REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-6")
+
 
 def model_spec(profile, model: str) -> TextModelSpec:
     if not model or not model.strip():
         raise ValueError("Choose a text model first.")
+    # OpenAI's supported protocols change independently of a meeting snapshot.
+    # Recalculate these routes so retries do not retain an obsolete chat route.
+    if profile.kind == "openai":
+        reasoning = model.lower().startswith(_OPENAI_REASONING_PREFIXES)
+        return TextModelSpec(
+            protocol="responses" if reasoning else "chat",
+            reasoning=reasoning,
+            reasoning_format="openai" if reasoning else "",
+            context_window=131072,
+            max_output_tokens=16384,
+        )
     saved = getattr(profile, "model_metadata", None)
     if saved and saved.get("model") == model:
         return spec_from_mapping(saved)
