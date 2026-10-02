@@ -620,6 +620,8 @@ class DownloadsPage(QWidget):
             "cards. Speed and memory vary with hardware, compute type, audio, "
             "and decoding settings."
         )
+        from services.model_catalog import MODEL_SECURITY_NOTICE
+        self.inspector_source_note.setText(self.inspector_source_note.text() + "\n\n" + MODEL_SECURITY_NOTICE)
         self.inspector_source_note.setObjectName("downloadsSourceNote")
         detail.addWidget(self.inspector_source_note)
         detail.addStretch()
@@ -645,6 +647,11 @@ class DownloadsPage(QWidget):
         fit_compact_button(self.inspector_origin_button, 0)
         self.inspector_origin_button.clicked.connect(self._open_origin)
         actions.addWidget(self.inspector_origin_button, stretch=1)
+        self.inspector_license_button = Button("License ↗")
+        self.inspector_license_button.setObjectName("downloadsLicenseButton")
+        fit_compact_button(self.inspector_license_button, 0)
+        self.inspector_license_button.clicked.connect(self._open_license)
+        actions.addWidget(self.inspector_license_button, stretch=1)
         outer.addLayout(actions)
 
         self._details: Optional[ModelDetails] = None
@@ -745,6 +752,7 @@ class DownloadsPage(QWidget):
         self.inspector_repo_button.setText("Hugging Face ↗" if "huggingface.co/" in details.repository_url else "Repository ↗")
         self.inspector_repo_button.setToolTip(details.repository_url)
         self.inspector_origin_button.setToolTip(details.origin_url)
+        self.inspector_license_button.setToolTip(details.license_url or details.origin_url)
         memory = details.memory_guidance
         if details.model_name not in MODELS:
             # For this computer's card: the compute type it will really run.
@@ -765,6 +773,9 @@ class DownloadsPage(QWidget):
             ("Download size", details.download_size),
             ("Local format", details.runtime_format),
             ("License", details.license),
+            ("Download host", ", ".join(details.download_hosts) or "Local folder"),
+            ("Version", details.revision or "Selected by model source"),
+            ("Download checks", details.verification),
         )
         while self.inspector_facts.count():
             item = self.inspector_facts.takeAt(0)
@@ -805,12 +816,17 @@ class DownloadsPage(QWidget):
             self.inspector_source_note,
             self.inspector_repo_button,
             self.inspector_origin_button,
+            self.inspector_license_button,
         ):
             widget.setVisible(enabled)
 
     def _open_repository(self) -> None:
         if self._details is not None:
             QDesktopServices.openUrl(QUrl(self._details.repository_url))
+
+    def _open_license(self) -> None:
+        if self._details is not None:
+            QDesktopServices.openUrl(QUrl(self._details.license_url or self._details.origin_url))
 
     def _open_origin(self) -> None:
         if self._details is not None:
@@ -1092,8 +1108,11 @@ class DownloadsPage(QWidget):
             if info is not None:
                 seen_repos[info.repo_id] = info
                 self._cached_sizes[model_name] = info.size_bytes
+            from services.whisper_sources import model_revision
+            revision = model_revision(model_name)
+            current_info = info if info is None or not revision or revision in info.revision_hashes else None
             row.update_state(
-                info,
+                current_info,
                 is_active=False,
                 is_loaded=(row.repo_id == loaded_repo),
                 downloading=(model_name == self._downloading_model),

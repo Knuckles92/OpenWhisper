@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from services.model_catalog import WHISPER_REVISIONS
 from services.component_catalog import PI_HOME_URL, get_component_details
 from services.components import ComponentId, ComponentInfo, ComponentState
 from services.hf_access import CachedModelInfo, get_hf_cache_dir
@@ -41,7 +42,7 @@ def _cached(repo_id, size_bytes):
         repo_id=repo_id,
         size_bytes=size_bytes,
         path=f"/hub/models--{repo_id.replace('/', '--')}",
-        revision_hashes=("abc",),
+        revision_hashes=(WHISPER_REVISIONS.get(repo_id, "abc"),),
     )
 
 

@@ -57,6 +57,7 @@ def _distribution_license(package, suffix, destination):
 # which PyInstaller does not otherwise retain.
 datas = [
     ("services/local_asr", "services/local_asr"),
+    ("services/whisper_models.json", "services"),
     (str(REPO_ROOT / "ui_qt" / "styles" / "theme.qss"), "ui_qt/styles"),
     (str(REPO_ROOT / "ui_qt" / "assets"), "ui_qt/assets"),
     (str(REPO_ROOT / "integrations" / "omarchy"), "integrations/omarchy"),

@@ -88,8 +88,8 @@ def is_model_cached(model_name: str) -> bool:
     if model_name in MODELS:
         from services.local_asr.cache import is_cached
         return is_cached(model_name)
-    from services.whisper_sources import cached_model_path, is_custom_model
-    if is_custom_model(model_name):
+    from services.whisper_sources import cached_model_path, is_custom_model, model_revision
+    if is_custom_model(model_name) or model_revision(model_name):
         try:
             cached_model_path(model_name)
             return True
@@ -191,7 +191,7 @@ def _download_model_files_in_process(
         return result
     from huggingface_hub import snapshot_download
 
-    from services.whisper_sources import parse_source, validate_model_folder
+    from services.whisper_sources import model_revision, parse_source, validate_model_folder
     source = parse_source(model_name)
     if source.local_path:
         return validate_model_folder(source.local_path)
@@ -210,6 +210,7 @@ def _download_model_files_in_process(
     )
     kwargs = {
         "local_files_only": False,
+        "revision": model_revision(model_name),
         "allow_patterns": allow_patterns,
         "tqdm_class": tqdm_class,
     }
