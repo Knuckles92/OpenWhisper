@@ -130,3 +130,32 @@ def test_custom_and_finetuned_model_architecture_resolution():
     assert gpu_info._architecture("juasker/whisper-ct2-podlodka-turbo") == turbo_arch
     assert gpu_info._architecture("custom-large-v3") == large_arch
     assert gpu_info._architecture("completely-unknown-model-xyz") is None
+
+
+@pytest.mark.parametrize("source", [
+    "Systran/faster-distil-whisper-large-v3", "distil-whisper/distil-large-v3-ct2",
+])
+def test_distilled_repository_preserves_its_decoder_memory_profile(source):
+    assert gpu_info._architecture(source) == gpu_info._ARCHITECTURES["distil-large-v3"]
+    supported = gpu_info.ctranslate2_cuda_types((7, 5))
+    assert gpu_info.plan_cuda(source, "auto", supported, 4096)[1] == gpu_info.plan_cuda(
+        "distil-large-v3", "auto", supported, 4096)[1]
+
+
+@pytest.mark.parametrize(("source", "architecture"), [
+    ("turbo-lab/whisper-large-v3", "large"),
+    ("large-lab/whisper-tiny", "tiny"),
+    ("D:/models/turbo/whisper-large-v3", "large"),
+    (r"D:\models\large\whisper-tiny", "tiny"),
+    ("Systran/faster-distil-whisper-small.en", "distil-small.en"),
+    ("Systran/faster-distil-whisper-medium.en", "distil-medium.en"),
+    ("large-v3-turbo", "turbo"),
+])
+def test_source_architecture_uses_model_name_and_preserves_distillation(source, architecture):
+    assert gpu_info._architecture(source) == gpu_info._ARCHITECTURES[architecture]
+
+
+@pytest.mark.parametrize("source", ["owner/database-asr", "owner/turbofan", "owner/whisper-small-large", "distil-large-v9"])
+def test_unknown_or_ambiguous_names_do_not_invent_memory_estimates(source):
+    assert gpu_info._architecture(source) is None
+    assert gpu_info.estimate_vram_mib(source, "float16") is None
