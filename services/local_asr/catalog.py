@@ -20,6 +20,7 @@ class SpeechModel:
 MODELS = {
     m.key: m for m in (
         SpeechModel("parakeet-v3", "parakeet", "Parakeet TDT 0.6B v3", "Fast dictation and files", "CC-BY-4.0", "25 European languages", meeting=True),
+        SpeechModel("orukeet-v0.1", "parakeet", "Orukeet TDT 0.6B", "Community adaptation of Parakeet for multilingual transcription", "CC-BY-SA-4.0", "25 European languages, including Russian and English", meeting=True),
         SpeechModel("qwen-0.6b", "qwen_asr", "Qwen3-ASR 0.6B", "Efficient multilingual transcription", "Apache-2.0", "30 languages and 22 Chinese dialects"),
         SpeechModel("qwen-1.7b", "qwen_asr", "Qwen3-ASR 1.7B", "Accuracy-focused transcription", "Apache-2.0", "30 languages and 22 Chinese dialects"),
         SpeechModel("nemotron-3.5", "nemotron", "Nemotron 3.5 ASR 0.6B", "Live speech recognition", "OpenMDW-1.1", "Multilingual; coverage varies by locale", streaming=True, meeting=True),

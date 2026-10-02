@@ -57,9 +57,9 @@ def main():
             op = request["op"]
             if op == "whisper_load":
                 from faster_whisper import WhisperModel
-                from services.whisper_sources import cached_model_path, is_custom_model
+                from services.whisper_sources import cached_model_path, is_custom_model, model_revision
                 name = request["model"]
-                path = cached_model_path(name) if is_custom_model(name) else name
+                path = cached_model_path(name) if is_custom_model(name) or model_revision(name) else name
                 model = WhisperModel(path, **request["options"])
                 result = {}
             elif op == "discover_whisper_models":

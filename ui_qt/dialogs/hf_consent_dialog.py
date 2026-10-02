@@ -119,13 +119,36 @@ class HuggingFaceConsentDialog(QDialog):
         from services.local_asr.catalog import MODELS, missing_runtime
         from services.settings import settings_manager
 
+        from services.model_catalog import (
+            CUSTOM_MODEL_NOTICE, MODEL_SECURITY_NOTICE, custom_model_details, get_model_details,
+        )
+        from services.whisper_sources import is_custom_model
+
+        custom = is_custom_model(self.model_name)
+        try:
+            details = custom_model_details(self.model_name) if custom else get_model_details(self.model_name)
+        except KeyError:
+            details = None
         repo = resolve_model_repo(self.model_name)
         label = MODELS[self.model_name].label if self.model_name in MODELS else self.model_name
         lines = [
             f'The speech model "{label}" is not on this computer.',
-            f"It can be downloaded from Hugging Face (huggingface.co), "
-            f"repository {repo}.",
+            (f"Downloading connects to {', '.join(details.download_hosts)}. Source: {repo}."
+             if details and details.download_hosts != ("huggingface.co",) else
+             f"It can be downloaded from Hugging Face (huggingface.co), repository {repo}."),
         ]
+
+        if details:
+            lines.append(f"Publisher / maintainer: {details.maintainer}.")
+            lines.append(f"License: {details.license}. Terms: {details.license_url or details.origin_url}")
+            lines.append(details.verification + ".")
+            if details.revision:
+                lines.append(f"Selected version: {details.revision}.")
+        lines.append(MODEL_SECURITY_NOTICE)
+        if custom:
+            lines.append(CUSTOM_MODEL_NOTICE)
+        if details and "SHA-256" in details.verification:
+            lines.append("Integrity checks do not guarantee security or accuracy.")
 
         size = format_download_size(self.model_name)
         if size:

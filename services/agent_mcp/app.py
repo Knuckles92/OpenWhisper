@@ -16,6 +16,7 @@ from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr
 
 from services.agent_api.app import create_app as create_history_app
 from services.agent_mcp.controls import AgentControls, ControlError
+from services.titles import MAX_TITLE_LENGTH
 
 INSTRUCTIONS = (
     "Search OpenWhisper history narrowly, then retrieve original transcripts and "
@@ -39,7 +40,7 @@ RecordId = Annotated[
     str, Field(min_length=1, max_length=200, pattern=r"^[^/\\?#\x00-\x1f]+$")
 ]
 Seconds = Annotated[float | None, Field(ge=0, allow_inf_nan=False)]
-Title = Annotated[str, Field(min_length=1, max_length=200)]
+Title = Annotated[str, Field(min_length=1, max_length=MAX_TITLE_LENGTH)]
 
 
 def create_app(

@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, select, update
 from sqlalchemy.pool import NullPool
 
 from services.models import MeetingSession, TranscriptionHistory
+from services.titles import normalize_title
 from services.settings import (
     SETTING_DEFAULTS,
     MeetingLanguage,
@@ -328,16 +329,10 @@ class AgentControls:
         return create_engine("sqlite://", creator=connect, poolclass=NullPool)
 
     def retitle(self, kind, record_id, title):
-        if (
-            not isinstance(title, str)
-            or not title.strip()
-            or len(title) > 200
-            or any(ord(char) < 32 or ord(char) == 127 for char in title)
-        ):
-            raise ControlError(
-                "invalid_title: Supply a title of 1–200 characters without control characters."
-            )
-        title = title.strip()
+        try:
+            title = normalize_title(title)
+        except ValueError as exc:
+            raise ControlError(f"invalid_title: {exc}") from exc
         permission = (
             SettingsKey.MCP_RETITLE_TRANSCRIPTIONS
             if kind == "transcription"

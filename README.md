@@ -166,14 +166,32 @@ Choose **Settings → General → Theme → Omarchy desktop** to follow your des
 | Backend | Models | Platform / device | Workflows |
 | --- | --- | --- | --- |
 | Local Whisper | Standard Whisper sizes, turbo, Distil-Whisper | All platforms, CPU; NVIDIA CUDA on Windows/Linux | Dictation with preview, uploads, meetings |
-| Parakeet | TDT 0.6B v3 | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU | Dictation with preview, uploads, meeting chunks |
+| Parakeet | TDT 0.6B v3; Orukeet TDT 0.6B community adaptation | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU | Dictation with preview, uploads, meeting chunks |
 | Qwen3-ASR | 0.6B, 1.7B | Windows x64 CPU / NVIDIA GPU | Dictation, uploads |
 | Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 and Linux x86_64 CPU / NVIDIA GPU | Dictation with preview, uploads, meetings with native preview |
 | Moonshine | Streaming Small / Medium, English | Windows x64 CPU | Dictation, uploads, meetings with native preview |
 | OpenAI API | GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027 | Cloud; API key and network required | Dictation, uploads |
 | Remote computer | Whichever engine the paired computer has selected | Another computer running OpenWhisper on your network | Dictation with that engine's preview, uploads, meetings with a supported host model |
 
+Optional local engines offer English, Russian, Spanish, French, Portuguese, Mandarin, and Auto where supported. Parakeet and Orukeet omit Mandarin; Moonshine offers English only. Qwen supports all these presets; Nemotron includes Mandarin in its broader coverage tier, where accuracy may vary. Auto detects other languages supported by the model. These controls transcribe speech rather than translate it. Paired computers expose the same host-supported choices.
+
 Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. macOS transcription uses CPU; see [GPU acceleration](#gpu-acceleration) for Windows and Linux.
+
+Orukeet is an optional 25-language adaptation of NVIDIA Parakeet from Oruk AI,
+including Russian and English. Its r3 native Q8 download is 714 MB and uses the
+existing NVIDIA Speech runtime. Tested with the pinned Windows and Linux CPU/CUDA
+runtimes; Apple Silicon validation for Orukeet is pending. It remains a community model; evaluate it on
+your recordings. Its weights are CC BY-SA 4.0, with attribution and applicable
+ShareAlike terms; see [the publisher's notice](https://huggingface.co/oruk/orukeet/blob/main/NOTICE.md).
+
+Downloads shows the publisher, source host, license, selected version, and download
+checks. Optional ASR weights and runtime archives are pinned by version, size, and
+SHA-256. Built-in Whisper aliases use pinned Hugging Face commits; custom sources
+retain their publisher-selected version. Integrity checks do not guarantee model
+or runtime security. Keep OpenWhisper and its runtimes updated, and review important
+transcripts for errors. Local transcription runs on this computer after installation;
+downloading connects to the listed host. Cloud transcription, remote engines, and
+AI cleanup have their own network behavior.
 
 ### Custom Whisper models
 
