@@ -233,6 +233,10 @@ class LocalWhisperBackend(TranscriptionBackend):
                 self.model_name = detected_model
 
             from services.hf_access import is_model_cached
+            from services.whisper_sources import is_custom_model, parse_source, validate_model_folder
+            if is_custom_model(self.model_name) and parse_source(self.model_name).local_path:
+                self._model_missing = False
+                validate_model_folder(parse_source(self.model_name).local_path)
 
             if not is_model_cached(self.model_name):
                 logger.info(
@@ -267,11 +271,13 @@ class LocalWhisperBackend(TranscriptionBackend):
             self.model = None
 
     def _construct_model(self, generation):
+        from services.whisper_sources import cached_model_path, is_custom_model
+        name = cached_model_path(self.model_name) if is_custom_model(self.model_name) else self.model_name
         with self._model_lock:
             if generation != self._model_generation or self.should_cancel:
                 raise RuntimeError("Transcription canceled")
             model = _whisper_model_class()(
-                self.model_name, device=self._device,
+                name, device=self._device,
                 compute_type=self._compute_type, local_files_only=True,
             )
             self.model = model

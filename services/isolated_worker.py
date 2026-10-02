@@ -57,8 +57,15 @@ def main():
             op = request["op"]
             if op == "whisper_load":
                 from faster_whisper import WhisperModel
-                model = WhisperModel(request["model"], **request["options"])
+                from services.whisper_sources import cached_model_path, is_custom_model
+                name = request["model"]
+                path = cached_model_path(name) if is_custom_model(name) else name
+                model = WhisperModel(path, **request["options"])
                 result = {}
+            elif op == "discover_whisper_models":
+                from services.whisper_sources import discover_hub_models_in_process
+                result = {"models": discover_hub_models_in_process(
+                    request["repo_id"], request.get("subfolder", ""))}
             elif op == "whisper_transcribe":
                 if model is None:
                     raise RuntimeError("Whisper model is not loaded")

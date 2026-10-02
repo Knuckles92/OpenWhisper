@@ -39,10 +39,13 @@ from services.components import (
 from services import openai_retirement
 from services.hf_access import (
     CachedModelInfo,
+    custom_model_cache_info,
     peek_cached_models,
     resolve_model_repo,
     scan_cached_models,
 )
+from services.whisper_sources import custom_models
+from ui_qt.dialogs.custom_whisper_dialog import add_custom_models
 from services.settings import (
     SETTING_DEFAULTS,
     MeetingAgentCore,
@@ -269,6 +272,7 @@ class ModelAssignments(QObject):
         card.addWidget(self.engine_caption)
 
         self.ondemand_whisper_picker = LocalModelPicker()
+        self.ondemand_whisper_picker.custom_models_requested.connect(self._add_custom_models)
         self.ondemand_whisper_picker.model_changed.connect(
             self._on_set_active_clicked
         )
@@ -380,6 +384,7 @@ class ModelAssignments(QObject):
         self.meeting_source_combo.currentIndexChanged.connect(self._on_meeting_source_changed)
         card.addWidget(self._field("Speech engine", self.meeting_source_combo))
         self.meeting_whisper_picker = LocalModelPicker(include_speech_models=True)
+        self.meeting_whisper_picker.custom_models_requested.connect(self._add_custom_models)
         self.meeting_whisper_picker.model_changed.connect(
             self._on_meeting_set_active_clicked
         )
@@ -637,6 +642,13 @@ class ModelAssignments(QObject):
         if self.on_set_active_requested:
             self.on_set_active_requested(model_name)
         self.refresh()
+
+    def _add_custom_models(self):
+        added = add_custom_models(self.host, settings_manager, self._cached)
+        if added:
+            self.refresh()
+            self._say(f"Added {len(added)} custom models. Choose a model above to load it.")
+            self.assignments_changed.emit()
 
     def _on_meeting_set_active_clicked(self, model_name: str) -> None:
         try:
@@ -1304,7 +1316,9 @@ class ModelAssignments(QObject):
                     if name != "auto"
                 }
                 present = sum(1 for repo in repos if repo in self._cached)
-                text = f"{present} of {len(repos)} Whisper models on this computer."
+                custom = custom_models(self._settings_snapshot())
+                present += sum(custom_model_cache_info(name) is not None for name in custom)
+                text = f"{present} of {len(repos) + len(custom)} Whisper models on this computer."
             else:
                 from services.local_asr.cache import is_cached
                 from services.local_asr.catalog import (
@@ -1520,16 +1534,17 @@ class ModelAssignments(QObject):
         active_model = settings_manager.get(
             SettingsKey.WHISPER_MODEL, SETTING_DEFAULTS[SettingsKey.WHISPER_MODEL]
         )
-        if active_model not in config.WHISPER_MODEL_CHOICES:
+        custom = custom_models(settings)
+        if active_model not in [*config.WHISPER_MODEL_CHOICES, *custom]:
             active_model = config.DEFAULT_WHISPER_MODEL
         meeting_model = resolve_meeting_whisper_model(settings)
         loaded_model = self._get_loaded_model() if self._get_loaded_model else None
 
         self.ondemand_whisper_picker.set_options(
-            cached, active_model, resolved=loaded_model
+            cached, active_model, resolved=loaded_model, custom=custom
         )
         self._update_ondemand_whisper_enabled()
-        self.meeting_whisper_picker.set_options(cached, meeting_model)
+        self.meeting_whisper_picker.set_options(cached, meeting_model, custom=custom)
         self._refresh_engine_inventory()
         self._refresh_rail_values()
 

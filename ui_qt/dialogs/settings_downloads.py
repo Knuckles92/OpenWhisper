@@ -12,6 +12,7 @@ font scale never squeezes the rows below the point where a name or a size is
 still readable.
 """
 import threading
+import math
 from typing import Callable, Dict, List, Optional, Set
 
 from PyQt6.QtCore import QRect, Qt, QUrl, pyqtSignal
@@ -37,6 +38,7 @@ from services.components import component_coordinator
 from services.hf_access import (
     MODEL_DOWNLOAD_SIZE_MB,
     CachedModelInfo,
+    custom_model_cache_info,
     format_download_size,
     format_size_bytes,
     get_hf_cache_dir,
@@ -44,7 +46,9 @@ from services.hf_access import (
     resolve_model_repo,
     scan_cached_models,
 )
-from services.model_catalog import ModelDetails, get_model_details
+from services.model_catalog import ModelDetails, custom_model_details, get_model_details
+from services.whisper_sources import custom_model_label, custom_models, is_custom_model, parse_source
+from ui_qt.dialogs.custom_whisper_dialog import add_custom_models
 from services.settings import (
     SETTING_DEFAULTS,
     SettingsKey,
@@ -109,6 +113,8 @@ class BatchDownloadDialog(QDialog):
 
         total_label = QLabel(
             f"Estimated total: ~{format_size_bytes(total_bytes)}"
+            if all(name in MODEL_DOWNLOAD_SIZE_MB for name in model_names)
+            else "Estimated total: unknown"
         )
         total_label.setObjectName("batchTotalLabel")
         layout.addWidget(total_label)
@@ -223,6 +229,12 @@ class DownloadsPage(QWidget):
         self.stats_label = ElidingLabel("")
         self.stats_label.setObjectName("downloadsSubtitle")
         header_row.addWidget(self.stats_label, stretch=1)
+
+        self.custom_models_button = Button("Add custom models…")
+        self.custom_models_button.setObjectName("downloadsToolButton")
+        fit_compact_button(self.custom_models_button, 0)
+        self.custom_models_button.clicked.connect(self._add_custom_models)
+        header_row.addWidget(self.custom_models_button)
 
         self.download_all_button = Button("Download all…")
         self.download_all_button.setObjectName("downloadsToolButton")
@@ -688,7 +700,8 @@ class DownloadsPage(QWidget):
         if model_name == "auto" or model_name not in self.rows:
             return
         self._selected_model = model_name
-        self._details = get_model_details(model_name)
+        self._details = (custom_model_details(model_name) if is_custom_model(model_name)
+                         else get_model_details(model_name))
         self._render_inspector()
         for name, row in self.rows.items():
             set_style_property(row, "selected", name == model_name)
@@ -719,7 +732,9 @@ class DownloadsPage(QWidget):
             return
         self._set_inspector_enabled(True)
         from services.local_asr.catalog import MODELS
-        self.inspector_name.setText(MODELS[details.model_name].label if details.model_name in MODELS else details.model_name)
+        self.inspector_name.setText(MODELS[details.model_name].label if details.model_name in MODELS else
+            custom_model_label(details.model_name) if is_custom_model(details.model_name) else details.model_name)
+        self.inspector_name.setToolTip(details.model_name)
         self.inspector_tags.setText(details.compact_tags)
         self.inspector_tags.setVisible(bool(details.compact_tags))
         self.inspector_description.setText(details.description)
@@ -805,15 +820,64 @@ class DownloadsPage(QWidget):
         from services.local_asr.catalog import MODELS
         from services.local_asr.cache import model_dir
         path = str(model_dir(self._selected_model).parent) if self._selected_model in MODELS else get_hf_cache_dir()
+        if self._selected_model and is_custom_model(self._selected_model):
+            info = custom_model_cache_info(self._selected_model)
+            if info is not None:
+                path = info.path
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     # ---- catalog actions ----
+
+    def _add_custom_models(self) -> None:
+        cached = peek_cached_models() or {}
+        added = add_custom_models(self, settings_manager, cached)
+        if added:
+            self.refresh()
+            self.message_label.setText(
+                f"Added {len(added)} custom models. Choose one in Voice model or Voice & speakers to load it."
+            )
+
+    def _sync_custom_rows(self, settings: dict) -> None:
+        names = custom_models(settings)
+        for name in list(self.rows):
+            if is_custom_model(name) and name not in names:
+                row = self.rows.pop(name)
+                self.list_layout.removeWidget(row)
+                row.deleteLater()
+                self._selected_models.discard(name)
+                if self._selected_model == name:
+                    self._selected_model = None
+                    self._details = None
+                    self._set_inspector_enabled(False)
+        for name in names:
+            if name in self.rows:
+                continue
+            row = ModelRowWidget(name)
+            row.download_clicked.connect(self._on_download_clicked)
+            row.delete_clicked.connect(self._on_delete_clicked)
+            row.details_requested.connect(self.select_model)
+            row.selection_toggled.connect(self._on_selection_toggled)
+            self.rows[name] = row
+            self.list_layout.insertWidget(len(self.rows) - 1, row)
 
     def _on_download_clicked(self, model_name: str) -> None:
         if self.on_download_requested:
             self.on_download_requested(model_name)
 
     def _on_delete_clicked(self, model_name: str) -> None:
+        if is_custom_model(model_name):
+            settings = self._settings_snapshot()
+            if model_name in (setting_value(SettingsKey.WHISPER_MODEL, settings),
+                              resolve_meeting_whisper_model(settings)):
+                self.message_label.setText("Choose another model before removing this assignment.")
+                return
+            def remove(values):
+                values[SettingsKey.CUSTOM_WHISPER_MODELS] = [
+                    name for name in custom_models(values) if name != model_name]
+            settings_manager.mutate_settings(remove)
+            self.refresh()
+            self.message_label.setText("Removed the custom model from the list. Its files are retained.")
+            return
         reply = QMessageBox.question(
             self,
             "Delete Model",
@@ -836,8 +900,9 @@ class DownloadsPage(QWidget):
 
     def _on_select_all_clicked(self) -> None:
         """Check every row that still needs a download (cached rows excluded)."""
+        missing = set(self._missing_names())
         for row in self.rows.values():
-            row.select_checkbox.setChecked(not row.is_cached)
+            row.select_checkbox.setChecked(row.model_name in missing)
 
     def _on_clear_selection_clicked(self) -> None:
         for row in self.rows.values():
@@ -849,7 +914,8 @@ class DownloadsPage(QWidget):
 
     def _missing_names(self) -> List[str]:
         """Every catalog model without local files, in catalog order."""
-        return [name for name, row in self.rows.items() if not row.is_cached]
+        return [name for name, row in self.rows.items() if not row.is_cached
+                and not (is_custom_model(name) and parse_source(name).local_path)]
 
     def _download_slot_busy(self) -> bool:
         return self._downloading_model is not None or bool(self._batch_queue)
@@ -857,9 +923,12 @@ class DownloadsPage(QWidget):
     def _update_selection_bar(self) -> None:
         names = self._selected_names()
         count = len(names)
-        total_bytes = sum(self.rows[name].sort_size_bytes for name in names)
+        sizes = [self.rows[name].sort_size_bytes for name in names]
+        total_bytes = sum(size for size in sizes if math.isfinite(size))
+        estimate = (f"~{format_size_bytes(total_bytes)} to download"
+                    if all(math.isfinite(size) for size in sizes) else "download size unknown")
         self.selection_summary.setText(
-            f"{count} selected · ~{format_size_bytes(total_bytes)} to download"
+            f"{count} selected · {estimate}"
             if count
             else ""
         )
@@ -987,10 +1056,11 @@ class DownloadsPage(QWidget):
         from services.local_asr.cache import inventory
         cached = {**cached, **inventory()}
         settings = self._settings_snapshot()
+        self._sync_custom_rows(settings)
         active_model = settings_manager.get(
             SettingsKey.WHISPER_MODEL, SETTING_DEFAULTS[SettingsKey.WHISPER_MODEL]
         )
-        if active_model not in config.WHISPER_MODEL_CHOICES:
+        if active_model not in [*config.WHISPER_MODEL_CHOICES, *custom_models(settings)]:
             active_model = config.DEFAULT_WHISPER_MODEL
         from services.local_asr.catalog import BACKENDS, selected_model
         selected_backend = setting_value(SettingsKey.SELECTED_MODEL, settings)
@@ -1017,9 +1087,10 @@ class DownloadsPage(QWidget):
         seen_repos: Dict[str, CachedModelInfo] = {}
         self._cached_sizes = {}
         for model_name, row in self.rows.items():
-            info = cached.get(row.repo_id)
+            info = (custom_model_cache_info(model_name) if is_custom_model(model_name)
+                    else cached.get(row.repo_id))
             if info is not None:
-                seen_repos[row.repo_id] = info
+                seen_repos[info.repo_id] = info
                 self._cached_sizes[model_name] = info.size_bytes
             row.update_state(
                 info,
@@ -1034,10 +1105,22 @@ class DownloadsPage(QWidget):
             )
             # Assignment lives on each feature's page; this one only downloads.
             row.set_active_button.setVisible(False)
+            if is_custom_model(model_name):
+                local = bool(parse_source(model_name).local_path)
+                row.delete_button.setText("Remove")
+                row.delete_button.setVisible(True)
+                row.delete_button.setToolTip("Remove from the model list; keep source files")
+                row.delete_button.setEnabled(not slot_busy and model_name not in
+                    (dictation_resolved, meeting_model, loaded_model))
+                if local:
+                    row.download_button.setVisible(False)
+                    row.select_checkbox.setVisible(False)
+                    if info is None:
+                        row._set_badge("Folder unavailable", "idle")
             row.set_usage(
                 self._usage_for(model_name, dictation_resolved, meeting_model)
             )
-            if cached.get(row.repo_id) is not None:
+            if info is not None or (is_custom_model(model_name) and parse_source(model_name).local_path):
                 # A model that gained files elsewhere must not stay checked.
                 row.select_checkbox.setChecked(False)
                 self._selected_models.discard(model_name)

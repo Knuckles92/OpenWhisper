@@ -87,7 +87,9 @@ class LocalEngineControls(QWidget):
             self.device_combo.setCurrentText(selected_device(backend, settings))
             self.device_combo.blockSignals(False)
         else:
-            self.model_combo.addItems(config.WHISPER_MODEL_CHOICES)
+            from services.whisper_sources import custom_models
+            self.model_combo.addItems([*config.WHISPER_MODEL_CHOICES,
+                                      *custom_models(settings_manager.load_all_settings())])
         self.model_combo.blockSignals(False)
         self.compute_combo.parentWidget().setVisible(backend not in BACKENDS)
         self.language_field.setVisible(backend in BACKENDS)
@@ -150,6 +152,8 @@ class LocalEngineControls(QWidget):
             (self.compute_combo, compute or "auto"),
         ):
             combo.blockSignals(True)
+            if combo is self.model_combo and combo.findText(value) < 0:
+                combo.addItem(value)
             # A paired client can select any precision supported by this
             # host, including mixed types beyond the short default menu.
             if combo is self.compute_combo and combo.findText(value) < 0:

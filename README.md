@@ -175,6 +175,15 @@ Choose **Settings → General → Theme → Omarchy desktop** to follow your des
 
 Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. macOS transcription uses CPU; see [GPU acceleration](#gpu-acceleration) for Windows and Linux.
 
+### Custom Whisper models
+
+Choose **Add custom models…** in **Settings → Downloads**, **Dictation → Voice model**, or **Meeting Mode → Voice & speakers**.
+
+- **Local files:** Choose a model folder or a parent folder containing several models. OpenWhisper lists complete model folders for you to select.
+- **Hugging Face:** Enter an `owner/model` repository and, optionally, a subfolder such as `ct2_int8_float16`. **Find on Hugging Face** lists compatible model folders without downloading weights. You can also discover models already in the local Hugging Face cache.
+
+Select the models you want and click **Add selected**, then choose one in **Voice model** or **Voice & speakers** to load it. Downloads follow your existing Hugging Face policy; cached models load offline. Custom folders must contain a CTranslate2 Whisper `model.bin`, valid `config.json`, and `tokenizer.json`. Original PyTorch weights need conversion before use. Removing a custom entry keeps its source files.
+
 ### Remote engine
 
 Use another computer's OpenWhisper engine for dictation, uploads, or meetings:
