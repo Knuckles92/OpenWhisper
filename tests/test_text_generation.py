@@ -20,6 +20,9 @@ from services.text_model_catalog import model_spec
 from services.transcript_cleanup import TranscriptCleanup
 
 CASES = [
+    ("openai", "o4-mini", "responses", "/v1/responses"),
+    ("openai", "gpt-5.6-luna", "responses", "/v1/responses"),
+    ("openai", "gpt-4o-mini", "chat", "/v1/chat/completions"),
     ("ollama", "llama3.2", "chat", "/v1/chat/completions"),
     ("groq", "llama-3.3-70b-versatile", "chat", "/openai/v1/chat/completions"),
     ("opencode_go", "glm-5.2", "chat", "/zen/go/v1/chat/completions"),
@@ -166,6 +169,16 @@ def test_same_model_has_distinct_go_and_zen_protocols():
     assert model_spec(get_profile("opencode_zen", {}), "minimax-m3").protocol == "chat"
 
 
+@pytest.mark.parametrize(("model", "protocol", "reasoning"), [
+    ("o4-mini", "responses", True),
+    ("gpt-5.6-luna", "responses", True),
+    ("gpt-4o-mini", "chat", False),
+])
+def test_openai_model_routes_are_reasoning_aware(model, protocol, reasoning):
+    spec = model_spec(get_profile("openai", {}), model)
+    assert (spec.protocol, spec.reasoning) == (protocol, reasoning)
+
+
 def test_ollama_url_normalizes_and_never_stores_embedded_secrets():
     with patch("services.settings.settings_manager.save_setting") as save:
         save_ollama_url("http://localhost:11434/")
@@ -191,9 +204,10 @@ def test_opencode_credentials_and_headers_are_separate():
     assert not profiles["ollama"].requires_api_key
 
 
-def test_responses_reasoning_preference_is_translated():
+@pytest.mark.parametrize("provider", ["openai", "opencode_go"])
+def test_responses_reasoning_preference_is_translated(provider):
     requests = []
-    profile, client = client_for("opencode_go", [reply("responses")], requests)
+    profile, client = client_for(provider, [reply("responses")], requests)
     with client:
         generate(client, profile, model="gpt-5.6-luna", messages=[{"role": "user", "content": "Hi"}],
                  reasoning_level="high")

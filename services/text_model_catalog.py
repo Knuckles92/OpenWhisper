@@ -90,6 +90,8 @@ _ROUTES = {
     },
 }
 
+_OPENAI_REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-6")
+
 
 def model_spec(profile, model: str) -> TextModelSpec:
     if not model or not model.strip():
@@ -105,6 +107,15 @@ def model_spec(profile, model: str) -> TextModelSpec:
             if model in models:
                 return TextModelSpec(protocol=protocol, **_CAPABILITIES.get(profile.kind, {}).get(model, {}))
         raise ValueError(f"{model} has no supported API route for {profile.name}. Choose a supported model.")
+    if profile.kind == "openai":
+        reasoning = model.lower().startswith(_OPENAI_REASONING_PREFIXES)
+        return TextModelSpec(
+            protocol="responses" if reasoning else "chat",
+            reasoning=reasoning,
+            reasoning_format="openai" if reasoning else "",
+            context_window=131072,
+            max_output_tokens=16384,
+        )
     if profile.kind == "groq" and any(word in model.lower() for word in ("whisper", "tts", "orpheus", "guard", "compound")):
         raise ValueError("Choose a Groq text-generation model.")
     if profile.kind == "groq":

@@ -290,6 +290,9 @@ def generate(client, profile, *, model: str, messages: list[dict],
         options.pop("temperature", None)
         options.pop("reasoning_effort", None)
         options.pop("extra_body", None)
+        level = (spec.thinking_levels or {}).get(reasoning_level, reasoning_level)
+        if level and level != "off" and spec.reasoning_format == "openai":
+            options["reasoning"] = {"effort": level}
         adapter = {"responses": _responses, "anthropic": _anthropic, "google": _google}[spec.protocol]
         result = adapter(client, model, messages, tools, limit, json_mode, options)
     _check_cancel(cancel_event)
