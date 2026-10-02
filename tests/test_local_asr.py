@@ -36,7 +36,8 @@ def isolated_models(tmp_path, monkeypatch):
 
 
 def test_every_optional_artifact_is_pinned_and_has_integrity_metadata():
-    assert len(BACKENDS) == 4 and len(MODELS) == 6
+    assert len(BACKENDS) == 4 and len(MODELS) == 7
+    assert "orukeet-v0.1" in MODELS
     for key in MODELS:
         spec = artifacts(key)
         assert spec["revision"]

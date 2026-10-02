@@ -326,7 +326,7 @@ class TestModelRows(_DialogTestCase):
             }
         )
         text = dialog.stats_label.text()
-        assert text.startswith("2 of 22 speech models")
+        assert text.startswith(f"2 of {len(dialog.rows)} speech models")
         assert "221 MB used" in text
 
 
