@@ -263,6 +263,9 @@ jobs:
         run: |
           test "$(uname -s)" = "Darwin"
           test "$(uname -m)" = "arm64"
+      - name: Configure loopback alias for MCP listener tests
+        # macOS needs an explicit alias for the second IPv4 loopback listener.
+        run: sudo ifconfig lo0 alias 127.0.0.2 up
       - name: Validate tag version
         if: github.ref_type == 'tag' || inputs.release_tag != ''
         env:
