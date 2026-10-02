@@ -122,7 +122,8 @@ class TestApplyUiTheme:
 
 
 class TestThemeSetting:
-    def test_fresh_install_is_dark(self):
+    def test_fresh_classic_install_is_dark(self, monkeypatch):
+        monkeypatch.setenv("OPENWHISPER_UI", "classic")
         assert config.UI_THEME == UiTheme.DARK
         assert resolve_ui_theme({}) == UiTheme.DARK
 

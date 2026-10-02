@@ -101,17 +101,22 @@ def create_app(
 
         Requires settings access. Credentials, paths, and MCP permission controls
         are excluded. Use the exact returned keys and choices for updates.
+        Theme value is the resolved preference; inherited means no saved override.
+        Resettable preferences accept null to remove their saved override.
         """
         return await control_call(controls.get_settings)
 
     @mcp.tool(annotations=write_annotations)
     async def update_settings(
-        changes: dict[str, StrictBool | StrictInt | StrictFloat | StrictStr],
+        changes: dict[str, StrictBool | StrictInt | StrictFloat | StrictStr | None],
     ) -> dict[str, object]:
         """Atomically update user-allowed preferences and return their previous values.
 
         Every key requires its own permission. An invalid or denied key prevents
         the entire update. Agents cannot grant themselves additional permissions.
+        Only ui_theme accepts null to inherit the desktop default. Theme values
+        in updated and previous are resolved preferences. Pass restore back as
+        changes to recover prior values while preserving theme inheritance.
         """
         return await control_call(controls.update_settings, changes)
 

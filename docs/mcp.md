@@ -161,6 +161,14 @@ For example, after the user permits changes to clipboard copying and theme:
 `update_settings` validates and authorizes every key before committing a single
 settings transaction. An invalid or disallowed key rejects the whole request.
 Successful responses include the changed values and their previous values.
+Theme values are resolved preferences: an unset theme follows the desktop default
+(`omarchy` on Omarchy, otherwise `dark`). The theme entry in `get_settings` also
+reports `inherited` (no saved override) and `resettable: true`. Only `ui_theme`
+accepts `null` to remove its override; other preferences still require a value.
+For example, `{"changes": {"ui_theme": null}}` resumes the desktop default.
+Responses include a `restore` object to pass back as `changes`: it uses `null`
+for an inherited theme, preserving inheritance instead of pinning the resolved
+theme. Theme values in `updated` and `previous` are resolved preferences.
 Appearance, live-preview controls, and recording shortcut mode refresh in the
 running desktop; other preferences apply to the next relevant operation.
 Permission to enable cleanup uses the user's existing provider configuration.
