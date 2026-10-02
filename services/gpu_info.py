@@ -229,9 +229,14 @@ def _overhead_mib() -> int:
 def _architecture(model: str):
     if model in _ARCHITECTURES:
         return _ARCHITECTURES[model]
-    base = model.removesuffix(".en")
-    if base.startswith("large"):
+    base = model.lower().removesuffix(".en")
+    if "turbo" in base:
+        return _ARCHITECTURES["turbo"]
+    if "large" in base:
         return _ARCHITECTURES["large"]
+    for arch in ("medium", "small", "base", "tiny"):
+        if arch in base:
+            return _ARCHITECTURES[arch]
     return _ARCHITECTURES.get(base)
 
 

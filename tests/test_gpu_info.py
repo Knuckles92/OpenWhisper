@@ -120,3 +120,13 @@ def test_catalog_no_longer_quotes_the_upstream_table():
     guidance = get_model_details("turbo").memory_guidance
     assert "upstream reference table" not in guidance
     assert not re.search(r"(?<![\d.])6 GB", guidance)
+
+
+def test_custom_and_finetuned_model_architecture_resolution():
+    turbo_arch = gpu_info._ARCHITECTURES["turbo"]
+    large_arch = gpu_info._ARCHITECTURES["large"]
+    assert gpu_info._architecture("whisper-turbo-ru") == turbo_arch
+    assert gpu_info._architecture("coriollon/whisper-large-v3-turbo-russian") == turbo_arch
+    assert gpu_info._architecture("juasker/whisper-ct2-podlodka-turbo") == turbo_arch
+    assert gpu_info._architecture("custom-large-v3") == large_arch
+    assert gpu_info._architecture("completely-unknown-model-xyz") is None
