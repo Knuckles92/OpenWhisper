@@ -29,7 +29,10 @@ def main():
             if op == "load":
                 family = request["backend"]
                 device = request["device"]
-                if family in ("parakeet", "nemotron"):
+                if family == "parakeet_mlx":
+                    from services.local_asr.mlx import MlxRecognizer
+                    engine = MlxRecognizer(request["runtime"], request["model_path"], device)
+                elif family in ("parakeet", "nemotron"):
                     from services.local_asr.nvidia import NvidiaRecognizer
                     engine = NvidiaRecognizer(request["runtime"], request["model_path"], device)
                 elif family == "moonshine":
@@ -66,7 +69,7 @@ def main():
                     with open(request["audio_path"], "rb") as audio:
                         samples.frombytes(audio.read())
                 language = request.get("language")
-                if family in ("parakeet", "nemotron", "moonshine"):
+                if family in ("parakeet", "nemotron", "moonshine", "parakeet_mlx"):
                     language = native_language_code(family, language)
                     if op == "stream":
                         result = {"events": engine.stream(request["session"], samples, language, request.get("finish", False))}

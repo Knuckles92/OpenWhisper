@@ -30,7 +30,8 @@ def dependency_options(family: str) -> list[dict]:
     gpu = nvidia_gpu()
     available = available_component_ids()
     options = []
-    for device in ("cpu",) if family == "moonshine" else ("cpu", "cuda"):
+    devices = ("auto", "cpu") if family == "parakeet_mlx" else ("cpu",) if family == "moonshine" else ("cpu", "cuda")
+    for device in devices:
         component = (
             (ComponentId.GPU_ACCEL if device == "cuda" else "")
             if family == WHISPER_BACKEND

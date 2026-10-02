@@ -16,6 +16,7 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 
 ### Added
+- **Experimental Parakeet MLX** — separate pinned MLX weights and runtime for Apple Silicon Macs, with Auto targeting the Apple GPU through Metal and a CPU option. Language is detected automatically. Actual Apple Silicon transcription validation is pending.
 - **Supported language presets** — optional local engines and paired hosts offer Russian, Spanish, French, Portuguese, and Mandarin alongside English and Auto where supported. Moonshine stays English-only; Parakeet omits Mandarin. Qwen language names and Nemotron Mandarin prompts are passed correctly to their pinned runtimes.
 - **Custom Whisper models** — add local model folders or discover compatible root and subfolder models in Hugging Face repositories and the local cache. Review discovered models before adding them, then assign them to dictation or meetings. Downloads and offline loading use the selected subfolder; removing a custom entry retains its files.
 - **Direct client history queries over MCP** — clients can allow their paired host to search saved history and read transcripts and meeting insights while they are online. Agents opt in with `include_clients`, route reads by device, and receive explicit offline/disabled status. The shared desktop and Omarchy setting is independent of storage; Both retains host copies for offline access.

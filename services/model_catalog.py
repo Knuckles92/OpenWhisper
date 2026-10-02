@@ -412,9 +412,10 @@ for _key, _model in SPEECH_MODELS.items():
         parameter_count=("123 million" if _key == "moonshine-small" else "245 million" if _key == "moonshine-medium" else "1.7 billion" if _key == "qwen-1.7b" else "600 million"), relative_performance="Measure on your hardware; published throughput is not dictation latency.",
         memory_guidance="CPU RAM / GPU memory use depends on model and audio length.",
         download_size_mb=round(sum(f["size_bytes"] for f in _spec["files"])/1_000_000),
-        runtime_format="GGUF Q8" if _model.backend in ("parakeet", "nemotron") else ("ORT quantized" if _model.backend == "moonshine" else "Safetensors"),
+        runtime_format="MLX Safetensors" if _model.backend == "parakeet_mlx" else "GGUF Q8" if _model.backend in ("parakeet", "nemotron") else ("ORT quantized" if _model.backend == "moonshine" else "Safetensors"),
         license=_model.license, best_for=_model.purpose,
-        limitations=(("Requires its optional runtime from Downloads (Windows x64, Linux x86_64, or Apple Silicon Mac CPU)." if _model.backend in ("parakeet", "nemotron") else "Requires its optional Windows x64 runtime from Downloads."),
+        limitations=(("Requires its optional MLX runtime from Downloads and an Apple Silicon Mac running macOS 14 or newer." if _model.backend == "parakeet_mlx" else "Requires its optional runtime from Downloads (Windows x64, Linux x86_64, or Apple Silicon Mac CPU)." if _model.backend in ("parakeet", "nemotron") else "Requires its optional Windows x64 runtime from Downloads."),
+                     "Auto uses the Apple GPU through Metal; CPU uses the same MLX weights. Language is detected automatically." if _model.backend == "parakeet_mlx" else
                      "Qwen CPU needs substantially more memory than the native engines; 1.7B is best suited to a GPU." if _model.backend == "qwen_asr" else
                      "English only; CPU execution." if _model.backend == "moonshine" else
                      "CPU and NVIDIA GPU use separately installed runtimes."),
@@ -423,8 +424,13 @@ for _key, _model in SPEECH_MODELS.items():
         revision=_spec["revision"],
         download_hosts=tuple(sorted({urlparse(f["url"]).hostname for f in _spec["files"]})),
         verification="Pinned version; size and SHA-256 checked during download",
-        source_urls=(_source, "https://github.com/NVIDIA/NeMo-Speech.cpp" if _model.backend in ("parakeet", "nemotron") else ("https://github.com/QwenLM/Qwen3-ASR" if _model.backend == "qwen_asr" else "https://moonshine-voice.readthedocs.io/")),
+        source_urls=(_source, "https://github.com/senstella/parakeet-mlx" if _model.backend == "parakeet_mlx" else "https://github.com/NVIDIA/NeMo-Speech.cpp" if _model.backend in ("parakeet", "nemotron") else ("https://github.com/QwenLM/Qwen3-ASR" if _model.backend == "qwen_asr" else "https://moonshine-voice.readthedocs.io/")),
     )
+_CATALOG["parakeet-v3-mlx"] = replace(
+    _CATALOG["parakeet-v3-mlx"],
+    limitations=(*_CATALOG["parakeet-v3-mlx"].limitations,
+                 "Experimental integration; actual transcription on Apple Silicon has not yet been validated."),
+)
 _CATALOG["orukeet-v0.1"] = replace(
     _CATALOG["orukeet-v0.1"], maintainer="Oruk AI (adaptation); NVIDIA (base model)",
     parameter_count="627 million", origin_name="Orukeet, based on NVIDIA Parakeet TDT v3",

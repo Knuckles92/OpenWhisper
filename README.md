@@ -167,6 +167,7 @@ Choose **Settings → General → Theme → Omarchy desktop** to follow your des
 | --- | --- | --- | --- |
 | Local Whisper | Standard Whisper sizes, turbo, Distil-Whisper | All platforms, CPU; NVIDIA CUDA on Windows/Linux | Dictation with preview, uploads, meetings |
 | Parakeet | TDT 0.6B v3; Orukeet TDT 0.6B community adaptation | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU | Dictation with preview, uploads, meeting chunks |
+| Parakeet MLX | TDT 0.6B v3, MLX Community weights | Apple Silicon, macOS 14+: Apple GPU through Metal or CPU | Dictation with preview, uploads, meeting chunks |
 | Qwen3-ASR | 0.6B, 1.7B | Windows x64 CPU / NVIDIA GPU | Dictation, uploads |
 | Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 and Linux x86_64 CPU / NVIDIA GPU | Dictation with preview, uploads, meetings with native preview |
 | Moonshine | Streaming Small / Medium, English | Windows x64 CPU | Dictation, uploads, meetings with native preview |
@@ -175,7 +176,7 @@ Choose **Settings → General → Theme → Omarchy desktop** to follow your des
 
 Optional local engines offer English, Russian, Spanish, French, Portuguese, Mandarin, and Auto where supported. Parakeet and Orukeet omit Mandarin; Moonshine offers English only. Qwen supports all these presets; Nemotron includes Mandarin in its broader coverage tier, where accuracy may vary. Auto detects other languages supported by the model. These controls transcribe speech rather than translate it. Paired computers expose the same host-supported choices.
 
-Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. macOS transcription uses CPU; see [GPU acceleration](#gpu-acceleration) for Windows and Linux.
+Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. On Apple Silicon Macs, select **Parakeet MLX**, download its runtime and model, and choose **Auto** to use the Apple GPU through Metal, or **CPU** to use the processor. This is an experimental integration; actual Apple Silicon transcription validation is pending. The MLX weights download is about 2.5 GB. Local Whisper and the GGUF Parakeet option use CPU on macOS; see [GPU acceleration](#gpu-acceleration) for Windows and Linux.
 
 Orukeet is an optional 25-language adaptation of NVIDIA Parakeet from Oruk AI,
 including Russian and English. Its r3 native Q8 download is 714 MB and uses the

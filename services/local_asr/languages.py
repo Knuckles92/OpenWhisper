@@ -10,6 +10,7 @@ LANGUAGE_LABELS = {
 # Nemotron includes zh-CN in its broader coverage tier. Moonshine is English-only.
 _BACKEND_LANGUAGES = {
     "parakeet": ("en", "ru", "es", "fr", "pt", "auto"),
+    "parakeet_mlx": ("auto",),
     "qwen_asr": tuple(LANGUAGE_LABELS),
     "nemotron": tuple(LANGUAGE_LABELS),
     "moonshine": ("en",),
