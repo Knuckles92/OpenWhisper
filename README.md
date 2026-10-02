@@ -167,13 +167,14 @@ Choose **Settings → General → Theme → Omarchy desktop** to follow your des
 | --- | --- | --- | --- |
 | Local Whisper | Standard Whisper sizes, turbo, Distil-Whisper | All platforms, CPU; NVIDIA CUDA on Windows/Linux | Dictation with preview, uploads, meetings |
 | Parakeet | TDT 0.6B v3 | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU | Dictation with preview, uploads, meeting chunks |
+| Parakeet MLX | TDT 0.6B v3, MLX Community weights | Apple Silicon, macOS 14+: Apple GPU through Metal or CPU | Dictation with preview, uploads, meeting chunks |
 | Qwen3-ASR | 0.6B, 1.7B | Windows x64 CPU / NVIDIA GPU | Dictation, uploads |
 | Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 and Linux x86_64 CPU / NVIDIA GPU | Dictation with preview, uploads, meetings with native preview |
 | Moonshine | Streaming Small / Medium, English | Windows x64 CPU | Dictation, uploads, meetings with native preview |
 | OpenAI API | GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027 | Cloud; API key and network required | Dictation, uploads |
 | Remote computer | Whichever engine the paired computer has selected | Another computer running OpenWhisper on your network | Dictation with that engine's preview, uploads, meetings with a supported host model |
 
-Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. macOS transcription uses CPU; see [GPU acceleration](#gpu-acceleration) for Windows and Linux.
+Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. On Apple Silicon Macs, select **Parakeet MLX**, download its runtime and model, and choose **Auto** to use the Apple GPU through Metal, or **CPU** to use the processor. The MLX weights download is about 2.5 GB. Local Whisper and the GGUF Parakeet option use CPU on macOS; see [GPU acceleration](#gpu-acceleration) for Windows and Linux.
 
 ### Custom Whisper models
 

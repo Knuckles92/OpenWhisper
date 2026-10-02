@@ -748,9 +748,10 @@ class SpeechHost:
         fields = {"id", "op"} if op == "model_catalog" else {"id", "op", "family", "model"}
         if op == "install_runtime":
             fields.add("device")
+        devices = ("auto", "cpu") if header.get("family") == "parakeet_mlx" else ("cpu", "cuda")
         if (set(header) - fields or (op != "model_catalog" and not all(
             isinstance(header.get(key), str) and header[key] for key in ("family", "model")
-        )) or (op == "install_runtime" and header.get("device") not in ("cpu", "cuda"))):
+        )) or (op == "install_runtime" and header.get("device") not in devices)):
             return {"id": request_id, "code": "bad_request", "error": "Invalid model management request."}
         try:
             result = self._manage_models(op, header, device_name)
@@ -817,7 +818,8 @@ class SpeechHost:
         if "device" in header:
             if not self._can_manage_models():
                 return {"id": request_id, "code": "forbidden", "error": "Model management is disabled on the host."}
-            if set(header) - {"id", "op", "family", "model", "device"} or header["device"] not in ("cpu", "cuda"):
+            devices = ("auto", "cpu") if family == "parakeet_mlx" else ("cpu", "cuda")
+            if set(header) - {"id", "op", "family", "model", "device"} or header["device"] not in devices:
                 return {"id": request_id, "error": "Invalid model device request."}
         if not isinstance(family, str) or not isinstance(model, str) or not model:
             return {"id": request_id, "error": "Choose a model to switch to"}

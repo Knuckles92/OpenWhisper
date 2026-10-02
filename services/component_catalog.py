@@ -198,6 +198,7 @@ for _id, _name, _source, _license, _description in (
     ("asr-nvidia-vulkan", "NVIDIA Speech GPU (Vulkan)", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0", "Vulkan GPU runtime shared by Parakeet and Nemotron, for NVIDIA GPUs older than Turing, such as the GTX 10 series."),
     ("asr-qwen", "Qwen3-ASR runtime", "https://github.com/QwenLM/Qwen3-ASR", "Apache-2.0 and bundled dependency licenses", "Isolated Python, PyTorch CUDA 12.4, and Qwen3-ASR. Also supports CPU."),
     ("asr-moonshine", "Moonshine runtime", "https://github.com/moonshine-ai/moonshine", "MIT and bundled dependency licenses", "Isolated Moonshine Voice runtime for CPU transcription."),
+    ("asr-parakeet-mlx", "Parakeet MLX runtime", "https://github.com/senstella/parakeet-mlx", "Apache-2.0; MIT and bundled dependency licenses", "Parakeet MLX on Apple Silicon. Auto uses the Apple GPU; CPU is also available."),
 ):
     _CATALOG[_id] = ComponentDetails(
         component_id=_id, display_name=_name, summary=_description,
@@ -206,13 +207,15 @@ for _id, _name, _source, _license, _description in (
         source_name="Pinned upstream archives", source_url=_source, source_label="Project",
         maintainer="Upstream publishers; packaged by OpenWhisper", family="Speech runtime",
         requires=(
-            "Windows x64, Linux x86_64 (glibc 2.31+), or Apple Silicon macOS" if _id == "asr-nvidia-cpu"
+            "Apple Silicon Mac, macOS 14 or newer, Python 3.12" if _id == "asr-parakeet-mlx"
+            else "Windows x64, Linux x86_64 (glibc 2.31+), or Apple Silicon macOS" if _id == "asr-nvidia-cpu"
             else "Windows x64 or Linux x86_64 (glibc 2.31+), and an NVIDIA GPU (Turing or newer) with its driver" if _id == "asr-nvidia-cuda"
             else "Linux x86_64 (glibc 2.31+), and an NVIDIA GPU older than Turing with its driver and the Vulkan loader" if _id == "asr-nvidia-vulkan"
             else "Windows x64"
         ),
         payload=(
-            "Verified native libraries" if _id == "asr-nvidia-vulkan"
+            "Verified macOS arm64 Python wheels, MLX and Metal libraries" if _id == "asr-parakeet-mlx"
+            else "Verified native libraries" if _id == "asr-nvidia-vulkan"
             else "Verified native libraries; portable Python on Windows" if _id.startswith("asr-nvidia")
             else "Portable Python 3.12 and verified runtime binaries"
         ),

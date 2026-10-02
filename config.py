@@ -359,7 +359,7 @@ class AppConfig:
     # Nemotron returned a 3 s window in 52 / 60 ms median with lower drained
     # WER than tiny.en's 112 ms; Moonshine needed 547 ms per window on CPU and
     # Qwen was not measured, so they keep no dictation preview.
-    STREAMING_PREVIEW_BACKENDS: Tuple[str, ...] = ("parakeet", "nemotron")
+    STREAMING_PREVIEW_BACKENDS: Tuple[str, ...] = ("parakeet", "nemotron", "parakeet_mlx")
     # Engines in STREAMING_PREVIEW_BACKENDS whose selected model advertises
     # native streaming follow the worker's ``stream_audio`` session instead of
     # re-decoding 3 s windows. The same benchmark measured Nemotron's native
@@ -393,7 +393,7 @@ class AppConfig:
     # noise input anyway. Qwen was not measured, so it stays out: its
     # autoregressive decoder has no fixed cost for a noise input, and it
     # would take seconds on CPU.
-    SPEECH_WARMUP_BACKENDS: Tuple[str, ...] = ("parakeet", "nemotron")
+    SPEECH_WARMUP_BACKENDS: Tuple[str, ...] = ("parakeet", "nemotron", "parakeet_mlx")
     # Optional engines that decode a long dictation's completed 30 s windows
     # while it is still being recorded (services/incremental_dictation.py),
     # so the stop only waits for the last partial window. The saved file is
@@ -402,7 +402,7 @@ class AppConfig:
     # stop decodes the whole file as before whenever that cannot be verified.
     # About a quarter of dictations run past 30 s, and those spent 343-619 ms
     # decoding after stop at 37-88 s (September 2026, RTX 2060).
-    INCREMENTAL_DICTATION_BACKENDS: Tuple[str, ...] = ("parakeet", "nemotron")
+    INCREMENTAL_DICTATION_BACKENDS: Tuple[str, ...] = ("parakeet", "nemotron", "parakeet_mlx")
     # How often a session takes newly captured audio. Resampling it costs
     # under a millisecond per second of audio; the interval only bounds how
     # long a completed window waits before its decode starts.
@@ -553,6 +553,7 @@ class AppConfig:
                 'API': 'api',
                 'Parakeet': 'parakeet', 'Qwen3-ASR': 'qwen_asr',
                 'Nemotron Streaming': 'nemotron', 'Moonshine': 'moonshine',
+                'Parakeet MLX': 'parakeet_mlx',
                 'Remote computer': 'remote',
             }
 

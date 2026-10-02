@@ -55,7 +55,7 @@ class LocalEngineControls(QWidget):
             'The speech model turns audio into text. Larger models generally improve accuracy but need more memory and processing time. Use Downloads to install models for this backend.',
             [('Open Settings → Voice model', 'ondemand'), ('Open Settings → Downloads', 'downloads')], self.help_requested.emit), stretch=2)
         layout.addWidget(engine_field("Device", self.device_combo,
-            'Choose the hardware used for transcription. Auto picks an available device. CUDA uses a compatible NVIDIA graphics card for faster processing; CPU uses your main processor. Moonshine uses CPU only.',
+            'Choose the hardware used for transcription. Auto picks an available device; Parakeet MLX uses the Apple GPU. CUDA uses a compatible NVIDIA graphics card; CPU uses your main processor. Moonshine uses CPU only.',
             [('Open Settings → Voice model', 'ondemand')], self.help_requested.emit), stretch=1)
         layout.addWidget(engine_field("Quant", self.compute_combo,
             'Controls how Whisper stores and calculates model numbers. Start with Auto. int8 uses less memory; float16 is suited to GPUs; float32 uses more memory. Lower precision may affect accuracy.',
@@ -75,6 +75,10 @@ class LocalEngineControls(QWidget):
     def set_backend(self, backend: str):
         from services.local_asr.catalog import MODELS, BACKENDS, selected_model, selected_device
         self._backend = backend
+        self.device_combo.blockSignals(True)
+        self.device_combo.clear()
+        self.device_combo.addItems(["auto", "cpu"] if backend == "parakeet_mlx" or sys.platform == "darwin" else ["auto", "cuda", "cpu"])
+        self.device_combo.blockSignals(False)
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         if backend in BACKENDS:
@@ -94,9 +98,9 @@ class LocalEngineControls(QWidget):
         self.compute_combo.parentWidget().setVisible(backend not in BACKENDS)
         self.language_field.setVisible(backend in BACKENDS)
         self.language_combo.blockSignals(True)
-        self.language_combo.setCurrentText("Auto" if settings_manager.get(SettingsKey.LOCAL_ASR_LANGUAGE, SETTING_DEFAULTS[SettingsKey.LOCAL_ASR_LANGUAGE]) == "auto" and backend != "moonshine" else "English")
+        self.language_combo.setCurrentText("Auto" if backend == "parakeet_mlx" or (settings_manager.get(SettingsKey.LOCAL_ASR_LANGUAGE, SETTING_DEFAULTS[SettingsKey.LOCAL_ASR_LANGUAGE]) == "auto" and backend != "moonshine") else "English")
         self.language_combo.blockSignals(False)
-        self.language_combo.setEnabled(backend != "moonshine")
+        self.language_combo.setEnabled(backend not in ("moonshine", "parakeet_mlx"))
         self.device_combo.setEnabled(backend != "moonshine")
         if backend not in BACKENDS:
             self.load_from_settings()

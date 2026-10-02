@@ -44,6 +44,9 @@ def runtime_state(engine: dict) -> dict:
             "compute_type": setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings),
         }
         compute_types["auto"] = compute_types.get("cuda" if cuda else "cpu", ["auto"])
+    elif family == "parakeet_mlx":
+        devices = ["auto", "cpu"] if is_installed(runtime_id(family, "auto")) else []
+        selected = {"device": selected_device(family, settings), "language": "auto"}
     else:
         # The Vulkan runtime needs only the card, not the CUDA libraries
         # CTranslate2 counts it with.
@@ -61,7 +64,7 @@ def runtime_state(engine: dict) -> dict:
         "selected": selected,
         "devices": devices,
         "compute_types": compute_types,
-        "languages": (["en"] if family == "moonshine" else ["en", "auto"]) if family in BACKENDS else [],
+        "languages": (["auto"] if family == "parakeet_mlx" else ["en"] if family == "moonshine" else ["en", "auto"]) if family in BACKENDS else [],
         "gpu": {"name": gpu.name, "total_mib": gpu.total_mib} if gpu else {},
         "dependencies": dependency_options(family),
     }

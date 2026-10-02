@@ -24,7 +24,8 @@ is checked on every request. Accepted downloads continue after disconnect or
 permission changes. These additive operations keep protocol version 1.
 
 Hosts with ``capabilities.runtime_installation`` also accept ``install_runtime``
-with a bundled ``family``, ``model`` and explicit ``device`` (cpu/cuda). The host
+with a bundled ``family``, ``model`` and explicit ``device`` (cpu/cuda;
+Parakeet MLX uses auto for the Apple GPU or cpu). The host
 resolves a platform-compatible, pinned component and installs it in the background
 using its shared component coordinator. Clients cannot supply URLs, paths or
 commands. ``model_catalog`` includes per-device dependency readiness and reasons,
