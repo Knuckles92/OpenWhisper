@@ -47,7 +47,7 @@ class LocalEngineControls(QWidget):
         )
         self.device_combo = engine_combo(device_choices)
         self.compute_combo = engine_combo(self.COMPUTE_CHOICES)
-        self.language_combo = engine_combo(["English", "Auto"])
+        self.language_combo = engine_combo(["English", "Russian", "Auto"])
 
         # Matches the Backend field's share, so Model reads as its peer and the
         # two runtime knobs stay visibly secondary.
@@ -94,7 +94,8 @@ class LocalEngineControls(QWidget):
         self.compute_combo.parentWidget().setVisible(backend not in BACKENDS)
         self.language_field.setVisible(backend in BACKENDS)
         self.language_combo.blockSignals(True)
-        self.language_combo.setCurrentText("Auto" if settings_manager.get(SettingsKey.LOCAL_ASR_LANGUAGE, SETTING_DEFAULTS[SettingsKey.LOCAL_ASR_LANGUAGE]) == "auto" and backend != "moonshine" else "English")
+        stored_lang = settings_manager.get(SettingsKey.LOCAL_ASR_LANGUAGE, SETTING_DEFAULTS[SettingsKey.LOCAL_ASR_LANGUAGE])
+        self.language_combo.setCurrentText("Russian" if stored_lang == "ru" else ("Auto" if stored_lang == "auto" and backend != "moonshine" else "English"))
         self.language_combo.blockSignals(False)
         self.language_combo.setEnabled(backend != "moonshine")
         self.device_combo.setEnabled(backend != "moonshine")
@@ -110,8 +111,10 @@ class LocalEngineControls(QWidget):
             devices = dict(settings.get(SettingsKey.LOCAL_ASR_DEVICES) or {})
             models[backend] = self.model_combo.currentData()
             devices[backend] = self.device_combo.currentText()
+            lang_text = self.language_combo.currentText()
+            lang_code = "ru" if lang_text == "Russian" else ("auto" if lang_text == "Auto" else "en")
             settings_manager.update_settings({SettingsKey.LOCAL_ASR_MODELS: models, SettingsKey.LOCAL_ASR_DEVICES: devices,
-                SettingsKey.LOCAL_ASR_LANGUAGE: "auto" if self.language_combo.currentText() == "Auto" else "en"})
+                SettingsKey.LOCAL_ASR_LANGUAGE: lang_code})
             self.engine_settings_changed.emit()
             return
         settings = settings_manager.update_settings({
