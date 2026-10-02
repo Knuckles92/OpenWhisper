@@ -188,6 +188,20 @@ class _DialogTestCase:
 class TestRail(_DialogTestCase):
     """The rail lists every assignable thing and reports its current value."""
 
+    def test_registered_local_model_survives_assignment_refresh(self, tmp_path):
+        for name, contents in (("model.bin", b"weights"), ("config.json", b"{}"),
+                               ("tokenizer.json", b"{}")):
+            (tmp_path / name).write_bytes(contents)
+        model = str(tmp_path.resolve())
+        dialog, _values = self._make_dialog(active_model=model, extra_settings={
+            SettingsKey.CUSTOM_WHISPER_MODELS: [model],
+            SettingsKey.MEETING_WHISPER_MODEL: model,
+        })
+        dialog.refresh()
+        assert dialog.ondemand_whisper_picker.current_model() == model
+        assert dialog.meeting_whisper_picker.current_model() == model
+        assert dialog.engine_inventory_label.text().startswith("1 of ")
+
     def test_rail_items_show_the_value_each_destination_owns(self):
         dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)},

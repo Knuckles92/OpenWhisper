@@ -54,6 +54,8 @@ class ModelDetails:
 
     @property
     def download_size(self) -> str:
+        if not self.download_size_mb:
+            return "Unknown"
         return format_download_mb(self.download_size_mb)
 
     @property
@@ -414,3 +416,26 @@ MODEL_DOWNLOAD_SIZE_MB: Final[Mapping[str, int]] = MappingProxyType({
 def get_model_details(model_name: str) -> ModelDetails:
     """Return bundled metadata, raising KeyError for unmanaged models."""
     return MODEL_CATALOG[model_name]
+
+
+def custom_model_details(model_name: str) -> ModelDetails:
+    """Describe a user-added source without inventing upstream model metadata."""
+    from pathlib import Path
+    from urllib.parse import quote
+    from services.whisper_sources import parse_source
+
+    source = parse_source(model_name)
+    url = (Path(source.local_path).as_uri() if source.local_path
+           else f"https://huggingface.co/{source.repo_id}"
+           + (f"/tree/main/{quote(source.subfolder)}" if source.subfolder else ""))
+    return ModelDetails(
+        model_name=model_name, description="A custom CTranslate2 Whisper model you added.",
+        origin_name=source.local_path or source.repo_id, origin_url=url,
+        repository_id=source.local_path or source.name, repository_url=url,
+        maintainer="See model source", family="Whisper", language_support="Model-defined",
+        task_support="Transcription", parameter_count="Unknown", relative_performance="Unknown",
+        memory_guidance="Depends on the model and selected compute type", download_size_mb=0,
+        runtime_format="CTranslate2", license="See model source",
+        best_for="Using your own or community Whisper weights",
+        limitations=("Requires a compatible CTranslate2 Whisper model.",), source_urls=(url,),
+    )

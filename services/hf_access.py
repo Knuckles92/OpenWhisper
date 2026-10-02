@@ -60,6 +60,13 @@ class ConsentAction:
 
 def resolve_model_repo(model_name: str) -> str:
     """Resolve a faster-whisper name to its Hugging Face repository ID."""
+    from services.whisper_sources import is_custom_model, parse_source
+    if is_custom_model(model_name):
+        try:
+            source = parse_source(model_name)
+            return source.local_path or source.repo_id
+        except ValueError:
+            return model_name
     return MODEL_REPOSITORIES.get(model_name, model_name)
 
 
@@ -81,6 +88,16 @@ def is_model_cached(model_name: str) -> bool:
     if model_name in MODELS:
         from services.local_asr.cache import is_cached
         return is_cached(model_name)
+    from services.whisper_sources import cached_model_path, is_custom_model
+    if is_custom_model(model_name):
+        try:
+            cached_model_path(model_name)
+            return True
+        except (OSError, ValueError):
+            return False
+        except Exception as e:
+            logger.debug("Custom Whisper model not cached: %s", e)
+            return False
     if os.path.isdir(model_name):
         return True
     try:
@@ -174,20 +191,18 @@ def _download_model_files_in_process(
         return result
     from huggingface_hub import snapshot_download
 
+    from services.whisper_sources import parse_source, validate_model_folder
+    source = parse_source(model_name)
+    if source.local_path:
+        return validate_model_folder(source.local_path)
     if "/" in model_name:
-        repo_id = model_name
+        repo_id = source.repo_id
     else:
         repo_id = _MODELS.get(model_name)
         if repo_id is None:
             raise ValueError(f"Invalid model size '{model_name}'")
 
-    allow_patterns = [
-        "config.json",
-        "preprocessor_config.json",
-        "model.bin",
-        "tokenizer.json",
-        "vocabulary.*",
-    ]
+    allow_patterns = source.patterns
     tqdm_class = (
         _progress_tqdm_class(progress_callback)
         if progress_callback is not None
@@ -201,6 +216,10 @@ def _download_model_files_in_process(
 
     logger.info(f"Downloading model '{model_name}' from Hugging Face...")
     path = snapshot_download(repo_id, **kwargs)
+    from services.whisper_sources import is_custom_model
+    if is_custom_model(model_name):
+        from pathlib import Path
+        path = validate_model_folder(Path(path) / source.subfolder)
     invalidate_cached_models_snapshot()
     logger.info(f"Model '{model_name}' downloaded to {path}")
     return path
@@ -321,6 +340,11 @@ def delete_model_from_cache(model_name: str) -> None:
 
     """
     from services.local_asr.catalog import MODELS
+    from services.whisper_sources import is_custom_model, parse_source
+    if is_custom_model(model_name):
+        source = parse_source(model_name)
+        if source.local_path or source.subfolder:
+            raise ValueError("Remove this custom model from the model list; its source files are retained.")
     if model_name in MODELS:
         from services.local_asr.cache import delete
         delete(model_name)
@@ -341,6 +365,20 @@ def delete_model_from_cache(model_name: str) -> None:
     strategy.execute()
     invalidate_cached_models_snapshot()
     logger.info(f"Deleted '{repo_id}' from HF cache")
+
+
+def custom_model_cache_info(model_name: str) -> Optional[CachedModelInfo]:
+    """Inspect this source's files, rather than treating a sibling folder as cached."""
+    from pathlib import Path
+    from services.whisper_sources import cached_model_path
+    try:
+        path = Path(cached_model_path(model_name))
+        size = sum(file.stat().st_size for file in path.iterdir() if file.is_file())
+        return CachedModelInfo(model_name, size, str(path), ())
+    except Exception:
+        return None
+
+
 class HuggingFaceAccessCoordinator:
     """Coordinates cache detection, policy evaluation, one-time grants, and
     download deduplication for Hugging Face model access.
