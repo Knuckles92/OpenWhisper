@@ -173,6 +173,8 @@ Choose **Settings → General → Theme → Omarchy desktop** to follow your des
 | OpenAI API | GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027 | Cloud; API key and network required | Dictation, uploads |
 | Remote computer | Whichever engine the paired computer has selected | Another computer running OpenWhisper on your network | Dictation with that engine's preview, uploads, meetings with a supported host model |
 
+Optional local engines offer English, Russian, Spanish, French, Portuguese, Mandarin, and Auto where supported. Parakeet and Orukeet omit Mandarin; Moonshine offers English only. Qwen supports all these presets; Nemotron includes Mandarin in its broader coverage tier, where accuracy may vary. Auto detects other languages supported by the model. These controls transcribe speech rather than translate it. Paired computers expose the same host-supported choices.
+
 Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. macOS transcription uses CPU; see [GPU acceleration](#gpu-acceleration) for Windows and Linux.
 
 ### Custom Whisper models
