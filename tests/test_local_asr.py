@@ -36,7 +36,7 @@ def isolated_models(tmp_path, monkeypatch):
 
 
 def test_every_optional_artifact_is_pinned_and_has_integrity_metadata():
-    assert len(BACKENDS) == 4 and len(MODELS) == 7
+    assert len(BACKENDS) == 5 and len(MODELS) == 8
     assert "orukeet-v0.1" in MODELS
     for key in MODELS:
         spec = artifacts(key)
@@ -51,7 +51,10 @@ def test_every_optional_artifact_is_pinned_and_has_integrity_metadata():
             assert entry["platform"] == platform
             for f in entry["archives"]:
                 assert len(f["sha256"]) == 64 and f["size_bytes"] > 0
-                assert f["url"].startswith("https://github.com/") or platform == "win_amd64"
+                assert f["url"].startswith("https://github.com/") or platform == "win_amd64" or (
+                    platform == "darwin_arm64" and f["extract"] == "python-wheel"
+                    and f["url"].startswith("https://files.pythonhosted.org/")
+                )
 
 
 def test_linux_x86_64_offers_only_the_native_nvidia_runtimes():

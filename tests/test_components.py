@@ -220,8 +220,8 @@ def test_available_component_ids_by_platform():
     with patch.object(components.sys, "platform", "darwin"), patch.object(
         components.platform_module, "machine", return_value="arm64"
     ):
-        assert components.available_component_ids() == (ComponentId.ASR_NVIDIA_CPU,)
-        assert len(ComponentCoordinator().list_components()) == 1
+        assert components.available_component_ids() == (ComponentId.ASR_NVIDIA_CPU, ComponentId.ASR_PARAKEET_MLX)
+        assert len(ComponentCoordinator().list_components()) == 2
 
     with patch.object(components.sys, "platform", "darwin"), patch.object(
         components.platform_module, "machine", return_value="x86_64"
@@ -236,7 +236,7 @@ def test_available_component_ids_by_platform():
         assert components.available_component_ids() == (
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
-            *(key for key in components.RUNTIME_IDS if key != ComponentId.ASR_NVIDIA_VULKAN),
+            *(key for key in components.RUNTIME_IDS if key not in (ComponentId.ASR_NVIDIA_VULKAN, ComponentId.ASR_PARAKEET_MLX)),
         )
 
 

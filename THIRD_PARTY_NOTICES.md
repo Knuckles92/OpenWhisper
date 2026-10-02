@@ -28,6 +28,8 @@ The additional Windows x64 backends are downloaded on demand; their model weight
 | Native Parakeet/Nemotron runtime | [NVIDIA NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) | Apache-2.0; bundled third-party components retain their own notices |
 | Orukeet TDT 0.6B r3 Q8 weights | [Oruk AI Orukeet](https://huggingface.co/oruk/orukeet), adapted from NVIDIA Parakeet; [weight license and attribution](https://huggingface.co/oruk/orukeet/blob/main/NOTICE.md) | CC-BY-SA-4.0; retain attribution and applicable ShareAlike terms |
 | Parakeet TDT 0.6B v3 weights | [NVIDIA Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | CC-BY-4.0 |
+| Parakeet TDT 0.6B v3 MLX weights | [MLX Community conversion](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3) | CC-BY-4.0 |
+| Parakeet MLX runtime | [parakeet-mlx](https://github.com/senstella/parakeet-mlx), [Apple MLX](https://github.com/ml-explore/mlx) | Apache-2.0; MIT; dependency licenses retained in installed wheels |
 | Nemotron 3.5 ASR Streaming 0.6B weights | [NVIDIA Nemotron](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b) | OpenMDW-1.1 |
 | Qwen3-ASR runtime and 0.6B / 1.7B weights | [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR), [0.6B](https://huggingface.co/Qwen/Qwen3-ASR-0.6B), [1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) | Apache-2.0 |
 | Moonshine runtime and English Small / Medium weights | [Moonshine](https://github.com/moonshine-ai/moonshine), [Small](https://huggingface.co/moonshine-ai/moonshine-streaming-small), [Medium](https://huggingface.co/moonshine-ai/moonshine-streaming-medium) | MIT |

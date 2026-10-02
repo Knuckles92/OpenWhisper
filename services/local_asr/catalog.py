@@ -26,6 +26,7 @@ MODELS = {
         SpeechModel("nemotron-3.5", "nemotron", "Nemotron 3.5 ASR 0.6B", "Live speech recognition", "OpenMDW-1.1", "Multilingual; coverage varies by locale", streaming=True, meeting=True),
         SpeechModel("moonshine-small", "moonshine", "Moonshine Streaming Small", "Fast CPU transcription", "MIT", "English", streaming=True, meeting=True),
         SpeechModel("moonshine-medium", "moonshine", "Moonshine Streaming Medium", "CPU transcription with a larger model", "MIT", "English", streaming=True, meeting=True),
+        SpeechModel("parakeet-v3-mlx", "parakeet_mlx", "Parakeet TDT 0.6B v3 (MLX)", "Apple Silicon dictation and files", "CC-BY-4.0", "25 European languages", meeting=True),
     )
 }
 BACKENDS = {
@@ -33,11 +34,13 @@ BACKENDS = {
     "qwen_asr": "Qwen3-ASR",
     "nemotron": "Nemotron Streaming",
     "moonshine": "Moonshine",
+    "parakeet_mlx": "Parakeet MLX",
 }
 #: Backend id of the built-in faster-whisper family, which is not in MODELS.
 WHISPER_BACKEND = "local_whisper"
 DEFAULT_MODELS = {key: next(m.key for m in MODELS.values() if m.backend == key) for key in BACKENDS}
-RUNTIME_IDS = ("asr-nvidia-cpu", "asr-nvidia-cuda", "asr-nvidia-vulkan", "asr-qwen", "asr-moonshine")
+MLX_RUNTIME = "asr-parakeet-mlx"
+RUNTIME_IDS = ("asr-nvidia-cpu", "asr-nvidia-cuda", "asr-nvidia-vulkan", "asr-qwen", "asr-moonshine", MLX_RUNTIME)
 #: NVIDIA's CUDA release of NeMo-Speech.cpp runs on Turing and newer. Older
 #: NVIDIA GPUs, such as the GTX 10 series, run its Vulkan release instead.
 CUDA_MIN_COMPUTE_CAPABILITY = (7, 5)
@@ -62,6 +65,8 @@ def selected_model(backend: str, settings: dict) -> str:
 def selected_device(backend: str, settings: dict) -> str:
     devices = settings.get("local_asr_devices", {})
     device = devices.get(backend) if isinstance(devices, dict) else None
+    if backend == "parakeet_mlx":
+        return device if device in ("auto", "cpu") else "auto"
     return device if device in ("auto", "cpu", "cuda") and backend != "moonshine" else ("cpu" if backend == "moonshine" else "auto")
 
 
@@ -84,6 +89,8 @@ def nvidia_gpu_runtime() -> str:
 
 
 def runtime_id(backend: str, device: str) -> str:
+    if backend == "parakeet_mlx":
+        return MLX_RUNTIME
     if backend == "qwen_asr":
         return "asr-qwen"
     if backend == "moonshine":
@@ -94,6 +101,10 @@ def runtime_id(backend: str, device: str) -> str:
 def resolve_runtime(backend: str, requested: str) -> tuple[str, str]:
     from services.components import is_installed
 
+    if backend == "parakeet_mlx":
+        if requested not in ("auto", "cpu"):
+            raise ValueError("Parakeet MLX supports Auto (Apple GPU) or CPU, not CUDA.")
+        return MLX_RUNTIME, "cpu" if requested == "cpu" else "metal"
     device = requested
     if device == "auto":
         try:
@@ -127,9 +138,10 @@ def runtime_catalog() -> dict:
     for key, filename in (("asr-qwen", "qwen_runtime.json"), ("asr-moonshine", "moonshine_runtime.json"), ("asr-nvidia-cpu", "nvidia_cpu_runtime.json"), ("asr-nvidia-cuda", "nvidia_cuda_runtime.json")):
         with Path(__file__).with_name(filename).open(encoding="utf-8-sig") as stream:
             entries[key] = {"platforms": {"win_amd64": json.load(stream)}}
-    # macOS and Linux runtimes are only NeMo-Speech.cpp's native libraries;
-    # the app's own interpreter runs the worker there.
+    # The app's interpreter runs workers on macOS/Linux, using downloaded
+    # native libraries or the macOS MLX wheel tree.
     for key, platform, filename in (
+        (MLX_RUNTIME, "darwin_arm64", "mlx_runtime.json"),
         ("asr-nvidia-cpu", "darwin_arm64", "nvidia_macos_runtime.json"),
         ("asr-nvidia-cpu", "linux_x86_64", "nvidia_linux_cpu_runtime.json"),
         ("asr-nvidia-cuda", "linux_x86_64", "nvidia_linux_cuda_runtime.json"),

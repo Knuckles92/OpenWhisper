@@ -26,6 +26,7 @@ def widget(tmp_path, monkeypatch):
 @pytest.mark.parametrize("mode", ["classic", "omarchy"])
 @pytest.mark.parametrize("backend,expected", [
     ("parakeet", {"en", "ru", "es", "fr", "pt", "auto"}),
+    ("parakeet_mlx", {"auto"}),
     ("qwen_asr", {"en", "ru", "es", "fr", "pt", "zh", "auto"}),
     ("nemotron", {"en", "ru", "es", "fr", "pt", "zh", "auto"}),
     ("moonshine", {"en"}),
@@ -92,6 +93,7 @@ def test_switching_mandarin_to_parakeet_selects_auto_without_saving(widget):
     ("moonshine", "ru", "en"), ("moonshine", "auto", "en"),
     ("parakeet", "zh", "auto"), ("qwen_asr", "zh", "zh"),
     ("nemotron", "ru", "ru"),
+    ("parakeet_mlx", "ru", "auto"),
 ])
 def test_requests_use_a_supported_language_even_before_controls_open(monkeypatch, backend, stored, expected):
     monkeypatch.setattr(LocalSpeechBackend, "_settings", staticmethod(lambda: {"local_asr_language": stored}))
@@ -103,7 +105,7 @@ def test_remote_choices_validate_language_before_persisting(monkeypatch):
     from services.remote_asr.runtime import runtime_state, validate_runtime
     monkeypatch.setattr(components, "is_installed", lambda _: True)
     monkeypatch.setattr(gpu_info, "nvidia_gpu", lambda: None)
-    for family, model in [("parakeet", "parakeet-v3"), ("qwen_asr", "qwen-0.6b"),
+    for family, model in [("parakeet", "parakeet-v3"), ("parakeet_mlx", "parakeet-v3-mlx"), ("qwen_asr", "qwen-0.6b"),
                           ("nemotron", "nemotron-3.5"), ("moonshine", "moonshine-small")]:
         engine = {"family": family, "model": model}
         settings_manager.save_setting(SettingsKey.LOCAL_ASR_LANGUAGE, "zh")

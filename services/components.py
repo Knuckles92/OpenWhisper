@@ -366,6 +366,7 @@ class ComponentId:
     ASR_NVIDIA_CPU: Final[str] = "asr-nvidia-cpu"
     ASR_NVIDIA_CUDA: Final[str] = "asr-nvidia-cuda"
     ASR_NVIDIA_VULKAN: Final[str] = "asr-nvidia-vulkan"
+    ASR_PARAKEET_MLX: Final[str] = "asr-parakeet-mlx"
 
 
 class ComponentState:
@@ -492,7 +493,7 @@ def available_component_ids(
     offered on Windows x64 and Linux x86_64/aarch64. Linux x86_64 also offers the native NVIDIA
     Speech CPU and CUDA runtimes, and the Vulkan one to a computer whose
     NVIDIA GPU is older than Turing (or that already has it); Apple Silicon
-    Macs offer the CPU one.
+    Macs offer the CPU one and Parakeet MLX for the Apple GPU.
 
     Returns:
         Installable component identifiers, in display order.
@@ -523,7 +524,7 @@ def available_component_ids(
     elif tag == PLATFORM_LINUX_AARCH64:
         candidates = (ComponentId.MEETING_AGENT, ComponentId.MEETING_AGENT_OPENCODE)
     elif tag == "darwin_arm64":
-        candidates = (ComponentId.ASR_NVIDIA_CPU,)
+        candidates = (ComponentId.ASR_NVIDIA_CPU, ComponentId.ASR_PARAKEET_MLX)
     else:
         return ()
     return tuple(
@@ -1387,6 +1388,14 @@ def _validate_component_payload(component_id: str, target_dir: str) -> None:
     if component_id in RUNTIME_IDS:
         tag = current_platform_tag()
         if tag == "darwin_arm64":
+            if component_id == ComponentId.ASR_PARAKEET_MLX:
+                packages = os.path.join(target_dir, "site-packages")
+                required = ("parakeet_mlx/__init__.py", "mlx/nn/__init__.py", "mlx/lib/libmlx.dylib", "mlx/lib/mlx.metallib", "librosa/__init__.py", "dacite/__init__.py")
+                if any(not os.path.isfile(os.path.join(packages, name)) for name in required):
+                    raise ComponentError("The MLX speech runtime is missing required files.")
+                if not any(name.startswith("core.") and name.endswith(".so") for name in os.listdir(os.path.join(packages, "mlx"))):
+                    raise ComponentError("The MLX speech runtime is missing its native extension.")
+                return
             library = os.path.join(target_dir, "nemo-speech", "lib", "libnemo_speech_asr_c.dylib")
             if component_id != ComponentId.ASR_NVIDIA_CPU or not os.path.isfile(library):
                 raise ComponentError("The speech runtime is missing required files.")
@@ -1589,6 +1598,8 @@ def _install_component(
                 _safe_extract_nvidia_wheel(
                     archive_path, staging, progress, cancel
                 )
+            elif extract == "python-wheel":
+                _safe_extract(archive_path, os.path.join(staging, "site-packages"), progress, cancel)
             elif extract == "node-exe":
                 _safe_extract_node_exe(
                     archive_path, staging, progress, cancel
