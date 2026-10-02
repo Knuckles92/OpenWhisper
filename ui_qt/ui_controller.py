@@ -45,7 +45,7 @@ from ui_qt.dialogs.settings_dialog import (
 from ui_qt.utils.font_scale import apply_ui_font_scale, apply_ui_theme
 from ui_qt.widgets import TabbedContentWidget
 from ui_qt.widgets.transcription_progress import stage_for_overlay_state
-from services.settings import SettingsKey, settings_manager
+from services.settings import SettingsKey, resolve_ui_theme, settings_manager
 
 logger = logging.getLogger(__name__)
 
@@ -336,7 +336,7 @@ class UIController(QObject):
         saved = settings_manager.load_all_settings()
         changes = {key: saved.get(key, value) for key, value in changes.items()}
         if SettingsKey.UI_THEME in changes:
-            self._apply_ui_theme(changes[SettingsKey.UI_THEME])
+            self._apply_ui_theme(resolve_ui_theme(saved))
         if SettingsKey.UI_FONT_SCALE in changes:
             self._apply_ui_font_scale(changes[SettingsKey.UI_FONT_SCALE])
         if SettingsKey.STREAMING_ENABLED in changes:

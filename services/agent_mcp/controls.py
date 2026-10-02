@@ -19,6 +19,7 @@ from services.settings import (
     TranscriptCleanupReasoning,
     UiFontScale,
     UiTheme,
+    resolve_ui_theme,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,8 +40,11 @@ class SettingControl:
     maximum: int | float | None = None
     max_length: int = 0
     effect: str = "Applies to the next operation."
+    resettable: bool = False
 
     def validate(self, value):
+        if value is None and self.resettable:
+            return None
         valid = False
         if self.kind == "boolean":
             valid = type(value) is bool
@@ -62,6 +66,14 @@ class SettingControl:
             raise ControlError(f"invalid_value: {self.key} is above its maximum.")
         return value
 
+    def resolve(self, saved):
+        if self.key == SettingsKey.UI_THEME:
+            return resolve_ui_theme(saved)
+        try:
+            return self.validate(saved.get(self.key, SETTING_DEFAULTS[self.key]))
+        except ControlError:
+            return SETTING_DEFAULTS[self.key]
+
     def describe(self):
         result = {
             "key": self.key,
@@ -72,6 +84,8 @@ class SettingControl:
         }
         if self.choices:
             result["choices"] = list(self.choices)
+        if self.resettable:
+            result["resettable"] = True
         for name in ("minimum", "maximum", "max_length"):
             value = getattr(self, name)
             if value is not None and value != 0:
@@ -120,6 +134,7 @@ SETTING_CONTROLS = (
         UiTheme.ALL,
         max_length=20,
         effect=LIVE,
+        resettable=True,
     ),
     SettingControl(
         SettingsKey.UI_FONT_SCALE,
@@ -226,18 +241,14 @@ class AgentControls:
         granted = writable_settings(saved)
         result = []
         for control in SETTING_CONTROLS:
-            value = saved.get(control.key, SETTING_DEFAULTS[control.key])
-            try:
-                value = control.validate(value)
-            except ControlError:
-                value = SETTING_DEFAULTS[control.key]
-            result.append(
-                {
-                    **control.describe(),
-                    "value": value,
-                    "writable": control.key in granted,
-                }
-            )
+            item = {
+                **control.describe(),
+                "value": control.resolve(saved),
+                "writable": control.key in granted,
+            }
+            if control.resettable:
+                item["inherited"] = control.key not in saved
+            result.append(item)
         return {"settings": result}
 
     def update_settings(self, changes):
@@ -267,18 +278,33 @@ class AgentControls:
                 raise ControlError(
                     "permission_denied: Enable each setting in Settings > MCP."
                 )
-            previous = {key: saved.get(key, SETTING_DEFAULTS[key]) for key in validated}
-            saved.update(validated)
+            previous = {
+                key: CONTROLS_BY_KEY[key].resolve(saved) for key in validated
+            }
+            restore = {
+                key: None
+                if CONTROLS_BY_KEY[key].resettable and key not in saved
+                else previous[key]
+                for key in validated
+            }
+            for key, value in validated.items():
+                if value is None:
+                    saved.pop(key, None)
+                else:
+                    saved[key] = value
             if SettingsKey.STREAMING_ENABLED in validated:
                 from services.settings import LEGACY_STREAMING_KEYS
 
                 for key in LEGACY_STREAMING_KEYS:
                     saved.pop(key, None)
-            return previous
+            updated = {
+                key: CONTROLS_BY_KEY[key].resolve(saved) for key in validated
+            }
+            return {"updated": updated, "previous": previous, "restore": restore}
 
-        previous = self.settings.mutate_settings(commit)
-        self._changed("settings", validated)
-        return {"updated": validated, "previous": previous}
+        result = self.settings.mutate_settings(commit)
+        self._changed("settings", result["updated"])
+        return result
 
     def _changed(self, kind, changes):
         if self.on_change is not None:

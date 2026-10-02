@@ -4,11 +4,12 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
 from PyQt6.QtCore import QObject
 from PyQt6.QtWidgets import QApplication
 
 from services.models import TranscriptionHistory
-from services.settings import SettingsKey, settings_manager
+from services.settings import SettingsKey, UiTheme, settings_manager
 from ui_qt.ui_controller import UIController
 from ui_qt.widgets.history_sidebar import HistoryItemWidget
 
@@ -32,6 +33,31 @@ def test_settings_notifications_apply_on_gui_thread_and_use_latest_values():
     assert not applied
     QApplication.processEvents()
     assert applied == [("dark", threading.get_ident())]
+
+
+@pytest.mark.parametrize(
+    "mode, expected", [("classic", UiTheme.DARK), ("omarchy", UiTheme.OMARCHY)]
+)
+def test_theme_notifications_resolve_latest_inherited_preference(
+    monkeypatch, mode, expected
+):
+    monkeypatch.setenv("OPENWHISPER_UI", mode)
+    ui = UIController.__new__(UIController)
+    QObject.__init__(ui)
+    ui._settings_dialog = None
+    ui._apply_ui_theme = Mock()
+    ui.agent_data_changed.connect(ui._apply_agent_changes)
+    settings_manager.save_setting(SettingsKey.UI_THEME, UiTheme.LIGHT)
+    worker = threading.Thread(
+        target=lambda: ui.agent_data_changed.emit(
+            "settings", {SettingsKey.UI_THEME: UiTheme.LIGHT}
+        )
+    )
+    worker.start()
+    worker.join()
+    settings_manager.update_settings({}, remove=(SettingsKey.UI_THEME,))
+    QApplication.processEvents()
+    ui._apply_ui_theme.assert_called_once_with(expected)
 
 
 def test_desktop_hooks_refresh_preview_cleanup_trigger_and_open_settings():
