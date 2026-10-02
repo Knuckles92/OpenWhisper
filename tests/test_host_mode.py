@@ -173,6 +173,8 @@ def test_the_host_logs_what_a_paired_computer_asked_for(speech_host):
     host, engine = speech_host
     connection = _paired_connection(host)
     try:
+        # The ready frame can arrive before the host registers the connection.
+        assert _wait_for(lambda: len(host.connected_clients()) == 1)
         assert host.connected_clients()[0]["since"] == pytest.approx(time.time(), abs=5)
         connection.request("transcribe", audio=_tone(2 * protocol.SAMPLE_RATE))
         connection.request("stream", audio=_tone(1600), session="preview", finish=False)
