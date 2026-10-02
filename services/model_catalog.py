@@ -6,7 +6,11 @@ model table, the Distil-Whisper model cards, and the CTranslate2 conversion
 repositories used by faster-whisper.
 """
 
-from dataclasses import dataclass
+import json
+from pathlib import Path
+from urllib.parse import urlparse
+
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Final, Mapping, Tuple
 
@@ -19,6 +23,19 @@ OPENAI_MODEL_TABLE_URL: Final[str] = (
 DISTIL_PAPER_URL: Final[str] = "https://arxiv.org/abs/2311.00430"
 RUNTIME_FORMAT: Final[str] = "CTranslate2 conversion (FP16 weights)"
 LICENSE: Final[str] = "MIT"
+WHISPER_REVISIONS: Final[Mapping[str, str]] = MappingProxyType({
+    repo: spec["revision"] for repo, spec in json.loads(
+        Path(__file__).with_name("whisper_models.json").read_text(encoding="utf-8")
+    ).items()
+})
+MODEL_SECURITY_NOTICE: Final[str] = (
+    "Models are provided by third-party publishers. Model files and speech runtimes "
+    "can have security vulnerabilities. Keep OpenWhisper and its runtimes updated, "
+    "and review important transcripts for errors."
+)
+CUSTOM_MODEL_NOTICE: Final[str] = (
+    "This source has not been reviewed by OpenWhisper. Only load models from publishers you trust."
+)
 
 
 def format_download_mb(size_mb: float) -> str:
@@ -51,6 +68,10 @@ class ModelDetails:
     best_for: str
     limitations: Tuple[str, ...]
     source_urls: Tuple[str, ...]
+    license_url: str = ""
+    revision: str = ""
+    download_hosts: Tuple[str, ...] = ()
+    verification: str = "Publisher-managed files; no OpenWhisper checksum manifest"
 
     @property
     def download_size(self) -> str:
@@ -124,6 +145,10 @@ def _standard_model(
         best_for=best_for,
         limitations=limitations,
         source_urls=(repo_url, f"https://huggingface.co/{upstream_name}", OPENAI_MODEL_TABLE_URL),
+        license_url="https://github.com/openai/whisper/blob/main/LICENSE",
+        revision=WHISPER_REVISIONS[repo_id], download_hosts=("huggingface.co",),
+        verification="Pinned version; downloaded through Hugging Face",
+
     )
 
 
@@ -164,6 +189,10 @@ def _distilled_model(
         best_for=best_for,
         limitations=limitations,
         source_urls=(repo_url, origin_url, DISTIL_PAPER_URL),
+        license_url=origin_url + "#license", revision=WHISPER_REVISIONS[repo_id],
+        download_hosts=("huggingface.co",),
+        verification="Pinned version; downloaded through Hugging Face",
+
     )
 
 
@@ -389,8 +418,23 @@ for _key, _model in SPEECH_MODELS.items():
                      "Qwen CPU needs substantially more memory than the native engines; 1.7B is best suited to a GPU." if _model.backend == "qwen_asr" else
                      "English only; CPU execution." if _model.backend == "moonshine" else
                      "CPU and NVIDIA GPU use separately installed runtimes."),
+        license_url=("https://huggingface.co/oruk/orukeet/blob/main/NOTICE.md" if _key == "orukeet-v0.1"
+                     else _source + "#license"),
+        revision=_spec["revision"],
+        download_hosts=tuple(sorted({urlparse(f["url"]).hostname for f in _spec["files"]})),
+        verification="Pinned version; size and SHA-256 checked during download",
         source_urls=(_source, "https://github.com/NVIDIA/NeMo-Speech.cpp" if _model.backend in ("parakeet", "nemotron") else ("https://github.com/QwenLM/Qwen3-ASR" if _model.backend == "qwen_asr" else "https://moonshine-voice.readthedocs.io/")),
     )
+_CATALOG["orukeet-v0.1"] = replace(
+    _CATALOG["orukeet-v0.1"], maintainer="Oruk AI (adaptation); NVIDIA (base model)",
+    parameter_count="627 million", origin_name="Orukeet, based on NVIDIA Parakeet TDT v3",
+    relative_performance="Publisher reports improvements over Parakeet; results depend on datasets and decoding.",
+    limitations=(*_CATALOG["orukeet-v0.1"].limitations,
+                 "Community model; independently evaluate quality on your recordings.",
+                 "Validated on Windows/Linux CPU and CUDA; Orukeet on Apple Silicon has not been tested.",
+                 "One reported benchmark split was also used for training and checkpoint selection.",
+                 "CC BY-SA 4.0 weights retain attribution and applicable ShareAlike terms."),
+)
 MODEL_CATALOG: Final[Mapping[str, ModelDetails]] = MappingProxyType(_CATALOG)
 
 # Keep display and cache lookups independent of faster-whisper's package
@@ -437,5 +481,8 @@ def custom_model_details(model_name: str) -> ModelDetails:
         memory_guidance="Depends on the model and selected compute type", download_size_mb=0,
         runtime_format="CTranslate2", license="See model source",
         best_for="Using your own or community Whisper weights",
-        limitations=("Requires a compatible CTranslate2 Whisper model.",), source_urls=(url,),
+        limitations=("Requires a compatible CTranslate2 Whisper model.", CUSTOM_MODEL_NOTICE),
+        source_urls=(url,), license_url=url,
+        download_hosts=() if source.local_path else ("huggingface.co",),
+
     )

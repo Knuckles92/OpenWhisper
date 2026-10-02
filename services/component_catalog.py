@@ -218,7 +218,7 @@ for _id, _name, _source, _license, _description in (
         ),
         local_format="Isolated worker process", license=_license,
         best_for=_description, limitations=("Model weights are a separate download.",),
-        compact_tags="Local speech", source_note=_SOURCE_NOTE, source_urls=(_source, "https://www.python.org/downloads/release/python-31210/"),
+        compact_tags="Local speech", source_note=_SOURCE_NOTE + " Speech runtimes install third-party executable software. Integrity checks do not guarantee security; keep runtimes updated.", source_urls=(_source, "https://www.python.org/downloads/release/python-31210/"),
     )
 COMPONENT_CATALOG: Final[Mapping[str, ComponentDetails]] = MappingProxyType(_CATALOG)
 
