@@ -8,6 +8,13 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+- Added optional Orukeet TDT 0.6B native Q8 weights from Oruk AI, a 25-language
+  Parakeet adaptation, with CC BY-SA 4.0 attribution and weight-license details.
+- Model downloads and details show sources, licenses, versions, and the limits of
+  integrity verification. Custom model and speech-runtime dialogs explain their
+  trust requirements. Built-in Whisper downloads and offline loads use pinned revisions.
+
+
 ### Added
 - **Supported language presets** — optional local engines and paired hosts offer Russian, Spanish, French, Portuguese, and Mandarin alongside English and Auto where supported. Moonshine stays English-only; Parakeet omits Mandarin. Qwen language names and Nemotron Mandarin prompts are passed correctly to their pinned runtimes.
 - **Custom Whisper models** — add local model folders or discover compatible root and subfolder models in Hugging Face repositories and the local cache. Review discovered models before adding them, then assign them to dictation or meetings. Downloads and offline loading use the selected subfolder; removing a custom entry retains its files.

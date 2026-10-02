@@ -132,6 +132,13 @@ def discover_hub_models(repo_id: str, subfolder: str = "") -> list[str]:
         worker.close()
 
 
+def model_revision(name: str) -> str | None:
+    """Return the bundled revision for a catalog alias; custom sources keep their own version."""
+    from services.model_catalog import MODEL_REPOSITORIES, WHISPER_REVISIONS
+
+    return WHISPER_REVISIONS.get(MODEL_REPOSITORIES.get(name, ""))
+
+
 def cached_model_path(name: str) -> str:
     """Return a validated local directory, with no Hub metadata requests."""
     from huggingface_hub import snapshot_download
@@ -140,7 +147,7 @@ def cached_model_path(name: str) -> str:
     if source.local_path:
         return validate_model_folder(source.local_path)
     snapshot = snapshot_download(source.repo_id, local_files_only=True,
-                                 allow_patterns=source.patterns)
+                                 revision=model_revision(name), allow_patterns=source.patterns)
     return validate_model_folder(Path(snapshot) / source.subfolder)
 
 

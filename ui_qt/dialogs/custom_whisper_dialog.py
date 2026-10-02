@@ -77,6 +77,8 @@ class CustomWhisperDialog(QDialog):
             "you choose a model to load or download. Models must include model.bin, "
             "config.json, and tokenizer.json."
         )
+        from services.model_catalog import CUSTOM_MODEL_NOTICE
+        lookup_note.setText(lookup_note.text() + "\n\n" + CUSTOM_MODEL_NOTICE)
         lookup_note.setWordWrap(True)
         layout.addWidget(lookup_note)
 

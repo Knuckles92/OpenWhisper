@@ -18,6 +18,7 @@ from meeting.corrections import correct_text, term_rules
 from meeting.interfaces import OpResult, TranscriptSegment
 from meeting.state.schema import parse_state_json
 from meeting.time_utils import utc_now_iso
+from services.titles import normalize_title
 from services.models import (
     MeetingAudioChunk,
     MeetingEvent,
@@ -221,10 +222,9 @@ class SqlMeetingRepository:
 
     def rename_meeting(self, meeting_id: str, title: str) -> None:
         """Update the canonical title and persisted state in one transaction."""
-        clean_title = str(title or "").strip()
-        if not clean_title:
-            raise ValueError("title required")
+        clean_title = normalize_title(title)
         with self._db.get_session() as session:
+            session.execute(sql_text("BEGIN IMMEDIATE"))
             row = session.get(MeetingSession, meeting_id)
             if row is None:
                 raise ValueError(f"unknown meeting '{meeting_id}'")
@@ -950,10 +950,14 @@ class SqlMeetingRepository:
 
     def on_ops_applied(self, meeting_id: str, state: Dict[str, Any],
                        results: List[OpResult], actor_type: str,
-                       actor_id: Optional[str]) -> None:
-        """Persist applied ops: audit events, entity mirrors, state snapshot."""
+                       actor_id: Optional[str]) -> Dict[str, Any]:
+        """Persist ops and return the snapshot reconciled with canonical metadata."""
         ts = utc_now_iso()
+        state = dict(state)
         with self._db.get_session() as session:
+            # A dashboard snapshot may predate an MCP or another dashboard's
+            # rename. Serialize the read/merge/write and only retitle on intent.
+            session.execute(sql_text("BEGIN IMMEDIATE"))
             for result in results:
                 undo_seq = result.op.get("_undo_event_seq")
                 action = result.op.get("op", "unknown")
@@ -975,22 +979,29 @@ class SqlMeetingRepository:
 
             row = session.get(MeetingSession, meeting_id)
             if row is not None:
+                for result in results:
+                    if result.ok and result.op.get("op") == "set_title":
+                        row.title = normalize_title(result.op.get("text"))
+                state["title"] = row.title or ""
                 row.state_json = json.dumps(state, ensure_ascii=False)
                 row.state_seq = int(state.get("seq", 0))
-                row.title = state.get("title", row.title)
                 row.cloud_enabled = bool(state.get("cloud_enabled", row.cloud_enabled))
+        return state
 
-    def persist_state(self, meeting_id: str, state: Dict[str, Any]) -> None:
-        """Persist a non-audited lifecycle/status snapshot atomically."""
+    def persist_state(self, meeting_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Persist lifecycle/status without overwriting an independently edited title."""
+        state = dict(state)
         with self._db.get_session() as session:
+            session.execute(sql_text("BEGIN IMMEDIATE"))
             row = session.get(MeetingSession, meeting_id)
             if row is None:
                 raise ValueError(f"unknown meeting '{meeting_id}'")
+            state["title"] = row.title or ""
             row.state_json = json.dumps(state, ensure_ascii=False)
             row.state_seq = int(state.get("seq", row.state_seq or 0))
             row.status = state.get("status", row.status)
-            row.title = state.get("title", row.title)
             row.cloud_enabled = bool(state.get("cloud_enabled", row.cloud_enabled))
+        return state
 
     def _mirror_effect(self, session, meeting_id: str, result: OpResult) -> None:
         """Write-through mirror of one applied op's effect."""

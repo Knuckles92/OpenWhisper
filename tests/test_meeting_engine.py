@@ -1666,8 +1666,8 @@ def test_engine_module_has_no_dead_recent_text_api():
 
 def test_terminal_finalization_adopts_topic_as_title(make_engine):
     engine = make_engine(cloud_enabled=False)
+    engine.options.title = ""
     engine.start()
-    engine.store.with_state(lambda state: setattr(state, "title", ""))
     engine.store.apply("system", "seed", [
         {"op": "set_topic", "text": "Q3 roadmap"},
     ])
