@@ -155,7 +155,11 @@ class ModelRowWidget(DownloadRow):
         identity.setSpacing(2)
 
         from services.local_asr.catalog import MODELS
-        name_label = ElidingLabel(MODELS[self.model_name].label if self.model_name in MODELS else self.model_name)
+        from services.whisper_sources import custom_model_label, is_custom_model
+        label = (MODELS[self.model_name].label if self.model_name in MODELS else
+                 custom_model_label(self.model_name) if is_custom_model(self.model_name) else self.model_name)
+        name_label = ElidingLabel(label)
+        name_label.setToolTip(self.model_name)
         name_label.setObjectName("modelRowName")
         name_font = QFont("Segoe UI", 10)
         name_font.setBold(True)
@@ -227,6 +231,9 @@ class ModelRowWidget(DownloadRow):
         self.progress.hide()
 
     def _model_summary(self) -> str:
+        from services.whisper_sources import is_custom_model
+        if is_custom_model(self.model_name):
+            return "Custom Whisper / CTranslate2"
         from services.local_asr.catalog import MODELS
         if self.model_name in MODELS:
             model = MODELS[self.model_name]

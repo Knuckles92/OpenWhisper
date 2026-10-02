@@ -54,7 +54,11 @@ class TestHelpers:
 
     def test_is_model_cached_local_directory(self):
         """A local model directory counts as cached without any lookup."""
+        from pathlib import Path
         with tempfile.TemporaryDirectory() as tmp:
+            for name, contents in (("model.bin", b"weights"), ("config.json", b"{}"),
+                                   ("tokenizer.json", b"{}")):
+                Path(tmp, name).write_bytes(contents)
             assert is_model_cached(tmp)
 
     def test_progress_tqdm_reports_bytes(self):

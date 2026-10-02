@@ -118,6 +118,7 @@ class SettingsKey:
     MEETING_ASR_MODEL: Final[str] = "meeting_asr_model"
     MEETING_ASR_SOURCE: Final[str] = "meeting_asr_source"  # local | remote
     WHISPER_MODEL: Final[str] = "whisper_model"
+    CUSTOM_WHISPER_MODELS: Final[str] = "custom_whisper_models"
     WHISPER_DEVICE: Final[str] = "whisper_device"
     WHISPER_COMPUTE_TYPE: Final[str] = "whisper_compute_type"
     # "Keep using the CPU" on the "Use this GPU" offer; it isn't shown again.
@@ -442,6 +443,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.DEVELOPER_MODE: config.DEVELOPER_MODE,
     # Local engines
     SettingsKey.WHISPER_MODEL: config.DEFAULT_WHISPER_MODEL,
+    SettingsKey.CUSTOM_WHISPER_MODELS: [],
     SettingsKey.WHISPER_DEVICE: config.FASTER_WHISPER_DEVICE,
     SettingsKey.WHISPER_COMPUTE_TYPE: config.FASTER_WHISPER_COMPUTE_TYPE,
     SettingsKey.WHISPER_GPU_OFFER_DECLINED: False,
@@ -1075,8 +1077,10 @@ def resolve_meeting_whisper_model(
     if isinstance(extra, str) and extra in MODELS and MODELS[extra].meeting:
         return extra
     model = settings.get(SettingsKey.MEETING_WHISPER_MODEL)
-    if isinstance(model, str) and model in config.WHISPER_MODEL_CHOICES:
-        return model
+    if isinstance(model, str):
+        from services.whisper_sources import custom_models
+        if model in [*config.WHISPER_MODEL_CHOICES, *custom_models(settings)]:
+            return model
     return SETTING_DEFAULTS[SettingsKey.MEETING_WHISPER_MODEL]
 
 
