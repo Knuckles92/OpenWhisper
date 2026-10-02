@@ -267,27 +267,30 @@ class WsHub:
             return
         future.add_done_callback(_log_broadcast_failure)
 
-    def schedule_invalidate_connections(self) -> None:
-        """Close all current sockets shortly after token regeneration."""
+    def schedule_invalidate_connections(self, *, resync: bool = False) -> None:
+        """Close sockets after token rotation, or request a reconnect for fresh state."""
         loop = self._loop
         if loop is None or loop.is_closed():
             return
         try:
             future = asyncio.run_coroutine_threadsafe(
-                self._invalidate_connections(), loop
+                self._invalidate_connections(
+                    WS_CLOSE_RESYNC if resync else WS_CLOSE_UNAUTHORIZED
+                ), loop
             )
         except RuntimeError:
             logger.debug("Socket invalidation dropped: server loop unavailable")
             return
         future.add_done_callback(_log_broadcast_failure)
 
-    async def _invalidate_connections(self) -> None:
-        # Give the regenerating REST response time to deliver the new host URL.
-        await asyncio.sleep(0.25)
+    async def _invalidate_connections(self, code: int = WS_CLOSE_UNAUTHORIZED) -> None:
+        if code == WS_CLOSE_UNAUTHORIZED:
+            # Give the regenerating REST response time to deliver the new host URL.
+            await asyncio.sleep(0.25)
         sockets = list(self._connections)
         self._connections.clear()
         await asyncio.gather(
-            *(self._close(ws, WS_CLOSE_UNAUTHORIZED) for ws in sockets),
+            *(self._close(ws, code) for ws in sockets),
             return_exceptions=True,
         )
 

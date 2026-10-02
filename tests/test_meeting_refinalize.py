@@ -842,3 +842,49 @@ class TestRedecodeSpeakerLabels:
 
         assert result["ok"] is True
         assert created == []
+
+
+def test_borrowed_claim_remains_exclusive_until_caller_releases_it():
+    from meeting.refinalize import FinalizationClaim, _one_run_per_meeting, is_running
+
+    @_one_run_per_meeting
+    def pipeline(repository, meeting_id):
+        assert is_running(meeting_id)
+        return {"ok": True}
+
+    claim = FinalizationClaim("m_claim_success")
+    try:
+        assert pipeline(None, claim.meeting_id, _claim=claim)["ok"]
+        assert is_running(claim.meeting_id)
+    finally:
+        claim.release()
+    assert not is_running(claim.meeting_id)
+    with pytest.raises(ValueError, match="inactive or mismatched"):
+        pipeline(None, claim.meeting_id, _claim=claim)
+
+
+def test_borrowed_claim_survives_pipeline_failure_and_releases_idempotently():
+    from meeting.refinalize import FinalizationClaim, _one_run_per_meeting, is_running
+
+    @_one_run_per_meeting
+    def pipeline(repository, meeting_id):
+        raise RuntimeError("synthetic pipeline failure")
+
+    claim = FinalizationClaim("m_claim_failure")
+    try:
+        with pytest.raises(RuntimeError, match="synthetic pipeline failure"):
+            pipeline(None, claim.meeting_id, _claim=claim)
+        assert is_running(claim.meeting_id)
+        with pytest.raises(ValueError, match="inactive or mismatched"):
+            pipeline(None, "m_other", _claim=claim)
+    finally:
+        claim.release()
+    next_claim = FinalizationClaim(claim.meeting_id)
+    try:
+        claim.release()
+        assert is_running(claim.meeting_id)
+        assert not claim.is_current
+        assert next_claim.is_current
+    finally:
+        next_claim.release()
+    assert not is_running(claim.meeting_id)
