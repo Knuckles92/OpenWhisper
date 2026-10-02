@@ -8,23 +8,29 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
-- Added optional Orukeet TDT 0.6B native Q8 weights from Oruk AI, a 25-language
-  Parakeet adaptation, with CC BY-SA 4.0 attribution and weight-license details.
-- Model downloads and details show sources, licenses, versions, and the limits of
-  integrity verification. Custom model and speech-runtime dialogs explain their
-  trust requirements. Built-in Whisper downloads and offline loads use pinned revisions.
-
+## [2.6.12] - 2026-10-02
 
 ### Added
+- **Orukeet TDT 0.6B** — optional native Q8 weights from Oruk AI, a 25-language Parakeet adaptation, with CC BY-SA 4.0 attribution and weight-license details.
 - **Experimental Parakeet MLX** — separate pinned MLX weights and runtime for Apple Silicon Macs, with Auto targeting the Apple GPU through Metal and a CPU option. Language is detected automatically. Actual Apple Silicon transcription validation is pending.
 - **Supported language presets** — optional local engines and paired hosts offer Russian, Spanish, French, Portuguese, and Mandarin alongside English and Auto where supported. Moonshine stays English-only; Parakeet omits Mandarin. Qwen language names and Nemotron Mandarin prompts are passed correctly to their pinned runtimes.
 - **Custom Whisper models** — add local model folders or discover compatible root and subfolder models in Hugging Face repositories and the local cache. Review discovered models before adding them, then assign them to dictation or meetings. Downloads and offline loading use the selected subfolder; removing a custom entry retains its files.
 - **Direct client history queries over MCP** — clients can allow their paired host to search saved history and read transcripts and meeting insights while they are online. Agents opt in with `include_clients`, route reads by device, and receive explicit offline/disabled status. The shared desktop and Omarchy setting is independent of storage; Both retains host copies for offline access.
 - **Copy MCP access token in Host mode** — the main desktop and Omarchy host dashboards now copy the running server's access token directly, with brief confirmation. MCP connection actions stack in narrow windows so all controls remain accessible.
+- **Optional MCP controls** — agents can retitle local transcriptions and finished meetings, and read or change supported preferences. Retitling and settings access require separate permissions, with individual controls for writable preferences; all new permissions are off by default.
+
+### Changed
+- **Model download details and trust** — downloads and model details show sources, licenses, versions, and the limits of integrity verification. Custom model and speech-runtime dialogs explain their trust requirements. Built-in Whisper downloads and offline loads use pinned revisions.
+- **Custom model hardware profiles** — GPU and architecture estimates recognize custom and fine-tuned Whisper sources while preserving distilled model profiles.
 
 ### Fixed
 - **MCP startup** — enabling MCP now opens the system credential store correctly. Startup previously failed before opening history and showed a misleading history-database error.
 - **MCP setup across computers** — optional Tailscale access provides a reachable host URL while keeping localhost available. Settings distinguishes the agent's computer, and Host mode copies the Tailscale setup when enabled. Local prompts identify their originating computer and no longer direct agents to enable an unrelated local OpenWhisper instance.
+- **Meeting titles** — renaming a saved meeting keeps its database title, saved state, open dashboards, and MCP results consistent, including multiple dashboards open at once.
+- **Meeting retries** — post-meeting steps retain their ownership until results are published and ignore progress from stale attempts, preventing overlapping retries and outdated progress.
+- **OpenAI reasoning models** — cleanup and meeting insights use the Responses API for supported reasoning models. Saved meeting routes are migrated from stale protocol choices.
+- **Pairing and history pagination** — paired services share the same device registry, and offline transcript segment cursors retain the correct source and filters.
+- **MCP theme preferences** — settings correctly report inherited theme choices and restore them when an agent resets the preference.
 
 ## [2.6.11] - 2026-09-29
 
