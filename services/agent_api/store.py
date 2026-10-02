@@ -149,12 +149,17 @@ class HistoryStore:
         limit=20,
         cursor=None,
         transform=None,
+        compatible_scopes=(),
     ):
         if not 1 <= limit <= 100:
             raise InvalidQuery("limit must be between 1 and 100.")
         fingerprint = hashlib.sha256(
             json.dumps(scope, sort_keys=True).encode()
         ).hexdigest()[:24]
+        valid_fingerprints = {fingerprint} | {
+            hashlib.sha256(json.dumps(previous, sort_keys=True).encode()).hexdigest()[:24]
+            for previous in compatible_scopes
+        }
         query = statement.subquery()
         statement = select(query)
         if cursor:
@@ -165,7 +170,7 @@ class HistoryStore:
                     base64.b64decode(cursor, altchars=b"-_", validate=True)
                 )
                 values = decoded["keys"]
-                if decoded["scope"] != fingerprint or len(values) != len(keys):
+                if decoded["scope"] not in valid_fingerprints or len(values) != len(keys):
                     raise ValueError
                 if not isinstance(values, list) or any(
                     not isinstance(v, (str, int, float)) for v in values
@@ -294,7 +299,11 @@ class HistoryStore:
         return self._page(
             statement,
             Segment,
-            scope=["segments", meeting_id, start_s, end_s, include_remote],
+            # Visibility is checked on the parent above, not on segment rows.
+            # Preserve the local-only fingerprint used by existing clients so
+            # the same cursor also works on this meeting's stored remote copy.
+            scope=["segments", meeting_id, start_s, end_s, False],
+            compatible_scopes=(["segments", meeting_id, start_s, end_s, True],),
             keys=["start_s", "id"],
             descending=[False, False],
             limit=limit,

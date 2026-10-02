@@ -95,9 +95,12 @@ class RemoteEngineService:
         from services.remote_asr.host import DeviceRegistry
         from services.remote_history.channel import HistoryBroker
 
-        self.history = HistoryBroker(DeviceRegistry(
+        # History and speech connections mutate the same saved collection.
+        # Keep their read-modify-write operations under one registry lock.
+        self._registry = DeviceRegistry(
             remote_settings.load_host_devices, remote_settings.save_host_devices
-        ))
+        )
+        self.history = HistoryBroker(self._registry)
         self._history_client = None
         self._switch_engine = switch_engine
         self._configure_engine = configure_engine
@@ -266,16 +269,14 @@ class RemoteEngineService:
             return cached
 
     def _ensure_host(self):
-        from services.remote_asr.host import DeviceRegistry, SpeechHost
+        from services.remote_asr.host import SpeechHost
         from services.remote_asr.tls import ensure_host_identity
 
         if self._host is None:
             identity = ensure_host_identity(self._identity_dir or _default_identity_dir())
             self._host = SpeechHost(
                 engine_provider=self._engine,
-                registry=DeviceRegistry(
-                    remote_settings.load_host_devices, remote_settings.save_host_devices
-                ),
+                registry=self._registry,
                 identity=identity,
                 on_event=lambda kind, _detail: self._notify(kind),
                 tailscale_owner=self._trusted_tailscale_owner,
@@ -498,11 +499,7 @@ class RemoteEngineService:
         if host is not None:
             removed = host.remove_device(device_id)
         else:
-            from services.remote_asr.host import DeviceRegistry
-
-            removed = DeviceRegistry(
-                remote_settings.load_host_devices, remote_settings.save_host_devices
-            ).remove(device_id)
+            removed = self._registry.remove(device_id)
             self._notify("devices")
         if delete_records:
             self.record_store().delete_device(device_id)
@@ -552,8 +549,6 @@ class RemoteEngineService:
         return self._engine().describe()
 
     def host_state(self) -> dict:
-        from services.remote_asr.host import DeviceRegistry
-
         with self._lock:
             host = self._host
             error = self._host_error
@@ -570,9 +565,7 @@ class RemoteEngineService:
             "fingerprint": host.identity.fingerprint if host is not None else "",
             "pairing": host.pairing_status() if running else None,
             "clients": host.connected_clients() if running else [],
-            "devices": (host.registry if host is not None else DeviceRegistry(
-                remote_settings.load_host_devices, remote_settings.save_host_devices
-            )).list(),
+            "devices": self._registry.list(),
             "engine": self._engine().describe() if running else None,
             "tailscale": self.tailscale_status(),
             "tailscale_trust": remote_settings.host_tailscale_trust(),
