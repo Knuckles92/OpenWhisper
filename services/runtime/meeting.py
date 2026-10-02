@@ -374,13 +374,21 @@ class MeetingRuntime:
             # dashboards may hold a historical review store for this meeting.
             owners.sort(key=lambda owner: getattr(owner, "meeting_id", None) != meeting_id)
             servers = [getattr(owner, "_server", None) for owner in owners if owner is not None]
-            server = next((server for server in servers
-                           if server is not None and server.is_running()), None)
-        if server is not None:
+            servers = list(dict.fromkeys(server for server in servers
+                                         if server is not None and server.is_running()))
+        if servers:
+            server = servers[0]
             if not server.retitle_saved_meeting(meeting_id, title):
                 raise ControlError("update_rejected: The meeting title could not be changed.")
         else:
             self._repository().rename_meeting(meeting_id, title)
+        for other in servers[1:]:
+            try:
+                other.refresh_saved_meeting_title(meeting_id)
+            except Exception:
+                # The committed rename remains successful even if a dashboard
+                # closed; repository writes also preserve the canonical title.
+                logger.exception("Could not refresh a dashboard's meeting title")
 
     def continue_in_background(self) -> bool:
         """Detach the ended meeting once its local transcription model is free."""
