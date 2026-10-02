@@ -243,6 +243,15 @@ class MeetingWebServer:
         )
         return bool(future.result(timeout=15)["ok"])
 
+    def refresh_saved_meeting_title(self, meeting_id: str) -> None:
+        """Refresh this dashboard's cached metadata after another owner writes it."""
+        if self._loop is None or not self._loop.is_running():
+            return
+        future = asyncio.run_coroutine_threadsafe(
+            self._app.state.refresh_saved_meeting_title(meeting_id), self._loop
+        )
+        future.result(timeout=15)
+
     def invalidate_connections(self) -> None:
         """Close sockets authenticated with the previous token pair."""
         self._hub.schedule_invalidate_connections()

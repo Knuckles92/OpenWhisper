@@ -1,6 +1,7 @@
 import FinalizationDiagnostics from './FinalizationDiagnostics';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
+import { titleError } from '../titles';
 import type { MeetingInfo, MeetingStateDoc, Op, Participant } from '../types';
 import { ops } from '../types';
 import type { SocketStatus } from '../ws';
@@ -174,9 +175,13 @@ export default function HeaderBar({
   };
 
   const commitTitle = () => {
+    const error = titleError(titleDraft);
+    if (error) {
+      onClientError(error);
+      return;
+    }
     const trimmed = titleDraft.trim();
-    if (trimmed && trimmed !== state.title) void onSendOp(ops.setTitle(trimmed));
-    else if (!trimmed) setTitleDraft(state.title);
+    if (trimmed !== state.title) void onSendOp(ops.setTitle(trimmed));
   };
 
   const hostAction = async (fn: () => Promise<unknown>) => {
