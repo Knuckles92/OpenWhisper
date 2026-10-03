@@ -302,7 +302,7 @@ def test_opencode_pass_end_to_end(server, monkeypatch, tmp_path):
     monkeypatch.setenv("FAKE_ACP_LOG", str(log))
     monkeypatch.setenv("FAKE_TOOL_CALL", json.dumps(PATCH_CALL))
     monkeypatch.setattr(drivers, "_TOOLS_REGISTERED_GRACE_S", 0.0)
-    driver = _FakeOpenCode(InstalledAgent("opencode", "fake", "2.0.18"))
+    driver = _FakeOpenCode(InstalledAgent("opencode_cli", "fake", "2.0.18"))
     driver.start(server, {"build": "COPILOT", "plan": "NOTE TAKER"})
     try:
         handler = Recorder()
@@ -334,7 +334,7 @@ def test_opencode_pass_end_to_end(server, monkeypatch, tmp_path):
 
 
 def test_opencode_overlay_locks_down_both_agents(server):
-    driver = OpenCodeDriver(InstalledAgent("opencode", "fake", "2.0.18"))
+    driver = OpenCodeDriver(InstalledAgent("opencode_cli", "fake", "2.0.18"))
     driver._server = server
     driver._router = server.open_endpoint([], Recorder())
     driver._personas = {"build": "COPILOT"}
@@ -349,7 +349,7 @@ def test_opencode_overlay_locks_down_both_agents(server):
 
 
 def test_opencode_refuses_every_other_permission():
-    driver = OpenCodeDriver(InstalledAgent("opencode", "fake", "2.0.18"))
+    driver = OpenCodeDriver(InstalledAgent("opencode_cli", "fake", "2.0.18"))
     options = [{"optionId": "a", "kind": "allow_once"}, {"optionId": "r", "kind": "reject_once"}]
     ours = driver._on_request("session/request_permission", {
         "toolCall": {"title": "openwhisper_patch_state"}, "options": options})
@@ -363,7 +363,7 @@ def test_opencode_refuses_every_other_permission():
 def test_opencode_rejects_a_model_its_providers_lack(server, monkeypatch, tmp_path):
     monkeypatch.setenv("FAKE_ACP_LOG", str(tmp_path / "acp.jsonl"))
     monkeypatch.setattr(drivers, "_TOOLS_REGISTERED_GRACE_S", 0.0)
-    driver = _FakeOpenCode(InstalledAgent("opencode", "fake", "2.0.18"))
+    driver = _FakeOpenCode(InstalledAgent("opencode_cli", "fake", "2.0.18"))
     driver.start(server, {"build": "COPILOT"})
     try:
         outcome = driver.run_pass(_request(Recorder(), model="gone/model"))

@@ -1,0 +1,18 @@
+Tool: built-in image_gen
+
+Use case: precise-object-edit / typography refinement.
+Edit image 1, the Tokyo Night Omarchy desktop advertisement, according to two specific user annotations. Image 2 is a high-resolution capture of the real OpenWhisper UI, supplied only to keep the app's small text accurate and crisp.
+
+1) CLEAR, SHARP TEXT:
+The user points to the large upper-left OpenWhisper headline. Keep its retro pixel/terminal character and exact wording, color, size and placement, but redraw the lettering with clean, sharp, deliberate edges and consistently aligned pixel geometry. Use solid flat fills, clean counters and even spacing. Remove the fuzzy/distressed texture, irregular tiny edge fragments, blur and pseudo-scanlines from ALL letters. "OpenWhisper" must read immediately and beautifully; the two lines "Your voice." and "Your Omarchy." must be equally clean and legible. The small "OMARCHY PREVIEW" and "TOKYO NIGHT" labels also need crisp clean type. Keep the artwork texture separate from the letters.
+Make the app UI labels and top bar text sharp too, faithfully using image 2 as the source for existing UI labels, without changing the interface or its proportions. No unsharp-mask halos, no glow around text, no invented controls.
+
+2) SMALLER LOWER-LEFT TERMINAL, LARGE OMARCHY WORDMARK:
+The user points to the small terminal at the bottom left, containing the OMARCHY ASCII-like wordmark and the Arch Linux / Hyprland / Wayland lines.
+Make this terminal panel approximately 20–25% narrower and 25–30% shorter than it currently is. Keep its bottom-left anchor approximately fixed, with the same modest margins from the canvas edges.
+Reduce wasted padding and prompt decoration. The word "OMARCHY" must remain LARGE and dominant inside this smaller panel, nearly the full available width with safe padding. Replace the wispy fragmented outline treatment with a very clear, confidently drawn bold pixel/ASCII-inspired wordmark spelling OMARCHY correctly. Retain the subtle blue-to-pink color character if it doesn't compromise readability.
+Keep "Arch Linux", "Hyprland", and "Wayland" in crisp readable monospaced type below it. Do not scale these supporting words down into tiny illegibility. Fit the panel around the content: less padding, fewer decorative prompt lines, clear hierarchy. The wordmark is visually larger than all supporting labels.
+
+PRESERVE EVERYTHING ELSE:
+Same 4:3 composition; same full-bleed pink / purple sunset winding-road wallpaper, mountains, sun, trees and deer; same authentic top desktop bar; same main app window size, location, colors and layout. Do not enlarge or widen the app. Preserve all exact existing copy. Preserve the OMARCHY PREVIEW status. Do not add content, a logo, an inset, another app, a laptop or a monitor.
+Deliver a high-resolution 4:3 master, ideally 3072x2304, with especially excellent text rendering. This is a precise polish pass, not a new concept.

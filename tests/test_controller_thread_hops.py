@@ -84,3 +84,36 @@ def test_a_reload_asked_for_on_the_qt_thread_is_armed_at_once():
         assert controller._reload_timer.isActive()
     finally:
         controller._reload_timer.stop()
+
+
+@pytest.mark.parametrize("has_audio, saved", [(False, False), (True, False)])
+def test_recording_storage_failure_is_delivered_on_qt_thread(has_audio, saved):
+    from services.runtime.transcription import TranscriptionRuntime
+
+    controller = ApplicationController.__new__(ApplicationController)
+    QObject.__init__(controller)
+    controller.recorder = SimpleNamespace(
+        wait_for_stop_completion=lambda: True,
+        has_recording_data=lambda: has_audio,
+        save_recording=lambda: saved,
+    )
+    controller.streaming_runtime = SimpleNamespace(stop_streaming_session=lambda: "")
+    controller.current_backend = None
+    runtime = TranscriptionRuntime(controller)
+    controller.transcription_runtime = runtime
+    delivered = []
+
+    def handle_error(message):
+        delivered.append((message, threading.current_thread()))
+        runtime._finish_job()
+
+    runtime.on_transcription_error = handle_error
+    controller.transcription_failed.connect(controller._on_transcription_error)
+    assert runtime._claim_job()
+    _off_qt_thread(runtime.finish_recording_job)
+    assert delivered == []
+    assert runtime.has_active_job
+    QCoreApplication.sendPostedEvents()
+    assert len(delivered) == 1
+    assert delivered[0][1] is threading.main_thread()
+    assert not runtime.has_active_job

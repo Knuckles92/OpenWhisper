@@ -110,6 +110,7 @@ from ui_qt.dialogs.settings_destinations import (
     DOWNLOADS,
     GENERAL,
     HOTKEYS,
+    MCP,
     MEETING_AFTER,
     MEETING_DASHBOARD,
     MEETING_FAST,
@@ -128,6 +129,7 @@ from ui_qt.dialogs.settings_fields import (
     settings_caption,
     settings_field,
 )
+from ui_qt.dialogs.settings_mcp import McpSettingsPage
 from ui_qt.dialogs.settings_models import ModelAssignments
 from ui_qt.dialogs.settings_overview import OverviewPage, OverviewSummary
 from ui_qt.dialogs.settings_remote import RemoteEngineSection
@@ -191,6 +193,11 @@ _HF_POLICY_LABELS = {
 
 #: Destinations reached from search by a name the app used to use.
 _SEARCH_ALIASES = {
+    MCP: (
+        "Connect an agent with MCP",
+        "App › MCP",
+        "model context protocol agent server connection claude cursor history api",
+    ),
     VOICE_MODEL: (
         "Model assignments",
         "Model Manager's choices now sit on Voice model, AI cleanup, Voice & "
@@ -502,6 +509,7 @@ class SettingsDialog(QDialog):
                 (GENERAL, "General", "bolt-green.svg"),
                 (HOTKEYS, "Hotkeys", "keyboard-green.svg"),
                 (API_KEYS, "API keys", "key-blue.svg"),
+                (MCP, "MCP", "server-blue.svg"),
                 (ADVANCED, "Advanced", "box-blue.svg"),
             )),
         ):
@@ -665,6 +673,12 @@ class SettingsDialog(QDialog):
             self._build_api_keys_page,
         )
         self._add_page(
+            MCP,
+            "MCP",
+            "Connect your agent to your OpenWhisper history.",
+            self._build_mcp_page,
+        )
+        self._add_page(
             ADVANCED,
             "Advanced",
             "Meeting re-transcription and developer tools.",
@@ -718,6 +732,11 @@ class SettingsDialog(QDialog):
         area.setWidget(page)
         self._page_scrolls[key] = area
         self.stack.addWidget(area)
+
+    def _build_mcp_page(self, layout: QVBoxLayout) -> None:
+        self.mcp_page = McpSettingsPage(settings_manager)
+        layout.addWidget(self.mcp_page)
+        layout.addStretch()
 
     def _build_downloads_page(self, layout: QVBoxLayout) -> None:
         self.hf_policy_combo = ElidingComboBox()
@@ -781,9 +800,12 @@ class SettingsDialog(QDialog):
             "Upload File results stay in the window with their own Copy buttons."
         )
         if self._native_wayland:
+            from services.hyprland import available
             auto_paste_description += (
-                " Native Wayland blocks cross-application key injection; use "
-                "clipboard copy or an X11 session if pasting does not work."
+                " On Hyprland, pasting uses the desktop's shortcut dispatcher. "
+                "Keep the destination app focused when you stop recording."
+                if available() else
+                " This Wayland desktop requires manual clipboard paste."
             )
         self.auto_paste_tile = SettingTile(
             "Paste into the active window",
@@ -953,7 +975,10 @@ class SettingsDialog(QDialog):
         margin = 32  # Wayland reports the whole output, bars included
         room = QSize(max(1, available.width() - 2 * margin),
                      max(1, available.height() - 2 * margin))
-        self.setMinimumSize(self.MINIMUM_SIZE.boundedTo(room))
+        from services.desktop_session import use_omarchy_ui
+
+        minimum = QSize(360, 240) if use_omarchy_ui() else self.MINIMUM_SIZE
+        self.setMinimumSize(minimum.boundedTo(room))
         fitted = self.size().boundedTo(room)
         if fitted != self.size():
             self.resize(fitted)
@@ -963,6 +988,12 @@ class SettingsDialog(QDialog):
             # Before QDialog's own showEvent, which centres by the size.
             self._fit_to_screen()
         super().showEvent(event)
+        if self._native_wayland and hasattr(self, "_hotkey_instruction"):
+            from PyQt6.QtWidgets import QApplication
+
+            desktop_status = QApplication.instance().property("omarchyShortcutStatus")
+            suffix = f"\n\n{desktop_status}" if desktop_status else ""
+            self._hotkey_instruction.setText(self._hotkey_instruction_text + suffix)
         if hasattr(self, "_accessibility_timer"):
             self._refresh_accessibility_status()
             self._accessibility_timer.start()
@@ -2078,10 +2109,10 @@ class SettingsDialog(QDialog):
             )
         elif self._native_wayland:
             instruction_text = (
-                "This is a native Wayland session. Wayland blocks reliable "
-                "system-wide key observation and injection, so these hotkeys "
-                "may work only in XWayland apps. Use the in-app controls or "
-                "sign in to an X11 session for global shortcuts and auto-paste."
+                "Click a shortcut, hold Ctrl, Alt, Shift, or Super, then press its key. "
+                "On Omarchy, free keys are registered with Hyprland for desktop-wide use. "
+                "Existing desktop bindings are preserved; conflicting keys still work "
+                "while OpenWhisper is focused."
             )
         elif USE_PYNPUT_BACKEND:
             instruction_text = (
@@ -2094,6 +2125,8 @@ class SettingsDialog(QDialog):
                 "Numpad keys are distinct from the matching regular keys."
             )
         instruction = WrappedLabel(instruction_text)
+        self._hotkey_instruction = instruction
+        self._hotkey_instruction_text = instruction_text
         instruction.setObjectName("hotkeyInstructionText")
         instruction_row.addWidget(instruction, stretch=1)
         layout.addWidget(instruction_card)
@@ -2218,13 +2251,22 @@ class SettingsDialog(QDialog):
         self.hotkey_row_descriptions[key] = detail
         row.addLayout(copy, stretch=1)
 
-        field = HotkeyCaptureInput()
+        if self._native_wayland:
+            from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
+
+            field = ProfileHotkeyInput()
+            field.setAccessibleName(f"{title} shortcut")
+            field.setToolTip("Click, then press a shortcut. Escape cancels.")
+            field.capture_changed.connect(self._on_profile_capture)
+            field.captured.connect(lambda hotkey, key=key: self._on_local_hotkey_captured(key, hotkey))
+        else:
+            field = HotkeyCaptureInput()
+            field.capture_requested.connect(
+                lambda key=key, field=field: self._start_hotkey_capture(key, field)
+            )
         field.setProperty("optional", optional)
         field.setMinimumWidth(190)
         field.setMaximumWidth(220)
-        field.capture_requested.connect(
-            lambda key=key, field=field: self._start_hotkey_capture(key, field)
-        )
         self.hotkey_inputs[key] = field
         row.addWidget(field, alignment=Qt.AlignmentFlag.AlignVCenter)
 
@@ -3489,6 +3531,11 @@ class SettingsDialog(QDialog):
         logger.info("Capturing hotkey for %s", key)
         thread.start()
 
+    def _on_local_hotkey_captured(self, key: str, hotkey: str) -> None:
+        updated = self.current_hotkeys.copy()
+        updated[key] = hotkey
+        self._apply_hotkey_settings(updated, "Shortcut updated.")
+
     def _on_hotkey_captured(
         self, thread: HotkeyCaptureThread, hotkey: str
     ) -> None:
@@ -3605,6 +3652,9 @@ class SettingsDialog(QDialog):
 
     def _update_hotkey_displays(self) -> None:
         for key, input_field in self.hotkey_inputs.items():
+            if self._native_wayland:
+                input_field.set_hotkey(self.current_hotkeys.get(key, ""))
+                continue
             input_field.setText(
                 format_hotkey_display(self.current_hotkeys.get(key, ""))
             )

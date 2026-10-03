@@ -133,7 +133,7 @@ class ProfileHotkeyInput(HotkeyCaptureInput):
             name = chr(key).lower()
         if not name:
             return
-        if sys.platform == "win32" and flags & Qt.KeyboardModifier.KeypadModifier:
+        if sys.platform != "darwin" and flags & Qt.KeyboardModifier.KeypadModifier:
             name = f"kp {name}"
         self._pending = (key, format_hotkey(modifiers, name))
 

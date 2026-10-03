@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "org.openwhisper.controls",
+  "name": "OpenWhisper",
+  "version": "1.0.0",
+  "author": "OpenWhisper",
+  "description": "Recording controls, live preview, and status for OpenWhisper",
+  "kinds": ["bar-widget"],
+  "entryPoints": {"barWidget": "OpenWhisper.qml"},
+  "barWidget": {
+    "displayName": "OpenWhisper",
+    "description": "Click to record/stop; right-click to cancel; middle-click to open",
+    "category": "Audio",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,11 +27,22 @@ ENTRYPOINT = ROOT / "main.py"
 def test_macos_build_script_is_executable_and_valid_bash():
     assert BUILD_SCRIPT.is_file()
     assert os.access(BUILD_SCRIPT, os.X_OK)
+    bash = shutil.which("bash")
+    if os.name == "nt":
+        # Prefer Git Bash over an inaccessible WindowsApps/WSL launcher alias.
+        git = shutil.which("git")
+        candidates = ([Path(git).resolve().parent.parent / "bin" / "bash.exe"] if git else [])
+        candidates += [Path(os.environ[key]) / "Git" / "bin" / "bash.exe"
+                       for key in ("ProgramFiles", "ProgramFiles(x86)") if os.environ.get(key)]
+        bash = next((str(path) for path in candidates if path.is_file()), bash)
+    if not bash:
+        pytest.skip("Bash is unavailable; native macOS CI validates shell syntax")
     completed = subprocess.run(
-        ["bash", "-n"],
+        [bash, "-n"],
         input=BUILD_SCRIPT.read_bytes().replace(b"\r\n", b"\n"),
         capture_output=True,
         check=False,
+        timeout=10,
     )
     assert completed.returncode == 0, completed.stderr
 

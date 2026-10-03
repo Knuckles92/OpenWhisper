@@ -40,6 +40,8 @@ class TranscriptionHistory(Base):
     cleanup_provider: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     cleanup_model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     source_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # User/agent display title; source_name remains the original filename.
+    title: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     # The paired computer this entry was stored here for (see
     # services/remote_records); NULL for this computer's own entries.
     origin_device_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)

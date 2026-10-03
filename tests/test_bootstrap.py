@@ -2,6 +2,7 @@
 
 import pytest
 import logging
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from ui_qt import bootstrap
@@ -40,6 +41,7 @@ class _FakeUIController:
         self.device_info = None
         self.cleaned_up = False
         self.apply_error_checked = False
+        self.agent_data_changed = SimpleNamespace(emit=lambda *_args: None)
 
     def show_main_window(self):
         self.show_main_window_called = True
@@ -82,6 +84,8 @@ class _FakeApplicationController:
         self.local_backend = local_backend
         self.cleaned_up = False
         self.main_ui_ready_notified = False
+        self.meeting_runtime = SimpleNamespace(retitle_saved_meeting=lambda *_args: None)
+        self.remote_engine = SimpleNamespace(history=object())
         self.transcription_backends = {"local_whisper": _FakeBackend("cuda")}
         self.__class__.instances.append(self)
 
@@ -126,7 +130,9 @@ class TestBootstrap:
 
         _mock_process_events.side_effect = lambda: order.append("process_events")
 
-        with patch.object(
+        from services.agent_mcp.runtime import runtime as mcp_runtime
+
+        with patch.object(mcp_runtime, "configure_controls") as configure_mcp, patch.object(
             bootstrap,
             "get_early_runtime_components",
             side_effect=get_early_runtime_components,
@@ -146,6 +152,7 @@ class TestBootstrap:
         assert len(_FakeApplicationController.instances) == 1
         assert _FakeApplicationController.instances[0].cleaned_up
         assert _FakeApplicationController.instances[0].main_ui_ready_notified
+        assert configure_mcp.call_args.kwargs["client_history"] is _FakeApplicationController.instances[0].remote_engine.history
         assert order.index("loading_screen_shown") < order.index("late_imports")
         assert order.index("process_events") < order.index("late_imports")
 

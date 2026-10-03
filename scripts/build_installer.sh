@@ -215,8 +215,10 @@ actual_version="$("$EXE_PATH" --version)"
 
 if command -v xvfb-run >/dev/null; then
     xvfb-run -a "$EXE_PATH" --self-test
+    xvfb-run -a "$PYTHON" scripts/check_release_health.py --executable "$EXE_PATH" --output build/release-health.json --timeout 45
 elif [[ -n "${DISPLAY:-}" ]]; then
     "$EXE_PATH" --self-test
+    "$PYTHON" scripts/check_release_health.py --executable "$EXE_PATH" --output build/release-health.json --timeout 45
 else
     echo "    warning: bundle import self-test skipped (install xvfb to run it headlessly)" >&2
 fi

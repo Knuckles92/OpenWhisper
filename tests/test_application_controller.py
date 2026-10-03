@@ -324,6 +324,9 @@ class FakeExecutor:
         self.shutdown_called = False
 
     def submit(self, fn, *args):
+        if fn.__name__ in ("_persist_history", "_preserve_failed_audio", "recover_recordings"):
+            fn(*args)
+            return types.SimpleNamespace()
         self.submissions.append((fn, args))
         return types.SimpleNamespace()
 
@@ -338,7 +341,7 @@ class FakeHistoryManager:
 
     def add_entry(self, **kwargs):
         self.entries.append(kwargs)
-        return kwargs
+        return types.SimpleNamespace(audio_file="retained.wav")
 
     def preserve_recording(self, source_path):
         self.preserved.append(source_path)
@@ -741,7 +744,7 @@ def _install_module_stubs(settings_manager, history_manager, keyboard, db_state)
     hf_access_module.ConsentAction = _RealConsentAction
     hf_access_module.resolve_model_repo = lambda name: name
     hf_access_module.download_model_files = (
-        lambda name, progress_callback=None: f"/cache/{name}"
+        lambda name, progress_callback=None, **kwargs: f"/cache/{name}"
     )
     hf_access_module.delete_model_from_cache = lambda name: None
     hf_access_module.is_hf_hub_offline_env_set = lambda: False
@@ -811,6 +814,8 @@ class TestApplicationController:
         # Load the adapter and its cache before the snapshot so later tests
         # cannot retain an orphan cache module that their mocks never reach.
         importlib.import_module("transcriber.optional_backend")
+        importlib.import_module("services.local_asr.process")
+        importlib.import_module("services.isolated")
         speech_cache = importlib.import_module("services.local_asr.cache")
         monkeypatch.setattr(
             speech_cache, "model_dir",
@@ -861,6 +866,7 @@ class TestApplicationController:
         controller = self.app_controller_module.ApplicationController(DummyUIController())
         controller.executor.shutdown(wait=False)
         controller.executor = FakeExecutor()
+        controller.persistence_executor = FakeExecutor()
         return controller
 
     def test_model_switch_updates_backend_and_device_info(self):
@@ -2413,7 +2419,7 @@ class TestApplicationController:
         with patch.object(
             self.app_controller_module,
             "download_model_files",
-            side_effect=lambda name, progress_callback=None: (
+            side_effect=lambda name, progress_callback=None, **kwargs: (
                 fetched.append(name) or f"/cache/{name}"
             ),
         ):
@@ -2946,3 +2952,125 @@ class TestApplicationController:
         else:
             ui.show_required_runtime_dialog.assert_not_called()
             controller.request_component_install.assert_not_called()
+
+
+    def test_history_persistence_is_queued_and_keeps_recording_slot(self):
+        controller = self._create_controller()
+        runtime = controller.transcription_runtime
+        pending = []
+        controller.persistence_executor.submit = lambda fn, *args: pending.append((fn, args))
+        assert runtime._claim_job()
+        controller._pending_audio_path = "source.wav"
+        controller._pending_source_name = "original.wav"
+        controller._on_transcription_complete("keep these words", None)
+        assert self.history_manager.entries == []
+        assert controller.ui_controller.transcription_text == "keep these words"
+        assert controller.ui_controller.copied[-1] == "keep these words"
+        assert runtime.has_active_job
+        assert not runtime.start_recording()
+        worker, args = pending.pop()
+        worker(*args)
+        assert self.history_manager.entries[0]["source_name"] == "original.wav"
+        assert not runtime.has_active_job
+
+    def test_history_failure_is_visible_and_keeps_transcript(self):
+        controller = self._create_controller()
+        runtime = controller.transcription_runtime
+        assert runtime._claim_job()
+        with patch.object(self.history_manager, "add_entry", side_effect=OSError("disk full")):
+            controller._on_transcription_complete("recover this text", None)
+        assert "History could not be saved" in controller.ui_controller.statuses[-1]
+        assert controller.ui_controller.transcription_text == "recover this text"
+        assert controller.ui_controller.copied[-1] == "recover this text"
+        assert not runtime.has_active_job
+
+    def test_capture_failure_preserves_audio_without_transcribing(self):
+        from unittest.mock import Mock
+        controller = self._create_controller()
+        controller.recorder.last_capture_error = "microphone disconnected"
+        controller.current_backend.transcribe = Mock()
+        runtime = controller.transcription_runtime
+        runtime.on_capture_error("microphone disconnected")
+        assert runtime.has_active_job
+        worker, args = controller.executor.submissions[-1]
+        worker(*args)
+        controller.current_backend.transcribe.assert_not_called()
+        assert self.history_manager.preserved
+        assert "microphone disconnected" in controller.ui_controller.statuses[-1]
+        assert not runtime.has_active_job
+
+    def test_queued_capture_error_after_cancel_does_not_stop_new_recording(self):
+        controller = self._create_controller()
+        controller.recorder.is_recording = True
+        controller.recorder.last_capture_error = None
+        before = list(controller.executor.submissions)
+        controller.transcription_runtime.on_capture_error("old microphone error")
+        assert controller.recorder.is_recording
+        assert controller.executor.submissions == before
+        assert not controller.transcription_runtime.has_active_job
+
+    def test_history_refresh_failure_releases_recording_slot(self):
+        controller = self._create_controller()
+        runtime = controller.transcription_runtime
+        assert runtime._claim_job()
+        with patch.object(controller.ui_controller, "refresh_history", side_effect=RuntimeError("view closed")):
+            controller._on_transcription_complete("saved despite view failure", None)
+        assert self.history_manager.entries[0]["text"] == "saved despite view failure"
+        assert not runtime.has_active_job
+        assert controller._pending_audio_path is None
+
+    def test_shutdown_refuses_new_jobs_but_releases_finished_job(self):
+        controller = self._create_controller()
+        runtime = controller.transcription_runtime
+        assert runtime._claim_job()
+        controller._shutting_down = True
+        runtime._finish_job()
+        assert not runtime.has_active_job
+        assert not runtime._claim_job()
+
+    def test_quit_drains_queued_history_before_closing_database(self):
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+
+        controller = self._create_controller()
+        controller.persistence_executor.shutdown(wait=True)
+        controller.persistence_executor = ThreadPoolExecutor(max_workers=1)
+        entered, release = threading.Event(), threading.Event()
+
+        def busy_writer():
+            entered.set()
+            assert release.wait(5)
+
+        controller.persistence_executor.submit(busy_writer)
+        assert entered.wait(2)
+        assert controller.transcription_runtime._claim_job()
+        controller._on_transcription_complete("accepted words survive Quit", None)
+        assert self.history_manager.entries == []
+
+        saved_at_database_close = []
+        close = self.app_controller_module.db.close
+
+        def close_database():
+            saved_at_database_close.extend(self.history_manager.entries)
+            close()
+
+        # Release only once shutdown has begun, proving the save was still
+        # queued when Quit reached its executor-drain path.
+        def unblock_when_shutting_down():
+            import time
+            deadline = time.monotonic() + 3
+            while not controller._shutting_down and time.monotonic() < deadline:
+                time.sleep(.01)
+            release.set()
+
+        releaser = threading.Thread(target=unblock_when_shutting_down)
+        releaser.start()
+        try:
+            with patch.object(self.app_controller_module.db, "close", close_database):
+                controller.cleanup()
+            assert len(saved_at_database_close) == 1
+            assert saved_at_database_close[0]["text"] == "accepted words survive Quit"
+        finally:
+            release.set()
+            releaser.join(3)
+            controller.persistence_executor.shutdown(wait=True)

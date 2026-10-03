@@ -41,6 +41,7 @@ from meeting.stored import compact_finalization_list_fields, load_state, open_st
 from meeting.time_utils import meeting_duration_s
 from meeting.web.auth import resolve_role
 from meeting.web.ws import WsHub
+from services.titles import normalize_title
 
 logger = logging.getLogger(__name__)
 
@@ -450,14 +451,12 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             headers={"Cache-Control": "no-store"},
         )
 
-    @app.post("/api/meetings/{meeting_id}/rename")
-    async def api_rename_meeting(meeting_id: str, request: Request,
-                                 token: str = "") -> Dict[str, Any]:
-        await _require(token, host_only=True)
-        body = await _json_body(request)
-        title = str(body.get("title") or "").strip()
-        if not title:
-            raise HTTPException(status_code=400, detail="title required")
+    async def retitle_saved_meeting(meeting_id: str, title: str) -> Dict[str, Any]:
+        """Shared local action; callers establish authorization before dispatch."""
+        try:
+            title = normalize_title(title)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         store = getattr(engine, "store", None)
         if store is not None and getattr(engine, "meeting_id", None) == meeting_id:
             results = await asyncio.to_thread(
@@ -477,6 +476,27 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                 await asyncio.to_thread(repository.rename_meeting, meeting_id, title)
                 ok = True
         return {"ok": ok, "title": title}
+
+    async def refresh_saved_meeting_title(meeting_id: str) -> None:
+        store = getattr(engine, "store", None)
+        if store is not None and getattr(engine, "meeting_id", None) == meeting_id:
+            changed = await asyncio.to_thread(store.refresh_title)
+            if changed:
+                # A reconnect sends a full hello without inventing an audit seq.
+                hub.schedule_invalidate_connections(resync=True)
+        cached = review_stores.get(meeting_id)
+        if cached is not None:
+            await asyncio.to_thread(cached.refresh_title)
+
+    app.state.retitle_saved_meeting = retitle_saved_meeting
+    app.state.refresh_saved_meeting_title = refresh_saved_meeting_title
+
+    @app.post("/api/meetings/{meeting_id}/rename")
+    async def api_rename_meeting(meeting_id: str, request: Request,
+                                 token: str = "") -> Dict[str, Any]:
+        await _require(token, host_only=True)
+        body = await _json_body(request)
+        return await retitle_saved_meeting(meeting_id, body.get("title"))
 
     @app.post("/api/meetings/{meeting_id}/review")
     async def api_insight_review(meeting_id: str, request: Request, token: str = "") -> Dict[str, Any]:

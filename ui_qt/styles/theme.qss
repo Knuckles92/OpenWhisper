@@ -1799,7 +1799,8 @@ QComboBox#engineFieldPrimary:disabled {
 }
 
 QComboBox#engineField::drop-down,
-QComboBox#engineFieldPrimary::drop-down {
+QComboBox#engineFieldPrimary::drop-down,
+QComboBox#hostModelCombo::drop-down {
     border: none;
     background-color: transparent;
     width: 20px;
@@ -1808,7 +1809,8 @@ QComboBox#engineFieldPrimary::drop-down {
 /* The global fallback draws its arrow from two borders, which reads as a stray
    corner mark at this field size. */
 QComboBox#engineField::down-arrow,
-QComboBox#engineFieldPrimary::down-arrow {
+QComboBox#engineFieldPrimary::down-arrow,
+QComboBox#hostModelCombo::down-arrow {
     image: url(ui_qt/assets/tabler/chevron-down-gray@icon-suffix.svg);
     border: none;
     width: 14px;

@@ -204,6 +204,33 @@ def test_the_host_toggle_saves_the_opt_in():
     dialog.close()
 
 
+@pytest.mark.parametrize("mode", ["classic", "omarchy"])
+def test_client_history_sharing_is_separate_from_storage(mode, monkeypatch):
+    from services.settings import SettingsKey, settings_manager
+
+    monkeypatch.setenv("OPENWHISPER_UI", mode)
+
+    class HistoryService(_Service):
+        def set_share_history(self, enabled):
+            settings_manager.save_setting(SettingsKey.REMOTE_CLIENT_HISTORY, enabled)
+
+    records = FakeRecords()
+    dialog, section = _section(records, HistoryService())
+    dialog.resize(520, 740)
+    QApplication.processEvents()
+    assert section.share_history_tile.isVisibleTo(dialog)
+    assert not section.share_history_tile.checkbox.isChecked()
+    assert section.share_history_tile.minimumSizeHint().width() <= 520
+    section.share_history_tile.checkbox.setChecked(True)
+    assert settings_manager.get(SettingsKey.REMOTE_CLIENT_HISTORY) is True
+    assert records.location() == "local" and records.locations == []
+    section.refresh()
+    assert section.share_history_tile.checkbox.isChecked()
+    section.share_history_tile.checkbox.setChecked(False)
+    assert settings_manager.get(SettingsKey.REMOTE_CLIENT_HISTORY) is False
+    dialog.close()
+
+
 def _remote_entry(entry_id, text, when="2026-09-27T10:00:00+00:00", audio=True):
     return {"id": entry_id, "text": text, "raw_text": None, "timestamp": when,
             "model": "parakeet (cuda)", "transcription_time": 1.0, "audio_duration": 2.0,

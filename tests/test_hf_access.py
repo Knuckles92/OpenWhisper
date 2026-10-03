@@ -12,7 +12,6 @@ from services.hf_access import (
     HuggingFaceAccessCoordinator,
     _progress_tqdm_class,
     delete_model_from_cache,
-    download_model_files,
     format_download_size,
     format_size_bytes,
     invalidate_cached_models_snapshot,
@@ -47,9 +46,19 @@ class TestHelpers:
         # Unknown names (custom repos, paths) pass through unchanged
         assert resolve_model_repo("me/my-model") == "me/my-model"
 
+    def test_bundled_repositories_match_faster_whisper_aliases(self):
+        from faster_whisper.utils import _MODELS
+
+        for name, repo in _MODELS.items():
+            assert resolve_model_repo(name) == repo
+
     def test_is_model_cached_local_directory(self):
         """A local model directory counts as cached without any lookup."""
+        from pathlib import Path
         with tempfile.TemporaryDirectory() as tmp:
+            for name, contents in (("model.bin", b"weights"), ("config.json", b"{}"),
+                                   ("tokenizer.json", b"{}")):
+                Path(tmp, name).write_bytes(contents)
             assert is_model_cached(tmp)
 
     def test_progress_tqdm_reports_bytes(self):
@@ -86,7 +95,8 @@ class TestHelpers:
         with patch("huggingface_hub.snapshot_download", side_effect=fake_snapshot), patch(
             "faster_whisper.utils._MODELS", {"base": "Systran/faster-whisper-base"}
         ):
-            path = download_model_files("base", progress_callback=lambda *_: None)
+            from services.hf_access import _download_model_files_in_process
+            path = _download_model_files_in_process("base", progress_callback=lambda *_: None)
 
         assert path == "/cache/base"
         assert captured["repo_id"] == "Systran/faster-whisper-base"

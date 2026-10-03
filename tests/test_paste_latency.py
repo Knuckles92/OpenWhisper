@@ -160,6 +160,7 @@ def _harness(monkeypatch, ui_factory=FakeUI):
         overlay_state_update=overlay,
         status_update=Mock(),
         recording_state_changed=Mock(),
+        persistence_executor=SimpleNamespace(submit=lambda fn, *args: fn(*args)),
         _pending_audio_path="recording.wav",
         _pending_audio_duration=10.0,
         _pending_file_size=4096,
@@ -169,6 +170,7 @@ def _harness(monkeypatch, ui_factory=FakeUI):
         _transcription_start_time=None,
     )
     runtime = TranscriptionRuntime(controller)
+    controller.history_persisted = SimpleNamespace(emit=runtime.on_history_persisted)
     monkeypatch.setattr(runtime, "_model_info_for_history", lambda: "parakeet")
     return SimpleNamespace(
         events=events,
@@ -222,8 +224,9 @@ def test_history_failure_still_pastes(h, caplog):
         h.runtime.on_transcription_complete("hello world")
 
     assert h.paste.called
-    assert h.ui.statuses[-1] == "Ready (Pasted)"
-    assert "Failed to save transcription to history: database is locked" in caplog.text
+    assert "Ready (Pasted)" in h.ui.statuses
+    assert "History could not be saved: database is locked" in h.ui.statuses[-1]
+    assert "Failed to save transcription to history" in caplog.text
     assert h.controller._pending_audio_path is None
     assert not h.runtime.has_active_job
 
@@ -250,13 +253,13 @@ def test_unexpected_clipboard_error_still_records_history_and_frees_the_job(h):
     assert not h.runtime.has_active_job
 
 
-def test_upload_saves_history_before_ready_and_never_pastes(h):
+def test_upload_displays_ready_then_saves_history_and_never_pastes(h):
     h.runtime._deliver_to_clipboard = False
 
     h.runtime.on_transcription_complete("uploaded words")
 
     delivery = [e for e in h.events if not (isinstance(e, tuple) and e[0] == "overlay")]
-    assert delivery == ["history", "refresh_history", ("status", "Ready")]
+    assert delivery == [("status", "Ready"), "history", "refresh_history"]
     assert not h.paste.called
     assert not h.runtime.has_active_job
 

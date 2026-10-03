@@ -95,6 +95,8 @@ class ApplicationController(QObject):
     # fixed text, optional raw text, optional CleanupInfo
     transcription_completed = pyqtSignal(str, object, object)
     transcription_failed = pyqtSignal(str)
+    recording_capture_failed = pyqtSignal(str)
+    history_persisted = pyqtSignal(object)
     remote_catalog_received = pyqtSignal(object, object, object)
     # Multi-file upload, emitted from the batch worker thread.
     # (1-based position, total, source name) as each file starts
@@ -202,7 +204,13 @@ class ApplicationController(QObject):
 
         saved_device_id = settings_manager.load_audio_input_device()
         self.recorder = AudioRecorder(device_id=saved_device_id)
+        self.recorder.error_callback = self.recording_capture_failed.emit
+        self._shutdown_cancel = threading.Event()
+        self._shutting_down = False
         self.executor = ThreadPoolExecutor(max_workers=2)
+        self.persistence_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="history-save"
+        )
         # Component installs get their own single worker. They can run for
         # tens of minutes, and letting one occupy the shared 2-worker pool
         # would starve transcription and model loading.
@@ -390,6 +398,7 @@ class ApplicationController(QObject):
         self.ui_controller.get_loaded_local_model = self.get_loaded_local_model
         self.ui_controller.get_remote_models = self.remote_models
         self.ui_controller.on_remote_model_selected = self.select_remote_model
+        self.ui_controller.on_host_model_selected = self.select_host_model
         self.ui_controller.on_remote_runtime_selected = self.select_remote_runtime
         self.ui_controller.get_missing_local_runtime = self.get_missing_local_runtime
         self.ui_controller.on_dictation_transcribe = self.transcribe_clip
@@ -517,6 +526,8 @@ class ApplicationController(QObject):
         return not self._reload_in_flight and not self._reload_pending
 
     def _reload_worker(self) -> None:
+        if self._shutting_down:
+            return
         warm = self._reload_selected_engine()
         if warm is None:
             return
@@ -542,7 +553,7 @@ class ApplicationController(QObject):
         to warm and finish, or None when the reload has finished here.
         """
         with self._engine_lock:
-            if self.is_meeting_active() or self.recorder.is_recording or self.is_transcribing():
+            if self._shutting_down or self.is_meeting_active() or self.recorder.is_recording or self.is_transcribing():
                 self._reload_in_flight = False
                 self.engine_busy_changed.emit(False)
                 return None
@@ -584,6 +595,8 @@ class ApplicationController(QObject):
             return None
 
     def _finish_speech_reload(self, selected) -> None:
+        if self._shutting_down:
+            return
         with self._reload_handoff_lock:
             self._reload_in_flight = False
             restore, self._restore_after_reload = self._restore_after_reload, False
@@ -618,6 +631,8 @@ class ApplicationController(QObject):
         main thread.
         """
         try:
+            if self._shutting_down:
+                return
             local_backend = self.transcription_backends.get("local_whisper")
             if local_backend:
                 local_backend.reload_model()
@@ -651,6 +666,8 @@ class ApplicationController(QObject):
             self._flush_pending_streaming_setup()
 
     def _flush_pending_streaming_setup(self) -> None:
+        if self._shutting_down:
+            return
         if self._pending_streaming_setup:
             self._pending_streaming_setup = False
             self.streaming_setup_requested.emit()
@@ -917,6 +934,7 @@ class ApplicationController(QObject):
         report it to.
         """
         from transcriber.optional_backend import LocalSpeechBackend
+        self.executor.submit(self.transcription_runtime.recover_recordings)
         if isinstance(self.current_backend, LocalSpeechBackend):
             self._pending_streaming_setup = True
             self._start_initial_whisper_load()
@@ -956,6 +974,7 @@ class ApplicationController(QObject):
         # Records kept on (or copied to) the paired host: after the database
         # is initialized above, on the sync's own thread.
         self.record_sync.start()
+        self.remote_engine.start_client_history()
         self._warm_openai_sdk()
 
     def _warm_openai_sdk(self) -> None:
@@ -1069,17 +1088,31 @@ class ApplicationController(QObject):
         finally:
             request.done.set()
 
-    def _switch_engine_to(self, family: str, model: str, device_name: str, *, runtime: Optional[dict] = None,
+    def select_host_model(self, family: str, model: str) -> Optional[str]:
+        """Host Mode's engine picker: serve another model ready on this computer.
+
+        Switches the way a paired computer's request does, so every view
+        follows. Returns why it can't, or None once the switch is under way.
+        """
+        try:
+            return self._switch_engine_to(family, model, None)
+        except Exception as exc:
+            logger.exception("Switching the served model failed")
+            return f"Couldn't switch models: {exc}"
+
+    def _switch_engine_to(self, family: str, model: str, device_name: Optional[str], *,
+                          runtime: Optional[dict] = None,
                           target_device: Optional[str] = None) -> Optional[str]:
         """Select a model here as the user would; returns why not, or None once queued.
 
         Persists the model the way the engine fields do, selects its backend
         through the main window so every view follows, and queues the reload
-        whose end ``_engine_settled`` reports.
+        whose end ``_engine_settled`` reports. ``device_name`` is the paired
+        computer that asked, or None when it was asked for on this computer.
         """
         from services.local_asr.catalog import BACKENDS, MODELS, WHISPER_BACKEND
 
-        name = socket.gethostname()
+        name = socket.gethostname() if device_name else "This computer"
         if self.is_meeting_active():
             return f"{name} is running a meeting. Change its model after the meeting ends."
         if self.recorder.is_recording or self.is_transcribing():
@@ -1115,7 +1148,10 @@ class ApplicationController(QObject):
             label = f"Whisper {model}"
         else:
             return f"{name} can't run {model}."
-        logger.info("Paired computer %s switched this computer to %s", device_name, label)
+        if device_name:
+            logger.info("Paired computer %s switched this computer to %s", device_name, label)
+        else:
+            logger.info("Host Mode switched this computer to %s", label)
         if self._current_model_name != family:
             display = next(key for key, value in config.MODEL_VALUE_MAP.items() if value == family)
             self.ui_controller.select_transcription_backend(display)
@@ -1126,7 +1162,8 @@ class ApplicationController(QObject):
         if (runtime is None and target_device is None and family == WHISPER_BACKEND and whisper is not None and whisper.is_available()
                 and whisper.last_loaded_model == model and not self._reload_pending):
             return None  # Selecting the backend was all it took.
-        self._reload_note = f"Switching to {label} for {device_name}..."
+        self._reload_note = (f"Switching to {label} for {device_name}..." if device_name
+                             else f"Switching to {label}...")
         self.reload_whisper_model()
         return None
 
@@ -1976,6 +2013,8 @@ class ApplicationController(QObject):
         backend = self.transcription_backends.get("local_whisper")
         success = False
         try:
+            if self._shutdown_cancel.is_set():
+                return
             if not load_into_engine:
                 success = self._download_model_to_cache(model_name)
                 return
@@ -1984,7 +2023,8 @@ class ApplicationController(QObject):
             decision = hf_access_coordinator.evaluate_access(model_name)
             if decision == AccessDecision.DOWNLOAD_ALLOWED:
                 self.status_update.emit(f"Downloading model '{model_name}'...")
-                download_model_files(model_name, progress_callback=self._hf_download_progress(model_name))
+                download_model_files(model_name, progress_callback=self._hf_download_progress(model_name),
+                                     cancel=self._shutdown_cancel)
             elif decision != AccessDecision.LOAD_CACHED:
                 self.status_update.emit(f"Model '{model_name}' is unavailable")
                 return
@@ -1992,7 +2032,7 @@ class ApplicationController(QObject):
             # A download can finish after the user switched engines or started
             # a meeting. Only the selected engine may acquire resident weights.
             with self._engine_lock:
-                if self._refuse_engine_load_during_meeting() or self.current_backend is not backend:
+                if self._shutting_down or self._refuse_engine_load_during_meeting() or self.current_backend is not backend:
                     return
                 backend.reload_model(model_name)
                 success = backend.is_available()
@@ -2020,6 +2060,8 @@ class ApplicationController(QObject):
         model happens to be the missing selected one. Returns True when the
         files are present afterwards.
         """
+        if self._shutdown_cancel.is_set():
+            return False
         backend = self.transcription_backends.get("local_whisper")
         decision = hf_access_coordinator.evaluate_access(model_name)
         if decision not in (
@@ -2038,6 +2080,7 @@ class ApplicationController(QObject):
             download_model_files(
                 model_name,
                 progress_callback=self._hf_download_progress(model_name),
+                cancel=self._shutdown_cancel,
             )
             self.status_update.emit(f"Model '{model_name}' downloaded")
         # Bridge: fetching the currently-missing selected model also
@@ -2053,7 +2096,7 @@ class ApplicationController(QObject):
             if self._refuse_engine_load_during_meeting():
                 return True
             with self._engine_lock:
-                if self.is_meeting_active() or self.current_backend is not backend:
+                if self._shutting_down or self.is_meeting_active() or self.current_backend is not backend:
                     return True
                 backend.reload_model(model_name)
             if backend.is_available():
@@ -2074,7 +2117,7 @@ class ApplicationController(QObject):
         succeeded = 0
         try:
             for model_name in model_names:
-                if self._batch_stop_requested:
+                if self._batch_stop_requested or self._shutdown_cancel.is_set():
                     break
                 hf_access_coordinator.grant_once(model_name)
                 self.model_download_started.emit(model_name)
@@ -2111,13 +2154,14 @@ class ApplicationController(QObject):
     def change_audio_device(self, device_id: Optional[int]) -> None:
         logger.info(f"Changing audio device to: {device_id}")
 
-        if self.recorder.is_recording:
+        if self.recorder.is_recording or self.transcription_runtime.has_active_job:
             logger.warning("Cannot change audio device while recording")
-            self.ui_controller.set_status("Stop recording before changing device")
+            self.ui_controller.set_status("Wait for the recording to finish before changing device")
             return
 
         self.recorder.cleanup()
         self.recorder = AudioRecorder(device_id=device_id)
+        self.recorder.error_callback = self.recording_capture_failed.emit
         self.streaming_runtime.setup_audio_level_callback()
 
         device_name = "System Default" if device_id is None else f"Device {device_id}"
@@ -2363,6 +2407,8 @@ class ApplicationController(QObject):
         self.remote_clients_changed.connect(self.ui_controller.set_remote_clients)
         self.ui_controller.on_remote_retry = self.retry_remote_now
         self.status_update.connect(self.ui_controller.set_status)
+        self.recording_capture_failed.connect(self.transcription_runtime.on_capture_error)
+        self.history_persisted.connect(self.transcription_runtime.on_history_persisted)
         self.device_info_update.connect(self.ui_controller.set_device_info)
         self.engine_busy_changed.connect(self.ui_controller.set_engine_busy)
         self.engine_busy_changed.connect(self._on_engine_busy_for_host)
@@ -2464,6 +2510,12 @@ class ApplicationController(QObject):
     def cleanup(self) -> None:
         """Release application resources in dependency order."""
         logger.info("Starting application cleanup...")
+        shutdown_started = time.perf_counter()
+        self._shutting_down = True
+        if hasattr(self, "_shutdown_cancel"):
+            self._shutdown_cancel.set()
+        self._batch_stop_requested = True
+        self.transcription_runtime.begin_shutdown()
 
         try:
             if self.current_backend and self.current_backend.is_transcribing:
@@ -2475,6 +2527,8 @@ class ApplicationController(QObject):
         try:
             if hasattr(self, "_watchdog_timer") and self._watchdog_timer:
                 self._watchdog_timer.stop()
+            if hasattr(self, "_reload_timer") and self._reload_timer:
+                self._reload_timer.stop()
             if hasattr(self, "_periodic_refresh_timer") and self._periodic_refresh_timer:
                 self._periodic_refresh_timer.stop()
             if hasattr(self, "_update_check_timer") and self._update_check_timer:
@@ -2483,6 +2537,19 @@ class ApplicationController(QObject):
                 self._update_cancel.set()
         except Exception as exc:
             logger.debug(f"Error stopping watchdog timers: {exc}")
+
+        # Close every backend before joining the executor: it may be waiting
+        # inside model construction, preview warmup, or a network request, even
+        # when is_transcribing is False. These process/connection boundaries
+        # interrupt running work; cancel_futures alone cannot do that.
+        for name, backend in self.transcription_backends.items():
+            try:
+                backend.cancel_transcription()
+                backend.cleanup()
+            except Exception as exc:
+                logger.debug("Error interrupting %s: %s", name, exc)
+        from services.local_asr.process import close_all_workers
+        close_all_workers()
 
         try:
             # Shut the meeting engine down early: it owns capture streams, a
@@ -2544,6 +2611,10 @@ class ApplicationController(QObject):
             except Exception as exc:
                 logger.debug(f"Error during executor shutdown: {exc}")
 
+        # Accepted transcripts must survive Quit even while another history
+        # save is running. Drain this queue before SQLite or UI resources close.
+        self.persistence_executor.shutdown(wait=True, cancel_futures=False)
+
         try:
             for backend_name, backend in self.transcription_backends.items():
                 try:
@@ -2567,3 +2638,5 @@ class ApplicationController(QObject):
             logger.debug(f"Error closing database: {exc}")
 
         logger.info("Application controller cleaned up")
+        from services.diagnostics import record_metrics
+        record_metrics(shutdown_s=time.perf_counter() - shutdown_started)

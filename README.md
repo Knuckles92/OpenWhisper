@@ -24,8 +24,10 @@ Use a [packaged release](#install) with bundled Python and dependencies, or [run
 - **Audio files:** Transcribe one file or a queue, keep results separate or combine them, and copy the output when ready.
 - **Meetings:** Capture microphone and system audio, follow a live dashboard, review searchable transcripts and AI insights, play recordings, and export. Available on Windows and macOS 13+; Linux system audio is a [preview](docs/linux-system-audio.md).
 - **AI cleanup:** Apply spelling and style rules or reusable [cleanup profiles](docs/cleanup-profiles.md), with separate text-model choices for dictation and meetings.
-- **One Settings window:** An Overview of what is running, each model choice on the page for the feature it powers, local models and runtimes under Downloads, and Ctrl+K search across every setting, model, and help note.
+- **Settings:** Choose models, manage downloads, and find settings with Ctrl+K search.
 - **History:** Search, retranscribe, and export transcripts as Markdown, plain text, or JSON. See [export format support](docs/export-support.md) for what each format includes.
+- **Agent history API (preview):** Search saved transcripts and meeting notes through an opt-in, authenticated local API. See [API setup](docs/agent-api.md).
+- **MCP:** Enable **Settings → MCP** to connect an agent to history, transcripts, and meeting insights. Optionally allow retitling and choose which settings agents may change. See [MCP setup](docs/mcp.md).
 
 The app also includes microphone selection, a system tray where available, and dark, light, or system-matched themes.
 
@@ -53,11 +55,13 @@ Downloads include `SHA256SUMS.txt` for verification. Compare your file's hash us
 
 ### macOS permissions
 
-Allow **Microphone** for recording, **Screen & System Audio Recording** for meeting system audio, and **Accessibility** for auto-paste under **System Settings → Privacy & Security**. Without Accessibility, you can still copy transcripts. **Settings → General → Set up auto-paste** shows the exact app to allow; if permission stops working after an update, remove its old entry, add that app again, and restart.
+In **System Settings → Privacy & Security**, allow **Microphone** for recording, **Screen & System Audio Recording** for meeting audio, and **Accessibility** for auto-paste. You can copy transcripts without Accessibility.
+
+**Settings → General → Set up auto-paste** shows which app to allow. If permission breaks after an update, remove its old entry, add the app again, and restart.
 
 ## Run from source
 
-Run OpenWhisper directly from a source checkout on Windows, macOS, or Linux. You'll need **Git** and **Python 3.11 or 3.12**; the steps below install the app's dependencies in a virtual environment. This also supports Intel Macs and Linux distributions without native packages.
+You'll need **Git** and **Python 3.11 or 3.12**. Source installs support Windows, macOS (including Intel Macs), and Linux distributions without native packages.
 
 ### One-time setup
 
@@ -90,7 +94,7 @@ On Linux, install Python's venv and development packages and a C compiler if nee
 
 ### Launch the app
 
-After setup, use these commands whenever you want to run OpenWhisper. Run them from your `OpenWhisper` checkout folder.
+Run these commands from your `OpenWhisper` checkout folder:
 
 **Windows (PowerShell):**
 
@@ -105,7 +109,7 @@ python main.py
 ./scripts/openwhisper
 ```
 
-The macOS/Linux launcher selects the project's virtual environment automatically. On macOS, it also lets Accessibility setup identify the correct app bundle. After launch, follow [Get started](#get-started) to choose a model and microphone.
+The macOS/Linux launcher selects the virtual environment and handles macOS app-bundle identification for Accessibility. Then follow [Get started](#get-started).
 
 ### Optional: launch from any terminal
 
@@ -113,13 +117,13 @@ To register `ow` and `openwhisper`, run `.\install.cmd` in PowerShell on Windows
 
 ### Optional: develop with uv
 
-Contributors can use `uv sync` and `uv run python main.py` without activating a virtual environment. See [development with uv](CONTRIBUTING.md#development-with-uv) for setup, tests, and NVIDIA GPU support. The pip instructions above and packaged releases do not require uv.
+Contributors can use `uv sync` and `uv run python main.py`. See [development with uv](CONTRIBUTING.md#development-with-uv) for setup, tests, and GPU support.
 
 ## GPU acceleration
 
-For Local Whisper, install **GPU Acceleration** from **Downloads → Components** on Windows or Linux x86_64. When Local Whisper finds an NVIDIA GPU without these libraries, it offers **Use this GPU**, which installs them, downloads the model the card should run, and loads it on the GPU. Source installs can instead run `python -m pip install -r requirements-gpu.txt` in the activated virtual environment. Both need an NVIDIA driver providing CUDA 12 (525+); the CUDA Toolkit is not required. macOS uses CPU.
+For Local Whisper on Windows or Linux x86_64, install **GPU Acceleration** from **Downloads → Components**, or choose **Use this GPU** when prompted. Requires an NVIDIA driver providing CUDA 12 (525+); the CUDA Toolkit is not needed. macOS uses CPU.
 
-On **Auto**, Local Whisper picks the compute type the card supports and has room for: float16 on RTX cards, int8_float32 on GTX 10-series and older cards, which have no float16. The log names the choice before loading, and **Downloads** gives each model's memory estimate for this computer's GPU. For example, turbo needs about 1.4 GB on a 4 GB GTX 1050 Ti.
+Source installs can use `python -m pip install -r requirements-gpu.txt` in the activated virtual environment. **Auto** selects a compatible compute type; **Downloads** shows GPU memory estimates.
 
 Other speech engines use their own runtimes from Downloads. The Meeting Intelligence Agent is also a separate component, available on Windows and Linux.
 
@@ -130,13 +134,13 @@ Use **Help → Check for Updates**. Windows applies an in-app update or opens se
 ## Get started
 
 1. Open **Settings → Voice model** and choose a speech backend. New Windows x64 installs default to Parakeet; other platforms default to Local Whisper. Existing choices are preserved.
-2. Download the selected model and any required runtime through **Settings → Downloads** (**Get models and runtimes** on the Voice model page opens it filtered to your engine), or add an OpenAI key in **Settings → API keys** for cloud transcription.
+2. Download the model and runtime through **Settings → Downloads**, or add an OpenAI key in **Settings → API keys** for cloud transcription.
 3. Choose your microphone in **Settings → Recording**. On macOS, grant the [required permissions](#macos-permissions).
 4. Use **Quick Record** or the recording hotkey. Stop recording to transcribe; dictation follows your clipboard and auto-paste settings. **Upload File** results stay in the app and have Copy buttons.
 
-For meetings, open **Meeting Mode**. Before starting, you can write an optional brief saying what you want out of the meeting — the AI note taker and the live copilot read it on every pass, so a request like "capture who objected to the vendor and why" is watched for as the meeting reaches it. The host can change it on the dashboard at any time. After local transcription finishes, **Continue in the background** lets you start another meeting while cleanup and reports finish; results remain in Past Meetings. Optional [insight review](docs/meeting-insight-review.md) uses TypeSafe to ask a few questions about uncertain commitments, owners, deadlines, or decisions; your answers update the insights and notes.
+For meetings, open **Meeting Mode**. Add an optional brief to guide AI notes and the live copilot; you can edit it during the meeting. After transcription, **Continue in the background** lets you start another meeting while reports finish. Find results in **Past Meetings**.
 
-Optional [fast judgments](docs/typesafe-fast-judgments.md) add advisory citation checks, meaning-based history search, an open-question radar, and clickable highlight pulses. Enable them individually under **Meeting Mode → Fast judgments**. Spoken instructions also support recaps and reversible term corrections.
+Optional [insight review](docs/meeting-insight-review.md) helps clarify uncertain decisions and commitments. [Fast judgments](docs/typesafe-fast-judgments.md) add citation checks, meaning-based history search, and live meeting cues; enable them under **Meeting Mode → Fast judgments**.
 
 ### Hotkeys
 
@@ -149,53 +153,78 @@ Change shortcuts and choose **Toggle** or **Push and hold** in **Settings → Ho
 | Enable/disable program | `Ctrl+Alt+Numpad *` | `Control+Option+Shift+R` |
 | Minimize to tray | `Ctrl+Alt+M` | `Control+Option+M` |
 
-On Linux, hotkeys also reach the focused app. Native Wayland limits global hotkeys and auto-paste; use in-app controls and clipboard copy, or an X11 session for those integrations. On macOS, auto-paste requires Accessibility permission; normal global hotkeys do not.
+On X11 Linux, hotkeys also reach the focused app. Omarchy supports desktop shortcuts and auto-paste; other native Wayland desktops use focused-window shortcuts and manual paste. macOS auto-paste requires Accessibility permission; global hotkeys do not.
+
+### Omarchy / Hyprland
+
+OpenWhisper adapts to Omarchy 3 and 4 with a compact interface and desktop colors. Hyprland manages window placement and sizing; Omarchy mode supports desktop shortcuts and auto-paste on Hyprland 0.55+.
+
+Choose **Settings → General → Theme → Omarchy desktop** to follow your desktop palette. An optional [Omarchy 4 bar widget](integrations/omarchy) provides recording controls, status, and live text.
 
 ## Speech models
 
 | Backend | Models | Platform / device | Workflows |
 | --- | --- | --- | --- |
 | Local Whisper | Standard Whisper sizes, turbo, Distil-Whisper | All platforms, CPU; NVIDIA CUDA on Windows/Linux | Dictation with preview, uploads, meetings |
-| Parakeet | TDT 0.6B v3 | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU | Dictation with preview, uploads, meeting chunks |
+| Parakeet | TDT 0.6B v3; Orukeet TDT 0.6B community adaptation | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU | Dictation with preview, uploads, meeting chunks |
+| Parakeet MLX | TDT 0.6B v3, MLX Community weights | Apple Silicon, macOS 14+: Apple GPU through Metal or CPU | Dictation with preview, uploads, meeting chunks |
 | Qwen3-ASR | 0.6B, 1.7B | Windows x64 CPU / NVIDIA GPU | Dictation, uploads |
 | Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 and Linux x86_64 CPU / NVIDIA GPU | Dictation with preview, uploads, meetings with native preview |
 | Moonshine | Streaming Small / Medium, English | Windows x64 CPU | Dictation, uploads, meetings with native preview |
 | OpenAI API | GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027 | Cloud; API key and network required | Dictation, uploads |
 | Remote computer | Whichever engine the paired computer has selected | Another computer running OpenWhisper on your network | Dictation with that engine's preview, uploads, meetings with a supported host model |
 
-Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. macOS transcription uses CPU; see [GPU acceleration](#gpu-acceleration) for Windows and Linux.
+Optional local engines offer English, Russian, Spanish, French, Portuguese, Mandarin, and Auto where supported. Parakeet and Orukeet omit Mandarin; Moonshine offers English only. Qwen supports all these presets; Nemotron includes Mandarin in its broader coverage tier, where accuracy may vary. Auto detects other languages supported by the model. These controls transcribe speech rather than translate it. Paired computers expose the same host-supported choices.
+
+Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. On Apple Silicon Macs, select **Parakeet MLX**, download its runtime and model, and choose **Auto** to use the Apple GPU through Metal, or **CPU** to use the processor. This is an experimental integration; actual Apple Silicon transcription validation is pending. The MLX weights download is about 2.5 GB. Local Whisper and the GGUF Parakeet option use CPU on macOS; see [GPU acceleration](#gpu-acceleration) for Windows and Linux.
+
+Orukeet is an optional 25-language adaptation of NVIDIA Parakeet from Oruk AI,
+including Russian and English. Its r3 native Q8 download is 714 MB and uses the
+existing NVIDIA Speech runtime. Tested with the pinned Windows and Linux CPU/CUDA
+runtimes; Apple Silicon validation for Orukeet is pending. It remains a community model; evaluate it on
+your recordings. Its weights are CC BY-SA 4.0, with attribution and applicable
+ShareAlike terms; see [the publisher's notice](https://huggingface.co/oruk/orukeet/blob/main/NOTICE.md).
+
+Downloads shows the publisher, source host, license, selected version, and download
+checks. Optional ASR weights and runtime archives are pinned by version, size, and
+SHA-256. Built-in Whisper aliases use pinned Hugging Face commits; custom sources
+retain their publisher-selected version. Integrity checks do not guarantee model
+or runtime security. Keep OpenWhisper and its runtimes updated, and review important
+transcripts for errors. Local transcription runs on this computer after installation;
+downloading connects to the listed host. Cloud transcription, remote engines, and
+AI cleanup have their own network behavior.
+
+### Custom Whisper models
+
+Choose **Add custom models…** in **Settings → Downloads**, **Dictation → Voice model**, or **Meeting Mode → Voice & speakers**.
+
+- **Local files:** Choose a model folder or a parent folder containing several models. OpenWhisper lists complete model folders for you to select.
+- **Hugging Face:** Enter an `owner/model` repository and, optionally, a subfolder such as `ct2_int8_float16`. **Find on Hugging Face** lists compatible model folders without downloading weights. You can also discover models already in the local Hugging Face cache.
+
+Select the models you want and click **Add selected**, then choose one in **Voice model** or **Voice & speakers** to load it. Downloads follow your existing Hugging Face policy; cached models load offline. Custom folders must contain a CTranslate2 Whisper `model.bin`, valid `config.json`, and `tokenizer.json`. Original PyTorch weights need conversion before use. Removing a custom entry keeps its source files.
 
 ### Remote engine
 
-Dictate on a laptop while a desktop or home server with a GPU does the transcription. Both computers run OpenWhisper:
+Use another computer's OpenWhisper engine for dictation, uploads, or meetings:
 
 1. On the computer with the engine, open **Settings → Dictation → Remote engine**, turn on **Share this computer's engine**, and click **Pair a device**. Allow OpenWhisper through the firewall if Windows asks.
 2. On the other computer, open the same page, enter the host's address (shown under the switch) and the six-digit code, and click **Pair**. Check that both screens show the same identity code.
 3. Click **Use for dictation**, or choose **Remote computer** as the recording engine.
 
-The host serves the engine selected on it. Traffic is encrypted, and only paired computers can connect; remove one from **Paired computers** to cut it off.
+The host's selected engine handles transcription. Traffic is encrypted and limited to paired computers; remove access under **Paired computers**.
 
-For meetings, choose **Settings → Meeting Mode → Voice & speakers → Speech engine → Remote computer**, or **Use for meetings** on the Remote engine page. This choice is independent of dictation; **This computer** remains the default and remembers your local meeting model. **Test connection** checks pairing, availability, and meeting support without sending audio. **Configure remote engine → Manage host models** lets you select the host's model and device; those choices affect every connected client. Supported meeting hosts run Whisper, Parakeet, Nemotron, or Moonshine. Native live previews follow the supported host model; Whisper updates through completed meeting chunks. The meeting's **Spoken language** is sent with its audio.
-
-Microphone and system-audio capture, recordings, transcripts, and on-device speaker identification remain on the computer running the meeting. In remote mode, speech audio is sent to the paired host for recognition, including the optional after-meeting re-transcription pass. AI insights and cloud speaker identification keep their separate settings. Keep both computers awake and the host's selected engine available throughout the meeting.
-
-A remote meeting checks its host before recording starts. If the connection drops later, capture continues to local disk, the dashboard shows the outage, and transcription retries automatically. End waits for pending transcription within its normal time budget; unfinished audio remains recoverable from Past Meetings. Recovery and re-transcription reuse the saved host identity, model, and language. If the host changes models, restore the original model to continue. Audio is never silently rerouted to a different paired computer or a local model.
-
-The **Remote computer** engine card in Quick Record and Upload shows the host's model, **Device** (Auto, CPU, or NVIDIA GPU), and Whisper **Quant** setting or the optional engine's **Language**. Choices reflect the host's hardware and installed runtimes. Changes apply to the host and connected clients, and wait while its engine reloads. The card separately shows the device and precision actually running, GPU name and total VRAM when reported, and connection route/latency. Both computers need an updated version for runtime controls; older hosts show read-only runtime details.
-
-**Manage host models** opens a searchable model browser with model details, download sizes, and CPU/GPU readiness. Download model weights, install missing speech runtimes, and choose a model and device to **Use on host**. The host must enable **Allow paired computers to manage models** in Settings → Remote engine. Runtime installs use the host's verified component catalog; model downloads also honor its Hugging Face download policy. Progress, failures, unsupported hardware/platforms, and required host restarts appear in the browser. Downloads and installations continue when it closes. Both computers need an updated version for remote runtime installation; older hosts direct you to their local Downloads page.
-
-The management permission is off by default and applies to all paired computers. For model weights, choose **Always allow downloads** under **Settings → Downloads** on the host, or download the model locally there; `HF_HUB_OFFLINE=1` blocks model downloads. Only bundled models and verified speech dependencies are accepted, with one remote model download and one runtime installation at a time. Accepted work continues after disconnect or permission changes while the host app remains running. Model deletion remains local to the host. The main engine card's existing model and runtime controls remain available without management permission.
-
-**With [Tailscale](https://tailscale.com/download)** on both computers, the laptop also works away from home. Computers on your tailnet that are sharing appear under **Computers on your tailnet**. If both are signed in to the same Tailscale account, click **Connect** and no code is needed; anyone else on your tailnet still uses a code. A computer paired at home over the LAN falls back to the host's Tailscale address when the LAN one is out of reach. The host can turn off code-free pairing with **Pair my Tailscale computers without a code**.
+- **Meetings:** Select **Remote computer** in **Settings → Meeting Mode → Voice & speakers → Speech engine**. Audio goes to the host for transcription; capture, recordings, and transcripts stay on the computer running the meeting.
+- **Host models:** Use **Manage host models** to choose or download a model and install speech runtimes. The host must first enable **Allow paired computers to manage models**.
+- **History through the host's MCP:** Enable **Allow the paired host to query this computer's history** on the client to let agents search its saved transcripts and meetings while it is online. Agents use `include_clients`; choose **Both** storage to keep host copies available while this computer is offline. See [direct client queries](docs/mcp.md#query-paired-clients-directly).
+- **Away from home:** Install [Tailscale](https://tailscale.com/download) on both computers. Hosts on your tailnet appear in the app; computers on the same Tailscale account can connect without a pairing code when the host allows it.
 
 ### AI cleanup and meeting intelligence
 
-Speech recognition and text processing use separate models. Choose the cleanup model on **Settings → AI cleanup** and the meeting model on **Settings → Intelligence**; each is set independently. Text providers include OpenAI, OpenRouter, Ollama, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints.
+Choose separate text models in **Settings → AI cleanup** and **Settings → Intelligence**. Providers include OpenAI, OpenRouter, Ollama, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. Ollama needs a separately managed server.
 
-Add credentials in **Settings → API keys**; they are stored in the OS credential store. Environment variables or a `.env` file provide a fallback when no key is saved: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENCODE_GO_API_KEY`, and `OPENCODE_ZEN_API_KEY`. Add custom endpoints from either chat-model picker. Ollama requires a separately managed server.
+Add credentials in **Settings → API keys**; keys use the OS credential store. Environment variables or `.env` provide a fallback: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENCODE_GO_API_KEY`, and `OPENCODE_ZEN_API_KEY`.
 
-Enable cleanup in **Settings → AI cleanup**, teach spelling and style in **Learned rules**, and use [Profiles](docs/cleanup-profiles.md) for formats such as emails or support tickets. Meeting settings control intelligence, end-of-meeting processing, and dashboard sharing.
+Enable cleanup in **Settings → AI cleanup**, teach spelling and style in **Learned rules**, and use [Profiles](docs/cleanup-profiles.md) for reusable formats.
 
 **Meeting insights through your own coding agent.** If you use **Claude Code**, **Codex**, or **OpenCode**, meetings can run on it instead of an API key. **Settings → Intelligence** shows which of them it found on this computer. Choose one and a model (or keep the agent's default), and meeting passes run with that agent's own sign-in, providers, and models. The agent gets OpenWhisper's meeting tools and nothing else. Claude Code and Codex run headless with their built-in tools switched off. OpenCode runs over the [Agent Client Protocol](https://agentclientprotocol.com) with its own tools denied. Each pass counts toward that agent's plan, so live insights refresh about once a minute rather than every few seconds. Custom reports use the same agent. OpenWhisper never installs or updates these agents.
 
@@ -203,7 +232,7 @@ Enable cleanup in **Settings → AI cleanup**, teach spelling and style in **Lea
 
 Downloaded speech models load from the local cache without network metadata checks. Install any required runtime before going offline.
 
-**Settings → Downloads → When a model is missing from this computer** controls missing-model downloads: ask first (default), always allow, or never connect unless you approve a one-time override. Setting `HF_HUB_OFFLINE=1` before launch blocks model downloads entirely. This controls model downloads; cloud transcription and remote text providers still require a network connection.
+Choose whether to ask, allow, or block missing-model downloads in **Settings → Downloads → When a model is missing from this computer**. Set `HF_HUB_OFFLINE=1` before launch to block model downloads entirely. Cloud transcription and remote text providers still need a network connection.
 
 <details>
 <summary>More screenshots</summary>

@@ -20,6 +20,9 @@ from services.text_model_catalog import model_spec
 from services.transcript_cleanup import TranscriptCleanup
 
 CASES = [
+    ("openai", "o4-mini", "responses", "/v1/responses"),
+    ("openai", "gpt-5.6-luna", "responses", "/v1/responses"),
+    ("openai", "gpt-4o-mini", "chat", "/v1/chat/completions"),
     ("ollama", "llama3.2", "chat", "/v1/chat/completions"),
     ("groq", "llama-3.3-70b-versatile", "chat", "/openai/v1/chat/completions"),
     ("opencode_go", "glm-5.2", "chat", "/zen/go/v1/chat/completions"),
@@ -30,6 +33,9 @@ CASES = [
     ("opencode_zen", "claude-sonnet-4-6", "anthropic", "/zen/v1/messages"),
     ("opencode_zen", "gemini-3.1-pro", "google", "/zen/v1/models/gemini-3.1-pro:generateContent"),
 ]
+NEW_PROVIDER_CASES = [case for case in CASES if case[0] in (
+    "ollama", "groq", "opencode_go", "opencode_zen",
+)]
 TOOL = {"type": "function", "function": {
     "name": "search_context_files", "description": "Find evidence",
     "parameters": {"type": "object", "properties": {"query": {"type": "string"}},
@@ -166,6 +172,31 @@ def test_same_model_has_distinct_go_and_zen_protocols():
     assert model_spec(get_profile("opencode_zen", {}), "minimax-m3").protocol == "chat"
 
 
+@pytest.mark.parametrize(("model", "protocol", "reasoning"), [
+    ("o4-mini", "responses", True),
+    ("gpt-5.6-luna", "responses", True),
+    ("gpt-4o-mini", "chat", False),
+])
+def test_openai_model_routes_are_reasoning_aware(model, protocol, reasoning):
+    spec = model_spec(get_profile("openai", {}), model)
+    assert (spec.protocol, spec.reasoning) == (protocol, reasoning)
+
+
+@pytest.mark.parametrize(("model", "protocol", "reasoning"), [
+    ("o4-mini", "responses", True),
+    ("gpt-4.1-mini", "chat", False),
+])
+def test_openai_routes_migrate_stale_meeting_metadata(model, protocol, reasoning):
+    snapshot = snapshot_from_mapping({
+        "profile_id": "openai", "name": "OpenAI", "kind": "openai",
+        "base_url": None, "api_key_env": "OPENAI_API_KEY",
+        "model_metadata": {"model": model, "protocol": "chat", "reasoning": True},
+    })
+    assert snapshot is not None
+    spec = model_spec(snapshot.to_profile(), model)
+    assert (spec.protocol, spec.reasoning) == (protocol, reasoning)
+
+
 def test_ollama_url_normalizes_and_never_stores_embedded_secrets():
     with patch("services.settings.settings_manager.save_setting") as save:
         save_ollama_url("http://localhost:11434/")
@@ -191,9 +222,10 @@ def test_opencode_credentials_and_headers_are_separate():
     assert not profiles["ollama"].requires_api_key
 
 
-def test_responses_reasoning_preference_is_translated():
+@pytest.mark.parametrize("provider", ["openai", "opencode_go"])
+def test_responses_reasoning_preference_is_translated(provider):
     requests = []
-    profile, client = client_for("opencode_go", [reply("responses")], requests)
+    profile, client = client_for(provider, [reply("responses")], requests)
     with client:
         generate(client, profile, model="gpt-5.6-luna", messages=[{"role": "user", "content": "Hi"}],
                  reasoning_level="high")
@@ -217,7 +249,7 @@ def test_direct_agent_recall_uses_protocol_tool_result(provider, model, protocol
     agent._tools.search_context_files.assert_called_once_with(query="budget", relative_path=None, limit=10)
 
 
-@pytest.mark.parametrize("provider,model,protocol,path", CASES)
+@pytest.mark.parametrize("provider,model,protocol,path", NEW_PROVIDER_CASES)
 def test_pi_endpoint_metadata_and_old_bundle_detection(provider, model, protocol, path):
     from meeting.agent.pi_sidecar import PiSidecarAgent
     from meeting.interfaces import AgentConfig
@@ -271,7 +303,7 @@ def test_provider_http_failures_preserve_raw(status):
     client.close()
 
 
-@pytest.mark.parametrize("provider,model,protocol,path", CASES)
+@pytest.mark.parametrize("provider,model,protocol,path", NEW_PROVIDER_CASES)
 def test_no_tool_support_uses_validated_json_and_rejects_prose(provider, model, protocol, path):
     from meeting.agent.openrouter_direct import DirectOpenRouterAgent
     requests = []

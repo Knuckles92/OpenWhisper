@@ -20,6 +20,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
+import re
 import sys
 import threading
 from dataclasses import dataclass
@@ -227,12 +228,21 @@ def _overhead_mib() -> int:
 
 
 def _architecture(model: str):
-    if model in _ARCHITECTURES:
-        return _ARCHITECTURES[model]
-    base = model.removesuffix(".en")
-    if base.startswith("large"):
-        return _ARCHITECTURES["large"]
-    return _ARCHITECTURES.get(base)
+    # Repository owners and parent directories do not describe the weights.
+    name = model.lower().replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if name in _ARCHITECTURES:
+        return _ARCHITECTURES[name]
+    tokens = set(re.split(r"[-_.]", name))
+    if "distil" in tokens:
+        match = re.search(r"(?:^|[-_])distil(?:[-_]whisper)?[-_]"
+                          r"(small\.en|medium\.en|large[-_]v[23])(?=$|[-_])", name)
+        return _ARCHITECTURES.get("distil-" + match[1].replace("_", "-")) if match else None
+    sizes = tokens.intersection({"tiny", "base", "small", "medium", "large"})
+    if "turbo" in tokens:
+        return _ARCHITECTURES["turbo"] if sizes <= {"large"} else None
+    if len(sizes) == 1:
+        return _ARCHITECTURES[sizes.pop()]
+    return None
 
 
 def estimate_vram_mib(model: str, compute_type: str, beam_size: Optional[int] = None) -> Optional[int]:

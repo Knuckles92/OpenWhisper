@@ -6,7 +6,11 @@ model table, the Distil-Whisper model cards, and the CTranslate2 conversion
 repositories used by faster-whisper.
 """
 
-from dataclasses import dataclass
+import json
+from pathlib import Path
+from urllib.parse import urlparse
+
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Final, Mapping, Tuple
 
@@ -19,6 +23,19 @@ OPENAI_MODEL_TABLE_URL: Final[str] = (
 DISTIL_PAPER_URL: Final[str] = "https://arxiv.org/abs/2311.00430"
 RUNTIME_FORMAT: Final[str] = "CTranslate2 conversion (FP16 weights)"
 LICENSE: Final[str] = "MIT"
+WHISPER_REVISIONS: Final[Mapping[str, str]] = MappingProxyType({
+    repo: spec["revision"] for repo, spec in json.loads(
+        Path(__file__).with_name("whisper_models.json").read_text(encoding="utf-8")
+    ).items()
+})
+MODEL_SECURITY_NOTICE: Final[str] = (
+    "Models are provided by third-party publishers. Model files and speech runtimes "
+    "can have security vulnerabilities. Keep OpenWhisper and its runtimes updated, "
+    "and review important transcripts for errors."
+)
+CUSTOM_MODEL_NOTICE: Final[str] = (
+    "This source has not been reviewed by OpenWhisper. Only load models from publishers you trust."
+)
 
 
 def format_download_mb(size_mb: float) -> str:
@@ -51,9 +68,15 @@ class ModelDetails:
     best_for: str
     limitations: Tuple[str, ...]
     source_urls: Tuple[str, ...]
+    license_url: str = ""
+    revision: str = ""
+    download_hosts: Tuple[str, ...] = ()
+    verification: str = "Publisher-managed files; no OpenWhisper checksum manifest"
 
     @property
     def download_size(self) -> str:
+        if not self.download_size_mb:
+            return "Unknown"
         return format_download_mb(self.download_size_mb)
 
     @property
@@ -122,6 +145,10 @@ def _standard_model(
         best_for=best_for,
         limitations=limitations,
         source_urls=(repo_url, f"https://huggingface.co/{upstream_name}", OPENAI_MODEL_TABLE_URL),
+        license_url="https://github.com/openai/whisper/blob/main/LICENSE",
+        revision=WHISPER_REVISIONS[repo_id], download_hosts=("huggingface.co",),
+        verification="Pinned version; downloaded through Hugging Face",
+
     )
 
 
@@ -162,6 +189,10 @@ def _distilled_model(
         best_for=best_for,
         limitations=limitations,
         source_urls=(repo_url, origin_url, DISTIL_PAPER_URL),
+        license_url=origin_url + "#license", revision=WHISPER_REVISIONS[repo_id],
+        download_hosts=("huggingface.co",),
+        verification="Pinned version; downloaded through Hugging Face",
+
     )
 
 
@@ -381,15 +412,45 @@ for _key, _model in SPEECH_MODELS.items():
         parameter_count=("123 million" if _key == "moonshine-small" else "245 million" if _key == "moonshine-medium" else "1.7 billion" if _key == "qwen-1.7b" else "600 million"), relative_performance="Measure on your hardware; published throughput is not dictation latency.",
         memory_guidance="CPU RAM / GPU memory use depends on model and audio length.",
         download_size_mb=round(sum(f["size_bytes"] for f in _spec["files"])/1_000_000),
-        runtime_format="GGUF Q8" if _model.backend in ("parakeet", "nemotron") else ("ORT quantized" if _model.backend == "moonshine" else "Safetensors"),
+        runtime_format="MLX Safetensors" if _model.backend == "parakeet_mlx" else "GGUF Q8" if _model.backend in ("parakeet", "nemotron") else ("ORT quantized" if _model.backend == "moonshine" else "Safetensors"),
         license=_model.license, best_for=_model.purpose,
-        limitations=(("Requires its optional runtime from Downloads (Windows x64, Linux x86_64, or Apple Silicon Mac CPU)." if _model.backend in ("parakeet", "nemotron") else "Requires its optional Windows x64 runtime from Downloads."),
+        limitations=(("Requires its optional MLX runtime from Downloads and an Apple Silicon Mac running macOS 14 or newer." if _model.backend == "parakeet_mlx" else "Requires its optional runtime from Downloads (Windows x64, Linux x86_64, or Apple Silicon Mac CPU)." if _model.backend in ("parakeet", "nemotron") else "Requires its optional Windows x64 runtime from Downloads."),
+                     "Auto uses the Apple GPU through Metal; CPU uses the same MLX weights. Language is detected automatically." if _model.backend == "parakeet_mlx" else
                      "Qwen CPU needs substantially more memory than the native engines; 1.7B is best suited to a GPU." if _model.backend == "qwen_asr" else
                      "English only; CPU execution." if _model.backend == "moonshine" else
                      "CPU and NVIDIA GPU use separately installed runtimes."),
-        source_urls=(_source, "https://github.com/NVIDIA/NeMo-Speech.cpp" if _model.backend in ("parakeet", "nemotron") else ("https://github.com/QwenLM/Qwen3-ASR" if _model.backend == "qwen_asr" else "https://moonshine-voice.readthedocs.io/")),
+        license_url=("https://huggingface.co/oruk/orukeet/blob/main/NOTICE.md" if _key == "orukeet-v0.1"
+                     else _source + "#license"),
+        revision=_spec["revision"],
+        download_hosts=tuple(sorted({urlparse(f["url"]).hostname for f in _spec["files"]})),
+        verification="Pinned version; size and SHA-256 checked during download",
+        source_urls=(_source, "https://github.com/senstella/parakeet-mlx" if _model.backend == "parakeet_mlx" else "https://github.com/NVIDIA/NeMo-Speech.cpp" if _model.backend in ("parakeet", "nemotron") else ("https://github.com/QwenLM/Qwen3-ASR" if _model.backend == "qwen_asr" else "https://moonshine-voice.readthedocs.io/")),
     )
+_CATALOG["parakeet-v3-mlx"] = replace(
+    _CATALOG["parakeet-v3-mlx"],
+    limitations=(*_CATALOG["parakeet-v3-mlx"].limitations,
+                 "Experimental integration; actual transcription on Apple Silicon has not yet been validated."),
+)
+_CATALOG["orukeet-v0.1"] = replace(
+    _CATALOG["orukeet-v0.1"], maintainer="Oruk AI (adaptation); NVIDIA (base model)",
+    parameter_count="627 million", origin_name="Orukeet, based on NVIDIA Parakeet TDT v3",
+    relative_performance="Publisher reports improvements over Parakeet; results depend on datasets and decoding.",
+    limitations=(*_CATALOG["orukeet-v0.1"].limitations,
+                 "Community model; independently evaluate quality on your recordings.",
+                 "Validated on Windows/Linux CPU and CUDA; Orukeet on Apple Silicon has not been tested.",
+                 "One reported benchmark split was also used for training and checkpoint selection.",
+                 "CC BY-SA 4.0 weights retain attribution and applicable ShareAlike terms."),
+)
 MODEL_CATALOG: Final[Mapping[str, ModelDetails]] = MappingProxyType(_CATALOG)
+
+# Keep display and cache lookups independent of faster-whisper's package
+# import, which also initializes CTranslate2 and its optional converters.
+MODEL_REPOSITORIES: Final[Mapping[str, str]] = MappingProxyType({
+    "large": _CATALOG["large-v3"].repository_id,
+    "large-v3-turbo": _CATALOG["turbo"].repository_id,
+    "distil-large-v3.5": "distil-whisper/distil-large-v3.5-ct2",
+    **{name: details.repository_id for name, details in _CATALOG.items()},
+})
 
 #: Approximate download sizes (MB) by model name, bundled so the consent
 #: dialog never contacts Hugging Face just to show an estimate: every catalog
@@ -405,3 +466,29 @@ MODEL_DOWNLOAD_SIZE_MB: Final[Mapping[str, int]] = MappingProxyType({
 def get_model_details(model_name: str) -> ModelDetails:
     """Return bundled metadata, raising KeyError for unmanaged models."""
     return MODEL_CATALOG[model_name]
+
+
+def custom_model_details(model_name: str) -> ModelDetails:
+    """Describe a user-added source without inventing upstream model metadata."""
+    from pathlib import Path
+    from urllib.parse import quote
+    from services.whisper_sources import parse_source
+
+    source = parse_source(model_name)
+    url = (Path(source.local_path).as_uri() if source.local_path
+           else f"https://huggingface.co/{source.repo_id}"
+           + (f"/tree/main/{quote(source.subfolder)}" if source.subfolder else ""))
+    return ModelDetails(
+        model_name=model_name, description="A custom CTranslate2 Whisper model you added.",
+        origin_name=source.local_path or source.repo_id, origin_url=url,
+        repository_id=source.local_path or source.name, repository_url=url,
+        maintainer="See model source", family="Whisper", language_support="Model-defined",
+        task_support="Transcription", parameter_count="Unknown", relative_performance="Unknown",
+        memory_guidance="Depends on the model and selected compute type", download_size_mb=0,
+        runtime_format="CTranslate2", license="See model source",
+        best_for="Using your own or community Whisper weights",
+        limitations=("Requires a compatible CTranslate2 Whisper model.", CUSTOM_MODEL_NOTICE),
+        source_urls=(url,), license_url=url,
+        download_hosts=() if source.local_path else ("huggingface.co",),
+
+    )

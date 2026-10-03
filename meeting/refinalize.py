@@ -13,6 +13,7 @@ from __future__ import annotations
 import functools
 import logging
 import threading
+from weakref import WeakValueDictionary
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from meeting.diarize import cloud_pass
@@ -727,6 +728,7 @@ class FinalizationBusyError(RuntimeError):
 
 _running_lock = threading.Lock()
 _running_meetings: set = set()
+_latest_claims: WeakValueDictionary = WeakValueDictionary()
 
 
 def is_running(meeting_id: str) -> bool:
@@ -735,25 +737,62 @@ def is_running(meeting_id: str) -> bool:
         return meeting_id in _running_meetings
 
 
-def _one_run_per_meeting(fn: Callable[..., Dict[str, Any]]) -> Callable[..., Dict[str, Any]]:
-    """Refuse a second concurrent retry of one meeting from any caller.
+class FinalizationClaim:
+    """Keep one retry exclusive through caller-side cleanup and publication.
 
-    The desktop card, the dashboard, and crash recovery each keep their own
-    busy flag; this is the one they all pass through.
+    A caller may pass this claim as ``_claim`` to a decorated pipeline, then
+    release it only after publishing the outcome. Claims are not reusable
+    after release and must not be shared by concurrent pipeline calls.
     """
-    @functools.wraps(fn)
-    def wrapper(repository: Any, meeting_id: str, **kwargs: Any) -> Dict[str, Any]:
+
+    def __init__(self, meeting_id: str):
+        self.meeting_id = meeting_id
+        self._active = False
         with _running_lock:
             if meeting_id in _running_meetings:
                 raise FinalizationBusyError(
                     "post-meeting steps are already running for this meeting"
                 )
             _running_meetings.add(meeting_id)
+            _latest_claims[meeting_id] = self
+            self._active = True
+
+    @property
+    def is_active(self) -> bool:
+        with _running_lock:
+            return self._active
+
+    @property
+    def is_current(self) -> bool:
+        """Whether no later retry has superseded this claim's queued events."""
+        with _running_lock:
+            return _latest_claims.get(self.meeting_id) is self
+
+    def release(self) -> None:
+        with _running_lock:
+            if self._active:
+                self._active = False
+                _running_meetings.discard(self.meeting_id)
+
+    def _validate(self, meeting_id: str) -> None:
+        with _running_lock:
+            if not self._active or meeting_id != self.meeting_id:
+                raise ValueError("inactive or mismatched finalization claim")
+
+
+def _one_run_per_meeting(fn: Callable[..., Dict[str, Any]]) -> Callable[..., Dict[str, Any]]:
+    """Refuse concurrent desktop, dashboard, and recovery retries."""
+    @functools.wraps(fn)
+    def wrapper(repository: Any, meeting_id: str, *,
+                _claim: Optional[FinalizationClaim] = None,
+                **kwargs: Any) -> Dict[str, Any]:
+        claim = _claim or FinalizationClaim(meeting_id)
         try:
+            claim._validate(meeting_id)
             return fn(repository, meeting_id, **kwargs)
         finally:
-            with _running_lock:
-                _running_meetings.discard(meeting_id)
+            if _claim is None:
+                claim.release()
 
     return wrapper
 

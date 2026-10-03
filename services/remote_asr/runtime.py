@@ -9,6 +9,7 @@ from services.local_asr.catalog import (
     selected_device,
 )
 from services.settings import SettingsKey, setting_value, settings_manager
+from services.local_asr.languages import language_choices, selected_language
 
 
 def runtime_state(engine: dict) -> dict:
@@ -44,6 +45,9 @@ def runtime_state(engine: dict) -> dict:
             "compute_type": setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings),
         }
         compute_types["auto"] = compute_types.get("cuda" if cuda else "cpu", ["auto"])
+    elif family == "parakeet_mlx":
+        devices = ["auto", "cpu"] if is_installed(runtime_id(family, "auto")) else []
+        selected = {"device": selected_device(family, settings), "language": "auto"}
     else:
         # The Vulkan runtime needs only the card, not the CUDA libraries
         # CTranslate2 counts it with.
@@ -54,14 +58,14 @@ def runtime_state(engine: dict) -> dict:
         if family != "moonshine" and devices:
             devices.insert(0, "auto")
         selected = {"device": selected_device(family, settings),
-                    "language": "en" if family == "moonshine" else setting_value(SettingsKey.LOCAL_ASR_LANGUAGE, settings)}
+                    "language": selected_language(family, setting_value(SettingsKey.LOCAL_ASR_LANGUAGE, settings))}
     return {
         "family": family,
         "model": engine.get("model", ""),
         "selected": selected,
         "devices": devices,
         "compute_types": compute_types,
-        "languages": (["en"] if family == "moonshine" else ["en", "auto"]) if family in BACKENDS else [],
+        "languages": list(language_choices(family)),
         "gpu": {"name": gpu.name, "total_mib": gpu.total_mib} if gpu else {},
         "dependencies": dependency_options(family),
     }

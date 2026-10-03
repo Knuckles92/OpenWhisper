@@ -73,7 +73,9 @@ class ThemeManager(QObject):
     @property
     def stylesheet(self) -> str:
         """The stylesheet resolved against the current theme."""
-        return self._palette.resolve(self._template)
+        from ui_qt.utils.omarchy_theme import desktop_stylesheet
+
+        return desktop_stylesheet(self._palette.resolve(self._template))
 
     def scaled_stylesheet(self, scale: float) -> str:
         """The resolved theme with every ``font-size`` multiplied by ``scale``."""
@@ -81,10 +83,15 @@ class ThemeManager(QObject):
 
         return scale_qss_fonts(self.stylesheet, scale)
 
-    def set_theme(self, theme_name: str) -> bool:
+    def set_theme(self, theme_name: str, *, desktop_palette: bool = False) -> bool:
         """Switch the palette. Returns True when the theme actually changed."""
-        palette = palette_for(theme_name)
-        if palette.name == self._palette.name:
+        if desktop_palette:
+            from ui_qt.utils.omarchy_theme import load_omarchy_palette
+
+            palette = load_omarchy_palette(theme_name)
+        else:
+            palette = palette_for(theme_name)
+        if palette == self._palette:
             return False
         self._palette = palette
         set_current_palette(palette)

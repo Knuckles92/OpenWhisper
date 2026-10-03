@@ -10,18 +10,15 @@ import numpy as np
 import time
 from datetime import datetime
 
-from typing import BinaryIO, Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 from config import config
+from services.recording_journal import RecordingJournal
 from services.wav_metadata import stamp_wav_origination
 
 logger = logging.getLogger(__name__)
 
 AudioLevelCallback = Callable[[float], None]
 
-# Keep short dictations in memory, then transparently spill longer captures to
-# an anonymous temporary file.  This bounds resident audio memory without doing
-# an unbounded list append for multi-hour recordings.
-SPOOL_MEMORY_LIMIT_BYTES = 8 * 1024 * 1024
 COPY_BLOCK_BYTES = 1024 * 1024
 
 # Adaptive post-roll keeps each callback block's level in a histogram of
@@ -174,7 +171,7 @@ class AudioRecorder:
         self.device_id = device_id
         self.output_file = output_file or config.RECORDED_AUDIO_FILE
         self.is_recording = False
-        self._audio_spool: Optional[BinaryIO] = None
+        self._audio_spool: Optional[RecordingJournal] = None
         self._recorded_bytes = 0
         self._recorded_sample_frames = 0
         self.stream: Optional[sd.InputStream] = None
@@ -191,6 +188,14 @@ class AudioRecorder:
         self._post_roll_end_reason = ""
         self._recording_complete_event = threading.Event()
         self.last_start_error: Optional[str] = None
+        self.last_capture_error: Optional[str] = None
+        self.error_callback: Optional[Callable[[str], None]] = None
+        self.dropped_frames = 0
+        self._error_lock = threading.Lock()
+        self._last_callback_at = 0.0
+        self._capture_started_at = 0.0
+        self._session_token = object()
+        self._retiring_writers = []
 
         self.chunk = config.CHUNK_SIZE
         self.dtype = config.AUDIO_FORMAT
@@ -218,7 +223,7 @@ class AudioRecorder:
 
     def start_recording(self) -> bool:
         """Open the input stream before marking the session as recording."""
-        if self.is_recording:
+        if self.is_recording or (self.recording_thread and self.recording_thread.is_alive()):
             logger.warning("Recording already in progress")
             return False
 
@@ -235,14 +240,15 @@ class AudioRecorder:
             with self._callback_lock:
                 self._post_roll_gate = PostRollGate(self.rate)
                 self._capture_canceled = False
-
-            import os
-            if os.path.exists(self.output_file):
-                try:
-                    os.remove(self.output_file)
-                    logger.info(f"Deleted old audio file: {self.output_file}")
-                except Exception as e:
-                    logger.warning(f"Could not delete old audio file: {e}")
+            self.last_capture_error = None
+            self.dropped_frames = 0
+            self._last_callback_at = 0.0
+            token = self._session_token
+            self._audio_spool = RecordingJournal(
+                self.output_file, self.rate, self.channels,
+                np.dtype(self.dtype).itemsize,
+                lambda message: self._fail_capture(message) if token is self._session_token else None,
+            )
 
             self.stream = sd.InputStream(
                 device=self.device_id,
@@ -253,6 +259,7 @@ class AudioRecorder:
                 callback=self._audio_callback,
             )
             self.stream.start()
+            self._capture_started_at = time.monotonic()
 
             self.is_recording = True
             self._stop_requested = False
@@ -278,6 +285,7 @@ class AudioRecorder:
             logger.error(f"Failed to start recording: {e}")
             self._unwind_failed_stream()
             self.is_recording = False
+            self.clear_recording_data()
             return False
 
     @staticmethod
@@ -364,21 +372,24 @@ class AudioRecorder:
         return finished
 
     def _audio_callback(self, indata: np.ndarray, frames: int, time_info, status):
-        if status:
-            logger.warning(f"Audio stream status: {status}")
-
         try:
             with self._callback_lock:
-                if self._capture_canceled:
+                if self._capture_canceled or self.last_capture_error or self._audio_spool is None:
                     return  # the stream is only closing; keep nothing more
+                self._last_callback_at = time.monotonic()
+                if status:
+                    self.dropped_frames += frames
+                    self._audio_spool.error = 'Audio input overflow or device error; recording stopped.'
+                    self._stop_event.set()
+                    self._end_post_roll('capture error')
+                    return
                 audio_copy = indata.copy()
                 payload = audio_copy.tobytes()
-                if self._audio_spool is None:
-                    self._audio_spool = tempfile.SpooledTemporaryFile(
-                        max_size=SPOOL_MEMORY_LIMIT_BYTES,
-                        mode="w+b",
-                    )
-                self._audio_spool.write(payload)
+                if not self._audio_spool.append(payload):
+                    self.dropped_frames += frames
+                    self._stop_event.set()
+                    self._end_post_roll('capture error')
+                    return
                 self._recorded_bytes += len(payload)
                 block_frames = int(audio_copy.shape[0] if audio_copy.ndim else frames)
                 self._recorded_sample_frames += block_frames
@@ -396,7 +407,23 @@ class AudioRecorder:
                         logger.debug(f"Streaming callback error: {stream_err}")
 
         except Exception as e:
-            logger.error(f"Error in audio callback: {e}")
+            # No logger/file access on PortAudio's thread. The watcher reports it.
+            if self._audio_spool is not None:
+                self._audio_spool.error = f'Audio capture failed: {e}'
+            self._stop_event.set()
+            self._end_post_roll('capture error')
+
+    def _fail_capture(self, message: str) -> None:
+        """Run outside PortAudio; deliver one visible failure per recording."""
+        with self._error_lock:
+            if self.last_capture_error or self._capture_canceled:
+                return
+            self.last_capture_error = message
+        logger.error('%s', message)
+        self._stop_event.set()
+        self._end_post_roll('capture error')
+        if self.error_callback:
+            self.error_callback(message)
 
     def _wait_for_stop(
         self,
@@ -412,7 +439,17 @@ class AudioRecorder:
         reason = "cap"
         try:
             logger.info("Audio stream started")
-            stop_event.wait()
+            while not stop_event.wait(0.1):
+                if self._audio_spool and self._audio_spool.error:
+                    self._fail_capture(self._audio_spool.error)
+                    break
+                stream_active = getattr(self.stream, 'active', None)
+                last_block = self._last_callback_at or self._capture_started_at
+                if stream_active is False or (last_block and time.monotonic() - last_block > 3.0):
+                    self._fail_capture('Audio device stopped delivering audio; recording stopped.')
+                    break
+            if self._audio_spool and self._audio_spool.error:
+                self._fail_capture(self._audio_spool.error)
             remaining = self._post_roll_deadline - time.monotonic()
             if post_roll_end_event.wait(max(0.0, remaining)):
                 reason = self._post_roll_end_reason or "quiet"
@@ -431,7 +468,16 @@ class AudioRecorder:
                 except Exception as e:
                     logger.error(f"Error closing audio stream: {e}")
                 self.stream = None
+            journal = self._audio_spool
+            if journal:
+                if not journal.finish():
+                    self._fail_capture('Recording storage did not finish; audio kept for recovery.')
+                elif journal.error:
+                    self._fail_capture(journal.error)
             self._log_post_roll(reason)
+            from services.diagnostics import record_metrics
+            record_metrics(captured_frames=self._recorded_sample_frames,
+                           dropped_frames=self.dropped_frames)
             self._stop_requested = False
             self._stop_requested_at = 0.0
             self._post_roll_deadline = 0.0
@@ -496,34 +542,29 @@ class AudioRecorder:
             temp_fd, temp_path = tempfile.mkstemp(suffix='.wav', dir=directory)
 
             try:
-                # The callback may still be completing post-roll after a timeout.
-                # Holding its lock produces one coherent snapshot without ever
-                # materializing the whole recording as a bytes object.
+                journal = self._audio_spool
+                if journal is not None and not journal.finish():
+                    raise TimeoutError('Recording storage is still busy; audio kept for recovery')
                 with self._callback_lock:
-                    if self._audio_spool is None or self._recorded_bytes <= 0:
+                    if journal is None or journal.written_bytes <= 0:
                         os.close(temp_fd)
                         temp_fd = -1
                         os.remove(temp_path)
                         logger.warning("No audio data to save")
                         return False
-                    recorded_bytes = self._recorded_bytes
-                    recorded_sample_frames = self._recorded_sample_frames
-                    self._audio_spool.flush()
-                    self._audio_spool.seek(0)
-                    with os.fdopen(temp_fd, 'wb') as temp_file:
-                        temp_fd = -1
-                        with wave.open(temp_file, 'wb') as wf:
-                            wf.setnchannels(self.channels)
-                            wf.setsampwidth(np.dtype(self.dtype).itemsize)
-                            wf.setframerate(self.rate)
-                            while True:
-                                block = self._audio_spool.read(COPY_BLOCK_BYTES)
-                                if not block:
-                                    break
-                                wf.writeframesraw(block)
-                            if padding_bytes:
-                                wf.writeframesraw(padding_bytes)
-                    self._audio_spool.seek(0, os.SEEK_END)
+                    recorded_bytes = journal.written_bytes
+                    recorded_sample_frames = recorded_bytes // (self.channels * np.dtype(self.dtype).itemsize)
+                with os.fdopen(temp_fd, 'wb') as temp_file:
+                    temp_fd = -1
+                    with wave.open(temp_file, 'wb') as wf:
+                        wf.setnchannels(self.channels)
+                        wf.setsampwidth(np.dtype(self.dtype).itemsize)
+                        wf.setframerate(self.rate)
+                        journal.copy_into(wf)
+                        if padding_bytes:
+                            wf.writeframesraw(padding_bytes)
+                    temp_file.flush()
+                    os.fsync(temp_file.fileno())
 
                 os.replace(temp_path, filename)
                 temp_path = ""
@@ -573,22 +614,14 @@ class AudioRecorder:
 
         Lets a reader follow a recording in progress (incremental dictation)
         without the streaming callback, which the live preview owns. The
-        spool's position is where the callback writes next, so it is restored
-        before the lock is released. Returns None when the capture no longer
-        reaches ``offset``: it was cleared or restarted since.
+        reader sees only the prefix committed by the journal writer, using
+        its own file handle. Returns None when the capture no longer reaches
+        ``offset``: it was cleared or restarted since.
         """
-        with self._callback_lock:
-            if offset < 0 or offset > self._recorded_bytes:
-                return None
-            if offset == self._recorded_bytes:
-                return b""
-            spool = self._audio_spool
-            position = spool.tell()
-            try:
-                spool.seek(offset)
-                return spool.read(self._recorded_bytes - offset)
-            finally:
-                spool.seek(position)
+        spool = self._audio_spool
+        if spool is None:
+            return b'' if offset == 0 else None
+        return spool.read_from(offset)
 
     def cancel_recording(self) -> None:
         """Throw the capture away: end post-roll now and keep nothing after it.
@@ -603,24 +636,42 @@ class AudioRecorder:
         if self.is_recording:
             self.stop_recording()
             self._end_post_roll("cancel")
-        self.clear_recording_data()
+        self.clear_recording_data(discard=True, wait=False)
 
     @property
     def capture_canceled(self) -> bool:
         """True from ``cancel_recording`` until the next recording starts."""
         return self._capture_canceled
 
-    def clear_recording_data(self):
-        """Clear the recorded audio data."""
+    def clear_recording_data(self, *, discard=False, wait=True):
+        """Release capture resources; preserve unacknowledged sessions on disk."""
         with self._callback_lock:
             old_bytes = self._recorded_bytes
+            self._session_token = object()
             spool, self._audio_spool = self._audio_spool, None
             self._recorded_bytes = 0
             self._recorded_sample_frames = 0
-            if spool is not None:
-                spool.close()
+        if spool is not None:
+            if wait:
+                spool.close(discard=discard)
+            else:
+                if discard:
+                    spool._discard = True
+                def release():
+                    try:
+                        spool.close(discard=discard)
+                    except Exception:
+                        logger.exception('Could not release recording journal')
+                thread = threading.Thread(target=release, name='dictation-release', daemon=True)
+                self._retiring_writers = [t for t in self._retiring_writers if t.is_alive()]
+                self._retiring_writers.append(thread)
+                thread.start()
 
         logger.info(f"Cleared recording data. Old byte count: {old_bytes}")
+
+    def acknowledge_recording(self):
+        """Remove the journal only after durable history/audio persistence."""
+        self.clear_recording_data(discard=True)
 
     def cleanup(self):
         """Clean up audio resources."""
@@ -645,6 +696,8 @@ class AudioRecorder:
                 self.stream = None
 
             self.clear_recording_data()
+            for thread in self._retiring_writers:
+                thread.join(timeout=0.5)
 
             logger.info("Audio recorder cleaned up")
 

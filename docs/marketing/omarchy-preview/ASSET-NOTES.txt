@@ -1,0 +1,27 @@
+OPENWHISPER / OMARCHY PREVIEW
+
+Three coordinated product graphics:
+
+01-omarchy-launch.png
+Landscape launch image. Recommended first image for the announcement.
+Headline: Your voice. At home on Omarchy.
+
+02-made-for-tiling.png
+Square native desktop feature graphic showing wide and narrow Settings.
+Headline: Made for your tiling life.
+
+03-full-toolkit.png
+Square feature-parity graphic showing Quick Record and Upload File.
+Headline: New look. Full toolkit.
+
+x-posts.txt contains six standalone post options, each under 280 characters.
+Each option includes its character count and suggested image.
+
+The graphics were created with the built-in image_gen tool using screenshots
+of the implemented Omarchy preview. They are promotional compositions, not
+raw screen captures. Unmodified references are in reference-captures/.
+The complete prompt set is in image-prompts.json.
+
+All graphics and post drafts identify this as a preview. No release date,
+public download, official Omarchy endorsement, or performance guarantee is
+claimed. Nothing has been posted to X.

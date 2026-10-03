@@ -11,6 +11,18 @@
       }
     ]
   },
+  "orukeet-v0.1": {
+    "repo": "oruk/orukeet",
+    "revision": "555136b50265a132d4cea0d35560c26fc4f657ab",
+    "files": [
+      {
+        "name": "orukeet-v0.1.0-q8.gguf",
+        "url": "https://huggingface.co/oruk/orukeet/resolve/555136b50265a132d4cea0d35560c26fc4f657ab/orukeet-v0.1.0-q8.gguf",
+        "sha256": "93ce19c6d8244acbfea980eeaf970531d4f216171578ef8e041dcc2d070a45bd",
+        "size_bytes": 714456704
+      }
+    ]
+  },
   "nemotron-3.5": {
     "repo": "nvidia/nemotron-3.5-asr-streaming-0.6b",
     "revision": "1c8deaecc64b91f034d73e08dd8b64625eb3395d",
@@ -248,6 +260,24 @@
         "url": "https://download.moonshine.ai/model/medium-streaming-en/quantized_26_08_21/tokenizer.bin",
         "sha256": "6884b35fd6377d4c4d32336a0bc152f36b64d1e45b6503683cdc238250a8472d",
         "size_bytes": 249974
+      }
+    ]
+  },
+  "parakeet-v3-mlx": {
+    "repo": "mlx-community/parakeet-tdt-0.6b-v3",
+    "revision": "ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15",
+    "files": [
+      {
+        "name": "config.json",
+        "url": "https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3/resolve/ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15/config.json",
+        "sha256": "f320f1292511f34ec47f513755fe20fd01dbfc09a925d42730e66059a6e1ef4c",
+        "size_bytes": 244093
+      },
+      {
+        "name": "model.safetensors",
+        "url": "https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3/resolve/ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15/model.safetensors",
+        "sha256": "05e01c7f396c298cf7d23f61da7b504adeab698f0aaeafd9c82d198625464592",
+        "size_bytes": 2508288736
       }
     ]
   }

@@ -330,6 +330,8 @@ def test_missing_gpu_runtime_has_setup_route_in_main_card(engine, monkeypatch):
     from services import components
     from ui_qt.widgets.upload_file_tab import UploadFileTab
 
+    # The simulated NVIDIA host offers Windows runtimes even on a macOS client.
+    monkeypatch.setattr(components, "current_platform_tag", lambda: "win_amd64")
     monkeypatch.setattr(components, "gpu_runtime_available", lambda: False)
     tab = UploadFileTab()
     tab.set_backend("Remote computer")

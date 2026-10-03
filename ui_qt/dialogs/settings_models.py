@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 from config import config, is_frozen
 from services.components import (
     component_coordinator,
+    current_platform_tag,
     meeting_agent_needs_update,
     meeting_agent_payload_dir,
     speaker_model_path,
@@ -38,10 +39,13 @@ from services.components import (
 from services import installed_agents, openai_retirement
 from services.hf_access import (
     CachedModelInfo,
+    custom_model_cache_info,
     peek_cached_models,
     resolve_model_repo,
     scan_cached_models,
 )
+from services.whisper_sources import custom_models
+from ui_qt.dialogs.custom_whisper_dialog import add_custom_models
 from services.settings import (
     SETTING_DEFAULTS,
     MeetingAgentCore,
@@ -122,9 +126,17 @@ def agent_core_label(core: str) -> str:
     """Short display name for a ``MeetingAgentCore`` value."""
     if core == MeetingAgentCore.PI:
         return "Pi (sidecar)"
+    if core == MeetingAgentCore.OPENCODE:
+        return "OpenCode SDK"
     if core in installed_agents.AGENT_SPECS:
         return installed_agents.AGENT_SPECS[core].name
     return "Direct (no sidecar)"
+
+
+def _opencode_in_downloads() -> bool:
+    """Whether Downloads offers the packaged OpenCode component."""
+    from services.components import ComponentId, component_is_published
+    return component_is_published(ComponentId.MEETING_AGENT_OPENCODE)
 
 
 def speaker_id_label(backend: str) -> str:
@@ -161,6 +173,7 @@ class ModelAssignments(QObject):
     assignments_changed = pyqtSignal()
     _text_models_loaded = pyqtSignal(str, str, list, str, object)
     _cache_scan_finished = pyqtSignal(int, object)
+    _engine_runtime_checked = pyqtSignal(object, str)
     _meeting_remote_checked = pyqtSignal(str)
 
     COMPUTE_CHOICES = ("auto", "float16", "float32", "int8")
@@ -185,6 +198,10 @@ class ModelAssignments(QObject):
         self._get_loaded_model = get_loaded_model
         self._background_cache_scan = bool(background_cache_scan)
         self._cache_scan_generation = 0
+        self._engine_runtime_pending: set[tuple[str, str]] = set()
+        self._engine_runtime_labels: Dict[tuple[str, str], str] = {}
+        self._engine_inventory_label_key: Optional[tuple[str, str]] = None
+        self._engine_inventory_prefix = ""
         self._cached: Dict[str, CachedModelInfo] = {}
         self._text_models_cache: Dict[tuple, list] = {}
         self._catalog_tokens = {}
@@ -196,9 +213,11 @@ class ModelAssignments(QObject):
         self._active_meeting_provider = TranscriptCleanupProvider.OPENROUTER
         self._active_meeting_llm_model = config.MEETING_LLM_MODEL
         self._pi_payload_available = meeting_agent_payload_dir() is not None
+        self._opencode_payload_available = meeting_agent_payload_dir("opencode") is not None
         self._built = set()
         self._text_models_loaded.connect(self._on_text_models_loaded)
         self._cache_scan_finished.connect(self._on_cache_scan_finished)
+        self._engine_runtime_checked.connect(self._on_engine_runtime_checked)
         self._meeting_remote_checked.connect(self._on_meeting_remote_checked)
 
     # ---- construction helpers ----
@@ -256,6 +275,7 @@ class ModelAssignments(QObject):
         card.addWidget(self.engine_caption)
 
         self.ondemand_whisper_picker = LocalModelPicker()
+        self.ondemand_whisper_picker.custom_models_requested.connect(self._add_custom_models)
         self.ondemand_whisper_picker.model_changed.connect(
             self._on_set_active_clicked
         )
@@ -367,6 +387,7 @@ class ModelAssignments(QObject):
         self.meeting_source_combo.currentIndexChanged.connect(self._on_meeting_source_changed)
         card.addWidget(self._field("Speech engine", self.meeting_source_combo))
         self.meeting_whisper_picker = LocalModelPicker(include_speech_models=True)
+        self.meeting_whisper_picker.custom_models_requested.connect(self._add_custom_models)
         self.meeting_whisper_picker.model_changed.connect(
             self._on_meeting_set_active_clicked
         )
@@ -482,8 +503,12 @@ class ModelAssignments(QObject):
         if item is not None:
             item.setEnabled(self._pi_payload_available)
         self.meeting_agent_core_combo.addItem(
-            "Direct (no sidecar)", MeetingAgentCore.DIRECT
+            "Standard API", MeetingAgentCore.DIRECT
         )
+        self.meeting_agent_core_combo.addItem(self._opencode_label(), MeetingAgentCore.OPENCODE)
+        oc_item = model.item(2) if hasattr(model, "item") else None
+        if oc_item is not None:
+            oc_item.setEnabled(self._opencode_payload_available)
         self.meeting_agent_core_combo.currentIndexChanged.connect(
             self._on_meeting_agent_core_changed
         )
@@ -549,6 +574,16 @@ class ModelAssignments(QObject):
         if is_frozen():
             return "Pi (install from Downloads)"
         return "Pi (sidecar not built)"
+
+    def _opencode_label(self) -> str:
+        if self._opencode_payload_available:
+            return "OpenCode SDK"
+        from services.opencode_component import SUPPORTED_PLATFORMS
+        if current_platform_tag() not in SUPPORTED_PLATFORMS:
+            return "OpenCode SDK (Windows and Linux only)"
+        if not _opencode_in_downloads():
+            return "OpenCode SDK (not in Downloads yet)"
+        return "OpenCode SDK (install from Downloads)"
 
     # ---- navigation hooks ----
 
@@ -622,6 +657,13 @@ class ModelAssignments(QObject):
         if self.on_set_active_requested:
             self.on_set_active_requested(model_name)
         self.refresh()
+
+    def _add_custom_models(self):
+        added = add_custom_models(self.host, settings_manager, self._cached)
+        if added:
+            self.refresh()
+            self._say(f"Added {len(added)} custom models. Choose a model above to load it.")
+            self.assignments_changed.emit()
 
     def _on_meeting_set_active_clicked(self, model_name: str) -> None:
         try:
@@ -1349,14 +1391,14 @@ class ModelAssignments(QObject):
                     if name != "auto"
                 }
                 present = sum(1 for repo in repos if repo in self._cached)
-                text = f"{present} of {len(repos)} Whisper models on this computer."
+                custom = custom_models(self._settings_snapshot())
+                present += sum(custom_model_cache_info(name) is not None for name in custom)
+                text = f"{present} of {len(repos) + len(custom)} Whisper models on this computer."
             else:
-                from services.components import is_installed
                 from services.local_asr.cache import is_cached
                 from services.local_asr.catalog import (
                     BACKENDS,
                     MODELS,
-                    resolve_runtime,
                     selected_device,
                 )
                 keys = [key for key, model in MODELS.items() if model.backend == backend]
@@ -1366,16 +1408,55 @@ class ModelAssignments(QObject):
                     f"{present} of {len(keys)} {BACKENDS[backend]} {noun} on this "
                     "computer"
                 )
-                component, _device = resolve_runtime(
-                    backend, selected_device(backend, self._settings_snapshot())
-                )
-                name = component_coordinator.describe(component).display_name
-                state = "installed" if is_installed(component) else "not installed"
-                text += f" · {name} {state}."
+                key = (backend, selected_device(backend, self._settings_snapshot()))
+                self._engine_inventory_prefix = text
+                text += self._engine_runtime_labels.get(key, ".")
+                self._engine_inventory_label_key = key
+                self.engine_inventory_label.setText(text)
+                if key not in self._engine_runtime_pending:
+                    self._engine_runtime_pending.add(key)
+                    if self._background_cache_scan:
+                        threading.Thread(
+                            target=self._check_engine_runtime,
+                            args=(key,),
+                            name="settings-engine-runtime",
+                            daemon=True,
+                        ).start()
+                    else:
+                        self._check_engine_runtime(key)
+                return
         except Exception:
             logger.debug("Engine inventory lookup failed", exc_info=True)
             text = "Open Downloads to see which models are on this computer."
         self.engine_inventory_label.setText(text)
+
+    def _check_engine_runtime(self, key: tuple[str, str]) -> None:
+        # Auto detection can import CTranslate2/PyTorch. Keep it off the Qt
+        # thread even when the user only opens Overview or General.
+        try:
+            from services.components import is_installed
+            from services.local_asr.catalog import resolve_runtime
+
+            component, _device = resolve_runtime(*key)
+            name = component_coordinator.describe(component).display_name
+            state = "installed" if is_installed(component) else "not installed"
+            label = f" · {name} {state}."
+        except Exception:
+            logger.debug("Engine runtime lookup failed", exc_info=True)
+            label = ". Open Downloads to check its runtime."
+        try:
+            self._engine_runtime_checked.emit(key, label)
+        except RuntimeError:
+            pass  # Settings was destroyed while detection was running.
+
+    def _on_engine_runtime_checked(self, key: tuple[str, str], label: str) -> None:
+        self._engine_runtime_pending.discard(key)
+        self._engine_runtime_labels[key] = label
+        if (
+            self.engine_combo.currentData() == key[0]
+            and self._engine_inventory_label_key == key
+        ):
+            self.engine_inventory_label.setText(self._engine_inventory_prefix + label)
 
     def _refresh_meeting_runtime_label(self) -> None:
         if resolve_meeting_asr_source(self._settings_snapshot()) == "remote":
@@ -1452,6 +1533,7 @@ class ModelAssignments(QObject):
         would return to.
         """
         self._pi_payload_available = meeting_agent_payload_dir() is not None
+        self._opencode_payload_available = meeting_agent_payload_dir("opencode") is not None
         combo = getattr(self, "meeting_agent_core_combo", None)
         if combo is None:
             return
@@ -1460,14 +1542,19 @@ class ModelAssignments(QObject):
         item = model.item(0) if hasattr(model, "item") else None
         if item is not None:
             item.setEnabled(self._pi_payload_available)
+        oc_index = combo.findData(MeetingAgentCore.OPENCODE)
+        combo.setItemText(oc_index, self._opencode_label())
+        oc_item = model.item(oc_index) if hasattr(model, "item") else None
+        if oc_item is not None:
+            oc_item.setEnabled(self._opencode_payload_available)
         snapshot = settings if settings is not None else self._settings_snapshot()
         core = resolve_meeting_agent_core(snapshot)
         builtin = core
         if core in MeetingAgentCore.INSTALLED:
             builtin = (MeetingAgentCore.PI if self._pi_payload_available
                        else MeetingAgentCore.DIRECT)
-            if combo.currentData() == MeetingAgentCore.DIRECT:
-                builtin = MeetingAgentCore.DIRECT
+            if combo.currentData() in (MeetingAgentCore.DIRECT, MeetingAgentCore.OPENCODE):
+                builtin = combo.currentData()
         elif core == MeetingAgentCore.PI and not self._pi_payload_available:
             builtin = MeetingAgentCore.DIRECT
         core_index = combo.findData(builtin)
@@ -1532,16 +1619,17 @@ class ModelAssignments(QObject):
         active_model = settings_manager.get(
             SettingsKey.WHISPER_MODEL, SETTING_DEFAULTS[SettingsKey.WHISPER_MODEL]
         )
-        if active_model not in config.WHISPER_MODEL_CHOICES:
+        custom = custom_models(settings)
+        if active_model not in [*config.WHISPER_MODEL_CHOICES, *custom]:
             active_model = config.DEFAULT_WHISPER_MODEL
         meeting_model = resolve_meeting_whisper_model(settings)
         loaded_model = self._get_loaded_model() if self._get_loaded_model else None
 
         self.ondemand_whisper_picker.set_options(
-            cached, active_model, resolved=loaded_model
+            cached, active_model, resolved=loaded_model, custom=custom
         )
         self._update_ondemand_whisper_enabled()
-        self.meeting_whisper_picker.set_options(cached, meeting_model)
+        self.meeting_whisper_picker.set_options(cached, meeting_model, custom=custom)
         self._refresh_engine_inventory()
         self._refresh_rail_values()
 

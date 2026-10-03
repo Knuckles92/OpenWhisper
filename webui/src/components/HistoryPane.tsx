@@ -5,6 +5,7 @@ import RecordingPlayer, { type PlaybackMoment } from './RecordingPlayer';
 import FinalizationDiagnostics from './FinalizationDiagnostics';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
+import { titleError } from '../titles';
 import { topicChapters } from '../chapters';
 import { initials, speakerColor } from '../people';
 import type { CardItem, ExportFormat, MeetingRow, MeetingStateDoc, Participant, SearchRow } from '../types';
@@ -400,8 +401,12 @@ export default function HistoryPane({
 
   const renameMeeting = async () => {
     if (!selectedId) return;
+    const error = titleError(renameDraft);
+    if (error) {
+      setError(error);
+      return;
+    }
     const title = renameDraft.trim();
-    if (!title) return;
     try {
       await api.renameMeeting(token, selectedId, title);
       await loadMeetings();

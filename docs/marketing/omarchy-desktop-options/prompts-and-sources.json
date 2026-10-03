@@ -1,0 +1,52 @@
+{
+  "tool": "built-in image_gen",
+  "sources": [
+    {
+      "title": "Official Omarchy promotion and desktop presentation",
+      "url": "https://omarchy.org/"
+    },
+    {
+      "title": "Official site redesign / pixel and demoscene direction",
+      "url": "https://omarchy.org/news/2026/09/omarchy-org-redesign-launches-with-29-languages/"
+    },
+    {
+      "title": "Official theme gallery",
+      "url": "https://omarchy.org/manual/themes/"
+    },
+    {
+      "title": "Original Tokyo Night and Gruvbox desktop references",
+      "url": "https://learn.omacom.io/2/the-omarchy-manual/52/themes"
+    }
+  ],
+  "note": "Real UI theme captures were rendered with isolated settings; jed's live theme and desktop were not changed. These outputs are promotional composites, not unedited screenshots.",
+  "assets": [
+    {
+      "name": "01-tokyo-night-desktop",
+      "references": [
+        "references/tokyo-night.png",
+        "references/tokyo-night-winding-road.jpg",
+        "references/official-tokyo-night-desktop.png",
+        "references/omarchy-quattro-promo.webp"
+      ],
+      "prompt": "Use case: ads-marketing / faithful desktop screenshot compositing.\nCreate a gorgeous, finished 4:3 LANDSCAPE product advertisement showing OpenWhisper visibly running ON THE OMARCHY LINUX DESKTOP. The app window must be compact and well-proportioned. The user rejected an excessively wide app window and wants real desktop context instead of abstract wave posters.\n\nINPUT ROLES:\n1. Real OpenWhisper app capture rendered in the installed Tokyo Night palette. This is an immutable product insert. Preserve its exact controls, labels, font proportions, tab navigation, colors, no top-right window buttons. Uniform scale only, never stretch or redesign it.\n2. Actual Omarchy Tokyo Night \"winding road\" wallpaper. Use this as the visible desktop background, preserve its landscape and spectacular pink / purple / warm orange sunset.\n3. Official Omarchy desktop screenshot. Reference for authentic slim top bar, workspaces, flat square window borders, small tiling gaps, no macOS chrome.\n4. Official Omarchy Quattro promotional image. Reference ONLY for the saturated sunset palette, retro Linux spirit and honest edge-to-edge desktop presentation. Do not include its car, its presenter, or any person.\n\nCOMPOSITION:\nThe scene IS a desktop capture styled as a product advert, with the native dark Omarchy bar spanning the very top edge: workspace dots/numbers left, small centered clock, compact system icons right, plus a tiny microphone icon. Wallpaper fills the whole image. OpenWhisper is the dominant crisp foreground native window at center-right/lower-right, about 55% of canvas width, keeping its original 1.28:1 aspect ratio. It sits naturally on the desktop with only a thin periwinkle border, subtle desktop shadow, squared corners. Its full footer and all buttons stay visible. No exaggerated glowing border, no enormous glossy frame, no fake hardware.\nPlace a small, restrained dark terminal window on the lower left, smaller than the app, with a minimal Omarchy ASCII-style wordmark and three simple monospaced lines \"Arch Linux\", \"Hyprland\", \"Wayland\". It is only context, not the hero. Do not add invented performance metrics or other apps covering the product.\nThe upper-left wallpaper region carries restrained but bold advertising typography, rather like a custom Omarchy wallpaper. Use beautifully designed large blocky pixel lettering, crisp cream and pale periwinkle, sharp-edged 1990s demoscene influence. It must feel like Omarchy's own colorful, playful promotion, not a generic glossy SaaS advertisement. Leave enough sunset visible to immediately identify the desktop.\nExact promotional copy, outside all app windows:\n\"OpenWhisper\"\n\"Your voice.\"\n\"Your Omarchy.\"\n\"OMARCHY PREVIEW\"\n\"TOKYO NIGHT\"\nKeep these words carefully placed and legible. No other marketing copy or CTA. Preserve actual screenshot text unchanged. No endorsement claim, no floating glass cards, no perspective, no monitor bezel or laptop. The final desktop should look authentic, inviting, and exceptionally well composed."
+    },
+    {
+      "name": "02-osaka-jade-desktop",
+      "references": [
+        "references/osaka-jade.png",
+        "references/osaka-jade-wallpaper.jpg",
+        "references/official-tokyo-night-desktop.png"
+      ],
+      "prompt": "Use case: ads-marketing / faithful desktop screenshot compositing.\nMake a premium finished 4:3 landscape OpenWhisper product image that unmistakably shows a native Omarchy desktop, this time in the actual Osaka Jade theme. It should be a distinct, quieter cinematic green option with substantial desktop context, not an abstract poster.\n\nINPUTS:\n1. Real OpenWhisper UI already rendered in Osaka Jade using the app's actual theme integration. Preserve this exact UI image as the product insert. Never recolor it, invent fields, change its button structure, stretch it, or add window controls.\n2. Installed Osaka Jade \"glowing city\" wallpaper. Use it as the actual desktop wallpaper, retaining the dark emerald Japanese city and cream window lights.\n3. Official Omarchy desktop reference for top bar layout, square edges, tightly tiled proportions, tiny uniform gaps and native window borders. Adapt only its desktop chrome colors to the supplied Osaka Jade colors.\n\nVISUAL DIRECTION:\nDeep forest ink #111c18 and lighter panel #23372B, muted jade #509475, pale warm cream #F7E8B2. Restrained pixel / monospaced typography inspired by Omarchy's retro promotional identity. Flat colors, sharp native square corners, no purple/blue generic tech treatment, no soft SaaS blobs, no glossy neon frame. Let the city wallpaper do the atmosphere.\nComposition is a natural desktop view, full bleed. An authentic thin Quickshell-style bar is visible at the top with workspaces, centered time and small right system icons. The real OpenWhisper window appears centered slightly left, large, perfectly front-facing and compact with its original 1.28:1 width-to-height. All controls and footer visible. The window is approximately 58% of total image width. To the right, one modest native terminal tile with matching jade colors and discreet minimal sample shell text, perhaps \"omarchy\" and \"ready\". Do not invent code, credentials, network addresses, system benchmark stats or endorsements. The UI must remain the clear focal point.\nUse the open strip of wallpaper above the two windows for the exact headline, cream large modern monospaced or elegantly pixel-styled text:\n\"Feels like home.\"\nBelow it in smaller clear type:\n\"OpenWhisper for Omarchy\"\nSmall corner labels:\n\"OSAKA JADE\"\n\"PREVIEW\"\nThis is a clean desktop advertisement, not a raw screenshot: polished typography is allowed on the wallpaper but it must not look like new controls inside the app. Keep plenty of visible city wallpaper around the windows. Windows are sharp and readable; no extreme depth of field, perspective, oversized shadows, rounded macOS titlebars, or floating 3D panels. Preserve the app screenshot faithfully."
+    },
+    {
+      "name": "03-gruvbox-workspace",
+      "references": [
+        "references/gruvbox.png",
+        "references/gruvbox-leaves.jpg",
+        "references/official-gruvbox-desktop.png"
+      ],
+      "prompt": "Use case: ads-marketing / faithful desktop screenshot compositing.\nCreate a finished 4:3 landscape launch advertisement for OpenWhisper's custom Omarchy UI. This option should feel like a real Gruvbox developer workspace with a warm retro editorial masthead.\n\nREFERENCE ROLES:\n1. The exact OpenWhisper screenshot in the REAL installed Gruvbox palette. Preserve the app contents verbatim, proportions, tab navigation, settings, buttons, and typography. Use as an immutable screenshot insert, not a prompt to draw a different app.\n2. Omarchy's actual Gruvbox fern wallpaper. Use behind the workspace, visible around windows and in the tiling gutters.\n3. The official Omarchy Gruvbox desktop screenshot. Strong reference for the actual warm charcoal / cream / sage color scheme, desktop bar, square tiled composition, thin borders, terminal typography and understated 1990s Unix aesthetic. Do not copy personal names, email addresses or long terminal command history from it.\n\nDESIGN:\nA very restrained warm-charcoal top masthead, about 17% of height, with large cream pixel-inspired headline \"Fits your desktop.\" and small \"OpenWhisper for Omarchy\". A tiny \"PREVIEW\" tag is neatly aligned on the right. No giant decorative 3D type.\nBelow this, approximately 78% of the image is an edge-to-edge REALISTIC OMARCHY DESKTOP, with its thin top bar visibly separated from the poster masthead. The desktop shows OpenWhisper as the dominant left tile, using its original 1.28:1 aspect ratio, and one narrower matching terminal / plain-text editor tile on the right. Keep both aligned with tiny 10–14 pixel native gaps. A small surrounding wallpaper margin and the authentic native bar make it obviously part of a Linux desktop, never an app floating in empty space.\nThe right tile contains a tasteful simple text note headed \"Today's notes\" with only these sample lines:\n\"Capture an idea.\"\n\"Keep your flow.\"\n\"Make it your own.\"\nNo simulated transcription claim, no benchmarks, no private data. This tile is understated desktop context; OpenWhisper is the hero.\nUse authentic Gruvbox hues: charcoal #282828, warm panels #3c3836, cream #d4be98, muted gold #d8a657, terracotta #e1875c, sage #a9b665, soft teal #7daea3. Crisp non-glossy UI, flat native styling, precise text, squared corners. Avoid neon purple, glows, gradients, blue glass, fake laptop or monitor frames.\nA narrow bottom caption strip contains only \"GRUVBOX\" and \"Your voice. Your workflow.\" in small monospaced lettering.\nMake the whole result feel like Omarchy's own understated, theme-delighted desktop promo. Faithful screenshot content, beautiful spacing and legibility, no fabricated OpenWhisper features or window-control buttons."
+    }
+  ]
+}

@@ -16,7 +16,7 @@ from services.models import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 class DatabaseManager:
@@ -329,6 +329,13 @@ class DatabaseManager:
                     if columns and column not in columns:
                         conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} TEXT"))
 
+        if from_version < 15:
+            columns = {row[1] for row in conn.execute(
+                text("PRAGMA table_info(transcription_history)")
+            ).fetchall()}
+            if columns and "title" not in columns:
+                conn.execute(text("ALTER TABLE transcription_history ADD COLUMN title TEXT"))
+
         conn.execute(text("UPDATE schema_version SET version = :v"), {"v": SCHEMA_VERSION})
         logger.info(f"Database migrated to schema version {SCHEMA_VERSION}")
 
@@ -438,6 +445,7 @@ class DatabaseManager:
                     TranscriptionHistory.raw_text.ilike(pattern, escape="\\"),
                     TranscriptionHistory.timestamp.ilike(pattern, escape="\\"),
                     TranscriptionHistory.source_name.ilike(pattern, escape="\\"),
+                    TranscriptionHistory.title.ilike(pattern, escape="\\"),
                     TranscriptionHistory.origin_device_name.ilike(pattern, escape="\\"),
                 )
             ).order_by(TranscriptionHistory.timestamp.desc())

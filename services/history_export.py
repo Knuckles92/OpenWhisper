@@ -38,6 +38,7 @@ _JSON_FIELDS = (
     "audio_duration",
     "file_size",
     "source_name",
+    "title",
     "origin_device_id",
     "origin_device_name",
 )
@@ -61,6 +62,7 @@ def serialize_history_entry(entry: Any) -> Dict[str, Any]:
         "audio_duration": getattr(entry, "audio_duration", None),
         "file_size": getattr(entry, "file_size", None),
         "source_name": getattr(entry, "source_name", None),
+        "title": getattr(entry, "title", None),
         # Set on a host for the entries a paired computer keeps there.
         "origin_device_id": getattr(entry, "origin_device_id", None),
         "origin_device_name": getattr(entry, "origin_device_name", None),
@@ -268,6 +270,8 @@ def _render_markdown(
     title = entry.get("formatted_timestamp") or entry.get("timestamp") or "Untitled"
     lines = [f"## {title}", ""]
     facts = [f"- Model: {entry.get('model') or 'unknown'}"]
+    if entry.get("title"):
+        facts.append(f"- Title: {entry['title']}")
     if _was_cleaned(entry):
         facts.append(f"- Cleanup: {_cleanup_label(entry)}")
     source_name = entry.get("source_name")
@@ -301,6 +305,8 @@ def _render_txt(entry: Dict[str, Any]) -> str:
     stamp = entry.get("formatted_timestamp") or entry.get("timestamp") or ""
     model = entry.get("model") or ""
     lines = [f"[{stamp}] {model}"]
+    if entry.get("title"):
+        lines.append(f"Title: {entry['title']}")
     if entry.get("source_name"):
         lines.append(f"Source: {entry['source_name']}")
     if _was_cleaned(entry):

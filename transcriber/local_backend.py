@@ -1,5 +1,6 @@
 """Local transcription with faster-whisper."""
 import logging
+import threading
 from typing import Optional, Tuple
 from .base import TranscriptionBackend
 from config import config
@@ -15,7 +16,7 @@ WhisperModel = None
 def _whisper_model_class():
     global WhisperModel
     if WhisperModel is None:
-        from faster_whisper import WhisperModel as model_class
+        from services.isolated import IsolatedWhisperModel as model_class
 
         WhisperModel = model_class
     return WhisperModel
@@ -75,6 +76,8 @@ class LocalWhisperBackend(TranscriptionBackend):
         self.model_name = model_name
         # A faster_whisper.WhisperModel once loaded.
         self.model = None
+        self._model_lock = threading.RLock()
+        self._model_generation = 0
         self._device: Optional[str] = None
         self._compute_type: Optional[str] = None
         self._override_device = device
@@ -211,6 +214,9 @@ class LocalWhisperBackend(TranscriptionBackend):
         ``download_and_load``).
         """
         self._load_deferred = False
+        with self._model_lock:
+            generation = self._model_generation
+            self.reset_cancel_flag()
         try:
             # A reload is a fresh attempt: without this reset, a successful GPU
             # load after the user fixes the cause (e.g. installs the GPU
@@ -227,6 +233,10 @@ class LocalWhisperBackend(TranscriptionBackend):
                 self.model_name = detected_model
 
             from services.hf_access import is_model_cached
+            from services.whisper_sources import is_custom_model, parse_source, validate_model_folder
+            if is_custom_model(self.model_name) and parse_source(self.model_name).local_path:
+                self._model_missing = False
+                validate_model_folder(parse_source(self.model_name).local_path)
 
             if not is_model_cached(self.model_name):
                 logger.info(
@@ -244,13 +254,10 @@ class LocalWhisperBackend(TranscriptionBackend):
             )
 
             try:
-                self.model = _whisper_model_class()(
-                    self.model_name,
-                    device=self._device,
-                    compute_type=self._compute_type,
-                    local_files_only=True,
-                )
+                self._construct_model(generation)
             except Exception as gpu_error:
+                if self.should_cancel:
+                    raise RuntimeError("Transcription canceled") from gpu_error
                 if not self._retry_on_cpu(gpu_error):
                     raise
 
@@ -259,7 +266,31 @@ class LocalWhisperBackend(TranscriptionBackend):
 
         except Exception as e:
             logger.error(f"Failed to load faster-whisper model: {e}")
+            if self.model is not None and hasattr(self.model, "close"):
+                self.model.close()
             self.model = None
+
+    def _construct_model(self, generation):
+        from services.whisper_sources import cached_model_path, is_custom_model
+        name = cached_model_path(self.model_name) if is_custom_model(self.model_name) else self.model_name
+        with self._model_lock:
+            if generation != self._model_generation or self.should_cancel:
+                raise RuntimeError("Transcription canceled")
+            model = _whisper_model_class()(
+                name, device=self._device,
+                compute_type=self._compute_type, local_files_only=True,
+            )
+            self.model = model
+        # Publish the adapter before native load begins, so Quit can kill a
+        # model that hangs while loading as well as during inference.
+        from services.isolated import IsolatedWhisperModel
+        if isinstance(model, IsolatedWhisperModel):
+            model.load()
+        with self._model_lock:
+            if generation != self._model_generation or self.should_cancel:
+                if hasattr(model, "close"):
+                    model.close()
+                raise RuntimeError("Transcription canceled")
 
     def _downgrade_to_cpu_if_gpu_libraries_missing(self) -> None:
         """Select the CPU when a CUDA device exists but its libraries do not.
@@ -362,12 +393,10 @@ class LocalWhisperBackend(TranscriptionBackend):
         self.gpu_fallback_note = note
         self.gpu_fallback_cause = cause
 
-        self.model = _whisper_model_class()(
-            self.model_name,
-            device=self._device,
-            compute_type=self._compute_type,
-            local_files_only=True,
-        )
+        previous = self.model
+        if previous is not None and hasattr(previous, "close"):
+            previous.close()
+        self._construct_model(self._model_generation)
         logger.info(
             f"Loaded '{self.model_name}' on CPU "
             f"(compute_type={self._compute_type}) after GPU failure"
@@ -409,11 +438,20 @@ class LocalWhisperBackend(TranscriptionBackend):
                     min_silence_duration_ms=config.FASTER_WHISPER_VAD_MIN_SILENCE_MS
                 )
 
-            segments, info = self.model.transcribe(
+            from services.isolated import IsolatedWhisperModel
+            model = self.model
+            if isinstance(model, IsolatedWhisperModel):
+                transcribe = model.transcribe_cancelable
+                cancel_options = {"should_cancel": lambda: self.should_cancel}
+            else:
+                transcribe = model.transcribe
+                cancel_options = {}
+            segments, info = transcribe(
                 audio_path,
                 beam_size=config.FASTER_WHISPER_BEAM_SIZE,
                 vad_filter=config.FASTER_WHISPER_VAD_ENABLED,
-                vad_parameters=vad_params
+                vad_parameters=vad_params,
+                **cancel_options,
             )
 
             logger.info(f"Detected language: {info.language} "
@@ -459,47 +497,22 @@ class LocalWhisperBackend(TranscriptionBackend):
         self._load_model()
 
     def cleanup(self):
-        """Clean up faster-whisper model and release resources.
+        """Terminate the owning process; no CUDA synchronization in the app."""
+        with self._model_lock:
+            self._model_generation += 1
+            self.should_cancel = True
+            model, self.model = self.model, None
+        if model is not None and hasattr(model, "close"):
+            model.close()
 
-        This unloads the model from memory (including GPU memory if applicable).
-        """
-        import time
-
-        try:
-            if self.model is not None:
-                self.should_cancel = True
-
-                # Turbo can leave pending CUDA work that outlives the model object.
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.synchronize()
-                except ImportError:
-                    pass
-                except Exception:
-                    logger.debug("CUDA sync failed during model cleanup", exc_info=True)
-
-                time.sleep(0.3)
-
-                self.model = None
-
-                time.sleep(0.5)
-
-                import gc
-                gc.collect()
-
-                time.sleep(0.2)
-
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except ImportError:
-                    pass
-                except Exception:
-                    logger.debug("CUDA cache clear failed during model cleanup", exc_info=True)
-        except Exception:
-            logger.debug("Local Whisper cleanup failed", exc_info=True)
+    def cancel_transcription(self):
+        super().cancel_transcription()
+        with self._model_lock:
+            model = self.model
+        # Keep the adapter ready for the next recording. It reloads in a new
+        # process on demand, after the canceled job has unwound.
+        if model is not None and hasattr(model, "cancel"):
+            model.cancel()
 
     @property
     def device(self) -> Optional[str]:

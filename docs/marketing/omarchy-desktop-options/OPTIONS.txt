@@ -1,0 +1,33 @@
+OPENWHISPER ON OMARCHY — DESKTOP OPTIONS
+
+01-tokyo-night-desktop.png
+Colorful sunset desktop: the installed winding-road wallpaper, Tokyo Night
+app palette, compact OpenWhisper window, native bar and terminal context.
+Copy: Your voice. Your Omarchy.
+
+02-osaka-jade-desktop.png
+Dark emerald city desktop: the installed Osaka Jade wallpaper and the app's
+actual jade/cream theme, with restrained typography and native window borders.
+Copy: Feels like home.
+
+03-gruvbox-workspace.png
+Warm charcoal, cream and sage: a tiled workspace using Omarchy's Gruvbox
+palette and fern wallpaper, with a retro editorial masthead.
+Copy: Fits your desktop.
+
+CREATION
+These are promotional desktop compositions made with the built-in image_gen
+tool. The app reference images were rendered from OpenWhisper's real Qt UI
+using each installed Omarchy palette and disposable settings. No live theme
+or desktop settings were changed on jed.
+
+PROMPTS AND REFERENCES
+The complete prompts and source links are in prompts-and-sources.json.
+The local references/ folder holds the input material for future revisions.
+The shareable ZIP contains the final graphics, these notes, and the prompts.
+
+PRIMARY DESIGN SOURCES
+https://omarchy.org/
+https://omarchy.org/news/2026/09/omarchy-org-redesign-launches-with-29-languages/
+https://omarchy.org/manual/themes/
+https://learn.omacom.io/2/the-omarchy-manual/52/themes

@@ -12,7 +12,7 @@ The strongest proposal is a two-speed insights pipeline: TypeSafe identifies pro
 
 The configured meeting API is OpenRouter `deepseek/deepseek-v4.1-flash`; cleanup uses OpenRouter `google/gemini-3.8-flash` with low reasoning. Both were tested through the application's text-generation adapter. An available OpenAI credential allowed testing the supported `gpt-4o-mini` fallback as well; it is not the active meeting or cleanup model. Groq, OpenCode Go and OpenCode Zen lacked configured credentials. Ollama was excluded as requested. Audio transcription and voice synthesis are outside this text comparison.
 
-The actual Direct, forced Direct JSON, Pi and OpenCode meeting engines were also exercised with the configured DeepSeek model: the existing six-check live-agent regression plus a separate end-of-meeting consolidation. These are workflow probes, not the same task as a typed classification call. The OpenCode engine measured here was the packaged harness, which has since been removed; OpenCode now runs as a user-installed agent over ACP, and these figures do not describe it.
+The actual Direct, forced Direct JSON, Pi and OpenCode meeting engines were also exercised with the configured DeepSeek model: the existing six-check live-agent regression plus a separate end-of-meeting consolidation. These are workflow probes, not the same task as a typed classification call.
 
 The semantic comparison contains 92 frozen cases across eight families, 100 scored fields and 124 questions. Thirty-six cases reuse the earlier experiment's holdout; 56 extend it. Expected labels were excluded from API requests. Event owner/deadline fields count only for accepted actions. All four main arms share suite SHA-256 `954a576768b202beaadc0446141eb0798bebd725d94daee03e0408a63ab603fe`.
 
@@ -59,7 +59,7 @@ The existing live-agent regression covers automatic contextual name repair, huma
 | Direct, normal tool path | 3/6 | 104.69 s | 113.64 s; completed, 32 items |
 | Direct, forced JSON path | 6/6 | 13.03 s | 109.52 s; completed, 27 items |
 | Pi | 5/6 | 65.81 s | 88.69 s; completed, 22 items |
-| OpenCode (packaged harness, since removed) | 5/6 | 32.06 s | Cancelled at 120.05 s; no items |
+| OpenCode | 5/6 | 32.06 s | Cancelled at 120.05 s; no items |
 
 The formal 5/6 results for Pi and OpenCode need qualification: both failed the same bullet-rewrite assertion, which rejects any appearance of `5000`. Their actual text preserved the correct distinction “$500, not $5000,” owner, Friday deadline and pending vendor choice. That assertion is overly literal; the original test was left unchanged. Direct's notes passes returned no applied notes in the first scenarios, although cards and a corrected transcript existed. Its notes pass could exceed the experiment's 60-second checkpoint setting because retries are not a strict overall deadline.
 

@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from services.model_catalog import WHISPER_REVISIONS
 from services.component_catalog import PI_HOME_URL, get_component_details
 from services.components import ComponentId, ComponentInfo, ComponentState
 from services.hf_access import CachedModelInfo, get_hf_cache_dir
@@ -41,7 +42,7 @@ def _cached(repo_id, size_bytes):
         repo_id=repo_id,
         size_bytes=size_bytes,
         path=f"/hub/models--{repo_id.replace('/', '--')}",
-        revision_hashes=("abc",),
+        revision_hashes=(WHISPER_REVISIONS.get(repo_id, "abc"),),
     )
 
 
@@ -326,7 +327,7 @@ class TestModelRows(_DialogTestCase):
             }
         )
         text = dialog.stats_label.text()
-        assert text.startswith("2 of 22 speech models")
+        assert text.startswith(f"2 of {len(dialog.rows)} speech models")
         assert "221 MB used" in text
 
 
@@ -538,7 +539,7 @@ class TestSorting(_DialogTestCase):
         dialog.sort_combo.setCurrentIndex(dialog.sort_combo.findData("backend"))
         backends = [dialog.rows[name].backend for name in self._row_order(dialog)]
         first_seen = list(dict.fromkeys(backends))
-        assert first_seen == ["local_whisper", "parakeet", "qwen_asr", "nemotron", "moonshine"]
+        assert first_seen == ["local_whisper", "parakeet", "qwen_asr", "nemotron", "moonshine", "parakeet_mlx"]
         assert backends == sorted(backends, key=first_seen.index)
         # Inside a family the recommended order still applies.
         assert self._row_order(dialog)[0] == "tiny"

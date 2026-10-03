@@ -65,9 +65,11 @@ def scale_qss_fonts(stylesheet: str, scale: float) -> str:
 
 def resolve_stylesheet(source: str, scale: Optional[float] = None) -> str:
     """Substitute palette tokens in ``source`` and scale its font sizes."""
+    from ui_qt.utils.omarchy_theme import desktop_stylesheet
+
     if scale is None:
         scale = current_ui_font_scale()
-    return scale_qss_fonts(resolve_tokens(source), scale)
+    return scale_qss_fonts(desktop_stylesheet(resolve_tokens(source)), scale)
 
 
 def _needs_resolution(sheet: str) -> bool:
@@ -103,7 +105,10 @@ def apply_ui_font_scale(
         if sheet:
             instance.setStyleSheet(sheet)
 
-    instance.setFont(QFont("Segoe UI", max(6, int(round(_BASE_APP_POINT_SIZE * scale)))))
+    from services.desktop_session import use_omarchy_ui
+
+    family = "Noto Sans" if use_omarchy_ui() else "Segoe UI"
+    instance.setFont(QFont(family, max(6, int(round(_BASE_APP_POINT_SIZE * scale)))))
     _resolve_widget_stylesheets(instance, scale)
 
 
@@ -165,7 +170,14 @@ def apply_ui_theme(
         except AttributeError:  # Qt < 6.8
             pass
 
-    changed = manager.set_theme(resolve_theme_preference(preference, instance))
+    from services.desktop_session import use_omarchy_ui
+
+    desktop_palette = preference == UiTheme.OMARCHY or (
+        follow_system and use_omarchy_ui()
+    )
+    changed = manager.set_theme(
+        resolve_theme_preference(preference, instance), desktop_palette=desktop_palette
+    )
     if instance is not None:
         manager.apply_platform_palette(instance, pin_color_scheme=not follow_system)
     if changed:

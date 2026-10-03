@@ -57,8 +57,10 @@ def _distribution_license(package, suffix, destination):
 # which PyInstaller does not otherwise retain.
 datas = [
     ("services/local_asr", "services/local_asr"),
+    ("services/whisper_models.json", "services"),
     (str(REPO_ROOT / "ui_qt" / "styles" / "theme.qss"), "ui_qt/styles"),
     (str(REPO_ROOT / "ui_qt" / "assets"), "ui_qt/assets"),
+    (str(REPO_ROOT / "integrations" / "omarchy"), "integrations/omarchy"),
     (str(REPO_ROOT / "webui" / "dist"), "webui/dist"),
     (str(REPO_ROOT / "docs" / "linux-system-audio.md"), "docs"),
     (str(REPO_ROOT / "THIRD_PARTY_NOTICES.md"), "."),
@@ -124,6 +126,9 @@ _COLLECT_PACKAGES = [
     "sounddevice",
     "lxml",
     "uvicorn",
+    "mcp",
+    "mcp_types",
+    "jsonschema_specifications",
     "soundcard",
     # Plugin-style packages whose platform implementations are selected at
     # runtime. SecretStorage/jeepney back Linux's explicit keyring backend;
@@ -154,7 +159,11 @@ for package in _COLLECT_PACKAGES:
     # absent. collect_all() warns for a missing package, so skip it cleanly.
     if find_spec(package) is None:
         continue
-    pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
+    # MCP's optional CLI exits when its unneeded CLI dependencies are absent.
+    pkg_datas, pkg_binaries, pkg_hidden = collect_all(
+        package,
+        filter_submodules=lambda name: name != "mcp.cli" and not name.startswith("mcp.cli."),
+    )
     datas += pkg_datas
     binaries += pkg_binaries
     hiddenimports += pkg_hidden

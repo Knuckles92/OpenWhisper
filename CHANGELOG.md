@@ -9,12 +9,69 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 ## [Unreleased]
 
 ### Added
-- **Meeting insights through your own Claude Code, Codex, or OpenCode** — a meeting's AI insights can now run on a coding agent you already have installed and signed in, instead of an API key in OpenWhisper. **Settings → Meeting Mode → Intelligence** looks for all three and lights up the ones it finds, showing version and sign-in. Pick one and a model; the default is the model set in that agent's own configuration. Meeting passes then run on that agent's sign-in, providers, and models, and so does **Ask for a report**. OpenWhisper, Pi, and the Standard agent stay available for API-key users.
-  - The agent gets OpenWhisper's meeting tools and nothing else. They are served to it on this computer only (127.0.0.1, a new secret per pass, browser requests refused), and every call goes through the same checks as the built-in engines, so a notes pass can only touch notes. Claude Code and Codex run headless with their own tools switched off; the Codex sandbox also stops its code runtime from reading files. OpenCode runs over the Agent Client Protocol with every tool but OpenWhisper's denied, layered on the user's own OpenCode setup for that process only. Asked to read a file outside those tools, none of the three could.
-  - Meetings stay out of the agent's own history: Claude Code and Codex save no session, and OpenCode's sessions are deleted after each pass. Agents run in an empty folder outside any repository, so a project's `CLAUDE.md` or `AGENTS.md` never applies, and Claude Code's hooks are switched off for meeting passes. A user-wide instructions file (OpenCode's global `AGENTS.md`, for one) can still load, so the meeting instructions say they come first.
-  - Each pass takes 10 to 30 seconds and counts toward the agent's plan, so live cards refresh about once a minute (every 30 to 90 seconds), notes every other refresh, and transcript polish every few minutes. Live passes skip extended thinking, which tripled their latency with no better results; the final report may think.
-  - Measured on the development PC with the demo meeting's first minutes, one live pass: Claude Code (Haiku) about 28 s and $0.013; Codex (its default model, low effort) about 23 s; OpenCode (DeepSeek V4.1 Flash through OpenRouter) about 8 s.
-  - The newest install wins when there are several. The Codex desktop app bundles a newer CLI than the one on PATH, and only the newer one accepted the current ChatGPT models. OpenCode 2.0 or newer is required.
+- **Installed meeting agents** — choose Claude Code, Codex, or OpenCode already installed and signed in on your computer. Each uses the shared meeting tools for live insights, notes, transcript polish, finalization, saved-meeting retries, and custom reports. Pi remains the default; Standard API and the packaged OpenCode SDK remain available.
+
+### Fixed
+- **Meeting notes** — minutes can repeat facts from the other insight cards while duplicate note blocks are still rejected.
+- **Installed Codex tools** — meeting passes disable unrelated user MCP servers before adding the meeting tools.
+
+## [2.6.12] - 2026-10-02
+
+### Added
+- **Orukeet TDT 0.6B** — optional native Q8 weights from Oruk AI, a 25-language Parakeet adaptation, with CC BY-SA 4.0 attribution and weight-license details.
+- **Experimental Parakeet MLX** — separate pinned MLX weights and runtime for Apple Silicon Macs, with Auto targeting the Apple GPU through Metal and a CPU option. Language is detected automatically. Actual Apple Silicon transcription validation is pending.
+- **Supported language presets** — optional local engines and paired hosts offer Russian, Spanish, French, Portuguese, and Mandarin alongside English and Auto where supported. Moonshine stays English-only; Parakeet omits Mandarin. Qwen language names and Nemotron Mandarin prompts are passed correctly to their pinned runtimes.
+- **Custom Whisper models** — add local model folders or discover compatible root and subfolder models in Hugging Face repositories and the local cache. Review discovered models before adding them, then assign them to dictation or meetings. Downloads and offline loading use the selected subfolder; removing a custom entry retains its files.
+- **Direct client history queries over MCP** — clients can allow their paired host to search saved history and read transcripts and meeting insights while they are online. Agents opt in with `include_clients`, route reads by device, and receive explicit offline/disabled status. The shared desktop and Omarchy setting is independent of storage; Both retains host copies for offline access.
+- **Copy MCP access token in Host mode** — the main desktop and Omarchy host dashboards now copy the running server's access token directly, with brief confirmation. MCP connection actions stack in narrow windows so all controls remain accessible.
+- **Optional MCP controls** — agents can retitle local transcriptions and finished meetings, and read or change supported preferences. Retitling and settings access require separate permissions, with individual controls for writable preferences; all new permissions are off by default.
+
+### Changed
+- **Model download details and trust** — downloads and model details show sources, licenses, versions, and the limits of integrity verification. Custom model and speech-runtime dialogs explain their trust requirements. Built-in Whisper downloads and offline loads use pinned revisions.
+- **Custom model hardware profiles** — GPU and architecture estimates recognize custom and fine-tuned Whisper sources while preserving distilled model profiles.
+
+### Fixed
+- **MCP startup** — enabling MCP now opens the system credential store correctly. Startup previously failed before opening history and showed a misleading history-database error.
+- **MCP setup across computers** — optional Tailscale access provides a reachable host URL while keeping localhost available. Settings distinguishes the agent's computer, and Host mode copies the Tailscale setup when enabled. Local prompts identify their originating computer and no longer direct agents to enable an unrelated local OpenWhisper instance.
+- **Meeting titles** — renaming a saved meeting keeps its database title, saved state, open dashboards, and MCP results consistent, including multiple dashboards open at once.
+- **Meeting retries** — post-meeting steps retain their ownership until results are published and ignore progress from stale attempts, preventing overlapping retries and outdated progress.
+- **OpenAI reasoning models** — cleanup and meeting insights use the Responses API for supported reasoning models. Saved meeting routes are migrated from stale protocol choices.
+- **Pairing and history pagination** — paired services share the same device registry, and offline transcript segment cursors retain the correct source and filters.
+- **MCP theme preferences** — settings correctly report inherited theme choices and restore them when an agent resets the preference.
+
+## [2.6.11] - 2026-09-29
+
+### Added
+- **Omarchy interface** — automatically selected on Omarchy, with compact application chrome, square controls, and a live desktop palette shared by the main window and Settings. Supports Omarchy 3 and 4 theme locations; existing explicit Dark/Light preferences are preserved. No Quickshell extension is required.
+- **Omarchy desktop controls** — compositor-owned global shortcuts, including press/release for push-and-hold and cleanup profiles, with conflict detection and no keyboard hook. Hyprland auto-paste supports native applications and recognized terminals. An optional Omarchy 4 bar widget adds record/stop, cancel, open, and live preview using the shell's own UI components.
+- **Interrupted recording recovery** — Quick Record writes audio to a recovery journal during capture. On the next launch, interrupted recordings are recovered as WAV files; failed transcriptions preserve their audio, while explicitly canceled recordings are discarded.
+- **Local support reports** — `--diagnostics` exports a report of app and dependency versions, selected engine settings, sanitized failure categories, and timing measurements. Reports exclude audio, transcripts, credentials, and raw logs, and are saved locally without uploading.
+
+### Fixed
+- **Omarchy window controls and Settings** — omit client titlebar buttons on the main window and dialogs. Settings no longer forces a 940-pixel minimum on smaller windows; forms scroll, overview cards reflow, and search stays within the window. Tray restore preserves maximized/fullscreen state, and field help stays inside the Wayland app. Shortcut hints distinguish desktop shortcuts from focused-window fallbacks.
+- **Wayland tiling and fractional scaling** — the compositor now owns the main window's geometry. Views, History, and Compact Mode no longer resize the tile, restored off-screen positions are ignored, and small tiles scroll. Omarchy uses Qt Fusion metrics independently of GTK scaling. The splash is opaque and static, shortcut hints avoid unsupported opacity animations, and the recording indicator stays inside the app on Wayland.
+- **Wayland keyboard-hook stalls** — native Wayland sessions no longer initialize or periodically refresh pynput's blocking X11 hook. Focused-window shortcuts remain available, including the default keypad bindings; editing shortcuts uses Qt key events. Linux shortcut labels use Ctrl/Alt/Super rather than macOS symbols. Other Wayland compositors retain focused-window shortcuts and manual paste.
+- **Cancellation and recording failures** — isolated transcription and model-download workers can be stopped when native decoding or network calls stall. Canceling does not deliver late text or paste, and disk-write failures stop capture with a visible error while keeping recoverable audio.
+- **Long audio files** — previews read headers, upload splitting decodes one bounded window at a time, and WAV metadata is written with a streaming copy. Packed stereo and integer PCM conversion now preserve duration and sample values.
+- **Settings model loading** — resolving Whisper model repositories no longer imports the transcription runtime. Engine runtime detection runs in the background, with results applied to the matching engine and device.
+
+### Changed
+- **Release validation** — recording, cancellation, history, and lifecycle checks run across Windows and macOS release and source environments. Installer builds also gate the frozen application's synthetic service lifecycle and process exit before packaging.
+
+## [2.6.10] - 2026-09-29
+
+### Added
+- **Host Mode** — **View → Host Mode** (Ctrl+Shift+H) is for a computer that only shares its engine with paired computers. It replaces Quick Record, Upload File, Meeting Mode and the History sidebar with a dashboard of what a host needs to see. The choice is remembered, and the dashboard keeps its own window size and position, the way Compact Mode does.
+  - Whether sharing is on, with a button to start or stop it. The dashboard shows the address and port computers reach, the Tailscale name and address, and the identity a pairing computer should match. A port that is already in use is shown with its reason.
+  - Four tiles: computers connected now, transcriptions, audio transcribed, and speed (seconds of audio per second of decoding) since sharing started.
+  - The engine being served: its device, whether it supports live preview, and why it can't serve when it can't. A picker switches it to any model ready on this computer, the same way a paired computer's switch does.
+  - Each connected computer, with its link, how long it has been connected, and what it has asked for. A computer's dictation and meeting connections are shown as one entry.
+  - Pairing: **Pair a computer** shows the 6-digit code with its countdown. The paired computers list shows which are connected, when the others were last seen, how each paired, and what records each keeps here.
+  - MCP: whether agents on this computer can search the dictations and meetings saved here, including the records paired computers keep here. It has a button to turn it on or off (the same setting as **Settings → MCP**) and a link to connect an agent. When the server can't start, the card says why.
+  - Recent activity: each transcription, with its length and how long this computer took, plus failures, connections, pairings and model switches.
+  - Motion follows real events: waves run from the host while a paired computer's audio is being decoded, and it ripples once when a transcription goes back. The counts are kept in memory only and start over when sharing starts again.
+- **MCP server and settings page** — **Settings → MCP** enables read-only agent access to saved history and meeting insights, with live status, an OS-stored access token, and copyable agent prompts, a Claude Code command, and Cursor configuration. Starts with the desktop app when enabled and stops when the app quits. See [MCP setup](docs/mcp.md).
+- **Local history API for agents (preview)** — `python main.py --api` starts a separate, token-authenticated service on localhost for searching saved transcriptions and meetings, reading full text and meeting insights, and retrieving timestamped citation segments. Includes bounded cursor pagination, date filters, explicit opt-in for paired-computer records, and an OpenAPI contract. Database access is read-only and the service stays off during normal desktop startup. See [setup and reference](docs/agent-api.md) and the [MCP integration](docs/mcp.md).
 - **Parakeet and Nemotron on older NVIDIA GPUs on Linux** — a Linux x86_64 computer whose NVIDIA GPU is older than Turing, such as a GTX 10 series card, can now run Parakeet and Nemotron on the GPU. NVIDIA's CUDA release of NeMo-Speech.cpp needs Turing or newer, so these cards could only use the CPU, and a remote host with one refused GPU setup. **Settings → Downloads** on these computers now offers **NVIDIA Speech GPU (Vulkan)**: NVIDIA's own NeMo-Speech.cpp 0.1.0 Vulkan release, pinned by size and SHA-256 (18 MB to download, 58 MB installed). A remote host with such a card offers it as its GPU runtime. Choosing the GPU, or Auto once it's installed, runs on it. It needs the NVIDIA driver and the Vulkan loader, not GPU Acceleration's CUDA libraries.
   - The runtime selects the NVIDIA card. On a laptop, the Intel iGPU is listed as the first Vulkan device, and the model would have run there, slower than on the CPU.
   - Measured on a GTX 1050 Ti (4 GB) with an i5-9300H, for a 22.6-second dictation: Parakeet decoded it in 1.2 s on the GPU and 5.1 s on the CPU; Nemotron in 3.6 s and 10.2 s, and its live preview step took 26 ms instead of 86 ms. Peak GPU memory was 1.35 GB. On a 90-second recording the GPU and CPU transcripts differed by 1 word of 221 (Parakeet) and 5 of 194 (Nemotron, mostly "um" and "uh"), plus some punctuation.
@@ -45,7 +102,6 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 - A consolidation that times out always reports the timeout, even when the canceled call returns during its grace period.
 
 ### Removed
-- **The packaged OpenCode meeting agent** — a Bun-based OpenCode component was built but never published in Downloads; OpenCode now runs as the user's own installed agent instead (see Added). Its sidecar, packaging script, catalog entry, and component leases are gone, about 2,700 lines, and **Agent core** under the built-in engine lists only Pi and Direct.
 - **Rolling transcript revisions** — the experimental pass that rewrote live meeting transcripts has been off since August because it made some meetings worse (by up to 4.9 points of word error rate). Its code and the meeting benchmark's `--enable-revisions` option are gone.
 - **The fallback meeting dashboard** — a source checkout whose `webui` bundle is missing now shows a one-line build instruction instead of an older built-in dashboard.
 - **Developer benchmarks and probes nobody runs** — the one-off TypeSafe probe scripts, the Gemini audio evaluations, the legacy accuracy and model benchmarks (use `scripts/benchmark_local_asr*.py`), and old audio probe scripts. The AMI human-label harness that the TypeSafe thresholds cite stays.

@@ -206,6 +206,7 @@ actual_version_cli="$("$APP_BIN" --version)"
 [[ "$actual_version_cli" == "OpenWhisper $VERSION" ]] || \
     fail "frozen executable reported '$actual_version_cli', expected 'OpenWhisper $VERSION'"
 "$APP_BIN" --self-test
+"$PYTHON" scripts/check_release_health.py --executable "$APP_BIN" --output build/release-health.json --timeout 45
 
 step "Verifying code signature"
 # Ad-hoc signatures are expected for the unnotarized preview. Do not gate on

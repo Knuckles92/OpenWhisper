@@ -29,6 +29,8 @@ class RequiredRuntimeDialog(QDialog):
             "downloading the model alone does not enable transcription.\n\n"
             f"Install {runtime} now? This is a separate {format_size_bytes(size)} download, "
             "shared by compatible models. After both downloads finish, the selected model loads automatically.\n\n"
+            "This installs third-party executable software. Archive integrity checks do not guarantee "
+            "security. Keep speech runtimes updated. See the runtime's source and license in Downloads.\n\n"
             "If you choose Later, the model will remain unavailable until you install this runtime in Downloads."
         )
         self.body.setWordWrap(True)

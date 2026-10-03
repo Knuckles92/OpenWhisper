@@ -80,6 +80,9 @@ def setup_logging() -> None:
         handlers=handlers,
         force=True,
     )
+    from services.diagnostics import install_failure_capture
+
+    install_failure_capture()
     _enable_crash_logging()
     _install_qt_message_handler()
 
@@ -306,6 +309,9 @@ def main() -> int:
 
         ui_controller.show_main_window()
         profiler.mark("main_window_shown")
+        from services.diagnostics import record_metrics
+
+        record_metrics(startup_to_window_s=profiler.events[-1][1])
 
         from services.app_update_apply import (
             parse_health_token,
@@ -321,6 +327,15 @@ def main() -> int:
         # Whisper load, HF consent, meeting recovery, and streaming setup
         # run after the window is visible — never on the splash path.
         app_controller.notify_main_ui_ready()
+        from services.agent_mcp.runtime import runtime as mcp_runtime
+        from services.settings import settings_manager
+
+        mcp_runtime.configure_controls(
+            on_change=ui_controller.agent_data_changed.emit,
+            meeting_renamer=app_controller.meeting_runtime.retitle_saved_meeting,
+            client_history=app_controller.remote_engine.history,
+        )
+        mcp_runtime.restore(settings_manager)
         if health_token:
             from PyQt6.QtCore import QTimer
 
@@ -351,6 +366,9 @@ def main() -> int:
         logging.exception("Application startup failed")
         raise
     finally:
+        from services.agent_mcp.runtime import runtime as mcp_runtime
+
+        mcp_runtime.stop(wait=True)
         try:
             if loading_screen is not None:
                 loading_screen.destroy()

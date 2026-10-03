@@ -1,0 +1,82 @@
+OPENWHISPER / OMARCHY PREVIEW — X POST OPTIONS
+
+These drafts describe the unreleased preview. Add a release link only after it is published. No posts have been sent.
+
+1. LAUNCH PREVIEW
+Suggested image: 01-omarchy-launch.png
+Characters including line breaks: 245
+
+OpenWhisper is getting a custom Omarchy UI.
+
+Live desktop themes. Hyprland-friendly windows. Global dictation shortcuts. A Quickshell recording widget.
+
+Dictation, uploads, meetings, profiles, and host mode are all still here.
+
+First look below.
+
+------------------------------------------------------------
+
+2. PERSONAL / FOUNDER
+Suggested image: 01-omarchy-launch.png
+Characters including line breaks: 194
+
+I wanted OpenWhisper to feel at home on Omarchy.
+
+Windows that follow Hyprland. Colors that follow your theme. Recording controls right in the bar.
+
+Here's a first look at the custom Omarchy UI.
+
+------------------------------------------------------------
+
+3. TECHNICAL AUDIENCE
+Suggested image: 02-made-for-tiling.png
+Characters including line breaks: 246
+
+Omarchy users: this one's for you.
+
+OpenWhisper's new UI follows your desktop colors, lets Hyprland handle window sizing, and registers dictation shortcuts with the compositor.
+
+Plus native Wayland paste + a Quickshell bar widget.
+
+Preview below.
+
+------------------------------------------------------------
+
+4. FEATURE PARITY
+Suggested image: 03-full-toolkit.png
+Characters including line breaks: 246
+
+Same OpenWhisper toolkit. A new home on Omarchy.
+
+Dictation. Uploads. Meetings. Profiles. History. Host mode.
+
+A custom interface with live desktop themes, responsive windows, and native recording controls.
+
+New look. Full toolkit. Preview below.
+
+------------------------------------------------------------
+
+5. SHORT AND PUNCHY
+Suggested image: 01-omarchy-launch.png
+Characters including line breaks: 170
+
+Your voice. Your desktop.
+
+OpenWhisper for Omarchy: live theme matching, desktop shortcuts, and recording controls in your Quickshell bar.
+
+A first look at the custom UI.
+
+------------------------------------------------------------
+
+6. BUILD IN PUBLIC
+Suggested image: 02-made-for-tiling.png
+Characters including line breaks: 243
+
+Building OpenWhisper for Omarchy meant fixing the desktop details:
+
+Window sizing. Responsive Settings. Keypad shortcuts. Recording indicators.
+
+Then checking 77 UI views on a real Hyprland desktop at 150% scale.
+
+Here's the custom UI preview.
+

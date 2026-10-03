@@ -77,10 +77,10 @@ class TestPreviewCost:
         assert preview.channels == 2
         assert preview.duration_seconds == pytest.approx(1.0, abs=0.05)
 
-    def test_large_file_is_decoded_and_reports_chunks(
+    def test_large_file_is_estimated_from_header_and_reports_chunks(
         self, processor, tmp_path, monkeypatch
     ):
-        """Split points still need the samples, so this file is decoded."""
+        """Do not decode twice just to preview a file that will be split."""
         path = write_wav(tmp_path / "big.wav", seconds=3.0, rate=44100)
         monkeypatch.setattr(config, "MAX_FILE_SIZE_MB", 0.05)
         decoded = []
@@ -91,7 +91,7 @@ class TestPreviewCost:
 
         preview = processor.preview_file(path, engine_splits=True)
 
-        assert decoded == [path]
+        assert decoded == []
         assert preview.needs_splitting is True
         assert preview.estimated_chunks >= 1
         assert sum(preview.chunk_durations) == pytest.approx(3.0, abs=0.05)
@@ -125,10 +125,10 @@ class TestPreviewCost:
         decoded = []
         # Stubbed rather than wrapped: the fake ``av.open`` below intercepts
         # every call, including the fallback's own decode.
-        processor._load_audio_metadata = lambda p: (
+        processor._iter_audio_blocks = lambda p: iter([
             decoded.append(p)
             or (np.zeros(int(1.5 * 44100), dtype=np.int16), 44100, 1)
-        )
+        ])
 
         class _Stream:
             rate = 44100
@@ -186,6 +186,219 @@ class TestSplitting:
 
         assert not any(os.path.exists(chunk) for chunk in chunks)
         assert processor.temp_files == []
+
+    def test_pcm_waveform_survives_splitting_exactly(self, processor, tmp_path, monkeypatch):
+        rate = 8000
+        samples = np.tile(np.array([-32768, -20000, -1, 0, 1, 20000, 32767], dtype=np.int16), 4000)
+        path = str(tmp_path / "pcm.wav")
+        with wave.open(path, "wb") as handle:
+            handle.setparams((1, 2, rate, 0, "NONE", "not compressed"))
+            handle.writeframes(samples.tobytes())
+        monkeypatch.setattr(config, "MAX_FILE_SIZE_MB", 0.01)
+        monkeypatch.setattr(config, "OVERLAP_DURATION_SEC", 0)
+        chunks = processor.split_audio_file(path)
+        decoded = []
+        try:
+            assert len(chunks) > 1
+            for chunk in chunks:
+                with wave.open(chunk, "rb") as handle:
+                    assert handle.getnchannels() == 1
+                    assert handle.getframerate() == rate
+                    decoded.append(np.frombuffer(handle.readframes(handle.getnframes()), dtype="<i2"))
+            np.testing.assert_array_equal(np.concatenate(decoded), samples)
+        finally:
+            processor.cleanup_temp_files()
+
+    def test_overlap_and_header_never_exceed_upload_limit(self, processor, tmp_path, monkeypatch):
+        path = write_wav(tmp_path / "overlap.wav", seconds=5, rate=8000)
+        monkeypatch.setattr(config, "MAX_FILE_SIZE_MB", 0.02)
+        monkeypatch.setattr(config, "OVERLAP_DURATION_SEC", 2)
+        chunks = processor.split_audio_file(path)
+        try:
+            assert len(chunks) > 1
+            assert all(os.path.getsize(chunk) <= int(0.02 * 1024 * 1024) for chunk in chunks)
+            arrays = []
+            for chunk in chunks:
+                with wave.open(chunk, "rb") as handle:
+                    arrays.append(np.frombuffer(handle.readframes(handle.getnframes()), dtype="<i2"))
+            _, overlap = processor._chunk_limits(8000)
+            for previous, current in zip(arrays, arrays[1:]):
+                np.testing.assert_array_equal(previous[-2 * overlap:], current[:2 * overlap])
+        finally:
+            processor.cleanup_temp_files()
+
+    def test_streaming_writes_before_reading_entire_input(self, processor, monkeypatch):
+        """File length cannot increase the analysis/decode working buffer."""
+        monkeypatch.setattr(config, "MAX_FILE_SIZE_MB", 0.02)
+        monkeypatch.setattr(config, "MIN_CHUNK_DURATION_SEC", 0.1)
+        monkeypatch.setattr(config, "OVERLAP_DURATION_SEC", 0.05)
+        rate = 8000
+        max_samples, _ = processor._chunk_limits(rate)
+        block = np.full(1000, 8000, dtype=np.int16)
+        saved = []
+        examined = []
+        original = processor._chunk_boundary
+
+        def source(*_):
+            for index in range(500):
+                if index == 20:
+                    assert saved, "decoder accumulated the input before writing"
+                yield block, rate, 1
+
+        def boundary(samples, *args):
+            examined.append(len(samples))
+            return original(samples, *args)
+
+        monkeypatch.setattr(processor, "_iter_audio_blocks", source)
+        monkeypatch.setattr(processor, "_chunk_boundary", boundary)
+        monkeypatch.setattr(processor, "_save_audio_chunk", lambda samples, *_: saved.append(len(samples)))
+        monkeypatch.setattr(processor, "_load_audio_metadata", lambda *_: pytest.fail("full decode"))
+        processor.split_audio_file("stream")
+        try:
+            assert len(saved) > 40
+            assert max(saved) <= max_samples
+            assert examined and max(examined) <= max_samples
+        finally:
+            processor.cleanup_temp_files()
+
+    def test_exact_chunk_size_does_not_emit_overlap_only_tail(self, processor, monkeypatch):
+        monkeypatch.setattr(config, "MAX_FILE_SIZE_MB", 0.02)
+        max_samples, _ = processor._chunk_limits(8000)
+        samples = np.zeros(max_samples, dtype=np.int16)
+        monkeypatch.setattr(processor, "_iter_audio_blocks", lambda *_: (item for item in [(samples, 8000, 1)]))
+        chunks = processor.split_audio_file("stream")
+        try:
+            assert len(chunks) == 1
+        finally:
+            processor.cleanup_temp_files()
+
+    def test_silence_boundary_keeps_every_sample_with_overlap(self, processor, tmp_path, monkeypatch):
+        rate = 1000
+        samples = np.full(9000, 12000, dtype=np.int16)
+        samples[3800:4600] = 0
+        path = str(tmp_path / "silence.wav")
+        with wave.open(path, "wb") as handle:
+            handle.setparams((1, 2, rate, 0, "NONE", "not compressed"))
+            handle.writeframes(samples.tobytes())
+        monkeypatch.setattr(config, "MAX_FILE_SIZE_MB", 0.01)
+        monkeypatch.setattr(config, "MIN_CHUNK_DURATION_SEC", 1)
+        monkeypatch.setattr(config, "OVERLAP_DURATION_SEC", 0.1)
+        monkeypatch.setattr(config, "SILENCE_DURATION_SEC", 0.3)
+        chunks = processor.split_audio_file(path)
+        try:
+            assert len(chunks) == 2
+            decoded = []
+            for chunk in chunks:
+                with wave.open(chunk, "rb") as handle:
+                    decoded.append(np.frombuffer(handle.readframes(handle.getnframes()), dtype="<i2"))
+            overlap = 100
+            assert 3800 < len(decoded[0]) - overlap < 4600
+            np.testing.assert_array_equal(np.concatenate([decoded[0][:-overlap], decoded[1][overlap:]]), samples)
+        finally:
+            processor.cleanup_temp_files()
+
+    def test_small_minimum_duration_still_advances_past_overlap(self, processor, monkeypatch):
+        monkeypatch.setattr(config, "MAX_FILE_SIZE_MB", 0.01)
+        monkeypatch.setattr(config, "MIN_CHUNK_DURATION_SEC", 0)
+        monkeypatch.setattr(config, "OVERLAP_DURATION_SEC", 2)
+        monkeypatch.setattr(config, "SILENCE_DURATION_SEC", 0.1)
+        samples = np.zeros(20000, dtype=np.int16)
+        monkeypatch.setattr(processor, "_iter_audio_blocks", lambda *_: (item for item in [(samples, 1000, 1)]))
+        chunks = processor.split_audio_file("stream")
+        try:
+            assert 1 < len(chunks) < 20
+            assert all(os.path.getsize(chunk) <= int(0.01 * 1024 * 1024) for chunk in chunks)
+        finally:
+            processor.cleanup_temp_files()
+
+    @pytest.mark.parametrize("cancel", [False, True])
+    def test_failure_or_cancel_removes_partial_files_and_closes_decoder(
+        self, processor, tmp_path, monkeypatch, cancel
+    ):
+        monkeypatch.setattr(config, "MAX_FILE_SIZE_MB", 0.02)
+        root = tmp_path / "chunks"
+        root.mkdir()
+        monkeypatch.setattr("services.audio_processor.tempfile.mkdtemp", lambda **_: str(root))
+        closed = []
+        stop = []
+
+        def source(*_):
+            try:
+                while True:
+                    yield np.zeros(1000, dtype=np.int16), 8000, 1
+            finally:
+                closed.append(True)
+
+        def write(_samples, _rate, filename):
+            with open(filename, "wb") as handle:
+                handle.write(b"partial")
+            if cancel:
+                stop.append(True)
+            else:
+                raise OSError("disk full")
+
+        monkeypatch.setattr(processor, "_iter_audio_blocks", source)
+        monkeypatch.setattr(processor, "_save_audio_chunk", write)
+        with pytest.raises((OSError, RuntimeError), match="disk full|canceled"):
+            processor.split_audio_file("stream", should_cancel=lambda: bool(stop))
+        assert closed == [True]
+        assert not root.exists()
+        assert processor.temp_files == []
+
+
+class TestPcmConversion:
+    def test_real_stereo_keeps_duration_and_source_channels(self, processor, tmp_path):
+        path = write_wav(tmp_path / "stereo.wav", seconds=1, rate=8000, channels=2)
+        samples, rate, channels = processor._load_audio_metadata(path)
+        assert len(samples) == rate == 8000
+        assert channels == 2
+        assert samples.dtype == np.int16
+        # Equal stereo channels must retain their waveform after downmixing.
+        t = np.arange(rate) / rate
+        expected = (np.sin(2 * np.pi * 440 * t) * 8000).astype(np.int16)
+        np.testing.assert_allclose(samples, expected, atol=2)
+
+    @pytest.mark.parametrize("format_name", ["s16", "s16p", "s32", "flt", "fltp", "u8"])
+    @pytest.mark.parametrize("channels", [1, 2])
+    def test_integer_float_and_packed_planar_formats(
+        self, processor, monkeypatch, format_name, channels
+    ):
+        import av
+
+        values = np.array([-16384, -8192, 0, 8192, 16384], dtype=np.int16)
+        if format_name.startswith("s16"):
+            data = values
+        elif format_name.startswith("s32"):
+            data = values.astype(np.int32) * 65536
+        elif format_name.startswith("flt"):
+            data = values.astype(np.float32) / 32768
+        else:
+            data = (values.astype(np.int32) // 256 + 128).astype(np.uint8)
+        planar = np.stack([data] if channels == 1 else [data, data[::-1]])
+        shaped = planar if format_name.endswith("p") else planar.T.reshape(1, -1)
+        frame = av.AudioFrame.from_ndarray(shaped, format=format_name, layout="mono" if channels == 1 else "stereo")
+        frame.sample_rate = 8000
+        closed = []
+
+        class Container:
+            streams = SimpleNamespace(audio=[SimpleNamespace(rate=8000, channels=channels)])
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                closed.append(True)
+
+            def decode(self, **_):
+                yield frame
+
+        monkeypatch.setattr(av, "open", lambda *_: Container())
+        samples, rate, source_channels = processor._load_audio_metadata("test")
+        assert rate == 8000 and source_channels == channels
+        assert len(samples) == len(values)
+        expected = values if channels == 1 else np.zeros_like(values)
+        np.testing.assert_array_equal(samples, expected)
+        assert closed == [True]
 
 
 class TestPreviewShape:
@@ -257,13 +470,14 @@ class TestMovingAverage:
         one = np.array([0.25], dtype=np.float32)
         assert _moving_average(one, 1)[0] == pytest.approx(0.25)
 
-    def test_split_points_are_unchanged_by_the_faster_smoothing(self, processor):
+    def test_split_points_are_unchanged_by_the_faster_smoothing(self, processor, monkeypatch):
         """End to end: the same audio must still split in the same places."""
         rate = 44100
         rng = np.random.default_rng(3)
         loud = (rng.standard_normal(rate * 40) * 6000).astype(np.int16)
         quiet = np.zeros(rate, dtype=np.int16)
         audio = np.concatenate([loud, quiet, loud, quiet, loud])
+        monkeypatch.setattr(config, "MAX_FILE_SIZE_MB", 5)
 
         original = processor._find_split_points
 
@@ -280,4 +494,6 @@ class TestMovingAverage:
             finally:
                 module._moving_average = saved
 
-        assert processor._find_split_points(audio, rate) == with_convolve(audio, rate)
+        points = processor._find_split_points(audio, rate)
+        assert points
+        assert points == with_convolve(audio, rate)

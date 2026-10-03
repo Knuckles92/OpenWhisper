@@ -106,6 +106,13 @@ if USE_PYNPUT_BACKEND:
         if key in _QT_MODIFIER_KEYS:
             return None
 
+        if sys.platform.startswith("linux") and event.modifiers() & Qt.KeyboardModifier.KeypadModifier:
+            name = _QT_MAIN_KEY_NAMES.get(key)
+            if name is None and 33 <= key <= 126:
+                name = chr(key).lower()
+            if name is not None:
+                return f"kp {name}"
+
         mapped_name = _QT_MAIN_KEY_NAMES.get(key)
         if mapped_name:
             return mapped_name
@@ -180,6 +187,7 @@ class HotkeyRuntime:
     def __init__(self, controller: "ApplicationController"):
         self.controller = controller
         self._active_window_hotkey_filter: Optional[ActiveWindowHotkeyFilter] = None
+        self._omarchy_controls = None
         # Push-and-hold bookkeeping; read/written from hotkey callback threads.
         self._record_press_monotonic: Optional[float] = None
         self._record_start_accepted = False
@@ -209,6 +217,14 @@ class HotkeyRuntime:
         self.refresh_profile_hotkeys()
         self._install_active_window_hotkey_filter()
         self._check_autopaste_permission()
+        from services.desktop_session import is_wayland_session, use_omarchy_ui
+
+        if is_wayland_session() and use_omarchy_ui():
+            from services.omarchy_controls import OmarchyControls
+
+            controls = OmarchyControls(self.controller)
+            if controls.start():
+                self._omarchy_controls = controls
 
     def set_recording_trigger_mode(self, mode: str) -> None:
         """Apply a new record hotkey activation mode without re-hooking."""
@@ -312,12 +328,21 @@ class HotkeyRuntime:
             )
         }
         manager.set_profile_hotkeys(shortcuts, self.controller.profile_record_requested.emit)
+        if self._omarchy_controls:
+            self._omarchy_controls.refresh()
 
     def set_capture_suspended(self, suspended: bool) -> None:
         if self.controller.hotkey_manager:
             self.controller.hotkey_manager.set_capture_suspended(suspended)
+            if self._omarchy_controls:
+                self._omarchy_controls.refresh()
 
     def setup_hook_watchdog(self) -> None:
+        from services.desktop_session import is_wayland_session
+
+        if is_wayland_session():
+            logger.info("Wayland focused-window shortcuts do not need a hook watchdog")
+            return
         self.controller._watchdog_interval_ms = config.HOTKEY_WATCHDOG_INTERVAL_MS
         self.controller._sleep_gap_threshold_sec = config.HOTKEY_SLEEP_GAP_THRESHOLD_SEC
         self.controller._expected_watchdog_time = time.monotonic() + (
@@ -367,6 +392,9 @@ class HotkeyRuntime:
             logger.info("Active-window hotkey filter installed")
 
     def cleanup(self) -> None:
+        if self._omarchy_controls:
+            self._omarchy_controls.close()
+            self._omarchy_controls = None
         if self._active_window_hotkey_filter is None:
             return
 
@@ -398,6 +426,10 @@ class HotkeyRuntime:
         self.rehook_keyboard()
 
     def rehook_keyboard(self) -> None:
+        from services.desktop_session import is_wayland_session
+
+        if is_wayland_session():
+            return
         if self.controller.hotkey_manager:
             try:
                 self.controller.hotkey_manager.rehook()

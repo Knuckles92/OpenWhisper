@@ -47,7 +47,7 @@ def test_startup_imports_leave_openai_unloaded():
 
 
 def test_startup_clients_with_saved_keys_leave_openai_unloaded():
-    """The controller builds both at startup; only a request loads the SDK."""
+    """The API adapter never imports the SDK into the main process."""
     assert _fresh_interpreter(
         "from transcriber.openai_backend import OpenAIBackend;"
         "from services.transcript_cleanup import TranscriptCleanup;"
@@ -56,12 +56,12 @@ def test_startup_clients_with_saved_keys_leave_openai_unloaded():
         "print(int('openai' in sys.modules), int(backend.is_available()));"
         "backend.prepare_client();"
         "print(int('openai' in sys.modules), int(backend.client is not None))"
-    ) == ["0", "1", "1", "1"]
+    ) == ["0", "1", "0", "1"]
 
 
 @pytest.fixture
 def built(monkeypatch):
-    """API keys the (fake) SDK built a client for, in order."""
+    """API keys the isolated-client factory received, in order."""
     keys = []
 
     class FakeOpenAI:
@@ -72,7 +72,7 @@ def built(monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    monkeypatch.setattr("services.isolated.IsolatedOpenAIClient", FakeOpenAI)
     return keys
 
 
@@ -115,7 +115,7 @@ class TestApiBackendClient:
         def broken(api_key):
             raise RuntimeError("no SDK")
 
-        monkeypatch.setattr("openai.OpenAI", broken)
+        monkeypatch.setattr("services.isolated.IsolatedOpenAIClient", broken)
         backend = OpenAIBackend("api", api_key="sk-test")
         backend.prepare_client()
         assert not backend.is_available()
@@ -132,7 +132,7 @@ class TestApiBackendClient:
                 started.set()
                 release.wait(5)
 
-        monkeypatch.setattr("openai.OpenAI", SlowOpenAI)
+        monkeypatch.setattr("services.isolated.IsolatedOpenAIClient", SlowOpenAI)
         backend = OpenAIBackend("api", api_key="sk-test")
         workers = [threading.Thread(target=backend.prepare_client) for _ in range(2)]
         for worker in workers:

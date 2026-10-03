@@ -2,8 +2,6 @@
 
 The investigation started from the audit of bcbd584. The repair plan is implemented;
 validation checks benchmark contracts without downloading models or calling paid providers.
-The packaged OpenCode harness whose suite this run also covered has since been removed;
-OpenCode now runs as a user-installed agent over ACP.
 
 - [x] Isolate recorder output at session and test scope; verify a pre-existing recording survives recorder tests.
 - [x] Replace the stale Advanced settings count with assertions for the intended controls.
@@ -14,7 +12,7 @@ OpenCode now runs as a user-installed agent over ACP.
 - [x] Validate AMI cache provenance, recompute Gemini arms, and reject incompatible preview pooling.
 - [x] Exercise the actual Pi SDK and shared runner through a child process and local streaming HTTP provider.
 - [x] Mount dashboard controls and exercise requests, selection, failure, retries, pending state, and focus restoration.
-- [x] Run Python, dashboard, Pi and packaged OpenCode suites, type checks, lint, build, and benchmark CLI smoke checks.
+- [x] Run Python, dashboard, Pi and OpenCode suites, type checks, lint, build, and benchmark CLI smoke checks.
 
 ## Behavioral changes
 
@@ -50,14 +48,14 @@ lexical overlap and does not claim factual support.
 **Tests:** the Pi integration uses the installed SDK and production runner, verifying
 handshake, actual tool registration and dispatch, request scoping, reasoning replay,
 history reset, provider failure, cancellation and recovery. React interaction tests
-use jsdom; only unsupported dialog browser methods are substituted. The packaged
-OpenCode harness's SDK protocol tests also passed.
+use jsdom; only unsupported dialog browser methods are substituted. The existing
+OpenCode SDK protocol tests also pass.
 
 ## Validation
 
 - Final complete Python run with branch coverage: **2,452 passed, 40 skipped, 391 subtests**, in 187 seconds.
 - Final focused command/replay/backend regressions: **68 passed**.
-- Dashboard: **22 passed**; Pi: **9 passed**; packaged OpenCode harness: **11 passed / 89 assertions**.
+- Dashboard: **22 passed**; Pi: **9 passed**; OpenCode: **11 passed / 89 assertions**.
 - All three TypeScript checks passed.
 - Required dashboard npm ci and npm run build passed; the generated committed
   bundle is byte-for-byte unchanged.

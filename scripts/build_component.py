@@ -485,9 +485,13 @@ def build_meeting_agent() -> None:
     _emit_meeting_agent_platforms(node_archives, bundle)
 
 
+from scripts.build_opencode_component import build_meeting_agent_opencode
+
+
 BUILDERS = {
     "gpu-accel": build_gpu_accel,
     "meeting-agent": build_meeting_agent,
+    "meeting-agent-opencode": build_meeting_agent_opencode,
 }
 
 

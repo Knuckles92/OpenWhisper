@@ -54,6 +54,9 @@ def is_model_gone_error(exc: BaseException) -> bool:
     ``SHUTDOWN_DATE``. A plain 404 counts too: the transcription endpoint
     itself does not move, so a 404 from it means the model.
     """
+    # Isolated API workers preserve these two structured SDK fields.
+    if getattr(exc, "status_code", None) == 404 or getattr(exc, "code", None) == "model_not_found":
+        return True
     try:
         import openai
     except ImportError:

@@ -149,6 +149,47 @@ _CATALOG: dict[str, ComponentDetails] = {
         source_note=_SOURCE_NOTE,
         source_urls=(PI_HOME_URL, NODEJS_URL),
     ),
+    "meeting-agent-opencode": ComponentDetails(
+        component_id="meeting-agent-opencode",
+        display_name="OpenCode v2",
+        summary=(
+            "An alternative meeting agent core, built on the OpenCode v2 SDK, that uses "
+            "your selected text provider and model."
+        ),
+        description=(
+            "A portable Bun runtime plus the OpenCode v2 SDK, embedded in a supervised "
+            "sidecar. Selected as the agent core in Models → Meeting, it maintains meeting "
+            "cards, notes, questions, and final reports. It uses the provider, model, and "
+            "credentials configured in OpenWhisper, and needs no OpenCode account or CLI. "
+            "Only the five meeting tools are exposed to the model; OpenCode's own shell, "
+            "file, and web tools are removed. Pi remains the default agent core."
+        ),
+        origin_name="OpenCode",
+        origin_url="https://opencode.ai/v2/docs/build/sdk/",
+        origin_label="OpenCode ↗",
+        source_name="OpenWhisper component release",
+        source_url="https://github.com/Knuckles92/OpenWhisper/releases",
+        source_label="GitHub ↗",
+        maintainer="OpenWhisper (integration); OpenCode (SDK); Bun (runtime)",
+        family="Meeting intelligence",
+        requires="A configured text model with tool support. Used by Meeting Mode.",
+        payload="Portable Bun runtime, OpenCode v2 SDK, and the meeting sidecar",
+        local_format="A self-contained component folder",
+        license="Bun and OpenCode MIT; dependency notices included in the download",
+        best_for="Meeting Mode with OpenCode's agent loop instead of Pi's.",
+        limitations=(
+            "The app pins a tested OpenCode SDK and Bun version; updates arrive as new "
+            "component versions.",
+            "Offered on Windows x64 and Linux x86_64/aarch64. macOS is not supported.",
+            "Larger than the Pi agent: up to 130 MB to download and 470 MB installed.",
+            "If the engine fails, recording continues and meeting intelligence is marked "
+            "unavailable; it does not switch to another agent core.",
+            "Finish active meeting and report jobs before updating or removing this component.",
+        ),
+        compact_tags="OpenCode v2 agent",
+        source_note=_SOURCE_NOTE,
+        source_urls=("https://opencode.ai/v2/docs/build/sdk/", "https://bun.sh"),
+    ),
 }
 
 for _id, _name, _source, _license, _description in (
@@ -157,6 +198,7 @@ for _id, _name, _source, _license, _description in (
     ("asr-nvidia-vulkan", "NVIDIA Speech GPU (Vulkan)", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0", "Vulkan GPU runtime shared by Parakeet and Nemotron, for NVIDIA GPUs older than Turing, such as the GTX 10 series."),
     ("asr-qwen", "Qwen3-ASR runtime", "https://github.com/QwenLM/Qwen3-ASR", "Apache-2.0 and bundled dependency licenses", "Isolated Python, PyTorch CUDA 12.4, and Qwen3-ASR. Also supports CPU."),
     ("asr-moonshine", "Moonshine runtime", "https://github.com/moonshine-ai/moonshine", "MIT and bundled dependency licenses", "Isolated Moonshine Voice runtime for CPU transcription."),
+    ("asr-parakeet-mlx", "Parakeet MLX runtime", "https://github.com/senstella/parakeet-mlx", "Apache-2.0; MIT and bundled dependency licenses", "Parakeet MLX on Apple Silicon. Auto uses the Apple GPU; CPU is also available."),
 ):
     _CATALOG[_id] = ComponentDetails(
         component_id=_id, display_name=_name, summary=_description,
@@ -165,19 +207,21 @@ for _id, _name, _source, _license, _description in (
         source_name="Pinned upstream archives", source_url=_source, source_label="Project",
         maintainer="Upstream publishers; packaged by OpenWhisper", family="Speech runtime",
         requires=(
-            "Windows x64, Linux x86_64 (glibc 2.31+), or Apple Silicon macOS" if _id == "asr-nvidia-cpu"
+            "Apple Silicon Mac, macOS 14 or newer, Python 3.12" if _id == "asr-parakeet-mlx"
+            else "Windows x64, Linux x86_64 (glibc 2.31+), or Apple Silicon macOS" if _id == "asr-nvidia-cpu"
             else "Windows x64 or Linux x86_64 (glibc 2.31+), and an NVIDIA GPU (Turing or newer) with its driver" if _id == "asr-nvidia-cuda"
             else "Linux x86_64 (glibc 2.31+), and an NVIDIA GPU older than Turing with its driver and the Vulkan loader" if _id == "asr-nvidia-vulkan"
             else "Windows x64"
         ),
         payload=(
-            "Verified native libraries" if _id == "asr-nvidia-vulkan"
+            "Verified macOS arm64 Python wheels, MLX and Metal libraries" if _id == "asr-parakeet-mlx"
+            else "Verified native libraries" if _id == "asr-nvidia-vulkan"
             else "Verified native libraries; portable Python on Windows" if _id.startswith("asr-nvidia")
             else "Portable Python 3.12 and verified runtime binaries"
         ),
         local_format="Isolated worker process", license=_license,
         best_for=_description, limitations=("Model weights are a separate download.",),
-        compact_tags="Local speech", source_note=_SOURCE_NOTE, source_urls=(_source, "https://www.python.org/downloads/release/python-31210/"),
+        compact_tags="Local speech", source_note=_SOURCE_NOTE + " Speech runtimes install third-party executable software. Integrity checks do not guarantee security; keep runtimes updated.", source_urls=(_source, "https://www.python.org/downloads/release/python-31210/"),
     )
 COMPONENT_CATALOG: Final[Mapping[str, ComponentDetails]] = MappingProxyType(_CATALOG)
 

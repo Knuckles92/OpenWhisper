@@ -161,10 +161,12 @@ class MeetingStateStore:
             if applied:
                 if self._repository is not None:
                     try:
-                        self._repository.on_ops_applied(
+                        persisted = self._repository.on_ops_applied(
                             self._state.meeting_id, candidate.to_dict(), applied,
                             actor_type, actor_id,
                         )
+                        if isinstance(persisted, dict):
+                            candidate = MeetingState.from_dict(persisted)
                     except Exception:
                         logger.exception(
                             "State persistence failed (meeting %s)",
@@ -204,9 +206,11 @@ class MeetingStateStore:
                 setattr(candidate, key, value)
             if self._repository is not None:
                 try:
-                    self._repository.persist_state(
+                    persisted = self._repository.persist_state(
                         self._state.meeting_id, candidate.to_dict()
                     )
+                    if isinstance(persisted, dict):
+                        candidate = MeetingState.from_dict(persisted)
                 except Exception:
                     logger.exception(
                         "Runtime state persistence failed (meeting %s)",
@@ -215,6 +219,19 @@ class MeetingStateStore:
                     return False
             self._state = candidate
             return True
+
+    def refresh_title(self) -> bool:
+        """Refresh independently edited metadata without rewriting a stale snapshot."""
+        if self._repository is None:
+            return False
+        with self._lock:
+            meeting = self._repository.get_meeting(self._state.meeting_id)
+            if meeting is None:
+                return False
+            title = meeting.get("title") or ""
+            changed = title != self._state.title
+            self._state.title = title
+            return changed
 
     def replace_document(self, state: MeetingState) -> None:
         """Replace the in-memory document after an out-of-band persistence write.

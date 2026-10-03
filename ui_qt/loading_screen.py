@@ -10,6 +10,7 @@ from PyQt6.QtGui import (
 )
 
 from ui_qt.utils.palette import current_palette
+from ui_qt.utils.desktop import compositor_managed
 
 logger = logging.getLogger(__name__)
 
@@ -23,21 +24,24 @@ class LoadingScreen(QWidget):
 
     def __init__(self):
         super().__init__()
+        self._desktop_surface = compositor_managed()
 
         self.setWindowFlags(
+            Qt.WindowType.SplashScreen if self._desktop_surface else
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.Tool
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, not self._desktop_surface)
 
-        self.setFixedSize(450, 300)
+        self.setFixedSize(450, 180 if self._desktop_surface else 300)
 
-        screen = QApplication.primaryScreen().geometry()
-        self.move(
-            screen.center().x() - self.width() // 2,
-            screen.center().y() - self.height() // 2
-        )
+        if not self._desktop_surface:
+            screen = QApplication.primaryScreen().geometry()
+            self.move(
+                screen.center().x() - self.width() // 2,
+                screen.center().y() - self.height() // 2
+            )
 
         self.status_text = "Initializing..."
         self.progress_text = "Please wait..."
@@ -60,7 +64,8 @@ class LoadingScreen(QWidget):
         self._glow_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._glow_timer.setInterval(33)
         self._glow_timer.timeout.connect(self.update)
-        self._glow_timer.start()
+        if not self._desktop_surface:
+            self._glow_timer.start()
         self._drag_position = None
 
     def _glow_phase(self) -> float:
@@ -83,6 +88,19 @@ class LoadingScreen(QWidget):
 
         rect = self.rect()
         w, h = rect.width(), rect.height()
+        if self._desktop_surface:
+            painter.fillRect(rect, self.bg_color)
+            painter.fillRect(0, 0, w, 3, self.accent_color)
+            painter.setPen(self.text_color)
+            painter.setFont(QFont("Noto Sans", 18, QFont.Weight.DemiBold))
+            painter.drawText(QRectF(28, 28, w - 56, 40), Qt.AlignmentFlag.AlignLeft, "OpenWhisper")
+            painter.setPen(self.accent_color)
+            painter.setFont(QFont("Noto Sans", 11))
+            painter.drawText(QRectF(28, 86, w - 56, 28), Qt.AlignmentFlag.AlignLeft, self.status_text)
+            painter.setPen(self.subtext_color)
+            painter.setFont(QFont("Noto Sans", 9))
+            painter.drawText(QRectF(28, 122, w - 56, 24), Qt.AlignmentFlag.AlignLeft, self.progress_text)
+            return
 
         gradient = QLinearGradient(0, 0, 0, h)
         gradient.setColorAt(0, self.bg_color)
@@ -171,6 +189,8 @@ class LoadingScreen(QWidget):
         painter.drawText(QRectF(0, h - 35, w, 20), Qt.AlignmentFlag.AlignCenter, self.progress_text)
 
     def mousePressEvent(self, event):
+        if self._desktop_surface:
+            return super().mousePressEvent(event)
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_position = (
                 event.globalPosition().toPoint() - self.frameGeometry().topLeft()

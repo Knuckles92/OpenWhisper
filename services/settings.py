@@ -75,6 +75,10 @@ class SettingsKey:
     WINDOW_GEOMETRY: Final[str] = "window_geometry"
     COMPACT_WINDOW_GEOMETRY: Final[str] = "compact_window_geometry"
     COMPACT_MODE: Final[str] = "compact_mode"
+    # View → Host Mode: the main window shows the host dashboard instead of
+    # the recording tabs, with its own window position and size.
+    HOST_MODE: Final[str] = "host_mode"
+    HOST_WINDOW_GEOMETRY: Final[str] = "host_window_geometry"
     AUTO_PASTE: Final[str] = "auto_paste"
     MACOS_ACCESSIBILITY_INTRO_SEEN: Final[str] = "macos_accessibility_intro_seen"
     COPY_CLIPBOARD: Final[str] = "copy_clipboard"
@@ -114,6 +118,7 @@ class SettingsKey:
     MEETING_ASR_MODEL: Final[str] = "meeting_asr_model"
     MEETING_ASR_SOURCE: Final[str] = "meeting_asr_source"  # local | remote
     WHISPER_MODEL: Final[str] = "whisper_model"
+    CUSTOM_WHISPER_MODELS: Final[str] = "custom_whisper_models"
     WHISPER_DEVICE: Final[str] = "whisper_device"
     WHISPER_COMPUTE_TYPE: Final[str] = "whisper_compute_type"
     # "Keep using the CPU" on the "Use this GPU" offer; it isn't shown again.
@@ -170,6 +175,13 @@ class SettingsKey:
     MEETING_CONTEXT_FOLDER_PATH: Final[str] = "meeting_context_folder_path"
     MEETING_SERVER_BIND: Final[str] = "meeting_server_bind"
     MEETING_SERVER_PORT: Final[str] = "meeting_server_port"
+    MCP_ENABLED: Final[str] = "mcp_enabled"
+    MCP_PORT: Final[str] = "mcp_port"
+    MCP_TAILSCALE_ENABLED: Final[str] = "mcp_tailscale_enabled"
+    MCP_RETITLE_TRANSCRIPTIONS: Final[str] = "mcp_retitle_transcriptions"
+    MCP_RETITLE_MEETINGS: Final[str] = "mcp_retitle_meetings"
+    MCP_SETTINGS_ACCESS: Final[str] = "mcp_settings_access"
+    MCP_WRITABLE_SETTINGS: Final[str] = "mcp_writable_settings"
     # Remote engine (services/remote_asr). Client: the paired host's address,
     # pinned certificate fingerprint and name (the token is in the OS
     # credential store). Host: sharing switch, port, and paired devices,
@@ -187,6 +199,7 @@ class SettingsKey:
     # Client: where this computer's records are kept while paired:
     # "local" (default), "host" (moved there), or "both" (copied there).
     REMOTE_RECORDS_LOCATION: Final[str] = "remote_records_location"
+    REMOTE_CLIENT_HISTORY: Final[str] = "remote_client_history"
     # TypeSafe fast judgments. The master switch gates every remote judgment;
     # each feature has its own switch so one can be trialled at a time.
     TYPESAFE_ENABLED: Final[str] = "typesafe_enabled"
@@ -257,12 +270,14 @@ class UiTheme:
     DARK: Final[str] = "dark"
     LIGHT: Final[str] = "light"
     SYSTEM: Final[str] = "system"
+    OMARCHY: Final[str] = "omarchy"
 
-    ALL: Final[Tuple[str, ...]] = (DARK, LIGHT, SYSTEM)
+    ALL: Final[Tuple[str, ...]] = (DARK, LIGHT, SYSTEM, OMARCHY)
     LABELS: Final[Dict[str, str]] = {
         DARK: "Dark",
         LIGHT: "Light",
         SYSTEM: "Match system",
+        OMARCHY: "Omarchy desktop",
     }
 
 
@@ -332,7 +347,7 @@ class TranscriptCleanupReasoning:
 class MeetingAgentCore:
     """Values for ``SettingsKey.MEETING_AGENT_CORE``.
 
-    ``PI`` and ``DIRECT`` run on OpenWhisper's own text endpoint and API key.
+    ``PI``, ``DIRECT`` and ``OPENCODE`` run on OpenWhisper's own text endpoint and API key.
     The ``INSTALLED`` values drive a coding agent the user already has set up,
     with its own sign-in, providers, and models.
     """
@@ -340,10 +355,11 @@ class MeetingAgentCore:
     DIRECT: Final[str] = "direct"  # Direct OpenRouter tool-calling loop
     CLAUDE_CODE: Final[str] = "claude_code"  # Installed Claude Code, headless
     CODEX: Final[str] = "codex"              # Installed Codex CLI, headless
-    OPENCODE: Final[str] = "opencode"        # Installed OpenCode, over ACP
+    OPENCODE: Final[str] = "opencode"      # Packaged OpenCode SDK; preserves saved settings
+    OPENCODE_CLI: Final[str] = "opencode_cli"  # Installed OpenCode, over ACP
 
-    INSTALLED: Final[Tuple[str, ...]] = (CLAUDE_CODE, CODEX, OPENCODE)
-    ALL: Final[Tuple[str, ...]] = (PI, DIRECT, *INSTALLED)
+    INSTALLED: Final[Tuple[str, ...]] = (CLAUDE_CODE, CODEX, OPENCODE_CLI)
+    ALL: Final[Tuple[str, ...]] = (PI, DIRECT, OPENCODE, *INSTALLED)
 
 
 class MeetingSpeakerIdBackend:
@@ -425,6 +441,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.COPY_CLIPBOARD: True,
     SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN: False,
     SettingsKey.COMPACT_MODE: False,
+    SettingsKey.HOST_MODE: False,
     SettingsKey.MINIMIZE_TRAY: True,
     SettingsKey.RECORDING_TRIGGER_MODE: config.RECORDING_TRIGGER_MODE,
     SettingsKey.STREAMING_ENABLED: config.STREAMING_ENABLED,
@@ -436,6 +453,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.DEVELOPER_MODE: config.DEVELOPER_MODE,
     # Local engines
     SettingsKey.WHISPER_MODEL: config.DEFAULT_WHISPER_MODEL,
+    SettingsKey.CUSTOM_WHISPER_MODELS: [],
     SettingsKey.WHISPER_DEVICE: config.FASTER_WHISPER_DEVICE,
     SettingsKey.WHISPER_COMPUTE_TYPE: config.FASTER_WHISPER_COMPUTE_TYPE,
     SettingsKey.WHISPER_GPU_OFFER_DECLINED: False,
@@ -817,7 +835,16 @@ def _choice_resolver(key: str, choices: Tuple[Any, ...]) -> Callable[..., Any]:
 # default. Each is called as ``resolve_x(settings=None)``.
 resolve_recording_trigger_mode = _choice_resolver(
     SettingsKey.RECORDING_TRIGGER_MODE, RecordingTriggerMode.ALL)
-resolve_ui_theme = _choice_resolver(SettingsKey.UI_THEME, UiTheme.ALL)
+def resolve_ui_theme(settings: Optional[Mapping[str, Any]] = None) -> str:
+    from services.desktop_session import use_omarchy_ui
+
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    if SettingsKey.UI_THEME not in settings and use_omarchy_ui():
+        return UiTheme.OMARCHY
+    return resolve_choice_setting(SettingsKey.UI_THEME, UiTheme.ALL, settings)
+
+
 resolve_transcript_cleanup_reasoning = _choice_resolver(
     SettingsKey.TRANSCRIPT_CLEANUP_REASONING, TranscriptCleanupReasoning.ALL)
 resolve_transcript_batch_relation = _choice_resolver(
@@ -1061,8 +1088,10 @@ def resolve_meeting_whisper_model(
     if isinstance(extra, str) and extra in MODELS and MODELS[extra].meeting:
         return extra
     model = settings.get(SettingsKey.MEETING_WHISPER_MODEL)
-    if isinstance(model, str) and model in config.WHISPER_MODEL_CHOICES:
-        return model
+    if isinstance(model, str):
+        from services.whisper_sources import custom_models
+        if model in [*config.WHISPER_MODEL_CHOICES, *custom_models(settings)]:
+            return model
     return SETTING_DEFAULTS[SettingsKey.MEETING_WHISPER_MODEL]
 
 

@@ -34,6 +34,8 @@ from meeting.state.schema import (
     now_iso,
 )
 
+from services.titles import normalize_title, title_error
+
 _ITEM_TEXT_NORM_RE = re.compile(r"[^a-z0-9]+")
 
 logger = logging.getLogger(__name__)
@@ -300,6 +302,8 @@ def _op_add_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> OpR
         for c, card_items in state.cards.items():
             if c in HUMAN_ONLY_CARDS:
                 continue
+            if c != card and "notes" in (c, card):
+                continue
             if c == card:
                 jac, cont = 0.60, 0.75
             else:
@@ -518,11 +522,11 @@ def _op_set_title(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> Op
     # Match the host-only REST rename route: guests must not retitle.
     if ctx.actor_type not in ("host", "system"):
         return _reject(op, "host_only")
-    reason = _check_text(op.get("text"), MAX_NAME_LEN)
+    reason = title_error(op.get("text"))
     if reason:
         return _reject(op, reason)
     prev = state.title
-    state.title = op["text"].strip()
+    state.title = normalize_title(op["text"])
     return OpResult(
         ok=True, op=op,
         effect={"entity": "title", "text": state.title},

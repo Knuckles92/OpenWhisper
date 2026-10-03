@@ -13,6 +13,14 @@ Code is the primary source of truth. Add prose only when it records information 
 
 Before submitting a change, remove temporary notes and commented-out experiments, then verify that every remaining comment explains why rather than what.
 
+## Desktop feature parity
+
+The main desktop and Omarchy interfaces must offer the same features and actions.
+Keep feature logic and controls shared; Omarchy-specific changes should adapt
+styling, layout, and desktop integration. Verify new or changed controls with
+`OPENWHISPER_UI=classic` and `OPENWHISPER_UI=omarchy`, including narrow tiled
+windows, and cover both modes in the relevant UI regression tests.
+
 ## Validation
 
 Use `uv run` as described below, or activate the repository virtual environment

@@ -45,21 +45,43 @@ class TestSchema:
                 cleanup_provider TEXT, cleanup_model TEXT
             )
         """)
+        rows = [
+            ("legacy-1", "Cleaned café 日本語", "Raw café 日本語", "2025-02-03T04:05:06",
+             "base", "original meeting.wav", 1.25, 12.5, 4321, "local", "cleanup-a"),
+            ("legacy-2", "Plain transcript", None, "2025-02-04T04:05:06",
+             "small", None, None, None, None, None, None),
+        ]
+        conn.executemany(
+            "INSERT INTO transcription_history VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        original_columns = [row[1] for row in conn.execute(
+            "PRAGMA table_info(transcription_history)"
+        )]
         conn.commit()
         conn.close()
 
         from services.database import DatabaseManager, SCHEMA_VERSION
-        manager = DatabaseManager(db_path=db_path)
-        try:
-            from sqlalchemy import inspect, text
-            assert SCHEMA_VERSION == 14
-            with manager.engine.connect() as c:
-                version = c.execute(
-                    text("SELECT version FROM schema_version")).scalar()
-            assert version == 14
-            assert "meeting_sessions" in inspect(manager.engine).get_table_names()
-        finally:
-            manager.close()
+        from sqlalchemy import inspect, text
+
+        for _ in range(3):
+            manager = DatabaseManager(db_path=db_path)
+            try:
+                with manager.engine.connect() as c:
+                    version = c.execute(
+                        text("SELECT version FROM schema_version")).scalar()
+                    assert version == SCHEMA_VERSION
+                    preserved = c.execute(text(
+                        f"SELECT {', '.join(original_columns)} "
+                        "FROM transcription_history ORDER BY id"
+                    )).all()
+                    assert [tuple(row) for row in preserved] == rows
+                    assert c.execute(text(
+                        "SELECT title FROM transcription_history ORDER BY id"
+                    )).all() == [(None,), (None,)]
+                assert "meeting_sessions" in inspect(manager.engine).get_table_names()
+            finally:
+                manager.close()
 
     def test_agent_endpoint_json_roundtrip(self, repo):
         import json

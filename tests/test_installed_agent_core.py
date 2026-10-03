@@ -192,9 +192,9 @@ def test_a_meeting_recorded_with_an_agent_keeps_it(no_pi):
     from services.meeting_agent_route import resolve_meeting_agent_route
 
     settings = {SettingsKey.MEETING_AGENT_CORE: "direct"}
-    route = resolve_meeting_agent_route(settings, {"agent_provider": "opencode",
+    route = resolve_meeting_agent_route(settings, {"agent_provider": "opencode_cli",
                                                    "agent_model": "prov/fast"})
-    assert (route.kind, route.model) == ("opencode", "prov/fast")
+    assert (route.kind, route.model) == ("opencode_cli", "prov/fast")
 
 
 def test_a_text_endpoint_meeting_rerun_on_a_newly_chosen_agent(no_pi):

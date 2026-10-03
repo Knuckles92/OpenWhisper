@@ -31,6 +31,7 @@ from services.local_asr.audio import (
     windows,
 )
 from services.recorder import AudioRecorder
+from services.recording_journal import RecordingJournal
 from services.settings import settings_manager
 from transcriber.optional_backend import LocalSpeechBackend
 
@@ -90,6 +91,7 @@ def backend():
 @pytest.fixture
 def recorder():
     capture_ = AudioRecorder(output_file=config.RECORDED_AUDIO_FILE)
+    capture_._audio_spool = RecordingJournal(capture_.output_file, capture_.rate, capture_.channels, 2, capture_._fail_capture)
     yield capture_
     capture_.cleanup()
 
@@ -102,6 +104,8 @@ def controller(backend, recorder):
 def capture(recorder, pcm, session=None, *, polls=BLOCKS_PER_POLL, rng=None):
     """Feed PCM through the recorder callback, polling the session as its thread would."""
     recorder.is_recording = True
+    if recorder._audio_spool is None:
+        recorder._audio_spool = RecordingJournal(recorder.output_file, recorder.rate, recorder.channels, 2, recorder._fail_capture)
     since_poll = start = 0
     due = polls
     while start < len(pcm):
@@ -110,8 +114,10 @@ def capture(recorder, pcm, session=None, *, polls=BLOCKS_PER_POLL, rng=None):
         start += size
         recorder._audio_callback(chunk.reshape(-1, 1), len(chunk), None, None)
         since_poll += 1
-        if session is not None and since_poll >= due:
-            session.poll()
+        if since_poll >= due:
+            recorder._audio_spool._queue.join()
+            if session is not None:
+                session.poll()
             since_poll = 0
             due = polls if rng is None else rng.randint(5, 3 * polls)
 
@@ -119,6 +125,7 @@ def capture(recorder, pcm, session=None, *, polls=BLOCKS_PER_POLL, rng=None):
 def stop(recorder, session=None):
     """End capture as the recorder thread does, then save the WAV."""
     recorder.is_recording = False
+    recorder._audio_spool._queue.join()
     if session is not None:
         session.poll()
     assert recorder.save_recording()
@@ -573,8 +580,10 @@ def test_read_recorded_bytes_restores_the_write_position(recorder):
     first = np.arange(3000, dtype=np.int16)
     second = np.arange(3000, 5000, dtype=np.int16)
     recorder._audio_callback(first.reshape(-1, 1), len(first), None, None)
+    recorder._audio_spool._queue.join()
     assert recorder.read_recorded_bytes(2000) == first[1000:].tobytes()
     recorder._audio_callback(second.reshape(-1, 1), len(second), None, None)
+    recorder._audio_spool._queue.join()
     assert recorder.read_recorded_bytes(0) == np.concatenate((first, second)).tobytes()
     assert recorder.read_recorded_bytes(10_000) == b""
     assert recorder.read_recorded_bytes(10_002) is None

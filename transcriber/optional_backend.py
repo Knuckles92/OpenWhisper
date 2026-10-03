@@ -96,7 +96,8 @@ class LocalSpeechBackend(TranscriptionBackend):
                 self.runtime_component = None
                 self.last_error = f"{self.name}'s {device.upper()} runtime is not available on this platform."
             else:
-                self.last_error = f"Install {self.name}'s {'GPU' if device == 'cuda' else 'CPU'} runtime in Downloads."
+                kind = "MLX" if self.backend_id == "parakeet_mlx" else ('GPU' if device == 'cuda' else 'CPU')
+                self.last_error = f"Install {self.name}'s {kind} runtime in Downloads."
             return
         if self.is_model_missing:
             self.last_error = f"Download {MODELS[self.model_name].label} in Downloads."
@@ -106,7 +107,8 @@ class LocalSpeechBackend(TranscriptionBackend):
             if generation != self._generation:
                 return
             # Windows runtimes carry an embedded Python; the macOS and Linux
-            # ones are only the native speech library, run by the app's own.
+            # ones use the app's interpreter with downloaded native libraries
+            # or, for MLX, a separate wheel tree.
             python = str(Path(component_dir(component)) / "python.exe") if sys.platform == "win32" else sys.executable
             process = SpeechProcess(python)
             self._process = process
@@ -223,7 +225,8 @@ class LocalSpeechBackend(TranscriptionBackend):
 
     def request_language(self) -> str:
         """The language a request made without one asks the worker for."""
-        return self._settings().get("local_asr_language", "en")
+        from services.local_asr.languages import selected_language
+        return selected_language(self.backend_id, self._settings().get("local_asr_language", "en"))
 
     def _request_audio(self, op, audio, language=None, **options) -> dict:
         if self.should_cancel:

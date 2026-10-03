@@ -203,6 +203,16 @@ class RemoteEngineSection(QObject):
         self.client_message.setObjectName("remoteClientMessage")
         self.client_tile.add_body(self.client_message)
 
+        self.share_history_tile = SettingTile(
+            "Allow the paired host to query this computer's history",
+            "Off by default. Agents connected to the paired host can search saved dictations "
+            "and meetings and read their transcripts and insights while this app is running. "
+            "Choose Both below to keep a copy available when this computer is offline.",
+            icon("server-blue.svg"),
+        )
+        self.share_history_tile.setObjectName("remoteShareHistoryTile")
+        self.share_history_tile.checkbox.toggled.connect(self._on_share_history_toggled)
+
         # Client: where this computer's history, recordings and meetings go.
         self.storage_tile = InfoTile(
             "Where records are kept",
@@ -277,7 +287,7 @@ class RemoteEngineSection(QObject):
         dialog._tile_group(
             layout,
             "Use another computer",
-            [self.client_tile, self.storage_tile, self.tailnet_tile],
+            [self.client_tile, self.share_history_tile, self.storage_tile, self.tailnet_tile],
             columns=1,
             intro=(
                 "Dictate or record meetings here while a faster computer does the transcription, on "
@@ -455,8 +465,16 @@ class RemoteEngineSection(QObject):
             self.tailnet_tile.hide()
             self.tailscale_tile.hide()
             self.storage_tile.hide()
+            self.share_history_tile.hide()
             return
         self._refresh_client(service)
+        from services.remote_asr.settings import client_shares_history
+
+        self.share_history_tile.setVisible(service.client_pairing() is not None)
+        checkbox = self.share_history_tile.checkbox
+        blocked = checkbox.blockSignals(True)
+        checkbox.setChecked(client_shares_history())
+        checkbox.blockSignals(blocked)
         self._refresh_records()
         self._refresh_tailnet(service)
         self._refresh_host(service)
@@ -946,6 +964,10 @@ class RemoteEngineSection(QObject):
     def _on_keep_records_toggled(self, checked: bool) -> None:
         if self._service is not None:
             self._service.set_keep_records(checked)
+
+    def _on_share_history_toggled(self, checked: bool) -> None:
+        if self._service is not None:
+            self._service.set_share_history(checked)
 
     # ---- where records are kept ----
 

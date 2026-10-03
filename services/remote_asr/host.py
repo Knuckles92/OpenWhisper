@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
 
 from services.remote_asr import protocol, tailscale
+from services.remote_asr.activity import HostActivity
 from services.remote_asr.engines import HostEngine, UnavailableEngine
 from services.remote_asr.tls import HostIdentity, server_context
 
@@ -153,6 +154,8 @@ class _Client:
     engine_identity: tuple = ()
     #: Handling any request of this client's, a model switch included.
     in_request: bool = False
+    #: When it connected, by the wall clock (for the host dashboard).
+    since: float = 0.0
 
 
 class SpeechHost:
@@ -193,6 +196,7 @@ class SpeechHost:
         records_enabled: Optional[Callable[[], bool]] = None,
         records: Optional[Callable[[str, dict, bytes, dict], dict]] = None,
         records_summary: Optional[Callable[[str], dict]] = None,
+        history=None,
     ):
         self._engine_provider = engine_provider
         self.registry = registry
@@ -210,12 +214,17 @@ class SpeechHost:
         self._records_enabled = records_enabled or (lambda: False)
         self._records = records
         self._records_summary = records_summary or (lambda _device_id: {})
+        from services.remote_history.channel import HistoryBroker
+
+        self.history = history if history is not None else HistoryBroker(registry)
         self._lock = threading.Lock()
         self._server = None
         self._thread: Optional[threading.Thread] = None
         self._pairing: Optional[_Pairing] = None
         self._clients: Dict[str, _Client] = {}
         self.port: Optional[int] = None
+        #: What paired computers asked of this host since sharing started.
+        self.activity = HostActivity()
 
     # ---- lifecycle ----
 
@@ -236,7 +245,7 @@ class SpeechHost:
                 port,
                 ssl=server_context(self.identity),
                 process_request=self._check_path,
-                max_size=protocol.MAX_REQUEST_BYTES,
+                max_size=max(protocol.MAX_REQUEST_BYTES, protocol.MAX_REPLY_BYTES),
                 compression=None,
                 open_timeout=HANDSHAKE_TIMEOUT_S,
                 ping_interval=20,
@@ -244,16 +253,19 @@ class SpeechHost:
                 logger=logging.getLogger("websockets.remote_engine"),
             )
             self._server = server
+            self.history.start()
             self.port = server.socket.getsockname()[1]
             self._thread = threading.Thread(
                 target=server.serve_forever, name="RemoteEngineHost", daemon=True
             )
             self._thread.start()
+            self.activity.reset()
         logger.info("Remote engine host listening on %s:%s", bind, self.port)
         self._emit("state", {})
         return self.port
 
     def stop(self) -> None:
+        self.history.remove()
         with self._lock:
             server, self._server = self._server, None
             thread, self._thread = self._thread, None
@@ -311,7 +323,7 @@ class SpeechHost:
         with self._lock:
             return [
                 {"device_id": c.device_id, "name": c.name, "address": c.address,
-                 "busy": c.busy}
+                 "busy": c.busy, "since": c.since}
                 for c in self._clients.values()
             ]
 
@@ -356,6 +368,7 @@ class SpeechHost:
     def remove_device(self, device_id: str) -> bool:
         """Forget a device and drop its open connections."""
         removed = self.registry.remove(device_id)
+        self.history.remove(device_id)
         with self._lock:
             sockets = [c.ws for c in self._clients.values() if c.device_id == device_id]
         for ws in sockets:
@@ -510,6 +523,7 @@ class SpeechHost:
             "host": self._host_info(),
         })
         ws.close()
+        self.activity.paired(device["id"], device["name"], via)
         self._emit("paired", {"name": device["name"]})
         self._emit("devices", {})
 
@@ -575,6 +589,9 @@ class SpeechHost:
             })
             ws.close(protocol.CLOSE_UNAUTHORIZED, "unauthorized")
             return
+        if message.get("purpose") == "history":
+            self.history.serve(ws, device, message.get("token"), message.get("history_enabled"))
+            return
         engine = self._engine()
         identity = engine.identity
         ready = {
@@ -602,8 +619,9 @@ class SpeechHost:
                 return
             self._clients[connection_id] = _Client(
                 device["id"], device["name"], address, time.monotonic(), ws,
-                engine_identity=identity,
+                engine_identity=identity, since=time.time(),
             )
+        self.activity.connected(device["id"], device["name"])
         self._emit("clients", {})
         streams: set = set()
         try:
@@ -633,6 +651,7 @@ class SpeechHost:
                     logger.debug("Could not cancel remote stream %s", session, exc_info=True)
             with self._lock:
                 self._clients.pop(connection_id, None)
+            self.activity.disconnected(device["id"], device["name"])
             self._emit("clients", {})
 
     def _dispatch(self, frame, engine: HostEngine, identity: tuple,
@@ -697,8 +716,19 @@ class SpeechHost:
                 result = current.describe()
             else:
                 raise ValueError(f"Unknown operation: {op!r}")
+            # Counted before the busy flag clears, so the "activity" event
+            # that clearing sends already sees it.
+            if op == "transcribe":
+                self.activity.transcribed(device_id, device_name,
+                                          len(audio) / protocol.SAMPLE_RATE,
+                                          time.perf_counter() - started)
+            elif op == "stream":
+                self.activity.previewed(device_id, device_name)
         except Exception as exc:
-            return {"id": request_id, "error": str(exc) or type(exc).__name__}
+            error = str(exc) or type(exc).__name__
+            if decodes:
+                self.activity.failed(device_id, device_name, error)
+            return {"id": request_id, "error": error}
         finally:
             if decodes:
                 self._set_busy(connection_id, False)
@@ -718,9 +748,10 @@ class SpeechHost:
         fields = {"id", "op"} if op == "model_catalog" else {"id", "op", "family", "model"}
         if op == "install_runtime":
             fields.add("device")
+        devices = ("auto", "cpu") if header.get("family") == "parakeet_mlx" else ("cpu", "cuda")
         if (set(header) - fields or (op != "model_catalog" and not all(
             isinstance(header.get(key), str) and header[key] for key in ("family", "model")
-        )) or (op == "install_runtime" and header.get("device") not in ("cpu", "cuda"))):
+        )) or (op == "install_runtime" and header.get("device") not in devices)):
             return {"id": request_id, "code": "bad_request", "error": "Invalid model management request."}
         try:
             result = self._manage_models(op, header, device_name)
@@ -787,7 +818,8 @@ class SpeechHost:
         if "device" in header:
             if not self._can_manage_models():
                 return {"id": request_id, "code": "forbidden", "error": "Model management is disabled on the host."}
-            if set(header) - {"id", "op", "family", "model", "device"} or header["device"] not in ("cpu", "cuda"):
+            devices = ("auto", "cpu") if family == "parakeet_mlx" else ("cpu", "cuda")
+            if set(header) - {"id", "op", "family", "model", "device"} or header["device"] not in devices:
                 return {"id": request_id, "error": "Invalid model device request."}
         if not isinstance(family, str) or not isinstance(model, str) or not model:
             return {"id": request_id, "error": "Choose a model to switch to"}
@@ -799,5 +831,6 @@ class SpeechHost:
                       else self._select_model(family, model, device_name))
         except Exception as exc:
             return {"id": request_id, "error": str(exc) or type(exc).__name__}
+        self.activity.switched(device_name, str((engine or {}).get("label") or model))
         self._emit("engine", {"family": family, "model": model, "by": device_name})
         return {"id": request_id, "result": {"engine": engine, "models": self._model_list()}}

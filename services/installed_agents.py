@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 CLAUDE_CODE = MeetingAgentCore.CLAUDE_CODE
 CODEX = MeetingAgentCore.CODEX
-OPENCODE = MeetingAgentCore.OPENCODE
+OPENCODE = MeetingAgentCore.OPENCODE_CLI
 #: Display order in Settings.
 AGENT_ORDER: Tuple[str, ...] = (CLAUDE_CODE, CODEX, OPENCODE)
 

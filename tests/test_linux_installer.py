@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import configparser
 import os
+import shutil
 import struct
 import subprocess
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,11 +19,23 @@ BUILD_SCRIPT = ROOT / "scripts" / "build_installer.sh"
 
 def test_build_script_is_executable_and_valid_bash():
     assert os.access(BUILD_SCRIPT, os.X_OK)
+    bash = shutil.which("bash")
+    if os.name == "nt":
+        # WindowsApps can expose an unlaunchable WSL alias even with Git Bash
+        # installed. Resolve Git's bundled shell before falling back to PATH.
+        git = shutil.which("git")
+        candidates = ([Path(git).resolve().parent.parent / "bin" / "bash.exe"] if git else [])
+        candidates += [Path(os.environ[key]) / "Git" / "bin" / "bash.exe"
+                       for key in ("ProgramFiles", "ProgramFiles(x86)") if os.environ.get(key)]
+        bash = next((str(path) for path in candidates if path.is_file()), bash)
+    if not bash:
+        pytest.skip("Bash is unavailable; native Linux CI validates shell syntax")
     completed = subprocess.run(
-        ["bash", "-n"],
+        [bash, "-n"],
         input=BUILD_SCRIPT.read_bytes().replace(b"\r\n", b"\n"),
         capture_output=True,
         check=False,
+        timeout=10,
     )
     assert completed.returncode == 0, completed.stderr
 

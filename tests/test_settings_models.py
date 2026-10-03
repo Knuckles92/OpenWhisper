@@ -195,6 +195,20 @@ class _DialogTestCase:
 class TestRail(_DialogTestCase):
     """The rail lists every assignable thing and reports its current value."""
 
+    def test_registered_local_model_survives_assignment_refresh(self, tmp_path):
+        for name, contents in (("model.bin", b"weights"), ("config.json", b"{}"),
+                               ("tokenizer.json", b"{}")):
+            (tmp_path / name).write_bytes(contents)
+        model = str(tmp_path.resolve())
+        dialog, _values = self._make_dialog(active_model=model, extra_settings={
+            SettingsKey.CUSTOM_WHISPER_MODELS: [model],
+            SettingsKey.MEETING_WHISPER_MODEL: model,
+        })
+        dialog.refresh()
+        assert dialog.ondemand_whisper_picker.current_model() == model
+        assert dialog.meeting_whisper_picker.current_model() == model
+        assert dialog.engine_inventory_label.text().startswith("1 of ")
+
     def test_rail_items_show_the_value_each_destination_owns(self):
         dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)},
@@ -730,10 +744,10 @@ class TestMeetingDestinations(_DialogTestCase):
         dialog, _values = self._make_meeting_dialog()
         combo = dialog.meeting_agent_core_combo
         cores = [combo.itemData(i) for i in range(combo.count())]
-        assert cores == [MeetingAgentCore.PI, MeetingAgentCore.DIRECT]
+        assert cores == [MeetingAgentCore.PI, MeetingAgentCore.DIRECT, MeetingAgentCore.OPENCODE]
         assert "Downloads" not in dialog.meeting_model_tile.description_label.text()
         assert dialog_module.agent_core_label(MeetingAgentCore.CLAUDE_CODE) == "Claude Code"
-        assert dialog_module.agent_core_label(MeetingAgentCore.OPENCODE) == "OpenCode"
+        assert dialog_module.agent_core_label(MeetingAgentCore.OPENCODE_CLI) == "OpenCode"
 
 
 class TestMeetingAgentChoice(_DialogTestCase):
@@ -745,7 +759,7 @@ class TestMeetingAgentChoice(_DialogTestCase):
         scan = {
             MeetingAgentCore.CLAUDE_CODE: CLAUDE,
             MeetingAgentCore.CODEX: CODEX,
-            MeetingAgentCore.OPENCODE: None,
+            MeetingAgentCore.OPENCODE_CLI: None,
         }
         models = {
             MeetingAgentCore.CLAUDE_CODE: [
@@ -843,9 +857,9 @@ class TestMeetingAgentChoice(_DialogTestCase):
         assert values[SettingsKey.MEETING_AGENT_MODELS][MeetingAgentCore.CLAUDE_CODE] == ""
 
     def test_saved_agent_that_is_missing_stays_selected_with_a_notice(self):
-        dialog, values = self._make_agent_dialog(MeetingAgentCore.OPENCODE)
+        dialog, values = self._make_agent_dialog(MeetingAgentCore.OPENCODE_CLI)
         picker = dialog.meeting_agent_picker
-        tile = picker.tiles[MeetingAgentCore.OPENCODE]
+        tile = picker.tiles[MeetingAgentCore.OPENCODE_CLI]
         assert tile.selected
         assert tile.state.tone == agent_picker.MISSING
         assert not tile.selectable
@@ -853,7 +867,7 @@ class TestMeetingAgentChoice(_DialogTestCase):
         assert "until it is installed" in picker.notice_label.text()
         assert picker.model_card.isHidden()
         assert dialog.meeting_model_tile.isHidden()
-        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.OPENCODE
+        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.OPENCODE_CLI
         assert dialog.rail.value(MEETING_TEXT) == "OpenCode · not installed"
 
     def test_opening_intelligence_uses_the_cached_scan(self):

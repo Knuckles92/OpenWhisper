@@ -36,7 +36,7 @@ from ui_qt.widgets.agent_picker import (
 
 CLAUDE_CODE = MeetingAgentCore.CLAUDE_CODE
 CODEX = MeetingAgentCore.CODEX
-OPENCODE = MeetingAgentCore.OPENCODE
+OPENCODE = MeetingAgentCore.OPENCODE_CLI
 
 CLAUDE = InstalledAgent(CLAUDE_CODE, "C:/bin/claude.exe", "2.1.281", "Claude Team", True)
 CODEX_AGENT = InstalledAgent(CODEX, "C:/bin/codex.exe", "0.158.0", "ChatGPT", True)

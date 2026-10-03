@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QWidget,
+    QToolTip,
 )
 from PyQt6.QtCore import (
     Qt,
@@ -24,6 +25,7 @@ from PyQt6.QtGui import QFont, QPainter, QPen
 
 from ui_qt.utils.palette import token_color
 from ui_qt.utils.restyle import set_style_property
+from ui_qt.utils.desktop import compositor_managed
 
 
 class HotkeyHoverHint(QWidget):
@@ -90,6 +92,8 @@ class HotkeyHoverHint(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        if compositor_managed():
+            return
         self._fade_in.stop()
         self.setWindowOpacity(0.0)
         self._fade_in.start()
@@ -144,6 +148,17 @@ class HotkeyHintFilter(QObject):
             return
 
         self._hide_timer.stop()
+        if compositor_managed():
+            # Qt anchors its native tooltip to the parent Wayland surface.
+            from PyQt6.QtWidgets import QApplication
+
+            global_keys = QApplication.instance().property("omarchyGlobalHotkeys") or []
+            scope = "desktop shortcut" if self._hotkey in global_keys else "while OpenWhisper is focused"
+            QToolTip.showText(
+                self._button.mapToGlobal(QPoint(0, self._button.height())),
+                f"{self._hotkey} · {scope}", self._button,
+            )
+            return
         if self._hint is None:
             self._hint = HotkeyHoverHint(self._button.window())
         self._hint.set_hotkey(self._hotkey)
@@ -159,6 +174,8 @@ class HotkeyHintFilter(QObject):
         self._hint.raise_()
 
     def hide_hint(self) -> None:
+        if compositor_managed():
+            QToolTip.hideText()
         if self._hint is not None:
             self._hint.hide()
 

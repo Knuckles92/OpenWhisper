@@ -1,4 +1,11 @@
 #!/bin/sh
 # Package-owned launcher. Keep the application directory out of the caller's
 # working directory so relative user paths can never land under /usr/lib.
+if [ "$#" -eq 0 ] && command -v gdbus >/dev/null 2>&1; then
+    if gdbus call --session --timeout 2 --dest org.openwhisper.OpenWhisper \
+        --object-path /org/openwhisper/OpenWhisper \
+        --method org.openwhisper.Control.Trigger show false >/dev/null 2>&1; then
+        exit 0
+    fi
+fi
 exec /usr/lib/openwhisper/OpenWhisper "$@"

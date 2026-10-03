@@ -33,7 +33,7 @@ class MeetingAgentRoute:
         provider: Text-endpoint profile id; for an installed agent, its id.
         model: Model id; "" lets an installed agent use its own default.
         endpoint: Text-endpoint snapshot, or None for an installed agent.
-        payload_dir: Pi sidecar payload, when ``kind`` is Pi.
+        payload_dir: Packaged Pi or OpenCode SDK payload, when selected.
     """
 
     kind: str

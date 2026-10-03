@@ -45,7 +45,7 @@ from ui_qt.dialogs.settings_dialog import (
 from ui_qt.utils.font_scale import apply_ui_font_scale, apply_ui_theme
 from ui_qt.widgets import TabbedContentWidget
 from ui_qt.widgets.transcription_progress import stage_for_overlay_state
-from services.settings import SettingsKey, settings_manager
+from services.settings import SettingsKey, resolve_ui_theme, settings_manager
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +100,7 @@ class UIController(QObject):
     transcription_received = pyqtSignal(str, object)  # fixed text, optional raw
     status_changed = pyqtSignal(str)
     audio_levels_updated = pyqtSignal(list)
+    agent_data_changed = pyqtSignal(str, dict)
 
     def __init__(self):
         super().__init__()
@@ -112,7 +113,9 @@ class UIController(QObject):
         )
 
         self.main_window = MainWindow()
-        self.overlay = WaveformOverlay()
+        from ui_qt.utils.desktop import is_wayland
+
+        self.overlay = WaveformOverlay(self.main_window if is_wayland() else None)
         self.tray_manager = SystemTrayManager(self.main_window)
         self.main_window.set_tray_available(self.tray_manager.available)
         self._dock_icon_sync = None
@@ -145,7 +148,7 @@ class UIController(QObject):
         self.on_hf_policy_changed: Optional[Callable] = None
         self.on_api_keys_changed: Optional[Callable] = None
         # RemoteEngineService, set by the application controller.
-        self.remote_engine = None
+        self._remote_engine = None
         self.on_model_download_requested: Optional[Callable] = None
         self.on_model_delete_requested: Optional[Callable] = None
         self.on_model_batch_download: Optional[Callable] = None
@@ -156,6 +159,8 @@ class UIController(QObject):
         # where a choice goes, as (family, model).
         self.get_remote_models: Optional[Callable] = None
         self.on_remote_model_selected: Optional[Callable[[str, str], None]] = None
+        # Host Mode's engine picker: (family, model) -> why not, or None.
+        self.on_host_model_selected: Optional[Callable[[str, str], Optional[str]]] = None
         self.on_remote_runtime_selected: Optional[Callable] = None
         # Reconnect to the paired computer now (the link was clicked).
         self.on_remote_retry: Optional[Callable[[], None]] = None
@@ -206,6 +211,17 @@ class UIController(QObject):
 
         self._setup_connections()
 
+    @property
+    def remote_engine(self):
+        """The controller's ``RemoteEngineService``; it's created after this window."""
+        return self._remote_engine
+
+    @remote_engine.setter
+    def remote_engine(self, service) -> None:
+        self._remote_engine = service
+        # Host Mode's dashboard reads the same service.
+        self.main_window.host_dashboard.bind(service)
+
     def _setup_connections(self):
         self.main_window.record_toggled.connect(self._on_record_toggled)
         self.main_window.quick_record_tab.profiles_requested.connect(self.open_cleanup_profiles)
@@ -213,6 +229,7 @@ class UIController(QObject):
         self.main_window.model_changed.connect(self._on_model_changed)
         self.main_window.whisper_engine_changed.connect(self._on_whisper_engine_changed)
         self.main_window.remote_model_selected.connect(self._on_remote_model_selected)
+        self.main_window.host_model_selected.connect(self._on_host_model_selected)
         self.main_window.remote_runtime_selected.connect(self._on_remote_runtime_selected)
         self.main_window.remote_retry_requested.connect(self._on_remote_retry)
         self.main_window.live_preview_changed.connect(self._on_live_preview_changed)
@@ -304,6 +321,34 @@ class UIController(QObject):
         self.transcription_received.connect(self._display_transcript)
         self.status_changed.connect(self._apply_status_to_main_window)
         self.audio_levels_updated.connect(self._apply_audio_levels_to_overlay)
+        self.agent_data_changed.connect(self._apply_agent_changes)
+
+    def _apply_agent_changes(self, kind: str, changes: dict) -> None:
+        """Apply MCP notifications on the GUI thread through the usual UI hooks."""
+        if kind != "settings":
+            self.main_window.refresh_history()
+            from services.remote_records.sync import record_sync
+
+            record_sync.record_saved("dictation" if kind == "transcription" else "meeting", changes["id"])
+            return
+        # A user may have changed a preference while this signal was queued.
+        # Refresh from the latest values instead of replaying a stale write.
+        saved = settings_manager.load_all_settings()
+        changes = {key: saved.get(key, value) for key, value in changes.items()}
+        if SettingsKey.UI_THEME in changes:
+            self._apply_ui_theme(resolve_ui_theme(saved))
+        if SettingsKey.UI_FONT_SCALE in changes:
+            self._apply_ui_font_scale(changes[SettingsKey.UI_FONT_SCALE])
+        if SettingsKey.STREAMING_ENABLED in changes:
+            self._on_settings_streaming_changed()
+        if SettingsKey.STREAMING_OVERLAY_FONT_SIZE in changes:
+            self.overlay.refresh_streaming_font_size()
+        if SettingsKey.TRANSCRIPT_CLEANUP_ENABLED in changes:
+            self.refresh_cleanup_controls()
+        if SettingsKey.RECORDING_TRIGGER_MODE in changes:
+            self._on_settings_recording_trigger_mode_changed(changes[SettingsKey.RECORDING_TRIGGER_MODE])
+        if self._settings_dialog is not None:
+            self._settings_dialog.refresh()
 
     def _on_record_toggled(self, is_recording: bool):
         if is_recording:
@@ -466,6 +511,15 @@ class UIController(QObject):
         if self.on_remote_model_selected:
             self.on_remote_model_selected(family, model)
 
+    def _on_host_model_selected(self, family: str, model: str) -> None:
+        logger.info("Host model chosen: %s/%s", family, model)
+        if self.on_host_model_selected is None:
+            error = "Switching models isn't available in this window."
+        else:
+            error = self.on_host_model_selected(family, model)
+        if error:
+            self.main_window.host_dashboard.show_engine_error(error)
+
     def _on_remote_runtime_selected(self, family: str, model: str, changes: dict) -> None:
         if self.on_remote_runtime_selected:
             self.on_remote_runtime_selected(family, model, changes)
@@ -494,6 +548,7 @@ class UIController(QObject):
         """
         self.main_window.quick_record_tab.set_engine_busy(busy)
         self.main_window.upload_file_tab.set_engine_busy(busy)
+        self.main_window.host_dashboard.set_engine_busy(busy)
         if not busy:
             self.refresh_model_views()
 
@@ -1497,6 +1552,9 @@ class UIController(QObject):
             self.main_window.upload_file_tab.set_status("Copy failed")
 
     def switch_to_tab(self, index: int):
+        # A meeting starting here needs its tab, even on a host.
+        if self.main_window.host_mode:
+            self.main_window.set_host_mode(False)
         self.main_window.tabbed_content.set_current_index(index)
 
     def switch_to_meeting_mode(self):
