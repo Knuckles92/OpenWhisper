@@ -143,6 +143,8 @@ class SettingsKey:
     MEETING_LLM_PROVIDER: Final[str] = "meeting_llm_provider"
     MEETING_LLM_MODEL: Final[str] = "meeting_llm_model"
     MEETING_AGENT_CORE: Final[str] = "meeting_agent_core"
+    #: ``{agent_id: model}`` for installed agents; "" keeps the agent's default.
+    MEETING_AGENT_MODELS: Final[str] = "meeting_agent_models"
     MEETING_END_REDECODE: Final[str] = "meeting_end_redecode"
     MEETING_REDECODE_COVERAGE_GUARD: Final[str] = "meeting_redecode_coverage_guard"
     MEETING_END_POLISH: Final[str] = "meeting_end_polish"
@@ -343,13 +345,21 @@ class TranscriptCleanupReasoning:
 
 
 class MeetingAgentCore:
-    """Values for ``SettingsKey.MEETING_AGENT_CORE``."""
+    """Values for ``SettingsKey.MEETING_AGENT_CORE``.
+
+    ``PI``, ``DIRECT`` and ``OPENCODE`` run on OpenWhisper's own text endpoint and API key.
+    The ``INSTALLED`` values drive a coding agent the user already has set up,
+    with its own sign-in, providers, and models.
+    """
     PI: Final[str] = "pi"          # Bundled Node sidecar running the Pi SDK
     DIRECT: Final[str] = "direct"  # Direct OpenRouter tool-calling loop
+    CLAUDE_CODE: Final[str] = "claude_code"  # Installed Claude Code, headless
+    CODEX: Final[str] = "codex"              # Installed Codex CLI, headless
+    OPENCODE: Final[str] = "opencode"      # Packaged OpenCode SDK; preserves saved settings
+    OPENCODE_CLI: Final[str] = "opencode_cli"  # Installed OpenCode, over ACP
 
-    OPENCODE: Final[str] = "opencode"
-
-    ALL: Final[Tuple[str, ...]] = (PI, DIRECT, OPENCODE)
+    INSTALLED: Final[Tuple[str, ...]] = (CLAUDE_CODE, CODEX, OPENCODE_CLI)
+    ALL: Final[Tuple[str, ...]] = (PI, DIRECT, OPENCODE, *INSTALLED)
 
 
 class MeetingSpeakerIdBackend:
@@ -471,6 +481,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.MEETING_LLM_PROVIDER: TranscriptCleanupProvider.OPENROUTER,
     SettingsKey.MEETING_LLM_MODEL: config.MEETING_LLM_MODEL,
     SettingsKey.MEETING_AGENT_CORE: config.MEETING_AGENT_CORE,
+    SettingsKey.MEETING_AGENT_MODELS: {},
     SettingsKey.MEETING_SPEAKER_ID_BACKEND: config.MEETING_SPEAKER_ID_BACKEND,
     SettingsKey.MEETING_END_REDECODE: config.MEETING_END_REDECODE,
     SettingsKey.MEETING_REDECODE_COVERAGE_GUARD: False,
@@ -1154,6 +1165,31 @@ def resolve_meeting_llm_model(
         settings,
     )
     return model
+
+
+def resolve_meeting_agent_models(
+    settings: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, str]:
+    """Return the model chosen for each installed agent, as a fresh dict.
+
+    Missing agents and non-string values are dropped; an empty string means
+    the agent keeps the default from its own configuration.
+    """
+    raw = setting_value(SettingsKey.MEETING_AGENT_MODELS, settings)
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        agent: model.strip()
+        for agent, model in raw.items()
+        if agent in MeetingAgentCore.INSTALLED and isinstance(model, str)
+    }
+
+
+def resolve_meeting_agent_model(
+    agent_id: str, settings: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """Return the model chosen for ``agent_id``, or "" for its own default."""
+    return resolve_meeting_agent_models(settings).get(agent_id, "")
 
 
 def resolve_meeting_speaker_id_backend(

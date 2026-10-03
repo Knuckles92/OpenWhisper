@@ -757,6 +757,13 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         fill in for meetings recorded with AI insights off.
         """
         options = getattr(engine, "options", None)
+        from services.settings import MeetingAgentCore
+
+        kind = getattr(options, "agent_core_kind", "")
+        if kind in MeetingAgentCore.INSTALLED:
+            # The meeting's installed agent writes the report too.
+            return {"provider": kind, "model": getattr(options, "llm_model", "") or "",
+                    "endpoint": None}
         provider = (meeting.get("agent_provider")
                     or getattr(options, "llm_provider", "") or "openrouter")
         model = (meeting.get("agent_model")

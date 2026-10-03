@@ -691,6 +691,14 @@ def generate_report(
             f"Keep the request under {MAX_REQUEST_CHARS} characters."
         )
 
+    from services.settings import MeetingAgentCore
+
+    if provider in MeetingAgentCore.INSTALLED and client is None:
+        return _generate_with_installed_agent(
+            meeting, state, segments, request, agent_id=provider, model=model,
+            repository=repository, timeout_s=timeout_s, cancel_event=cancel_event,
+        )
+
     from meeting.agent.base import merge_usage
     from services.text_generation import TextGenerationError, generate
 
@@ -792,6 +800,82 @@ def generate_report(
         "title": report_title(markdown, request),
         "sources": sources,
         "usage": usage,
+    }
+
+
+#: The report is the agent's closing reply, so it must be nothing else.
+_AGENT_REPORT_CLOSING = (
+    "When you have what you need, reply with the finished report in Markdown "
+    "and nothing else: no preamble, no notes about the tools."
+)
+
+
+def _generate_with_installed_agent(
+    meeting: Dict[str, Any], state: Dict[str, Any], segments: List[Dict[str, Any]],
+    request: str, *, agent_id: str, model: str, repository: Any,
+    timeout_s: float, cancel_event: Optional[threading.Event],
+) -> Dict[str, Any]:
+    """The same report, written by the user's installed agent.
+
+    The agent reads through the same corpus tools, served over MCP; its
+    closing reply is the report.
+    """
+    from meeting.agent.installed.core import run_agent_task
+    from meeting.agent.installed.drivers import AgentUnavailable
+
+    participants = state.get("participants") or {}
+    corpus = TranscriptCorpus(segments or [], participants)
+    meeting_id = str(state.get("meeting_id") or meeting.get("id") or "")
+    past_recall = bool(repository is not None and past_recall_enabled())
+    context_files = context_folder_enabled()
+    tools = [
+        {
+            "name": tool["function"]["name"],
+            "description": tool["function"]["description"],
+            "inputSchema": tool["function"]["parameters"],
+        }
+        for tool in _tool_schemas(past_recall=past_recall, context_files=context_files)
+    ]
+    used: Dict[str, int] = {}
+    dispatch = _make_dispatcher(corpus, repository, meeting_id, used)
+
+    def handle(name: str, args: Dict[str, Any]) -> Tuple[str, bool]:
+        try:
+            return dispatch(name, args), False
+        except Exception:
+            logger.exception("Report read tool %s failed", name)
+            return f"{name} failed; continue without it.", True
+
+    try:
+        outcome = run_agent_task(
+            agent_id, model=model, system_prompt=SYSTEM_PROMPT,
+            user_prompt=build_corpus_prompt(meeting, state, corpus, request),
+            tools=tools, handler=handle, timeout_s=timeout_s,
+            closing=_AGENT_REPORT_CLOSING, cancel_event=cancel_event,
+        )
+    except AgentUnavailable as exc:
+        raise ReportUnavailable(str(exc)) from exc
+    if outcome.canceled:
+        raise ReportUnavailable("The report was canceled.")
+    if not outcome.ok:
+        raise ReportUnavailable(outcome.error or "The agent could not write the report.")
+    markdown = _clean_markdown(outcome.text)
+    if not markdown:
+        raise ReportUnavailable("The report came back empty. Try rephrasing the request.")
+    return {
+        "markdown": markdown,
+        "title": report_title(markdown, request),
+        "sources": {
+            "transcript_lines": len(corpus),
+            "duration_s": round(corpus.duration_s, 1),
+            "transcript_complete": corpus.total_chars <= INLINE_TRANSCRIPT_CHARS,
+            "tools_used": dict(sorted(used.items())),
+            "past_meetings": past_recall,
+            "knowledge_folder": context_files,
+            "model": model or "default",
+            "provider": agent_id,
+        },
+        "usage": outcome.usage,
     }
 
 

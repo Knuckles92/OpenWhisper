@@ -226,6 +226,10 @@ Add credentials in **Settings → API keys**; keys use the OS credential store. 
 
 Enable cleanup in **Settings → AI cleanup**, teach spelling and style in **Learned rules**, and use [Profiles](docs/cleanup-profiles.md) for reusable formats.
 
+**Meeting engine choices.** Pi is the default. Choose **OpenWhisper** in **Settings → Meeting Mode → Intelligence** to use Pi, Standard API, or the packaged OpenCode SDK with your selected text endpoint and API key. Install Pi or OpenCode SDK from **Downloads → Components** when available on your platform. Existing `opencode` settings continue to select the packaged SDK.
+
+**Meeting insights through your own coding agent.** If you use **Claude Code**, **Codex**, or **OpenCode**, choose its tile in **Settings → Meeting Mode → Intelligence**. OpenWhisper detects existing installations and sign-in status. Choose a model or keep the agent's default; meeting passes use that agent's sign-in, providers, and models. Claude Code and Codex run headlessly with built-in tools disabled; unrelated MCP servers are excluded. Installed OpenCode uses the [Agent Client Protocol](https://agentclientprotocol.com) with its own tools denied and has the separate setting `opencode_cli`. Every engine uses the shared meeting tools and validation rules for cards, notes, polish, finalization, and retries. Saved meetings recorded with an installed agent and their custom reports retain that agent. Passes count toward the agent's account or API usage; installed agents use a slower live cadence. OpenWhisper never installs, updates, or signs into these agents for you.
+
 ### Offline use
 
 Downloaded speech models load from the local cache without network metadata checks. Install any required runtime before going offline.

@@ -18,15 +18,12 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from config import config
 from services.components import (
     ensure_speaker_model,
-    meeting_agent_payload_dir,
     speaker_model_path,
 )
 from services.settings import (
     SETTING_DEFAULTS,
-    MeetingAgentCore,
     MeetingSpeakerIdBackend,
     SettingsKey,
-    resolve_meeting_agent_core,
     resolve_meeting_audio_upload_consent,
     resolve_meeting_end_polish,
     resolve_meeting_end_redecode,
@@ -34,9 +31,6 @@ from services.settings import (
     resolve_meeting_end_report,
     resolve_meeting_insight_review,
     resolve_meeting_report_views,
-    resolve_meeting_llm_endpoint,
-    resolve_meeting_llm_model,
-    resolve_meeting_llm_provider,
     resolve_meeting_language,
     resolve_meeting_server_bind,
     resolve_meeting_server_port,
@@ -935,14 +929,9 @@ class MeetingRuntime:
         if not demo and resolve_meeting_asr_source(settings) == "remote":
             from meeting.asr.remote import remote_route
             remote = remote_route(settings)
-        agent_kind = resolve_meeting_agent_core(settings)
-        payload_dir = meeting_agent_payload_dir(agent_kind)
-        if agent_kind == MeetingAgentCore.PI and payload_dir is None:
-            logger.info(
-                "Meeting agent component not installed; using the direct "
-                "OpenRouter core"
-            )
-            agent_kind = MeetingAgentCore.DIRECT
+        from services.meeting_agent_route import resolve_meeting_agent_route
+
+        route = resolve_meeting_agent_route(settings)
 
         speaker_backend = (
             MeetingSpeakerIdBackend.LOCAL
@@ -961,11 +950,11 @@ class MeetingRuntime:
             asr_model=resolve_meeting_whisper_model(settings),
             asr_remote=remote,
             asr_language=resolve_meeting_language(settings),
-            llm_provider=resolve_meeting_llm_provider(settings),
-            llm_model=resolve_meeting_llm_model(settings),
-            llm_endpoint=resolve_meeting_llm_endpoint(settings),
-            agent_core_kind=agent_kind,
-            sidecar_payload_dir=payload_dir,
+            llm_provider=route.provider,
+            llm_model=route.model,
+            llm_endpoint=route.endpoint,
+            agent_core_kind=route.kind,
+            sidecar_payload_dir=route.payload_dir,
             diarization_model_path=(
                 ensure_speaker_model() if want_speaker_model else None
             ),
@@ -1451,16 +1440,19 @@ class MeetingRuntime:
                 from meeting.web.archive import ArchivedMeetingDashboard
                 from meeting.web.server import MeetingWebServer
 
+                from services.meeting_agent_route import resolve_meeting_agent_route
+
                 settings = settings_manager.load_all_settings()
+                route = resolve_meeting_agent_route(settings, meeting)
                 archive = ArchivedMeetingDashboard(
                     repository,
                     meeting,
                     spool_root=config.MEETINGS_FOLDER,
-                    llm_provider=resolve_meeting_llm_provider(settings),
-                    llm_model=resolve_meeting_llm_model(settings),
-                    llm_endpoint=resolve_meeting_llm_endpoint(settings),
-                    agent_core_kind=resolve_meeting_agent_core(settings),
-                    sidecar_payload_dir=meeting_agent_payload_dir(resolve_meeting_agent_core(settings)),
+                    llm_provider=route.provider,
+                    llm_model=route.model,
+                    llm_endpoint=route.endpoint,
+                    agent_core_kind=route.kind,
+                    sidecar_payload_dir=route.payload_dir,
                     model_lease=self._model_lease(),
                 )
                 server = MeetingWebServer(

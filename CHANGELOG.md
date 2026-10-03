@@ -8,6 +8,15 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+### Added
+- **Installed meeting agents** — choose Claude Code, Codex, or OpenCode already installed and signed in on your computer. Each uses the shared meeting tools for live insights, notes, transcript polish, finalization, saved-meeting retries, and custom reports. Pi remains the default; Standard API and the packaged OpenCode SDK remain available.
+
+### Fixed
+- **Meeting notes** — minutes can repeat facts from the other insight cards while duplicate note blocks are still rejected.
+- **Installed Codex tools** — meeting passes disable unrelated user MCP servers before adding the meeting tools.
+- **Agent cleanup** — installed agents and short probes retain ownership of helper processes even after the parent exits.
+- **Standard API deadlines** — capability probes and passes stop at their wall-clock budget, discard late results, and prevent overlapping unfinished requests.
+
 ## [2.6.12] - 2026-10-02
 
 ### Added

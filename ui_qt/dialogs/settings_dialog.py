@@ -134,6 +134,7 @@ from ui_qt.dialogs.settings_models import ModelAssignments
 from ui_qt.dialogs.settings_overview import OverviewPage, OverviewSummary
 from ui_qt.dialogs.settings_remote import RemoteEngineSection
 from ui_qt.dialogs.settings_search import (
+    SETTING,
     PageSource,
     SearchEntry,
     SearchPalette,
@@ -612,8 +613,9 @@ class SettingsDialog(QDialog):
         self._add_page(
             MEETING_INTELLIGENCE,
             "Meeting intelligence",
-            "One chat model runs every Meeting Mode pass. Nothing is sent until "
-            "you enable intelligence for a meeting.",
+            "A coding agent you already use, or OpenWhisper's built-in engine, "
+            "runs every Meeting Mode pass. Nothing is sent until you turn on "
+            "AI insights for a meeting.",
             self._build_meeting_intelligence_page,
         )
         self._add_page(
@@ -1343,8 +1345,9 @@ class SettingsDialog(QDialog):
         self._update_cleanup_prompt_ui()
 
     def _build_meeting_intelligence_page(self, layout: QVBoxLayout) -> None:
-        group_title(layout, "Model")
+        # Who runs AI insights, then the built-in engine's chat model.
         self.meeting_model_tile = self.models.build_meeting_model_section(layout)
+        self.meeting_agent_picker = self.models.meeting_agent_picker
         layout.addSpacing(6)
 
         self.meeting_past_recall_tile = SettingTile(
@@ -2376,8 +2379,27 @@ class SettingsDialog(QDialog):
                 self._rail_icons.get(key, "box-blue.svg"),
             ))
         return build_index(
-            pages, self.downloads, keyword_entries(_SEARCH_ALIASES)
+            pages,
+            self.downloads,
+            keyword_entries(_SEARCH_ALIASES) + self._agent_search_entries(),
         )
+
+    def _agent_search_entries(self) -> list:
+        """The meeting agent picker, which is tiles rather than a setting tile."""
+        group = self._rail_groups.get(MEETING_INTELLIGENCE, "")
+        name = self.rail.name(MEETING_INTELLIGENCE)
+        return [SearchEntry(
+            SETTING,
+            "Who runs AI insights",
+            f"{group} › {name}" if group else name,
+            MEETING_INTELLIGENCE,
+            target=self.meeting_agent_picker,
+            keywords=(
+                "meeting agent installed coding agent claude code codex opencode "
+                "sign-in openwhisper built-in"
+            ),
+            icon=self._rail_icons.get(MEETING_INTELLIGENCE, "stack-purple.svg"),
+        )]
 
     def _on_search_activated(self, entry: SearchEntry) -> None:
         if entry.model_name:
@@ -2596,7 +2618,7 @@ class SettingsDialog(QDialog):
         settings = self._settings_snapshot()
         cleanup_on = self.transcript_cleanup_check.isChecked()
         cleanup_remote = self._provider_is_remote(models.active_text_provider)
-        meeting_remote = self._provider_is_remote(models.active_meeting_provider)
+        meeting_remote = models.meeting_intelligence_is_remote(self._provider_is_remote)
 
         local_items, cloud_items = [], []
         if models.voice_is_remote() and not models.voice_is_cloud():
@@ -2644,11 +2666,7 @@ class SettingsDialog(QDialog):
                 "A ticket, an email, or your own format",
             ),
             meeting_voice=(models.meeting_model_label(), models.meeting_voice_detail()),
-            intelligence=(
-                models.meeting_model_name(),
-                f"{profile_display_name(models.active_meeting_provider, settings)}"
-                f" · {models.meeting_agent_core_label()}",
-            ),
+            intelligence=models.meeting_intelligence_overview(),
             hotkeys=(f"Record {record}", f"Cancel {cancel} · Tray {minimize}"),
             local_items=local_items,
             cloud_items=cloud_items,
