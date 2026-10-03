@@ -8,14 +8,21 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+## [2.6.13] - 2026-10-03
+
 ### Added
-- **Installed meeting agents** — choose Claude Code, Codex, or OpenCode already installed and signed in on your computer. Each uses the shared meeting tools for live insights, notes, transcript polish, finalization, saved-meeting retries, and custom reports. Pi remains the default; Standard API and the packaged OpenCode SDK remain available.
+- **Installed meeting agents** — choose Claude Code, Codex, or OpenCode already installed and signed in on your computer. Each uses the shared meeting tools for live insights, notes, transcript polish, finalization, saved-meeting retries, and custom reports. Pi remains the default; the packaged OpenCode SDK remains available.
 
 ### Fixed
 - **Meeting notes** — minutes can repeat facts from the other insight cards while duplicate note blocks are still rejected.
 - **Installed Codex tools** — meeting passes disable unrelated user MCP servers before adding the meeting tools.
 - **Agent cleanup** — installed agents and short probes retain ownership of helper processes even after the parent exits.
-- **Standard API deadlines** — capability probes and passes stop at their wall-clock budget, discard late results, and prevent overlapping unfinished requests.
+
+### Changed
+- **Agent-only meeting intelligence** — label the native choice **Pi** with a π mark instead of OpenWhisper's name and app icon, and retire Standard API as a meeting-agent backend. Old `direct` selections resolve to Pi; missing Pi components no longer silently fall back to a homegrown API loop. Install/update the agent or choose another; recording still works without AI insights.
+- **OpenAI text generation** — supported GPT-4o and GPT-4.1 models now use Responses across cleanup, meeting insights, custom reports, and the benchmark judge. Custom text endpoints can select Chat Completions or Responses, and saved meetings retain their endpoint choice.
+- **Faster desktop and meeting dashboard** — load secondary views and Settings pages when opened, reuse unchanged history cards, page long meeting transcripts, and avoid loading full transcript collections for history summaries. Meeting capture starts before optional processors finish loading; queued audio is replayed when they are ready.
+- **Lighter meeting updates** — copy only the state sections changed by an operation, reduce repeated settings reads, and advance the waveform using elapsed time. These changes preserve saved state and update ordering.
 
 ## [2.6.12] - 2026-10-02
 
