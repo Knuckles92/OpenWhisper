@@ -115,3 +115,20 @@ python .tmp/headless-agent-review-20261002/bench.py --source <source-directory> 
 ```
 
 Pi and packaged OpenCode also require `--sidecar-dir` pointing to the freshly built archived payload. The harness uses isolated writable application data. Keep provider credentials out of reports and command lines. All fixtures, scorer code, runtime versions and raw checks are available locally for audit.
+
+## Integration follow-up — October 2, 2026
+
+The feature is now merged locally into `main` (`bd4d46d`), with the benchmark fixture compatibility fix at `f720387`. The existing uncommitted Responses API work was preserved and included in validation. The earlier review and quality tables above describe the implementation before these repairs.
+
+All six choices are wired through Settings → Meeting Mode → Intelligence: Pi (default), Standard API, packaged OpenCode SDK, and installed Claude Code, Codex, or OpenCode. The existing `opencode` setting retains the packaged SDK; installed OpenCode uses `opencode_cli`. Shared meeting tools cover cards, notes, transcript polish, finalization, retries, and custom reports. Native-agent recordings retain their agent for saved-meeting work. SDK build/Downloads support, component leases, and CI were retained.
+
+Repairs include excluding unrelated Codex MCP servers before every pass; allowing live notes to restate other cards while still rejecting duplicate note blocks; owning Windows agent descendants with a job assigned before the agent starts, and POSIX descendants with a process group; and bounding Standard capability probes and generation by wall-clock deadlines. Late HTTP results cannot run meeting tools, and a still-draining request prevents another request on that core.
+
+Validation on the actual combined checkout:
+
+- Full Python run: 4,601 passed, 42 skipped, and 3,898 passing subtests. Five older benchmark fixture failures were caused by the existing judge's new context-managed client. The compatible fixture repair passed a final 383-test affected-suite run; every original failure was checked against the passing follow-up XML.
+- Pi SDK: 11 tests and type check passed; fresh source bundle built. OpenCode SDK: 14 tests/117 assertions and type check passed; the locked component build, every-file integrity check, and offline SDK self-test passed. Both local source payloads resolve successfully. No release was uploaded or catalog marked published.
+- Real production synthetic follow-up: Pi 38/38 checks over cards, notes, spelling correction, contextual polish, and final consolidation; installed Codex, Standard API, and packaged OpenCode SDK each 19/19 live checks. Codex now retained the budget and deadline in minutes and preserved them through the Maia correction. One repetition per engine; these are functional and source checks, not a new blinded quality panel or a new latency ranking. Some follow-up work overlapped other validation.
+- Replaying the exact four Standard minute operations rejected in the earlier benchmark now accepted 4/4 with the original other cards present. Regression tests cover same-page note duplicates, both note/card write orders, orphaned helpers, cancellation, trickling HTTP deadlines, late-write exclusion, SDK/CLI routing, and Settings transitions. The Settings dialog also passed an offscreen render check with isolated settings.
+
+Claude Code 2.1.281 remains signed out and installed OpenCode is absent on this computer. Their driver paths were exercised with simulated CLIs/ACP, but this follow-up did not assign live quality scores to them. Local evidence is in `.tmp/headless-agent-review-20261002/merged-*`; source fingerprints and the integration summary are in the JSON companion.

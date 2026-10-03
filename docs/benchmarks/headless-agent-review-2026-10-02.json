@@ -1806,5 +1806,101 @@
         "anchors_outside_cited_spans": []
       }
     }
+  },
+  "integration_followup": {
+    "production_merge_commit": "bd4d46d",
+    "validated_head": "f7203875df4eafe87aca8a5e8ad7cd4b0169c1c6",
+    "existing_working_changes_preserved": true,
+    "engine_choices": [
+      "pi",
+      "direct",
+      "opencode",
+      "claude_code",
+      "codex",
+      "opencode_cli"
+    ],
+    "default": "pi",
+    "python": {
+      "full_run_passed": 4601,
+      "full_run_fixture_failures": 5,
+      "skipped": 42,
+      "subtests_passed": 3898,
+      "final_followup_passed": 383,
+      "all_original_failures_verified_fixed": true,
+      "full_log": "merged-tests.log",
+      "followup_log": "merged-followup-tests-final.log"
+    },
+    "pi_sdk": {
+      "tests_passed": 11,
+      "typecheck": "passed",
+      "source_build": "passed"
+    },
+    "opencode_sdk": {
+      "tests_passed": 14,
+      "assertions_passed": 117,
+      "typecheck": "passed",
+      "locked_component_build_and_offline_selftest": "passed"
+    },
+    "synthetic_functional_smokes": {
+      "Pi": {
+        "file": "merged-pi-all.json",
+        "passes": 5,
+        "checks_passed": 38,
+        "checks_total": 38
+      },
+      "Installed Codex": {
+        "file": "merged-codex-live.json",
+        "passes": 3,
+        "checks_passed": 19,
+        "checks_total": 19
+      },
+      "Standard API": {
+        "file": "merged-standard-live.json",
+        "passes": 3,
+        "checks_passed": 19,
+        "checks_total": 19
+      },
+      "OpenCode SDK": {
+        "file": "merged-sdk-live.json",
+        "passes": 3,
+        "checks_passed": 19,
+        "checks_total": 19
+      }
+    },
+    "previously_rejected_minutes_replay": {
+      "accepted": 4,
+      "attempted": 4,
+      "file": "merged-dedup-replay.json"
+    },
+    "ui_render_check": {
+      "passed": true,
+      "files": [
+        "merged-engines-ui.png",
+        "merged-codex-ui.png"
+      ],
+      "method": "offscreen Settings dialog, isolated settings and synthetic availability"
+    },
+    "native_unavailable": {
+      "claude_code": "2.1.281; signed_in=False",
+      "opencode_cli": "not installed"
+    },
+    "quality_scope": "Original blinded panel is pre-fix evidence. Follow-up uses one synthetic repetition and source checks; no new comparative quality rating.",
+    "source_sha256": {
+      "services/settings.py": "bccfd8db6b2d4fbf29457330976d892dd50a4bde8e9ced939bc9b506a551e671",
+      "services/installed_agents.py": "5dd63b4156e6a941564566fa3e6d47a8aa2eff07ea5e0cd51e63295c047b7262",
+      "services/agent_process.py": "6cb84c2654916130db9f95a84280390ea69c9fb8397750c3e5a8b9defe7f624e",
+      "services/meeting_agent_route.py": "9917a17d73aa7e6f6d8345f0183b945dbe128792afebf1506ab8775f2c99a3e7",
+      "services/text_generation.py": "d8e707aee23a6c51a3996324dbe907ee2b45521acaf3ca01b2c70e1498aff231",
+      "services/text_llm.py": "f50dd81567abdc346b35ba510956a102dc4da670b5ea98880932594dd5422bc4",
+      "services/text_model_catalog.py": "ae5c421aae5d15826580b314f3ac010c11be46cb9926c26f0f48338879f9b9b3",
+      "meeting/state/patches.py": "0fc90edb2e4f9efd7c18390a806a47ccca0d14df64e651d9851947a5d616141e",
+      "meeting/agent/base.py": "20cb12855e942afd9152e6c2fbcf3e69d62d2d9942e55ae216e6a4115d4fa02c",
+      "meeting/agent/openrouter_direct.py": "c018650f2071fc02b92b4e9c9d2c56b5a97a8b27b00370bc5e972418dae738b5",
+      "meeting/agent/installed/drivers.py": "b08ce1717cf262d14fe311addb72578b0e5e436d82bcfa1de5d3ebcd9be473da",
+      "meeting/agent/installed/acp.py": "8e78d44289b688847e18cbfcbd6b0b4ecf2f656a664e6edcdf89497c0cea28ca",
+      "meeting/agent/installed/core.py": "92b0358a787d26f886fc6a43d7829411876b7a495e7b0c1490730d2d6f87fda2",
+      "ui_qt/dialogs/settings_models.py": "99c57d9698cfa5df7816198cfed0229665d45e22f7a36f703c137b251935bc75",
+      "ui_qt/widgets/agent_picker.py": "bcecb2c75fc1669daf703dd38c33f623f5b76efad1d5922d8798102e16bfaf52"
+    }
   }
 }
