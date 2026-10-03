@@ -43,7 +43,7 @@ from meeting.interfaces import (
 from meeting.recall import past_recall_enabled
 from meeting.agent.tool_specs import MEETING_TOOLS as _TOOLS, NOOP_TOOL as _NOOP_TOOL
 
-from services.text_generation import generate
+from services.text_generation import TextGenerationError, generate
 from services.text_llm import (
     NEW_PROFILE_IDS,
     profile_from_agent_config,
@@ -99,6 +99,8 @@ class DirectOpenRouterAgent:
         self._tools: Optional[AgentToolHost] = None
         self._client: Optional[Any] = None
         self._client_lock = threading.Lock()
+        self._generation_lock = threading.Lock()
+        self._generation_thread: Optional[threading.Thread] = None
         self._api_key: Optional[str] = None
         self._base_url: Optional[str] = None
         self._headers: Optional[Dict[str, str]] = None
@@ -227,7 +229,8 @@ class DirectOpenRouterAgent:
     def _probe_tool_support(self, client: Any) -> None:
         new_provider = self._profile.kind in NEW_PROFILE_IDS
         try:
-            result = generate(
+            result = self._generate_before(
+                time.monotonic() + _PROBE_TIMEOUT_S,
                 client.with_options(timeout=_PROBE_TIMEOUT_S), self._profile,
                 model=self._model,
                 messages=[{"role": "user", "content": "Call the noop tool."}],
@@ -245,6 +248,56 @@ class DirectOpenRouterAgent:
             )
             self._json_mode = True
             self._note_error(exc)
+
+    def _generate_before(self, deadline: float, client: Any, profile: Any, **kwargs) -> Any:
+        """Bound total HTTP wall time, including responses that trickle forever.
+
+        Only this waiting thread may use a result to call meeting tools. A
+        late result is dropped, and another request cannot start while the
+        abandoned network call is still draining.
+        """
+        done = threading.Event()
+        outcome: Dict[str, Any] = {}
+
+        def request() -> None:
+            try:
+                outcome["value"] = generate(client, profile, **kwargs)
+            except Exception as exc:
+                outcome["error"] = exc
+            finally:
+                done.set()
+
+        with self._generation_lock:
+            if self._cancel_event.is_set():
+                raise TextGenerationError("canceled")
+            if time.monotonic() >= deadline:
+                raise TextGenerationError("meeting text deadline exceeded")
+            if self._generation_thread is not None and self._generation_thread.is_alive():
+                raise TextGenerationError("previous meeting text request is still ending")
+            thread = threading.Thread(target=request, name="meeting-text-request", daemon=True)
+            self._generation_thread = thread
+            thread.start()
+        while True:
+            if self._cancel_event.is_set():
+                raise TextGenerationError("canceled")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                # Avoid racing a synchronous socket close against a read.
+                # No tool runs on the network thread, so dropping its output
+                # also revokes every possible late write.
+                raise TextGenerationError("meeting text deadline exceeded")
+            if done.wait(min(0.05, remaining)):
+                break
+        if self._cancel_event.is_set():
+            raise TextGenerationError("canceled")
+        if time.monotonic() >= deadline:
+            raise TextGenerationError("meeting text deadline exceeded")
+        if "error" in outcome:
+            raise outcome["error"]
+        # done is set immediately before return; join makes the next tool
+        # round safe even when it starts without any scheduler delay.
+        thread.join()
+        return outcome["value"]
 
     def _note_error(self, exc: Exception) -> None:
         status = getattr(exc, "status_code", None)
@@ -332,7 +385,8 @@ class DirectOpenRouterAgent:
                 remaining = min(timeout_s, getattr(self, "_pass_deadline", time.monotonic() + timeout_s) - time.monotonic())
                 if remaining <= 0:
                     return AgentResult(ok=False, op_results=op_results, error="meeting text deadline exceeded", usage=usage)
-                response = generate(client.with_options(timeout=remaining), self._profile,
+                response = self._generate_before(time.monotonic() + remaining,
+                    client.with_options(timeout=remaining), self._profile,
                     cancel_event=self._cancel_event,
                     model=self._model,
                     messages=messages,
@@ -424,7 +478,8 @@ class DirectOpenRouterAgent:
                 remaining = min(timeout_s, getattr(self, "_pass_deadline", time.monotonic() + timeout_s) - time.monotonic())
                 if remaining <= 0:
                     return AgentResult(ok=False, op_results=all_results, error="meeting text deadline exceeded", usage=usage)
-                response = generate(client.with_options(timeout=remaining), self._profile,
+                response = self._generate_before(time.monotonic() + remaining,
+                                    client.with_options(timeout=remaining), self._profile,
                                     cancel_event=self._cancel_event, **kwargs)
             except Exception as exc:
                 retry_without_format = (

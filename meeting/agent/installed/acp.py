@@ -16,6 +16,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable, Deque, Dict, List, Optional, Sequence, Tuple
+from services.agent_process import popen_agent
 
 from services.installed_agents import (
     agent_child_env,
@@ -89,7 +90,7 @@ class AcpConnection:
     def start(self) -> None:
         """Start the agent. Raises :class:`AcpError` when it cannot run."""
         try:
-            self._proc = subprocess.Popen(
+            self._proc = popen_agent(
                 self._argv, cwd=self._cwd, env=self._env,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True, encoding="utf-8",
@@ -187,6 +188,8 @@ class AcpConnection:
         try:
             proc.wait(timeout=wait_s)
         except subprocess.TimeoutExpired:
+            pass
+        finally:
             kill_process_tree(proc)
         self._fail_pending("the agent was closed")
 

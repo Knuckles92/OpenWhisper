@@ -27,6 +27,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from services.agent_process import popen_agent, run_agent_probe
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable, Deque, Dict, List, Optional, Sequence, Tuple
@@ -221,8 +222,8 @@ def _help_text(agent: InstalledAgent, *args: str) -> str:
         if cache and key in _help_cache:
             return _help_cache[key]
     try:
-        result = subprocess.run(
-            [agent.path, *args], capture_output=True, text=True,
+        result = run_agent_probe(
+            [agent.path, *args], text=True,
             encoding="utf-8", errors="replace", timeout=_HELP_TIMEOUT_S,
             stdin=subprocess.DEVNULL, env=agent_child_env(),
             cwd=agent_workspace_dir(), **popen_flags(),
@@ -308,7 +309,7 @@ class HeadlessDriver:
             argv, extra_env = self.build(request, server.url(endpoint),
                                          endpoint.token, workdir)
             try:
-                proc = subprocess.Popen(
+                proc = popen_agent(
                     argv, cwd=agent_workspace_dir(), env=agent_child_env(extra_env),
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE, text=True, encoding="utf-8",
@@ -629,7 +630,7 @@ class CodexDriver(HeadlessDriver):
         ]
         overrides.extend(
             f"mcp_servers.{name}.enabled=false"
-            for name in getattr(self, "_unrelated_mcp", [])
+            for name in self._mcp_servers_to_disable()
         )
         if request.effort:
             overrides.append(f"model_reasoning_effort={request.effort}")

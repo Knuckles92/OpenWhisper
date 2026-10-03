@@ -842,6 +842,32 @@ class TestMeetingAgentChoice(_DialogTestCase):
         combo.setCurrentIndex(combo.findData(MeetingAgentCore.PI))
         assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.CLAUDE_CODE
 
+    def test_switching_to_an_installed_agent_restores_packaged_sdk_choice(self):
+        with patch.object(dialog_module, "meeting_agent_payload_dir", return_value="C:/payload"):
+            dialog, values = self._make_agent_dialog(MeetingAgentCore.OPENCODE, pi=True)
+            combo = dialog.meeting_agent_core_combo
+            picker = dialog.meeting_agent_picker
+            assert combo.currentData() == MeetingAgentCore.OPENCODE
+            assert combo.model().item(combo.findData(MeetingAgentCore.OPENCODE)).isEnabled()
+            assert combo.currentText() == "OpenCode SDK"
+            picker.tiles[MeetingAgentCore.CODEX].clicked.emit(MeetingAgentCore.CODEX)
+            assert dialog.meeting_model_tile.isHidden()
+            dialog.refresh_component_state()
+            picker.tiles[agent_picker.BUILTIN].clicked.emit(agent_picker.BUILTIN)
+            assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.OPENCODE
+            assert not dialog.meeting_model_tile.isHidden()
+
+    def test_sdk_download_state_refresh_preserves_selection(self):
+        dialog, values = self._make_agent_dialog(MeetingAgentCore.OPENCODE)
+        combo = dialog.meeting_agent_core_combo
+        index = combo.findData(MeetingAgentCore.OPENCODE)
+        assert not combo.model().item(index).isEnabled()
+        with patch.object(dialog_module, "meeting_agent_payload_dir", return_value="C:/sdk"):
+            dialog.refresh_component_state()
+        assert combo.model().item(index).isEnabled()
+        assert combo.currentText() == "OpenCode SDK"
+        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.OPENCODE
+
     def test_model_choice_merges_into_the_saved_models(self):
         dialog, values = self._make_agent_dialog(
             MeetingAgentCore.CLAUDE_CODE, models={MeetingAgentCore.CODEX: "gpt-x"}

@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from services.settings import MeetingAgentCore
+from services.agent_process import kill_agent_process, run_agent_probe
 
 logger = logging.getLogger(__name__)
 
@@ -204,35 +205,22 @@ def kill_process_tree(proc: Optional[subprocess.Popen], wait_s: float = 3.0) -> 
     Agents start helpers of their own (Codex runs a code-mode host), so ending
     only the parent can leave them behind.
     """
-    if proc is None or proc.poll() is not None:
-        return
     try:
-        if sys.platform == "win32":
-            subprocess.run(
-                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                capture_output=True, timeout=wait_s, **popen_flags(),
-            )
-        else:
-            import signal
-
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                proc.terminate()
-        proc.wait(timeout=wait_s)
+        kill_agent_process(proc, wait_s)
     except Exception:
         try:
-            proc.kill()
-            proc.wait(timeout=1.0)
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=1.0)
         except Exception:
-            logger.debug("Could not stop agent process %s", proc.pid, exc_info=True)
+            logger.debug("Could not stop agent process", exc_info=True)
 
 
 def _run(cmd: Sequence[str], timeout_s: float) -> Tuple[Optional[int], str]:
     """Run a short probe; return (exit code, stdout+stderr), (None, "") on failure."""
     try:
-        result = subprocess.run(
-            list(cmd), capture_output=True, text=True, encoding="utf-8",
+        result = run_agent_probe(
+            list(cmd), text=True, encoding="utf-8",
             errors="replace", timeout=timeout_s, stdin=subprocess.DEVNULL,
             env=agent_child_env(), cwd=agent_workspace_dir(), **popen_flags(),
         )

@@ -3,7 +3,7 @@
 Run with: python -m benchmarks.meeting_mode.live_agent_eval
 Uses the configured model and installed sidecar; output contains synthetic text.
 Pass --sidecar-dir sidecar/dist to test a freshly built bundle, or
---harness claude_code|codex|opencode [--model ...] to run an installed agent
+--harness claude_code|codex|opencode_cli [--model ...] to run an installed agent
 on its own sign-in (its plan pays for the passes).
 """
 
@@ -54,10 +54,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run synthetic live meeting agent checks using the configured provider. Makes billable model calls; never reads meeting recordings."
     )
-    parser.add_argument("--harness", choices=("pi", "direct", *MeetingAgentCore.INSTALLED),
+    parser.add_argument("--harness", choices=MeetingAgentCore.ALL,
                         default="pi",
-                        help="pi/direct use the configured text endpoint; claude_code, "
-                             "codex, and opencode run the installed agent on its own sign-in")
+                        help="pi/direct/opencode use the configured text endpoint; claude_code, "
+                             "codex, and opencode_cli run the installed agent on its own sign-in")
     parser.add_argument("--model", help="installed agents: model or alias; default: the agent's own")
     parser.add_argument("--sidecar-dir")
     parser.add_argument("--output", default=".tmp/live_agent_eval.json")

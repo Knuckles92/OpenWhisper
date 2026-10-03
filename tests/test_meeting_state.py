@@ -105,6 +105,30 @@ def make_store():
     return store, repo
 
 class TestItemOps:
+    def test_minutes_restate_card_facts_but_cannot_repeat_note_blocks(self):
+        store, _ = make_store()
+        facts = ["Pilot budget cap is $500, not $5000.",
+                 "Maya will deliver the API comparison Tuesday, not Friday."]
+        cards = store.apply("agent", "agent", [
+            {"op": "add_item", "card": "key_points", "text": text, "evidence": ["sg_known"]}
+            for text in facts
+        ])
+        assert all(r.ok for r in cards)
+        notes = store.apply("agent", "agent", [
+            {"op": "add_item", "card": "live_notes", "text": "The team confirmed: " + text,
+             "evidence": ["sg_known"]} for text in facts
+        ])
+        assert all(r.ok for r in notes)
+        duplicate = store.apply("agent", "agent", [notes[0].op])[0]
+        assert not duplicate.ok and duplicate.reason == "duplicate_item"
+
+    def test_card_facts_can_be_added_after_the_note_taker_records_them(self):
+        store, _ = make_store()
+        note = {"op": "add_item", "card": "live_notes", "text": "Pilot budget cap is $500.",
+                "evidence": ["sg_known"]}
+        assert store.apply("agent", "agent", [note])[0].ok
+        assert store.apply("agent", "agent", [dict(note, card="key_points")])[0].ok
+
     def test_agent_add_item_is_proposed(self):
         store, _ = make_store()
         results = store.apply("agent", "agent", [

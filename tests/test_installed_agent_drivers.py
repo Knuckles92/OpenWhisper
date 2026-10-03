@@ -190,6 +190,18 @@ def test_codex_command_line(monkeypatch, tmp_path):
     assert env == {"OPENWHISPER_MCP_TOKEN": "tok"}
 
 
+def test_codex_refreshes_mcp_inventory_before_each_pass(monkeypatch, tmp_path):
+    inventory = []
+    monkeypatch.setattr(drivers, "_help_text", lambda agent, *args:
+                        json.dumps(inventory) if args[-3:] == ("mcp", "list", "--json")
+                        else "--json --disable")
+    driver = CodexDriver(InstalledAgent("codex", "fake", "0.160.0"))
+    driver.check_ready()
+    inventory.append({"name": "added_during_meeting", "enabled": True})
+    argv, _ = driver.build(_request(Recorder()), "http://127.0.0.1:1/mcp/tok", "tok", str(tmp_path))
+    assert "mcp_servers.added_during_meeting.enabled=false" in argv
+
+
 class _FakeCli:
     """Run the fake CLI in place of the agent, with the driver's own argv."""
 

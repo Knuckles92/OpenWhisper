@@ -213,6 +213,24 @@ def test_a_new_meeting_without_pi_uses_the_direct_core(no_pi):
     assert route.kind == "direct" and route.endpoint is not None
 
 
+def test_packaged_opencode_and_installed_opencode_have_distinct_routes(monkeypatch):
+    from services.meeting_agent_route import resolve_meeting_agent_route
+
+    monkeypatch.setattr("services.components.meeting_agent_payload_dir",
+                        lambda kind: "C:/sdk" if kind == "opencode" else None)
+    settings = {SettingsKey.MEETING_AGENT_CORE: "opencode",
+                SettingsKey.MEETING_LLM_PROVIDER: "openrouter",
+                SettingsKey.MEETING_LLM_MODEL: "deepseek/test"}
+    sdk = resolve_meeting_agent_route(settings)
+    assert (sdk.kind, sdk.provider, sdk.model, sdk.payload_dir) == (
+        "opencode", "openrouter", "deepseek/test", "C:/sdk")
+    assert not sdk.installed and sdk.endpoint is not None
+    cli = resolve_meeting_agent_route(dict(settings, meeting_agent_core="opencode_cli"))
+    assert (cli.kind, cli.provider, cli.model, cli.payload_dir, cli.endpoint) == (
+        "opencode_cli", "opencode_cli", "", None, None)
+    assert cli.installed
+
+
 def test_the_archive_ignores_a_recorded_endpoint_for_an_agent(monkeypatch):
     import meeting.web.archive as archive
 

@@ -302,7 +302,9 @@ def _op_add_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> OpR
         for c, card_items in state.cards.items():
             if c in HUMAN_ONLY_CARDS:
                 continue
-            if c != card and "notes" in (c, card):
+            # The note taker's minutes must stand on their own even when
+            # a shorter card already records the same fact.
+            if c != card and "live_notes" in (c, card):
                 continue
             if c == card:
                 jac, cont = 0.60, 0.75
