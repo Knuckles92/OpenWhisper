@@ -249,7 +249,7 @@ class AgentToolHost(Protocol):
 
 @runtime_checkable
 class AgentCore(Protocol):
-    """A meeting-intelligence backend (Pi sidecar, direct OpenRouter, ...)."""
+    """An SDK-backed or installed coding agent for meeting intelligence."""
 
     def initialize(self, cfg: AgentConfig, tools: AgentToolHost) -> None:
         """Prepare the core for a meeting (spawn sidecar, probe capabilities)."""

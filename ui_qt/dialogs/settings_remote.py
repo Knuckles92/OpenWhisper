@@ -419,6 +419,18 @@ class RemoteEngineSection(QObject):
         self._built = True
         self.refresh()
 
+    _UI_ATTRIBUTES = frozenset({'_set_rail_value', 'storage_status', 'tailnet_list', 'cancel_pairing_button', 'manage_button', 'meeting_use_button', 'client_tile', 'paired_row', 'pair_row', 'share_tile', 'code_edit', 'devices_list', 'tailnet_search_button', 'send_existing_button', 'pairing_code_label', 'client_message', 'tailscale_tile', 'pairing_expiry_label', 'retry_records_button', 'use_button', '_tailnet_layout', 'devices_tile', 'forget_button', 'pair_device_button', 'bring_back_button', 'storage_tile', 'host_status', 'share_history_tile', 'keep_records_tile', 'tailnet_tile', 'host_identity', 'management_tile', 'address_edit', '_built', '_location_group', '_devices_layout', 'pairing_box', 'pair_button', 'port_tile', 'location_buttons', 'port_spin'})
+
+    def __getattr__(self, name):
+        if name in self._UI_ATTRIBUTES and not self.__dict__.get("_built", False):
+            host = self.parent()
+            if host is not None and hasattr(host, "ensure_page"):
+                from ui_qt.dialogs.settings_destinations import REMOTE_ENGINE
+                host.ensure_page(REMOTE_ENGINE)
+                if name in self.__dict__:
+                    return self.__dict__[name]
+        raise AttributeError(name)
+
     def bind(self, service, select_engine: Optional[Callable[[str], None]] = None) -> None:
         """Attach the controller's service (the page is built before one exists)."""
         self._select_engine = select_engine

@@ -169,14 +169,21 @@ class TestTranscriptCleanupProviders:
         assert kwargs["temperature"] == 0
         assert "reasoning_effort" not in kwargs
 
-    def test_reasoning_openai_sends_reasoning_effort(self):
-        cleaner = TranscriptCleanup(provider="openai", api_key="k", reasoning="high")
-        cleaner.client = self._mock_client()
+    def test_reasoning_openai_sends_responses_reasoning_effort(self):
+        cleaner = TranscriptCleanup(provider="openai", model="o4-mini", api_key="k", reasoning="high")
+        cleaner.client = MagicMock()
+        cleaner.client.responses.create.return_value = {
+            "status": "completed", "output": [{"type": "message", "content": [
+                {"type": "output_text", "text": "Cleaned."},
+            ]}],
+        }
 
-        cleaner.cleanup("raw text")
-        kwargs = cleaner.client.chat.completions.create.call_args.kwargs
-        assert kwargs["reasoning_effort"] == "high"
+        assert cleaner.cleanup("raw text") == "Cleaned."
+        kwargs = cleaner.client.responses.create.call_args.kwargs
+        assert kwargs["reasoning"] == {"effort": "high"}
+        assert kwargs["store"] is False
         assert "temperature" not in kwargs
+        cleaner.client.chat.completions.create.assert_not_called()
 
     def test_reasoning_openrouter_uses_extra_body(self):
         cleaner = TranscriptCleanup(

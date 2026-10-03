@@ -1,4 +1,7 @@
-"""Direct OpenRouter/OpenAI agent core: in-process, single-call checkpoints.
+"""Retired direct API agent, retained for historical regression tests.
+
+The application factory and public agent exports never select this core.
+Meeting intelligence uses Pi, OpenCode SDK, or an installed coding agent.
 
 Implements the ``AgentCore`` protocol with one chat-completions call per
 checkpoint using function tools that mirror the state-patch vocabulary

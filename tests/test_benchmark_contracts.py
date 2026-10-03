@@ -1,6 +1,7 @@
 """Executable validity contracts for benchmark output, without model calls."""
 from types import SimpleNamespace
 import json
+import os
 from unittest.mock import MagicMock, Mock
 
 import pytest
@@ -92,10 +93,18 @@ def test_valid_judge_tie_remains_a_tie():
 
 
 @pytest.mark.parametrize("failure", [False, True])
-def test_corpus_counts_silence_and_propagates_failures(monkeypatch, tmp_path, failure):
+@pytest.mark.parametrize("previous_offline", [None, "0"])
+def test_corpus_counts_silence_and_propagates_failures(monkeypatch, tmp_path, failure, previous_offline):
     import numpy as np
     from scripts import benchmark_local_asr_corpus as corpus
-    monkeypatch.setattr("faster_whisper.audio.decode_audio", lambda *a, **k: np.zeros(16000))
+    if previous_offline is None:
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    else:
+        monkeypatch.setenv("HF_HUB_OFFLINE", previous_offline)
+    def decode_audio(*args, **kwargs):
+        assert os.environ["HF_HUB_OFFLINE"] == "1"
+        return np.zeros(16000)
+    monkeypatch.setattr("faster_whisper.audio.decode_audio", decode_audio)
     backend = SimpleNamespace(device="cpu", device_info="fake", model_name="base",
         is_available=lambda: True, transcribe=Mock(side_effect=RuntimeError("decode failed")) if failure else
         Mock(return_value="invented words"), cleanup=Mock())
@@ -107,6 +116,7 @@ def test_corpus_counts_silence_and_propagates_failures(monkeypatch, tmp_path, fa
     output = tmp_path/"result.json"
     code = corpus.run(SimpleNamespace(manifest=manifest, models="base", cpu_only=True,
         test_root=None, output=output))
+    assert os.environ.get("HF_HUB_OFFLINE") == previous_offline
     row = json.loads(output.read_text())["results"][0]
     assert code == int(failure)
     backend.cleanup.assert_called_once()
@@ -116,6 +126,17 @@ def test_corpus_counts_silence_and_propagates_failures(monkeypatch, tmp_path, fa
         assert row["groups"]["silence"]["insertions"] == 2
         assert row["groups"]["silence"]["errors"] == 2
         assert row["groups"]["silence"]["normalized_wer"] is None
+
+
+def test_corpus_restores_offline_environment_after_invalid_input(monkeypatch, tmp_path):
+    from scripts import benchmark_local_asr_corpus as corpus
+
+    monkeypatch.setenv("HF_HUB_OFFLINE", "0")
+    manifest = tmp_path / "invalid.json"
+    manifest.write_text("{", encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        corpus.run(SimpleNamespace(manifest=manifest))
+    assert os.environ["HF_HUB_OFFLINE"] == "0"
 
 
 def test_provenance_rejects_legacy_changed_audio_settings_and_dirty_source(monkeypatch, tmp_path):
@@ -156,7 +177,7 @@ def test_preview_pool_rejects_different_installed_identity(tmp_path, field):
 
 def test_production_replay_waits_for_arrivals_runs_first_notes_and_keeps_corrections(monkeypatch):
     from meeting.interfaces import AgentResult
-    from meeting.agent import openrouter_direct
+    from meeting.agent import sidecar
     calls = []
     class Agent:
         def initialize(self, cfg, host): self.host = host
@@ -171,8 +192,12 @@ def test_production_replay_waits_for_arrivals_runs_first_notes_and_keeps_correct
                     text="Maia", evidence=["sg_first"])])
                 assert results[0].ok
             return AgentResult(ok=True)
-    monkeypatch.setattr(product, "create_agent_core", lambda _: Agent())
-    before_timeout = openrouter_direct._CHECKPOINT_TIMEOUT_S
+    def factory(kind, payload_dir):
+        assert kind == "pi" and payload_dir == "/fake/pi"
+        return Agent()
+    monkeypatch.setattr(product, "create_agent_core", factory)
+    monkeypatch.setattr(product, "meeting_agent_payload_dir", lambda kind: "/fake/pi")
+    before_timeout = sidecar._CHECKPOINT_TIMEOUT_S
     source = [dict(id="sg_first",start_s=0,end_s=5,text="Maya"),
               dict(id="sg_future",start_s=140,end_s=145,text="Later")]
     result = product.simulate_live_meeting("m", source, provider="fake", model="fake", api_key="fake")
@@ -181,7 +206,7 @@ def test_production_replay_waits_for_arrivals_runs_first_notes_and_keeps_correct
     assert any(now == 120 and notes for now, notes, _, _ in calls)
     assert result["segments"][0]["text"] == "Maia"
     assert source[0]["text"] == "Maya"
-    assert openrouter_direct._CHECKPOINT_TIMEOUT_S == before_timeout
+    assert sidecar._CHECKPOINT_TIMEOUT_S == before_timeout
 
 
 @pytest.mark.parametrize("winner,failed_stage", [("tie",False),("unjudged",False),("tie",True)])

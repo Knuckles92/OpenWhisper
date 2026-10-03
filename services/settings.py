@@ -1,5 +1,6 @@
 """Persistent application settings and validated resolvers."""
 import json
+from copy import deepcopy
 import os
 import logging
 import tempfile
@@ -347,19 +348,20 @@ class TranscriptCleanupReasoning:
 class MeetingAgentCore:
     """Values for ``SettingsKey.MEETING_AGENT_CORE``.
 
-    ``PI``, ``DIRECT`` and ``OPENCODE`` run on OpenWhisper's own text endpoint and API key.
+    ``PI`` and ``OPENCODE`` use an agent SDK with OpenWhisper's text endpoint and API key.
+    The retired ``DIRECT`` value is read only for compatibility and resolves to Pi.
     The ``INSTALLED`` values drive a coding agent the user already has set up,
     with its own sign-in, providers, and models.
     """
     PI: Final[str] = "pi"          # Bundled Node sidecar running the Pi SDK
-    DIRECT: Final[str] = "direct"  # Direct OpenRouter tool-calling loop
+    DIRECT: Final[str] = "direct"  # Legacy saved value; migrated to Pi, never selectable
     CLAUDE_CODE: Final[str] = "claude_code"  # Installed Claude Code, headless
     CODEX: Final[str] = "codex"              # Installed Codex CLI, headless
     OPENCODE: Final[str] = "opencode"      # Packaged OpenCode SDK; preserves saved settings
     OPENCODE_CLI: Final[str] = "opencode_cli"  # Installed OpenCode, over ACP
 
     INSTALLED: Final[Tuple[str, ...]] = (CLAUDE_CODE, CODEX, OPENCODE_CLI)
-    ALL: Final[Tuple[str, ...]] = (PI, DIRECT, OPENCODE, *INSTALLED)
+    ALL: Final[Tuple[str, ...]] = (PI, OPENCODE, *INSTALLED)
 
 
 class MeetingSpeakerIdBackend:
@@ -531,6 +533,20 @@ class SettingsManager:
         # and background workers share this singleton, so the lock must cover
         # the complete transaction rather than only the final write.
         self._lock = threading.RLock()
+        self._cached_signature = None
+        self._cached_settings = None
+
+    def _file_signature(self):
+        """Detect changed paths, in-place edits, and atomic external replaces."""
+        path = os.path.abspath(self.settings_file)
+        try:
+            stat = os.stat(path)
+        except FileNotFoundError:
+            return (path, None)
+        except OSError:
+            return None
+        return (path, stat.st_dev, stat.st_ino, stat.st_size,
+                stat.st_mtime_ns, stat.st_ctime_ns)
 
     def _load_all_settings_unlocked(self, *, strict: bool = False) -> Dict[str, Any]:
         """Read the settings mapping while the caller owns ``_lock``.
@@ -576,6 +592,10 @@ class SettingsManager:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp_path, absolute_path)
+            # Never label the caller's mutable mapping with a signature from
+            # a concurrent external writer. The next read owns its snapshot.
+            self._cached_settings = None
+            self._cached_signature = None
             temp_path = ""
         finally:
             if temp_fd >= 0:
@@ -589,7 +609,18 @@ class SettingsManager:
     def load_all_settings(self) -> Dict[str, Any]:
         """Load settings, returning an empty dict on failure."""
         with self._lock:
-            return self._load_all_settings_unlocked()
+            signature = self._file_signature()
+            if (signature is not None and signature == self._cached_signature
+                    and self._cached_settings is not None):
+                return deepcopy(self._cached_settings)
+            settings = self._load_all_settings_unlocked()
+            if signature is not None and signature == self._file_signature():
+                self._cached_signature = signature
+                self._cached_settings = deepcopy(settings)
+            else:
+                self._cached_signature = None
+                self._cached_settings = None
+            return settings
 
     def save_all_settings(self, settings: Dict[str, Any]) -> None:
         """Persist the complete settings mapping."""

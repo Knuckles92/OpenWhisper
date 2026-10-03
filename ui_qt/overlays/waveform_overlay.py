@@ -87,7 +87,7 @@ class WaveformOverlay(QWidget):
         self.timer.timeout.connect(self._update_animation)
         self.frame_rate = config.WAVEFORM_FRAME_RATE
         self.animation_duration = 0
-        self.last_frame_time = time.time()
+        self.last_frame_time = time.monotonic()
 
         self.hidden_timer = QTimer()
         self.hidden_timer.setSingleShot(True)
@@ -483,13 +483,13 @@ class WaveformOverlay(QWidget):
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, text)
 
     def _update_animation(self):
-        current_time = time.time()
-        delta_time = current_time - self.last_frame_time
+        current_time = time.monotonic()
+        delta_time = max(0.0, min(0.1, current_time - self.last_frame_time))
         self.last_frame_time = current_time
 
         self.animation_time += delta_time
 
-        self.style.update_animation_time(delta_time)
+        self.style.advance(self.current_state, delta_time)
 
         if self.current_state == self.STATE_CANCELING:
             self.cancel_progress = min(1.0, self.animation_time / 0.8)
@@ -506,7 +506,7 @@ class WaveformOverlay(QWidget):
             self.current_state = state
             self.animation_time = 0.0
             self.cancel_progress = 0.0
-            self.last_frame_time = time.time()  # Reset to prevent huge delta on first frame
+            self.last_frame_time = time.monotonic()  # Reset to prevent huge delta on first frame
 
             if state == self.STATE_CANCELING:
                 self.style.set_canceling_start_time(time.time())

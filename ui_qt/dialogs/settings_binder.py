@@ -74,7 +74,12 @@ class SettingsBinder:
         spin.valueChanged.connect(lambda value: self._persist(key, int(value)))
         self._bindings.append(_Binding(resolve, spin.setValue))
 
-    def load(self, settings: Settings) -> None:
-        """Set every bound control from ``settings``, in binding order."""
-        for binding in self._bindings:
+    @property
+    def binding_count(self) -> int:
+        """Number of controls registered so far, for lazy page initialization."""
+        return len(self._bindings)
+
+    def load(self, settings: Settings, *, start: int = 0) -> None:
+        """Set bound controls from ``settings``, beginning at ``start``."""
+        for binding in self._bindings[start:]:
             binding.apply(binding.resolve(settings))

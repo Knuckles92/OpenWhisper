@@ -1,4 +1,5 @@
 import { ReviewCorrections } from '../InsightReview';
+import { flushSync } from 'react-dom';
 import { useEffect, useMemo, useState, type RefObject } from 'react';
 import {
   enabledReportViews,
@@ -31,6 +32,7 @@ interface ReportTabsProps {
   audioKey?: string;
   /** When false, Full download stays disabled so a partial transcript is never printed. */
   transcriptComplete?: boolean;
+  onPrepareFull?: () => Promise<void>;
   /** Hide the in-toolbar download when the header already owns it. */
   showDownload?: boolean;
   /** Hide the in-page switcher when the header already owns it. */
@@ -52,6 +54,7 @@ export default function ReportTabs({
   audioRef,
   audioKey,
   transcriptComplete = false,
+  onPrepareFull,
   showDownload = true,
   showSwitcher = true,
   activeView,
@@ -59,6 +62,24 @@ export default function ReportTabs({
   token,
   onState,
 }: ReportTabsProps) {
+  const [printingFull, setPrintingFull] = useState(false);
+  useEffect(() => {
+    // beforeprint must commit the tree before the browser snapshots the page.
+    const before = () => {
+      if (document.body.dataset.printScope === 'full') flushSync(() => setPrintingFull(true));
+    };
+    const after = () => setPrintingFull(false);
+    const media = window.matchMedia?.('print');
+    const mediaChanged = (event: MediaQueryListEvent) => { if (!event.matches) after(); };
+    window.addEventListener('beforeprint', before);
+    window.addEventListener('afterprint', after);
+    media?.addEventListener('change', mediaChanged);
+    return () => {
+      window.removeEventListener('beforeprint', before);
+      window.removeEventListener('afterprint', after);
+      media?.removeEventListener('change', mediaChanged);
+    };
+  }, []);
   const views = enabledReportViews(state);
   const segs = useMemo(() => segmentMap(segments), [segments]);
   const [internalView, setInternalView] = useState<ReportViewId>(() =>
@@ -97,6 +118,7 @@ export default function ReportTabs({
                 state={state}
                 meeting={meeting}
                 transcriptComplete={transcriptComplete}
+                onPrepareFull={onPrepareFull}
                 activeView={active}
               />
             )}
@@ -118,7 +140,7 @@ export default function ReportTabs({
             onState={onState}
           />
         )}
-        <FullMeetingDocument state={state} segments={segments} />
+        {printingFull && <FullMeetingDocument state={state} segments={segments} />}
       </section>
     </EvidenceProvider>
   );

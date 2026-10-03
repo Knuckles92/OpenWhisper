@@ -56,6 +56,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
     def test_uses_rail_and_independently_scrollable_pages(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
+            dialog.ensure_all_pages()
         try:
             self.assertIsInstance(dialog.rail, NavRail)
             # Grouped by feature, under an Overview landing page.
@@ -262,6 +263,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
     def test_general_tiles_toggle_and_gate_update_notify(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
+            dialog.ensure_all_pages()
         try:
             dialog.show()
             self.app.processEvents()
@@ -284,6 +286,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
     def test_cleanup_toggle_gates_the_prompt_and_rule_tiles(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
+            dialog.ensure_all_pages()
         try:
             dialog.transcript_cleanup_check.setChecked(True)
             self.assertTrue(dialog.cleanup_prompt_tile.isEnabled())
@@ -314,6 +317,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
     def test_learned_rules_gate_link_opens_cleanup(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
+            dialog.ensure_all_pages()
         try:
             dialog.show()
             self.app.processEvents()
@@ -331,6 +335,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
     def test_report_view_tiles_follow_the_final_report_toggle(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
+            dialog.ensure_all_pages()
         try:
             dialog.meeting_end_report_check.setChecked(True)
             self.assertTrue(dialog.meeting_report_ribbon_tile.isEnabled())
@@ -351,6 +356,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
         self.app.setStyleSheet(ThemeManager().stylesheet)
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
+            dialog.ensure_all_pages()
         try:
             # The offscreen test screen (800x800) is smaller than the default
             # size, and fitting it is test_window_fit_and_title_bar.py's job;
@@ -404,6 +410,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
     def test_cards_reflow_when_the_window_narrows(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
+            dialog.ensure_all_pages()
         try:
             dialog.show()
             # The window floor keeps two columns; the reflow itself is what
@@ -432,6 +439,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
         manager = ThemeManager()
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
+            dialog.ensure_all_pages()
         try:
             # Fitting the 800x800 offscreen screen would lower the minimum
             # width below the 940 px these layouts are designed down to.

@@ -62,6 +62,7 @@ class TestHotkeySettingsPage(unittest.TestCase):
             )
             with self._patch_settings(manager):
                 dialog = SettingsDialog()
+                dialog.ensure_page(HOTKEYS)
             try:
                 self.assertEqual(dialog.current_hotkeys["record_toggle"], "f8")
                 self.assertEqual(
@@ -83,6 +84,7 @@ class TestHotkeySettingsPage(unittest.TestCase):
             manager = SettingsManager(os.path.join(temp_dir, "settings.json"))
             with self._patch_settings(manager):
                 dialog = SettingsDialog()
+                dialog.ensure_page(HOTKEYS)
                 applied = []
 
                 def apply_hotkeys(hotkeys):
@@ -120,6 +122,7 @@ class TestHotkeySettingsPage(unittest.TestCase):
             manager.save_hotkey_settings(custom)
             with self._patch_settings(manager):
                 dialog = SettingsDialog()
+                dialog.ensure_page(HOTKEYS)
                 applied = []
                 dialog.on_hotkeys_changed = lambda hotkeys: applied.append(
                     hotkeys.copy()
@@ -154,6 +157,7 @@ class TestHotkeySettingsPage(unittest.TestCase):
             )
             with self._patch_settings(manager):
                 dialog = SettingsDialog()
+                dialog.ensure_page(HOTKEYS)
                 try:
                     self.assertEqual(
                         dialog.record_mode_combo.currentData(),
@@ -187,6 +191,7 @@ class TestHotkeySettingsPage(unittest.TestCase):
     def test_leaving_hotkeys_stops_active_capture(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
+            dialog.ensure_page(HOTKEYS)
         try:
             field = dialog.hotkey_inputs["record_toggle"]
             field.set_capturing(True)

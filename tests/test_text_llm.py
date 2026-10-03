@@ -22,6 +22,8 @@ from services.text_llm import (
     remove_custom_profile,
     resolve_api_key,
     snapshot_from_meeting,
+    snapshot_from_mapping,
+    snapshot_from_profile,
     upsert_custom_profile,
     validate_api_key_env,
     validate_profile_name,
@@ -97,6 +99,29 @@ class TestProfileCrud:
     def test_cannot_delete_builtin(self):
         with pytest.raises(ValueError):
             remove_custom_profile({}, OPENAI_PROFILE_ID)
+
+    def test_responses_endpoint_persists_and_edits_preserve_protocol(self):
+        from services.text_model_catalog import model_spec
+        settings = {}
+        profile = upsert_custom_profile(settings, name="Gateway", base_url="https://gateway.test/v1",
+                                        protocol="responses")
+        restored = get_profile(profile.id, settings)
+        assert restored.protocol == "responses"
+        updated = upsert_custom_profile(settings, profile_id=profile.id, name="Renamed",
+                                        base_url=profile.base_url)
+        assert updated.protocol == "responses"
+        # The endpoint-level choice also survives a snapshot without a model.
+        saved = snapshot_from_mapping(snapshot_from_profile(updated).to_dict()).to_profile()
+        assert model_spec(saved, "synthetic-model").protocol == "responses"
+        with pytest.raises(ValueError):
+            upsert_custom_profile(settings, name="Invalid", base_url=profile.base_url, protocol="unknown")
+
+    def test_legacy_custom_endpoints_keep_chat_protocol(self):
+        settings = {SettingsKey.TEXT_LLM_PROFILES: [{
+            "id": "custom_legacy", "name": "Local", "base_url": "http://localhost:1234/v1",
+            "api_key_env": "",
+        }]}
+        assert get_profile("custom_legacy", settings).protocol == "chat"
 
 
 class TestCredentialsAndCatalog:

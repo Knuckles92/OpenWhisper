@@ -76,6 +76,7 @@ class TextLLMProfile:
     api_key_env: str
     builtin: bool = False
     model_metadata: Optional[Dict[str, Any]] = None
+    protocol: str = "chat"
 
     @property
     def requires_api_key(self) -> bool:
@@ -100,6 +101,7 @@ class TextLLMSnapshot:
     base_url: Optional[str]
     api_key_env: str
     model_metadata: Optional[Dict[str, Any]] = None
+    protocol: str = "chat"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -109,6 +111,7 @@ class TextLLMSnapshot:
             "base_url": self.base_url,
             "api_key_env": self.api_key_env,
             **({"model_metadata": self.model_metadata} if self.model_metadata else {}),
+            **({"protocol": self.protocol} if self.protocol != "chat" else {}),
         }
 
     def to_profile(self) -> TextLLMProfile:
@@ -119,6 +122,7 @@ class TextLLMSnapshot:
             base_url=self.base_url,
             api_key_env=self.api_key_env or "",
             model_metadata=self.model_metadata,
+            protocol=self.protocol,
             builtin=(
                 self.profile_id in BUILTIN_PROFILE_IDS
                 and self.kind == self.profile_id
@@ -202,6 +206,12 @@ def new_custom_profile_id() -> str:
     return f"{_CUSTOM_ID_PREFIX}{secrets.token_hex(4)}"
 
 
+def validate_text_protocol(protocol: str) -> str:
+    if protocol not in ("chat", "responses"):
+        raise ValueError("Choose Chat Completions or Responses for this endpoint.")
+    return protocol
+
+
 def snapshot_from_profile(profile: TextLLMProfile, model: str = "") -> TextLLMSnapshot:
     metadata = profile.model_metadata
     if model:
@@ -215,6 +225,7 @@ def snapshot_from_profile(profile: TextLLMProfile, model: str = "") -> TextLLMSn
         base_url=profile.base_url,
         api_key_env=profile.api_key_env,
         model_metadata=metadata,
+        protocol=profile.protocol,
     )
 
 
@@ -255,6 +266,7 @@ def snapshot_from_mapping(raw: Any) -> Optional[TextLLMSnapshot]:
         except ValueError:
             api_key_env = ""
     metadata = raw.get("model_metadata")
+    protocol = validate_text_protocol(raw.get("protocol", "chat"))
     if metadata is not None:
         from services.text_model_catalog import spec_from_mapping
 
@@ -263,6 +275,7 @@ def snapshot_from_mapping(raw: Any) -> Optional[TextLLMSnapshot]:
         metadata = {"model": metadata["model"], **spec_from_mapping(metadata).to_dict()}
     return TextLLMSnapshot(
         model_metadata=metadata,
+        protocol=protocol,
         profile_id=profile_id.strip(),
         name=name.strip(),
         kind=kind,
@@ -304,6 +317,7 @@ def parse_custom_profile(raw: Any) -> Optional[TextLLMProfile]:
         name = validate_profile_name(str(raw.get("name") or ""))
         base_url = normalize_base_url(str(raw.get("base_url") or ""))
         api_key_env = validate_api_key_env(str(raw.get("api_key_env") or ""))
+        protocol = validate_text_protocol(raw.get("protocol", "chat"))
     except ValueError:
         return None
     return TextLLMProfile(
@@ -313,6 +327,7 @@ def parse_custom_profile(raw: Any) -> Optional[TextLLMProfile]:
         base_url=base_url,
         api_key_env=api_key_env,
         builtin=False,
+        protocol=protocol,
     )
 
 
@@ -391,6 +406,7 @@ def custom_profiles_payload(profiles: Sequence[TextLLMProfile]) -> List[Dict[str
             "name": profile.name,
             "base_url": profile.base_url or "",
             "api_key_env": profile.api_key_env,
+            "protocol": profile.protocol,
         })
         if len(payload) >= MAX_CUSTOM_PROFILES:
             break
@@ -404,6 +420,7 @@ def upsert_custom_profile(
     base_url: str,
     api_key_env: str = "",
     profile_id: Optional[str] = None,
+    protocol: str | None = None,
 ) -> TextLLMProfile:
     """Create or replace a validated custom endpoint in mutable settings."""
     from services.settings import SettingsKey
@@ -412,6 +429,10 @@ def upsert_custom_profile(
     base_url = normalize_base_url(base_url)
     api_key_env = validate_api_key_env(api_key_env)
     existing = list_custom_profiles(settings)
+    previous = next((p for p in existing if p.id == profile_id), None)
+    protocol = validate_text_protocol(
+        protocol if protocol is not None else previous.protocol if previous else "chat"
+    )
     if profile_id:
         if get_profile(profile_id, settings) is None or (
             builtin_profile(profile_id) is not None
@@ -424,6 +445,7 @@ def upsert_custom_profile(
                 kind=PROFILE_KIND_CUSTOM,
                 base_url=base_url,
                 api_key_env=api_key_env,
+                protocol=protocol,
             )
             if profile.id == profile_id else profile
             for profile in existing
@@ -440,6 +462,7 @@ def upsert_custom_profile(
             kind=PROFILE_KIND_CUSTOM,
             base_url=base_url,
             api_key_env=api_key_env,
+            protocol=protocol,
         )
         updated = [*existing, profile]
     settings[SettingsKey.TEXT_LLM_PROFILES] = custom_profiles_payload(updated)

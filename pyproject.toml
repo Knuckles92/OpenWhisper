@@ -11,7 +11,7 @@ dependencies = [
     "numpy>=1.24.0",
     "keyboard>=0.13.5 ; sys_platform == \"win32\"",
     "pynput>=1.7.6 ; sys_platform != \"win32\"",
-    "openai>=1.3.0",
+    "openai>=1.66.0",
     "certifi>=2024.2.2",
     "faster-whisper>=1.0.0",
     "python-dotenv>=1.0.0",
@@ -164,6 +164,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = ["qt: Qt/UI tests requiring application, widget cleanup and agent-probe isolation"]
 
 [tool.black]
 line-length = 88

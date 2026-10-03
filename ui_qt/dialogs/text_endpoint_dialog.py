@@ -15,9 +15,10 @@ from services.text_llm import (
     normalize_base_url,
     validate_api_key_env,
     validate_profile_name,
+    validate_text_protocol,
 )
 from ui_qt.utils.app_icon import app_icon
-from ui_qt.widgets import Button, PrimaryButton
+from ui_qt.widgets import Button, NoWheelComboBox, PrimaryButton
 
 
 class TextEndpointDialog(QDialog):
@@ -61,7 +62,7 @@ class TextEndpointDialog(QDialog):
         layout.addWidget(title)
 
         intro = QLabel(
-            "Any server that speaks the OpenAI Chat Completions API works "
+            "Servers that support OpenAI Chat Completions or Responses work "
             "here — LM Studio, vLLM, Ollama's /v1 route, LiteLLM, or a "
             "private gateway. Name the variable that holds its API key, then "
             "enter the key under Settings → API keys (or export the variable). "
@@ -82,12 +83,21 @@ class TextEndpointDialog(QDialog):
         self.env_edit = QLineEdit()
         self.env_edit.setObjectName("textEndpointEnvEdit")
         self.env_edit.setPlaceholderText("Optional, e.g. LMSTUDIO_API_KEY")
+        self.protocol_combo = NoWheelComboBox()
+        self.protocol_combo.setObjectName("textEndpointProtocolCombo")
+        self.protocol_combo.addItem("Chat Completions", "chat")
+        self.protocol_combo.addItem("Responses", "responses")
+        self.protocol_combo.setToolTip("Choose the API supported by your server.")
         if self._profile is not None:
             self.name_edit.setText(self._profile.name)
             self.url_edit.setText(self._profile.base_url or "")
             self.env_edit.setText(self._profile.api_key_env)
+            self.protocol_combo.setCurrentIndex(
+                self.protocol_combo.findData(self._profile.protocol)
+            )
         form.addRow("Name", self.name_edit)
         form.addRow("Base URL", self.url_edit)
+        form.addRow("API", self.protocol_combo)
         form.addRow("API key variable", self.env_edit)
         layout.addLayout(form)
 
@@ -118,6 +128,7 @@ class TextEndpointDialog(QDialog):
             name = validate_profile_name(self.name_edit.text())
             base_url = normalize_base_url(self.url_edit.text())
             api_key_env = validate_api_key_env(self.env_edit.text())
+            protocol = validate_text_protocol(self.protocol_combo.currentData())
         except ValueError as exc:
             self.error_label.setText(str(exc))
             return
@@ -125,6 +136,7 @@ class TextEndpointDialog(QDialog):
             "name": name,
             "base_url": base_url,
             "api_key_env": api_key_env,
+            "protocol": protocol,
         }
         if self._profile is not None:
             self._payload["id"] = self._profile.id

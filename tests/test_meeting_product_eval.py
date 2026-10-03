@@ -1,14 +1,62 @@
 """Unit tests for the product-package eval helpers (no live LLM)."""
 
+import json
+from unittest.mock import patch
+
+import httpx
+import pytest
+from openai import OpenAI
+
 from benchmarks.meeting_mode.product_eval import (
     ProductEvalHost,
     _render_package_for_judge,
     build_live_windows,
     dashboard_package,
     format_reference,
+    judge_packages,
     strip_proposed_after_redecode,
 )
 from meeting.interfaces import OpResult
+
+
+@pytest.mark.parametrize("provider,model,path", [
+    ("openai", "gpt-4o-mini", "/v1/responses"),
+    ("openai", "o4-mini", "/v1/responses"),
+    ("openrouter", "synthetic", "/v1/chat/completions"),
+])
+def test_judge_uses_shared_protocol_and_json_output(provider, model, path):
+    requests = []
+    fields = ("transcript_usefulness", "topic_accuracy", "key_points_fidelity",
+              "decisions_actions_precision", "notes_and_timeline_quality", "overall_record")
+    judgment = {"winner": "clean", "legacy": dict.fromkeys(fields, 2), "clean": dict.fromkeys(fields, 4)}
+    def handler(request):
+        requests.append(request)
+        content = json.dumps(judgment)
+        if path.endswith("responses"):
+            reply = {"id": "resp_1", "status": "completed", "output": [{"type": "message",
+                     "content": [{"type": "output_text", "text": content}]}]}
+        else:
+            reply = {"choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "stop"}]}
+        return httpx.Response(200, json=reply)
+    client = OpenAI(api_key="synthetic", base_url="https://judge.test/v1", max_retries=0,
+                    http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    with patch("benchmarks.meeting_mode.product_eval._judge_client", return_value=client):
+        result = judge_packages(meeting_id="test", description="Demo", reference="Reference",
+                                legacy={}, clean={}, provider=provider, model=model, api_key="synthetic")
+    assert result == judgment
+    assert client.is_closed()
+    assert requests[0].url.path == path
+    body = json.loads(requests[0].content)
+    if provider == "openai":
+        assert body["text"]["format"] == {"type": "json_object"}
+        assert body["store"] is False
+        if model.startswith("o4"):
+            assert "temperature" not in body
+        else:
+            assert body["temperature"] == 0
+    else:
+        assert body["response_format"] == {"type": "json_object"}
+        assert body["temperature"] == 0
 
 def test_dashboard_package_drops_removed_cards_and_empty_transcript_lines():
     snapshot = {

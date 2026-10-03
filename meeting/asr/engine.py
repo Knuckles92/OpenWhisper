@@ -77,6 +77,8 @@ class MeetingAsrEngine:
         term_rules: Optional[Callable[[], Dict[str, str]]] = None,
         remote: Optional[Dict[str, Any]] = None,
         on_connection_status: Optional[Callable[[str, bool], None]] = None,
+        *,
+        defer_load: bool = False,
     ) -> None:
         """Load a dedicated Whisper model for one meeting.
 
@@ -106,43 +108,10 @@ class MeetingAsrEngine:
         self._connection_status = on_connection_status
         self._last_connection_status = None
         self._stop_event = threading.Event()
-
-        try:
-            from transcriber.local_backend import LocalWhisperBackend
-
-            from services.local_asr.catalog import MODELS
-            if remote is not None:
-                from meeting.asr.remote import MeetingRemoteBackend
-                backend = MeetingRemoteBackend(remote)
-                backend.reload_model()
-            elif model_name in MODELS:
-                from transcriber.optional_backend import LocalSpeechBackend
-                backend = LocalSpeechBackend(MODELS[model_name].backend, model_name=model_name)
-                backend.reload_model()
-            else:
-                backend = LocalWhisperBackend(model_name=model_name)
-            if backend.is_available():
-                self._backend = backend
-                self.is_available = True
-                logger.info(
-                    "Meeting ASR engine ready: %s", getattr(backend, "name", model_name)
-                )
-            else:
-                self.last_error = getattr(backend, "last_error", "") or "Speech engine unavailable"
-                cleanup = getattr(backend, "cleanup", None)
-                if callable(cleanup):
-                    cleanup()
-                logger.error(
-                    "Meeting ASR model '%s' failed to load "
-                    "(missing=%s); engine unavailable",
-                    model_name, getattr(backend, "is_model_missing", "?"),
-                )
-        except Exception as exc:
-            self.last_error = str(exc)
-            logger.exception(
-                "Meeting ASR backend construction failed for model '%s'; "
-                "engine unavailable", model_name,
-            )
+        self._backend_lock = threading.RLock()
+        self._model_name = model_name
+        self._remote = remote
+        self._defer_load = defer_load
 
         self._queue: "queue.Queue" = queue.Queue()  # unbounded: never drop chunks
         self._on_chunk_result: Optional[
@@ -167,6 +136,73 @@ class MeetingAsrEngine:
         self._draft_context: Dict[tuple[str, str], List[str]] = {}
         #: Confident auto-detected languages of chunks that held speech.
         self._language_votes: Dict[str, int] = {}
+        if not defer_load:
+            self.load_backend()
+
+    def load_backend(self) -> bool:
+        """Load on the owning startup worker, with a handle visible to stop().
+
+        Eager construction remains the default for recovery and direct callers.
+        A live meeting opts into deferred loading so recording need not wait.
+        """
+        backend = None
+        try:
+            from transcriber.local_backend import LocalWhisperBackend
+            from services.local_asr.catalog import MODELS
+
+            with self._backend_lock:
+                if self._stop_event.is_set():
+                    return False
+                if self.is_available:
+                    return True
+                if self._remote is not None:
+                    from meeting.asr.remote import MeetingRemoteBackend
+                    backend = MeetingRemoteBackend(self._remote)
+                elif self._model_name in MODELS:
+                    from transcriber.optional_backend import LocalSpeechBackend
+                    backend = LocalSpeechBackend(
+                        MODELS[self._model_name].backend, model_name=self._model_name)
+                elif self._defer_load:
+                    backend = LocalWhisperBackend(model_name=self._model_name, load=False)
+                else:
+                    backend = LocalWhisperBackend(model_name=self._model_name)
+                self._backend = backend
+            if self._remote is not None or self._model_name in MODELS:
+                if self._defer_load:
+                    backend.reload_model(cancel_event=self._stop_event)
+                else:
+                    backend.reload_model()
+            elif self._defer_load:
+                backend._load_model(cancel_event=self._stop_event)
+            with self._backend_lock:
+                if self._stop_event.is_set() or self._backend is not backend:
+                    return False
+                self.is_available = bool(backend.is_available())
+                if self.is_available:
+                    logger.info("Meeting ASR engine ready: %s", getattr(backend, "name", self._model_name))
+                    return True
+                self.last_error = getattr(backend, "last_error", "") or "Speech engine unavailable"
+                self._backend = None
+            logger.error("Meeting ASR model '%s' failed to load (missing=%s); engine unavailable",
+                         self._model_name, getattr(backend, "is_model_missing", "?"))
+        except Exception as exc:
+            if not self._stop_event.is_set():
+                self.last_error = str(exc)
+                logger.exception("Meeting ASR backend construction failed for model '%s'; engine unavailable",
+                                 self._model_name)
+            with self._backend_lock:
+                if self._backend is backend:
+                    self._backend = None
+                self.is_available = False
+        finally:
+            if backend is not None and not self.is_available:
+                cleanup = getattr(backend, "cleanup", None)
+                if callable(cleanup):
+                    try:
+                        cleanup()
+                    except Exception:
+                        logger.exception("Error releasing unavailable meeting ASR backend")
+        return False
 
     def start(
         self,
@@ -339,7 +375,7 @@ class MeetingAsrEngine:
                 logger.exception("Error releasing meeting ASR model")
             del backend
 
-    def requeue_pending(self) -> int:
+    def requeue_pending(self, *, rows: Optional[List[Dict[str, Any]]] = None) -> int:
         """Re-enqueue this meeting's unfinished chunks from the database.
 
         Pulls ``pending`` and retryable ``failed`` chunks via
@@ -350,11 +386,15 @@ class MeetingAsrEngine:
         Returns:
             Number of chunks enqueued.
         """
-        try:
-            rows = self._repository.get_pending_chunks(self.meeting_id)
-        except Exception:
-            logger.exception("Could not list pending chunks for %s", self.meeting_id)
-            return 0
+        if rows is None:
+            try:
+                rows = self._repository.get_pending_chunks(self.meeting_id)
+            except Exception:
+                logger.exception("Could not list pending chunks for %s", self.meeting_id)
+                return 0
+        rows = sorted(rows, key=lambda row: (float(row.get("start_s") or 0),
+                                           int(row.get("seq") or 0),
+                                           str(row.get("channel") or ""), int(row["id"])))
 
         requeued = 0
         for row in rows:

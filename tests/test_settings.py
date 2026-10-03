@@ -473,7 +473,7 @@ class TestMeetingSettings:
             self.keys.MEETING_LANGUAGE: "en",
             self.keys.MEETING_LLM_PROVIDER: "openai",
             self.keys.MEETING_LLM_MODEL: "  gpt-4o-mini  ",
-            self.keys.MEETING_AGENT_CORE: self.agent_cores.DIRECT,
+            self.keys.MEETING_AGENT_CORE: self.agent_cores.PI,
             self.keys.MEETING_SPEAKER_ID_BACKEND: self.speaker_backends.OPENAI,
             self.keys.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: True,
             self.keys.MEETING_LINUX_PREVIEW_ACK_VERSION: self.preview_ack_version,
@@ -495,7 +495,7 @@ class TestMeetingSettings:
         assert self.resolve_language(saved) == "en"
         assert self.resolve_provider(saved) == "openai"
         assert self.resolve_llm_model(saved) == "gpt-4o-mini"
-        assert self.resolve_agent_core(saved) == self.agent_cores.DIRECT
+        assert self.resolve_agent_core(saved) == self.agent_cores.PI
         assert self.resolve_speaker_id(saved) == self.speaker_backends.OPENAI
         assert self.resolve_speaker_id(
             {self.keys.MEETING_SPEAKER_ID_BACKEND: self.speaker_backends.OFF}
@@ -530,6 +530,12 @@ class TestMeetingSettings:
         assert not self.resolve_developer_mode(
             {self.keys.DEVELOPER_MODE: "yes"}
         )
+
+    def test_retired_direct_agent_resolves_to_pi(self):
+        saved = {self.keys.MEETING_AGENT_CORE: "direct"}
+        assert self.resolve_agent_core(saved) == self.agent_cores.PI
+        assert "direct" not in self.agent_cores.ALL
+        assert saved[self.keys.MEETING_AGENT_CORE] == "direct"
 
     def test_unknown_values_fall_back_to_defaults(self):
         saved = {

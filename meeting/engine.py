@@ -94,10 +94,12 @@ class MeetingEngineOptions:
     llm_provider: str = 'openrouter'
     llm_model: str = ''
     llm_endpoint: Optional[Dict[str, Any]] = None
-    #: 'pi' | 'direct', or an installed agent: 'claude_code' | 'codex' | 'opencode'
+    #: Packaged 'pi' | 'opencode', or installed 'claude_code' | 'codex' | 'opencode_cli'
     agent_core_kind: str = 'pi'
     sidecar_payload_dir: Optional[str] = None
     diarization_model_path: Optional[str] = None
+    #: Resolve/download a missing embedding model on the processing worker.
+    diarization_model_resolver: Optional[Callable[[], Optional[str]]] = None
     speaker_id_backend: str = 'local'  # 'off' | 'local' | 'openai'
     speaker_id_audio_consent: bool = False
     server_bind: str = 'localhost'    # 'localhost' | 'lan'
@@ -153,6 +155,12 @@ class MeetingEngine:
         self._starting = False
         self._start_thread_id: Optional[int] = None
         self._start_complete = threading.Event()
+        self._processing_complete = threading.Event()
+        self._processing_complete.set()
+        self._processing_stop = threading.Event()
+        self._processing_thread: Optional[threading.Thread] = None
+        self._asr_ready = False
+        self._asr_release_emitted = False
         self._end_thread: Optional[threading.Thread] = None
         self._spool_dir: Optional[str] = None
         self._me_participant_id: Optional[str] = None
@@ -174,6 +182,9 @@ class MeetingEngine:
         self._diarizer: Optional[Any] = None
         self._server: Optional[Any] = None
         self._agent_core: Optional[Any] = None
+        self._initializing_agent_core: Optional[Any] = None
+        self._intelligence_start_lock = threading.RLock()
+        self._intelligence_generation = 0
         self._scheduler: Optional[Any] = None
         self._fast_features_lock = threading.RLock()
         self._fast_features_stopped = False
@@ -236,16 +247,22 @@ class MeetingEngine:
         """
         self._shutdown_voice_commands()
         self._shutdown_fast_features(signals_only=True)
-        asr = self._asr
-        if asr is None:
-            return True
-        try:
-            asr.stop()
-        except Exception:
-            logger.exception("ASR stop failed (%s)", context)
-            return False
-        self._asr = None
-        self._emit("asr_released", {"meeting_id": self.meeting_id})
+        with self._lifecycle_lock:
+            asr = self._asr
+            if asr is not None:
+                try:
+                    asr.stop()
+                except Exception:
+                    logger.exception("ASR stop failed (%s)", context)
+                    return False
+                self._asr = None
+                self._asr_ready = False
+            # End can arrive before the processing worker builds an ASR
+            # handle. The stop flag then prevents any future model load, so
+            # the host's dictation lease is free even in that path.
+            if not self._asr_release_emitted:
+                self._asr_release_emitted = True
+                self._emit("asr_released", {"meeting_id": self.meeting_id})
         return True
 
     def _broadcast(self, message: Dict[str, Any], *,
@@ -585,14 +602,15 @@ class MeetingEngine:
             if self.options.demo_mode:
                 capture_note = self._seed_demo_meeting()
             else:
-                # Consumers before producers: diarizer and ASR are in place
-                # before capture can finalize the first chunk.
-                self._start_diarizer()
-                self._start_asr()
+                # A remote route is authenticated/validated before capture;
+                # it does not load weights on this computer. Local weights
+                # load after durable capture and the dashboard are ready.
+                if self.options.asr_remote is not None:
+                    self._start_asr()
                 capture_note = self._start_capture()
             self._refresh_live_highlights_status()
             url = self._start_server()
-            self._maybe_start_intelligence()
+            self._start_processing()
             self._emit_status(note=capture_note)
 
             return {
@@ -610,6 +628,42 @@ class MeetingEngine:
                 self._starting = False
                 self._start_thread_id = None
             self._start_complete.set()
+
+    def _start_processing(self) -> None:
+        """Own optional initialization separately from required startup."""
+        with self._lifecycle_lock:
+            if self._processing_stop.is_set() or not self._active:
+                return
+            self._processing_complete.clear()
+            worker = threading.Thread(target=self._processing_worker,
+                                      name="meeting-processing-start", daemon=True)
+            self._processing_thread = worker
+        worker.start()
+
+    def _processing_worker(self) -> None:
+        try:
+            if self._processing_stop.is_set():
+                return
+            if not self.options.demo_mode:
+                self._start_diarizer()
+                if self._processing_stop.is_set():
+                    self._diarizer = None
+                    return
+                if self.options.asr_remote is None:
+                    self._start_asr(defer_load=True)
+            if not self._processing_stop.is_set():
+                self._maybe_start_intelligence()
+                self._emit_status()
+        except Exception as exc:
+            if not self._processing_stop.is_set():
+                logger.exception("Meeting processing initialization failed")
+                self._emit("error", {"code": "processing_unavailable", "message": str(exc)})
+        finally:
+            self._processing_complete.set()
+
+    def wait_for_processing(self, timeout_s: Optional[float] = None) -> bool:
+        """Wait for optional startup (for recovery/tests), never required by capture."""
+        return self._processing_complete.wait(timeout_s)
 
     def _seed_demo_meeting(self) -> str:
         """Load canned transcript/cards and skip live capture.
@@ -707,6 +761,7 @@ class MeetingEngine:
                 return self._end_thread
             if not self._active:
                 return None
+            self._processing_stop.set()
             thread = threading.Thread(
                 target=self._end_worker, args=(drain_timeout_s,),
                 name="meeting-end", daemon=True,
@@ -718,6 +773,10 @@ class MeetingEngine:
     def _drain_end_capture(self, drain_timeout_s: float) -> bool:
         self._stop_capture()
         self._flush_spools()
+        if not self._asr_ready:
+            # Loading workers are cancelable; unfinished durable chunks stay
+            # pending for recovery instead of waiting for a model at End.
+            self._stop_asr("end during processing startup")
         drained = True
         if self._asr is not None:
             try:
@@ -1384,6 +1443,7 @@ class MeetingEngine:
         Ends the meeting (short drain budget) when still active, waits for
         finalization, then stops the server and the agent core.
         """
+        self._processing_stop.set()
         thread = None
         if self._active:
             thread = self._begin_end(SHUTDOWN_DRAIN_TIMEOUT_S)
@@ -1411,6 +1471,10 @@ class MeetingEngine:
             except Exception:
                 logger.exception("Meeting web server stop failed")
         self._shutdown_agent_core()
+        processing = self._processing_thread
+        if (processing is not None and processing is not threading.current_thread()
+                and processing.is_alive()):
+            processing.join(timeout=5.0)
         self._stop_heartbeat()
 
     def _interrupt_finalization_on_shutdown(self) -> None:
@@ -1451,6 +1515,7 @@ class MeetingEngine:
     def _abort_start(self) -> None:
         """Best-effort teardown after a failed ``start()``."""
         self._active = False
+        self._processing_stop.set()
         self.revoke_agent_writes()
         self._stop_capture()
         self._flush_spools()  # releases the spool writer threads
@@ -1528,8 +1593,20 @@ class MeetingEngine:
                 )
 
     def _shutdown_agent_core(self) -> None:
-        core = self._agent_core
-        self._agent_core = None
+        with self._lifecycle_lock:
+            core = self._agent_core
+            self._agent_core = None
+            pending = self._initializing_agent_core
+            self._initializing_agent_core = None
+        self._release_agent_cores(core, pending)
+
+    def _release_agent_cores(self, core: Optional[Any], pending: Optional[Any]) -> None:
+        """Release detached handles, never a newer initialization's core."""
+        if pending is not None and pending is not core:
+            try:
+                pending.shutdown()
+            except Exception:
+                logger.exception("Initializing agent core cleanup failed")
         if core is not None:
             # Detached first: a dying core's reader thread must not push
             # activity ticks after intelligence was turned off.
@@ -1994,20 +2071,21 @@ class MeetingEngine:
     def _on_chunk(self, chunk: SpooledChunk) -> None:
         """Route a finalized chunk to ASR (idempotent per chunk id)."""
         with self._chunk_lock:
+            self._chunk_index[chunk.chunk_id] = chunk
             if chunk.chunk_id in self._enqueued_chunk_ids:
                 return
-            self._enqueued_chunk_ids.add(chunk.chunk_id)
-            self._chunk_index[chunk.chunk_id] = chunk
-        if self._asr is None:
-            logger.warning("Chunk %s spooled but ASR is unavailable; left pending",
-                           chunk.chunk_id)
-            return
-        try:
-            self._asr.enqueue(chunk)
-        except Exception:
-            logger.exception("Failed to enqueue chunk %s", chunk.chunk_id)
+            if self._asr is None or not self._asr_ready:
+                # SQLite owns this pending work during model initialization.
+                # Its ordered replay claims the same lock before opening live
+                # delivery, so a spool callback cannot overtake that replay.
+                return
+            try:
+                self._asr.enqueue(chunk)
+                self._enqueued_chunk_ids.add(chunk.chunk_id)
+            except Exception:
+                logger.exception("Failed to enqueue chunk %s", chunk.chunk_id)
 
-    def _start_asr(self) -> None:
+    def _start_asr(self, *, defer_load: bool = False) -> None:
         try:
             from meeting.asr.engine import MeetingAsrEngine
             language = (self.options.asr_language or "auto").strip().lower()
@@ -2017,10 +2095,26 @@ class MeetingEngine:
                 self.repository,
                 language=None if language == "auto" else language,
                 term_rules=self._active_term_rules,
+                **({"defer_load": True} if defer_load else {}),
                 **({"remote": self.options.asr_remote,
                     "on_connection_status": self._on_asr_connection_status}
                    if self.options.asr_remote is not None else {}),
             )
+            if defer_load:
+                # Publish before native load so End/Quit can cancel it.
+                with self._lifecycle_lock:
+                    if self._processing_stop.is_set():
+                        asr.stop()
+                        return
+                    self._asr = asr
+                asr.load_backend()
+                with self._lifecycle_lock:
+                    if self._processing_stop.is_set():
+                        if self._asr is asr:
+                            self._stop_asr("processing startup canceled")
+                        else:
+                            asr.stop()
+                        return
         except Exception as exc:
             logger.exception("Meeting ASR engine unavailable")
             self._emit("error", {"code": "asr_unavailable", "message": str(exc)})
@@ -2028,6 +2122,8 @@ class MeetingEngine:
                 raise
             return
         if not getattr(asr, "is_available", True):
+            if self._asr is asr:
+                self._asr = None
             if self.options.asr_remote is not None:
                 raise RuntimeError(asr.last_error or "The remote speech engine is unavailable.")
             logger.error("Meeting ASR model %r is not available; "
@@ -2038,7 +2134,6 @@ class MeetingEngine:
                            "audio is recorded and can be transcribed later.",
             })
             return
-        self._asr = asr
         if self.options.asr_remote is not None:
             route = dict(asr._backend.route, language=language)
             self.options.asr_remote = route
@@ -2047,19 +2142,37 @@ class MeetingEngine:
                 self.meeting_id, asr_model=route["model"], asr_remote_json=json.dumps(route)
             )
             self._on_asr_connection_status(f"Transcribing on {route['host_name']}", True)
-        asr.start(self._on_chunk_result)
-        self._preview_frontiers = {}
-        start_preview = getattr(asr, "start_preview", None)
-        if callable(start_preview):
-            start_preview(self._on_speech_preview)
-        requeue = getattr(asr, "requeue_pending", None)
-        if callable(requeue):
-            try:
-                requeue()
-            except Exception:
-                logger.exception("requeue_pending failed")
-        else:
-            logger.debug("ASR engine exposes no requeue_pending; skipping")
+        with self._lifecycle_lock:
+            if self._processing_stop.is_set():
+                asr.stop()
+                return
+            self._asr = asr
+            with self._chunk_lock:
+                rows = self.repository.get_pending_chunks(self.meeting_id)
+                rows.sort(key=lambda row: (float(row.get("start_s") or 0),
+                                          int(row.get("seq") or 0),
+                                          str(row.get("channel") or ""), int(row["id"])))
+                for row in rows:
+                    chunk = SpooledChunk(
+                        chunk_id=row["id"], meeting_id=row["meeting_id"],
+                        channel=row["channel"], seq=row["seq"],
+                        file_path=row["file_path"], start_s=row["start_s"],
+                        duration_s=row["duration_s"], sample_rate=row["sample_rate"],
+                    )
+                    self._chunk_index[chunk.chunk_id] = chunk
+                self._preview_frontiers = {}
+                asr.start(self._on_chunk_result)
+                requeue = getattr(asr, "requeue_pending", None)
+                if callable(requeue):
+                    requeue(rows=rows)
+                else:
+                    for row in rows:
+                        asr.enqueue(self._chunk_index[row["id"]])
+                self._enqueued_chunk_ids.update(row["id"] for row in rows)
+                self._asr_ready = True
+            start_preview = getattr(asr, "start_preview", None)
+            if callable(start_preview):
+                start_preview(self._on_speech_preview)
 
     def _on_asr_connection_status(self, message: str, connected: bool) -> None:
         if self.store is None:
@@ -2175,10 +2288,13 @@ class MeetingEngine:
 
     def _start_diarizer(self) -> None:
         if self.options.speaker_id_backend == "off":
-            self._degraded_diarization = False
-            self._diarizer = None
-            if self.store is not None:
-                self.store.update_runtime_fields(diarization_available=False)
+            with self._lifecycle_lock:
+                if self._processing_stop.is_set():
+                    return
+                self._degraded_diarization = False
+                self._diarizer = None
+                if self.store is not None:
+                    self.store.update_runtime_fields(diarization_available=False)
             logger.info(
                 "Speaker identification off; loopback stays channel-labeled"
             )
@@ -2186,6 +2302,12 @@ class MeetingEngine:
         self._degraded_diarization = False
         diarizer = None
         try:
+            if (not self.options.diarization_model_path
+                    and self.options.diarization_model_resolver is not None):
+                path = self.options.diarization_model_resolver()
+                if self._processing_stop.is_set():
+                    return
+                self.options.diarization_model_path = path
             from meeting.diarize.clustering import create_diarizer
             diarizer = create_diarizer(
                 self.options.diarization_model_path, self.store,
@@ -2193,6 +2315,8 @@ class MeetingEngine:
             )
         except Exception:
             logger.exception("Diarizer unavailable")
+        if self._processing_stop.is_set():
+            return
         available = False
         if diarizer is not None:
             try:
@@ -2204,12 +2328,17 @@ class MeetingEngine:
                 diarizer.set_relabel_callback(self._on_diarizer_relabel)
             except Exception:
                 logger.exception("Failed to register diarizer relabel callback")
-            self._diarizer = diarizer
-        else:
-            self._diarizer = None
-            logger.info("Diarization disabled; loopback stays channel-labeled")
-        if self.store is not None:
-            self.store.update_runtime_fields(diarization_available=available)
+        # Availability probes and callback registration can block. End may
+        # have claimed the meeting while either ran; adoption and its status
+        # write must be one guarded transition after those calls finish.
+        with self._lifecycle_lock:
+            if self._processing_stop.is_set():
+                return
+            self._diarizer = diarizer if available else None
+            if not available:
+                logger.info("Diarization disabled; loopback stays channel-labeled")
+            if self.store is not None:
+                self.store.update_runtime_fields(diarization_available=available)
 
     def _check_diarizer_degraded(self) -> None:
         """Flip diarization off once the diarizer stops being available.
@@ -2271,6 +2400,10 @@ class MeetingEngine:
         return url
 
     def _maybe_start_intelligence(self) -> None:
+        with self._intelligence_start_lock:
+            self._start_intelligence()
+
+    def _start_intelligence(self) -> None:
         """Bring up agent core + scheduler when cloud processing is enabled.
 
         Failure is bounded: the meeting continues transcript-only with
@@ -2281,8 +2414,11 @@ class MeetingEngine:
         """
         if self.store is None:
             return
-        if not self.store.with_state(lambda s: s.cloud_enabled):
-            return
+        with self._lifecycle_lock:
+            if (self._processing_stop.is_set()
+                    or not self.store.with_state(lambda s: s.cloud_enabled)):
+                return
+            generation = self._intelligence_generation
         created_core = None
         try:
             from meeting.agent.base import create_agent_core
@@ -2298,6 +2434,13 @@ class MeetingEngine:
                 created_core = create_agent_core(
                     self.options.agent_core_kind, self.options.sidecar_payload_dir
                 )
+                with self._lifecycle_lock:
+                    if (generation != self._intelligence_generation
+                            or self._processing_stop.is_set()
+                            or not self.store.with_state(lambda s: s.cloud_enabled)):
+                        created_core.shutdown()
+                        return
+                    self._initializing_agent_core = created_core
                 created_core.initialize(
                     AgentConfig(
                         meeting_id=self.meeting_id,
@@ -2310,55 +2453,81 @@ class MeetingEngine:
                     StoreToolHost(
                         get_store=lambda: self.store,
                         repository=self.repository,
-                        writes_allowed=self.agent_writes_allowed,
+                        writes_allowed=lambda: (
+                            generation == self._intelligence_generation
+                            and self._agent_core is created_core
+                            and self.agent_writes_allowed()
+                            and self.store.with_state(lambda state: state.cloud_enabled)
+                        ),
                     ),
                 )
-                self._agent_core = created_core
-                # Duck-typed: cores without session events (the direct
-                # OpenRouter core) simply publish no activity.
-                setter = getattr(created_core, "set_activity_callback", None)
-                if callable(setter):
-                    setter(self._on_agent_activity)
-            if not self._core_is_healthy():
-                # Locked degradation path: an unusable backend (no API key,
-                # missing SDK, dead sidecar) never blocks the meeting.
-                self._report_intelligence_unusable(created_core)
-                return
-            if self._scheduler is None:
-                scheduler_kwargs: Dict[str, Any] = {}
-                topic_judge = self._typesafe_topic_judge()
-                if topic_judge is not None:
-                    scheduler_kwargs["topic_judge"] = topic_judge
-                scheduler = CheckpointScheduler(
-                    self, self._agent_core, on_health=self._on_intelligence_health,
-                    **scheduler_kwargs,
-                )
-                self._seed_scheduler_watermark(scheduler)
-                scheduler.start()
-                self._scheduler = scheduler
-            self.allow_agent_writes()
-            self.store.update_runtime_fields(intelligence_online=True)
-            # Fresh/recovered intelligence is ready for a later consolidation.
-            self._set_finalization("pending", emit=False)
-            self._emit("intelligence", {"online": True})
-            self._emit_status()
+                with self._lifecycle_lock:
+                    owns_initialization = self._initializing_agent_core is created_core
+                    if owns_initialization:
+                        self._initializing_agent_core = None
+                    if (not owns_initialization
+                            or generation != self._intelligence_generation
+                            or self._processing_stop.is_set()
+                            or not self.store.with_state(lambda s: s.cloud_enabled)):
+                        created_core.shutdown()
+                        return
+                    self._agent_core = created_core
+                    # Cores without session events publish no activity.
+                    setter = getattr(created_core, "set_activity_callback", None)
+                    if callable(setter):
+                        setter(self._on_agent_activity)
+            # End cannot claim the meeting between this readiness check and
+            # scheduler adoption, permission restoration or status writes.
+            with self._lifecycle_lock:
+                if (generation != self._intelligence_generation
+                        or self._processing_stop.is_set()
+                        or not self.store.with_state(lambda s: s.cloud_enabled)):
+                    return
+                if not self._core_is_healthy():
+                    self._report_intelligence_unusable(created_core)
+                    return
+                if self._scheduler is None:
+                    scheduler_kwargs: Dict[str, Any] = {}
+                    topic_judge = self._typesafe_topic_judge()
+                    if topic_judge is not None:
+                        scheduler_kwargs["topic_judge"] = topic_judge
+                    scheduler = CheckpointScheduler(
+                        self, self._agent_core, on_health=self._on_intelligence_health,
+                        **scheduler_kwargs,
+                    )
+                    self._seed_scheduler_watermark(scheduler)
+                    scheduler.start()
+                    self._scheduler = scheduler
+                self.allow_agent_writes()
+                self.store.update_runtime_fields(intelligence_online=True)
+                self._set_finalization("pending", emit=False)
+                self._emit("intelligence", {"online": True})
+                self._emit_status()
         except Exception as exc:
             logger.exception("Meeting intelligence failed to start")
-            if created_core is not None:
+            with self._lifecycle_lock:
+                if self._initializing_agent_core is created_core:
+                    self._initializing_agent_core = None
                 if self._agent_core is created_core:
                     self._agent_core = None
+            if created_core is not None:
                 try:
                     created_core.shutdown()
                 except Exception:
                     logger.exception("Agent core cleanup failed")
-            self.store.update_runtime_fields(intelligence_online=False)
-            self._set_finalization(
-                "unavailable",
-                f"Meeting intelligence failed to start: {exc}",
-                emit=False,
-            )
-            self._emit("intelligence", {"online": False, "error": str(exc)})
-            self._emit_status()
+            with self._lifecycle_lock:
+                if (generation != self._intelligence_generation
+                        or self._processing_stop.is_set()
+                        or not self.store.with_state(lambda s: s.cloud_enabled)):
+                    return
+                self.store.update_runtime_fields(intelligence_online=False)
+                self._set_finalization(
+                    "unavailable",
+                    f"Meeting intelligence failed to start: {exc}",
+                    emit=False,
+                )
+                self._emit("intelligence", {"online": False, "error": str(exc)})
+                self._emit_status()
 
     def _on_agent_activity(self, activity: Any) -> None:
         """Publish one ephemeral agent activity tick to host dashboards.
@@ -2487,31 +2656,40 @@ class MeetingEngine:
             logger.exception("Failed to seed the checkpoint scheduler cursor")
 
     def _stop_intelligence(self) -> None:
-        scheduler = self._scheduler
-        self._scheduler = None
+        with self._lifecycle_lock:
+            self._intelligence_generation += 1
+            generation = self._intelligence_generation
+            scheduler = self._scheduler
+            self._scheduler = None
+            core, self._agent_core = self._agent_core, None
+            pending, self._initializing_agent_core = self._initializing_agent_core, None
+            self._intelligence_restarted = True
         if scheduler is not None:
             try:
                 scheduler.stop()
             except Exception:
                 logger.exception("Scheduler stop failed")
-        if self._agent_core is not None:
+        if core is not None:
             try:
-                self._agent_core.cancel()
+                core.cancel()
             except Exception:
                 logger.exception("Agent cancel failed")
         # Revoked consent must not leave a sidecar process alive holding the
         # API key and an open session.
-        self._shutdown_agent_core()
-        self._intelligence_restarted = True
-        if self.store is not None:
-            self.store.update_runtime_fields(intelligence_online=False)
-            self._set_finalization(
-                "disabled",
-                "AI insights are off for this meeting.",
-                emit=False,
-            )
-        self._emit("intelligence", {"online": False})
-        self._emit_status()
+        self._release_agent_cores(core, pending)
+        with self._lifecycle_lock:
+            if (generation != self._intelligence_generation
+                    or (self.store is not None and self.store.with_state(lambda s: s.cloud_enabled))):
+                return
+            if self.store is not None:
+                self.store.update_runtime_fields(intelligence_online=False)
+                self._set_finalization(
+                    "disabled",
+                    "AI insights are off for this meeting.",
+                    emit=False,
+                )
+            self._emit("intelligence", {"online": False})
+            self._emit_status()
 
     def set_cloud_enabled(self, enabled: bool) -> None:
         """Toggle cloud processing mid-meeting (host action).

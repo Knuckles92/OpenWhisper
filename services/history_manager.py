@@ -2,6 +2,8 @@
 import logging
 import os
 import shutil
+import threading
+import time
 from datetime import datetime
 from typing import List, Optional, Tuple
 from dataclasses import dataclass
@@ -61,6 +63,10 @@ class HistoryManager:
         off rather than read from settings.
         """
         self.recordings_folder = recordings_folder or config.RECORDINGS_FOLDER
+        self._usage_lock = threading.Lock()
+        self._usage_cache = None
+        self._usage_signature = None
+        self._usage_checked_at = 0.0
         if max_recordings is _UNSET and max_bytes is _UNSET:
             settings = settings_manager.load_all_settings()
             self.max_recordings = resolve_max_saved_recordings(settings)
@@ -176,6 +182,7 @@ class HistoryManager:
                 except FileNotFoundError:
                     pass
                 raise
+            self._invalidate_recordings_usage()
             logger.info(f"Saved recording: {filename}")
 
             self._rotate_recordings()
@@ -202,6 +209,7 @@ class HistoryManager:
             for rec in expired:
                 try:
                     os.remove(rec.file_path)
+                    self._invalidate_recordings_usage()
                     logger.info(f"Removed old recording: {rec.filename}")
 
                     db.clear_history_audio_file(rec.filename)
@@ -238,8 +246,38 @@ class HistoryManager:
 
     def get_recordings_usage(self) -> Tuple[int, int]:
         """Return ``(count, total_bytes)`` for saved recordings."""
-        recordings = self.get_recordings()
-        return len(recordings), sum(rec.size_bytes for rec in recordings)
+        with self._usage_lock:
+            try:
+                stat = os.stat(self.recordings_folder)
+                signature = (self.recordings_folder, stat.st_mtime_ns, stat.st_ctime_ns)
+            except OSError:
+                signature = None
+            now = time.monotonic()
+            if (self._usage_cache is not None and signature == self._usage_signature
+                    and now - self._usage_checked_at < 2.0):
+                return self._usage_cache
+            count = total_bytes = 0
+            try:
+                with os.scandir(self.recordings_folder) as entries:
+                    for entry in entries:
+                        if not entry.name.endswith('.wav'):
+                            continue
+                        try:
+                            if entry.is_file():
+                                count += 1
+                                total_bytes += entry.stat().st_size
+                        except FileNotFoundError:
+                            continue  # A concurrent retention pass removed it.
+            except FileNotFoundError:
+                pass
+            self._usage_cache = (count, total_bytes)
+            self._usage_signature = signature
+            self._usage_checked_at = now
+            return self._usage_cache
+
+    def _invalidate_recordings_usage(self) -> None:
+        with self._usage_lock:
+            self._usage_cache = None
 
     def get_history(self, limit: Optional[int] = None) -> List[HistoryEntry]:
         """Return history entries newest first."""
@@ -317,6 +355,7 @@ class HistoryManager:
 
         try:
             os.remove(audio_path)
+            self._invalidate_recordings_usage()
         except OSError as exc:
             logger.error("Failed to delete saved recording %s: %s", filename, exc)
             return False

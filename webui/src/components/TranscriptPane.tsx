@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, type CSSProperties, type MouseEvent, type ReactNode, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode, type RefObject } from 'react';
 import { usePlayingSpanId } from '../playback';
 import { scrollChildIntoView } from '../scroll';
+import { useTranscriptWindow } from '../useTranscriptWindow';
 import type { Participant, Segment, SpeechPreviewMsg } from '../types';
 import { speakerColor } from '../people';
 
@@ -12,6 +13,8 @@ interface TranscriptPaneProps {
   onHighlightClear: () => void;
   onReassignSpeaker: (segmentId: string, participantId: string | null) => void;
   readOnly?: boolean;
+  /** Print documents render the complete transcript instead of a viewport. */
+  virtualize?: boolean;
   /** Optional control rendered under the Conversation header (e.g. audio). */
   headerExtra?: ReactNode;
   /** Prefix element ids so a print copy does not collide with the live list. */
@@ -48,6 +51,7 @@ export default function TranscriptPane({
   onHighlightClear,
   onReassignSpeaker,
   readOnly = false,
+  virtualize = true,
   headerExtra,
   segmentIdPrefix = '',
   newestFirst = false,
@@ -62,6 +66,11 @@ export default function TranscriptPane({
       ),
     [segments, newestFirst],
   );
+  const playingSegmentId = usePlayingSpanId(sorted, audioRef, audioKey);
+  const [keyboardSegmentId, setKeyboardSegmentId] = useState<string | null>(null);
+  const viewport = useTranscriptWindow(sorted, virtualize, highlightSegmentId ?? keyboardSegmentId ?? playingSegmentId);
+  const rendered = sorted.slice(viewport.start, viewport.end);
+  const highlightRendered = Boolean(highlightSegmentId && rendered.some(segment => segment.id === highlightSegmentId));
   const highlightedAvailable = Boolean(
     highlightSegmentId && sorted.some((segment) => segment.id === highlightSegmentId),
   );
@@ -69,7 +78,7 @@ export default function TranscriptPane({
   clearHighlightRef.current = onHighlightClear;
 
   useEffect(() => {
-    if (!highlightSegmentId || !highlightedAvailable) return undefined;
+    if (!highlightSegmentId || !highlightedAvailable || !highlightRendered) return undefined;
     const node = document.getElementById(`${segmentIdPrefix}seg-${highlightSegmentId}`);
     if (node) {
       scrollChildIntoView(node, { block: 'center' });
@@ -77,9 +86,13 @@ export default function TranscriptPane({
     }
     const timer = window.setTimeout(() => clearHighlightRef.current(), 3000);
     return () => window.clearTimeout(timer);
-  }, [highlightSegmentId, highlightedAvailable, segmentIdPrefix]);
+  }, [highlightSegmentId, highlightedAvailable, highlightRendered, segmentIdPrefix]);
 
-  const playingSegmentId = usePlayingSpanId(sorted, audioRef, audioKey);
+  useEffect(() => {
+    if (!keyboardSegmentId || !rendered.some(segment => segment.id === keyboardSegmentId)) return;
+    document.getElementById(`${segmentIdPrefix}seg-${keyboardSegmentId}`)?.focus({ preventScroll: true });
+  }, [keyboardSegmentId, viewport.start, viewport.end, segmentIdPrefix]);
+  useEffect(() => setKeyboardSegmentId(null), [playingSegmentId]);
   const seekable = Boolean(onPlaySegment);
 
   /**
@@ -119,16 +132,30 @@ export default function TranscriptPane({
             {readOnly ? 'No transcript was captured.' : 'Waiting for speech…'}
           </p>
         ) : (
-          <div className="segment-list">
-            {sorted.map((seg) => {
+          <div className="segment-list" ref={viewport.listRef} style={{ overflowAnchor: 'none' }} role="feed" aria-label="Conversation turns"
+            onKeyDown={event => {
+              if ((event.target as HTMLElement).closest('select, input, textarea')) return;
+              const article = (event.target as HTMLElement).closest<HTMLElement>('[data-transcript-id]');
+              if (!article || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+              const index = sorted.findIndex(segment => segment.id === article.dataset.transcriptId);
+              const next = event.key === 'Home' ? 0 : event.key === 'End' ? sorted.length - 1
+                : Math.max(0, Math.min(sorted.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+              event.preventDefault();
+              setKeyboardSegmentId(sorted[next].id);
+            }}>
+            {viewport.top > 0 && <div aria-hidden="true" style={{ height: viewport.top, flexShrink: 0 }} />}
+            {rendered.map((seg, index) => {
               const highlighted = seg.id === highlightSegmentId;
               const nowPlaying = seg.id === playingSegmentId;
               return (
                 <article
                   key={seg.id}
                   id={`${segmentIdPrefix}seg-${seg.id}`}
+                  data-transcript-id={seg.id}
                   className={`segment${highlighted ? ' highlight' : ''}${nowPlaying ? ' is-playing' : ''}${seekable ? ' is-seekable' : ''}`}
-                  tabIndex={highlighted ? -1 : undefined}
+                  tabIndex={index === 0 ? 0 : -1}
+                  aria-posinset={viewport.start + index + 1}
+                  aria-setsize={sorted.length}
                   aria-current={nowPlaying ? 'true' : undefined}
                   onClick={seekable ? (event) => playFromRow(event, seg) : undefined}
                   aria-label={`${speakerLabel(participants, seg.speaker_participant_id, seg.channel)} at ${formatTime(seg.start_s)}`}
@@ -185,6 +212,7 @@ export default function TranscriptPane({
                 </article>
               );
             })}
+            {viewport.bottom > 0 && <div aria-hidden="true" style={{ height: viewport.bottom, flexShrink: 0 }} />}
           </div>
         )}
       </div>

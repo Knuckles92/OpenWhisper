@@ -91,6 +91,7 @@ _ROUTES = {
 }
 
 _OPENAI_REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-6")
+_OPENAI_RESPONSES_TEXT_PREFIXES = ("gpt-4o", "gpt-4.1")
 
 
 def model_spec(profile, model: str) -> TextModelSpec:
@@ -99,9 +100,15 @@ def model_spec(profile, model: str) -> TextModelSpec:
     # OpenAI's supported protocols change independently of a meeting snapshot.
     # Recalculate these routes so retries do not retain an obsolete chat route.
     if profile.kind == "openai":
-        reasoning = model.lower().startswith(_OPENAI_REASONING_PREFIXES)
+        # Fine-tuned IDs retain their base model after the ft: prefix.
+        base_model = model.lower().removeprefix("ft:").split(":", 1)[0]
+        reasoning = base_model.startswith(_OPENAI_REASONING_PREFIXES)
+        responses = reasoning or (
+            base_model.startswith(_OPENAI_RESPONSES_TEXT_PREFIXES)
+            and not any(marker in base_model for marker in ("audio", "realtime", "search", "tts", "transcribe"))
+        )
         return TextModelSpec(
-            protocol="responses" if reasoning else "chat",
+            protocol="responses" if responses else "chat",
             reasoning=reasoning,
             reasoning_format="openai" if reasoning else "",
             context_window=131072,
@@ -110,6 +117,11 @@ def model_spec(profile, model: str) -> TextModelSpec:
     saved = getattr(profile, "model_metadata", None)
     if saved and saved.get("model") == model:
         return spec_from_mapping(saved)
+    if profile.kind == "custom" and getattr(profile, "protocol", "chat") == "responses":
+        reasoning = model.lower().removeprefix("ft:").startswith(_OPENAI_REASONING_PREFIXES)
+        return TextModelSpec(protocol="responses", reasoning=reasoning,
+                             reasoning_format="openai" if reasoning else "",
+                             context_window=131072, max_output_tokens=16384)
     if profile.kind == "ollama":
         with _ollama_lock:
             return _ollama_specs.get((profile.base_url, model), TextModelSpec(context_window=4096, max_output_tokens=2048))

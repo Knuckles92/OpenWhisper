@@ -15,6 +15,7 @@ from services.text_llm import (
     save_ollama_url,
     snapshot_from_mapping,
     snapshot_from_profile,
+    upsert_custom_profile,
 )
 from services.text_model_catalog import model_spec
 from services.transcript_cleanup import TranscriptCleanup
@@ -22,7 +23,9 @@ from services.transcript_cleanup import TranscriptCleanup
 CASES = [
     ("openai", "o4-mini", "responses", "/v1/responses"),
     ("openai", "gpt-5.6-luna", "responses", "/v1/responses"),
-    ("openai", "gpt-4o-mini", "chat", "/v1/chat/completions"),
+    ("openai", "gpt-4o-mini", "responses", "/v1/responses"),
+    ("openai", "gpt-4.1-mini", "responses", "/v1/responses"),
+    ("openai", "gpt-3.5-turbo", "chat", "/v1/chat/completions"),
     ("ollama", "llama3.2", "chat", "/v1/chat/completions"),
     ("groq", "llama-3.3-70b-versatile", "chat", "/openai/v1/chat/completions"),
     ("opencode_go", "glm-5.2", "chat", "/zen/go/v1/chat/completions"),
@@ -113,6 +116,7 @@ def test_wire_protocol_and_signed_tool_roundtrip(provider, model, protocol, path
     elif protocol == "responses":
         assert body["input"][2]["encrypted_content"] == "signed-reasoning"
         assert body["input"][-1]["type"] == "function_call_output"
+        assert body["tools"][0]["strict"] is False
     elif protocol == "anthropic":
         assert body["messages"][1]["content"][0]["signature"] == "signed-reasoning"
         assert body["messages"][-1]["content"][0]["tool_use_id"] == "call_1"
@@ -175,7 +179,16 @@ def test_same_model_has_distinct_go_and_zen_protocols():
 @pytest.mark.parametrize(("model", "protocol", "reasoning"), [
     ("o4-mini", "responses", True),
     ("gpt-5.6-luna", "responses", True),
-    ("gpt-4o-mini", "chat", False),
+    ("gpt-4o-mini", "responses", False),
+    ("gpt-4o-2024-08-06", "responses", False),
+    ("gpt-4.1-mini", "responses", False),
+    ("ft:gpt-4.1-mini-2025-04-14:org:custom:123", "responses", False),
+    ("gpt-4", "chat", False),
+    ("gpt-3.5-turbo", "chat", False),
+    ("chatgpt-4o-latest", "chat", False),
+    ("gpt-4o-audio-preview", "chat", False),
+    ("gpt-4o-search-preview", "chat", False),
+    ("gpt-4o-mini-transcribe", "chat", False),
 ])
 def test_openai_model_routes_are_reasoning_aware(model, protocol, reasoning):
     spec = model_spec(get_profile("openai", {}), model)
@@ -184,7 +197,7 @@ def test_openai_model_routes_are_reasoning_aware(model, protocol, reasoning):
 
 @pytest.mark.parametrize(("model", "protocol", "reasoning"), [
     ("o4-mini", "responses", True),
-    ("gpt-4.1-mini", "chat", False),
+    ("gpt-4.1-mini", "responses", False),
 ])
 def test_openai_routes_migrate_stale_meeting_metadata(model, protocol, reasoning):
     snapshot = snapshot_from_mapping({
@@ -230,6 +243,87 @@ def test_responses_reasoning_preference_is_translated(provider):
         generate(client, profile, model="gpt-5.6-luna", messages=[{"role": "user", "content": "Hi"}],
                  reasoning_level="high")
     assert json.loads(requests[0].content)["reasoning"] == {"effort": "high"}
+
+
+@pytest.mark.parametrize("model", ["gpt-4o-mini", "gpt-4.1-mini"])
+def test_non_reasoning_responses_preserve_cleanup_temperature_and_json(model):
+    requests = []
+    profile, client = client_for("openai", [reply("responses")], requests)
+    with client:
+        generate(client, profile, model=model, messages=[{"role": "user", "content": "JSON please"}],
+                 temperature=0, reasoning_level="high", response_format={"type": "json_object"})
+    body = json.loads(requests[0].content)
+    assert body["temperature"] == 0
+    assert body["store"] is False
+    assert body["text"]["format"] == {"type": "json_object"}
+    assert "response_format" not in body
+    assert "reasoning" not in body
+    assert "include" not in body
+
+
+@pytest.mark.parametrize("model", ["o3-mini", "o4-mini", "gpt-5.6-luna"])
+def test_reasoning_responses_request_encrypted_context_and_omit_temperature(model):
+    requests = []
+    profile, client = client_for("openai", [reply("responses")], requests)
+    with client:
+        generate(client, profile, model=model, messages=[{"role": "user", "content": "Hi"}],
+                 temperature=0, reasoning_level="high")
+    body = json.loads(requests[0].content)
+    assert body["include"] == ["reasoning.encrypted_content"]
+    assert body["reasoning"] == {"effort": "high"}
+    assert "temperature" not in body
+
+
+@pytest.mark.parametrize("model,reasoning", [("gpt-4.1-mini", False), ("o4-mini", True)])
+def test_custom_responses_cleanup_and_saved_meeting_tools(model, reasoning):
+    settings, requests = {}, []
+    profile = upsert_custom_profile(settings, name="Gateway", base_url="https://gateway.test/v1",
+                                    protocol="responses")
+    responses = [reply("responses"), reply("responses", True), reply("responses")]
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json=responses.pop(0))
+    client = OpenAI(api_key="dummy", base_url=profile.base_url, max_retries=0,
+                    http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    with client, patch("services.text_llm._load_settings", return_value=settings), patch(
+        "services.transcript_cleanup.create_openai_client", return_value=client
+    ):
+        cleaner = TranscriptCleanup(profile.id, model)
+        assert cleaner.cleanup("raw transcript") == "Clean text."
+        snapshot = snapshot_from_profile(profile, model)
+        # Editing a live endpoint does not change a saved meeting's protocol.
+        upsert_custom_profile(settings, profile_id=profile.id, name="Gateway", base_url=profile.base_url,
+                              protocol="chat")
+        restored = snapshot_from_mapping(snapshot.to_dict()).to_profile()
+        assert model_spec(restored, model).protocol == "responses"
+        messages = [{"role": "user", "content": "Budget?"}]
+        first = generate(client, restored, model=model, messages=messages, tools=[TOOL])
+        messages += [first.assistant_message, {"role": "tool", "tool_call_id": "call_1", "content": "hits"}]
+        assert generate(client, restored, model=model, messages=messages, tools=[TOOL]).text == "Clean text."
+    assert all(request.url.path == "/v1/responses" for request in requests)
+    cleanup_body = json.loads(requests[0].content)
+    if reasoning:
+        assert "temperature" not in cleanup_body
+    else:
+        assert cleanup_body["temperature"] == 0
+    tool_body = json.loads(requests[-1].content)
+    assert tool_body["input"][1]["encrypted_content"] == "signed-reasoning"
+    assert tool_body["input"][-1]["call_id"] == "call_1"
+    assert tool_body["store"] is False
+
+
+@pytest.mark.parametrize("model", ["gpt-4o-mini", "gpt-4.1-mini", "o4-mini"])
+def test_sidecars_receive_responses_for_native_openai_models(model):
+    from meeting.agent.opencode_sidecar import OpenCodeSidecarAgent
+    from meeting.agent.pi_sidecar import PiSidecarAgent
+    from meeting.interfaces import AgentConfig
+    for cls in (PiSidecarAgent, OpenCodeSidecarAgent):
+        agent = cls(payload_dir="unused-test-payload")
+        agent._cfg = AgentConfig(meeting_id="meeting-1", provider="openai", model=model, api_key=None,
+                                 system_prompt="Use evidence.")
+        fields = agent._endpoint_fields()
+        assert fields["model_metadata"]["protocol"] == "responses"
+        assert fields["model_metadata"]["reasoning"] is model.startswith("o4")
 
 
 @pytest.mark.parametrize("provider,model,protocol,path", CASES)

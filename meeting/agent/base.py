@@ -2,20 +2,17 @@
 
 The rest of the engine talks to an agent core exclusively through the
 ``AgentCore``/``AgentToolHost`` protocols from :mod:`meeting.interfaces`;
-``create_agent_core`` picks the concrete implementation (Pi sidecar or direct
-OpenRouter) and handles graceful fallback when the sidecar bundle is missing.
+``create_agent_core`` picks an SDK-backed or installed coding agent. Missing
+agents fail explicitly; meeting recording can continue without AI insights.
 """
 from __future__ import annotations
 
-import logging
 import os
 from typing import Any, Dict, Optional
 
 # Re-exported for convenience so agent implementations and the engine can do
 # ``from meeting.agent.base import AgentCore, AgentToolHost``.
 from meeting.interfaces import AgentCore, AgentToolHost  # noqa: F401
-
-logger = logging.getLogger(__name__)
 
 #: File name of the compiled Pi sidecar bundle inside its payload directory.
 SIDECAR_BUNDLE_NAME = "bundle.cjs"
@@ -77,20 +74,21 @@ def create_agent_core(kind: str, payload_dir: Optional[str] = None) -> AgentCore
     """Create the meeting-intelligence agent core.
 
     Args:
-        kind: ``pi`` or ``opencode`` for a packaged SDK, ``direct`` for the in-process
-            agent, or an installed agent (``claude_code``, ``codex``,
-            ``opencode_cli``) that runs on the user's own agent setup.
+        kind: ``pi`` or ``opencode`` for a packaged SDK, or an installed agent
+            (``claude_code``, ``codex``, ``opencode_cli``). The retired
+            ``direct`` value is migrated to Pi for older callers.
         payload_dir: Directory holding the sidecar payload (``bundle.cjs``
             and optionally a portable ``node.exe``). Required for ``pi``.
 
     Returns:
-        An ``AgentCore`` implementation. When ``pi`` is requested but the
-        sidecar bundle is missing, falls back to the direct agent with a
-        logged warning rather than failing the meeting. An installed agent
-        never falls back: it needs no API key, and the direct agent would.
+        An ``AgentCore`` implementation. No core falls back to direct API
+        calls or a different agent.
+
+    Raises:
+        RuntimeError: A required packaged agent is unavailable.
+        ValueError: The requested kind is not supported.
     """
-    # Imported lazily to avoid import cycles and keep optional dependencies
-    # (the openai SDK) out of the factory's import path.
+    # Imported lazily to avoid import cycles.
     from services.settings import MeetingAgentCore
 
     if kind in MeetingAgentCore.INSTALLED:
@@ -98,7 +96,8 @@ def create_agent_core(kind: str, payload_dir: Optional[str] = None) -> AgentCore
 
         return InstalledAgentCore(kind)
 
-    from meeting.agent.openrouter_direct import DirectOpenRouterAgent
+    if kind == MeetingAgentCore.DIRECT:
+        kind = MeetingAgentCore.PI
 
     if kind == MeetingAgentCore.OPENCODE:
         if not payload_dir:
@@ -107,7 +106,7 @@ def create_agent_core(kind: str, payload_dir: Optional[str] = None) -> AgentCore
 
         return OpenCodeSidecarAgent(payload_dir)
 
-    if kind == "pi":
+    if kind == MeetingAgentCore.PI:
         bundle_path = (
             os.path.join(payload_dir, SIDECAR_BUNDLE_NAME) if payload_dir else None
         )
@@ -115,15 +114,10 @@ def create_agent_core(kind: str, payload_dir: Optional[str] = None) -> AgentCore
             from meeting.agent.pi_sidecar import PiSidecarAgent
 
             return PiSidecarAgent(payload_dir)
-        logger.warning(
-            "Pi sidecar bundle not found (payload_dir=%r); falling back to "
-            "the direct OpenRouter agent core", payload_dir,
+        raise RuntimeError(
+            "Pi is unavailable. Install or update Pi from Downloads → Components, "
+            "or choose an installed coding agent in Settings → Meeting Mode → "
+            "Intelligence. Meetings can still record without AI insights."
         )
-        return DirectOpenRouterAgent()
 
-    if kind != "direct":
-        logger.warning(
-            "Unknown agent core kind %r; using the direct OpenRouter agent core",
-            kind,
-        )
-    return DirectOpenRouterAgent()
+    raise ValueError(f"Unsupported meeting agent core: {kind!r}")

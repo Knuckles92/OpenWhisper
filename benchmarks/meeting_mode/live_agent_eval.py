@@ -56,7 +56,7 @@ def main():
     )
     parser.add_argument("--harness", choices=MeetingAgentCore.ALL,
                         default="pi",
-                        help="pi/direct/opencode use the configured text endpoint; claude_code, "
+                        help="pi/opencode use the configured text endpoint; claude_code, "
                              "codex, and opencode_cli run the installed agent on its own sign-in")
     parser.add_argument("--model", help="installed agents: model or alias; default: the agent's own")
     parser.add_argument("--sidecar-dir")

@@ -779,19 +779,6 @@ class MeetingRuntime:
 
             self._shutdown_archive_dashboard()
             self._shutdown_engine()  # drop a previous (ended) session's server
-            speaker_backend = (
-                MeetingSpeakerIdBackend.LOCAL
-                if demo
-                else resolve_meeting_speaker_id_backend()
-            )
-            if (
-                not demo
-                and speaker_backend != MeetingSpeakerIdBackend.OFF
-                and speaker_model_path() is None
-            ):
-                self.controller.meeting_status_update.emit(
-                    "Downloading speaker identification model..."
-                )
             options = self._build_options(
                 cloud,
                 demo=demo,
@@ -873,6 +860,13 @@ class MeetingRuntime:
 
         with self._lock:
             self._starting = False
+            stop = getattr(engine, "_processing_stop", None)
+            if isinstance(stop, threading.Event) and stop.is_set():
+                # A host may End/Quit as soon as the dashboard opens. Its
+                # terminal events own the UI; this delayed start completion
+                # must not announce an already-ended meeting as active.
+                self._deferred_start_errors = []
+                return
             self._engine = engine
             # The engine's server_started event usually landed first (and
             # already announced the URLs); keep those values when the start
@@ -956,7 +950,10 @@ class MeetingRuntime:
             agent_core_kind=route.kind,
             sidecar_payload_dir=route.payload_dir,
             diarization_model_path=(
-                ensure_speaker_model() if want_speaker_model else None
+                speaker_model_path() if want_speaker_model else None
+            ),
+            diarization_model_resolver=(
+                ensure_speaker_model if want_speaker_model else None
             ),
             speaker_id_backend=speaker_backend,
             speaker_id_audio_consent=(

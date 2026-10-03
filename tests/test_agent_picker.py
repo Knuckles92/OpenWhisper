@@ -106,7 +106,10 @@ class TestTileCopy:
         assert found_count_text({CODEX: CODEX_AGENT}) == (
             "Found 1 coding agent on this computer."
         )
-        assert found_count_text({}).startswith("No coding agents found")
+        empty = found_count_text({})
+        assert empty.startswith("No coding agents found")
+        assert "Pi" in empty and "component is installed" in empty
+        assert "OpenWhisper's built-in" not in empty
 
     def test_usage_caption_names_the_sign_in_and_the_limits(self):
         text = usage_caption(CLAUDE)
@@ -237,6 +240,29 @@ class TestChoosing:
             picker = AgentPicker()
             picker.resize(900, 400)
             yield picker
+
+    @pytest.mark.parametrize("core", [MeetingAgentCore.PI, MeetingAgentCore.DIRECT])
+    def test_native_tile_names_pi_and_does_not_use_the_app_icon(self, picker, core):
+        picker.set_choice(core)
+        tile = picker.tiles[BUILTIN]
+        assert tile.name == tile.name_label.text() == "Pi"
+        assert tile.accessibleName() == "Pi, Built in"
+        assert tile.mark._monogram == "π"
+        assert tile.mark._pixmap is None
+        assert "Your API key" in tile.detail_label.text()
+        assert "OpenWhisper" not in tile.accessibleDescription()
+
+    def test_packaged_opencode_is_not_mislabeled_as_pi(self, picker):
+        picker.set_choice(MeetingAgentCore.OPENCODE)
+        tile = picker.tiles[BUILTIN]
+        assert tile.name_label.text() == "OpenCode SDK"
+        assert tile.accessibleName() == "OpenCode SDK, Built in"
+        assert tile.mark._monogram == "OC"
+        picker.set_choice(CODEX)
+        assert tile.name_label.text() == "OpenCode SDK"
+        picker.set_choice(MeetingAgentCore.PI)
+        assert tile.name_label.text() == "Pi"
+        assert tile.mark._monogram == "π"
 
     def test_found_tile_click_requests_that_agent(self, picker):
         requested = []

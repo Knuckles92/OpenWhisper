@@ -339,11 +339,13 @@ class RemoteSpeechBackend(LocalSpeechBackend):
 
     # ---- connection lifecycle ----
 
-    def reload_model(self, model_name=None):
+    def reload_model(self, model_name=None, *, cancel_event=None):
         from services.remote_asr.client import RemoteEngineError
         from services.remote_asr.settings import load_client_pairing, load_client_token
 
         with self._state_lock:
+            if cancel_event is not None and cancel_event.is_set():
+                return
             self.cleanup()
             self.reset_cancel_flag()
             generation = self._generation
@@ -369,6 +371,8 @@ class RemoteSpeechBackend(LocalSpeechBackend):
         self.host_name = self.host_name or pairing.host_name
         self._set_connecting(True)
         try:
+            if cancel_event is not None and cancel_event.is_set():
+                return
             connection, ready = self._connect(pairing, token, generation)
             if requested is not None and (runtime is not None or not _serves(ready, requested)):
                 connection, ready = self._switch_host(connection, pairing, token, requested, generation, runtime)
@@ -390,7 +394,8 @@ class RemoteSpeechBackend(LocalSpeechBackend):
                 self._pending = None
             self._set_connecting(False)
         with self._state_lock:
-            if generation != self._generation:
+            if (generation != self._generation
+                    or (cancel_event is not None and cancel_event.is_set())):
                 connection.close()
                 return
             self._adopt(pairing, connection, ready)

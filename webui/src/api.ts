@@ -6,6 +6,7 @@ import type {
   Op,
   MeetingDetailResponse,
   MeetingRow,
+  MeetingListResponse,
   AuditEvent,
   RegenerateTokensResponse,
   RerunInsightsResponse,
@@ -87,28 +88,47 @@ export const api = {
     meetingId: string,
     cursor?: string,
     limit = 500,
+    signal?: AbortSignal,
   ): Promise<TranscriptPage> {
     return request<TranscriptPage>(
       `/api/meetings/${encodeURIComponent(meetingId)}/transcript?${qs({ token, cursor, limit })}`,
+      { signal },
     );
   },
 
-  async segment(token: string, meetingId: string, segmentId: string): Promise<Segment> {
+  async segment(token: string, meetingId: string, segmentId: string, signal?: AbortSignal): Promise<Segment> {
     const data = await request<{ segment: Segment }>(
       `/api/meetings/${encodeURIComponent(meetingId)}/segments/${encodeURIComponent(segmentId)}?${qs({ token })}`,
+      { signal },
     );
     return data.segment;
   },
 
-  async meetings(token: string): Promise<MeetingRow[]> {
-    const data = await request<unknown>(`/api/meetings?${qs({ token })}`);
-    return asArray<MeetingRow>(data, 'meetings', 'items');
+  async meetings(token: string, options: {
+    cursor?: string; limit?: number; query?: string; since?: string;
+    hasDecisions?: boolean; hasActions?: boolean; needsAttention?: boolean;
+    signal?: AbortSignal;
+  } = {}): Promise<MeetingListResponse> {
+    const data = await request<MeetingListResponse>(`/api/meetings?${qs({
+      token, cursor: options.cursor, limit: options.limit ?? 50, q: options.query,
+      since: options.since, has_decisions: options.hasDecisions ? 1 : undefined,
+      has_actions: options.hasActions ? 1 : undefined,
+      needs_attention: options.needsAttention ? 1 : undefined,
+    })}`, { signal: options.signal });
+    return { meetings: asArray<MeetingRow>(data, 'meetings', 'items'), next_cursor: data.next_cursor ?? null };
   },
 
-  meeting(token: string, meetingId: string): Promise<MeetingDetailResponse> {
+  meeting(token: string, meetingId: string, options: {
+    includeTranscript?: boolean; signal?: AbortSignal;
+  } = {}): Promise<MeetingDetailResponse> {
     return request<MeetingDetailResponse>(
-      `/api/meetings/${encodeURIComponent(meetingId)}?${qs({ token })}`,
+      `/api/meetings/${encodeURIComponent(meetingId)}?${qs({ token, include_transcript: options.includeTranscript === false ? 0 : 1 })}`,
+      { signal: options.signal },
     );
+  },
+
+  meetingState(token: string, meetingId: string, signal?: AbortSignal): Promise<{ state: MeetingStateDoc }> {
+    return request(`/api/meetings/${encodeURIComponent(meetingId)}/state?${qs({ token })}`, { signal });
   },
 
   renameMeeting(token: string, meetingId: string, title: string): Promise<unknown> {

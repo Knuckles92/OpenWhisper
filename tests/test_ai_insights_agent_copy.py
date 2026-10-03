@@ -72,7 +72,7 @@ class TestAiInsightsDestination:
 
     def test_built_in_engine_is_unchanged(self):
         where, privacy = ai_insights_destination({
-            SettingsKey.MEETING_AGENT_CORE: MeetingAgentCore.DIRECT,
+            SettingsKey.MEETING_AGENT_CORE: MeetingAgentCore.PI,
             "meeting_llm_provider": "openrouter",
             "meeting_llm_model": "deepseek/deepseek-v4.1-flash",
         })
@@ -110,7 +110,7 @@ class TestConsentForAnAgent:
         assert "sent to Codex on this computer" in self._body(dialog)
 
     def test_built_in_engine_keeps_the_endpoint_copy(self):
-        settings_manager.save_setting(SettingsKey.MEETING_AGENT_CORE, MeetingAgentCore.DIRECT)
+        settings_manager.save_setting(SettingsKey.MEETING_AGENT_CORE, MeetingAgentCore.PI)
         dialog = MeetingConsentDialog(destination="Work gateway", remote=True)
         assert dialog.agent_id == ""
         body = self._body(dialog)

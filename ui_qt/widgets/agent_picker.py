@@ -1,8 +1,8 @@
-"""Choose who runs Meeting Mode's AI insights: an installed agent or OpenWhisper.
+"""Choose who runs Meeting Mode's AI insights: Pi or an installed agent.
 
 Settings → Meeting Mode → Intelligence opens with one tile per coding agent
-OpenWhisper can drive (Claude Code, Codex, OpenCode) and one for its built-in
-engine. The tiles report what a scan of this computer found, and the model row
+OpenWhisper can drive (Claude Code, Codex, OpenCode) and one for Pi (or the
+packaged OpenCode SDK when selected). The tiles report what a scan of this computer found, and the model row
 under them lists the chosen agent's own models.
 
 Motion follows the scan only. Tiles shimmer from the moment the scan starts
@@ -18,7 +18,6 @@ import math
 import re
 import threading
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Dict, Final, Iterable, List, Optional
 
 from PyQt6.QtCore import (
@@ -54,7 +53,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import bundle_root
 from services import installed_agents
 from services.installed_agents import (
     AGENT_ORDER,
@@ -63,6 +61,7 @@ from services.installed_agents import (
     InstalledAgent,
     sign_in_hint,
 )
+from services.settings import MeetingAgentCore
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
 from ui_qt.utils.palette import current_palette, token_color
@@ -74,7 +73,7 @@ from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
 
-#: The picker's id for OpenWhisper's own engine (Pi or Direct).
+#: Stable internal id for the Pi tile (or the selected packaged OpenCode SDK).
 BUILTIN: Final[str] = "openwhisper"
 
 # Tile tones: what the scan says about one tile.
@@ -173,8 +172,8 @@ def found_count_text(agents: Dict[str, Optional[InstalledAgent]]) -> str:
     found = sum(1 for agent_id in AGENT_ORDER if agents.get(agent_id) is not None)
     if not found:
         return (
-            "No coding agents found on this computer. OpenWhisper's built-in "
-            "engine works without one."
+            "No coding agents found on this computer. Pi can run AI insights "
+            "with your API key once its component is installed."
         )
     noun = "agent" if found == 1 else "agents"
     return f"Found {found} coding {noun} on this computer."
@@ -263,12 +262,6 @@ def _ring_color(accent: QColor) -> QColor:
     return accent.lighter(118) if _dark() else accent.darker(112)
 
 
-def _app_mark() -> Optional[QPixmap]:
-    path = Path(bundle_root()) / "ui_qt" / "assets" / "openwhisper.png"
-    pixmap = QPixmap(str(path))
-    return None if pixmap.isNull() else pixmap
-
-
 class AgentMark(QWidget):
     """The rounded monogram square; warms from muted to the agent's colour."""
 
@@ -291,6 +284,11 @@ class AgentMark(QWidget):
     @property
     def missing(self) -> float:
         return self._missing
+
+    def set_monogram(self, monogram: str) -> None:
+        if monogram != self._monogram:
+            self._monogram = monogram
+            self.update()
 
     def set_warmth(self, value: float) -> None:
         value = _clamp(value)
@@ -679,6 +677,15 @@ class AgentTile(QWidget):
             self._arrival_timer.start(delay_ms)
         else:
             self._begin_arrival()
+
+    def set_identity(self, name: str, monogram: str) -> None:
+        """Name the packaged SDK accurately, including for screen readers."""
+        self.name = name
+        self.name_label.setText(name)
+        self.link.setText(f"Get {name} ↗")
+        self.mark.set_monogram(monogram)
+        pill = self._state.pill
+        self.setAccessibleName(f"{name}, {pill}" if pill else name)
 
     def set_selected(self, selected: bool, animate: bool = True) -> None:
         if selected == self._selected:
@@ -1154,7 +1161,7 @@ class AgentPicker(QWidget):
                 install_url=spec.install_url, install_hint=spec.install_hint,
             )
             self.tiles[agent_id] = tile
-        builtin = AgentTile(BUILTIN, "OpenWhisper", "OW", "#0a84ff", pixmap=_app_mark())
+        builtin = AgentTile(BUILTIN, "Pi", "π", "#0a84ff")
         builtin.show_state(BUILTIN_STATE)
         self.tiles[BUILTIN] = builtin
         for tile in self.tiles.values():
@@ -1314,6 +1321,9 @@ class AgentPicker(QWidget):
     def set_choice(self, core: str) -> None:
         """Show ``core`` (a ``MeetingAgentCore`` value) as the chosen tile."""
         self._choice = core if core in AGENT_ORDER else BUILTIN
+        if self._choice == BUILTIN:
+            name, monogram = ("OpenCode SDK", "OC") if core == MeetingAgentCore.OPENCODE else ("Pi", "π")
+            self.tiles[BUILTIN].set_identity(name, monogram)
         self._sync_selection()
 
     def set_saved_models(self, models: Dict[str, str]) -> None:

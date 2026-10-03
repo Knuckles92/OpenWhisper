@@ -120,13 +120,11 @@ def _responses(client, model, messages, tools, limit, json_mode, options) -> Tex
             items.append({"role": role, "content": message.get("content") or ""})
     body = dict(model=model, input=items, store=False, max_output_tokens=limit)
     if tools:
-        body["tools"] = [{"type": "function", **t["function"]} for t in tools]
+        # Preserve optional parameters from our Chat Completions tool schemas.
+        body["tools"] = [{"type": "function", "strict": False, **t["function"]} for t in tools]
         body["tool_choice"] = "auto"
     if json_mode:
         body["text"] = {"format": {"type": "json_object"}}
-    # Only OpenAI reasoning models expose this control through the gateway.
-    if model.startswith("gpt-"):
-        body["include"] = ["reasoning.encrypted_content"]
     raw = _mapping(client.responses.create(**body, **options))
     if raw.get("status") in ("incomplete", "failed", "cancelled") or raw.get("error"):
         raise TextGenerationError("Model output was incomplete or failed.")
@@ -287,12 +285,15 @@ def generate(client, profile, *, model: str, messages: list[dict],
         limit = options.pop("max_tokens", spec.max_output_tokens)
         json_mode = options.pop("response_format", None) is not None
         options.pop("tool_choice", None)
-        options.pop("temperature", None)
+        if spec.protocol != "responses" or spec.reasoning:
+            options.pop("temperature", None)
         options.pop("reasoning_effort", None)
         options.pop("extra_body", None)
         level = (spec.thinking_levels or {}).get(reasoning_level, reasoning_level)
         if level and level != "off" and spec.reasoning_format == "openai":
             options["reasoning"] = {"effort": level}
+        if spec.protocol == "responses" and spec.reasoning_format == "openai":
+            options["include"] = ["reasoning.encrypted_content"]
         adapter = {"responses": _responses, "anthropic": _anthropic, "google": _google}[spec.protocol]
         result = adapter(client, model, messages, tools, limit, json_mode, options)
     _check_cancel(cancel_event)

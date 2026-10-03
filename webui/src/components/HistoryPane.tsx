@@ -1,5 +1,6 @@
 import InsightReview from './InsightReview';
 import HighlightPulseStrip, { pulseTime } from './HighlightPulseStrip';
+import { flushSync } from 'react-dom';
 import { playMoment } from '../playback';
 import RecordingPlayer, { type PlaybackMoment } from './RecordingPlayer';
 import FinalizationDiagnostics from './FinalizationDiagnostics';
@@ -143,6 +144,18 @@ export default function HistoryPane({
   onClose,
 }: HistoryPaneProps) {
   const [meetings, setMeetings] = useState<MeetingRow[]>([]);
+  const [listCursor, setListCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const listController = useRef<AbortController | null>(null);
+  const detailController = useRef<AbortController | null>(null);
+  const transcriptRequestController = useRef<AbortController | null>(null);
+  const loadedSegments = useRef<Segment[]>([]);
+  const transcriptCursor = useRef<string | undefined>(undefined);
+  const transcriptStarted = useRef(false);
+  const transcriptPending = useRef<Promise<void> | null>(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [transcriptRevision, setTranscriptRevision] = useState(0);
+  const [selectedMeeting, setSelectedMeeting] = useState<MeetingRow | null>(null);
   const [ownSelectedId, setOwnSelectedId] = useState<string | null>(initialMeetingId ?? null);
   const [ownFocused, setOwnFocused] = useState(false);
   // Controlled when the dashboard drives it, self-contained when mounted alone.
@@ -184,31 +197,41 @@ export default function HistoryPane({
   const playOnOpen = useRef(false);
   const reportRef = useRef<HTMLDivElement | null>(null);
   const selectedIdRef = useRef<string | null>(selectedId);
+  selectedIdRef.current = selectedId;
   const focusReport = useMemo(
     () => new URLSearchParams(location.search).get('view') === 'report',
     [],
   );
 
-  const loadMeetings = useCallback(async () => {
-    setLoading(true);
+  const loadMeetings = useCallback(async (cursor?: string) => {
+    listController.current?.abort();
+    const controller = new AbortController();
+    listController.current = controller;
+    if (cursor) setLoadingMore(true); else setLoading(true);
     setError(null);
+    const now = new Date();
+    const since = dateRange === '7' ? new Date(now.getTime() - 7 * DAY_MS)
+      : dateRange === '30' ? new Date(now.getTime() - 30 * DAY_MS)
+        : dateRange === 'year' ? new Date(now.getFullYear(), 0, 1) : null;
     try {
-      const rows = await api.meetings(token);
-      setMeetings(rows);
+      const response = await api.meetings(token, { cursor, since: since?.toISOString(),
+        hasDecisions: onlyDecisions, hasActions: onlyActions, needsAttention: onlyAttention,
+        signal: controller.signal });
+      if (controller.signal.aborted) return;
+      const rows = Array.isArray(response) ? response as MeetingRow[] : response.meetings;
+      setMeetings(previous => cursor ? [...new Map([...previous, ...rows].map(row => [row.id, row])).values()] : rows);
+      setListCursor(Array.isArray(response) ? null : response.next_cursor);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load meetings');
+      if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Failed to load meetings');
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) { setLoading(false); setLoadingMore(false); }
     }
-  }, [token]);
+  }, [token, dateRange, onlyDecisions, onlyActions, onlyAttention]);
 
   useEffect(() => {
-    loadMeetings();
+    void loadMeetings();
+    return () => listController.current?.abort();
   }, [loadMeetings]);
-
-  useEffect(() => {
-    selectedIdRef.current = selectedId;
-  }, [selectedId]);
 
   // A deep link straight to a report opens the full view, where the report lives.
   useEffect(() => {
@@ -217,70 +240,132 @@ export default function HistoryPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadCompleteMeeting = useCallback(async (
+  const loadMeetingPage = useCallback(async (
     meetingId: string,
-    onPage?: (state: MeetingStateDoc, segments: Segment[], complete: boolean) => void,
-  ): Promise<{ state: MeetingStateDoc; segments: Segment[] }> => {
-    const response = await api.meeting(token, meetingId);
-    let segments = response.segments;
-    let cursor = response.transcript_next_cursor ?? undefined;
-    onPage?.(response.state, segments, !cursor);
-    while (cursor) {
-      const page = await api.meetingTranscriptPage(token, meetingId, cursor);
-      const byId = new Map(segments.map((segment) => [segment.id, segment]));
-      for (const segment of page.items) byId.set(segment.id, segment);
-      segments = [...byId.values()].sort(
-        (a, b) => a.start_s - b.start_s || a.id.localeCompare(b.id),
-      );
-      cursor = page.next_cursor ?? undefined;
-      onPage?.(response.state, segments, !cursor);
-    }
-    return { state: response.state, segments };
+    onPage: (state: MeetingStateDoc, segments: Segment[], complete: boolean) => void,
+  ) => {
+    const controller = detailController.current;
+    if (!controller || selectedIdRef.current !== meetingId) return;
+    const response = await api.meeting(token, meetingId, { includeTranscript: false, signal: controller.signal });
+    if (controller.signal.aborted || selectedIdRef.current !== meetingId) return;
+    transcriptRequestController.current?.abort();
+    transcriptRequestController.current = new AbortController();
+    transcriptPending.current = null;
+    const included = response.transcript_included !== false;
+    transcriptStarted.current = included;
+    transcriptCursor.current = response.transcript_next_cursor ?? undefined;
+    loadedSegments.current = response.segments;
+    setSelectedMeeting(response.meeting);
+    onPage(response.state, response.segments, included && !response.transcript_next_cursor);
+    setTranscriptRevision(value => value + 1);
   }, [token]);
 
-  // History has no live socket, so anything running server-side is followed
-  // by polling. A boolean dep keeps the interval stable across refreshes.
+  const loadTranscriptPage = useCallback(async (): Promise<void> => {
+    if (transcriptPending.current) return transcriptPending.current;
+    const meetingId = selectedIdRef.current;
+    const controller = detailController.current;
+    if (!meetingId || !controller || controller.signal.aborted) throw new DOMException('Meeting closed', 'AbortError');
+    if (transcriptStarted.current && !transcriptCursor.current) return;
+    const requestController = transcriptRequestController.current ?? new AbortController();
+    transcriptRequestController.current = requestController;
+    const abort = () => requestController.abort();
+    controller.signal.addEventListener('abort', abort, { once: true });
+    setTranscriptLoading(true);
+    const pending = (async () => {
+      const page = await api.meetingTranscriptPage(token, meetingId, transcriptCursor.current, 500, requestController.signal);
+      if (controller.signal.aborted || requestController.signal.aborted || selectedIdRef.current !== meetingId) throw new DOMException('Meeting closed', 'AbortError');
+      transcriptStarted.current = true;
+      transcriptCursor.current = page.next_cursor ?? undefined;
+      loadedSegments.current = [...new Map([...loadedSegments.current, ...page.items].map(segment => [segment.id, segment])).values()]
+        .sort((a, b) => a.start_s - b.start_s || a.id.localeCompare(b.id));
+      setDetailSegments(loadedSegments.current);
+      setTranscriptComplete(!page.next_cursor);
+    })();
+    transcriptPending.current = pending;
+    try { await pending; }
+    finally {
+      controller.signal.removeEventListener('abort', abort);
+      if (transcriptPending.current === pending) {
+        transcriptPending.current = null;
+        if (!controller.signal.aborted) setTranscriptLoading(false);
+      }
+    }
+  }, [token]);
+
+  const loadFullTranscript = useCallback(async () => {
+    const controller = detailController.current;
+    const requestController = transcriptRequestController.current;
+    do {
+      await loadTranscriptPage();
+      if (!controller || controller.signal.aborted || requestController?.signal.aborted) throw new DOMException('Meeting closed', 'AbortError');
+    } while (transcriptCursor.current);
+    // Printing must see the complete data even when React batches async page updates.
+    flushSync(() => { setDetailSegments(loadedSegments.current); setTranscriptComplete(true); });
+  }, [loadTranscriptPage]);
+
+  // Schedule after completion so a slow poll never overlaps the next one.
   const workRunning = detail?.insight_review?.status === 'running'
     || (detail?.custom_reports ?? []).some((report) => report.status === 'running');
-
   useEffect(() => {
     if (!selectedId || !workRunning) return;
-    let cancelled = false;
-    const timer = setInterval(() => {
-      api.meeting(token, selectedId).then(response => {
-        if (!cancelled) setDetail(response.state);
-      }).catch(() => { if (!cancelled) setDetailError('Could not refresh this meeting. Reopen it to reconnect.'); });
-    }, 2000);
-    return () => { cancelled = true; clearInterval(timer); };
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const response = await api.meetingState(token, selectedId, controller.signal);
+        if (!controller.signal.aborted) setDetail(response.state);
+      } catch {
+        if (!controller.signal.aborted) setDetailError('Could not refresh this meeting. Reopen it to reconnect.');
+      } finally {
+        if (!controller.signal.aborted) timer = setTimeout(poll, 2000);
+      }
+    };
+    timer = setTimeout(poll, 2000);
+    return () => { controller.abort(); clearTimeout(timer); };
   }, [token, selectedId, workRunning]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    detailController.current = controller;
+    loadedSegments.current = [];
+    transcriptCursor.current = undefined;
+    transcriptStarted.current = false;
+    transcriptPending.current = null;
+    setTranscriptLoading(false);
+    setSelectedMeeting(null);
     setDetail(null);
     setPlaybackMoment(null);
     setDetailSegments([]);
     setDetailError(null);
     setRerunNote(null);
     setTranscriptComplete(false);
-    if (!selectedId) return;
-    let cancelled = false;
-    loadCompleteMeeting(selectedId, (state, segments, complete) => {
-      if (cancelled) return;
-      setDetail(state);
-      setDetailSegments(segments);
-      setTranscriptComplete(complete);
-    })
-      .then(() => {
-        if (!cancelled) setTranscriptComplete(true);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setDetailError(err instanceof Error ? err.message : 'Failed to load meeting');
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [loadCompleteMeeting, selectedId]);
+    if (selectedId) void loadMeetingPage(selectedId, (state, segments, complete) => {
+      setDetail(state); setDetailSegments(segments); setTranscriptComplete(complete);
+    }).catch((err: unknown) => {
+      if (!controller.signal.aborted) setDetailError(err instanceof Error ? err.message : 'Failed to load meeting');
+    });
+    return () => controller.abort();
+  }, [loadMeetingPage, selectedId]);
+
+  useEffect(() => {
+    if (focused) {
+      if (transcriptRequestController.current?.signal.aborted) {
+        transcriptRequestController.current = new AbortController();
+        transcriptPending.current = null;
+        setTranscriptLoading(false);
+      }
+    } else {
+      transcriptRequestController.current?.abort();
+    }
+    return () => transcriptRequestController.current?.abort();
+  }, [focused, selectedId]);
+
+  useEffect(() => {
+    if (!focused || !detail || transcriptStarted.current) return;
+    void loadTranscriptPage().catch(err => {
+      if (!detailController.current?.signal.aborted && err?.name !== 'AbortError') setDetailError(err instanceof Error ? err.message : 'Failed to load transcript');
+    });
+  }, [focused, detail?.meeting_id, transcriptRevision, loadTranscriptPage]);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -354,7 +439,8 @@ export default function HistoryPane({
     setHighlightSegmentId(segmentId || null);
   };
 
-  const selected = meetings.find((m) => m.id === selectedId);
+  const selected = meetings.find((m) => m.id === selectedId)
+    ?? (selectedMeeting?.id === selectedId ? selectedMeeting : undefined);
 
   useEffect(() => {
     if (selected) setRenameDraft(String(selected.title ?? ''));
@@ -451,9 +537,9 @@ export default function HistoryPane({
         setTranscriptComplete(false);
       }
       // A retry can include audio re-decoding or speaker relabeling, so replace
-      // the entire client transcript rather than leaving its old 500-row page.
+      // visible transcript page so it cannot retain stale labels after a retry.
       try {
-        await loadCompleteMeeting(meetingId, (state, segments, complete) => {
+        await loadMeetingPage(meetingId, (state, segments, complete) => {
           if (selectedIdRef.current !== meetingId) return;
           setDetail(state);
           setDetailSegments(segments);
@@ -498,7 +584,7 @@ export default function HistoryPane({
         }
       }
       try {
-        await loadCompleteMeeting(meetingId, (state, segments, complete) => {
+        await loadMeetingPage(meetingId, (state, segments, complete) => {
           if (selectedIdRef.current !== meetingId) return;
           setDetail(state);
           setDetailSegments(segments);
@@ -534,7 +620,18 @@ export default function HistoryPane({
 
   const handleEvidenceClick = useCallback((segmentId: string) => {
     setHighlightSegmentId(segmentId);
-  }, []);
+    const meetingId = selectedIdRef.current;
+    const controller = detailController.current;
+    if (!meetingId || !controller || detailSegments.some(segment => segment.id === segmentId)) return;
+    void api.segment(token, meetingId, segmentId, controller.signal).then(segment => {
+      if (!controller.signal.aborted && selectedIdRef.current === meetingId) {
+        loadedSegments.current = [...new Map([...loadedSegments.current, segment].map(row => [row.id, row])).values()];
+        setDetailSegments(loadedSegments.current);
+      }
+    }).catch(err => {
+      if (!controller.signal.aborted) setDetailError(err instanceof Error ? err.message : 'Could not load the source');
+    });
+  }, [token, detailSegments]);
 
   const detailPeople = useMemo(
     () => (detail ? Object.values(detail.participants ?? {}) : []),
@@ -662,8 +759,8 @@ export default function HistoryPane({
               <h2 id="meeting-history-heading" className="shelf-heading">Past meetings</h2>
               {!loading && (
                 <span className="shelf-heading-count">
-                  {filtersActive ? `${filtered.length} of ${meetings.length}` : meetings.length}{' '}
-                  {meetings.length === 1 ? 'meeting' : 'meetings'}
+                  {filtersActive && filtered.length !== meetings.length ? `${filtered.length} of ${meetings.length}` : filtered.length}{' '}
+                  {meetings.length === 1 ? 'meeting' : 'meetings'}{listCursor ? ' loaded' : ''}
                 </span>
               )}
             </>
@@ -752,7 +849,7 @@ export default function HistoryPane({
             {loading ? (
               <p className="empty-state" role="status" aria-live="polite">Loading past meetings…</p>
             ) : meetings.length === 0 ? (
-              <p className="empty-state">No past meetings recorded.</p>
+              <p className="empty-state">{filtersActive ? 'No meetings in this page match these filters.' : 'No past meetings recorded.'}</p>
             ) : filtered.length === 0 ? (
               <p className="empty-state">No meetings match these filters.</p>
             ) : groups.map((group) => (
@@ -799,6 +896,9 @@ export default function HistoryPane({
                 </ul>
               </section>
             ))}
+            {listCursor && <button type="button" disabled={loadingMore} onClick={() => void loadMeetings(listCursor)}>
+              {loadingMore ? 'Loading meetings…' : 'Load more meetings'}
+            </button>}
           </div>
         </div>
         )}
@@ -929,7 +1029,7 @@ export default function HistoryPane({
                   durationS={selected.duration_s ?? undefined}
                   onSelect={pulse => {
                     setPlaybackMoment(pulse);
-                    setHighlightSegmentId(pulse.segment_id);
+                    handleEvidenceClick(pulse.segment_id);
                     playMoment(audioRef.current, pulse.start_s);
                   }} />}
 
@@ -957,8 +1057,9 @@ export default function HistoryPane({
                       audioRef={selected.has_audio === false ? undefined : audioRef}
                       audioKey={selected.id}
                       transcriptComplete={transcriptComplete}
+                      onPrepareFull={loadFullTranscript}
                       token={token}
-                      onState={setDetail}
+                      onState={state => { if (state.meeting_id === selectedIdRef.current) setDetail(state); }}
                     />
                   </div>
                 )}
@@ -1001,6 +1102,11 @@ export default function HistoryPane({
                     }}
                     readOnly
                   />
+                  {!transcriptComplete && <button type="button" disabled={transcriptLoading} onClick={() => {
+                    void loadTranscriptPage().catch(err => {
+                      if (err?.name !== 'AbortError') setDetailError(err instanceof Error ? err.message : 'Failed to load transcript');
+                    });
+                  }}>{transcriptLoading ? 'Loading transcript…' : 'Load more transcript'}</button>}
                 </section>
               </div>
             )}

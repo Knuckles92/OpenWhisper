@@ -206,11 +206,27 @@ def test_a_text_endpoint_meeting_rerun_on_a_newly_chosen_agent(no_pi):
     assert (route.kind, route.provider, route.model) == ("claude_code", "claude_code", "")
 
 
-def test_a_new_meeting_without_pi_uses_the_direct_core(no_pi):
+def test_a_new_meeting_without_pi_keeps_pi_without_a_fallback(no_pi):
     from services.meeting_agent_route import resolve_meeting_agent_route
 
     route = resolve_meeting_agent_route({SettingsKey.MEETING_AGENT_CORE: "pi"})
-    assert route.kind == "direct" and route.endpoint is not None
+    assert route.kind == "pi" and route.endpoint is not None
+    assert route.payload_dir is None
+
+
+@pytest.mark.parametrize("meeting", [None, {
+    "agent_provider": "openrouter", "agent_model": "deepseek/saved",
+}])
+def test_retired_direct_route_migrates_to_pi_for_new_and_saved_meetings(no_pi, meeting):
+    from services.meeting_agent_route import resolve_meeting_agent_route
+
+    settings = {SettingsKey.MEETING_AGENT_CORE: "direct",
+                SettingsKey.MEETING_LLM_PROVIDER: "openrouter",
+                SettingsKey.MEETING_LLM_MODEL: "deepseek/current"}
+    route = resolve_meeting_agent_route(settings, meeting)
+    assert route.kind == "pi" and route.payload_dir is None
+    assert route.provider == "openrouter" and route.endpoint is not None
+    assert route.model == ("deepseek/saved" if meeting else "deepseek/current")
 
 
 def test_packaged_opencode_and_installed_opencode_have_distinct_routes(monkeypatch):

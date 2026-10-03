@@ -256,12 +256,11 @@ class CustomTitleBar(QFrame):
 from ui_qt.widgets import (
     Button,
     HistorySidebar, HistoryEdgeTab, HotkeyHintFilter,
-    TabbedContentWidget, QuickRecordTab, UploadFileTab, MeetingModeTab,
+    TabbedContentWidget, QuickRecordTab,
     CompactRecordController,
 )
 from services.history_manager import history_manager
 from ui_qt.dialogs.history_entry_dialog import HistoryEntryDialog
-from ui_qt.widgets.host_dashboard import HostDashboard
 
 
 class MainWindow(QMainWindow):
@@ -304,6 +303,7 @@ class MainWindow(QMainWindow):
     past_meeting_copy_requested = pyqtSignal(str)
     past_meeting_delete_requested = pyqtSignal(str, bool)
     past_meetings_clear_requested = pyqtSignal(bool)
+    screen_created = pyqtSignal(str, object)
 
     def __init__(self):
         super().__init__()
@@ -340,6 +340,10 @@ class MainWindow(QMainWindow):
         # tests that instantiate MainWindow without a tray manager.
         self._tray_available = True
         self._initial_show_complete = False
+        self._screen_widgets = {}
+        self._screen_updates = {"upload": {}, "meeting": {}, "host": {}}
+        self._shared_tab_updates = {}
+        self._host_service = None
         self._compact_mode = False
         self._full_geometry = None
         self._host_mode = False
@@ -440,16 +444,11 @@ class MainWindow(QMainWindow):
 
         self.tabbed_content.add_tab(self.quick_record_tab, "Quick Record")
 
-        self.upload_file_tab = UploadFileTab()
-        self.tabbed_content.add_tab(self.upload_file_tab, "Upload File")
-
-        self.meeting_mode_tab = MeetingModeTab()
-        self.meeting_mode_tab.content_height_changed.connect(
-            self._schedule_meeting_mode_height_sync
-        )
-        self.tabbed_content.add_tab(self.meeting_mode_tab, "Meeting Mode")
-
-        self.transcription_tabs = (self.quick_record_tab, self.upload_file_tab)
+        self._screen_placeholders = {}
+        for key, label in (("upload", "Upload File"), ("meeting", "Meeting Mode")):
+            placeholder = QWidget()
+            self._screen_placeholders[key] = placeholder
+            self.tabbed_content.add_tab(placeholder, label)
 
         # Sync the stack with the tab bar after all tabs have been added
         # (fixes timing issue where tab bar index is restored before stack has widgets)
@@ -469,41 +468,17 @@ class MainWindow(QMainWindow):
 
         self.tabbed_content.tab_changed.connect(self._on_tab_changed)
 
-        for tab in self.transcription_tabs:
-            tab.model_changed.connect(self._on_model_changed)
-            tab.engine_settings_changed.connect(self._on_engine_settings_changed)
-            tab.remote_model_selected.connect(self.remote_model_selected)
-            tab.remote_runtime_selected.connect(self.remote_runtime_selected)
-            tab.remote_retry_requested.connect(self.remote_retry_requested)
-            tab.live_preview_changed.connect(self._on_live_preview_changed)
-            tab.help_requested.connect(self.engine_help_requested)
-            tab.engine_downloads_requested.connect(
-                lambda: self.settings_destination_requested.emit("engine_downloads")
-            )
-            tab.transcription_collapsed.connect(self._on_transcription_collapsed)
-            tab.stats_widget.visibility_changed.connect(self._on_stats_visibility_changed)
+        self._connect_transcription_tab(self.quick_record_tab)
 
         self.quick_record_tab.record_toggled.connect(self._on_quick_record_toggled)
         self.quick_record_tab.record_canceled.connect(self._on_quick_record_canceled)
         self.quick_record_tab.copy_requested.connect(self.quick_record_copy_requested)
-        self.upload_file_tab.upload_requested.connect(self._on_upload_file_transcribe)
-        self.upload_file_tab.upload_files_requested.connect(
-            self.upload_files_requested.emit
-        )
-        self.upload_file_tab.cancel_requested.connect(self.upload_cancel_requested.emit)
-        self.upload_file_tab.copy_requested.connect(self.upload_copy_requested.emit)
 
         main_area_layout.addWidget(self.tabbed_content)
         main_area_layout.addWidget(self.compact_controller)
 
         # View → Host Mode shows this instead of the tabs (see set_host_mode).
-        self.host_dashboard = HostDashboard()
-        self.host_dashboard.hide()
-        self.host_dashboard.model_requested.connect(self.host_model_selected)
-        self.host_dashboard.settings_requested.connect(
-            self.settings_destination_requested
-        )
-        main_area_layout.addWidget(self.host_dashboard)
+        self._main_area_layout = main_area_layout
 
         root_layout.addWidget(main_area, stretch=1)
 
@@ -539,6 +514,125 @@ class MainWindow(QMainWindow):
         self._on_tab_changed(self.tabbed_content.current_index())
 
         self._build_footer(outer_layout)
+
+    def _connect_transcription_tab(self, tab):
+        tab.model_changed.connect(self._on_model_changed)
+        tab.engine_settings_changed.connect(self._on_engine_settings_changed)
+        tab.remote_model_selected.connect(self.remote_model_selected)
+        tab.remote_runtime_selected.connect(self.remote_runtime_selected)
+        tab.remote_retry_requested.connect(self.remote_retry_requested)
+        tab.live_preview_changed.connect(self._on_live_preview_changed)
+        tab.help_requested.connect(self.engine_help_requested)
+        tab.engine_downloads_requested.connect(
+            lambda: self.settings_destination_requested.emit("engine_downloads")
+        )
+        tab.transcription_collapsed.connect(self._on_transcription_collapsed)
+        tab.stats_widget.visibility_changed.connect(self._on_stats_visibility_changed)
+
+    def existing_transcription_tabs(self):
+        if not isinstance(getattr(self, "_screen_widgets", None), dict):
+            return getattr(self, "transcription_tabs", ())
+        upload = self._screen_widgets.get("upload")
+        return (self.quick_record_tab, upload) if upload is not None else (self.quick_record_tab,)
+
+    @property
+    def transcription_tabs(self):
+        """Explicit callers retain access to both recording surfaces."""
+        return self.quick_record_tab, self.upload_file_tab
+
+    @property
+    def upload_file_tab(self):
+        return self._ensure_screen("upload")
+
+    @property
+    def meeting_mode_tab(self):
+        return self._ensure_screen("meeting")
+
+    @property
+    def host_dashboard(self):
+        return self._ensure_screen("host")
+
+    def _ensure_screen(self, key):
+        if key in self._screen_widgets:
+            return self._screen_widgets[key]
+        if key == "upload":
+            from ui_qt.widgets.upload_file_tab import UploadFileTab
+
+            widget = UploadFileTab()
+        elif key == "meeting":
+            from ui_qt.widgets.meeting_mode_tab import MeetingModeTab
+
+            widget = MeetingModeTab()
+        else:
+            from ui_qt.widgets.host_dashboard import HostDashboard
+
+            widget = HostDashboard()
+        self._screen_widgets[key] = widget
+        if key == "host":
+            widget.hide()
+            widget.model_requested.connect(self.host_model_selected)
+            widget.settings_requested.connect(self.settings_destination_requested)
+            self._main_area_layout.addWidget(widget)
+            if self._host_service is not None:
+                widget.bind(self._host_service)
+        else:
+            stack = self.tabbed_content.stack
+            placeholder = self._screen_placeholders.pop(key)
+            index = stack.indexOf(placeholder)
+            current = stack.currentIndex()
+            stack.removeWidget(placeholder)
+            stack.insertWidget(index, widget)
+            stack.setCurrentIndex(current)
+            placeholder.deleteLater()
+            if key == "upload":
+                self._connect_transcription_tab(widget)
+                widget.upload_requested.connect(self._on_upload_file_transcribe)
+                widget.upload_files_requested.connect(self.upload_files_requested.emit)
+                widget.cancel_requested.connect(self.upload_cancel_requested.emit)
+                widget.copy_requested.connect(self.upload_copy_requested.emit)
+                widget.set_model_selection(settings_manager.load_model_selection())
+                self._apply_local_engine_visibility(self.current_model)
+                for method, (args, kwargs) in self._shared_tab_updates.items():
+                    getattr(widget, method)(*args, **kwargs)
+            else:
+                widget.content_height_changed.connect(self._schedule_meeting_mode_height_sync)
+        for method, (args, kwargs) in self._screen_updates[key].items():
+            if isinstance(method, tuple):
+                method = method[0]
+            getattr(widget, method)(*args, **kwargs)
+        self.screen_created.emit(key, widget)
+        return widget
+
+    def update_screen(self, key, method, *args, **kwargs):
+        """Retain the latest runtime values until an inactive screen opens."""
+        if key == "meeting" and method == "set_meeting_state":
+            previous = self._screen_updates[key].get(method, (({},), {}))[0][0]
+            args = ({**previous, **args[0]},)
+        cache_key = (method, args[0]) if method == "set_model_downloading" else method
+        self._screen_updates[key].pop(cache_key, None)
+        self._screen_updates[key][cache_key] = (args, kwargs)
+        widget = self._screen_widgets.get(key)
+        if widget is not None:
+            getattr(widget, method)(*args, **kwargs)
+
+    def update_transcription_tabs(self, method, *args, **kwargs):
+        self._shared_tab_updates.pop(method, None)
+        self._shared_tab_updates[method] = (args, kwargs)
+        for tab in MainWindow.existing_transcription_tabs(self):
+            getattr(tab, method)(*args, **kwargs)
+
+    def bind_host_service(self, service):
+        self._host_service = service
+        host = self._screen_widgets.get("host")
+        if host is not None:
+            host.bind(service)
+
+    def meeting_is_active(self):
+        meeting = self._screen_widgets.get("meeting")
+        if meeting is not None:
+            return meeting.is_meeting_active
+        state = self._screen_updates["meeting"].get("set_meeting_state", (({},), {}))[0][0]
+        return bool(state.get("active"))
 
     _FOOTER_BAR_STYLE = """
         QWidget#footerBar {
@@ -722,7 +816,7 @@ class MainWindow(QMainWindow):
     def _load_saved_settings(self):
         try:
             saved_model = settings_manager.load_model_selection()
-            for tab in self.transcription_tabs:
+            for tab in MainWindow.existing_transcription_tabs(self):
                 tab.set_model_selection(saved_model)
             self.current_model = self.quick_record_tab.current_model
             self._apply_local_engine_visibility(self.current_model)
@@ -732,6 +826,10 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index: int):
         logger.debug(f"Tab changed to index {index}")
+        if index == TabbedContentWidget.TAB_UPLOAD_FILE:
+            self._ensure_screen("upload")
+        elif index == TabbedContentWidget.TAB_MEETING_MODE:
+            self._ensure_screen("meeting")
 
         if self._compact_mode and index != TabbedContentWidget.TAB_QUICK_RECORD:
             self.set_compact_mode(False)
@@ -831,7 +929,7 @@ class MainWindow(QMainWindow):
         self.is_recording = False
         self.compact_controller.set_recording_state(False)
         self.compact_controller.set_status("Ready to record")
-        if not self.meeting_mode_tab.is_meeting_active:
+        if not self.meeting_is_active():
             self.tabbed_content.set_recording_state(False, -1)
 
         self.record_canceled.emit()
@@ -840,7 +938,7 @@ class MainWindow(QMainWindow):
         self.current_model = model_name
 
         # Sync the other tabs without re-emitting the signal
-        for tab in self.transcription_tabs:
+        for tab in MainWindow.existing_transcription_tabs(self):
             tab.set_backend(model_name)
 
         self._apply_local_engine_visibility(model_name)
@@ -851,7 +949,9 @@ class MainWindow(QMainWindow):
         from services.local_asr.catalog import BACKENDS
         backend = config.MODEL_VALUE_MAP.get(model_name)
         is_local = backend == "local_whisper" or backend in BACKENDS
-        for tab in self.transcription_tabs:
+        tabs = (MainWindow.existing_transcription_tabs(self) if hasattr(self, "existing_transcription_tabs")
+                else self.transcription_tabs)
+        for tab in tabs:
             tab.set_local_engine_visible(is_local)
 
     def _on_engine_settings_changed(self):
@@ -863,7 +963,7 @@ class MainWindow(QMainWindow):
         and guarantees the two tabs always agree. ``whisper_engine_changed`` then
         triggers the controller's background reload.
         """
-        for tab in self.transcription_tabs:
+        for tab in MainWindow.existing_transcription_tabs(self):
             tab.local_engine.load_from_settings()
         self.whisper_engine_changed.emit()
 
@@ -878,7 +978,7 @@ class MainWindow(QMainWindow):
         self.live_preview_changed.emit()
 
     def refresh_live_preview_controls(self):
-        for tab in self.transcription_tabs:
+        for tab in MainWindow.existing_transcription_tabs(self):
             tab.load_live_preview_setting()
 
     def _on_upload_file_transcribe(
@@ -896,7 +996,7 @@ class MainWindow(QMainWindow):
 
         if self.is_recording:
             self.tabbed_content.set_recording_state(True, TabbedContentWidget.TAB_QUICK_RECORD)
-        elif not self.meeting_mode_tab.is_meeting_active:
+        elif not self.meeting_is_active():
             self.tabbed_content.set_recording_state(False, -1)
 
     def set_status(self, status_text: str):
@@ -904,21 +1004,17 @@ class MainWindow(QMainWindow):
         self.compact_controller.set_status(status_text)
 
     def set_device_info(self, device_info: str, ready: Optional[bool] = None):
-        for tab in self.transcription_tabs:
-            tab.set_device_info(device_info, ready)
-        self.host_dashboard.set_device_info(device_info, ready)
+        self.update_transcription_tabs("set_device_info", device_info, ready)
+        self.update_screen("host", "set_device_info", device_info, ready)
 
     def set_remote_models(self, choices):
-        for tab in self.transcription_tabs:
-            tab.set_remote_models(choices)
+        self.update_transcription_tabs("set_remote_models", choices)
 
     def set_remote_link(self, link):
-        for tab in self.transcription_tabs:
-            tab.set_remote_link(link)
+        self.update_transcription_tabs("set_remote_link", link)
 
     def set_remote_clients(self, clients):
-        for tab in self.transcription_tabs:
-            tab.set_remote_clients(clients)
+        self.update_transcription_tabs("set_remote_clients", clients)
 
     def set_transcript(self, text: str, raw=None):
         self.quick_record_tab.set_transcript(text, raw=raw)
@@ -961,7 +1057,8 @@ class MainWindow(QMainWindow):
             delta: The body height that was hidden/shown, in pixels.
         """
         source = self.sender()
-        for tab in self.transcription_tabs:
+        self._shared_tab_updates["set_transcription_collapsed"] = ((collapsed,), {})
+        for tab in MainWindow.existing_transcription_tabs(self):
             if tab is not source:
                 tab.set_transcription_collapsed(collapsed)
 
@@ -1837,11 +1934,11 @@ class MainWindow(QMainWindow):
                         # was expanded must not leave its now-hidden body as blank
                         # vertical space. Apply this independently of window width
                         # (users can resize the main workspace horizontally).
+                        tabs = MainWindow.existing_transcription_tabs(self)
                         transcript_collapsed = (
-                            hasattr(self, "transcription_tabs")
-                            and all(
+                            bool(tabs) and all(
                                 tab.is_transcription_collapsed()
-                                for tab in self.transcription_tabs
+                                for tab in tabs
                             )
                         )
                         if transcript_collapsed:

@@ -124,6 +124,51 @@ def test_quit_during_native_model_construction_cannot_publish_model(native_worke
     assert all(p.poll() is not None for p in processes)
 
 
+def test_external_startup_cancel_interrupts_native_model_load(native_worker, monkeypatch):
+    from transcriber.local_backend import LocalWhisperBackend
+    started, processes = native_worker
+    monkeypatch.setattr("transcriber.local_backend.WhisperModel", isolated.IsolatedWhisperModel)
+    monkeypatch.setattr(LocalWhisperBackend, "_detect_hardware", lambda self: ("cpu", "int8", "block-load"))
+    monkeypatch.setattr("services.hf_access.is_model_cached", lambda _: True)
+    backend = LocalWhisperBackend("block-load", load=False)
+    cancel = threading.Event()
+    try:
+        with ThreadPoolExecutor() as executor:
+            pending = executor.submit(backend._load_model, cancel_event=cancel)
+            wait_for_file(started)
+            cancel.set()
+            pending.result(timeout=3)
+        assert backend.model is None
+        assert not backend.is_available()
+        assert all(p.poll() is not None for p in processes)
+    finally:
+        backend.cleanup()
+
+
+def test_deferred_meeting_stop_reaps_loading_native_model(native_worker, monkeypatch):
+    from meeting.asr.engine import MeetingAsrEngine
+    from transcriber.local_backend import LocalWhisperBackend
+    started, processes = native_worker
+    monkeypatch.setattr("transcriber.local_backend.WhisperModel", isolated.IsolatedWhisperModel)
+    monkeypatch.setattr(LocalWhisperBackend, "_detect_hardware", lambda self: ("cpu", "int8", "block-load"))
+    monkeypatch.setattr("services.hf_access.is_model_cached", lambda _: True)
+    engine = MeetingAsrEngine("block-load", "m_cancel", object(), defer_load=True)
+    assert processes == []
+    try:
+        with ThreadPoolExecutor() as executor:
+            pending = executor.submit(engine.load_backend)
+            wait_for_file(started)
+            assert engine._backend is not None
+            engine.stop()
+            assert pending.result(timeout=3) is False
+        assert engine._backend is None
+        assert not engine.is_available
+        assert engine._thread is None
+        assert all(p.poll() is not None for p in processes)
+    finally:
+        engine.stop()
+
+
 def test_hub_cancel_interrupts_download_without_waiting_for_next_byte(native_worker):
     from services.hf_access import download_model_files
     _, processes = native_worker

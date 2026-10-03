@@ -142,6 +142,45 @@ def test_launch_reports_starting_without_claiming_active(runtime, monkeypatch):
     worker.start.assert_called_once()
 
 
+def test_build_options_defers_missing_speaker_download(runtime, monkeypatch):
+    rt, _controller = runtime
+    monkeypatch.setattr(_RUNTIME_GLOBALS["settings_manager"], "load_all_settings",
+                        lambda: {SettingsKey.MEETING_SPEAKER_ID_BACKEND: MeetingSpeakerIdBackend.LOCAL})
+    monkeypatch.setitem(_RUNTIME_GLOBALS, "speaker_model_path", lambda: None)
+    downloads = []
+    resolver = lambda: downloads.append("download") or "/downloaded/model.onnx"
+    monkeypatch.setitem(_RUNTIME_GLOBALS, "ensure_speaker_model", resolver)
+    options = rt._build_options(False)
+    assert downloads == []
+    assert options.diarization_model_path is None
+    assert options.diarization_model_resolver is resolver
+
+
+def test_completed_start_does_not_reactivate_a_cancelled_engine(runtime, monkeypatch):
+    rt, controller = runtime
+    states = []
+    controller.meeting_state_changed.connect(lambda payload: states.append(dict(payload)))
+
+    class EndedEngine:
+        def __init__(self, *args, **kwargs):
+            self._processing_stop = threading.Event()
+
+        def add_listener(self, listener):
+            pass
+
+        def start(self):
+            self._processing_stop.set()
+            return {"host_url": "http://127.0.0.1:8765/host"}
+
+    monkeypatch.setattr("meeting.engine.MeetingEngine", EndedEngine)
+    monkeypatch.setattr(rt, "_build_options", lambda *args, **kwargs: object())
+    rt._starting = True
+    rt._start_worker(False)
+    assert not rt._starting
+    assert not controller.meeting_active
+    assert not any(payload.get("active") for payload in states)
+
+
 def test_start_worker_failure_rolls_back_active_state(runtime, monkeypatch):
     rt, controller = runtime
     states = []

@@ -148,7 +148,7 @@ class _DialogTestCase:
             SettingsKey.MEETING_LANGUAGE: "auto",
             SettingsKey.MEETING_LLM_PROVIDER: "openrouter",
             SettingsKey.MEETING_LLM_MODEL: "deepseek/test-model",
-            SettingsKey.MEETING_AGENT_CORE: MeetingAgentCore.DIRECT,
+            SettingsKey.MEETING_AGENT_CORE: MeetingAgentCore.PI,
             SettingsKey.MEETING_SPEAKER_ID_BACKEND: MeetingSpeakerIdBackend.LOCAL,
             SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "openai",
             SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "gpt-test",
@@ -594,16 +594,18 @@ class TestMeetingDestinations(_DialogTestCase):
         assert values[SettingsKey.MEETING_LLM_MODEL] == "other-local"
 
     def test_meeting_language_and_core_persist(self):
-        dialog, values = self._make_meeting_dialog()
+        with patch.object(dialog_module, "meeting_agent_payload_dir", return_value="C:/payload"):
+            dialog, values = self._make_meeting_dialog()
         language_index = dialog.meeting_language_combo.findData("en")
         dialog.meeting_language_combo.setCurrentIndex(language_index)
         core_index = dialog.meeting_agent_core_combo.findData(
-            MeetingAgentCore.DIRECT
+            MeetingAgentCore.OPENCODE
         )
         dialog.meeting_agent_core_combo.setCurrentIndex(core_index)
 
         assert values[SettingsKey.MEETING_LANGUAGE] == "en"
-        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.DIRECT
+        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.OPENCODE
+        assert dialog.meeting_agent_picker.tiles[agent_picker.BUILTIN].name_label.text() == "OpenCode SDK"
         assert dialog.rail.value(MEETING_VOICE).endswith("· English")
 
     def test_speaker_id_combo_includes_off_and_persists(self):
@@ -732,19 +734,24 @@ class TestMeetingDestinations(_DialogTestCase):
             dialog, _values = self._make_meeting_dialog(
                 extra={SettingsKey.MEETING_AGENT_CORE: MeetingAgentCore.PI}
             )
-        assert dialog.meeting_agent_core_combo.currentData() == MeetingAgentCore.DIRECT
+        assert dialog.meeting_agent_core_combo.currentData() == MeetingAgentCore.PI
+        assert "Pi" in dialog.meeting_agent_core_notice.text()
+        assert "no direct API fallback" in dialog.meeting_agent_core_notice.text()
+        assert not dialog.meeting_agent_core_notice.isHidden()
 
         with patch.object(
             dialog_module, "meeting_agent_payload_dir", return_value="C:/payload"
         ):
             dialog.refresh_component_state()
         assert dialog.meeting_agent_core_combo.currentData() == MeetingAgentCore.PI
+        assert dialog.meeting_agent_core_notice.isHidden()
 
     def test_agent_core_combo_lists_only_the_built_in_cores(self):
         dialog, _values = self._make_meeting_dialog()
         combo = dialog.meeting_agent_core_combo
         cores = [combo.itemData(i) for i in range(combo.count())]
-        assert cores == [MeetingAgentCore.PI, MeetingAgentCore.DIRECT, MeetingAgentCore.OPENCODE]
+        assert cores == [MeetingAgentCore.PI, MeetingAgentCore.OPENCODE]
+        assert all("Standard API" not in combo.itemText(i) for i in range(combo.count()))
         assert "Downloads" not in dialog.meeting_model_tile.description_label.text()
         assert dialog_module.agent_core_label(MeetingAgentCore.CLAUDE_CODE) == "Claude Code"
         assert dialog_module.agent_core_label(MeetingAgentCore.OPENCODE_CLI) == "OpenCode"
@@ -799,13 +806,14 @@ class TestMeetingAgentChoice(_DialogTestCase):
         assert "Claude Team" in picker.usage_label.text()
 
     def test_built_in_core_shows_the_chat_model_tile(self):
-        dialog, _values = self._make_agent_dialog(MeetingAgentCore.DIRECT)
+        dialog, _values = self._make_agent_dialog(MeetingAgentCore.PI)
         assert dialog.meeting_agent_picker.choice() == agent_picker.BUILTIN
+        assert dialog.meeting_agent_picker.tiles[agent_picker.BUILTIN].name_label.text() == "Pi"
         assert not dialog.meeting_model_tile.isHidden()
         assert dialog.rail.value(MEETING_TEXT) == "OpenRouter · deepseek/test-model"
 
-    def test_choosing_an_agent_saves_it_and_openwhisper_restores_direct(self):
-        dialog, values = self._make_agent_dialog(MeetingAgentCore.DIRECT)
+    def test_choosing_an_agent_saves_it_and_openwhisper_restores_pi_even_if_missing(self):
+        dialog, values = self._make_agent_dialog(MeetingAgentCore.PI)
         picker = dialog.meeting_agent_picker
         picker.tiles[MeetingAgentCore.CODEX].clicked.emit(MeetingAgentCore.CODEX)
         assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.CODEX
@@ -814,7 +822,9 @@ class TestMeetingAgentChoice(_DialogTestCase):
         assert dialog.rail.value(MEETING_TEXT) == "Codex · default model"
 
         picker.tiles[agent_picker.BUILTIN].clicked.emit(agent_picker.BUILTIN)
-        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.DIRECT
+        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.PI
+        assert dialog.meeting_agent_core_combo.currentData() == MeetingAgentCore.PI
+        assert not dialog.meeting_agent_core_notice.isHidden()
         assert not dialog.meeting_model_tile.isHidden()
 
     def test_openwhisper_restores_pi_when_it_was_the_last_built_in_core(self):
@@ -896,8 +906,19 @@ class TestMeetingAgentChoice(_DialogTestCase):
         assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.OPENCODE_CLI
         assert dialog.rail.value(MEETING_TEXT) == "OpenCode · not installed"
 
+    def test_legacy_direct_selection_shows_pi_without_an_api_option(self):
+        dialog, values = self._make_agent_dialog(MeetingAgentCore.DIRECT)
+        assert dialog.meeting_agent_core() == MeetingAgentCore.PI
+        assert dialog.meeting_agent_core_combo.currentData() == MeetingAgentCore.PI
+        assert dialog.meeting_agent_core_combo.findData(MeetingAgentCore.DIRECT) == -1
+        assert not dialog.meeting_agent_core_notice.isHidden()
+        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.DIRECT
+        dialog.meeting_agent_picker.tiles[MeetingAgentCore.CODEX].clicked.emit(MeetingAgentCore.CODEX)
+        dialog.meeting_agent_picker.tiles[agent_picker.BUILTIN].clicked.emit(agent_picker.BUILTIN)
+        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.PI
+
     def test_opening_intelligence_uses_the_cached_scan(self):
-        dialog, _values = self._make_agent_dialog(MeetingAgentCore.DIRECT)
+        dialog, _values = self._make_agent_dialog(MeetingAgentCore.PI)
         with patch.object(agent_picker, "scan_installed_agents") as scan:
             dialog.on_destination_shown(MEETING_INTELLIGENCE)
         scan.assert_not_called()
@@ -1014,7 +1035,7 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                     SettingsKey.MEETING_LLM_PROVIDER: "openai",
                     SettingsKey.MEETING_LLM_MODEL: "gpt-4o-mini",
                     SettingsKey.MEETING_LANGUAGE: "fr",
-                    SettingsKey.MEETING_AGENT_CORE: MeetingAgentCore.DIRECT,
+                    SettingsKey.MEETING_AGENT_CORE: MeetingAgentCore.PI,
                     SettingsKey.MEETING_SPEAKER_ID_BACKEND: (
                         MeetingSpeakerIdBackend.OPENAI
                     ),
@@ -1034,7 +1055,7 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                 )
                 assert dialog.rail.value(MEETING_VOICE) == "tiny · French"
                 assert dialog.rail.value(MEETING_INTELLIGENCE) == "OpenAI · gpt-4o-mini"
-                assert dialog.models.meeting_agent_core_label() == "Direct (no sidecar)"
+                assert dialog.models.meeting_agent_core_label() == "Pi (sidecar)"
                 assert dialog.models.speaker_id_is_remote()
                 dialog.meeting_end_polish_check.setChecked(
                     not dialog.meeting_end_polish_check.isChecked()
@@ -1045,7 +1066,7 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
             assert saved[SettingsKey.MEETING_LLM_PROVIDER] == "openai"
             assert saved[SettingsKey.MEETING_LLM_MODEL] == "gpt-4o-mini"
             assert saved[SettingsKey.MEETING_LANGUAGE] == "fr"
-            assert saved[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.DIRECT
+            assert saved[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.PI
             assert saved[SettingsKey.MEETING_SPEAKER_ID_BACKEND] == MeetingSpeakerIdBackend.OPENAI
             assert saved[SettingsKey.TEXT_LLM_PROFILES][0]["id"] == "custom_abcd1234"
 
@@ -1089,8 +1110,10 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                 assert entries[0].target is picker
                 assert entries[0].destination == MEETING_INTELLIGENCE
                 assert "claude code" in entries[0].keywords
+                assert "pi" in entries[0].keywords.split()
                 heading, subtitle = dialog._headings[MEETING_INTELLIGENCE]
-                assert "coding agent" in subtitle and "built-in engine" in subtitle
+                assert "coding agent" in subtitle and "Pi" in subtitle
+                assert "OpenWhisper's built-in engine" not in subtitle
 
 
 class TestApiModelSelection(_DialogTestCase):

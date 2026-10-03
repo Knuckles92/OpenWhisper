@@ -203,7 +203,7 @@ class LocalWhisperBackend(TranscriptionBackend):
         """True when construction skipped ``_load_model`` and nothing has tried yet."""
         return self._load_deferred
 
-    def _load_model(self):
+    def _load_model(self, *, cancel_event=None):
         """Load the faster-whisper model from the local cache only.
 
         Cache-first policy: cached models always load with
@@ -215,6 +215,8 @@ class LocalWhisperBackend(TranscriptionBackend):
         """
         self._load_deferred = False
         with self._model_lock:
+            if cancel_event is not None and cancel_event.is_set():
+                return
             generation = self._model_generation
             self.reset_cancel_flag()
         try:
@@ -254,11 +256,11 @@ class LocalWhisperBackend(TranscriptionBackend):
             )
 
             try:
-                self._construct_model(generation)
+                self._construct_model(generation, cancel_event=cancel_event)
             except Exception as gpu_error:
-                if self.should_cancel:
+                if self.should_cancel or (cancel_event is not None and cancel_event.is_set()):
                     raise RuntimeError("Transcription canceled") from gpu_error
-                if not self._retry_on_cpu(gpu_error):
+                if not self._retry_on_cpu(gpu_error, cancel_event=cancel_event):
                     raise
 
             self._last_loaded_model = self.model_name
@@ -270,11 +272,12 @@ class LocalWhisperBackend(TranscriptionBackend):
                 self.model.close()
             self.model = None
 
-    def _construct_model(self, generation):
+    def _construct_model(self, generation, *, cancel_event=None):
         from services.whisper_sources import cached_model_path, is_custom_model
         name = cached_model_path(self.model_name) if is_custom_model(self.model_name) else self.model_name
         with self._model_lock:
-            if generation != self._model_generation or self.should_cancel:
+            if (generation != self._model_generation or self.should_cancel
+                    or (cancel_event is not None and cancel_event.is_set())):
                 raise RuntimeError("Transcription canceled")
             model = _whisper_model_class()(
                 name, device=self._device,
@@ -285,9 +288,10 @@ class LocalWhisperBackend(TranscriptionBackend):
         # model that hangs while loading as well as during inference.
         from services.isolated import IsolatedWhisperModel
         if isinstance(model, IsolatedWhisperModel):
-            model.load()
+            model.load(cancel=cancel_event)
         with self._model_lock:
-            if generation != self._model_generation or self.should_cancel:
+            if (generation != self._model_generation or self.should_cancel
+                    or (cancel_event is not None and cancel_event.is_set())):
                 if hasattr(model, "close"):
                     model.close()
                 raise RuntimeError("Transcription canceled")
@@ -353,7 +357,7 @@ class LocalWhisperBackend(TranscriptionBackend):
 
         return ("", "GPU load failed, using CPU", GpuFallbackCause.UNKNOWN)
 
-    def _retry_on_cpu(self, error: Exception) -> bool:
+    def _retry_on_cpu(self, error: Exception, *, cancel_event=None) -> bool:
         """Reload the model on the CPU after a GPU load failure.
 
         A CUDA device can be present while the libraries CTranslate2 needs are
@@ -396,7 +400,7 @@ class LocalWhisperBackend(TranscriptionBackend):
         previous = self.model
         if previous is not None and hasattr(previous, "close"):
             previous.close()
-        self._construct_model(self._model_generation)
+        self._construct_model(self._model_generation, cancel_event=cancel_event)
         logger.info(
             f"Loaded '{self.model_name}' on CPU "
             f"(compute_type={self._compute_type}) after GPU failure"

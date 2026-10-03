@@ -203,7 +203,7 @@ def stored_agent(
         provider: LLM provider id.
         model: Model id.
         endpoint: Endpoint snapshot; the row's when omitted.
-        agent_core_kind: ``pi``, ``direct``, or an installed agent id.
+        agent_core_kind: ``pi``, ``opencode``, or an installed agent id.
         sidecar_payload_dir: Directory holding the Pi sidecar payload.
 
     Yields:
@@ -258,7 +258,7 @@ def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
         meeting_id: The meeting to re-analyze.
         provider: LLM provider id for the agent core (e.g. ``openrouter``).
         model: Model id for the agent core.
-        agent_core_kind: ``pi``, ``direct``, or an installed agent id.
+        agent_core_kind: ``pi``, ``opencode``, or an installed agent id.
         sidecar_payload_dir: Directory holding the Pi sidecar payload.
         store: Optional existing ``MeetingStateStore`` (e.g. from an active engine).
         timeout_s: Budget for the consolidation pass.

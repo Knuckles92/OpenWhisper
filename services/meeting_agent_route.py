@@ -7,7 +7,6 @@ endpoint; otherwise the current settings decide.
 """
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
@@ -20,9 +19,6 @@ from services.settings import (
     resolve_meeting_llm_provider,
     settings_manager,
 )
-
-logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True)
 class MeetingAgentRoute:
@@ -72,9 +68,6 @@ def resolve_meeting_agent_route(
 
     payload_dir = meeting_agent_payload_dir(kind)
     if not meeting:
-        if kind == MeetingAgentCore.PI and payload_dir is None:
-            logger.info("Meeting agent component not installed; using the direct core")
-            kind = MeetingAgentCore.DIRECT
         return MeetingAgentRoute(
             kind,
             resolve_meeting_llm_provider(settings),
