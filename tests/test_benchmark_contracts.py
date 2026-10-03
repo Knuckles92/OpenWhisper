@@ -1,7 +1,7 @@
 """Executable validity contracts for benchmark output, without model calls."""
 from types import SimpleNamespace
 import json
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -70,9 +70,10 @@ def test_partial_polish_failure_is_not_completed():
 
 @pytest.mark.parametrize("content", ["", "{", "[]", "{}", '{"winner":"tie"}'])
 def test_invalid_judge_is_unjudged(monkeypatch, content):
-    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(
+    client = MagicMock(chat=SimpleNamespace(completions=SimpleNamespace(
         create=lambda **_: SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
     )))
+    client.__enter__.return_value = client
     monkeypatch.setattr(product, "_judge_client", lambda *_: client)
     result = product.judge_packages(meeting_id="m", description="", reference="hello",
         legacy={}, clean={}, provider="fake", model="fake", api_key="fake")
