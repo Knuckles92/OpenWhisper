@@ -1,0 +1,1810 @@
+{
+  "method": "Three shuffled sequential repetitions; production defaults; synthetic fixtures",
+  "manifest": {
+    "baseline_commit": "363734b2ba5cc0c952c93b925bd098d0c395304e",
+    "candidate_commit": "74bfc62b1d09427fb9b55018cda208886830894b",
+    "candidate_change": "Codex inherited MCP isolation and optional image/browser/worktree tools disabled",
+    "seed": 42,
+    "repeats": 3,
+    "synthetic_only": true,
+    "runs": [
+      {
+        "arm": "codex",
+        "repeat": 1,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\codex-1.json",
+        "exit_code": 0,
+        "wall_s": 72.11000000001513
+      },
+      {
+        "arm": "pi",
+        "repeat": 1,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\pi-1.json",
+        "exit_code": 0,
+        "wall_s": 58.34299999999348
+      },
+      {
+        "arm": "packaged_opencode",
+        "repeat": 1,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\packaged_opencode-1.json",
+        "exit_code": 0,
+        "wall_s": 134.26600000000326
+      },
+      {
+        "arm": "claude_default",
+        "repeat": 1,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\claude_default-1.json",
+        "exit_code": 0,
+        "wall_s": 6.296999999991385
+      },
+      {
+        "arm": "standard",
+        "repeat": 1,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\standard-1.json",
+        "exit_code": 0,
+        "wall_s": 165.48399999999674
+      },
+      {
+        "arm": "claude_haiku",
+        "repeat": 1,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\claude_haiku-1.json",
+        "exit_code": 0,
+        "wall_s": 1.687999999994645
+      },
+      {
+        "arm": "codex",
+        "repeat": 2,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\codex-2.json",
+        "exit_code": 0,
+        "wall_s": 78.03100000001723
+      },
+      {
+        "arm": "standard",
+        "repeat": 2,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\standard-2.json",
+        "exit_code": 1,
+        "wall_s": 558.1089999999967
+      },
+      {
+        "arm": "packaged_opencode",
+        "repeat": 2,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\packaged_opencode-2.json",
+        "exit_code": 0,
+        "wall_s": 139.43799999999464
+      },
+      {
+        "arm": "claude_default",
+        "repeat": 2,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\claude_default-2.json",
+        "exit_code": 0,
+        "wall_s": 1.5469999999913853
+      },
+      {
+        "arm": "claude_haiku",
+        "repeat": 2,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\claude_haiku-2.json",
+        "exit_code": 0,
+        "wall_s": 1.5310000000172295
+      },
+      {
+        "arm": "pi",
+        "repeat": 2,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\pi-2.json",
+        "exit_code": 0,
+        "wall_s": 67.46899999998277
+      },
+      {
+        "arm": "codex",
+        "repeat": 3,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\codex-3.json",
+        "exit_code": 0,
+        "wall_s": 82.76500000001397
+      },
+      {
+        "arm": "pi",
+        "repeat": 3,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\pi-3.json",
+        "exit_code": 0,
+        "wall_s": 77.68799999999464
+      },
+      {
+        "arm": "packaged_opencode",
+        "repeat": 3,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\packaged_opencode-3.json",
+        "exit_code": 0,
+        "wall_s": 214.04699999999139
+      },
+      {
+        "arm": "standard",
+        "repeat": 3,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\standard-3.json",
+        "exit_code": 1,
+        "wall_s": 400.9690000000119
+      },
+      {
+        "arm": "claude_default",
+        "repeat": 3,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\claude_default-3.json",
+        "exit_code": 0,
+        "wall_s": 2.312000000005355
+      },
+      {
+        "arm": "claude_haiku",
+        "repeat": 3,
+        "output": "D:\\coding\\whisper_local\\.tmp\\headless-agent-review-20261002\\claude_haiku-3.json",
+        "exit_code": 0,
+        "wall_s": 2.312999999994645
+      }
+    ]
+  },
+  "environment": {
+    "python": "3.12.10",
+    "os": "Windows-11-10.0.26200-SP0",
+    "arch": "AMD64",
+    "packages": {
+      "openai": "3.6.0",
+      "httpx": "0.28.1",
+      "pytest": "9.1.1",
+      "PyQt6": "6.11.0"
+    },
+    "bun": "1.3.14",
+    "pi": "0.84.1",
+    "opencode_sdk": "2.0.18",
+    "codex_cli": "0.160.0",
+    "claude_cli": "2.1.281",
+    "fixture_sha256": "78f091a042b10fec64266f15ae4809863caa9fe852e88a87951ec73fb4bec2d4"
+  },
+  "arms": {
+    "pi": {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "completed_runs": 3,
+      "expected_passes": 15,
+      "recorded_passes": 15,
+      "transport_successes": 15,
+      "passed_checks": 113,
+      "total_checks": 114,
+      "expected_checks": 114,
+      "pass_timings": {
+        "n": 12,
+        "median_s": 4.539,
+        "min_s": 2.312,
+        "max_s": 11.844
+      },
+      "startup_timings": {
+        "n": 9,
+        "median_s": 0.359,
+        "min_s": 0.344,
+        "max_s": 0.437
+      },
+      "phases": {
+        "live_cards": {
+          "timing": {
+            "n": 3,
+            "median_s": 10.078,
+            "min_s": 8.485,
+            "max_s": 11.844
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "21/21"
+        },
+        "live_notes": {
+          "timing": {
+            "n": 3,
+            "median_s": 5.813,
+            "min_s": 3.375,
+            "max_s": 7.187
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "17/18"
+        },
+        "human_guidance": {
+          "timing": {
+            "n": 3,
+            "median_s": 4.125,
+            "min_s": 2.312,
+            "max_s": 4.953
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "18/18"
+        },
+        "contextual_polish": {
+          "timing": {
+            "n": 3,
+            "median_s": 3.407,
+            "min_s": 3.094,
+            "max_s": 3.547
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "21/21"
+        },
+        "consolidation": {
+          "timing": {
+            "n": 3,
+            "median_s": 38.765,
+            "min_s": 38.719,
+            "max_s": 51.266
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "36/36"
+        }
+      },
+      "failed_checks": [
+        {
+          "repeat": 3,
+          "phase": "live_notes",
+          "checks": [
+            "budget_500"
+          ],
+          "transport_ok": true,
+          "error": null,
+          "censored": false
+        }
+      ],
+      "rejected_operations": {
+        "duplicate_item": 30
+      },
+      "raw_files": {
+        "pi-1.json": "e3d6e8ab75cc524f06141b16b86592c7bb7aa99f89fe0bca229ef11f97c716d4",
+        "pi-2.json": "56eff6a946b58b2b7a535de1b2abf9bc6dcef1a91a12cb0a4d9c955c078791f5",
+        "pi-3.json": "ddc9c2ef421f342111d2b9b7bf0c9fba8bf89207a0121b1ea8de7c86725a0b27"
+      },
+      "complete": true
+    },
+    "codex": {
+      "model": "gpt-6.1-sol",
+      "completed_runs": 3,
+      "expected_passes": 15,
+      "recorded_passes": 15,
+      "transport_successes": 15,
+      "passed_checks": 106,
+      "total_checks": 114,
+      "expected_checks": 114,
+      "pass_timings": {
+        "n": 12,
+        "median_s": 10.883,
+        "min_s": 6.156,
+        "max_s": 18.078
+      },
+      "startup_timings": {
+        "n": 9,
+        "median_s": 0.313,
+        "min_s": 0.265,
+        "max_s": 0.422
+      },
+      "phases": {
+        "live_cards": {
+          "timing": {
+            "n": 3,
+            "median_s": 14.156,
+            "min_s": 14.141,
+            "max_s": 14.781
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "21/21"
+        },
+        "live_notes": {
+          "timing": {
+            "n": 3,
+            "median_s": 9.688,
+            "min_s": 9.235,
+            "max_s": 9.937
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "12/18"
+        },
+        "human_guidance": {
+          "timing": {
+            "n": 3,
+            "median_s": 11.937,
+            "min_s": 11.829,
+            "max_s": 18.078
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "16/18"
+        },
+        "contextual_polish": {
+          "timing": {
+            "n": 3,
+            "median_s": 6.219,
+            "min_s": 6.156,
+            "max_s": 6.984
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "21/21"
+        },
+        "consolidation": {
+          "timing": {
+            "n": 3,
+            "median_s": 31.766,
+            "min_s": 26.203,
+            "max_s": 33.156
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "36/36"
+        }
+      },
+      "failed_checks": [
+        {
+          "repeat": 1,
+          "phase": "live_notes",
+          "checks": [
+            "budget_500",
+            "deadline"
+          ],
+          "transport_ok": true,
+          "error": null,
+          "censored": false
+        },
+        {
+          "repeat": 2,
+          "phase": "live_notes",
+          "checks": [
+            "budget_500",
+            "deadline"
+          ],
+          "transport_ok": true,
+          "error": null,
+          "censored": false
+        },
+        {
+          "repeat": 2,
+          "phase": "human_guidance",
+          "checks": [
+            "budget_preserved"
+          ],
+          "transport_ok": true,
+          "error": null,
+          "censored": false
+        },
+        {
+          "repeat": 3,
+          "phase": "live_notes",
+          "checks": [
+            "budget_500",
+            "deadline"
+          ],
+          "transport_ok": true,
+          "error": null,
+          "censored": false
+        },
+        {
+          "repeat": 3,
+          "phase": "human_guidance",
+          "checks": [
+            "budget_preserved"
+          ],
+          "transport_ok": true,
+          "error": null,
+          "censored": false
+        }
+      ],
+      "rejected_operations": {
+        "duplicate_item": 13,
+        "notes_only": 2
+      },
+      "raw_files": {
+        "codex-1.json": "eb5ec7c687873b12d21ca7302bf8f2ae4e87f6ead571000065fcbfce6f3d2a6d",
+        "codex-2.json": "1b4956c9676f08de339816c6ec9fd6337ab545f6772c2680f63e27a0d53c50ca",
+        "codex-3.json": "de97b38d8110d7bea083d90f09b89d9d2e9e80b3a7a22cc060adc4938e586b46"
+      },
+      "complete": true
+    },
+    "packaged_opencode": {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "completed_runs": 3,
+      "expected_passes": 15,
+      "recorded_passes": 15,
+      "transport_successes": 15,
+      "passed_checks": 114,
+      "total_checks": 114,
+      "expected_checks": 114,
+      "pass_timings": {
+        "n": 12,
+        "median_s": 10.031,
+        "min_s": 3.391,
+        "max_s": 30.0
+      },
+      "startup_timings": {
+        "n": 9,
+        "median_s": 2.469,
+        "min_s": 2.297,
+        "max_s": 2.813
+      },
+      "phases": {
+        "live_cards": {
+          "timing": {
+            "n": 3,
+            "median_s": 10.297,
+            "min_s": 7.141,
+            "max_s": 14.0
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "21/21"
+        },
+        "live_notes": {
+          "timing": {
+            "n": 3,
+            "median_s": 12.812,
+            "min_s": 9.766,
+            "max_s": 21.312
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "18/18"
+        },
+        "human_guidance": {
+          "timing": {
+            "n": 3,
+            "median_s": 22.313,
+            "min_s": 5.703,
+            "max_s": 30.0
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "18/18"
+        },
+        "contextual_polish": {
+          "timing": {
+            "n": 3,
+            "median_s": 4.36,
+            "min_s": 3.391,
+            "max_s": 4.547
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "21/21"
+        },
+        "consolidation": {
+          "timing": {
+            "n": 3,
+            "median_s": 91.687,
+            "min_s": 77.109,
+            "max_s": 146.969
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "36/36"
+        }
+      },
+      "failed_checks": [],
+      "rejected_operations": {
+        "duplicate_item": 24
+      },
+      "raw_files": {
+        "packaged_opencode-1.json": "1a99a6cd7f050258b8afee80b69056d2fec423835023c337a3381c06250bbf3d",
+        "packaged_opencode-2.json": "bbe3574be1a80513aeeb4040565a018220eadd2774f94dc9efe7b0aafaa598d9",
+        "packaged_opencode-3.json": "abcc22fc1603a7119fda0dcc007730a3f9bdc0ab9db43796278696f0cbdc3a8a"
+      },
+      "complete": true
+    },
+    "standard": {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "completed_runs": 3,
+      "expected_passes": 15,
+      "recorded_passes": 15,
+      "transport_successes": 13,
+      "passed_checks": 78,
+      "total_checks": 114,
+      "expected_checks": 114,
+      "pass_timings": {
+        "n": 12,
+        "median_s": 10.312,
+        "min_s": 1.235,
+        "max_s": 40.375
+      },
+      "startup_timings": {
+        "n": 7,
+        "median_s": 4.031,
+        "min_s": 2.203,
+        "max_s": 6.422
+      },
+      "phases": {
+        "live_cards": {
+          "timing": {
+            "n": 3,
+            "median_s": 34.218,
+            "min_s": 7.859,
+            "max_s": 40.375
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "21/21"
+        },
+        "live_notes": {
+          "timing": {
+            "n": 3,
+            "median_s": 11.0,
+            "min_s": 9.11,
+            "max_s": 39.922
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "12/18"
+        },
+        "human_guidance": {
+          "timing": {
+            "n": 3,
+            "median_s": 21.14,
+            "min_s": 9.625,
+            "max_s": 26.906
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "12/18"
+        },
+        "contextual_polish": {
+          "timing": {
+            "n": 3,
+            "median_s": 1.391,
+            "min_s": 1.235,
+            "max_s": 1.563
+          },
+          "successes": 3,
+          "attempts": 3,
+          "checks": "21/21"
+        },
+        "consolidation": {
+          "timing": {
+            "n": 1,
+            "median_s": 66.14,
+            "min_s": 66.14,
+            "max_s": 66.14
+          },
+          "successes": 1,
+          "attempts": 3,
+          "checks": "12/36"
+        }
+      },
+      "failed_checks": [
+        {
+          "repeat": 2,
+          "phase": "live_notes",
+          "checks": [
+            "applied_operations",
+            "nonempty_notes",
+            "budget_500",
+            "deadline"
+          ],
+          "transport_ok": true,
+          "error": null,
+          "censored": false
+        },
+        {
+          "repeat": 2,
+          "phase": "human_guidance",
+          "checks": [
+            "applied_operations",
+            "corrected_owner",
+            "budget_preserved",
+            "deadline_preserved"
+          ],
+          "transport_ok": true,
+          "error": null,
+          "censored": false
+        },
+        {
+          "repeat": 2,
+          "phase": "consolidation",
+          "checks": [
+            "transport_ok",
+            "applied_operations",
+            "corrected_deadline",
+            "correct_owner",
+            "real_decision",
+            "correct_budget",
+            "vendor_undecided",
+            "no_unaccepted_task",
+            "no_fictional_decision",
+            "completed_work_not_reassigned",
+            "offline_requirement",
+            "valid_evidence"
+          ],
+          "transport_ok": false,
+          "error": "Externally stopped: no result returned after the production request budget.",
+          "censored": true
+        },
+        {
+          "repeat": 3,
+          "phase": "live_notes",
+          "checks": [
+            "budget_500",
+            "deadline"
+          ],
+          "transport_ok": true,
+          "error": null,
+          "censored": false
+        },
+        {
+          "repeat": 3,
+          "phase": "human_guidance",
+          "checks": [
+            "obsolete_spelling_removed",
+            "budget_preserved"
+          ],
+          "transport_ok": true,
+          "error": null,
+          "censored": false
+        },
+        {
+          "repeat": 3,
+          "phase": "consolidation",
+          "checks": [
+            "transport_ok",
+            "applied_operations",
+            "corrected_deadline",
+            "correct_owner",
+            "real_decision",
+            "correct_budget",
+            "vendor_undecided",
+            "no_unaccepted_task",
+            "no_fictional_decision",
+            "completed_work_not_reassigned",
+            "offline_requirement",
+            "valid_evidence"
+          ],
+          "transport_ok": false,
+          "error": "Externally stopped: no result returned after the production request budget.",
+          "censored": true
+        }
+      ],
+      "rejected_operations": {
+        "duplicate_item": 24
+      },
+      "raw_files": {
+        "standard-1.json": "58d001597764eb69ffc35ab36dd485b13a2a62dabef83697b1aace62f437cabb",
+        "standard-2.json": "3fd2baa9922c28951109b26bb57e5c1aa72c42dd1990615ecdd39737175cddd3",
+        "standard-3.json": "49b83baf2594440a8fc64063100d92eeace1ae2f3808563fc754d5aad03014f8"
+      },
+      "complete": true
+    }
+  },
+  "long_reports": [
+    {
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "segments": 1200,
+      "transcript_chars": 211630,
+      "inline_limit": 60000,
+      "fixture_version": 2,
+      "named_participant_mapping": true,
+      "ok": true,
+      "checks": {
+        "retrieval_tools_used": true,
+        "correct_owner": true,
+        "corrected_deadline": true,
+        "budget_cap": true,
+        "actual_decision": true,
+        "offline_requirement": true,
+        "vendor_undecided": true,
+        "open_legal_question": true,
+        "timestamp_citations": true
+      },
+      "elapsed_s": 22.405999999988126
+    },
+    {
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "segments": 1200,
+      "transcript_chars": 211630,
+      "inline_limit": 60000,
+      "fixture_version": 2,
+      "named_participant_mapping": true,
+      "ok": true,
+      "checks": {
+        "retrieval_tools_used": true,
+        "correct_owner": true,
+        "corrected_deadline": true,
+        "budget_cap": true,
+        "actual_decision": true,
+        "offline_requirement": true,
+        "vendor_undecided": true,
+        "open_legal_question": true,
+        "timestamp_citations": true
+      },
+      "elapsed_s": 14.203000000008615
+    }
+  ],
+  "issues": {
+    "process-cleanup-probe": {
+      "parent_exited": true,
+      "child_survived_kill_process_tree": true,
+      "probe_child_cleaned_up": true
+    },
+    "dedup-probe": {
+      "reproduced": true
+    },
+    "deadline-probe": {
+      "budget_s": 0.2,
+      "elapsed_s": 0.9529999999795109,
+      "returned_ok": true,
+      "error": null,
+      "local_http_only": true,
+      "wall_budget_bypassed": true
+    }
+  },
+  "claude": {
+    "ranked": false,
+    "reason": "OAuth session expired and refresh failed; CLI then reported logged out.",
+    "intended_models": [
+      "opus[1m]",
+      "haiku"
+    ]
+  },
+  "installed_opencode": {
+    "ranked": false,
+    "reason": "CLI not installed; packaged SDK mode evaluated separately."
+  },
+  "quality": {
+    "weights": {
+      "live": {
+        "cards_fidelity": 0.2,
+        "cards_coverage": 0.15,
+        "notes_coverage": 0.2,
+        "correction_fidelity": 0.2,
+        "polish_fidelity": 0.1,
+        "notes_usefulness": 0.15
+      },
+      "final": {
+        "factual_accuracy": 0.25,
+        "coverage": 0.25,
+        "commitment_precision": 0.25,
+        "organization": 0.1,
+        "usefulness": 0.15
+      }
+    },
+    "expected_panel_calls": 6,
+    "valid_panel_calls": 6,
+    "unjudged": [],
+    "judges": [
+      "OpenRouter DeepSeek v4.1 Flash",
+      "Installed Codex gpt-6.1-sol"
+    ],
+    "arms": {
+      "standard": {
+        "live": {
+          "n": 6,
+          "mean": 3.558,
+          "min": 2.25,
+          "max": 4.75
+        },
+        "final": {
+          "n": 2,
+          "mean": 4.938,
+          "min": 4.875,
+          "max": 5.0
+        },
+        "by_judge": {
+          "api": [
+            {
+              "repeat": 1,
+              "live": 4.75,
+              "final": 4.875,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 4.5,
+                  "notes_coverage": 4.5,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 4.5
+                },
+                "final": {
+                  "factual_accuracy": 5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 4.5,
+                  "usefulness": 4.5
+                }
+              }
+            },
+            {
+              "repeat": 2,
+              "live": 2.25,
+              "final": null,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 5,
+                  "notes_coverage": 0,
+                  "correction_fidelity": 0,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 0
+                },
+                "final": {
+                  "factual_accuracy": null,
+                  "coverage": null,
+                  "commitment_precision": null,
+                  "organization": null,
+                  "usefulness": null
+                }
+              }
+            },
+            {
+              "repeat": 3,
+              "live": 3.525,
+              "final": null,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 5,
+                  "notes_coverage": 2,
+                  "correction_fidelity": 2.5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 2.5
+                },
+                "final": {
+                  "factual_accuracy": null,
+                  "coverage": null,
+                  "commitment_precision": null,
+                  "organization": null,
+                  "usefulness": null
+                }
+              }
+            }
+          ],
+          "codex": [
+            {
+              "repeat": 1,
+              "live": 4.75,
+              "final": 5.0,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 4.5,
+                  "notes_coverage": 4.5,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 4.5
+                },
+                "final": {
+                  "factual_accuracy": 5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 5,
+                  "usefulness": 5
+                }
+              }
+            },
+            {
+              "repeat": 2,
+              "live": 2.25,
+              "final": null,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 5,
+                  "notes_coverage": 0,
+                  "correction_fidelity": 0,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 0
+                },
+                "final": {
+                  "factual_accuracy": null,
+                  "coverage": null,
+                  "commitment_precision": null,
+                  "organization": null,
+                  "usefulness": null
+                }
+              }
+            },
+            {
+              "repeat": 3,
+              "live": 3.825,
+              "final": null,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 5,
+                  "notes_coverage": 2.5,
+                  "correction_fidelity": 3.5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 2.5
+                },
+                "final": {
+                  "factual_accuracy": null,
+                  "coverage": null,
+                  "commitment_precision": null,
+                  "organization": null,
+                  "usefulness": null
+                }
+              }
+            }
+          ]
+        },
+        "deductions": [
+          {
+            "judge": "api",
+            "repeat": 1,
+            "items": [
+              "Live action item and live notes do not name Me/host/speaker for the Friday API comparison (sg_01), a minor owner-specificity gap.",
+              "Final record's live_notes omit the vendor comparison, $500 budget, and SQLite decision, though those facts appear in cards (sg_00, sg_02, sg_04)."
+            ]
+          },
+          {
+            "judge": "api",
+            "repeat": 2,
+            "items": [
+              "Live notes are empty, so they retain none of the required facts from sg_00 through sg_04.",
+              "Corrected notes are empty, so they do not use Maia, retain Friday/budget/pending vendor status, or provide corrected minutes.",
+              "Empty notes are not useful standalone minutes.",
+              "Final record is null, so final quality is unavailable and counted as a delivery failure."
+            ]
+          },
+          {
+            "judge": "api",
+            "repeat": 3,
+            "items": [
+              "Live notes contain only the legal customer-data note, omitting vendor comparison, Friday API-comparison deadline, $500 budget, and SQLite/on-device/offline requirements (live_notes vs live_transcript sg_00-sg_03).",
+              "Corrected notes omit the $500 budget and retain obsolete Maya in the phrase 'not Maya' (corrected_notes; human_instruction).",
+              "Corrected notes are not standalone-complete minutes, as they omit budget and add only a narrow correction plus SQLite and legal notes.",
+              "final_record is null, so final factual quality and usefulness cannot be scored; this is a delivery failure already counted separately."
+            ]
+          },
+          {
+            "judge": "codex",
+            "repeat": 1,
+            "items": [
+              "Live action 'Compare ... by Friday' and initial notes omit the committing speaker/owner from live sg_01.",
+              "Initial and corrected notes call the legal question 'a blocker'; live sg_04 establishes an unanswered question, not an explicit blocking decision."
+            ]
+          },
+          {
+            "judge": "codex",
+            "repeat": 2,
+            "items": [
+              "Both live_notes and corrected_notes are empty: no standalone minutes retain live sg_00\u2013sg_04, and the human instruction to use Maia is unfulfilled."
+            ]
+          },
+          {
+            "judge": "codex",
+            "repeat": 3,
+            "items": [
+              "Initial separate notes contain only the customer-data question (live sg_04), omitting the substantive facts in sg_00\u2013sg_03.",
+              "Corrected notes omit the $500 budget cap (live sg_02), despite the human instruction to keep budget, and retain the obsolete spelling in 'Maia, not Maya'."
+            ]
+          }
+        ],
+        "unsupported_claim_flags": [
+          {
+            "judge": "codex",
+            "repeat": 1,
+            "items": [
+              "'This is a blocker pending their response' exceeds live sg_04's statement that Legal still needs to answer."
+            ]
+          }
+        ]
+      },
+      "pi": {
+        "live": {
+          "n": 6,
+          "mean": 4.771,
+          "min": 4.575,
+          "max": 5.0
+        },
+        "final": {
+          "n": 6,
+          "mean": 4.817,
+          "min": 4.425,
+          "max": 5.0
+        },
+        "by_judge": {
+          "api": [
+            {
+              "repeat": 1,
+              "live": 5.0,
+              "final": 4.875,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 5,
+                  "notes_coverage": 5,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 5
+                },
+                "final": {
+                  "factual_accuracy": 4.5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 5,
+                  "usefulness": 5
+                }
+              }
+            },
+            {
+              "repeat": 2,
+              "live": 4.75,
+              "final": 5.0,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 4.5,
+                  "notes_coverage": 4.5,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 4.5
+                },
+                "final": {
+                  "factual_accuracy": 5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 5,
+                  "usefulness": 5
+                }
+              }
+            },
+            {
+              "repeat": 3,
+              "live": 4.75,
+              "final": 4.925,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 4.5,
+                  "notes_coverage": 4.5,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 4.5
+                },
+                "final": {
+                  "factual_accuracy": 5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 5,
+                  "usefulness": 4.5
+                }
+              }
+            }
+          ],
+          "codex": [
+            {
+              "repeat": 1,
+              "live": 4.9,
+              "final": 4.425,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 4.5,
+                  "cards_coverage": 5,
+                  "notes_coverage": 5,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 5
+                },
+                "final": {
+                  "factual_accuracy": 4,
+                  "coverage": 5,
+                  "commitment_precision": 4,
+                  "organization": 5,
+                  "usefulness": 4.5
+                }
+              }
+            },
+            {
+              "repeat": 2,
+              "live": 4.65,
+              "final": 4.675,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 4.5,
+                  "cards_coverage": 4.5,
+                  "notes_coverage": 4.5,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 4.5
+                },
+                "final": {
+                  "factual_accuracy": 4,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 5,
+                  "usefulness": 4.5
+                }
+              }
+            },
+            {
+              "repeat": 3,
+              "live": 4.575,
+              "final": 5.0,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 4.5,
+                  "notes_coverage": 4,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 4
+                },
+                "final": {
+                  "factual_accuracy": 5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 5,
+                  "usefulness": 5
+                }
+              }
+            }
+          ]
+        },
+        "deductions": [
+          {
+            "judge": "api",
+            "repeat": 1,
+            "items": [
+              "Final summary adds an unsupported distinction: 'now owned by Maya, not the host' (sg_11 only states Maya is the current owner)."
+            ]
+          },
+          {
+            "judge": "api",
+            "repeat": 2,
+            "items": [
+              "Live cards action item says 'Compare the OpenAI and Anthropic APIs by Friday' without crediting the first-person owner from sg_01.",
+              "Live notes first note says 'The two APIs will be compared by Friday' without the speaker/owner anchor available from sg_01."
+            ]
+          },
+          {
+            "judge": "api",
+            "repeat": 3,
+            "items": [
+              "Live cards summarize the API comparison without naming an owner in the summary or action item, omitting the owner/deadline coverage element for live cards (live_cards summary/action_item vs live_transcript sg_01).",
+              "Live notes omit the $500 approved budget cap, so the pre-correction notes are not standalone-complete (live_notes vs live_transcript sg_02).",
+              "Final usefulness is slightly reduced because the final summary does not mention the completed export status, though it is present in cards/key points (final_record summary vs final_transcript sg_10)."
+            ]
+          },
+          {
+            "judge": "codex",
+            "repeat": 1,
+            "items": [
+              "Live risk 'Using customer data ... is blocked until Legal answers' strengthens the unresolved question in live sg_04 into a prohibition.",
+              "Final summary says ownership is 'now owned by Maya, not the host'; final sg_06 and sg_11 establish Maya/Tuesday, not a transfer from a distinct host.",
+              "Final notes say migration 'remains unowned'; final sg_03 establishes only that Nia has not been asked or agreed."
+            ]
+          },
+          {
+            "judge": "codex",
+            "repeat": 2,
+            "items": [
+              "Live cards and original notes say only 'the two APIs will be compared by Friday,' omitting the speaker's ownership established in live sg_01.",
+              "Live summary says SQLite was chosen 'so recordings stay on-device'; live sg_03 states separate requirements rather than that causal relationship.",
+              "Final timeline invents an 'earlier $5,000 assumption'; final sg_02 rejects $5000 without establishing an earlier assumption.",
+              "Final decision 'Keep offline mode so recordings stay on the device' introduces a causal dependency absent from final sg_08."
+            ]
+          },
+          {
+            "judge": "codex",
+            "repeat": 3,
+            "items": [
+              "Live cards give the Friday task but omit its owner even as Me/host/speaker (live sg_01).",
+              "Initial separate notes omit the $500 budget cap (live sg_02) and the first-person task owner (sg_01), although corrected notes restore both."
+            ]
+          }
+        ],
+        "unsupported_claim_flags": [
+          {
+            "judge": "api",
+            "repeat": 1,
+            "items": [
+              "'now owned by Maya, not the host' \u2014 sg_11 says the current API-comparison owner is Maya, but does not establish that Maya is distinct from the host or that ownership changed."
+            ]
+          },
+          {
+            "judge": "codex",
+            "repeat": 1,
+            "items": [
+              "'Blocked until Legal answers' is not established by live sg_04.",
+              "'Maya, not the host' invents a distinction and ownership change absent from final sg_01, sg_06, and sg_11.",
+              "'The migration remains unowned' goes beyond final sg_03's narrower statement about Nia."
+            ]
+          },
+          {
+            "judge": "codex",
+            "repeat": 2,
+            "items": [
+              "'Revising an earlier $5,000 assumption' adds history not established by final sg_02.",
+              "'Keep offline mode so recordings stay on the device' asserts causality; final sg_08 independently requires on-device recordings and retained offline mode."
+            ]
+          }
+        ]
+      },
+      "packaged_opencode": {
+        "live": {
+          "n": 6,
+          "mean": 4.875,
+          "min": 4.65,
+          "max": 5.0
+        },
+        "final": {
+          "n": 6,
+          "mean": 4.846,
+          "min": 4.575,
+          "max": 5.0
+        },
+        "by_judge": {
+          "api": [
+            {
+              "repeat": 1,
+              "live": 4.75,
+              "final": 5.0,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 4.5,
+                  "notes_coverage": 4.5,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 4.5
+                },
+                "final": {
+                  "factual_accuracy": 5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 5,
+                  "usefulness": 5
+                }
+              }
+            },
+            {
+              "repeat": 2,
+              "live": 4.925,
+              "final": 4.875,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 4.5,
+                  "notes_coverage": 5,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 5
+                },
+                "final": {
+                  "factual_accuracy": 5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 4.5,
+                  "usefulness": 4.5
+                }
+              }
+            },
+            {
+              "repeat": 3,
+              "live": 5.0,
+              "final": 5.0,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 5,
+                  "notes_coverage": 5,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 5
+                },
+                "final": {
+                  "factual_accuracy": 5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 5,
+                  "usefulness": 5
+                }
+              }
+            }
+          ],
+          "codex": [
+            {
+              "repeat": 1,
+              "live": 4.65,
+              "final": 4.625,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 4.5,
+                  "cards_coverage": 4.5,
+                  "notes_coverage": 4.5,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 4.5
+                },
+                "final": {
+                  "factual_accuracy": 4.5,
+                  "coverage": 5,
+                  "commitment_precision": 4.5,
+                  "organization": 4.5,
+                  "usefulness": 4.5
+                }
+              }
+            },
+            {
+              "repeat": 2,
+              "live": 4.925,
+              "final": 5.0,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 4.5,
+                  "notes_coverage": 5,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 5
+                },
+                "final": {
+                  "factual_accuracy": 5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 5,
+                  "usefulness": 5
+                }
+              }
+            },
+            {
+              "repeat": 3,
+              "live": 5.0,
+              "final": 4.575,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 5,
+                  "notes_coverage": 5,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 5
+                },
+                "final": {
+                  "factual_accuracy": 4.5,
+                  "coverage": 5,
+                  "commitment_precision": 4.5,
+                  "organization": 4,
+                  "usefulness": 4.5
+                }
+              }
+            }
+          ]
+        },
+        "deductions": [
+          {
+            "judge": "api",
+            "repeat": 1,
+            "items": [
+              "Live cards/action item and live notes say 'One participant committed' rather than naming Me/host/speaker for the Friday API comparison (sg_01), a minor owner-specificity gap."
+            ]
+          },
+          {
+            "judge": "api",
+            "repeat": 2,
+            "items": [
+              "Live cards action item says 'Compare the two APIs (OpenAI vs Anthropic) by Friday' without crediting the first-person owner from sg_01.",
+              "Final organization places the Finance $500 approval in key_points rather than decisions, and the 'Meeting overview' note duplicates facts already covered in other notes."
+            ]
+          },
+          {
+            "judge": "api",
+            "repeat": 3,
+            "items": []
+          },
+          {
+            "judge": "codex",
+            "repeat": 1,
+            "items": [
+              "Live cards omit an identifiable comparison owner; initial notes say only 'One participant' rather than identifying the committing speaker from live sg_01.",
+              "Live notes assert device/offline requirements were 'behind the choice' of SQLite; live sg_03 does not state that causal rationale.",
+              "Final summary says migration 'remains unowned' and final timeline/notes call the legal question a 'blocker', exceeding final sg_03 and sg_05.",
+              "Final deadline-correction timeline and note use 56 seconds, but final sg_06 begins at 48 seconds."
+            ]
+          },
+          {
+            "judge": "codex",
+            "repeat": 2,
+            "items": [
+              "Live action item 'Compare the two APIs ... by Friday' omits an explicit owner; live sg_01 establishes the speaker's commitment."
+            ]
+          },
+          {
+            "judge": "codex",
+            "repeat": 3,
+            "items": [
+              "Final notes say the API comparison 'is the input that will settle' vendor selection, although final sg_00 and sg_11 establish only comparison and an open choice.",
+              "Final risk and notes assert migration 'has no owner' and 'the work is unowned'; final sg_03 establishes only that Nia has not been asked or agreed.",
+              "Several final notes have incomplete evidence: cache/offline cites only sg_04 rather than also sg_08; delivery/ownership cites only sg_06 rather than sg_11; example/prior work cites only sg_07 rather than also sg_10."
+            ]
+          }
+        ],
+        "unsupported_claim_flags": [
+          {
+            "judge": "codex",
+            "repeat": 1,
+            "items": [
+              "'The requirement behind the choice' supplies a SQLite-selection rationale not stated in live sg_03.",
+              "'Migration ... remains unowned' is not established by final sg_03, which only excludes an accepted Nia commitment.",
+              "'Open blocker' strengthens final sg_05's unresolved legal question into an established blocking condition."
+            ]
+          },
+          {
+            "judge": "codex",
+            "repeat": 3,
+            "items": [
+              "The API comparison will settle vendor selection: final sg_00 and sg_11 do not establish a decision mechanism or guaranteed outcome.",
+              "Migration has no owner: final sg_03 rules out an accepted Nia assignment, not every possible owner."
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "live": {
+          "n": 6,
+          "mean": 4.079,
+          "min": 3.825,
+          "max": 4.375
+        },
+        "final": {
+          "n": 6,
+          "mean": 4.95,
+          "min": 4.875,
+          "max": 5.0
+        },
+        "by_judge": {
+          "api": [
+            {
+              "repeat": 1,
+              "live": 4.2,
+              "final": 4.875,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 5,
+                  "notes_coverage": 2.5,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 3
+                },
+                "final": {
+                  "factual_accuracy": 5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 4.5,
+                  "usefulness": 4.5
+                }
+              }
+            },
+            {
+              "repeat": 2,
+              "live": 3.825,
+              "final": 4.875,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 5,
+                  "notes_coverage": 2.5,
+                  "correction_fidelity": 3.5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 2.5
+                },
+                "final": {
+                  "factual_accuracy": 5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 4.5,
+                  "usefulness": 4.5
+                }
+              }
+            },
+            {
+              "repeat": 3,
+              "live": 3.9,
+              "final": 4.95,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 5,
+                  "notes_coverage": 2.5,
+                  "correction_fidelity": 3.5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 3
+                },
+                "final": {
+                  "factual_accuracy": 5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 4.5,
+                  "usefulness": 5
+                }
+              }
+            }
+          ],
+          "codex": [
+            {
+              "repeat": 1,
+              "live": 4.375,
+              "final": 5.0,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 5,
+                  "notes_coverage": 3,
+                  "correction_fidelity": 5,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 3.5
+                },
+                "final": {
+                  "factual_accuracy": 5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 5,
+                  "usefulness": 5
+                }
+              }
+            },
+            {
+              "repeat": 2,
+              "live": 4.0,
+              "final": 5.0,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 5,
+                  "notes_coverage": 2.5,
+                  "correction_fidelity": 4,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 3
+                },
+                "final": {
+                  "factual_accuracy": 5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 5,
+                  "usefulness": 5
+                }
+              }
+            },
+            {
+              "repeat": 3,
+              "live": 4.175,
+              "final": 5.0,
+              "dimensions": {
+                "live": {
+                  "cards_fidelity": 5,
+                  "cards_coverage": 5,
+                  "notes_coverage": 3,
+                  "correction_fidelity": 4,
+                  "polish_fidelity": 5,
+                  "notes_usefulness": 3.5
+                },
+                "final": {
+                  "factual_accuracy": 5,
+                  "coverage": 5,
+                  "commitment_precision": 5,
+                  "organization": 5,
+                  "usefulness": 5
+                }
+              }
+            }
+          ]
+        },
+        "deductions": [
+          {
+            "judge": "api",
+            "repeat": 1,
+            "items": [
+              "Live notes before correction omit the vendor comparison, owner/deadline, and $500 budget; only local storage and customer-data facts are present (sg_00, sg_01, sg_02).",
+              "Final questions array is empty despite open vendor-choice and legal questions (sg_05, sg_11)."
+            ]
+          },
+          {
+            "judge": "api",
+            "repeat": 2,
+            "items": [
+              "Live notes omit the vendor comparison, budget, and owner/deadline; only SQLite/offline and legal are present, despite sg_00, sg_01, and sg_02.",
+              "Corrected notes omit the $500 budget cap required by the human instruction and present in sg_02.",
+              "Live notes are too incomplete to serve as standalone minutes for the meeting."
+            ]
+          },
+          {
+            "judge": "api",
+            "repeat": 3,
+            "items": [
+              "Live notes omit the vendor comparison/no-vendor status, the Friday API-comparison commitment, and the $500 budget, leaving only SQLite/on-device/offline and legal customer-data notes (live_notes vs live_transcript sg_00-sg_04).",
+              "Corrected notes still omit the $500 budget, which the human instruction explicitly required keeping (corrected_notes; human_instruction).",
+              "Final questions are empty even though the legal customer-data question remains open in the final transcript (final_record questions [] vs final_transcript sg_05)."
+            ]
+          },
+          {
+            "judge": "codex",
+            "repeat": 1,
+            "items": [
+              "Initial separate notes contain only storage and Legal facts, omitting the vendor comparison, pending selection, Friday commitment/owner, and budget from live sg_00\u2013sg_02.",
+              "Corrected notes restore coverage but put the entire meeting under 'Local storage and customer data' at 24 seconds, weakening navigation for sg_00\u2013sg_02."
+            ]
+          },
+          {
+            "judge": "codex",
+            "repeat": 2,
+            "items": [
+              "Before correction, separate notes contain only storage and legal entries, omitting vendor comparison/status, owner/deadline, and budget from live sg_00\u2013sg_02.",
+              "Corrected notes still omit the $500 cap from live sg_02, despite the human instruction to keep budget; cards cannot substitute for standalone notes."
+            ]
+          },
+          {
+            "judge": "codex",
+            "repeat": 3,
+            "items": [
+              "Initial separate notes omit the vendor comparison and Friday commitment (live sg_00\u2013sg_01) and budget (sg_02).",
+              "Corrected notes restore Maia/Friday and pending vendor status but still omit the $500 cap, contrary to the human instruction."
+            ]
+          }
+        ],
+        "unsupported_claim_flags": []
+      }
+    },
+    "calls": [
+      {
+        "judge": "api",
+        "repeat": 1,
+        "elapsed_s": 68.70300000000861,
+        "live_winner": "A",
+        "final_winner": "B",
+        "mapping": {
+          "A": "pi",
+          "B": "packaged_opencode",
+          "C": "codex",
+          "D": "standard"
+        },
+        "rationale": "A is the strongest live-stage record: its cards and both note sets are complete and faithful, and its correction/polish handling is clean. B is the strongest final record: it preserves all corrected facts, avoids unsupported ownership/host distinctions, and keeps commitment precision clean. A's final record is otherwise strong but adds the unsupported 'not the host' distinction. C's live notes are materially incomplete before correction, and D's live/final notes have minor owner and completeness gaps.",
+        "settings": {
+          "presentation_version": 2,
+          "api_output_budget": 20000,
+          "api_reasoning_effort": "low",
+          "codex_reasoning_effort": "medium"
+        }
+      },
+      {
+        "judge": "api",
+        "repeat": 2,
+        "elapsed_s": 27.25,
+        "live_winner": "D",
+        "final_winner": "A",
+        "mapping": {
+          "A": "pi",
+          "B": "codex",
+          "C": "standard",
+          "D": "packaged_opencode"
+        },
+        "rationale": "D is the strongest live record because its pre- and post-correction notes retain all required facts, including speaker/Maia ownership, Friday deadline, $500 cap, SQLite/on-device/offline, and the legal question. A is the strongest final record: it is complete, precise, well organized, and correctly reflects Maya/Tuesday ownership, the $500 cap, vendor undecided status, SQLite/offline requirements, legal open question, and completed export work without false commitments. B is less complete in live notes and less organized finally; C has empty live notes and a null final record.",
+        "settings": {
+          "presentation_version": 2,
+          "api_output_budget": 20000,
+          "api_reasoning_effort": "low",
+          "codex_reasoning_effort": "medium"
+        }
+      },
+      {
+        "judge": "api",
+        "repeat": 3,
+        "elapsed_s": 67.59399999998277,
+        "live_winner": "A",
+        "final_winner": "A",
+        "mapping": {
+          "A": "packaged_opencode",
+          "B": "codex",
+          "C": "pi",
+          "D": "standard"
+        },
+        "rationale": "A is the strongest live record: its live cards, live notes, corrected notes, and polish all retain the key facts and satisfy the Maia correction without retaining obsolete Maya. B, C, and D have increasingly material notes/correction omissions, especially missing budget or vendor/deadline facts in notes. For the final artifact, A is complete and precise, with corrected Tuesday/Maya ownership, $500 cap, vendor openness, SQLite/offline/on-device requirements, legal question, migration non-assignment, export completion, and fictional slide status; C is close but slightly less useful, while D returned no final_record.",
+        "settings": {
+          "presentation_version": 2,
+          "api_output_budget": 20000,
+          "api_reasoning_effort": "low",
+          "codex_reasoning_effort": "medium"
+        }
+      },
+      {
+        "judge": "codex",
+        "repeat": 1,
+        "elapsed_s": 35.703000000008615,
+        "live_winner": "B",
+        "final_winner": "tie",
+        "mapping": {
+          "A": "standard",
+          "B": "pi",
+          "C": "codex",
+          "D": "packaged_opencode"
+        },
+        "rationale": "B has the most complete standalone notes across both live stages, despite overstating the legal restriction. A and C tie for the strongest final records: both preserve all required facts and commitment boundaries. B invents a host/Maya distinction; D adds unsupported status claims and an incorrect correction timestamp.",
+        "settings": {
+          "presentation_version": 2,
+          "api_output_budget": 20000,
+          "api_reasoning_effort": "low",
+          "codex_reasoning_effort": "medium"
+        }
+      },
+      {
+        "judge": "codex",
+        "repeat": 2,
+        "elapsed_s": 33.640999999974156,
+        "live_winner": "A",
+        "final_winner": "tie",
+        "mapping": {
+          "A": "packaged_opencode",
+          "B": "standard",
+          "C": "codex",
+          "D": "pi"
+        },
+        "rationale": "A provides the strongest complete live notes and faithful correction. A and C both deliver complete, accurate final records with precise commitments. D adds unsupported budget history and storage causality. B's final quality is unavailable because no artifact was returned.",
+        "settings": {
+          "presentation_version": 2,
+          "api_output_budget": 20000,
+          "api_reasoning_effort": "low",
+          "codex_reasoning_effort": "medium"
+        }
+      },
+      {
+        "judge": "codex",
+        "repeat": 3,
+        "elapsed_s": 40.828000000008615,
+        "live_winner": "C",
+        "final_winner": "tie",
+        "mapping": {
+          "A": "standard",
+          "B": "codex",
+          "C": "packaged_opencode",
+          "D": "pi"
+        },
+        "rationale": "C alone retains all important facts in separate notes both before and after correction. B and D tie for final quality: both provide complete, faithful, actionable records. C adds unsupported certainty and weaker note evidence. A's final quality is unavailable because no final artifact was returned.",
+        "settings": {
+          "presentation_version": 2,
+          "api_output_budget": 20000,
+          "api_reasoning_effort": "low",
+          "codex_reasoning_effort": "medium"
+        }
+      }
+    ],
+    "input_hashes": {
+      "quality-api-1-input.json": "83b5e52527e1c4aa5053544dae0ecd1129d05ce423ded74cbda4cbf7cc767e66",
+      "quality-api-2-input.json": "eaa3fcb925a3e3491186db9c143a846204614cac2cb3f5f3df1add6a55feac2a",
+      "quality-api-3-input.json": "bb6ec26daefdd110a84712a55a081725c7c94ee98561d8022208705c05adf99e",
+      "quality-codex-1-input.json": "ae06d7614d1ca65945b4c573667dc31bf15b8d2b170d0fcddee48187355c7054",
+      "quality-codex-2-input.json": "8e3b28366a412e99b101a663fda34841c5b67108786820f490fb9d58e914a143",
+      "quality-codex-3-input.json": "c754207e3f014802eba381579801f6556b75c4e122e24194688d26984400e1cc"
+    }
+  },
+  "anchor_audit": {
+    "method": "Unique saved items with explicit clock anchors; cited-span range check",
+    "arms": {
+      "standard": {
+        "checked_unique_items": 29,
+        "anchors_outside_cited_spans": []
+      },
+      "pi": {
+        "checked_unique_items": 73,
+        "anchors_outside_cited_spans": []
+      },
+      "packaged_opencode": {
+        "checked_unique_items": 69,
+        "anchors_outside_cited_spans": [
+          {
+            "repeat": 1,
+            "phase": "consolidation",
+            "card": "timeline",
+            "text": "Deadline correction: API comparison moves from Friday to Tuesday.",
+            "anchor_s": 56.0,
+            "evidence": [
+              "sg_06"
+            ],
+            "cited_span_s": [
+              48,
+              54
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "checked_unique_items": 40,
+        "anchors_outside_cited_spans": []
+      }
+    }
+  }
+}

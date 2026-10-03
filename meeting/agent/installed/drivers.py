@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -213,8 +214,11 @@ _help_lock = threading.Lock()
 
 def _help_text(agent: InstalledAgent, *args: str) -> str:
     key = (agent.path, agent.version, " ".join(args))
+    # Users can add MCP servers while OpenWhisper is running. Inventory must
+    # reflect the configuration of this meeting, rather than a cached scan.
+    cache = args[-3:] != ("mcp", "list", "--json")
     with _help_lock:
-        if key in _help_cache:
+        if cache and key in _help_cache:
             return _help_cache[key]
     try:
         result = subprocess.run(
@@ -227,7 +231,8 @@ def _help_text(agent: InstalledAgent, *args: str) -> str:
     except (OSError, subprocess.SubprocessError):
         text = ""
     with _help_lock:
-        _help_cache[key] = text
+        if cache:
+            _help_cache[key] = text
     return text
 
 
@@ -552,6 +557,7 @@ _CODEX_DISABLE = (
     "hooks", "memories", "workspace_dependencies", "skill_mcp_dependency_install",
     "personality", "standalone_web_search", "web_search_request",
     "web_search_cached", "js_repl", "remote_plugin",
+    "view_image", "browser_use_full_cdp_access", "worktrees",
 )
 
 
@@ -567,6 +573,31 @@ class CodexDriver(HeadlessDriver):
             )
         self._exec_help = exec_help
         self._disable = self._features_to_disable()
+        self._unrelated_mcp = self._mcp_servers_to_disable()
+
+    def _mcp_servers_to_disable(self) -> List[str]:
+        flags = [value for name in self._disable for value in ("--disable", name)]
+        listing = _help_text(self.agent, *flags, "mcp", "list", "--json")
+        try:
+            servers = json.loads(listing)
+            if not isinstance(servers, list):
+                raise ValueError("not a server list")
+            names = []
+            for server in servers:
+                if not isinstance(server, dict):
+                    raise ValueError("invalid server")
+                name = str(server.get("name") or "")
+                if name == SERVER_NAME or server.get("enabled") is False:
+                    continue
+                if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+                    raise ValueError("unsupported server name")
+                names.append(name)
+            return sorted(set(names))
+        except (ValueError, TypeError):
+            raise AgentUnavailable(
+                "Could not verify Codex's MCP configuration. Update Codex before "
+                "using it for meeting insights."
+            ) from None
 
     def _features_to_disable(self) -> List[str]:
         listing = _help_text(self.agent, "features", "list")
@@ -596,6 +627,10 @@ class CodexDriver(HeadlessDriver):
             "project_doc_max_bytes=0",
             f"model_instructions_file={instructions.replace(os.sep, '/')}",
         ]
+        overrides.extend(
+            f"mcp_servers.{name}.enabled=false"
+            for name in getattr(self, "_unrelated_mcp", [])
+        )
         if request.effort:
             overrides.append(f"model_reasoning_effort={request.effort}")
         argv = [self.agent.path, "exec", "--json"]

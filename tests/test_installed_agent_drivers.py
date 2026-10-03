@@ -166,6 +166,10 @@ def test_old_claude_code_is_refused(monkeypatch):
 def test_codex_command_line(monkeypatch, tmp_path):
     listing = "shell_tool   stable   true\napps   stable   true\nsqlite   removed   true\nmemories  stable  false\n"
     monkeypatch.setattr(drivers, "_help_text", lambda agent, *args: (
+        json.dumps([{"name": "other", "enabled": True},
+                    {"name": "openwhisper", "enabled": True},
+                    {"name": "already_off", "enabled": False}])
+        if args[-3:] == ("mcp", "list", "--json") else
         listing if args[:1] == ("features",) else "--json --ephemeral --disable"))
     driver = CodexDriver(InstalledAgent("codex", "codex.exe", "0.158.0"))
     driver.check_ready()
@@ -176,6 +180,8 @@ def test_codex_command_line(monkeypatch, tmp_path):
     assert "mcp_servers.openwhisper.url=http://127.0.0.1:1/mcp/tok" in overrides
     assert "mcp_servers.openwhisper.default_tools_approval_mode=approve" in overrides
     assert "approval_policy=never" in overrides and "project_doc_max_bytes=0" in overrides
+    assert "mcp_servers.other.enabled=false" in overrides
+    assert "mcp_servers.openwhisper.enabled=false" not in overrides
     # Only enabled, non-removed features are switched off; no quoted values.
     disabled = [argv[i + 1] for i, a in enumerate(argv) if a == "--disable"]
     assert disabled == ["shell_tool", "apps"]
@@ -199,7 +205,9 @@ class _FakeCli:
 
 @pytest.mark.parametrize("driver_cls, mode", [(ClaudeCodeDriver, "claude"), (CodexDriver, "codex")])
 def test_headless_pass_end_to_end(server, monkeypatch, driver_cls, mode):
-    monkeypatch.setattr(drivers, "_help_text", lambda agent, *args: CLAUDE_HELP + " --json --ephemeral")
+    monkeypatch.setattr(drivers, "_help_text", lambda agent, *args:
+                        "[]" if args[-3:] == ("mcp", "list", "--json")
+                        else CLAUDE_HELP + " --json --ephemeral")
     monkeypatch.setenv("FAKE_TOOL_CALL", json.dumps(PATCH_CALL))
     driver = driver_cls(InstalledAgent(mode if mode == "codex" else "claude_code", "fake", "9.0.0"))
     driver.start(server)
@@ -212,6 +220,14 @@ def test_headless_pass_end_to_end(server, monkeypatch, driver_cls, mode):
     assert outcome.usage["prompt_tokens"] > 0 and outcome.usage["completion_tokens"] > 0
     assert "tool" in events and events[-1] == "settled"
     assert server._endpoints == {}  # the pass's endpoint closed with it
+
+
+@pytest.mark.parametrize("inventory", ["", "not json", "{}", '[{"name":"x.y","enabled":true}]'])
+def test_codex_refuses_a_pass_when_server_isolation_cannot_be_verified(monkeypatch, inventory):
+    monkeypatch.setattr(drivers, "_help_text", lambda agent, *args:
+                        inventory if args[-3:] == ("mcp", "list", "--json") else "--json")
+    with pytest.raises(drivers.AgentUnavailable, match="MCP configuration"):
+        CodexDriver(InstalledAgent("codex", "codex.exe", "0.160.0")).check_ready()
 
 
 def test_a_signed_out_claude_reads_as_a_sign_in_hint(server, monkeypatch):
