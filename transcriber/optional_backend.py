@@ -77,8 +77,10 @@ class LocalSpeechBackend(TranscriptionBackend):
         with self._state_lock:
             return self._generation
 
-    def reload_model(self, model_name=None):
+    def reload_model(self, model_name=None, *, cancel_event=None):
         with self._state_lock:
+            if cancel_event is not None and cancel_event.is_set():
+                return
             self.cleanup()
             self.reset_cancel_flag()
             generation = self._generation
@@ -104,7 +106,8 @@ class LocalSpeechBackend(TranscriptionBackend):
             return
         from services.local_asr.process import SpeechProcess
         with self._state_lock:
-            if generation != self._generation:
+            if (generation != self._generation
+                    or (cancel_event is not None and cancel_event.is_set())):
                 return
             # Windows runtimes carry an embedded Python; the macOS and Linux
             # ones use the app's interpreter with downloaded native libraries
@@ -115,9 +118,11 @@ class LocalSpeechBackend(TranscriptionBackend):
         try:
             result = process.request("load", backend=self.backend_id, model=self.model_name,
                                      model_path=cache.load_path(self.model_name),
-                                     runtime=component_dir(component), device=device, timeout=300)
+                                     runtime=component_dir(component), device=device, timeout=300,
+                                     cancel=cancel_event)
             with self._state_lock:
-                if generation != self._generation:
+                if (generation != self._generation
+                        or (cancel_event is not None and cancel_event.is_set())):
                     process.close()
                     return
                 self.device = result["device"]

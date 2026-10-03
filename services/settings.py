@@ -1,5 +1,6 @@
 """Persistent application settings and validated resolvers."""
 import json
+from copy import deepcopy
 import os
 import logging
 import tempfile
@@ -143,6 +144,8 @@ class SettingsKey:
     MEETING_LLM_PROVIDER: Final[str] = "meeting_llm_provider"
     MEETING_LLM_MODEL: Final[str] = "meeting_llm_model"
     MEETING_AGENT_CORE: Final[str] = "meeting_agent_core"
+    #: ``{agent_id: model}`` for installed agents; "" keeps the agent's default.
+    MEETING_AGENT_MODELS: Final[str] = "meeting_agent_models"
     MEETING_END_REDECODE: Final[str] = "meeting_end_redecode"
     MEETING_REDECODE_COVERAGE_GUARD: Final[str] = "meeting_redecode_coverage_guard"
     MEETING_END_POLISH: Final[str] = "meeting_end_polish"
@@ -343,13 +346,22 @@ class TranscriptCleanupReasoning:
 
 
 class MeetingAgentCore:
-    """Values for ``SettingsKey.MEETING_AGENT_CORE``."""
+    """Values for ``SettingsKey.MEETING_AGENT_CORE``.
+
+    ``PI`` and ``OPENCODE`` use an agent SDK with OpenWhisper's text endpoint and API key.
+    The retired ``DIRECT`` value is read only for compatibility and resolves to Pi.
+    The ``INSTALLED`` values drive a coding agent the user already has set up,
+    with its own sign-in, providers, and models.
+    """
     PI: Final[str] = "pi"          # Bundled Node sidecar running the Pi SDK
-    DIRECT: Final[str] = "direct"  # Direct OpenRouter tool-calling loop
+    DIRECT: Final[str] = "direct"  # Legacy saved value; migrated to Pi, never selectable
+    CLAUDE_CODE: Final[str] = "claude_code"  # Installed Claude Code, headless
+    CODEX: Final[str] = "codex"              # Installed Codex CLI, headless
+    OPENCODE: Final[str] = "opencode"      # Packaged OpenCode SDK; preserves saved settings
+    OPENCODE_CLI: Final[str] = "opencode_cli"  # Installed OpenCode, over ACP
 
-    OPENCODE: Final[str] = "opencode"
-
-    ALL: Final[Tuple[str, ...]] = (PI, DIRECT, OPENCODE)
+    INSTALLED: Final[Tuple[str, ...]] = (CLAUDE_CODE, CODEX, OPENCODE_CLI)
+    ALL: Final[Tuple[str, ...]] = (PI, OPENCODE, *INSTALLED)
 
 
 class MeetingSpeakerIdBackend:
@@ -471,6 +483,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.MEETING_LLM_PROVIDER: TranscriptCleanupProvider.OPENROUTER,
     SettingsKey.MEETING_LLM_MODEL: config.MEETING_LLM_MODEL,
     SettingsKey.MEETING_AGENT_CORE: config.MEETING_AGENT_CORE,
+    SettingsKey.MEETING_AGENT_MODELS: {},
     SettingsKey.MEETING_SPEAKER_ID_BACKEND: config.MEETING_SPEAKER_ID_BACKEND,
     SettingsKey.MEETING_END_REDECODE: config.MEETING_END_REDECODE,
     SettingsKey.MEETING_REDECODE_COVERAGE_GUARD: False,
@@ -520,6 +533,20 @@ class SettingsManager:
         # and background workers share this singleton, so the lock must cover
         # the complete transaction rather than only the final write.
         self._lock = threading.RLock()
+        self._cached_signature = None
+        self._cached_settings = None
+
+    def _file_signature(self):
+        """Detect changed paths, in-place edits, and atomic external replaces."""
+        path = os.path.abspath(self.settings_file)
+        try:
+            stat = os.stat(path)
+        except FileNotFoundError:
+            return (path, None)
+        except OSError:
+            return None
+        return (path, stat.st_dev, stat.st_ino, stat.st_size,
+                stat.st_mtime_ns, stat.st_ctime_ns)
 
     def _load_all_settings_unlocked(self, *, strict: bool = False) -> Dict[str, Any]:
         """Read the settings mapping while the caller owns ``_lock``.
@@ -565,6 +592,10 @@ class SettingsManager:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp_path, absolute_path)
+            # Never label the caller's mutable mapping with a signature from
+            # a concurrent external writer. The next read owns its snapshot.
+            self._cached_settings = None
+            self._cached_signature = None
             temp_path = ""
         finally:
             if temp_fd >= 0:
@@ -578,7 +609,18 @@ class SettingsManager:
     def load_all_settings(self) -> Dict[str, Any]:
         """Load settings, returning an empty dict on failure."""
         with self._lock:
-            return self._load_all_settings_unlocked()
+            signature = self._file_signature()
+            if (signature is not None and signature == self._cached_signature
+                    and self._cached_settings is not None):
+                return deepcopy(self._cached_settings)
+            settings = self._load_all_settings_unlocked()
+            if signature is not None and signature == self._file_signature():
+                self._cached_signature = signature
+                self._cached_settings = deepcopy(settings)
+            else:
+                self._cached_signature = None
+                self._cached_settings = None
+            return settings
 
     def save_all_settings(self, settings: Dict[str, Any]) -> None:
         """Persist the complete settings mapping."""
@@ -1154,6 +1196,31 @@ def resolve_meeting_llm_model(
         settings,
     )
     return model
+
+
+def resolve_meeting_agent_models(
+    settings: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, str]:
+    """Return the model chosen for each installed agent, as a fresh dict.
+
+    Missing agents and non-string values are dropped; an empty string means
+    the agent keeps the default from its own configuration.
+    """
+    raw = setting_value(SettingsKey.MEETING_AGENT_MODELS, settings)
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        agent: model.strip()
+        for agent, model in raw.items()
+        if agent in MeetingAgentCore.INSTALLED and isinstance(model, str)
+    }
+
+
+def resolve_meeting_agent_model(
+    agent_id: str, settings: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """Return the model chosen for ``agent_id``, or "" for its own default."""
+    return resolve_meeting_agent_models(settings).get(agent_id, "")
 
 
 def resolve_meeting_speaker_id_backend(

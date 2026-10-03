@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import os
 import sys
+import ast
+from functools import lru_cache
+from pathlib import Path
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
@@ -38,6 +41,64 @@ _disable_tqdm_monitor()
 _session_status: list[int] = []
 
 
+@lru_cache(maxsize=None)
+def _qt_imports(path: str):
+    root = Path(PROJECT_ROOT)
+    source_path = Path(path)
+    try:
+        source = source_path.read_text(encoding="utf-8-sig")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, UnicodeError):
+        return True, ()
+    if "ui_qt" in source or "PyQt6" in source:
+        return True, ()
+    package = source_path.relative_to(root).parent.parts
+    dependencies = set()
+    for node in ast.walk(tree):
+        names = []
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            base = (".".join(package[:len(package) - node.level + 1]) + "."
+                    if node.level else "") + (node.module or "")
+            names = [base] + [f"{base}.{alias.name}" for alias in node.names]
+        for name in names:
+            parts = name.split(".")
+            module = root.joinpath(*parts)
+            candidates = [module.with_suffix(".py")]
+            candidates.extend(root.joinpath(*parts[:i], "__init__.py")
+                              for i in range(1, len(parts) + 1))
+            dependencies.update(str(candidate) for candidate in candidates if candidate.is_file())
+    return False, tuple(dependencies)
+
+
+@lru_cache(maxsize=None)
+def _requires_qt(path: str) -> bool:
+    """Conservatively follow local imports, including deferred UI imports.
+
+    Tests may also opt in explicitly with ``pytest.mark.qt``. UI references
+    count for monkeypatch/importlib targets. Cache parsed modules so deciding
+    fixture scope does not repeat the same import graph for each test case.
+    """
+    pending, visited = [path], set()
+    while pending:
+        current = pending.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        direct, dependencies = _qt_imports(current)
+        if direct:
+            return True
+        pending.extend(dependencies)
+    return False
+
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if _requires_qt(str(item.path)):
+            item.add_marker(pytest.mark.qt)
+
+
 def pytest_sessionfinish(session, exitstatus):
     _session_status.append(int(exitstatus))
 
@@ -61,7 +122,7 @@ def pytest_unconfigure(config):
     os._exit(_session_status[-1] if _session_status else 0)
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def _session_qt_application():
     from PyQt6.QtWidgets import QApplication
     from ui_qt.utils.font_scale import WidgetStyleFilter
@@ -98,6 +159,9 @@ def _session_settings_store(tmp_path_factory):
     database_folder = tmp_path_factory.mktemp("database-session")
     config.DATABASE_FILE = str(database_folder / "openwhisper.db")
     config.HISTORY_FILE = str(database_folder / "transcription_history.json")
+    # Diagnostic handlers retain their paths after a controller shuts down.
+    # Keep that session fallback away from the checkout and the user's logs.
+    config.LOG_FILE = str(tmp_path_factory.mktemp("diagnostics-session") / "openwhisper.log")
     from services.database import db
     from services.history_manager import history_manager
 
@@ -110,7 +174,7 @@ def _session_settings_store(tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _isolated_qt_widgets(
-    _session_qt_application, _isolated_settings_store, _isolated_credential_store
+    request, _isolated_settings_store, _isolated_credential_store
 ):
     """Destroy each test's widgets before the next test can restyle them.
 
@@ -123,9 +187,12 @@ def _isolated_qt_widgets(
     Preserve widgets owned by broader-scoped fixtures. Settings and credentials
     remain isolated while destruction callbacks run.
     """
+    if request.node.get_closest_marker("qt") is None:
+        yield
+        return
     from PyQt6.QtCore import QCoreApplication, QEvent
 
-    app = _session_qt_application
+    app = request.getfixturevalue("_session_qt_application")
     existing = set(app.allWidgets())
     yield
     created = set(app.allWidgets()) - existing
@@ -150,6 +217,7 @@ def _isolated_settings_store(_session_settings_store, tmp_path):
         patcher.setattr(config, "RECORDINGS_FOLDER", str(tmp_path / "recordings"))
         patcher.setattr(config, "DATABASE_FILE", str(tmp_path / "openwhisper.db"))
         patcher.setattr(config, "HISTORY_FILE", str(tmp_path / "transcription_history.json"))
+        patcher.setattr(config, "LOG_FILE", str(tmp_path / "openwhisper.log"))
         # Bind the real module now: some tests swap services.database in
         # sys.modules, and teardown must still reach this manager.
         from services.database import db
@@ -180,6 +248,30 @@ def _isolated_credential_store():
         yield
     finally:
         credentials.set_store(previous)
+
+
+@pytest.fixture(autouse=True)
+def _no_installed_agent_probes(request):
+    """Keep Settings from running the user's real coding agents.
+
+    Opening Meeting Mode → Intelligence scans for Claude Code, Codex, and
+    OpenCode by running their command lines. Here the scan finds nothing
+    unless a test patches ``ui_qt.widgets.agent_picker`` itself.
+    """
+    if request.node.get_closest_marker("qt") is None:
+        yield
+        return
+    from services.installed_agents import AGENT_ORDER, AGENT_SPECS, AgentModel
+    from ui_qt.widgets import agent_picker
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(agent_picker, "scan_installed_agents",
+                        lambda refresh=False: dict.fromkeys(AGENT_ORDER))
+        patcher.setattr(agent_picker, "cached_agents", lambda: None)
+        patcher.setattr(agent_picker, "list_agent_models", lambda agent: [
+            AgentModel("", f"{AGENT_SPECS[agent.id].name} default")
+        ])
+        yield
 
 
 @pytest.fixture(autouse=True)

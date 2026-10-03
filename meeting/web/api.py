@@ -78,6 +78,8 @@ _REPORT_REJECTIONS = {
 
 _TRANSCRIPT_PAGE_DEFAULT = 500
 _TRANSCRIPT_PAGE_MAX = 1000
+_HISTORY_PAGE_DEFAULT = 50
+_HISTORY_PAGE_MAX = 100
 
 
 def _encode_cursor(item: Dict[str, Any]) -> str:
@@ -86,6 +88,28 @@ def _encode_cursor(item: Dict[str, Any]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _history_cursor(meeting: Dict[str, Any]) -> str:
+    raw = json.dumps([meeting["started_at"], meeting["id"]], separators=(",", ":"))
+    return base64.urlsafe_b64encode(raw.encode()).decode("ascii").rstrip("=")
+
+
+def _decode_history_cursor(cursor: str) -> tuple[Optional[str], Optional[str]]:
+    if not cursor:
+        return None, None
+    try:
+        if len(cursor) > 1024:
+            raise ValueError("cursor too long")
+        values = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+        if not isinstance(values, list) or len(values) != 2:
+            raise ValueError("invalid cursor shape")
+        started_at, meeting_id = values
+        if not isinstance(started_at, str) or not isinstance(meeting_id, str):
+            raise ValueError("invalid cursor fields")
+        return started_at, meeting_id
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid meeting cursor") from exc
 
 
 def _decode_cursor(cursor: str) -> tuple[Optional[float], Optional[str]]:
@@ -203,10 +227,12 @@ def _public_meeting(
     if digest is not None:
         public["digest"] = digest
     public.update(compact_finalization_list_fields(meeting))
-    if repository is not None:
-        summary = summarize_meeting_content(
-            repository, str(meeting.get("id") or "")
-        )
+    summary = meeting.get("content_summary")
+    if isinstance(summary, dict) or repository is not None:
+        if not isinstance(summary, dict):
+            summary = summarize_meeting_content(
+                repository, str(meeting.get("id") or "")
+            )
         public["content_summary"] = summary
         public.update({
             "has_audio": summary["has_audio"],
@@ -385,24 +411,51 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         return await _transcript_page(meeting_id, cursor, limit)
 
     @app.get("/api/meetings")
-    async def api_meetings(token: str = "") -> Dict[str, Any]:
+    async def api_meetings(token: str = "", cursor: str = "",
+                           limit: int = _HISTORY_PAGE_DEFAULT, q: str = "",
+                           since: str = "", has_decisions: bool = False,
+                           has_actions: bool = False,
+                           needs_attention: bool = False) -> Dict[str, Any]:
         await _require(token, host_only=True)
-        rows = await asyncio.to_thread(repository.list_meetings)
-        meetings = await asyncio.gather(*[
-            asyncio.to_thread(_public_meeting, row, repository)
-            for row in rows
-        ])
-        return {"meetings": meetings}
+        started_at, meeting_id = _decode_history_cursor(cursor)
+        page_limit = max(1, min(limit, _HISTORY_PAGE_MAX))
+        rows = await asyncio.to_thread(
+            repository.list_past_meeting_summaries, limit=page_limit + 1,
+            query=q, cursor_started_at=started_at, cursor_id=meeting_id,
+            include_running=True, started_after=since,
+        )
+        has_more = len(rows) > page_limit
+        page = rows[:page_limit]
+        # Digest filters inspect one bounded window. A continuation is returned
+        # even for an empty filtered page, so older matches remain reachable.
+        def public_page() -> list[Dict[str, Any]]:
+            result = []
+            for row in page:
+                public = _public_meeting(row)
+                digest = public.get("digest") or {}
+                if has_decisions and not digest.get("decisions"):
+                    continue
+                if has_actions and not digest.get("action_items"):
+                    continue
+                if needs_attention and public.get("insights_tone") != "warning":
+                    continue
+                result.append(public)
+            return result
+        return {
+            "meetings": await asyncio.to_thread(public_page),
+            "next_cursor": _history_cursor(page[-1]) if has_more and page else None,
+        }
 
     @app.get("/api/meetings/{meeting_id}")
-    async def api_meeting_detail(meeting_id: str, token: str = "") -> Dict[str, Any]:
+    async def api_meeting_detail(meeting_id: str, token: str = "",
+                                 include_transcript: bool = True) -> Dict[str, Any]:
         await _require(token, host_only=True)
         meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail="unknown meeting")
-        transcript = await _transcript_page(
+        transcript = (await _transcript_page(
             meeting_id, "", _TRANSCRIPT_PAGE_DEFAULT
-        )
+        )) if include_transcript else {"items": [], "next_cursor": None}
         public_meeting = await asyncio.to_thread(
             _public_meeting, meeting, repository
         )
@@ -411,7 +464,17 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             "state": await _state_for(meeting_id, meeting),
             "segments": transcript["items"],
             "transcript_next_cursor": transcript["next_cursor"],
+            "transcript_included": include_transcript,
         }
+
+    @app.get("/api/meetings/{meeting_id}/state")
+    async def api_meeting_state(meeting_id: str, token: str = "") -> Dict[str, Any]:
+        """Follow report/review progress without transcript or content queries."""
+        await _require(token, host_only=True)
+        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="unknown meeting")
+        return {"state": await _state_for(meeting_id, meeting)}
 
     @app.get("/api/meetings/{meeting_id}/transcript")
     async def api_meeting_transcript(meeting_id: str, token: str = "",
@@ -757,6 +820,13 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         fill in for meetings recorded with AI insights off.
         """
         options = getattr(engine, "options", None)
+        from services.settings import MeetingAgentCore
+
+        kind = getattr(options, "agent_core_kind", "")
+        if kind in MeetingAgentCore.INSTALLED:
+            # The meeting's installed agent writes the report too.
+            return {"provider": kind, "model": getattr(options, "llm_model", "") or "",
+                    "endpoint": None}
         provider = (meeting.get("agent_provider")
                     or getattr(options, "llm_provider", "") or "openrouter")
         model = (meeting.get("agent_model")

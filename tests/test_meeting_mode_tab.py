@@ -69,11 +69,12 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
             ),
             "Meeting Mode",
         )
+        meeting_tab = self.window.meeting_mode_tab
         self.assertIs(
             self.window.tabbed_content.stack.widget(
                 TabbedContentWidget.TAB_MEETING_MODE
             ),
-            self.window.meeting_mode_tab,
+            meeting_tab,
         )
         self.assertFalse(hasattr(self.window, "meeting_panel"))
 
@@ -235,47 +236,40 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
         layout = self.window.meeting_mode_tab.finalization_steps_layout
         return [layout.itemAt(i).widget() for i in range(layout.count())]
 
-    def test_finalization_steps_expand_window_height(self):
-        """Window smoothly expands to accommodate finalization steps without clipping."""
-        start_height = self.window.height()
-        self.window.meeting_mode_tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": self.FINALIZATION,
-            "dashboard_available": True,
-        })
-        self._settle()
+    def test_finalization_geometry_and_clear(self):
+        """Expansion, row spacing and shrinkage share one window lifecycle."""
+        for dashboard in ({}, {"dashboard_available": True}):
+            with self.subTest(dashboard=dashboard):
+                start_height = self.window.height()
+                self.window.meeting_mode_tab.set_meeting_state({
+                    "active": False,
+                    "status": "ended",
+                    "finalization": self.FINALIZATION,
+                    **dashboard,
+                })
+                self._settle()
+                expanded_height = self.window.height()
+                self.assertGreater(expanded_height, start_height)
+                steps_widget = self.window.meeting_mode_tab.finalization_steps_widget
+                self.assertGreaterEqual(
+                    steps_widget.height(), steps_widget.minimumSizeHint().height()
+                )
+                for row in self._step_rows():
+                    self.assertGreaterEqual(row.height(), row.minimumSizeHint().height())
+                    self.assertGreater(row.x(), 0)
+                    self.assertLess(row.x() + row.width(), steps_widget.width())
 
-        self.assertGreater(self.window.height(), start_height)
-        steps_widget = self.window.meeting_mode_tab.finalization_steps_widget
-        self.assertGreaterEqual(
-            steps_widget.height(), steps_widget.minimumSizeHint().height()
-        )
-        for row in self._step_rows():
-            self.assertGreaterEqual(row.height(), row.minimumSizeHint().height())
-
-    def test_scroll_space_is_released_when_the_card_clears(self):
-        """Clearing finalization smoothly shrinks the window back to idle height."""
-        self.window.meeting_mode_tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": self.FINALIZATION,
-        })
-        self._settle()
-        expanded_height = self.window.height()
-
-        self.window.meeting_mode_tab.set_meeting_state({
-            "status": "idle",
-            "active": False,
-            "finalization": None,
-        })
-        self._settle()
-
-        self.assertLess(self.window.height(), expanded_height)
-        self.assertEqual(
-            self.window.meeting_mode_tab.scroll_area.verticalScrollBar().maximum(),
-            0,
-        )
+                self.window.meeting_mode_tab.set_meeting_state({
+                    "status": "idle",
+                    "active": False,
+                    "finalization": None,
+                })
+                self._settle()
+                self.assertLess(self.window.height(), expanded_height)
+                self.assertEqual(
+                    self.window.meeting_mode_tab.scroll_area.verticalScrollBar().maximum(),
+                    0,
+                )
 
     def test_switch_tabs_static_between_record_and_upload(self):
         """Switching between Quick Record and Upload File keeps height static."""
@@ -316,21 +310,6 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
         )
         self._settle()
         self.assertEqual(self.window.height(), resting_height)
-
-    def test_step_rows_are_inset_from_the_list_edges(self):
-        """Step rows keep padding on both sides instead of touching the border."""
-        self.window.meeting_mode_tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": self.FINALIZATION,
-        })
-        self._settle()
-
-        steps_widget = self.window.meeting_mode_tab.finalization_steps_widget
-        for row in self._step_rows():
-            self.assertGreater(row.x(), 0)
-            self.assertLess(row.x() + row.width(), steps_widget.width())
-
 
 class TestMeetingModeTabState(unittest.TestCase):
     @classmethod

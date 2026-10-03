@@ -95,11 +95,11 @@ class IsolatedWhisperModel:
             raise
         return process
 
-    def load(self):
+    def load(self, cancel=None):
         with self._state_lock:
             generation = self._generation
         with self._request_lock:
-            self._worker(generation)
+            self._worker(generation, cancel)
 
     def transcribe(self, audio, **options):
         return self.transcribe_cancelable(audio, should_cancel=None, **options)

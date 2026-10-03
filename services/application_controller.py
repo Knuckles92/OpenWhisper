@@ -97,6 +97,7 @@ class ApplicationController(QObject):
     transcription_failed = pyqtSignal(str)
     recording_capture_failed = pyqtSignal(str)
     history_persisted = pyqtSignal(object)
+    startup_database_ready = pyqtSignal(str)
     remote_catalog_received = pyqtSignal(object, object, object)
     # Multi-file upload, emitted from the batch worker thread.
     # (1-based position, total, source name) as each file starts
@@ -208,6 +209,10 @@ class ApplicationController(QObject):
         self._shutdown_cancel = threading.Event()
         self._shutting_down = False
         self.executor = ThreadPoolExecutor(max_workers=2)
+        self._startup_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="database-startup"
+        )
+        self._startup_database_requested = False
         self.persistence_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="history-save"
         )
@@ -934,7 +939,6 @@ class ApplicationController(QObject):
         report it to.
         """
         from transcriber.optional_backend import LocalSpeechBackend
-        self.executor.submit(self.transcription_runtime.recover_recordings)
         if isinstance(self.current_backend, LocalSpeechBackend):
             self._pending_streaming_setup = True
             self._start_initial_whisper_load()
@@ -950,15 +954,12 @@ class ApplicationController(QObject):
                 QTimer.singleShot(0, self.streaming_runtime.setup_streaming)
         else:
             QTimer.singleShot(0, self.streaming_runtime.setup_streaming)
-        # Meeting crash recovery: scan now that there is a UI to show the
-        # recovery dialog over. Initialize SQLite on this thread first so
-        # the two setup workers do not race create_all on a missing file.
-        try:
-            db.ensure_initialized()
-        except Exception as exc:
-            self.update_readiness_error = str(exc) or "Could not initialize the database"
-            logger.exception("Could not initialize the database")
-        QTimer.singleShot(0, self.meeting_runtime.setup)
+        # Migrations and legacy history import may be slow on first launch.
+        # The completion signal starts dependent services after the shared
+        # database is ready, without holding up the first event-loop paint.
+        if not self._startup_database_requested:
+            self._startup_database_requested = True
+            self._startup_executor.submit(self._initialize_startup_database)
         self.component_executor.submit(self._prune_update_leftovers)
         # Defer the GitHub metadata check so HF consent / recovery win the
         # first modal slot, and so a recording or meeting can start first.
@@ -971,11 +972,29 @@ class ApplicationController(QObject):
             name="remote-host-start",
             daemon=True,
         ).start()
-        # Records kept on (or copied to) the paired host: after the database
-        # is initialized above, on the sync's own thread.
+        self._warm_openai_sdk()
+
+    def _initialize_startup_database(self) -> None:
+        error = ""
+        try:
+            db.ensure_initialized()
+        except Exception as exc:
+            error = str(exc) or "Could not initialize the database"
+            logger.exception("Could not initialize the database")
+        if not self._shutting_down:
+            self.startup_database_ready.emit(error)
+
+    def _on_startup_database_ready(self, error: str) -> None:
+        if self._shutting_down:
+            return
+        if error:
+            self.update_readiness_error = error
+            self.ui_controller.set_status(error)
+            return
+        self.executor.submit(self.transcription_runtime.recover_recordings)
+        self.meeting_runtime.setup()
         self.record_sync.start()
         self.remote_engine.start_client_history()
-        self._warm_openai_sdk()
 
     def _warm_openai_sdk(self) -> None:
         """Import the openai SDK on a worker when this session is set to use it.
@@ -2388,6 +2407,7 @@ class ApplicationController(QObject):
             logger.error(f"Meeting recovery dialog failed: {exc}")
 
     def _connect_signals(self) -> None:
+        self.startup_database_ready.connect(self._on_startup_database_ready)
         self.profile_record_requested.connect(self.toggle_profile_recording)
         self.transcription_completed.connect(self._on_transcription_complete)
         self.transcription_failed.connect(self._on_transcription_error)
@@ -2512,6 +2532,7 @@ class ApplicationController(QObject):
         logger.info("Starting application cleanup...")
         shutdown_started = time.perf_counter()
         self._shutting_down = True
+        self._startup_executor.shutdown(wait=True, cancel_futures=True)
         if hasattr(self, "_shutdown_cancel"):
             self._shutdown_cancel.set()
         self._batch_stop_requested = True

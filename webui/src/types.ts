@@ -562,11 +562,17 @@ export interface SessionResponse {
 
 export type MeetingRow = MeetingInfo;
 
+export interface MeetingListResponse {
+  meetings: MeetingRow[];
+  next_cursor: string | null;
+}
+
 export interface MeetingDetailResponse {
   meeting: MeetingRow;
   state: MeetingStateDoc;
   segments: Segment[];
   transcript_next_cursor: string | null;
+  transcript_included?: boolean;
 }
 
 export interface TranscriptPage {

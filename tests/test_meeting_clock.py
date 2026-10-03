@@ -1,51 +1,69 @@
 """
 Tests for MeetingClock: pause credit, timestamp conversion, recovery re-anchor.
 """
-import time
+from types import SimpleNamespace
 
+import pytest
+
+import meeting.clock as clock_module
 from meeting.clock import MeetingClock
 
+
+@pytest.fixture
+def monotonic(monkeypatch):
+    ticks = SimpleNamespace(value=10_000.0)
+
+    def advance(seconds):
+        ticks.value += seconds
+
+    ticks.advance = advance
+    # Replace this module's clock source, leaving pytest and real worker
+    # deadlines on their own monotonic clocks.
+    monkeypatch.setattr(clock_module, "time", SimpleNamespace(monotonic=lambda: ticks.value))
+    return ticks
+
+
 class TestMeetingClock:
-    def test_zero_before_start(self):
+    def test_zero_before_start(self, monotonic):
         clock = MeetingClock()
         assert clock.now_s() == 0.0
         assert not clock.is_running
-        assert clock.meeting_time(time.monotonic()) == 0.0
+        assert clock.meeting_time(monotonic.value) == 0.0
 
-    def test_advances_after_start(self):
+    def test_advances_after_start(self, monotonic):
         clock = MeetingClock()
         clock.start()
-        time.sleep(0.05)
-        assert 0.03 < clock.now_s() < 1.0
+        monotonic.advance(0.05)
+        assert clock.now_s() == pytest.approx(0.05)
         assert clock.is_running
         assert clock.started_at_iso
 
-    def test_pause_freezes_meeting_time(self):
+    def test_pause_freezes_meeting_time(self, monotonic):
         clock = MeetingClock()
         clock.start()
-        time.sleep(0.05)
+        monotonic.advance(0.05)
         clock.pause()
         frozen = clock.now_s()
-        time.sleep(0.08)
-        assert abs(clock.now_s() - frozen) < 0.005
+        monotonic.advance(0.08)
+        assert clock.now_s() == frozen
         # Timestamps taken during the pause resolve to the pause instant
-        assert abs(clock.meeting_time(time.monotonic()) - frozen) < 0.005
+        assert clock.meeting_time(monotonic.value) == frozen
 
-    def test_resume_credits_paused_span(self):
+    def test_resume_credits_paused_span(self, monotonic):
         clock = MeetingClock()
         clock.start()
-        time.sleep(0.05)
+        monotonic.advance(0.05)
         before_pause = clock.now_s()
         clock.pause()
-        time.sleep(0.1)
+        monotonic.advance(0.1)
         clock.resume()
         after = clock.now_s()
         # Scheduler delays before pause belong to meeting time; only the
         # paused span should disappear.
-        assert abs(after - before_pause) < 0.05
-        assert clock.paused_total_s() >= 0.09
+        assert after == pytest.approx(before_pause)
+        assert clock.paused_total_s() == pytest.approx(0.1)
 
-    def test_pause_resume_idempotent(self):
+    def test_pause_resume_idempotent(self, monotonic):
         clock = MeetingClock()
         clock.start()
         clock.resume()  # not paused: no-op
@@ -56,10 +74,10 @@ class TestMeetingClock:
         assert clock.is_running
         assert not clock.is_paused
 
-    def test_recovery_reanchor_continues_timeline(self):
+    def test_recovery_reanchor_continues_timeline(self, monotonic):
         clock = MeetingClock()
         clock.resume_from_recovery(120.0)
         now = clock.now_s()
-        assert 119.9 < now < 121.0
-        time.sleep(0.05)
-        assert clock.now_s() > now
+        assert now == pytest.approx(120.0)
+        monotonic.advance(0.05)
+        assert clock.now_s() == pytest.approx(now + 0.05)

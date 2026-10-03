@@ -7,6 +7,7 @@ Every subsystem the engine imports lazily (capture, ASR, diarizer, web server,
 agent core, scheduler) is replaced with an in-process fake, so nothing here
 touches an audio device, a Whisper model, a socket, or the network.
 """
+import json
 import os
 import sys
 import threading
@@ -16,6 +17,7 @@ import types
 import numpy as np
 import pytest
 
+from meeting.agent.base import create_agent_core as real_agent_core_factory
 from meeting.interfaces import AgentResult, SpooledChunk, TranscriptSegment
 
 # Load the real diarize package before the ``fakes`` fixture shadows its
@@ -68,11 +70,12 @@ class FakeAsr:
     instances = []
 
     def __init__(self, model, meeting_id, repository, language=None,
-                 term_rules=None):
+                 term_rules=None, *, defer_load=False):
         self.model = model
         self.meeting_id = meeting_id
         self.language = language
         self.term_rules = term_rules
+        self.repository = repository
         self.is_available = True
         self.on_segments = None
         self.chunks = []
@@ -82,6 +85,9 @@ class FakeAsr:
         self.offline_passes = 0
         self.offline_segments = []
         FakeAsr.instances.append(self)
+
+    def load_backend(self):
+        return self.is_available
 
     def start(self, on_segments):
         self.on_segments = on_segments
@@ -100,8 +106,14 @@ class FakeAsr:
     def stop(self):
         self.stops += 1
 
-    def requeue_pending(self):
+    def requeue_pending(self, *, rows=None):
         self.requeues += 1
+        for row in rows or []:
+            self.enqueue(SpooledChunk(
+                chunk_id=row["id"], meeting_id=row["meeting_id"],
+                channel=row["channel"], seq=row["seq"], file_path=row["file_path"],
+                start_s=row["start_s"], duration_s=row["duration_s"], sample_rate=row["sample_rate"],
+            ))
 
 class FakeServer:
     """Web server stand-in that records broadcasts instead of sending them."""
@@ -343,10 +355,13 @@ def make_engine(repo, tmp_path, fakes):
             title="Test meeting",
             cloud_enabled=cloud_enabled,
             spool_root=str(tmp_path / "spool"),
-            agent_core_kind="direct",
+            agent_core_kind=overrides.pop("agent_core_kind", "pi"),
             **overrides,
         )
         engine = MeetingEngine(options, repository=repo)
+        # Feature tests below need ready fake consumers. Lifecycle tests opt
+        # back into the real startup worker to exercise the readiness split.
+        engine._start_processing = engine._processing_worker
         engine.events = []
         engine.add_listener(
             lambda kind, payload: engine.events.append((kind, dict(payload)))
@@ -374,6 +389,329 @@ def loopback_segment(meeting_id, seg_id, start=1.0, end=3.0, chunk_id=None):
     )
 
 # Required startup services
+
+class TestDeferredProcessingStartup:
+    @staticmethod
+    def _async_start(engine):
+        from meeting.engine import MeetingEngine
+        engine._start_processing = MeetingEngine._start_processing.__get__(engine)
+
+    @staticmethod
+    def _register(engine, repo, seq, start_s, channel="mic"):
+        chunk_id = repo.register_chunk(
+            meeting_id=engine.meeting_id, channel=channel, seq=seq,
+            file_path=os.devnull, start_s=start_s, duration_s=1.0, sample_rate=16000,
+        )
+        return SpooledChunk(chunk_id=chunk_id, meeting_id=engine.meeting_id,
+                            channel=channel, seq=seq, file_path=os.devnull,
+                            start_s=start_s, duration_s=1.0, sample_rate=16000)
+
+    def test_capture_dashboard_and_ordered_replay_do_not_wait_for_model(
+            self, make_engine, repo, fakes):
+        entered, release = threading.Event(), threading.Event()
+
+        class DelayedAsr(FakeAsr):
+            def load_backend(self):
+                entered.set()
+                assert release.wait(5)
+                return True
+
+        fakes.modules["meeting.asr.engine"].MeetingAsrEngine = DelayedAsr
+        engine = make_engine(cloud_enabled=False)
+        self._async_start(engine)
+        try:
+            result = engine.start()
+            assert entered.wait(5)
+            assert result["url"]
+            assert all(source.is_active() for source in engine._sources)
+            assert fakes.servers[0].engine is engine
+            assert not engine._asr_ready
+            later = self._register(engine, repo, 1, 4.0)
+            earlier = self._register(engine, repo, 0, 1.0)
+            loopback = self._register(engine, repo, 0, 2.0, "loopback")
+            for chunk in (later, earlier, earlier, loopback):
+                engine._on_chunk(chunk)
+            assert fakes.asr[0].chunks == []
+            assert len(repo.get_pending_chunks(engine.meeting_id)) == 3
+            release.set()
+            assert engine.wait_for_processing(5)
+            assert [chunk.chunk_id for chunk in fakes.asr[0].chunks] == [
+                earlier.chunk_id, loopback.chunk_id, later.chunk_id,
+            ]
+            # A registration can finish before its delayed spool notification.
+            engine._on_chunk(later)
+            live = self._register(engine, repo, 2, 6.0)
+            engine._on_chunk(live)
+            engine._on_chunk(live)
+            assert [chunk.chunk_id for chunk in fakes.asr[0].chunks] == [
+                earlier.chunk_id, loopback.chunk_id, later.chunk_id, live.chunk_id,
+            ]
+        finally:
+            release.set()
+            engine.wait_for_processing(5)
+
+    def test_end_cancels_loading_and_leaves_pending_audio_recoverable(
+            self, make_engine, repo, fakes):
+        entered, release = threading.Event(), threading.Event()
+
+        class CancelableAsr(FakeAsr):
+            def load_backend(self):
+                self.is_available = False
+                entered.set()
+                assert release.wait(5)
+                return False
+
+            def stop(self):
+                super().stop()
+                release.set()
+
+        fakes.modules["meeting.asr.engine"].MeetingAsrEngine = CancelableAsr
+        engine = make_engine(cloud_enabled=True)
+        self._async_start(engine)
+        try:
+            engine.start()
+            assert entered.wait(5)
+            chunk = self._register(engine, repo, 0, 0.0)
+            engine._on_chunk(chunk)
+            engine.end()
+            engine._end_thread.join(5)
+            assert not engine._end_thread.is_alive()
+            assert engine.wait_for_processing(5)
+            assert repo.get_meeting(engine.meeting_id)["status"] == "needs_recovery"
+            assert repo.get_pending_chunks(engine.meeting_id)[0]["id"] == chunk.chunk_id
+            assert fakes.asr[0].chunks == []
+            assert fakes.asr[0].stops >= 1
+            assert engine._asr is None
+            assert engine._scheduler is None
+            assert fakes.cores == []
+            assert len(events_of(engine, "asr_released")) == 1
+        finally:
+            release.set()
+            engine.wait_for_processing(5)
+
+    def test_failed_dashboard_preserves_audio_without_starting_models(
+            self, make_engine, repo, fakes):
+        engine = make_engine(cloud_enabled=False)
+        self._async_start(engine)
+
+        class FailingServer(FakeServer):
+            def start(server):
+                chunk = self._register(engine, repo, 0, 0.0)
+                engine._on_chunk(chunk)
+                raise RuntimeError("dashboard failed")
+
+        fakes.modules["meeting.web.server"].MeetingWebServer = FailingServer
+        with pytest.raises(RuntimeError, match="dashboard failed"):
+            engine.start()
+        assert repo.get_meeting(engine.meeting_id)["status"] == "failed"
+        assert len(repo.get_pending_chunks(engine.meeting_id)) == 1
+        assert all(not source.is_active() for source in engine._sources)
+        assert engine._processing_thread is None
+        assert fakes.asr == []
+
+    def test_end_during_speaker_resolution_prevents_model_and_agent_adoption(
+            self, make_engine, repo, fakes):
+        entered, release = threading.Event(), threading.Event()
+
+        def resolve():
+            entered.set()
+            assert release.wait(5)
+            return "/downloaded/speaker.onnx"
+
+        engine = make_engine(diarization_model_resolver=resolve)
+        self._async_start(engine)
+        try:
+            assert engine.start()["url"]
+            assert entered.wait(5)
+            assert all(source.is_active() for source in engine._sources)
+            chunk = self._register(engine, repo, 0, 0.0)
+            engine._on_chunk(chunk)
+            engine.end()
+            engine._end_thread.join(5)
+            assert not engine._end_thread.is_alive()
+            assert repo.get_meeting(engine.meeting_id)["status"] == "needs_recovery"
+            assert repo.get_pending_chunks(engine.meeting_id)[0]["id"] == chunk.chunk_id
+            assert len(events_of(engine, "asr_released")) == 1
+            release.set()
+            assert engine.wait_for_processing(5)
+            assert fakes.asr == []
+            assert fakes.cores == []
+            assert engine._diarizer is None
+            assert engine._scheduler is None
+        finally:
+            release.set()
+            engine.wait_for_processing(5)
+
+    def test_end_cancels_initializing_agent_without_late_online_status(
+            self, make_engine, fakes, monkeypatch):
+        entered, release = threading.Event(), threading.Event()
+
+        class DelayedCore(FakeAgentCore):
+            def initialize(self, cfg, tools):
+                super().initialize(cfg, tools)
+                entered.set()
+                assert release.wait(5)
+
+            def shutdown(self):
+                super().shutdown()
+                release.set()
+
+        core = DelayedCore()
+        monkeypatch.setattr("meeting.agent.base.create_agent_core", lambda *args: core)
+        engine = make_engine()
+        self._async_start(engine)
+        try:
+            engine.start()
+            assert entered.wait(5)
+            engine.end()
+            engine._end_thread.join(5)
+            assert not engine._end_thread.is_alive()
+            assert engine.wait_for_processing(5)
+            assert core.shutdowns >= 1
+            assert engine._agent_core is None
+            assert engine._initializing_agent_core is None
+            assert engine._scheduler is None
+            assert not engine.agent_writes_allowed()
+            assert not engine.store.snapshot()["intelligence_online"]
+            assert not any(payload.get("online") for payload in events_of(engine, "intelligence"))
+            assert fakes.schedulers == []
+        finally:
+            release.set()
+            engine.wait_for_processing(5)
+
+
+    @pytest.mark.parametrize("blocked_stage", ["availability", "callback"])
+    def test_end_during_diarizer_probe_prevents_late_availability(
+            self, make_engine, repo, fakes, blocked_stage):
+        entered, release = threading.Event(), threading.Event()
+
+        class DelayedDiarizer(FakeDiarizer):
+            def is_available(self):
+                if blocked_stage == "availability":
+                    entered.set()
+                    assert release.wait(5)
+                return True
+
+            def set_relabel_callback(self, callback):
+                if blocked_stage == "callback":
+                    entered.set()
+                    assert release.wait(5)
+                super().set_relabel_callback(callback)
+
+        diarizer = DelayedDiarizer()
+        fakes.modules["meeting.diarize.clustering"].create_diarizer = lambda *args: diarizer
+        engine = make_engine(cloud_enabled=False)
+        self._async_start(engine)
+        try:
+            engine.start()
+            assert entered.wait(5)
+            engine.end()
+            engine._end_thread.join(5)
+            assert not engine._end_thread.is_alive()
+            assert engine.store.snapshot()["status"] == "ended"
+            release.set()
+            assert engine.wait_for_processing(5)
+            assert engine._diarizer is None
+            assert not engine.store.snapshot()["diarization_available"]
+            persisted = repo.get_meeting(engine.meeting_id)
+            assert not json.loads(persisted["state_json"])["diarization_available"]
+        finally:
+            release.set()
+            engine.wait_for_processing(5)
+
+    @pytest.mark.parametrize("initialization_raises", [False, True])
+    @pytest.mark.parametrize("reenable", [False, True])
+    def test_revoked_initializer_cannot_adopt_or_overwrite_new_consent(
+            self, make_engine, fakes, monkeypatch, initialization_raises, reenable):
+        entered, release, reenabled = threading.Event(), threading.Event(), threading.Event()
+
+        class RevokedCore(FakeAgentCore):
+            def initialize(self, cfg, tools):
+                super().initialize(cfg, tools)
+                entered.set()
+                assert release.wait(5)
+                if initialization_raises:
+                    raise RuntimeError("initialization interrupted")
+
+        revoked, fresh = RevokedCore(), FakeAgentCore()
+        created = []
+
+        def create(*args):
+            core = revoked if not created else fresh
+            created.append(core)
+            return core
+
+        monkeypatch.setattr("meeting.agent.base.create_agent_core", create)
+        engine = make_engine()
+        self._async_start(engine)
+        enable_thread = None
+        enable_errors = []
+        try:
+            engine.start()
+            assert entered.wait(5)
+            engine.set_cloud_enabled(False)
+            assert engine.store.snapshot()["finalization"]["status"] == "disabled"
+            if reenable:
+                engine.store.subscribe(lambda seq, results: reenabled.set() if any(
+                    result.op.get("op") == "set_cloud_enabled" and result.op.get("enabled")
+                    for result in results) else None)
+
+                def enable():
+                    try:
+                        engine.set_cloud_enabled(True)
+                    except Exception as exc:
+                        enable_errors.append(exc)
+
+                enable_thread = threading.Thread(target=enable, daemon=True)
+                enable_thread.start()
+                assert reenabled.wait(5)
+            release.set()
+            assert engine.wait_for_processing(5)
+            if enable_thread is not None:
+                enable_thread.join(5)
+                assert not enable_thread.is_alive()
+                assert enable_errors == []
+            assert not any(payload.get("error") for payload in events_of(engine, "intelligence"))
+            denied = revoked.tools.apply_agent_ops([{
+                "op": "set_rolling_summary", "text": "Late revoked write", "evidence": ["sg_audio"],
+            }])[0]
+            assert not denied.ok and denied.reason == "agent_writes_revoked"
+            if reenable:
+                assert created == [revoked, fresh]
+                assert engine._agent_core is fresh
+                assert engine._scheduler.agent_core is fresh
+                assert engine.store.snapshot()["finalization"]["status"] == "pending"
+            else:
+                assert engine._agent_core is None
+                assert engine._scheduler is None
+                assert engine.store.snapshot()["finalization"]["status"] == "disabled"
+        finally:
+            release.set()
+            engine.wait_for_processing(5)
+            if enable_thread is not None:
+                enable_thread.join(5)
+
+    def test_committed_replay_frontier_survives_asr_startup(
+            self, make_engine, repo, fakes):
+        class ImmediateReplayAsr(FakeAsr):
+            def requeue_pending(self, *, rows=None):
+                super().requeue_pending(rows=rows)
+                for chunk in self.chunks:
+                    self.on_segments(chunk, [])
+
+        fakes.modules["meeting.asr.engine"].MeetingAsrEngine = ImmediateReplayAsr
+        engine = make_engine(cloud_enabled=False)
+        engine._start_processing = lambda: None
+        engine.start()
+        chunk = self._register(engine, repo, 0, 2.0)
+        engine._on_chunk(chunk)
+        engine._start_asr(defer_load=True)
+        assert engine._preview_frontiers == {"mic": chunk.start_s + chunk.duration_s}
+        broadcasts = len(fakes.servers[0].messages)
+        engine._on_speech_preview({"channel": "mic", "text": "stale draft", "start_s": 0,
+                                   "end_s": 1, "final": False})
+        assert len(fakes.servers[0].messages) == broadcasts
+
 
 class TestRequiredStartupServices:
     def test_server_failure_aborts_and_discards_empty_meeting(
@@ -536,6 +874,21 @@ class TestIntelligenceHealth:
         assert fakes.cores == []
         assert fakes.schedulers == []
         assert engine.store.with_state(lambda s: s.intelligence_online) is False
+
+    @pytest.mark.parametrize("kind", ["pi", "direct"])
+    def test_missing_pi_keeps_recording_without_starting_an_api_fallback(
+            self, make_engine, fakes, monkeypatch, kind):
+        monkeypatch.setattr("meeting.agent.base.create_agent_core", real_agent_core_factory)
+        engine = make_engine(cloud_enabled=True, agent_core_kind=kind)
+        result = engine.start()
+
+        assert result["meeting_id"] == engine.meeting_id
+        assert engine.store.with_state(lambda s: s.status) == "active"
+        assert engine.store.with_state(lambda s: s.intelligence_online) is False
+        assert fakes.asr and fakes.servers and not fakes.servers[0].stopped
+        assert fakes.cores == [] and fakes.schedulers == []
+        assert engine._agent_core is None
+        assert "Pi is unavailable" in events_of(engine, "intelligence")[-1]["error"]
 
     def test_asr_receives_pinned_meeting_language(self, make_engine, fakes):
         engine = make_engine(cloud_enabled=False, asr_language="en")
@@ -1291,6 +1644,8 @@ class TestDiarizationDegradation:
         engine.start()
         chunk_id = self._prime(engine, repo)
         assert engine.store.with_state(lambda s: s.diarization_available) is True
+        initial_events = len(engine.events)
+        initial_broadcasts = len(fakes.servers[0].messages)
 
         fakes.diarizer.available = False
         fakes.diarizer.next_participant = None
@@ -1309,14 +1664,15 @@ class TestDiarizationDegradation:
         assert engine._degraded_diarization is True
 
         notices = [
-            payload for payload in events_of(engine, "status")
+            payload for kind, payload in engine.events[initial_events:]
+            if kind == "status"
             if payload.get("diarization_available") is False
         ]
         assert len(notices) == 1
         assert notices[0]["diarization_available"] is False
 
         broadcasts = [
-            m for m in fakes.servers[0].messages
+            m for m in fakes.servers[0].messages[initial_broadcasts:]
             if m.get("type") == "status"
             and m.get("diarization_available") is False
         ]

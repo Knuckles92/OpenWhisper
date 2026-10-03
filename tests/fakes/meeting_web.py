@@ -41,6 +41,32 @@ class FakeWebRepo:
     def list_meetings(self):
         return [dict(m) for m in self._meetings]
 
+    def get_meeting_content_summary(self, meeting_id):
+        from types import SimpleNamespace
+        from meeting.content import summarize_meeting_content
+        return summarize_meeting_content(SimpleNamespace(
+            get_audio_chunks=self.get_audio_chunks, get_segments=self.get_segments,
+        ), meeting_id)
+
+    def list_past_meeting_summaries(self, *, limit=101, query="", origin=...,
+                                   cursor_started_at=None, cursor_id=None,
+                                   include_running=False, started_after="", meeting_id=None):
+        rows = sorted(self.list_meetings(),
+                      key=lambda row: (row["started_at"], row["id"]), reverse=True)
+        if not include_running:
+            rows = [row for row in rows if row["status"] not in {"active", "paused", "ending"}]
+        if meeting_id is not None:
+            rows = [row for row in rows if row["id"] == meeting_id]
+        if cursor_started_at is not None:
+            rows = [row for row in rows if (row["started_at"], row["id"])
+                    < (cursor_started_at, cursor_id)]
+        if started_after:
+            rows = [row for row in rows if row["started_at"] >= started_after]
+        if query:
+            rows = [row for row in rows if query.lower() in str(row).lower()]
+        return [dict(row, content_summary=self.get_meeting_content_summary(row["id"]))
+                for row in rows[:limit]]
+
     def delete_meeting(self, meeting_id):
         self.deleted.append(meeting_id)
 

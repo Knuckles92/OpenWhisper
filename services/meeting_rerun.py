@@ -66,35 +66,28 @@ def rerun_options(
         ``from_step``.
     """
     from meeting.refinalize import DEFAULT_TIMEOUT_S
-    from services.components import meeting_agent_payload_dir
+    from services.meeting_agent_route import resolve_meeting_agent_route
     from services.settings import (
-        resolve_meeting_agent_core,
         resolve_meeting_audio_upload_consent,
         resolve_meeting_language,
-        resolve_meeting_llm_model,
-        resolve_meeting_llm_provider,
         resolve_meeting_redecode_coverage_guard,
         resolve_meeting_speaker_id_backend,
         resolve_meeting_whisper_model,
         settings_manager,
     )
-    from services.text_llm import snapshot_from_meeting
     from meeting.asr.remote import saved_remote_route
 
     if settings is None:
         settings = settings_manager.load_all_settings()
     meeting = meeting or {}
     remote = saved_remote_route(meeting)
-    provider = meeting.get("agent_provider") or resolve_meeting_llm_provider(settings)
-    agent_core_kind = resolve_meeting_agent_core(settings)
+    route = resolve_meeting_agent_route(settings, meeting)
     return {
-        "provider": provider,
-        "model": meeting.get("agent_model") or resolve_meeting_llm_model(settings),
-        "endpoint": snapshot_from_meeting(
-            meeting, settings, fallback_provider=provider,
-        ).to_dict(),
-        "agent_core_kind": agent_core_kind,
-        "sidecar_payload_dir": meeting_agent_payload_dir(agent_core_kind),
+        "provider": route.provider,
+        "model": route.model,
+        "endpoint": route.endpoint,
+        "agent_core_kind": route.kind,
+        "sidecar_payload_dir": route.payload_dir,
         "timeout_s": DEFAULT_TIMEOUT_S,
         "asr_model_name": str(
             meeting.get("asr_model") or resolve_meeting_whisper_model(settings)

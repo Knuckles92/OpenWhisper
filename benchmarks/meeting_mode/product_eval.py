@@ -34,6 +34,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from meeting.agent.base import create_agent_core, find_provider_api_key  # noqa: E402
+from services.components import meeting_agent_payload_dir  # noqa: E402
 from meeting.agent.prompts import build_system_prompt, render_state_compact  # noqa: E402
 from meeting.agent.scheduler import ConsolidationOutcome  # noqa: E402
 from meeting.interfaces import (  # noqa: E402
@@ -45,6 +46,8 @@ from meeting.interfaces import (  # noqa: E402
 from meeting.state.repair import repair_meeting_state  # noqa: E402
 from meeting.state.schema import CARD_KEYS, MeetingState  # noqa: E402
 from meeting.state.store import MeetingStateStore  # noqa: E402
+from services.text_generation import generate  # noqa: E402
+from services.text_llm import get_profile  # noqa: E402
 
 from benchmarks.meeting_mode.ami import (  # noqa: E402
     annotation_root,
@@ -404,7 +407,7 @@ def simulate_live_meeting(
     from types import SimpleNamespace
     from unittest.mock import patch
     from meeting.agent.scheduler import CheckpointScheduler
-    from meeting.agent import openrouter_direct as direct_mod
+    from meeting.agent import sidecar as sidecar_mod
 
     if window_s <= 0:
         raise ValueError("Replay tick must be positive")
@@ -415,7 +418,7 @@ def simulate_live_meeting(
     }))
     now = [0.0]
     host.clock = SimpleNamespace(now_s=lambda: now[0])
-    agent = create_agent_core("direct")
+    agent = create_agent_core("pi", meeting_agent_payload_dir("pi"))
     stats = dict(windows=0, checkpoints_ok=0, checkpoints_failed=0,
                  notes_passes_ok=0, notes_passes_failed=0,
                  polish_passes_ok=0, polish_passes_failed=0,
@@ -447,8 +450,8 @@ def simulate_live_meeting(
             system_prompt=build_system_prompt()), host)
         if not agent.is_healthy():
             raise RuntimeError("Meeting intelligence agent is offline")
-        with patch.object(direct_mod, "_CHECKPOINT_TIMEOUT_S",
-                          max(float(direct_mod._CHECKPOINT_TIMEOUT_S), checkpoint_timeout_s)):
+        with patch.object(sidecar_mod, "_CHECKPOINT_TIMEOUT_S",
+                          max(float(sidecar_mod._CHECKPOINT_TIMEOUT_S), checkpoint_timeout_s)):
             cursor = 0
             while True:
                 count = 0
@@ -590,13 +593,13 @@ def run_product_pipeline(
     engine's post-re-decode evidence remap + card strip for the clean End
     path (``old_segments`` supplies the pre-re-decode evidence ids).
     """
-    from meeting.agent import openrouter_direct as direct_mod
+    from meeting.agent import sidecar as sidecar_mod
 
-    direct_mod._CHECKPOINT_TIMEOUT_S = max(
-        float(direct_mod._CHECKPOINT_TIMEOUT_S), polish_timeout_s,
+    sidecar_mod._CHECKPOINT_TIMEOUT_S = max(
+        float(sidecar_mod._CHECKPOINT_TIMEOUT_S), polish_timeout_s,
     )
-    direct_mod._CONSOLIDATION_TIMEOUT_S = max(
-        float(direct_mod._CONSOLIDATION_TIMEOUT_S), consolidation_timeout_s,
+    sidecar_mod._CONSOLIDATION_TIMEOUT_S = max(
+        float(sidecar_mod._CONSOLIDATION_TIMEOUT_S), consolidation_timeout_s,
     )
     host = ProductEvalHost(meeting_id, segments, initial_state=initial_state)
     stripped = (
@@ -608,7 +611,7 @@ def run_product_pipeline(
     )
     if stripped:
         logger.info("Post-redecode strip removed %d proposed item(s)", stripped)
-    agent = create_agent_core("direct")
+    agent = create_agent_core("pi", meeting_agent_payload_dir("pi"))
     agent.initialize(
         AgentConfig(
             meeting_id=meeting_id,
@@ -783,16 +786,17 @@ def judge_packages(
         legacy=_render_package_for_judge(legacy),
         clean=_render_package_for_judge(clean),
     )
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": _JUDGE_SYSTEM},
-            {"role": "user", "content": user},
-        ],
-        temperature=0.0,
-        response_format={"type": "json_object"},
-    )
-    content = (response.choices[0].message.content or "").strip()
+    with client:
+        response = generate(
+            client, get_profile(provider, {}), model=model,
+            messages=[
+                {"role": "system", "content": _JUDGE_SYSTEM},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.0,
+            response_format={"type": "json_object"},
+        )
+    content = response.text.strip()
     try:
         judgment = json.loads(content)
     except json.JSONDecodeError:

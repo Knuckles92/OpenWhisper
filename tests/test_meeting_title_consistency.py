@@ -6,7 +6,7 @@ import threading
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -165,8 +165,16 @@ VALID_TITLES = ["x", "x" * 120, "x" * 121, "x" * 200, "📝" * 200, "  New title
 INVALID_TITLES = [None, 123, "", "   ", "x" * 201, "📝" * 201, "bad\nname", "bad\x00name", "bad\x7fname"]
 
 
-@pytest.mark.parametrize("title", VALID_TITLES + INVALID_TITLES)
-@pytest.mark.parametrize("route", ["repository", "state", "mcp", "rest_current", "rest_cached", "rest_uncached", "mcp_current", "mcp_cached", "mcp_uncached"])
+TITLE_ROUTES = ["repository", "state", "mcp", "rest_current", "rest_cached", "rest_uncached", "mcp_current", "mcp_cached", "mcp_uncached"]
+# Invalid titles are rejected before cache/current/archive dispatch. Exercise
+# each distinct validator, while all valid boundaries still visit every route.
+@pytest.mark.parametrize("route,title", [
+    (route, title)
+    for route in TITLE_ROUTES
+    for title in (VALID_TITLES + INVALID_TITLES
+                  if route in {"repository", "state", "mcp", "rest_current"}
+                  else VALID_TITLES)
+])
 def test_every_title_write_path_uses_the_same_contract(title_case, route, title):
     repo, agent, meeting_id, other_id = title_case
     valid = title in VALID_TITLES
@@ -177,6 +185,22 @@ def test_every_title_write_path_uses_the_same_contract(title_case, route, title)
             if route.endswith("_cached"):
                 dashboard.delete_report(meeting_id, "r_0")
             agent.meeting_renamer = runtime_for(repo, dashboard)
+        before = repo.get_meeting(meeting_id)
+        events_before = repo.list_events(meeting_id)
+        if not valid:
+            # These calls are downstream of validation: rejecting a title
+            # must not open a write transaction, dispatch to a store, or
+            # reach an MCP runtime. This guards the removed duplicate cases.
+            dispatch = []
+            if route == "repository":
+                dispatch.append(stack.enter_context(patch.object(repo._db, "get_session", wraps=repo._db.get_session)))
+            elif route == "mcp":
+                dispatch.append(stack.enter_context(patch.object(agent, "_engine", wraps=agent._engine)))
+                agent.meeting_renamer = MagicMock(side_effect=AssertionError("invalid title dispatched"))
+                dispatch.append(agent.meeting_renamer)
+            elif route.startswith("rest"):
+                dispatch.append(stack.enter_context(patch.object(dashboard.engine, "apply_client_action", wraps=dashboard.engine.apply_client_action)))
+                dispatch.append(stack.enter_context(patch.object(repo, "rename_meeting", wraps=repo.rename_meeting)))
         if route.startswith("rest"):
             response = dashboard.client.post(f"/api/meetings/{meeting_id}/rename",
                                              params={"token": "host-token"}, json={"title": title})
@@ -185,7 +209,13 @@ def test_every_title_write_path_uses_the_same_contract(title_case, route, title)
                 assert response.json() == {"ok": True, "title": title.strip()}
         elif route == "state":
             store = open_store(repo, meeting_id, repo.get_meeting(meeting_id), historical=True)
-            result = store.apply("host", None, [{"op": "set_title", "text": title}])[0]
+            original = store.snapshot()
+            with patch.object(store, "_notify", wraps=store._notify) as notify:
+                result = store.apply("host", None, [{"op": "set_title", "text": title}])[0]
+                if not valid:
+                    notify.assert_not_called()
+                    assert result.seq is None
+                    assert store.snapshot() == original
             assert result.ok == valid
         else:
             action = repo.rename_meeting if route == "repository" else lambda mid, value: agent.retitle("meeting", mid, value)
@@ -194,7 +224,13 @@ def test_every_title_write_path_uses_the_same_contract(title_case, route, title)
             else:
                 with pytest.raises((ValueError, ControlError), match="1–200"):
                     action(meeting_id, title)
+        if not valid:
+            for action in dispatch:
+                action.assert_not_called()
         assert_saved_title(repo, meeting_id, title.strip() if valid else "Test meeting")
+        if not valid:
+            assert repo.get_meeting(meeting_id) == before
+            assert repo.list_events(meeting_id) == events_before
 
 
 def test_mcp_advertises_the_shared_length_contract():

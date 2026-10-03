@@ -145,6 +145,7 @@ export default function FullMeetingDocument({
         onReassignSpeaker={noop}
         readOnly
         segmentIdPrefix="print-"
+        virtualize={false}
       />
     </div>
   );

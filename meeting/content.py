@@ -94,6 +94,10 @@ def summarize_meeting_content(repository: Any, meeting_id: str) -> Dict[str, Any
     cloud insights may be disabled or fail independently of whether anything
     was actually recorded.
     """
+    aggregate = getattr(repository, "get_meeting_content_summary", None)
+    if callable(aggregate):
+        return aggregate(meeting_id)
+
     chunks = []
     segments = []
     try:

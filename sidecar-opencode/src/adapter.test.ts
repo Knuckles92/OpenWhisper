@@ -85,8 +85,11 @@ test("provider routes preserve model capabilities and explicit budget", () => {
   expect(() => providerConfig({ ...base, modelMetadata: { protocol: "invalid" } })).toThrow();
 });
 
-for (const protocol of ["chat", "responses", "anthropic", "google"]) {
-  test(protocol + " tool round trip uses app endpoint, auth, headers, and charter", async () => {
+for (const [kind, protocol] of [
+  ["custom", "chat"], ["custom", "responses"], ["openai", "responses"],
+  ["custom", "anthropic"], ["custom", "google"],
+]) {
+  test(kind + " " + protocol + " tool round trip uses app endpoint, auth, headers, and charter", async () => {
     const seen: any[] = [];
     let applied = 0;
     const progress: any[] = [];
@@ -97,7 +100,7 @@ for (const protocol of ["chat", "responses", "anthropic", "google"]) {
     } });
     let session: HarnessSession | undefined;
     try {
-      session = await createSession({ ...base, baseUrl: "http://127.0.0.1:" + server.port + "/gateway/v1",
+      session = await createSession({ ...base, kind, baseUrl: "http://127.0.0.1:" + server.port + "/gateway/v1",
         headers: { "x-openwhisper-test": "yes" }, modelMetadata: { protocol, max_output_tokens: 3000 },
         tools: [{ ...tool, execute: async args => { expect(args.text).toBe("Synthetic"); applied++; return { text: "Applied" }; } }],
         onEvent: event => progress.push(event),
@@ -111,6 +114,11 @@ for (const protocol of ["chat", "responses", "anthropic", "google"]) {
       expect(seen[0].headers.get("x-openwhisper-test")).toBe("yes");
       expect(seen[0].path).toBe(protocol === "google" ? "/gateway/v1/models/synthetic:streamGenerateContent" : "/gateway/v1/" + ({ chat: "chat/completions", responses: "responses", anthropic: "messages" } as any)[protocol]);
       expect(seen[0].headers.get(protocol === "anthropic" ? "x-api-key" : protocol === "google" ? "x-goog-api-key" : "authorization")).toBe(protocol === "chat" || protocol === "responses" ? "Bearer synthetic-secret" : "synthetic-secret");
+      if (protocol === "responses") {
+        expect(seen[0].body.store).toBe(false);
+        expect(seen[0].body.reasoning).toBeUndefined();
+        expect(seen[1].body.input.some((item: any) => item.type === "function_call_output")).toBe(true);
+      }
       const prompt = JSON.stringify(seen[0].body);
       expect(prompt).toContain(context.systemPrompt);
       expect(prompt).not.toContain("bash");

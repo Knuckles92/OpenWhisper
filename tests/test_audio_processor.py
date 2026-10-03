@@ -428,11 +428,13 @@ class TestMovingAverage:
     split points cannot move, not that the numbers are any particular figure.
     """
 
-    @pytest.mark.parametrize("size", [1, 2, 5, 17, 100, 1000, 4096, 50000])
-    @pytest.mark.parametrize("window", [1, 2, 3, 4, 7, 50, 101, 999, 4410])
+    @pytest.mark.parametrize("size,window", [
+        (size, window)
+        for window in [1, 2, 3, 4, 7, 50, 101, 999, 4410]
+        for size in [1, 2, 5, 17, 100, 1000, 4096, 50000]
+        if window <= size
+    ])
     def test_matches_numpy_convolve(self, size, window):
-        if window > size:
-            pytest.skip("window longer than the signal")
         rng = np.random.default_rng(size * 1000 + window)
         samples = rng.random(size).astype(np.float32)
 

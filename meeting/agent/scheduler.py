@@ -95,6 +95,37 @@ _NOTES_MIN_INTERVAL_S = 45.0
 #: lives in the existing note blocks shipped in the state snapshot.
 _NOTES_MAX_SEGMENTS = 300
 
+
+@dataclass(frozen=True)
+class CheckpointCadence:
+    """How often a core's passes run, for cores that need their own pace.
+
+    An agent core may expose one as ``cadence``; without it the module
+    constants above apply, which suit the built-in engines.
+    """
+
+    base_interval_s: float
+    min_interval_s: float
+    max_interval_s: float
+    polish_every_n: int
+    polish_min_interval_s: float
+    notes_every_n: int
+    notes_min_interval_s: float
+
+
+#: An installed agent (Claude Code, Codex, OpenCode) takes 10-20 s per run and
+#: draws on the user's own plan, so cards refresh about once a minute, notes
+#: every other checkpoint, and polish every few minutes.
+INSTALLED_AGENT_CADENCE = CheckpointCadence(
+    base_interval_s=45.0,
+    min_interval_s=30.0,
+    max_interval_s=90.0,
+    polish_every_n=4,
+    polish_min_interval_s=180.0,
+    notes_every_n=2,
+    notes_min_interval_s=120.0,
+)
+
 #: Trailing transcript window re-sent when a human correction or insight asks
 #: the agent to reconsider its state without waiting for new speech. The full
 #: dashboard state travels alongside, so a bounded recent window is enough
@@ -138,9 +169,9 @@ class CheckpointScheduler:
     """
 
     def __init__(self, engine: Any, agent_core: Any,
-                 base_interval_s: float = 15.0,
-                 min_interval_s: float = 5.0,
-                 max_interval_s: float = 20.0,
+                 base_interval_s: Optional[float] = None,
+                 min_interval_s: Optional[float] = None,
+                 max_interval_s: Optional[float] = None,
                  on_health: Optional[Callable[[bool], None]] = None,
                  monotonic: Optional[Callable[[], float]] = None,
                  topic_judge: Optional[
@@ -149,9 +180,16 @@ class CheckpointScheduler:
         self._monotonic = monotonic or (lambda: time.monotonic())
         self._engine = engine
         self._agent = agent_core
-        self._base_interval_s = base_interval_s
-        self._min_interval_s = min_interval_s
-        self._max_interval_s = max_interval_s
+        cadence = getattr(agent_core, "cadence", None)
+        self._cadence: Optional[CheckpointCadence] = (
+            cadence if isinstance(cadence, CheckpointCadence) else None
+        )
+        self._base_interval_s = base_interval_s if base_interval_s is not None else (
+            self._cadence.base_interval_s if self._cadence else 15.0)
+        self._min_interval_s = min_interval_s if min_interval_s is not None else (
+            self._cadence.min_interval_s if self._cadence else 5.0)
+        self._max_interval_s = max_interval_s if max_interval_s is not None else (
+            self._cadence.max_interval_s if self._cadence else 20.0)
         self._on_health = on_health
         #: ``(previous_window_text, window_text) -> P(topic changed)``; ``None``
         #: from the judge means "no answer", and the lexical rule decides.
@@ -187,6 +225,15 @@ class CheckpointScheduler:
         self._notes_sent_starts: Dict[str, float] = {}
         self._notes_max_sent_start_s = -1.0
         self._note_requests = deque()
+
+    def _pace(self, name: str, default: float) -> float:
+        """A cadence value: the core's own, else the module default.
+
+        The default is read at call time so it follows the module constant.
+        """
+        if self._cadence is not None:
+            return getattr(self._cadence, name)
+        return default
 
     def start(self) -> None:
         """Start the worker thread. Idempotent."""
@@ -606,9 +653,10 @@ class CheckpointScheduler:
         if since_mark <= 0 and not self._polish_retry_pending:
             return
         now = self._monotonic()
-        due_by_count = since_mark >= _POLISH_EVERY_N_CHECKPOINTS
+        due_by_count = since_mark >= self._pace("polish_every_n", _POLISH_EVERY_N_CHECKPOINTS)
         due_by_time = (
-            now - self._last_polish_mono >= _POLISH_MIN_INTERVAL_S
+            now - self._last_polish_mono >= self._pace(
+                "polish_min_interval_s", _POLISH_MIN_INTERVAL_S)
             if self._last_polish_mono else
             now - self._last_fire_mono >= _POLISH_INITIAL_DELAY_S
         )
@@ -679,11 +727,11 @@ class CheckpointScheduler:
             guidance = self._notes_guidance_pending
             generation = self._guidance_generation
         since_mark = self._successful_checkpoints - self._notes_checkpoint_mark
-        due_by_count = since_mark >= _NOTES_EVERY_N_CHECKPOINTS
+        due_by_count = since_mark >= self._pace("notes_every_n", _NOTES_EVERY_N_CHECKPOINTS)
         due_by_time = (
             self._last_notes_mono > 0.0
             and (self._monotonic() - self._last_notes_mono)
-            >= _NOTES_MIN_INTERVAL_S
+            >= self._pace("notes_min_interval_s", _NOTES_MIN_INTERVAL_S)
         ) or (self._last_notes_mono == 0.0 and self._successful_checkpoints >= 1)
         if not (guidance or due_by_count or due_by_time):
             return
@@ -767,7 +815,8 @@ class CheckpointScheduler:
                 if start_s > prune_cursor
             }
         else:
-            self._notes_retry_not_before = self._monotonic() + _NOTES_MIN_INTERVAL_S
+            self._notes_retry_not_before = self._monotonic() + self._pace(
+                "notes_min_interval_s", _NOTES_MIN_INTERVAL_S)
             if guidance:
                 with self._lock:
                     self._notes_guidance_pending = True

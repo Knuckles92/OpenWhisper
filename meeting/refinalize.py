@@ -606,7 +606,7 @@ def rerun_polish(
         meeting_id: The meeting to clean up.
         provider: LLM provider id.
         model: Model id.
-        agent_core_kind: ``pi`` or ``direct``.
+        agent_core_kind: ``pi``, ``opencode``, or an installed agent id.
         sidecar_payload_dir: Directory holding the Pi sidecar payload.
         store: Optional existing store.
         timeout_s: Per-block budget.
@@ -876,7 +876,7 @@ def rerun_finalization(
             failed/skipped step (falls back to consolidation).
         provider: LLM provider id for polish/consolidation.
         model: LLM model id.
-        agent_core_kind: ``pi`` or ``direct``.
+        agent_core_kind: ``pi``, ``opencode``, or an installed agent id.
         sidecar_payload_dir: Directory holding the Pi sidecar payload.
         store: Optional existing ``MeetingStateStore``.
         timeout_s: Budget for the consolidation pass.

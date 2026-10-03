@@ -866,6 +866,8 @@ class TestApplicationController:
         controller = self.app_controller_module.ApplicationController(DummyUIController())
         controller.executor.shutdown(wait=False)
         controller.executor = FakeExecutor()
+        controller._startup_executor.shutdown(wait=True)
+        controller._startup_executor = FakeExecutor()
         controller.persistence_executor = FakeExecutor()
         return controller
 
@@ -2758,6 +2760,56 @@ class TestApplicationController:
         assert controller.executor.submissions == []
         assert not controller._reload_in_flight
         assert backend.load_deferred is True
+
+    def test_startup_database_is_deferred_and_dependencies_wait_for_completion(self):
+        import threading
+
+        controller = self._create_controller()
+        controller.current_backend = controller.transcription_backends["api"]
+        entered, release = threading.Event(), threading.Event()
+        calls = []
+
+        def initialize():
+            assert threading.current_thread() is not threading.main_thread()
+            entered.set()
+            assert release.wait(3)
+            calls.append("database")
+
+        with patch.object(self.app_controller_module.db, "ensure_initialized", initialize), \
+                patch.object(controller.meeting_runtime, "setup", lambda: calls.append("meeting")), \
+                patch.object(controller.record_sync, "start", lambda: calls.append("sync")), \
+                patch.object(controller.remote_engine, "start_client_history", lambda: calls.append("remote")):
+            controller.notify_main_ui_ready()
+            controller.notify_main_ui_ready()
+            assert not entered.is_set()
+            assert len(controller._startup_executor.submissions) == 1
+            worker, args = controller._startup_executor.submissions[0]
+            thread = threading.Thread(target=worker, args=args)
+            thread.start()
+            try:
+                assert entered.wait(3)
+                assert calls == []
+            finally:
+                release.set()
+                thread.join(3)
+            assert not thread.is_alive()
+            assert calls == ["database", "meeting", "sync", "remote"]
+
+    @pytest.mark.parametrize("closing", [False, True])
+    def test_startup_database_failure_or_shutdown_does_not_start_dependents(self, closing):
+        controller = self._create_controller()
+        controller._shutting_down = closing
+        with patch.object(self.app_controller_module.db, "ensure_initialized", side_effect=RuntimeError("database unavailable")), \
+                patch.object(controller.meeting_runtime, "setup") as meeting, \
+                patch.object(controller.record_sync, "start") as sync, \
+                patch.object(controller.remote_engine, "start_client_history") as remote:
+            controller._initialize_startup_database()
+            meeting.assert_not_called()
+            sync.assert_not_called()
+            remote.assert_not_called()
+        if not closing:
+            assert controller.update_readiness_error == "database unavailable"
+            assert "database unavailable" in controller.ui_controller.statuses
 
     def test_start_recording_refused_while_local_engine_loading(self):
         controller = self._create_controller()

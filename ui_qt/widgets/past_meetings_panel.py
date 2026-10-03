@@ -16,6 +16,7 @@ from meeting.content import (
 from meeting.time_utils import format_meeting_duration, format_meeting_started_at
 from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
 from ui_qt.utils.file_reveal import open_folder_in_file_manager
+from ui_qt.utils.list_reconcile import MeetingDelivery, reconcile_cards
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.context_menu import context_menu
 
@@ -279,6 +280,8 @@ class PastMeetingsPanel(QWidget):
         self._selected_id: Optional[str] = None
         self._meetings: list[Dict[str, Any]] = []
         self._meeting_load_generation = 0
+        self._meeting_cards = {}
+        self._meeting_cancel = threading.Event()
         self._source_filtered = False
         self._has_more = False
         self.setObjectName("pastMeetingsContent")
@@ -566,6 +569,12 @@ class PastMeetingsPanel(QWidget):
         query = self.search_input.text().strip().lower()
         self._meeting_load_generation += 1
         generation = self._meeting_load_generation
+        self._meeting_cancel.set()
+        canceled = threading.Event()
+        self._meeting_cancel = canceled
+        self.destroyed.connect(canceled.set)
+        delivery = MeetingDelivery()
+        delivery.loaded.connect(self._apply_meeting_results)
 
         # Explicit providers are small test/integration seams and retain their
         # synchronous behavior. Production repository reads run off the Qt
@@ -590,17 +599,22 @@ class PastMeetingsPanel(QWidget):
                 except Exception as exc:
                     logger.error("Failed to load past meetings: %s", exc)
                     error = str(exc)
+                if canceled.is_set():
+                    return
                 remote = None if error else self._start_remote_listing(query, meetings)
                 if remote is None:
-                    self._meetings_loaded.emit(
+                    delivery.loaded.emit(
                         generation, meetings, error, source_filtered
                     )
                     return
                 done, merged = remote
                 if not done.wait(self.REMOTE_MERGE_WAIT_S):
-                    self._meetings_loaded.emit(generation, meetings, "", source_filtered)
-                    done.wait()
-                self._meetings_loaded.emit(generation, merged(), "", source_filtered)
+                    delivery.loaded.emit(generation, meetings, "", source_filtered)
+                    while not done.wait(0.1):
+                        if canceled.is_set():
+                            return
+                if not canceled.is_set():
+                    delivery.loaded.emit(generation, merged(), "", source_filtered)
 
             threading.Thread(
                 target=load,
@@ -646,7 +660,6 @@ class PastMeetingsPanel(QWidget):
         self._rebuild_list()
 
     def _rebuild_list(self) -> None:
-        self._clear_list()
         meetings = (
             self._meetings
             if self._source_filtered
@@ -659,24 +672,31 @@ class PastMeetingsPanel(QWidget):
         self.section_header.setText(f"PAST MEETINGS ({shown}{suffix})")
 
         if not self._meetings:
+            self._clear_list()
             self.meetings_list_layout.addWidget(
                 self._placeholder("No past meetings yet")
             )
             return
         if query and not meetings:
+            self._clear_list()
             self.meetings_list_layout.addWidget(
                 self._placeholder("No matching meetings")
             )
             return
 
-        for meeting in meetings[: self.MAX_MEETINGS]:
+        def create(meeting):
             card = PastMeetingItem(meeting, self.scroll_area.widget())
             card.meeting_selected.connect(self._on_card_selected)
             card.copy_transcript_requested.connect(
                 self.copy_transcript_requested.emit
             )
             card.delete_requested.connect(self._confirm_delete)
-            self.meetings_list_layout.addWidget(card)
+            return card
+
+        self._meeting_cards = reconcile_cards(
+            self.meetings_list_layout, meetings[:self.MAX_MEETINGS],
+            self._meeting_cards, create, lambda meeting: meeting,
+        )
 
         if self._has_more or len(meetings) > self.MAX_MEETINGS:
             self.meetings_list_layout.addWidget(
@@ -822,6 +842,7 @@ class PastMeetingsPanel(QWidget):
         dialog.exec()
 
     def _clear_list(self) -> None:
+        self._meeting_cards = {}
         while self.meetings_list_layout.count():
             item = self.meetings_list_layout.takeAt(0)
             widget = item.widget()

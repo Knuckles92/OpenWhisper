@@ -183,6 +183,7 @@ class DownloadsPage(QWidget):
         get_loaded_model: Optional[Callable[[], Optional[str]]] = None,
         parent=None,
         background_cache_scan: bool = True,
+        defer_build: bool = False,
     ):
         """Show the catalog with the in-use model protected from deletion.
 
@@ -212,8 +213,28 @@ class DownloadsPage(QWidget):
         self._inspector_docked = True
         self._inspector_open = False
 
-        self._setup_ui()
+        self._ui_built = False
+        self._inventory = {}
         self._cache_scan_finished.connect(self._on_cache_scan_finished)
+        if not defer_build:
+            self.ensure_ui()
+
+    _UI_ATTRIBUTES = frozenset({'inspector_best_for_heading', 'inspector_detail_scroll', '_inspector_open', 'policy_row', 'inspector_source_note', 'inspector_best_for', '_cache_scan_generation', '_downloading_model', '_batch_queue', '_toolbar_layout', 'backend_filter_combo', 'download_all_button', 'stats_label', 'inspector_close_button', 'inspector_license_button', 'clear_selection_button', 'download_selected_button', '_selected_model', 'inspector', 'message_row', 'stop_batch_button', '_batch_failed', 'selection_summary', '_cached_sizes', 'inspector_tradeoffs_heading', '_download_fraction', 'library_scroll_area', '_batch_done', 'inspector_tags', 'catalog_column', '_background_cache_scan', '_downloads_blocked', 'select_all_button', 'custom_models_button', 'inspector_usage', 'inspector_description', '_get_loaded_model', 'inspector_tradeoffs', 'list_layout', 'inspector_origin_button', '_details', 'env_banner', '_split', 'message_label', 'sort_combo', '_cache_inventory_loading', 'status_filter_combo', 'empty_label', 'inspector_repo_button', 'inspector_facts', 'filter_edit', 'inspector_name', '_inspector_docked'})
+
+    def __getattr__(self, name):
+        if (name in self._UI_ATTRIBUTES and "_ui_built" in self.__dict__
+                and not self.__dict__["_ui_built"]):
+            self.ensure_ui()
+            if name in self.__dict__:
+                return self.__dict__[name]
+        raise AttributeError(name)
+
+    def ensure_ui(self) -> None:
+        if self._ui_built:
+            return
+        self._ui_built = True
+        self._setup_ui()
+        self._refresh_cached_model_state(self._inventory)
 
     # ---- construction ----
 
@@ -1071,7 +1092,19 @@ class DownloadsPage(QWidget):
     ) -> None:
         from services.local_asr.cache import inventory
         cached = {**cached, **inventory()}
+        self._inventory = dict(cached)
         settings = self._settings_snapshot()
+        if not self._ui_built:
+            from services.local_asr.catalog import MODELS
+            self._cached_sizes = {}
+            for name in [*config.WHISPER_MODEL_CHOICES, *MODELS, *custom_models(settings)]:
+                if name == "auto":
+                    continue
+                info = custom_model_cache_info(name) if is_custom_model(name) else cached.get(resolve_model_repo(name))
+                if info is not None:
+                    self._cached_sizes[name] = info.size_bytes
+            self.inventory_changed.emit()
+            return
         self._sync_custom_rows(settings)
         active_model = settings_manager.get(
             SettingsKey.WHISPER_MODEL, SETTING_DEFAULTS[SettingsKey.WHISPER_MODEL]
@@ -1178,15 +1211,15 @@ class DownloadsPage(QWidget):
 
     def storage_summary(self) -> dict:
         """Downloaded count, catalog size, and bytes per backend label."""
-        from services.local_asr.catalog import BACKENDS
+        from services.local_asr.catalog import BACKENDS, MODELS
         by_backend: Dict[str, int] = {}
         for model_name, size in self._cached_sizes.items():
-            backend = self.rows[model_name].backend
+            backend = (self.rows[model_name].backend if self._ui_built else MODELS[model_name].backend if model_name in MODELS else "local_whisper")
             label = BACKENDS.get(backend, "Whisper")
             by_backend[label] = by_backend.get(label, 0) + size
         return {
             "downloaded": len(self._cached_sizes),
-            "total": len(self.rows),
+            "total": (len(self.rows) if self._ui_built else len([name for name in config.WHISPER_MODEL_CHOICES if name != "auto"]) + len(MODELS) + len(custom_models(self._settings_snapshot()))),
             "bytes": sum(self._cached_sizes.values()),
             "by_backend": by_backend,
         }

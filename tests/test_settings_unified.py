@@ -148,6 +148,9 @@ class TestRouting:
             dialog, _store = make_dialog(
                 {SettingsKey.SELECTED_MODEL: "parakeet"}, background_cache_scan=True
             )
+            # The hidden engine page no longer probes during first open.
+            assert not started.is_set()
+            dialog.select_destination(VOICE_MODEL)
             assert started.wait(2)
             dialog.show()
             QApplication.instance().processEvents()
@@ -188,7 +191,10 @@ class TestRouting:
             models._on_engine_runtime_checked(("parakeet", "cpu"), " · Late result.")
             assert models.engine_inventory_label.text() == ""
 
-    @pytest.mark.parametrize("alias, destination", [
+    def test_legacy_model_manager_names_land_on_a_destination(
+        self, make_dialog, subtests
+    ):
+        aliases = [
         ("ondemand", VOICE_MODEL),
         ("text", CLEANUP),
         ("meeting", MEETING_VOICE),
@@ -198,14 +204,15 @@ class TestRouting:
         ("voice", DOWNLOADS),
         ("engine_downloads", DOWNLOADS),
         (GENERAL, GENERAL),
-    ])
-    def test_legacy_model_manager_names_land_on_a_destination(
-        self, make_dialog, alias, destination
-    ):
-        assert resolve_destination(alias) == destination
+        ]
         dialog, _store = make_dialog()
-        dialog.select_destination(alias)
-        assert dialog.rail.current_key() == destination
+        for alias, destination in aliases:
+            with subtests.test(alias=alias, destination=destination):
+                dialog.select_destination(OVERVIEW)
+                assert dialog.rail.current_key() == OVERVIEW
+                assert resolve_destination(alias) == destination
+                dialog.select_destination(alias)
+                assert dialog.rail.current_key() == destination
 
     def test_voice_page_opens_downloads_filtered_to_its_engine(self, make_dialog):
         dialog, _store = make_dialog({SettingsKey.SELECTED_MODEL: "parakeet"})
@@ -381,6 +388,7 @@ class TestSearchPalette:
         assert any(title.startswith("Recording engine") for title in titles)
         assert "Voice model" in titles
         assert any(entry.model_name == "tiny" for entry in index)
+        dialog.ensure_page(DOWNLOADS)
         assert any(entry.component_id for entry in index) == bool(
             dialog.downloads._component_rows
         )

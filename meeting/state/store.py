@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from copy import copy, deepcopy
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from meeting.interfaces import OpResult
@@ -38,6 +39,78 @@ SegmentLookup = Callable[[Iterable[str]], Dict[str, bool]]
 
 _SEGMENT_ID_KEYS = frozenset({"segment_id"})
 _SEGMENT_LIST_KEYS = frozenset({"evidence", "segment_ids"})
+
+# Patch handlers mutate these domains in place. Other fields are either read
+# only or replaced on the candidate root. Include linked review/note changes
+# in card edits; item_effect can revise user_notes and live_notes together.
+_OP_DOMAINS = {
+    **{name: ("cards", "insight_review") for name in (
+        "add_item", "update_item", "remove_item", "pin_item", "unpin_item",
+        "confirm_item", "review_finish", "review_answer", "citation_check",
+        "invalidate_citations",
+    )},
+    **{name: ("insight_review",) for name in (
+        "review_unavailable", "review_begin", "review_skip", "review_reopen",
+    )},
+    **{name: ("participants",) for name in (
+        "upsert_participant", "suggest_participant_name", "rename_participant",
+    )},
+    **{name: ("questions",) for name in (
+        "ask_question", "resolve_question", "answer_question", "dismiss_question",
+        "reopen_question",
+    )},
+    **{name: ("custom_reports",) for name in (
+        "request_custom_report", "finish_custom_report", "remove_custom_report",
+    )},
+    "set_topic": ("topic",),
+    "publish_highlights": ("live_highlights",),
+    **{name: () for name in (
+        "set_rolling_summary", "set_title", "set_meeting_intent",
+        "set_cloud_enabled", "voice_feedback", "reassign_segment_speaker",
+        "revise_segment_text",
+    )},
+}
+
+
+def _copy_for_ops(state: MeetingState, ops: List[Dict[str, Any]]) -> MeetingState:
+    """Isolate mutated sections without round-tripping untouched reports."""
+    domains = set()
+    for op in ops:
+        if not isinstance(op, dict):
+            continue
+        name = op.get("op")
+        if not isinstance(name, str) or name not in _OP_DOMAINS:
+            # A newly registered handler is safe until its mutation scope is
+            # added here. Malformed/unknown ops retain the same rejection path.
+            return deepcopy(state)
+        domains.update(_OP_DOMAINS[name])
+    candidate = copy(state)
+    for field in domains:
+        value = getattr(state, field)
+        setattr(candidate, field, _copy_cards(value) if field == "cards" else deepcopy(value))
+    return candidate
+
+
+def _copy_cards(cards):
+    """Own item objects and the containers that registered handlers mutate.
+
+    Handlers replace evidence/review/check fields and change scalar item
+    fields. Data edits replace the dict or set a top-level flag; nested data
+    is read-only. Sharing those untouched payloads avoids copying whole
+    report source trees for a small card edit.
+    """
+    result = {}
+    for card, items in cards.items():
+        cloned = []
+        for item in items:
+            candidate = copy(item)
+            candidate.data = dict(item.data)
+            candidate.evidence = list(item.evidence)
+            candidate.review = deepcopy(item.review)
+            candidate.citation_check = deepcopy(item.citation_check)
+            cloned.append(candidate)
+        result[card] = cloned
+    return result
 
 
 def _referenced_segment_ids(ops: List[Dict[str, Any]]) -> Set[str]:
@@ -140,12 +213,13 @@ class MeetingStateStore:
             ops carry their assigned ``seq`` and broadcastable ``effect``.
         """
         with self._lock:
-            # Applying to a round-tripped candidate makes repository failure
-            # a real rejection instead of leaving an unpersisted live state.
-            candidate = MeetingState.from_dict(self._state.to_dict())
+            # The live document remains untouched until persistence succeeds.
+            candidate = _copy_for_ops(self._state, ops)
             exists, pinned = self._batch_predicates(ops)
             ctx = OpContext(actor_type, actor_id, exists, pinned)
-            results = apply_ops(candidate, ops, ctx)
+            # Handlers may attach nested data from an incoming op to an item.
+            # Own that small payload, independent of callers retaining it.
+            results = apply_ops(candidate, deepcopy(ops), ctx)
 
             for result in results:
                 if not result.ok:
@@ -166,7 +240,7 @@ class MeetingStateStore:
                             actor_type, actor_id,
                         )
                         if isinstance(persisted, dict):
-                            candidate = MeetingState.from_dict(persisted)
+                            candidate = self._reconcile_persisted(candidate, persisted)
                     except Exception:
                         logger.exception(
                             "State persistence failed (meeting %s)",
@@ -186,7 +260,7 @@ class MeetingStateStore:
     def update_runtime_fields(self, **fields: Any) -> bool:
         """Persist lifecycle/status fields before making them observable."""
         with self._lock:
-            candidate = MeetingState.from_dict(self._state.to_dict())
+            candidate = copy(self._state)
             for key, value in fields.items():
                 if not hasattr(candidate, key):
                     raise AttributeError(key)
@@ -202,15 +276,17 @@ class MeetingStateStore:
                     )
                     if value.status == "running" and candidate.finalization.status != "running":
                         from meeting.state.review import invalidate_checks
+                        candidate.cards = _copy_cards(candidate.cards)
+                        candidate.insight_review = deepcopy(candidate.insight_review)
                         invalidate_checks(candidate)
-                setattr(candidate, key, value)
+                setattr(candidate, key, deepcopy(value))
             if self._repository is not None:
                 try:
                     persisted = self._repository.persist_state(
                         self._state.meeting_id, candidate.to_dict()
                     )
                     if isinstance(persisted, dict):
-                        candidate = MeetingState.from_dict(persisted)
+                        candidate = self._reconcile_persisted(candidate, persisted)
                 except Exception:
                     logger.exception(
                         "Runtime state persistence failed (meeting %s)",
@@ -219,6 +295,18 @@ class MeetingStateStore:
                     return False
             self._state = candidate
             return True
+
+    def _reconcile_persisted(self, candidate: MeetingState,
+                             persisted: Dict[str, Any]) -> MeetingState:
+        """Adopt canonical metadata without rebuilding the isolated document.
+
+        Other repository implementations may transform the whole snapshot, so
+        they retain the full reconciliation contract unless they opt in.
+        """
+        if getattr(self._repository, "state_metadata_only", False) is True:
+            candidate.title = str(persisted.get("title") or "")
+            return candidate
+        return MeetingState.from_dict(persisted)
 
     def refresh_title(self) -> bool:
         """Refresh independently edited metadata without rewriting a stale snapshot."""

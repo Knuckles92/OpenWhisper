@@ -220,7 +220,10 @@ class UIController(QObject):
     def remote_engine(self, service) -> None:
         self._remote_engine = service
         # Host Mode's dashboard reads the same service.
-        self.main_window.host_dashboard.bind(service)
+        if isinstance(getattr(self.main_window, "_screen_widgets", None), dict):
+            self.main_window.bind_host_service(service)
+        else:
+            self.main_window.host_dashboard.bind(service)
 
     def _setup_connections(self):
         self.main_window.record_toggled.connect(self._on_record_toggled)
@@ -265,7 +268,38 @@ class UIController(QObject):
             self._on_past_meetings_clear_requested
         )
 
-        meeting_tab = self.main_window.meeting_mode_tab
+        self.main_window.screen_created.connect(self._on_screen_created)
+        meeting_tab = self.main_window._screen_widgets.get("meeting")
+        if meeting_tab is not None:
+            self._connect_meeting_tab(meeting_tab)
+
+        self.main_window.on_show_copied_animation = self.show_copied_animation
+
+        self.tray_manager.show_requested.connect(self._on_tray_show)
+        self.tray_manager.hide_requested.connect(self._on_tray_hide)
+        self.tray_manager.exit_requested.connect(self._on_tray_exit)
+        self.tray_manager.toggle_recording.connect(self._on_tray_toggle_recording)
+        self.tray_manager.meeting_toggle_requested.connect(
+            self._on_tray_meeting_toggle
+        )
+        self.tray_manager.meeting_dashboard_requested.connect(
+            self._on_meeting_open_dashboard
+        )
+
+        self.overlay.state_changed.connect(self._on_overlay_state_changed)
+
+        self.record_started.connect(self._show_recording_overlay)
+        self.record_stopped.connect(self._show_processing_overlay)
+        self.transcription_received.connect(self._display_transcript)
+        self.status_changed.connect(self._apply_status_to_main_window)
+        self.audio_levels_updated.connect(self._apply_audio_levels_to_overlay)
+        self.agent_data_changed.connect(self._apply_agent_changes)
+
+    def _on_screen_created(self, key, widget):
+        if key == "meeting":
+            self._connect_meeting_tab(widget)
+
+    def _connect_meeting_tab(self, meeting_tab):
         meeting_tab.start_requested.connect(self._on_meeting_start_requested)
         meeting_tab.demo_requested.connect(self._on_meeting_demo_requested)
         meeting_tab.pause_requested.connect(
@@ -301,27 +335,12 @@ class UIController(QObject):
             self._on_meeting_start_new_requested
         )
 
-        self.main_window.on_show_copied_animation = self.show_copied_animation
-
-        self.tray_manager.show_requested.connect(self._on_tray_show)
-        self.tray_manager.hide_requested.connect(self._on_tray_hide)
-        self.tray_manager.exit_requested.connect(self._on_tray_exit)
-        self.tray_manager.toggle_recording.connect(self._on_tray_toggle_recording)
-        self.tray_manager.meeting_toggle_requested.connect(
-            self._on_tray_meeting_toggle
-        )
-        self.tray_manager.meeting_dashboard_requested.connect(
-            self._on_meeting_open_dashboard
-        )
-
-        self.overlay.state_changed.connect(self._on_overlay_state_changed)
-
-        self.record_started.connect(self._show_recording_overlay)
-        self.record_stopped.connect(self._show_processing_overlay)
-        self.transcription_received.connect(self._display_transcript)
-        self.status_changed.connect(self._apply_status_to_main_window)
-        self.audio_levels_updated.connect(self._apply_audio_levels_to_overlay)
-        self.agent_data_changed.connect(self._apply_agent_changes)
+    def _update_screen(self, key, method, *args, **kwargs):
+        if isinstance(getattr(self.main_window, "_screen_widgets", None), dict):
+            self.main_window.update_screen(key, method, *args, **kwargs)
+        else:
+            name = {"upload": "upload_file_tab", "meeting": "meeting_mode_tab", "host": "host_dashboard"}[key]
+            getattr(getattr(self.main_window, name), method)(*args, **kwargs)
 
     def _apply_agent_changes(self, kind: str, changes: dict) -> None:
         """Apply MCP notifications on the GUI thread through the usual UI hooks."""
@@ -547,8 +566,8 @@ class UIController(QObject):
             busy: True to disable combos while the engine reloads, else False.
         """
         self.main_window.quick_record_tab.set_engine_busy(busy)
-        self.main_window.upload_file_tab.set_engine_busy(busy)
-        self.main_window.host_dashboard.set_engine_busy(busy)
+        self._update_screen("upload", "set_engine_busy", busy)
+        self._update_screen("host", "set_engine_busy", busy)
         if not busy:
             self.refresh_model_views()
 
@@ -628,6 +647,8 @@ class UIController(QObject):
     def _upload_job_active(self) -> bool:
         return (
             self._transcription_source_tab == TabbedContentWidget.TAB_UPLOAD_FILE
+            and (not isinstance(getattr(self.main_window, "_screen_widgets", None), dict)
+                 or "upload" in self.main_window._screen_widgets)
             and self.main_window.upload_file_tab.is_transcribing
         )
 
@@ -830,7 +851,7 @@ class UIController(QObject):
         dialog.on_hf_policy_changed = self.on_hf_policy_changed
         dialog.on_api_keys_changed = self._on_api_keys_changed
         dialog.on_developer_mode_changed = (
-            self.main_window.meeting_mode_tab.set_developer_mode
+            lambda enabled: self._update_screen("meeting", "set_developer_mode", enabled)
         )
         dialog.on_cleanup_changed = self.refresh_cleanup_controls
         dialog.on_hotkeys_changed = self._on_settings_hotkeys_changed
@@ -880,11 +901,13 @@ class UIController(QObject):
         triggers another engine reload.
         """
         self.main_window.quick_record_tab.local_engine.load_from_settings()
-        self.main_window.upload_file_tab.local_engine.load_from_settings()
+        upload = getattr(self.main_window, "_screen_widgets", {}).get("upload")
+        if upload is not None:
+            upload.local_engine.load_from_settings()
 
     def refresh_cleanup_controls(self):
         self.main_window.quick_record_tab.load_cleanup_setting()
-        self.main_window.upload_file_tab.load_cleanup_setting()
+        self._update_screen("upload", "load_cleanup_setting")
 
     def refresh_live_preview_controls(self):
         self.main_window.refresh_live_preview_controls()
@@ -900,8 +923,11 @@ class UIController(QObject):
     def _redraw_rendered_text(self) -> None:
         """Re-render Markdown documents, whose colours are baked in at render time."""
         self.main_window.quick_record_tab.redraw_transcript()
-        self.main_window.upload_file_tab.redraw_transcript()
-        viewer = getattr(self.main_window.upload_file_tab, "_viewer", None)
+        upload = getattr(self.main_window, "_screen_widgets", {}).get("upload")
+        if upload is None:
+            return
+        upload.redraw_transcript()
+        viewer = getattr(upload, "_viewer", None)
         if viewer is not None:
             viewer.refresh_typography()
 
@@ -992,7 +1018,9 @@ class UIController(QObject):
             display_name: A ``config.MODEL_CHOICES`` label such as
                 ``\"Local Whisper\"``.
         """
-        tabs = getattr(self.main_window, "transcription_tabs", None)
+        tabs = (self.main_window.existing_transcription_tabs()
+                if isinstance(getattr(self.main_window, "_screen_widgets", None), dict)
+                else getattr(self.main_window, "transcription_tabs", None))
         if not display_name or not tabs:
             return
         tabs[0].choose_backend(display_name)
@@ -1031,7 +1059,7 @@ class UIController(QObject):
 
     def on_model_download_started(self, model_name: str):
         self.main_window.quick_record_tab.set_model_downloading(model_name, True)
-        self.main_window.upload_file_tab.set_model_downloading(model_name, True)
+        self._update_screen("upload", "set_model_downloading", model_name, True)
         models, downloads = self._settings_parts()
         if downloads is not None:
             downloads.set_downloading(model_name)
@@ -1049,7 +1077,7 @@ class UIController(QObject):
 
     def on_model_download_finished(self, model_name: str, success: bool):
         self.main_window.quick_record_tab.set_model_downloading(model_name, False)
-        self.main_window.upload_file_tab.set_model_downloading(model_name, False)
+        self._update_screen("upload", "set_model_downloading", model_name, False)
         models, downloads = self._settings_parts()
         if downloads is not None:
             downloads.finish_download(model_name, success)
@@ -1335,7 +1363,7 @@ class UIController(QObject):
         # post-meeting finalization when capture is already inactive.
         tab_payload = dict(payload)
         tab_payload.setdefault("dashboard_available", has_dashboard)
-        self.main_window.meeting_mode_tab.set_meeting_state(tab_payload)
+        self._update_screen("meeting", "set_meeting_state", tab_payload)
         if payload.get("active"):
             self.main_window.history_sidebar.set_selected_past_meeting(None)
         elif "meeting_id" in payload:
@@ -1372,7 +1400,7 @@ class UIController(QObject):
     def set_meeting_status(self, status: str) -> None:
         if not status:
             return
-        self.main_window.meeting_mode_tab.set_status_text(status)
+        self._update_screen("meeting", "set_status_text", status)
         self.set_status(status)
 
     def on_meeting_error(self, message: str) -> None:
@@ -1401,7 +1429,7 @@ class UIController(QObject):
         self.tray_manager.set_meeting_active(
             self._meeting_active, dashboard_available=has_dashboard
         )
-        self.main_window.meeting_mode_tab.set_dashboard_available(has_dashboard)
+        self._update_screen("meeting", "set_dashboard_available", has_dashboard)
         if self.on_meeting_open_dashboard:
             self.on_meeting_open_dashboard()
 

@@ -657,7 +657,7 @@ def meeting_agent_payload_dir(kind: str = "pi") -> Optional[str]:
            a platform-compatible Node runtime, and a bundle revision the
            sidecar handshake accepts.
         2. Source-tree ``sidecar/dist`` when ``bundle.cjs`` has been built.
-        3. ``None`` — callers fall back to the direct OpenRouter agent.
+        3. ``None`` — AI insights need an agent install/update; no API fallback.
 
     Returns:
         Absolute path to a payload directory containing ``bundle.cjs``, or
@@ -676,7 +676,7 @@ def meeting_agent_payload_dir(kind: str = "pi") -> Optional[str]:
             # never treat them as a runnable payload.
             logger.warning(
                 "meeting-agent install is present but its manifest is missing "
-                "or invalid; falling back to source/direct"
+                "or invalid; checking the source sidecar build"
             )
         else:
             incompatible = check_compatibility(manifest)
@@ -688,9 +688,8 @@ def meeting_agent_payload_dir(kind: str = "pi") -> Optional[str]:
                     "meeting-agent install is incompatible: %s", incompatible
                 )
             elif _pi_bundle_outdated(manifest.get("version")):
-                # The handshake would refuse it and leave the meeting without
-                # intelligence; the direct agent keeps insights working until
-                # Downloads updates it.
+                # The handshake would refuse it. AI insights need an updated
+                # component or another agent; recording remains available.
                 logger.warning(
                     "meeting-agent %s is out of date; update it from Downloads",
                     manifest.get("version"),

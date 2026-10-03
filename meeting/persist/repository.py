@@ -201,6 +201,10 @@ def _remap_state_evidence(
 class SqlMeetingRepository:
     """Implements ``meeting.interfaces.MeetingRepository`` on the app database."""
 
+    # Write-through state methods reconcile only the independently edited title.
+    # The store can adopt that field without reparsing every card/report object.
+    state_metadata_only = True
+
     def __init__(self, db: Optional[Any] = None) -> None:
         if db is None:
             from services.database import db as app_db
@@ -266,6 +270,11 @@ class SqlMeetingRepository:
         limit: int = 101,
         query: str = "",
         origin: Any = ...,
+        cursor_started_at: Optional[str] = None,
+        cursor_id: Optional[str] = None,
+        include_running: bool = False,
+        started_after: str = "",
+        meeting_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Return a bounded Past Meetings page with batched content metadata.
 
@@ -278,9 +287,23 @@ class SqlMeetingRepository:
         page_limit = max(1, min(int(limit), 501))
         needle = str(query or "").strip()
         with self._db.get_session() as session:
-            sessions = session.query(MeetingSession).filter(
-                ~MeetingSession.status.in_(("active", "paused", "ending"))
-            )
+            sessions = session.query(MeetingSession)
+            if not include_running:
+                sessions = sessions.filter(
+                    ~MeetingSession.status.in_(("active", "paused", "ending"))
+                )
+            if meeting_id is not None:
+                sessions = sessions.filter(MeetingSession.id == meeting_id)
+            if started_after:
+                sessions = sessions.filter(
+                    func.julianday(MeetingSession.started_at) >= func.julianday(started_after)
+                )
+            if cursor_started_at is not None and cursor_id is not None:
+                sessions = sessions.filter(or_(
+                    MeetingSession.started_at < cursor_started_at,
+                    (MeetingSession.started_at == cursor_started_at)
+                    & (MeetingSession.id < cursor_id),
+                ))
             if origin is None:
                 sessions = sessions.filter(MeetingSession.origin_device_id.is_(None))
             elif origin is not ...:
@@ -379,6 +402,20 @@ class SqlMeetingRepository:
                 }
                 result.append(meeting)
             return result
+
+    def get_meeting_content_summary(self, meeting_id: str) -> Dict[str, Any]:
+        """Content counts and a bounded preview without materializing audio/text rows."""
+        rows = self.list_past_meeting_summaries(
+            limit=1, include_running=True, meeting_id=meeting_id,
+        )
+        if rows:
+            return rows[0]["content_summary"]
+        return {
+            "has_audio": False, "has_loopback_audio": False,
+            "has_transcript": False, "is_empty": True, "audio_chunks": 0,
+            "transcript_segments": 0, "can_rerun_speakers": False,
+            "preview_text": "",
+        }
 
     def origin_spools(self, origin: str) -> List[Tuple[str, str]]:
         """``(meeting_id, spool_dir)`` of the meetings a paired computer stored here."""

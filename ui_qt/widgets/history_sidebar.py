@@ -26,6 +26,7 @@ from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_EASING,
 )
 from ui_qt.utils.file_reveal import reveal_in_file_manager
+from ui_qt.utils.list_reconcile import HistoryDelivery, reconcile_cards
 from ui_qt.widgets.context_menu import context_menu
 from ui_qt.widgets.past_meetings_panel import PastMeetingsPanel
 from ui_qt.widgets.wrapped_label import WrappedLabel
@@ -59,7 +60,7 @@ def _format_model_name(model: str) -> str:
     return f"{name} · {detail}" if detail else name
 
 
-def _format_cleanup_info(entry: HistoryEntry) -> str:
+def _format_cleanup_info(entry: HistoryEntry, settings=None) -> str:
     """Format an entry's cleanup provider/model for display.
 
     Entries written before the cleanup columns existed may carry raw_text
@@ -72,7 +73,7 @@ def _format_cleanup_info(entry: HistoryEntry) -> str:
     if not provider and provider_id:
         try:
             provider = profile_display_name(
-                provider_id, settings_manager.load_all_settings()
+                provider_id, settings if settings is not None else settings_manager.load_all_settings()
             ) or provider_id
         except Exception:
             provider = provider_id
@@ -128,9 +129,10 @@ class HistoryItemWidget(QFrame):
     retranscribe_requested = pyqtSignal(str)
     _remote_audio_ready = pyqtSignal(str, str)
 
-    def __init__(self, entry: HistoryEntry, parent=None):
+    def __init__(self, entry: HistoryEntry, parent=None, *, settings=None):
         super().__init__(parent)
         self.entry = entry
+        self._cleanup_info = _format_cleanup_info(entry, settings) if _entry_was_cleaned(entry) else ""
         self._audio_path = None
         self._stored_on = getattr(entry, "stored_on", None)
         self._remote_audio_ready.connect(self._on_remote_audio_ready)
@@ -225,7 +227,7 @@ class HistoryItemWidget(QFrame):
             cleanup_chip.setObjectName("historyCleanupChip")
             cleanup_chip.setFont(QFont("Segoe UI", 9))
             cleanup_chip.setFixedHeight(20)
-            chip_text = f"✦ {_format_cleanup_info(self.entry)}"
+            chip_text = f"✦ {self._cleanup_info}"
             cleanup_chip.setText(
                 cleanup_chip.fontMetrics().elidedText(
                     chip_text, Qt.TextElideMode.ElideRight, 150 if chips else 280
@@ -233,7 +235,7 @@ class HistoryItemWidget(QFrame):
             )
             if self.entry.cleanup_model:
                 cleanup_chip.setToolTip(
-                    f"Transcript cleaned with {_format_cleanup_info(self.entry)}"
+                    f"Transcript cleaned with {self._cleanup_info}"
                 )
             else:
                 cleanup_chip.setToolTip(
@@ -488,6 +490,8 @@ class HistorySidebar(QWidget):
         self._refresh_pending = True
         self._meeting_mode = False
         self._history_load_generation = 0
+        self._history_cards = {}
+        self._history_cancel = threading.Event()
         #: Host-kept entries shown now, by id, for opening, copying, deleting.
         self._remote_entries = {}
         #: Entries kept here and copied to the host: id -> the host's name.
@@ -805,6 +809,12 @@ class HistorySidebar(QWidget):
         query = self.search_input.text().strip().lower()
         self._history_load_generation += 1
         generation = self._history_load_generation
+        self._history_cancel.set()
+        canceled = threading.Event()
+        self._history_cancel = canceled
+        self.destroyed.connect(canceled.set)
+        delivery = HistoryDelivery()
+        delivery.loaded.connect(self._apply_history_results)
         if self.history_list_layout.count() == 0:
             self.history_list_layout.addWidget(
                 self._make_empty_label("Loading history…")
@@ -823,19 +833,24 @@ class HistorySidebar(QWidget):
             except Exception as exc:
                 logger.error("Failed to load transcription history: %s", exc)
                 error = str(exc)
+            if canceled.is_set():
+                return
             if error:
-                self._history_loaded.emit(generation, query, entries, error)
+                delivery.loaded.emit(generation, query, entries, error)
                 return
             remote = self._start_remote_listing(query, limit, entries)
             if remote is None:
-                self._history_loaded.emit(generation, query, entries, "")
+                delivery.loaded.emit(generation, query, entries, "")
                 return
             done, merged = remote
             if not done.wait(self.REMOTE_MERGE_WAIT_S):
                 # Show this computer's entries now rather than wait on the host.
-                self._history_loaded.emit(generation, query, entries, "")
-                done.wait()
-            self._history_loaded.emit(generation, query, merged(), "")
+                delivery.loaded.emit(generation, query, entries, "")
+                while not done.wait(0.1):
+                    if canceled.is_set():
+                        return
+            if not canceled.is_set():
+                delivery.loaded.emit(generation, query, merged(), "")
 
         threading.Thread(
             target=load,
@@ -899,8 +914,9 @@ class HistorySidebar(QWidget):
     ) -> None:
         if generation != self._history_load_generation:
             return
-        self._clear_layout(self.history_list_layout)
         if error:
+            self._clear_layout(self.history_list_layout)
+            self._history_cards = {}
             self.history_header.setText("HISTORY")
             self.history_list_layout.addWidget(
                 self._make_empty_label("History could not be loaded")
@@ -919,14 +935,6 @@ class HistorySidebar(QWidget):
         self._also_on = {
             entry.id: entry.also_on for entry in entries if getattr(entry, "also_on", None)
         }
-        if notice:
-            note = self._make_empty_label(
-                f"{notice} Entries kept there show when it is."
-                if "reachable" in notice else notice
-            )
-            note.setObjectName("historyRemoteNotice")
-            note.setWordWrap(True)
-            self.history_list_layout.addWidget(note)
         has_more = len(entries) > self.MAX_HISTORY_ITEMS
         shown = entries[:self.MAX_HISTORY_ITEMS]
 
@@ -938,19 +946,40 @@ class HistorySidebar(QWidget):
         )
 
         if not shown:
+            self._clear_layout(self.history_list_layout)
+            self._history_cards = {}
             message = "No matching entries" if query else "No history yet"
             self.history_list_layout.addWidget(self._make_empty_label(message))
             return
 
-        for entry in shown:
-            item = HistoryItemWidget(entry)
+        settings = settings_manager.load_all_settings()
+        def create(entry):
+            item = HistoryItemWidget(entry, settings=settings)
             item.clicked.connect(self._on_entry_clicked)
             item.copy_requested.connect(self._on_copy_requested)
             item.copy_raw_requested.connect(self._on_copy_raw_requested)
             item.delete_requested.connect(self._on_delete_requested)
             item.retranscribe_requested.connect(self.retranscribe_requested.emit)
-            self.history_list_layout.addWidget(item)
+            return item
 
+        def fingerprint(entry):
+            value = {name: value for name, value in vars(entry).items() if not name.startswith("_")}
+            value["cleanup_display"] = _format_cleanup_info(entry, settings)
+            if entry.audio_file and not getattr(entry, "stored_on", None):
+                value["audio_available"] = bool(history_manager.get_recording_path(entry.audio_file))
+            return value
+
+        self._history_cards = reconcile_cards(
+            self.history_list_layout, shown, self._history_cards, create, fingerprint
+        )
+        if notice:
+            note = self._make_empty_label(
+                f"{notice} Entries kept there show when it is."
+                if "reachable" in notice else notice
+            )
+            note.setObjectName("historyRemoteNotice")
+            note.setWordWrap(True)
+            self.history_list_layout.insertWidget(0, note)
         if has_more:
             self.history_list_layout.addWidget(
                 self._make_empty_label(

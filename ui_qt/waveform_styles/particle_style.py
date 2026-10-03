@@ -38,8 +38,9 @@ class Particle:
         self.y += self.vy * dt
         self.vy += gravity * dt
 
-        self.vx *= damping
-        self.vy *= damping
+        frame_damping = damping ** (dt * 30.0)
+        self.vx *= frame_damping
+        self.vy *= frame_damping
 
         self.life -= dt * 0.5
         return self.life > 0
@@ -96,6 +97,10 @@ class ParticleStyle:
         self._cancel_initialized = False
         self._last_cancel_progress = 1.0
         self._last_cancel_update: Optional[float] = None
+        self._simulation_remainder = 0.0
+        self._emission_remainder = 0.0
+        self._simulation_state = "idle"
+        self._cancel_elapsed = 0.0
 
     def update_audio_levels(self, levels: List[float]):
         self.audio_levels = levels.copy() if levels else []
@@ -105,40 +110,67 @@ class ParticleStyle:
         self.animation_time += delta_time
 
     def get_cancellation_progress(self) -> float:
-        """Return cancellation progress from 0.0 to 1.0."""
         from config import config
-
-        if self._canceling_start_time is None:
-            return 0.0
-        cancellation_duration = config.CANCELLATION_ANIMATION_DURATION_MS / 1000.0
-        elapsed = time.time() - self._canceling_start_time
-        return min(1.0, max(0.0, elapsed / cancellation_duration))
+        duration = config.CANCELLATION_ANIMATION_DURATION_MS / 1000.0
+        return min(1.0, self._cancel_elapsed / max(duration, 0.001))
 
     def set_canceling_start_time(self, start_time: float):
-        """Set the cancellation start timestamp from ``time.time()``."""
         self._canceling_start_time = start_time
+        self._cancel_elapsed = 0.0
+        self._cancel_initialized = False
 
-    def draw_recording_state(self, painter: QPainter, rect: QRect, message: str = "Recording..."):
-        dt = 1/30
+    def advance(self, state: str, delta_time: float) -> None:
+        """Advance physics once per timer tick, independently of repaint count.
+
+        Fixed substeps keep emission and motion consistent across display frame
+        rates. Clamp stalls so a sleeping/hidden window does not emit a burst.
+        """
+        delta_time = max(0.0, min(0.1, delta_time))
+        if state != self._simulation_state:
+            self._simulation_state = state
+            self._emission_remainder = 0.0
+            if state == "canceling":
+                self._init_cancel_particles(QRect(0, 0, self.width, self.height))
+        self._simulation_remainder += delta_time
+        step = 1.0 / 120.0
+        while self._simulation_remainder + 1e-12 >= step:
+            self._simulation_remainder -= step
+            self.animation_time += step
+            if state in ("recording", "streaming"):
+                self._advance_recording(step)
+            elif state == "processing":
+                self._advance_processing(step)
+            elif state == "transcribing":
+                self._advance_transcribing(step)
+            elif state == "canceling":
+                self._cancel_elapsed += step
+                self._update_cancel_particles(step)
+                if self.get_cancellation_progress() >= 1.0:
+                    self.cancel_particles.clear()
+
+    def _emission_count(self, rate: float, dt: float) -> int:
+        self._emission_remainder += rate * dt
+        count = int(self._emission_remainder + 1e-12)
+        self._emission_remainder -= count
+        return count
+
+    def _advance_recording(self, dt: float):
         audio_energy = sum(self.audio_levels) / len(self.audio_levels) if self.audio_levels else 0.0
 
         emission_multiplier = 1.0 + audio_energy * self.audio_response
-        particles_to_emit = int(self.emission_rate * emission_multiplier * dt)
+        particles_to_emit = self._emission_count(self.emission_rate * emission_multiplier, dt)
 
         self._emit_audio_particles(particles_to_emit, audio_energy)
 
         self._update_particles(dt, audio_energy)
-        self._draw_particles(painter)
 
-        self._draw_text(painter, rect, message)
 
-    def draw_processing_state(self, painter: QPainter, rect: QRect, message: str = "Processing..."):
+    def _advance_processing(self, dt: float):
         """Draw swirling particle vortex."""
-        dt = 1/30
-        center_x = rect.width() // 2
-        center_y = rect.height() // 2 - 5
+        center_x = self.width // 2
+        center_y = self.height // 2 - 5
 
-        vortex_particles = 4
+        vortex_particles = self._emission_count(120.0, dt)
         for i in range(vortex_particles):
             angle = (i / vortex_particles) * 2 * math.pi + self.animation_time * 2
             radius = 30 + 10 * math.sin(self.animation_time * 3)
@@ -154,14 +186,11 @@ class ParticleStyle:
             self.particles.append(particle)
 
         self._update_particles(dt, 0.5, vortex_mode=True)
-        self._draw_particles(painter)
-        self._draw_text(painter, rect, message)
 
-    def draw_transcribing_state(self, painter: QPainter, rect: QRect, message: str = "Transcribing..."):
+    def _advance_transcribing(self, dt: float):
         """Draw particles converging to center."""
-        dt = 1/30
 
-        particles_per_frame = random.randint(2, 4)
+        particles_per_frame = self._emission_count(90.0, dt)
         for _ in range(particles_per_frame):
             edge = random.randint(0, 3)
             if edge == 0:
@@ -190,42 +219,33 @@ class ParticleStyle:
             self.particles.append(particle)
 
         self._update_particles(dt, 0.3, converge_mode=True)
+
+    def draw_recording_state(self, painter: QPainter, rect: QRect, message: str = "Recording..."):
+        self._draw_particles(painter)
+        self._draw_text(painter, rect, message)
+
+    def draw_processing_state(self, painter: QPainter, rect: QRect, message: str = "Processing..."):
+        self._draw_particles(painter)
+        self._draw_text(painter, rect, message)
+
+    def draw_transcribing_state(self, painter: QPainter, rect: QRect, message: str = "Transcribing..."):
         self._draw_particles(painter)
         self._draw_text(painter, rect, message)
 
     def draw_canceling_state(self, painter: QPainter, rect: QRect, message: str = "Canceled"):
-        """Draw canceling state with a quick red burst."""
         progress = self.get_cancellation_progress()
-
-        if (progress < self._last_cancel_progress - 0.2) or not self._cancel_initialized:
-            self._init_cancel_particles(rect)
-
-        dt = self._cancel_dt()
-        self._update_cancel_particles(dt)
         self._draw_cancel_particles(painter, progress)
-
         center_x = rect.width() // 2
         center_y = rect.height() // 2 - 5
         size = int(26 * (1.0 - 0.6 * progress))
         alpha = max(0, int(255 * (1.0 - progress)))
-
         painter.setPen(round_pen(token_color("danger", alpha), 3))
         painter.drawLine(center_x - size, center_y - size, center_x + size, center_y + size)
         painter.drawLine(center_x + size, center_y - size, center_x - size, center_y + size)
-
         painter.setPen(token_color("overlay-text", alpha))
-        font = QFont("Segoe UI", 10)
-        painter.setFont(font)
-        text_rect = QRect(0, rect.height() - 25, rect.width(), 20)
-        painter.drawText(text_rect, 0x0004 | 0x0080, message)
-
-        if progress >= 1.0:
-            self.cancel_particles.clear()
-            self._cancel_initialized = False
-            self._last_cancel_progress = 1.0
-            self._last_cancel_update = None
-        else:
-            self._last_cancel_progress = progress
+        painter.setFont(QFont("Segoe UI", 10))
+        painter.drawText(QRect(0, rect.height() - 25, rect.width(), 20),
+                         Qt.AlignmentFlag.AlignCenter, message)
 
     def _emit_audio_particles(self, count: int, audio_energy: float):
         for _ in range(min(count, self.max_particles - len(self.particles))):
@@ -281,8 +301,8 @@ class ParticleStyle:
                     particle.vx += (nx * attraction - ny * swirl) * dt
                     particle.vy += (ny * attraction + nx * swirl) * dt
 
-                    particle.vx *= 0.9
-                    particle.vy *= 0.9
+                    particle.vx *= 0.9 ** (dt * 30.0)
+                    particle.vy *= 0.9 ** (dt * 30.0)
                 else:
                     particle.life -= dt * 5.0
 

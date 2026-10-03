@@ -1,0 +1,143 @@
+{
+  "review_date": "2026-10-02",
+  "checkout": "6089571",
+  "working_tree": "Included pre-existing uncommitted changes",
+  "survey": {
+    "tracked_source_files": 689,
+    "source_lines": 225476,
+    "python_files_parsed": 596,
+    "python_parse_errors": 0,
+    "scope": "Codebase-wide inventory/static survey and targeted inspection of hot paths; not uniform line-by-line review"
+  },
+  "ui_construction_probe": {
+    "runtime": "Windows Python 3.12, Qt offscreen",
+    "isolation": "Disposable data/settings, memory credential store, empty mocked model cache, mocked input-device enumeration",
+    "main_window_child_widgets": 717,
+    "main_window_construct_s": [0.523815, 0.071459, 0.074803],
+    "main_window_settings_reads": [27, 27, 27],
+    "settings_pages": 19,
+    "settings_child_widgets": 1829,
+    "settings_construct_s": [0.805874, 0.208939, 0.211082],
+    "settings_reads": [89, 88, 88],
+    "local_probe": ".tmp/performance-review-2026-10-02/ui_probe.py",
+    "limitations": "Construction only; warm repeats share a process. Excludes real device enumeration, compositor painting, inference and end-to-end launch. Independent changes can have overlapping benefits."
+  },
+  "history_render_probe": {
+    "runtime": "Windows Python 3.12, Qt offscreen, real theme/style filter",
+    "records": 100,
+    "built_in_provider_construct_ms_range": [70.0, 93.6],
+    "built_in_provider_events_ms_range": [54.1, 66.4],
+    "custom_provider_construct_ms_range": [105.3, 109.8],
+    "custom_provider_events_ms_range": [56.1, 59.3],
+    "built_in_provider_settings_reads": 0,
+    "custom_provider_settings_reads": 200,
+    "populated_list_widget_descendants": 626,
+    "trials_per_provider": 3,
+    "limitations": "Synthetic entries, temporary minimal settings, no audio, real archive, ASR or network. Probe ran through PowerShell stdin; detailed per-trial results are not preserved. Ranges cannot establish percentiles or compositor frame rates."
+  },
+  "transcript_static_render_probe": {
+    "scenario": "Visible TranscriptPane plus ended ReportTabs with Brief view and its hidden full print document",
+    "samples": [
+      {"segments": 500, "transcript_articles": 1000, "markup_bytes": 374622},
+      {"segments": 5000, "transcript_articles": 10000, "markup_bytes": 3747626}
+    ],
+    "limitations": "Synthetic React static render; excludes browser DOM, layout and paint. Does not establish production latency."
+  },
+  "animation_repaint_probe": {
+    "runtime": "Qt offscreen QPixmap/QPainter",
+    "timer_advancement_s": 0,
+    "particle_counts_after_draws": [8, 16, 24],
+    "animation_time": 0.0,
+    "limitations": "Deterministic synthetic reproduction of draw-side simulation mutation, not a frame-rate benchmark"
+  },
+  "test_reduction_followup": {
+    "collected_python_items": 4647,
+    "python_test_files": 226,
+    "collection_duration_s": 3.11,
+    "baseline": {
+      "test_files": [
+        "tests/test_audio_processor.py",
+        "tests/test_meeting_title_consistency.py",
+        "tests/test_settings_binder.py",
+        "tests/test_settings_unified.py",
+        "tests/test_meeting_clock.py",
+        "tests/test_meeting_mode_tab.py"
+      ],
+      "passed": 340,
+      "skipped": 29,
+      "subtests_passed": 2,
+      "duration_s": 36.43,
+      "pytest_options": "-q -p no:cacheprovider --durations=12",
+      "local_output": ".tmp/performance-review-2026-10-02/test-reduction-baseline.txt"
+    },
+    "candidate_reductions": [
+      {
+        "slot": 11,
+        "area": "Settings binding and alias scenarios",
+        "before_items": 21,
+        "candidate_after_items": 2,
+        "candidate_reduction": 19,
+        "preservation": "Retain all 12 binding rows and 9 alias rows as labelled subtests with verified state resets; preserve separate initialization tests"
+      },
+      {
+        "slot": 12,
+        "area": "Meeting title validation route matrix",
+        "before_items": 135,
+        "candidate_after_items": 90,
+        "candidate_reduction": 45,
+        "preservation": "Keep all 54 valid title-route combinations and 36 invalid cases at independent validators/adapters; require branch and no-dispatch/no-mutation verification before pruning"
+      },
+      {
+        "slot": 13,
+        "area": "Moving-average reference matrix",
+        "before_items": 72,
+        "candidate_after_items": 43,
+        "candidate_reduction": 29,
+        "preservation": "Exclude only the 29 rows already skipped before application code; retain exact 43 numeric pairs, random seeds, assertions and separate block-boundary tests"
+      },
+      {
+        "slot": 14,
+        "area": "Meeting Mode window geometry",
+        "before_items": 5,
+        "candidate_after_items": 3,
+        "candidate_reduction": 2,
+        "preservation": "Group expansion, row-inset and shrink checks while retaining all original payload variants, initial geometry and assertions; keep two tab-transition cases separate"
+      },
+      {
+        "slot": 15,
+        "area": "Pure-test fixture scope and deterministic clocks",
+        "candidate_reduction": 0,
+        "preservation": "Same behavioral cases with less Qt setup and clock waiting; retain global data/credential safety, UI cleanup and real-thread integration coverage"
+      }
+    ],
+    "candidate_total_reduction": 95,
+    "coverage_tooling_installed": {
+      "coverage": false,
+      "pytest_cov": false
+    },
+    "duplicate_sidecar_body_pairs": 4,
+    "duplicate_sidecar_decision": "Different Pi/OpenCode fixtures; retain both driver executions",
+    "geometry_fixed_waits_source_total_s": 4.9,
+    "meeting_clock_arithmetic_sleeps_source_total_s": 0.38,
+    "limitations": "Recommendations only. No tests changed; no after-suite timings, statement/branch baseline, coverage equivalence or suite-wide speedup verified. Grouped rows still execute all assertions; structural parameterization alone is not a case-count reduction."
+  },
+  "validation": {
+    "test_files": [
+      "tests/test_bootstrap.py",
+      "tests/test_history_scalability.py",
+      "tests/test_startup_visibility.py",
+      "tests/test_meeting_start_readiness_seams.py",
+      "tests/test_settings_unified.py"
+    ],
+    "passed": 74,
+    "duration_s": 12.31,
+    "warnings": [
+      "history-sidebar-load emitted to an already deleted HistorySidebar at ui_qt/widgets/history_sidebar.py:831",
+      "pytest could not write existing .pytest_cache/v/cache/nodeids due to access denied"
+    ],
+    "ruff_F_checks": "passed",
+    "git_diff_check": "passed",
+    "full_test_suite": "not run",
+    "production_runtime_benchmark": "not run"
+  }
+}

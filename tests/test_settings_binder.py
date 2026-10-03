@@ -140,15 +140,20 @@ def test_bound_controls_load_without_saving(isolated_dialog):
     assert manager.load_all_settings() == stored
 
 
-@pytest.mark.parametrize(
-    "control, key",
-    [(control, key) for control, key, _value, _checked in _BOUND_CHECKS],
-)
-def test_bound_checkbox_saves_its_key_immediately(isolated_dialog, control, key):
-    dialog, manager, _stored = isolated_dialog
-    check = control(dialog)
-    check.setChecked(not check.isChecked())
-    assert manager.load_all_settings()[key] is check.isChecked()
+def test_bound_checkbox_saves_its_key_immediately(isolated_dialog, subtests):
+    dialog, manager, stored = isolated_dialog
+    for control, key, _value, checked in _BOUND_CHECKS:
+        with subtests.test(key=key):
+            # Reset both persistence and the control before every case so a
+            # preceding toggle cannot satisfy the next assertion.
+            manager.save_all_settings(stored)
+            dialog._loading = True
+            check = control(dialog)
+            check.setChecked(checked)
+            dialog._loading = False
+            check.setChecked(not checked)
+            assert check.isChecked() is not checked
+            assert manager.load_all_settings() == {**stored, key: not checked}
 
 
 def test_bound_combo_and_spin_save_their_keys_immediately(isolated_dialog):

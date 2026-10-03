@@ -52,6 +52,7 @@ class SearchEntry:
     detail: str
     destination: str
     target: QWidget | None = None
+    target_name: str = ""
     model_name: str = ""
     component_id: str = ""
     badges: tuple[str, ...] = ()
@@ -200,6 +201,23 @@ def build_index(
 def _catalog_entries(downloads) -> list[SearchEntry]:
     from services.local_asr.catalog import BACKENDS, MODELS
     entries = []
+    if not downloads.__dict__.get("_ui_built", True):
+        from config import config
+        from services.hf_access import resolve_model_repo
+        from services.whisper_sources import custom_models
+        settings = downloads._settings_snapshot()
+        for name in [*config.WHISPER_MODEL_CHOICES, *MODELS, *custom_models(settings)]:
+            if name == "auto":
+                continue
+            label = MODELS[name].label if name in MODELS else name
+            entries.append(SearchEntry(MODEL, label, f"Downloads · {resolve_model_repo(name) or name}",
+                                       "downloads", model_name=name, keywords=f"{name} model", icon="download-blue.svg"))
+        from services.components import component_coordinator, available_component_ids
+        for component_id in available_component_ids():
+            info = component_coordinator.describe(component_id)
+            entries.append(SearchEntry(MODEL, info.display_name, f"Downloads › Components · {info.summary}",
+                                       "downloads", component_id=component_id, keywords="component runtime add-on", icon="box-blue.svg"))
+        return entries
     for name, row in downloads.rows.items():
         label = MODELS[name].label if name in MODELS else name
         backend = BACKENDS.get(row.backend, "Whisper")
