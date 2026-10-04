@@ -10,6 +10,7 @@ from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QDialog,
+    QButtonGroup,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -26,6 +27,7 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QSystemTrayIcon,
+    QTabBar,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -58,6 +60,7 @@ from services.settings import (
     RecordingRetentionMode,
     RecordingTriggerMode,
     SettingsKey,
+    SettingsView,
     UiFontScale,
     UiTheme,
     resolve_developer_mode,
@@ -81,6 +84,7 @@ from services.settings import (
     resolve_streaming_overlay_font_size,
     resolve_ui_font_scale,
     resolve_ui_theme,
+    resolve_settings_view,
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_prompt,
     resolve_transcript_cleanup_provider,
@@ -105,6 +109,9 @@ from ui_qt.dialogs.settings_metadata import CONTROL_DESTINATIONS, PAGE_SEARCH_FI
 from ui_qt.utils.list_reconcile import HistoryDelivery
 from ui_qt.dialogs.settings_destinations import (
     ADVANCED,
+    BASIC_APP,
+    BASIC_DICTATION,
+    BASIC_MEETINGS,
     API_KEYS,
     BACKUP,
     CLEANUP,
@@ -136,6 +143,7 @@ from ui_qt.dialogs.settings_fields import (
 from ui_qt.dialogs.settings_mcp import McpSettingsPage
 from ui_qt.dialogs.settings_models import ModelAssignments
 from ui_qt.dialogs.settings_overview import OverviewPage, OverviewSummary
+from ui_qt.dialogs.settings_basic import BasicSettingsPage
 from ui_qt.dialogs.settings_remote import RemoteEngineSection
 from ui_qt.dialogs.settings_search import (
     SETTING,
@@ -267,9 +275,9 @@ class _SettingsPage(QWidget):
 class SettingsDialog(QDialog):
     """The one non-modal window for settings, model choices, and downloads.
 
-    The rail is grouped by feature (Dictation, Meeting Mode, Models &
-    storage, App) under an Overview landing page, so every model choice sits
-    on the page for the feature it powers. Changes persist immediately.
+    Basic curates common controls; Advanced groups every destination by
+    feature under an Overview landing page. Both save through the same
+    handlers, and the selected view persists between sessions.
     ``UIController`` holds a single instance and re-raises it instead of
     stacking copies.
     """
@@ -279,6 +287,8 @@ class SettingsDialog(QDialog):
     DEFAULT_SIZE = QSize(1315, 814)
     #: The Downloads filter row is the widest fixed content in the window.
     MINIMUM_SIZE = QSize(940, 520)
+    BASIC_DEFAULT_SIZE = QSize(1040, 814)
+    BASIC_MINIMUM_SIZE = QSize(720, 520)
 
     _cleanup_rule_polished = pyqtSignal(str, str, str)
     _rule_dictation_finished = pyqtSignal(str, str)
@@ -329,6 +339,9 @@ class SettingsDialog(QDialog):
         self._background_cache_scan = bool(background_cache_scan)
         self._backup_coordinator = backup_coordinator
         self._backup_busy = False
+        self._settings_view = SettingsView.ADVANCED
+        self._basic_pages = {}
+        self._advanced_rail_width = NavRail.RAIL_WIDTH
         self._pages_ready = False
         self._built_pages = set()
         self._building_pages = set()
@@ -416,6 +429,9 @@ class SettingsDialog(QDialog):
         self._pages_ready = True
         self.rail.select(OVERVIEW)
         self.refresh()
+        self.set_settings_view(resolve_settings_view(self._settings_snapshot()), persist=False)
+        if self._settings_view == SettingsView.BASIC:
+            self.resize(self.BASIC_DEFAULT_SIZE)
         if self._backup_coordinator is not None:
             try:
                 self._on_backup_busy_changed(bool(self._backup_coordinator.snapshot().get("busy")))
@@ -423,16 +439,18 @@ class SettingsDialog(QDialog):
                 logger.exception("Could not read backup coordinator state")
 
     def _setup_ui(self) -> None:
-        root = QHBoxLayout(self)
+        root = QVBoxLayout(self)
         # Only the shell constrains the window; page contents scroll independently.
         root.setSizeConstraint(QLayout.SizeConstraint.SetDefaultConstraint)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+        root.addWidget(self._build_view_header())
         self.settings_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.settings_splitter.setObjectName("settingsSplitter")
         self.settings_splitter.setHandleWidth(6)
         self.settings_splitter.setChildrenCollapsible(False)
-        self.settings_splitter.addWidget(self._build_rail_pane())
+        self.rail_pane = self._build_rail_pane()
+        self.settings_splitter.addWidget(self.rail_pane)
         self.settings_splitter.addWidget(self._build_body())
         self.settings_splitter.setStretchFactor(0, 0)
         self.settings_splitter.setStretchFactor(1, 1)
@@ -442,7 +460,46 @@ class SettingsDialog(QDialog):
         handle = self.settings_splitter.handle(1)
         handle.setCursor(Qt.CursorShape.SizeHorCursor)
         handle.setToolTip("Drag to resize the settings sidebar")
-        root.addWidget(self.settings_splitter)
+        root.addWidget(self.settings_splitter, stretch=1)
+
+    def _build_view_header(self) -> QWidget:
+        header = QFrame()
+        header.setObjectName("settingsViewHeader")
+        row = QHBoxLayout(header)
+        row.setContentsMargins(20, 14, 20, 14)
+        row.setSpacing(10)
+        icon = QLabel()
+        icon.setObjectName("modelManagerHeaderIcon")
+        icon.setPixmap(app_icon().pixmap(28, 28))
+        row.addWidget(icon)
+        brand = QLabel("OpenWhisper")
+        self.settings_brand = brand
+        brand.setObjectName("settingsViewBrand")
+        row.addWidget(brand)
+        label = QLabel("Settings")
+        self.settings_label = label
+        label.setObjectName("settingsViewLabel")
+        row.addWidget(label)
+        row.addStretch()
+        segment = QFrame()
+        segment.setObjectName("settingsViewSegment")
+        buttons = QHBoxLayout(segment)
+        buttons.setContentsMargins(3, 3, 3, 3)
+        buttons.setSpacing(2)
+        self.view_button_group = QButtonGroup(self)
+        self.view_buttons = {}
+        for view in SettingsView.ALL:
+            button = QPushButton(view.title())
+            button.setObjectName("settingsViewButton")
+            button.setCheckable(True)
+            button.setMinimumWidth(100)
+            button.setAccessibleName(f"{view.title()} settings")
+            button.clicked.connect(lambda _checked, view=view: self.set_settings_view(view))
+            self.view_button_group.addButton(button)
+            self.view_buttons[view] = button
+            buttons.addWidget(button)
+        row.addWidget(segment)
+        return header
 
     def _build_rail_pane(self) -> QWidget:
         pane = QWidget()
@@ -452,20 +509,6 @@ class SettingsDialog(QDialog):
         column = QVBoxLayout(pane)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(0)
-
-        brand = QHBoxLayout()
-        brand.setContentsMargins(16, 16, 16, 12)
-        brand.setSpacing(10)
-        brand_icon = QLabel()
-        brand_icon.setObjectName("modelManagerHeaderIcon")
-        brand_icon.setPixmap(app_icon().pixmap(26, 26))
-        brand_icon.setFixedSize(28, 28)
-        brand.addWidget(brand_icon)
-        brand_title = QLabel("Settings")
-        brand_title.setObjectName("modelManagerRailBrand")
-        brand.addWidget(brand_title)
-        brand.addStretch()
-        column.addLayout(brand)
 
         self.search_button = QPushButton()
         self.search_button.setObjectName("settingsRailSearch")
@@ -493,7 +536,7 @@ class SettingsDialog(QDialog):
         self.search_button.setFixedHeight(34)
         self.search_button.clicked.connect(lambda: self.open_search())
         search_holder = QHBoxLayout()
-        search_holder.setContentsMargins(12, 0, 12, 8)
+        search_holder.setContentsMargins(12, 12, 12, 8)
         search_holder.addWidget(self.search_button)
         column.addLayout(search_holder)
 
@@ -533,7 +576,7 @@ class SettingsDialog(QDialog):
                 (HOTKEYS, "Hotkeys", "keyboard-green.svg"),
                 (API_KEYS, "API keys", "key-blue.svg"),
                 (MCP, "MCP", "server-blue.svg"),
-                (ADVANCED, "Advanced", "box-blue.svg"),
+                (ADVANCED, "Developer options", "box-blue.svg"),
             )),
         ):
             self.rail.add_group(group)
@@ -547,8 +590,21 @@ class SettingsDialog(QDialog):
         body = QWidget()
         body.setObjectName("modelManagerBody")
         layout = QVBoxLayout(body)
+        self.body_layout = layout
         layout.setContentsMargins(28, 20, 28, 16)
         layout.setSpacing(14)
+
+        self.basic_tabs = QTabBar()
+        self.basic_tabs.setObjectName("basicSettingsTabs")
+        self.basic_tabs.setExpanding(False)
+        self.basic_tabs.setDrawBase(False)
+        self._basic_destinations = (BASIC_DICTATION, BASIC_MEETINGS, BASIC_APP)
+        for title, icon in (("Dictation", "microphone-blue.svg"),
+                            ("Meetings", "microphone-blue.svg"), ("App", "box-blue.svg")):
+            self.basic_tabs.addTab(design_icon(icon), title)
+        self.basic_tabs.currentChanged.connect(self._on_basic_tab_changed)
+        self.basic_tabs.setVisible(False)
+        layout.addWidget(self.basic_tabs)
 
         self.page_title = QLabel("")
         self.page_title.setObjectName("modelManagerTitle")
@@ -711,22 +767,37 @@ class SettingsDialog(QDialog):
         )
         self._add_page(
             ADVANCED,
-            "Advanced",
+            "Developer options",
             "Meeting re-transcription and developer tools.",
             self._build_advanced_page,
         )
+        for key, title, subtitle in (
+            (BASIC_DICTATION, "Dictation", "The essentials for everyday voice typing."),
+            (BASIC_MEETINGS, "Meetings", "The essentials for recording and reviewing meetings."),
+            (BASIC_APP, "App", "Make OpenWhisper feel at home on your computer."),
+        ):
+            self._add_page(key, title, subtitle,
+                           lambda layout, key=key: self._build_basic_page(layout, key))
         layout.addWidget(self.stack, stretch=1)
 
         footer = QHBoxLayout()
         footer.setSpacing(8)
+        saved = QLabel("Changes save automatically")
+        saved.setObjectName("settingsAutoSaveLabel")
+        footer.addWidget(saved)
         footer.addWidget(self.message_label, stretch=1)
-        close_btn = Button("Close")
+        close_btn = Button("Done")
         close_btn.setObjectName("modelManagerCloseButton")
         fit_compact_button(close_btn, 110)
         close_btn.clicked.connect(self.close)
         footer.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignBottom)
         layout.addLayout(footer)
         return body
+
+    def _build_basic_page(self, layout, key) -> None:
+        page = BasicSettingsPage(self, key)
+        self._basic_pages[key] = page
+        layout.addWidget(page)
 
     def _add_page(
         self,
@@ -1074,7 +1145,9 @@ class SettingsDialog(QDialog):
                      max(1, available.height() - 2 * margin))
         from services.desktop_session import use_omarchy_ui
 
-        minimum = QSize(360, 240) if use_omarchy_ui() else self.MINIMUM_SIZE
+        minimum = (QSize(360, 240) if use_omarchy_ui() else
+                   self.BASIC_MINIMUM_SIZE if getattr(self, "_settings_view", SettingsView.ADVANCED) == SettingsView.BASIC
+                   else self.MINIMUM_SIZE)
         self.setMinimumSize(minimum.boundedTo(room))
         fitted = self.size().boundedTo(room)
         if fitted != self.size():
@@ -2404,12 +2477,81 @@ class SettingsDialog(QDialog):
 
     # ---- navigation ----
 
+    @property
+    def settings_view(self) -> str:
+        return self._settings_view
+
+    def set_settings_view(self, view: str, *, persist: bool = True) -> None:
+        """Switch the presentation while retaining both views' navigation."""
+        if view not in SettingsView.ALL or self._backup_busy:
+            self.view_buttons[self._settings_view].setChecked(True)
+            return
+        if persist and view != self._settings_view:
+            if not self._persist(SettingsKey.SETTINGS_VIEW, view):
+                self.view_buttons[self._settings_view].setChecked(True)
+                return
+        for page in self._basic_pages.values():
+            page.cancel_capture()
+        self._cancel_hotkey_capture()
+        previous = self._settings_view
+        if previous == SettingsView.ADVANCED and view == SettingsView.BASIC and self.isVisible():
+            self._advanced_rail_width = self.settings_splitter.sizes()[0]
+        self._settings_view = view
+        self.view_buttons[view].setChecked(True)
+        basic = view == SettingsView.BASIC
+        self.rail_pane.setVisible(not basic)
+        self.basic_tabs.setVisible(basic)
+        self.body_layout.setSpacing(8 if basic else 14)
+        self.setMinimumSize(self.BASIC_MINIMUM_SIZE if basic else self.MINIMUM_SIZE)
+        if previous == SettingsView.BASIC and not basic:
+            self.settings_splitter.setSizes([
+                self._advanced_rail_width,
+                max(1, self.width() - self._advanced_rail_width),
+            ])
+        if self.isVisible():
+            self._fit_to_screen()
+        if basic:
+            self._on_basic_tab_changed(self.basic_tabs.currentIndex())
+        else:
+            self._on_destination_changed(self.rail.current_key() or OVERVIEW)
+
+    def show_home(self) -> None:
+        """Open ordinary Settings in the user's last selected view."""
+        self.set_settings_view(resolve_settings_view(self._settings_snapshot()), persist=False)
+        if self._settings_view == SettingsView.ADVANCED:
+            self.select_destination(OVERVIEW)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        scale = current_ui_font_scale()
+        self.settings_brand.setVisible(self.width() >= round(560 * scale))
+        self.settings_label.setVisible(self.width() >= round(700 * scale))
+
+    def _on_basic_tab_changed(self, index: int) -> None:
+        if self._settings_view != SettingsView.BASIC or index < 0:
+            return
+        for page in self._basic_pages.values():
+            page.cancel_capture()
+        key = self._basic_destinations[index]
+        self.ensure_page(key)
+        self._basic_pages[key].refresh()
+        self.stack.setCurrentWidget(self._page_scrolls[key])
+        title, subtitle = self._headings[key]
+        self.page_title.setText(title)
+        self.page_subtitle.setText(subtitle)
+
     def select_destination(self, key: str) -> None:
         """Show one destination by stable key or legacy alias."""
         key = resolve_destination(key)
         if self._backup_busy and key != BACKUP:
             return
         if key in self._pages:
+            if key in self._basic_destinations:
+                self.basic_tabs.setCurrentIndex(self._basic_destinations.index(key))
+                self.set_settings_view(SettingsView.BASIC)
+                return
+            if self._settings_view == SettingsView.BASIC:
+                self.set_settings_view(SettingsView.ADVANCED)
             self.ensure_page(key)
             self.rail.select(key)
 
@@ -2439,6 +2581,9 @@ class SettingsDialog(QDialog):
     def _on_destination_changed(self, key: str) -> None:
         if self._backup_busy and key != BACKUP:
             self.rail.select(BACKUP)
+            return
+        if self._settings_view == SettingsView.BASIC:
+            self.set_settings_view(SettingsView.ADVANCED)
             return
         if key != HOTKEYS:
             self._cancel_hotkey_capture()
@@ -2473,6 +2618,9 @@ class SettingsDialog(QDialog):
         self._backup_busy = bool(busy)
         self.rail.setEnabled(not busy)
         self.search_button.setEnabled(not busy)
+        self.basic_tabs.setEnabled(not busy)
+        for button in self.view_buttons.values():
+            button.setEnabled(not busy)
         for shortcut in self._search_shortcuts:
             shortcut.setEnabled(not busy)
         if busy:
@@ -2641,6 +2789,8 @@ class SettingsDialog(QDialog):
 
     def closeEvent(self, event):
         self.search_palette.close_palette()
+        for page in self._basic_pages.values():
+            page.cancel_capture()
         if CLEANUP_PROFILES in self._built_pages:
             self.cleanup_profiles_panel.hotkey_input.cancel_capture()
         self._cancel_hotkey_capture()
@@ -2663,8 +2813,7 @@ class SettingsDialog(QDialog):
             logger.error("Couldn't save setting %s: %s", key, exc)
             self.message_label.setText(f"Couldn't save setting: {exc}")
             return False
-        if message:
-            self.message_label.setText(message)
+        self.message_label.setText(message)
         self._refresh_rail_values()
         return True
 
@@ -2677,6 +2826,7 @@ class SettingsDialog(QDialog):
             logger.error("Couldn't save settings: %s", exc)
             self.message_label.setText(f"Couldn't save settings: {exc}")
             return False
+        self.message_label.setText("")
         self._refresh_rail_values()
         return True
 
@@ -2716,6 +2866,8 @@ class SettingsDialog(QDialog):
         else:
             self.rail.set_value(BACKUP, "Local backups")
         self.rail.set_value(ADVANCED, "Developer mode on" if resolve_developer_mode(settings) else "Developer mode off")
+        for page in self._basic_pages.values():
+            page.refresh()
         if self.rail.current_key() == OVERVIEW:
             self._refresh_overview()
 
@@ -3787,6 +3939,8 @@ class SettingsDialog(QDialog):
         self._update_hotkey_displays()
 
     def _update_hotkey_displays(self) -> None:
+        for page in self._basic_pages.values():
+            page.refresh_shortcut()
         for key, input_field in self.hotkey_inputs.items():
             if self._native_wayland:
                 input_field.set_hotkey(self.current_hotkeys.get(key, ""))

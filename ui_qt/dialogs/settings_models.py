@@ -706,12 +706,30 @@ class ModelAssignments(QObject):
 
     def _on_engine_changed(self, _index: int) -> None:
         """Route a recording-engine change through the main-window path."""
-        display = self.engine_combo.currentText()
-        if self.on_backend_changed:
-            self.on_backend_changed(display)
-        self._update_engine_caption()
-        self._update_ondemand_whisper_enabled()
-        self._refresh_engine_inventory()
+        self.choose_backend(self.engine_combo.currentData())
+
+    def choose_backend(self, backend: str) -> None:
+        """Shared Basic/Advanced engine choice without building a model page."""
+        if backend not in config.MODEL_VALUE_MAP.values():
+            return
+        from ui_qt.widgets.speech_backend_picker import backend_display_name
+
+        try:
+            if self.on_backend_changed:
+                self.on_backend_changed(backend_display_name(backend))
+            else:
+                settings_manager.save_setting(SettingsKey.SELECTED_MODEL, backend)
+        except Exception as exc:
+            self._say(f"Couldn't change voice model: {exc}")
+            self.refresh_engine_selection()
+            return
+        if VOICE_MODEL in self._built:
+            blocker = self.engine_combo.blockSignals(True)
+            self.engine_combo.setCurrentIndex(max(0, self.engine_combo.findData(backend)))
+            self.engine_combo.blockSignals(blocker)
+            self._update_engine_caption()
+            self._update_ondemand_whisper_enabled()
+            self._refresh_engine_inventory()
         self._refresh_rail_values()
 
     def _on_speech_settings_changed(self):

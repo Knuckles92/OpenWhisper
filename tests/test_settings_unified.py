@@ -25,6 +25,7 @@ from services.settings import (
     HuggingFaceAccessPolicy,
     MeetingSpeakerIdBackend,
     SettingsKey,
+    SettingsView,
     SettingsManager,
 )
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
@@ -32,6 +33,9 @@ from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_destinations import (
     CLEANUP,
+    BASIC_APP,
+    BASIC_DICTATION,
+    BASIC_MEETINGS,
     DOWNLOADS,
     GENERAL,
     MEETING_INTELLIGENCE,
@@ -77,7 +81,7 @@ def make_dialog():
 
     def build(values=None, cached=None, *, background_cache_scan=False):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings(values or {})
+        store.save_all_settings({SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED, **(values or {})})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))
@@ -107,6 +111,7 @@ class TestRouting:
         assert dialog.rail.current_key() == OVERVIEW
         assert dialog.page_title.text() == "Overview"
         assert dialog.rail.value(OVERVIEW) == "What is running now"
+
 
     def test_refresh_rebuilds_the_overview_once(self, make_dialog):
         dialog, _store = make_dialog()
@@ -234,6 +239,186 @@ class TestRouting:
         combo.setCurrentIndex(combo.findData(HuggingFaceAccessPolicy.NEVER))
         assert store.load_hf_access_policy() == HuggingFaceAccessPolicy.NEVER
 
+
+class TestBasicSettings:
+    def test_basic_opens_without_building_model_or_cloud_setup(self, make_dialog):
+        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+        assert dialog.settings_view == SettingsView.BASIC
+        assert dialog.page_title.text() == "Dictation"
+        assert dialog.rail_pane.isHidden()
+        assert not dialog.basic_tabs.isHidden()
+        assert dialog.stack.currentWidget() is dialog._page_scrolls[BASIC_DICTATION]
+        assert not {VOICE_MODEL, CLEANUP, MEETING_INTELLIGENCE} & dialog._built_pages
+        assert store.get(SettingsKey.SETTINGS_VIEW) == SettingsView.BASIC
+
+    def test_views_remember_navigation_and_restore_after_reopening(self, make_dialog):
+        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+        dialog.basic_tabs.setCurrentIndex(2)
+        dialog.select_destination(RECORDING)
+        assert dialog.settings_view == SettingsView.ADVANCED
+        assert store.get(SettingsKey.SETTINGS_VIEW) == SettingsView.ADVANCED
+        dialog.set_settings_view(SettingsView.BASIC)
+        assert dialog.stack.currentWidget() is dialog._page_scrolls[BASIC_APP]
+        dialog.set_settings_view(SettingsView.ADVANCED)
+        assert dialog.rail.current_key() == RECORDING
+        reopened = settings_dialog_module.SettingsDialog(background_cache_scan=False)
+        assert reopened.settings_view == SettingsView.ADVANCED
+        assert reopened.page_title.text() == "Overview"
+        reopened.close()
+        dialog.set_settings_view(SettingsView.BASIC)
+        reopened = settings_dialog_module.SettingsDialog(background_cache_scan=False)
+        assert reopened.settings_view == SettingsView.BASIC
+        reopened.close()
+
+    def test_basic_and_advanced_changes_share_the_same_store_and_callbacks(self, make_dialog):
+        dialog, store = make_dialog({
+            SettingsKey.SETTINGS_VIEW: SettingsView.BASIC,
+            SettingsKey.STREAMING_ENABLED: False,
+            SettingsKey.STREAMING_OVERLAY_ENABLED: True,
+        })
+        page = dialog._basic_pages[BASIC_DICTATION]
+        dialog.on_streaming_settings_changed = MagicMock()
+        page.controls[SettingsKey.STREAMING_ENABLED].click()
+        assert store.get(SettingsKey.STREAMING_ENABLED) is True
+        assert SettingsKey.STREAMING_OVERLAY_ENABLED not in store.load_all_settings()
+        dialog.on_streaming_settings_changed.assert_called_once_with()
+        dialog.select_destination(RECORDING)
+        assert dialog.streaming_enabled_check.isChecked()
+        dialog.streaming_enabled_check.setChecked(False)
+        dialog.set_settings_view(SettingsView.BASIC)
+        assert not page.controls[SettingsKey.STREAMING_ENABLED].isChecked()
+
+    def test_microphone_uses_the_shared_inventory_and_live_callback(self, make_dialog):
+        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+        dialog.on_audio_device_changed = MagicMock()
+        dialog._apply_audio_devices(dialog._audio_device_generation, "", [(11, "Desk microphone")], "")
+        combo = dialog._basic_pages[BASIC_DICTATION].controls[SettingsKey.AUDIO_INPUT_DEVICE]
+        combo.setCurrentIndex(combo.findData(11))
+        assert store.get(SettingsKey.AUDIO_INPUT_DEVICE) == 11
+        dialog.on_audio_device_changed.assert_called_once_with(11)
+        dialog.basic_tabs.setCurrentIndex(1)
+        other = dialog._basic_pages[BASIC_MEETINGS].controls[SettingsKey.AUDIO_INPUT_DEVICE]
+        assert other.currentData() == 11
+        other.setCurrentIndex(other.findData(None))
+        assert SettingsKey.AUDIO_INPUT_DEVICE not in store.load_all_settings()
+
+    def test_voice_choice_uses_the_canonical_controller_label_without_model_setup(self, make_dialog):
+        from ui_qt.widgets.speech_backend_picker import backend_display_name
+        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+        combo = dialog._basic_pages[BASIC_DICTATION].voice_combo
+        backend = combo.itemData((combo.currentIndex() + 1) % combo.count())
+        def choose(display):
+            from config import config
+            store.save_model_selection(config.MODEL_VALUE_MAP[display])
+        dialog.models.on_backend_changed = MagicMock(side_effect=choose)
+        combo.setCurrentIndex(combo.findData(backend))
+        assert store.load_model_selection() == backend
+        dialog.models.on_backend_changed.assert_called_once_with(backend_display_name(backend))
+        assert VOICE_MODEL not in dialog._built_pages
+
+    def test_app_theme_and_meeting_report_edits_use_existing_handlers(self, make_dialog):
+        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+        dialog.basic_tabs.setCurrentIndex(2)
+        dialog.on_ui_theme_changed = MagicMock()
+        theme = dialog._basic_pages[BASIC_APP].controls[SettingsKey.UI_THEME]
+        theme.setCurrentIndex(theme.findData("light"))
+        assert store.get(SettingsKey.UI_THEME) == "light"
+        dialog.on_ui_theme_changed.assert_called_once_with("light")
+        dialog.basic_tabs.setCurrentIndex(1)
+        report = dialog._basic_pages[BASIC_MEETINGS].controls[SettingsKey.MEETING_END_REPORT]
+        report.click()
+        assert store.get(SettingsKey.MEETING_END_REPORT) is report.isChecked()
+        dialog.select_destination("meeting_after")
+        assert dialog.meeting_end_report_check.isChecked() == report.isChecked()
+
+    def test_failed_save_restores_basic_and_allows_retry(self, make_dialog):
+        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+        switch = dialog._basic_pages[BASIC_DICTATION].controls[SettingsKey.AUTO_PASTE]
+        previous = switch.isChecked()
+        with patch.object(store, "save_setting", side_effect=OSError("Disk full")):
+            switch.click()
+        assert switch.isChecked() == previous
+        assert dialog.auto_paste_check.isChecked() == previous
+        assert "Disk full" in dialog.message_label.text()
+        switch.click()
+        assert store.get(SettingsKey.AUTO_PASTE) == (not previous)
+        assert dialog.message_label.text() == ""
+
+    def test_basic_shortcut_capture_cancels_when_switching_view(self, make_dialog):
+        dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+        dialog.on_profile_hotkey_capture = MagicMock()
+        field = dialog._basic_pages[BASIC_DICTATION].shortcut
+        field.begin_capture()
+        dialog.on_profile_hotkey_capture.assert_called_with(True)
+        dialog.set_settings_view(SettingsView.ADVANCED)
+        assert not field._capturing
+        dialog.on_profile_hotkey_capture.assert_called_with(False)
+
+    def test_invalid_view_falls_back_to_basic_without_changing_other_settings(self, make_dialog):
+        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: "unknown", SettingsKey.AUTO_PASTE: False})
+        assert dialog.settings_view == SettingsView.BASIC
+        assert store.get(SettingsKey.AUTO_PASTE) is False
+
+    def test_change_button_captures_and_saves_a_shortcut_inline(self, make_dialog):
+        from PyQt6.QtWidgets import QPushButton
+        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+        dialog.show()
+        QApplication.instance().processEvents()
+        field = dialog._basic_pages[BASIC_DICTATION].shortcut
+        button = dialog.findChild(QPushButton, "basicSettingsChangeShortcut")
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+        assert field.hasFocus()
+        QTest.keyClick(field, Qt.Key.Key_J, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)
+        assert not field._capturing
+        assert store.load_hotkey_settings()["record_toggle"] == field.hotkey
+        dialog.select_destination("hotkeys")
+        assert dialog.hotkey_inputs["record_toggle"].text() == field.text()
+        dialog.close()
+
+    @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 460)])
+    @pytest.mark.parametrize("theme", ["dark", "light"])
+    def test_basic_rows_fit_narrow_windows_and_large_fonts(self, make_dialog, monkeypatch, ui_mode, width, theme):
+        from PyQt6.QtWidgets import QAbstractButton, QComboBox, QLineEdit, QLabel
+        from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+        from ui_qt.utils.palette import current_palette, set_current_palette
+        from ui_qt.utils.theme_manager import ThemeManager
+        monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
+        app = QApplication.instance()
+        previous_style, previous_font = app.styleSheet(), app.font()
+        previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
+        manager = ThemeManager(theme)
+        dialog = None
+        try:
+            apply_ui_font_scale(130, app=app, theme_manager=manager)
+            dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+            dialog.show()
+            dialog._fit_to_screen()
+            dialog.resize(width, 600)
+            for index, key in enumerate(dialog._basic_destinations):
+                dialog.basic_tabs.setCurrentIndex(index)
+                for _ in range(8):
+                    app.processEvents()
+                page = dialog._basic_pages[key]
+                assert dialog.width() == width
+                for control in (page.findChildren(QAbstractButton) + page.findChildren(QComboBox) + page.findChildren(QLineEdit)):
+                    if not control.isVisible():
+                        continue
+                    assert control.mapTo(page, control.rect().topLeft()).x() >= 0
+                    assert control.mapTo(page, control.rect().bottomRight()).x() < page.width()
+                for label in page.findChildren(QLabel):
+                    if label.isVisible() and label.wordWrap():
+                        assert label.height() >= label.heightForWidth(label.width())
+                scroll = dialog._page_scrolls[key]
+                scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
+                app.processEvents()
+                assert page.mapTo(scroll.viewport(), page.rect().bottomRight()).y() <= scroll.viewport().height()
+        finally:
+            if dialog is not None:
+                dialog.close()
+            apply_ui_font_scale(previous_scale, app=app)
+            set_current_palette(previous_palette)
+            app.setFont(previous_font)
+            app.setStyleSheet(previous_style)
 
 class TestControllerRouting:
     def _controller(self, dialog, missing_runtime=None):

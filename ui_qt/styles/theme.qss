@@ -3661,6 +3661,184 @@ QCheckBox#batchRelationCombine {
     background-color: transparent;
 }
 
+/* ---- Settings views and the curated Basic pages ---- */
+
+QFrame#settingsViewHeader {
+    background-color: @slate-rail;
+    border: none;
+    border-bottom: 1px solid @slate-border-subtle;
+}
+
+QLabel#settingsViewBrand {
+    background-color: transparent;
+    color: @slate-text;
+    font-size: 17px;
+    font-weight: 700;
+    border: none;
+}
+
+QLabel#settingsViewLabel {
+    background-color: transparent;
+    color: @slate-text-3;
+    font-size: 13px;
+    border: none;
+    padding-left: 12px;
+}
+
+QFrame#settingsViewSegment {
+    background-color: @slate-field;
+    border: 1px solid @slate-border-strong;
+    border-radius: 9px;
+}
+
+QPushButton#settingsViewButton {
+    background-color: transparent;
+    color: @slate-text-3;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+QPushButton#settingsViewButton:hover {
+    background-color: @slate-raised;
+    color: @slate-text;
+}
+
+QPushButton#settingsViewButton:checked {
+    background-color: @accent;
+    color: @on-accent;
+}
+
+QPushButton#settingsViewButton:focus {
+    border: 1px solid @accent;
+}
+
+QTabBar#basicSettingsTabs {
+    background-color: transparent;
+}
+
+QTabBar#basicSettingsTabs::tab {
+    background-color: transparent;
+    color: @slate-text-3;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 10px 22px;
+    font-size: 14px;
+    margin-right: 8px;
+}
+
+QTabBar#basicSettingsTabs::tab:selected {
+    color: @accent;
+    border-bottom-color: @accent;
+}
+
+QTabBar#basicSettingsTabs::tab:hover:!selected {
+    color: @slate-text;
+    background-color: @slate-rail-hover;
+}
+
+QWidget#basicSettingsPage,
+QWidget#basicSettingsShortcut,
+QAbstractButton#basicSettingsSwitch {
+    background-color: transparent;
+    border: none;
+}
+
+QFrame#basicSettingsGroup {
+    background-color: @slate-surface;
+    border: 1px solid @slate-border;
+    border-radius: 10px;
+}
+
+QLabel#basicSettingsGroupTitle,
+QLabel#basicSettingsRowTitle,
+QLabel#basicSettingsDescription,
+QLabel#basicSettingsStatus,
+QLabel#basicSettingsSummary,
+QLabel#basicSettingsIcon,
+QLabel#settingsAutoSaveLabel {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#basicSettingsGroupTitle {
+    color: @slate-text;
+    font-size: 16px;
+    font-weight: 700;
+    padding-left: 6px;
+}
+
+QLabel#basicSettingsRowTitle {
+    color: @slate-text;
+    font-size: 14px;
+}
+
+QLabel#basicSettingsDescription,
+QLabel#basicSettingsSummary {
+    color: @slate-text-3;
+    font-size: 12px;
+}
+
+QLabel#basicSettingsSummary {
+    padding-top: 12px;
+}
+
+QLabel#basicSettingsStatus {
+    color: @slate-text-3;
+    font-size: 11px;
+}
+
+QLabel#settingsAutoSaveLabel {
+    color: @slate-text-4;
+    font-size: 11px;
+}
+
+QFrame#basicSettingsDivider {
+    background-color: @slate-border-subtle;
+    border: none;
+}
+
+QComboBox#basicSettingsCombo {
+    background-color: @slate-field;
+    color: @slate-text;
+    border: 1px solid @slate-border-strong;
+    border-radius: 7px;
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+QComboBox#basicSettingsCombo:focus {
+    border-color: @accent;
+}
+
+QPushButton#basicSettingsAdvancedLink {
+    background-color: transparent;
+    color: @accent;
+    border: none;
+    padding: 8px 0;
+    font-size: 12px;
+    font-weight: 500;
+    text-align: left;
+}
+
+QPushButton#basicSettingsAdvancedLink:hover,
+QPushButton#basicSettingsAdvancedLink:focus {
+    color: @accent-hover;
+    text-decoration: underline;
+}
+
+QPushButton#basicSettingsChangeShortcut {
+    background-color: @slate-field;
+    color: @slate-text-2;
+    border: 1px solid @slate-border-strong;
+    border-radius: 7px;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
 /* ---- Unified Settings: rail search, Overview, and the search palette ---- */
 
 QPushButton#settingsRailSearch {

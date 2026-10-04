@@ -17,7 +17,7 @@ from services.settings import (
     SettingsManager,
 )
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
-from ui_qt.dialogs.settings_dialog import GENERAL, HOTKEYS, OVERVIEW, SettingsDialog
+from ui_qt.dialogs.settings_dialog import GENERAL, HOTKEYS, SettingsDialog
 from ui_qt.ui_controller import UIController
 
 
@@ -244,7 +244,7 @@ class TestHotkeySettingsNavigation(unittest.TestCase):
         self.assertEqual(dialog.destination, HOTKEYS)
         self.assertIs(controller.raised, dialog)
 
-    def test_regular_settings_still_selects_general(self):
+    def test_regular_settings_opens_the_remembered_view(self):
         class FakeDialog:
             def __init__(self):
                 self.destination = None
@@ -252,8 +252,8 @@ class TestHotkeySettingsNavigation(unittest.TestCase):
             def refresh(self):
                 pass
 
-            def select_destination(self, destination):
-                self.destination = destination
+            def show_home(self):
+                self.destination = "home"
 
         dialog = FakeDialog()
 
@@ -270,7 +270,7 @@ class TestHotkeySettingsNavigation(unittest.TestCase):
         controller = FakeController()
         UIController.open_settings_dialog(controller)
 
-        self.assertEqual(dialog.destination, OVERVIEW)
+        self.assertEqual(dialog.destination, "home")
         self.assertIs(controller.raised, dialog)
 
 

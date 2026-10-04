@@ -9,6 +9,7 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 ## [Unreleased]
 
 ### Added
+- **Basic and Advanced settings** — everyday controls live in compact Dictation, Meetings, and App tabs. Advanced retains the complete settings sidebar, model configuration, and search. Both views save the same settings, remember the selected view, and preserve links to detailed pages.
 - **Local backup and restore** — a dedicated page in Settings saves settings, history, meetings, and optional recordings to a verified `.owbackup` archive. Restore previews the archive, applies it during a clean restart, and retains the previous data for recovery. Optional daily or weekly backups run while the app is open and idle, with configurable retention.
 
 ### Fixed

@@ -778,7 +778,7 @@ class UIController(QObject):
         self.main_window.restore_from_tray()
 
     def open_settings_dialog(self, focus_hf_policy: bool = False):
-        """Show the non-modal Settings window on its Overview (re-raised).
+        """Show the non-modal Settings window in its remembered view (re-raised).
 
         Args:
             focus_hf_policy: When True, open Downloads with the Hugging Face
@@ -790,7 +790,7 @@ class UIController(QObject):
         if focus_hf_policy:
             dialog.focus_hf_policy()
         else:
-            dialog.select_destination(OVERVIEW)
+            dialog.show_home()
         self._raise_dialog(dialog)
 
     def open_engine_help_destination(self, destination: str) -> None:

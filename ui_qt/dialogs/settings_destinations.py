@@ -7,6 +7,9 @@ Manager and Downloads windows used working for code that still passes them.
 from typing import Final
 
 OVERVIEW: Final[str] = "overview"
+BASIC_DICTATION: Final[str] = "basic_dictation"
+BASIC_MEETINGS: Final[str] = "basic_meetings"
+BASIC_APP: Final[str] = "basic_app"
 
 # Dictation
 VOICE_MODEL: Final[str] = "voice_model"
