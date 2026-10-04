@@ -106,9 +106,11 @@ class NvidiaRecognizer:
         self.gpu_name = ""
         gpu = 0
         if sys.platform == "darwin":
-            if device != "cpu":
-                raise RuntimeError("The Mac speech runtime supports CPU only.")
+            if device not in ("cpu", "metal"):
+                raise RuntimeError("The Mac speech runtime supports the Apple GPU or CPU.")
             library = Path(runtime) / "nemo-speech" / "lib" / "libnemo_speech_asr_c.dylib"
+            if device == "metal" and not (library.parent / "libggml-metal.dylib").exists():
+                raise RuntimeError("Install NVIDIA Speech GPU (Metal) in Downloads, or choose CPU.")
             self.lib = c.CDLL(str(library))
         elif sys.platform.startswith("linux"):
             self.lib = _load_linux(runtime, device)
@@ -121,7 +123,8 @@ class NvidiaRecognizer:
             library = bin_dir / "nemo_speech_asr_c.dll"
             self.lib = c.CDLL(str(library))
         self._bind()
-        backend = BackendConfig(c.sizeof(BackendConfig), gpu if device == "cuda" else -1)
+        # Metal is the only GPU the Mac release can see.
+        backend = BackendConfig(c.sizeof(BackendConfig), gpu if device in ("cuda", "metal") else -1)
         model = ModelConfig(c.sizeof(ModelConfig), model_path.encode("utf-8"), None)
         config = RecognizerConfig()
         config.size = c.sizeof(config)

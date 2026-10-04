@@ -103,7 +103,7 @@ class LocalSpeechBackend(TranscriptionBackend):
                 self.runtime_component = None
                 self.last_error = f"{self.name} is not available on this computer. {reason}."
             else:
-                kind = "MLX" if self.backend_id == "parakeet_mlx" else ('GPU' if device in ('cuda', 'mps') else 'CPU')
+                kind = "MLX" if self.backend_id == "parakeet_mlx" else ('GPU' if device in ('cuda', 'mps', 'metal') else 'CPU')
                 self.last_error = f"Install {self.name}'s {kind} runtime in Downloads."
             return
         if self.is_model_missing:

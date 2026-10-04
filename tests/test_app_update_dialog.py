@@ -302,10 +302,13 @@ class TestAppUpdateDialog(_QtTestCase):
         assert dialog.later_btn.text() == "Later"
 
 
-def test_mac_update_explains_manual_replacement():
+def test_mac_update_explains_restart_rollback_and_manual_fallback():
     dialog = AppUpdateDialog(_result(
         channel=InstallChannel.INSTALLER, can_apply=True, apply_mode=ApplyMode.MACOS_DMG,
     ))
-    assert dialog.primary_btn.text() == 'Download Mac update'
-    assert 'Drag OpenWhisper to Applications' in dialog.hint_label.text()
+    assert dialog.primary_btn.text() == 'Download and install'
+    hint = dialog.hint_label.text()
+    assert 'installs the verified update and restarts' in hint
+    assert 'does not start' in hint
+    assert 'drag OpenWhisper to Applications' in hint
     dialog.close()

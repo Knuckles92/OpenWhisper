@@ -219,20 +219,38 @@ def test_available_component_ids_by_platform():
 
     with patch.object(components.sys, "platform", "darwin"), patch.object(
         components.platform_module, "machine", return_value="arm64"
-    ):
+    ), patch.object(components, "_macos_version", return_value=(15, 0)):
         # OpenCode is listed once its macOS archive is pinned.
         assert components.available_component_ids() == (
             ComponentId.MEETING_AGENT,
             ComponentId.ASR_NVIDIA_CPU,
+            ComponentId.ASR_NVIDIA_METAL,
             ComponentId.ASR_PARAKEET_MLX,
+            ComponentId.ASR_QWEN,
+            ComponentId.ASR_MOONSHINE,
         )
-        assert len(ComponentCoordinator().list_components()) == 3
+        assert len(ComponentCoordinator().list_components()) == 6
+
+    with patch.object(components.sys, "platform", "darwin"), patch.object(
+        components.platform_module, "machine", return_value="arm64"
+    ), patch.object(components, "_macos_version", return_value=(14, 6)):
+        # Moonshine publishes only a macOS 15 build.
+        assert ComponentId.ASR_MOONSHINE not in components.available_component_ids()
+        assert ComponentId.ASR_QWEN in components.available_component_ids()
+        # An explicit platform query describes the catalog, not this Mac.
+        assert ComponentId.ASR_MOONSHINE in components.available_component_ids(
+            components.PLATFORM_DARWIN_ARM64
+        )
 
     with patch.object(components.sys, "platform", "darwin"), patch.object(
         components.platform_module, "machine", return_value="x86_64"
     ):
-        assert components.available_component_ids() == ()
-        assert ComponentCoordinator().list_components() == ()
+        # Intel Macs run from source: the meeting agents and NVIDIA Speech CPU.
+        assert components.available_component_ids() == (
+            ComponentId.MEETING_AGENT,
+            ComponentId.ASR_NVIDIA_CPU,
+        )
+        assert len(ComponentCoordinator().list_components()) == 2
 
     with patch.object(components.sys, "platform", "win32"), patch.object(
         components.platform_module, "machine", return_value="AMD64"
@@ -241,7 +259,9 @@ def test_available_component_ids_by_platform():
         assert components.available_component_ids() == (
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
-            *(key for key in components.RUNTIME_IDS if key not in (ComponentId.ASR_NVIDIA_VULKAN, ComponentId.ASR_PARAKEET_MLX)),
+            *(key for key in components.RUNTIME_IDS if key not in (
+                ComponentId.ASR_NVIDIA_VULKAN, ComponentId.ASR_NVIDIA_METAL, ComponentId.ASR_PARAKEET_MLX,
+            )),
         )
 
 
@@ -275,6 +295,7 @@ def test_meeting_agent_catalog_is_published():
         components.PLATFORM_LINUX_X86_64: ("node-tar", 139_497_605),
         components.PLATFORM_LINUX_AARCH64: ("node-tar", 136_820_317),
         components.PLATFORM_DARWIN_ARM64: ("node-tar", 127_598_925),
+        components.PLATFORM_DARWIN_X86_64: ("node-tar", 130_101_517),
     }
     for tag, (node_extract, install_bytes) in expected.items():
         assert components.component_is_published(

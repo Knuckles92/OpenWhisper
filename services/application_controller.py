@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import socket
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -1365,6 +1366,16 @@ class ApplicationController(QObject):
                 logger.info(
                     "Removed finished update downloads: %s", ", ".join(removed)
                 )
+        if sys.platform == "darwin":
+            from services.app_update_macos import prune_transactions
+
+            try:
+                removed = prune_transactions()
+            except Exception:
+                logger.exception("Could not prune Mac update transactions")
+            else:
+                if removed:
+                    logger.info("Removed Mac update transactions: %s", ", ".join(removed))
         try:
             transactions = prune_abandoned_transactions()
             from services.setup_update import cleanup_setup_backup

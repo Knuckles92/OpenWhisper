@@ -1,8 +1,8 @@
 """Build this platform's OpenCode component from the lockfile and a verified Bun archive.
 
 Run via python scripts/build_component.py meeting-agent-opencode on each target
-(Windows x64, Linux x86_64, Linux aarch64, Apple Silicon macOS): the offline
-self-test runs the payload.
+(Windows x64, Linux x86_64, Linux aarch64, macOS on Apple Silicon or Intel):
+the offline self-test runs the payload.
 No development node_modules are copied, and dependency install scripts stay disabled.
 ``--pin FILE.catalog.json ...`` copies measured pins into services/opencode_catalog.py.
 """
@@ -36,6 +36,8 @@ BUN_ARCHIVES = {
                       "a27ffb63a8310375836e0d6f668ae17fa8d8d18b88c37c821c65331973a19a3b"),
     "darwin_arm64": ("bun-darwin-aarch64",
                      "d8b96221828ad6f97ac7ac0ab7e95872341af763001e8803e8267652c2652620"),
+    "darwin_x86_64": ("bun-darwin-x64-baseline",
+                      "3e35ad6f53971a9834bf9e6786e2adf72b5f1921cc9a9c5fde073d2972944076"),
 }
 
 
@@ -62,7 +64,7 @@ def build_meeting_agent_opencode() -> None:
     platform = current_platform_tag()
     if platform not in BUN_ARCHIVES:
         raise SystemExit(
-            "Build the OpenCode component on Windows x64, Linux x86_64/aarch64 or an Apple Silicon Mac."
+            "Build the OpenCode component on Windows x64, Linux x86_64/aarch64 or a Mac."
         )
     bun_name, bun_sha256 = BUN_ARCHIVES[platform]
     windows = platform == "win_amd64"

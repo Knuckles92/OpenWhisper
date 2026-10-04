@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,7 +40,9 @@ BACKENDS = {
 WHISPER_BACKEND = "local_whisper"
 DEFAULT_MODELS = {key: next(m.key for m in MODELS.values() if m.backend == key) for key in BACKENDS}
 MLX_RUNTIME = "asr-parakeet-mlx"
-RUNTIME_IDS = ("asr-nvidia-cpu", "asr-nvidia-cuda", "asr-nvidia-vulkan", "asr-qwen", "asr-moonshine", MLX_RUNTIME)
+#: NeMo-Speech.cpp's Metal release: Parakeet and Nemotron on the Apple GPU.
+NVIDIA_METAL_RUNTIME = "asr-nvidia-metal"
+RUNTIME_IDS = ("asr-nvidia-cpu", "asr-nvidia-cuda", "asr-nvidia-vulkan", NVIDIA_METAL_RUNTIME, "asr-qwen", "asr-moonshine", MLX_RUNTIME)
 #: NVIDIA's CUDA release of NeMo-Speech.cpp runs on Turing and newer. Older
 #: NVIDIA GPUs, such as the GTX 10 series, run its Vulkan release instead.
 CUDA_MIN_COMPUTE_CAPABILITY = (7, 5)
@@ -89,6 +90,13 @@ def nvidia_gpu_runtime() -> str:
     return "asr-nvidia-cuda"
 
 
+def apple_silicon() -> bool:
+    """True on an Apple Silicon Mac, where Auto means the Apple GPU, never CUDA."""
+    from services.components import current_platform_tag
+
+    return current_platform_tag() == "darwin_arm64"
+
+
 def runtime_id(backend: str, device: str) -> str:
     if backend == "parakeet_mlx":
         return MLX_RUNTIME
@@ -96,6 +104,8 @@ def runtime_id(backend: str, device: str) -> str:
         return "asr-qwen"
     if backend == "moonshine":
         return "asr-moonshine"
+    if device != "cpu" and apple_silicon():
+        return NVIDIA_METAL_RUNTIME
     return nvidia_gpu_runtime() if device == "cuda" else "asr-nvidia-cpu"
 
 
@@ -106,12 +116,18 @@ def resolve_runtime(backend: str, requested: str) -> tuple[str, str]:
         if requested not in ("auto", "cpu"):
             raise ValueError("Parakeet MLX supports Auto (Apple GPU) or CPU, not CUDA.")
         return MLX_RUNTIME, "cpu" if requested == "cpu" else "metal"
-    if backend == "qwen_asr" and sys.platform == "darwin":
-        # PyTorch reaches the Apple GPU through MPS; the worker uses the CPU
-        # on a Mac without it.
-        if requested not in ("auto", "cpu"):
-            raise ValueError("Qwen3-ASR on a Mac supports Auto (Apple GPU) or CPU, not CUDA.")
-        return "asr-qwen", "cpu" if requested == "cpu" else "mps"
+    if backend in ("qwen_asr", "parakeet", "nemotron") and apple_silicon():
+        # A Mac's GPU is the Apple GPU: Metal for NeMo-Speech.cpp, MPS for
+        # PyTorch. A saved "cuda" from another computer means that GPU too.
+        if requested == "cpu":
+            return runtime_id(backend, "cpu"), "cpu"
+        if backend == "qwen_asr":
+            return "asr-qwen", "mps"
+        # Auto keeps an installed CPU runtime until the Metal one is added.
+        if (requested == "auto" and is_installed("asr-nvidia-cpu")
+                and not is_installed(NVIDIA_METAL_RUNTIME)):
+            return "asr-nvidia-cpu", "cpu"
+        return NVIDIA_METAL_RUNTIME, "metal"
     device = requested
     if device == "auto":
         try:
@@ -131,13 +147,19 @@ def resolve_runtime(backend: str, requested: str) -> tuple[str, str]:
 
 
 def missing_runtime(model_name: str, settings: dict) -> str | None:
-    from services.components import component_is_published, is_installed
+    from services.components import (
+        catalog_entry_for_platform, check_compatibility, component_is_published, is_installed,
+    )
 
     model = MODELS.get(model_name)
     if model is None:
         return None
     component, _device = resolve_runtime(model.backend, selected_device(model.backend, settings))
-    return component if component_is_published(component) and not is_installed(component) else None
+    if not component_is_published(component) or is_installed(component):
+        return None
+    # Never offer a runtime this computer cannot load, such as Moonshine's
+    # macOS 15 build on macOS 14.
+    return None if check_compatibility(catalog_entry_for_platform(component) or {}) else component
 
 
 def runtime_catalog() -> dict:
@@ -150,6 +172,8 @@ def runtime_catalog() -> dict:
     for key, platform, filename in (
         (MLX_RUNTIME, "darwin_arm64", "mlx_runtime.json"),
         ("asr-nvidia-cpu", "darwin_arm64", "nvidia_macos_runtime.json"),
+        ("asr-nvidia-cpu", "darwin_x86_64", "nvidia_macos_intel_runtime.json"),
+        (NVIDIA_METAL_RUNTIME, "darwin_arm64", "nvidia_macos_metal_runtime.json"),
         ("asr-qwen", "darwin_arm64", "qwen_macos_runtime.json"),
         ("asr-moonshine", "darwin_arm64", "moonshine_macos_runtime.json"),
         ("asr-nvidia-cpu", "linux_x86_64", "nvidia_linux_cpu_runtime.json"),

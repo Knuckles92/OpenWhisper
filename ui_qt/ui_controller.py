@@ -1759,6 +1759,12 @@ class UIController(QObject):
 
         result = self._last_update_result
         if result is not None and result.apply_mode == ApplyMode.MACOS_DMG:
+            from services.app_update_macos import decode_result
+
+            mac_transaction = decode_result(path)
+            if mac_transaction:
+                self._start_macos_update(mac_transaction, path)
+                return
             if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
                 if self._update_dialog is not None:
                     self._update_dialog.set_error("The Mac update disk image could not be opened.")
@@ -1819,6 +1825,45 @@ class UIController(QObject):
                 QMessageBox.warning(self.main_window, "Update failed", message)
             return
         self.exit_for_update()
+
+    def _start_macos_update(self, transaction_id: str, handoff: str) -> None:
+        """Start the staged app's helper, then quit once it is waiting for us."""
+        import time
+        from services.app_update_macos import READY_WAIT_S, helper_ready, start_helper
+
+        def fail(message: str) -> None:
+            abandon = getattr(self, "on_update_abandon", None)
+            if abandon:
+                abandon(handoff)
+            if self._update_dialog is not None:
+                self._update_dialog.set_error(message)
+            else:
+                QMessageBox.warning(self.main_window, "Update failed", message)
+
+        try:
+            process = start_helper(transaction_id)
+        except Exception:
+            logger.exception("Could not start the Mac update helper")
+            fail("The updater could not be started.")
+            return
+        if self._update_dialog is not None:
+            self._update_dialog.set_progress(DownloadPhase.RESTARTING, 1, 1)
+        deadline = time.monotonic() + READY_WAIT_S
+        timer = QTimer(self)
+        timer.setInterval(100)
+
+        def poll() -> None:
+            if helper_ready(transaction_id):
+                timer.stop()
+                self.exit_for_update()
+            elif process.poll() is not None or time.monotonic() > deadline:
+                timer.stop()
+                logger.error("The Mac update helper did not start (exit %s)", process.poll())
+                fail("The updater could not be started.")
+
+        timer.timeout.connect(poll)
+        timer.start()
+        self._macos_update_timer = timer
 
     def exit_for_update(self) -> None:
         """Leave immediately so the launched updater can replace this install.

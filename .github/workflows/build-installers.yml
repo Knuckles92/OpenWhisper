@@ -250,7 +250,15 @@ jobs:
   macos:
     name: macOS DMG (Apple Silicon)
     runs-on: macos-14
-    timeout-minutes: 90
+    timeout-minutes: 150
+    env:
+      # Optional. With all five set the DMG is Developer ID signed, notarized
+      # and stapled; without them it stays ad-hoc signed and unnotarized.
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_NOTARY_KEY_P8: ${{ secrets.MACOS_NOTARY_KEY_P8 }}
+      MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+      MACOS_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -288,9 +296,40 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: ./venv/bin/python -m pytest -vv --maxfail=1
+      - name: Import Developer ID signing and notary credentials
+        if: env.MACOS_CERTIFICATE_P12 != '' && env.MACOS_NOTARY_KEY_P8 != ''
+        run: |
+          keychain="$RUNNER_TEMP/openwhisper-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 --decode >"$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" \
+            | awk -F'"' '/Developer ID Application/ { print $2; exit }')"
+          test -n "$identity"
+          key="$RUNNER_TEMP/notary-key.p8"
+          printf '%s' "$MACOS_NOTARY_KEY_P8" | base64 --decode >"$key"
+          {
+            echo "OPENWHISPER_MACOS_CODESIGN_IDENTITY=$identity"
+            echo "OPENWHISPER_MACOS_NOTARY_KEY=$key"
+            echo "OPENWHISPER_MACOS_NOTARY_KEY_ID=$MACOS_NOTARY_KEY_ID"
+            echo "OPENWHISPER_MACOS_NOTARY_ISSUER=$MACOS_NOTARY_ISSUER"
+          } >>"$GITHUB_ENV"
       - name: Build and verify DMG
-        # Ad-hoc signed and unnotarized by design. No Apple Developer secrets.
+        # Developer ID signed and notarized when the step above imported
+        # credentials; ad-hoc signed and unnotarized otherwise.
         run: ./scripts/build_installer_macos.sh --clean
+      - name: Remove signing credentials
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/openwhisper-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/notary-key.p8"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

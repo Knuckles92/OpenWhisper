@@ -38,7 +38,7 @@ Download the package for your platform from [Releases](https://github.com/Knuckl
 | Platform | Install |
 | --- | --- |
 | Windows | Run the `.exe` installer. It installs per-user without admin rights. |
-| macOS | Open the `.dmg` and drag OpenWhisper into Applications. Requires Apple Silicon and macOS 14+. The preview is not notarized; approve first launch in **Privacy & Security → Open Anyway**. |
+| macOS | Open the `.dmg` and drag OpenWhisper into Applications. Requires Apple Silicon and macOS 14+. Unless a release says it is notarized, approve first launch in **Privacy & Security → Open Anyway**. Intel Macs run [from source](#run-from-source). |
 | Linux | Install the `.deb` on Debian 12+ / Ubuntu 22.04+, or `.pkg.tar.zst` on Arch-compatible distributions. Both packages require x86_64. |
 
 On Linux, use the matching command, replacing `<version>` with your download's version:
@@ -125,11 +125,11 @@ For Local Whisper on Windows or Linux x86_64, install **GPU Acceleration** from 
 
 Source installs can use `python -m pip install -r requirements-gpu.txt` in the activated virtual environment. **Auto** selects a compatible compute type; **Downloads** shows GPU memory estimates.
 
-Other speech engines use their own runtimes from Downloads. The Meeting Intelligence Agent is also a separate component, available on Windows and Linux.
+Other speech engines use their own runtimes from Downloads. On Apple Silicon Macs, **Auto** runs Parakeet MLX on the Apple GPU through MLX, Parakeet and Nemotron through the **NVIDIA Speech GPU (Metal)** runtime, and Qwen3-ASR through PyTorch MPS. The Pi and OpenCode SDK meeting agents are also separate components, available on Windows, Linux and macOS.
 
 ## Updates
 
-Use **Help → Check for Updates**. Windows applies an in-app update or opens setup; macOS opens a verified DMG for replacement in Applications. On Linux, install the new package with the same command as above. Source users run `git pull --ff-only` and reinstall requirements if dependencies changed. Automatic checks and notifications are configurable in **Settings → General**.
+Use **Help → Check for Updates**. Windows applies an in-app update or opens setup. macOS installs the verified update and restarts, keeping the previous version until the new one starts and restoring it otherwise; when OpenWhisper cannot replace itself (another account installed it, or it runs from a read-only location), the verified DMG opens for replacement in Applications. On Linux, install the new package with the same command as above. Source users run `git pull --ff-only` and reinstall requirements if dependencies changed. Automatic checks and notifications are configurable in **Settings → General**.
 
 ## Get started
 
@@ -166,17 +166,17 @@ Choose **Settings → General → Theme → Omarchy desktop** to follow your des
 | Backend | Models | Platform / device | Workflows |
 | --- | --- | --- | --- |
 | Local Whisper | Standard Whisper sizes, turbo, Distil-Whisper | All platforms, CPU; NVIDIA CUDA on Windows/Linux | Dictation with preview, uploads, meetings |
-| Parakeet | TDT 0.6B v3; Orukeet TDT 0.6B community adaptation | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU | Dictation with preview, uploads, meeting chunks |
+| Parakeet | TDT 0.6B v3; Orukeet TDT 0.6B community adaptation | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (Metal); Intel Mac CPU | Dictation with preview, uploads, meeting chunks |
 | Parakeet MLX | TDT 0.6B v3, MLX Community weights | Apple Silicon, macOS 14+: Apple GPU through Metal or CPU | Dictation with preview, uploads, meeting chunks |
-| Qwen3-ASR | 0.6B, 1.7B | Windows x64 CPU / NVIDIA GPU | Dictation, uploads |
-| Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 and Linux x86_64 CPU / NVIDIA GPU | Dictation with preview, uploads, meetings with native preview |
-| Moonshine | Streaming Small / Medium, English | Windows x64 CPU | Dictation, uploads, meetings with native preview |
+| Qwen3-ASR | 0.6B, 1.7B | Windows x64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (MPS) | Dictation, uploads |
+| Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (Metal); Intel Mac CPU | Dictation with preview, uploads, meetings with native preview |
+| Moonshine | Streaming Small / Medium, English | Windows x64 CPU; Apple Silicon CPU, macOS 15+ | Dictation, uploads, meetings with native preview |
 | OpenAI API | GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027 | Cloud; API key and network required | Dictation, uploads |
 | Remote computer | Whichever engine the paired computer has selected | Another computer running OpenWhisper on your network | Dictation with that engine's preview, uploads, meetings with a supported host model |
 
 Optional local engines offer English, Russian, Spanish, French, Portuguese, Mandarin, and Auto where supported. Parakeet and Orukeet omit Mandarin; Moonshine offers English only. Qwen supports all these presets; Nemotron includes Mandarin in its broader coverage tier, where accuracy may vary. Auto detects other languages supported by the model. These controls transcribe speech rather than translate it. Paired computers expose the same host-supported choices.
 
-Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. On Apple Silicon Macs, select **Parakeet MLX**, download its runtime and model, and choose **Auto** to use the Apple GPU through Metal, or **CPU** to use the processor. This is an experimental integration; actual Apple Silicon transcription validation is pending. The MLX weights download is about 2.5 GB. Local Whisper and the GGUF Parakeet option use CPU on macOS; see [GPU acceleration](#gpu-acceleration) for Windows and Linux.
+Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. On Apple Silicon Macs, select **Parakeet MLX**, download its runtime and model, and choose **Auto** to use the Apple GPU through Metal, or **CPU** to use the processor. The MLX weights download is about 2.5 GB. Parakeet, Nemotron, Qwen3-ASR and Moonshine also run on Apple Silicon; **Auto** uses the Apple GPU where the engine supports it. Moonshine's runtime needs macOS 15. Local Whisper uses CPU on macOS; see [GPU acceleration](#gpu-acceleration) for Windows and Linux. Intel Macs running from source can use Parakeet and Nemotron on the CPU.
 
 Orukeet is an optional 25-language adaptation of NVIDIA Parakeet from Oruk AI,
 including Russian and English. Its r3 native Q8 download is 714 MB and uses the

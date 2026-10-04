@@ -5,6 +5,7 @@ from services.local_asr.catalog import (
     BACKENDS,
     NVIDIA_VULKAN_RUNTIME,
     WHISPER_BACKEND,
+    apple_silicon,
     runtime_id,
     selected_device,
 )
@@ -48,6 +49,14 @@ def runtime_state(engine: dict) -> dict:
     elif family == "parakeet_mlx":
         devices = ["auto", "cpu"] if is_installed(runtime_id(family, "auto")) else []
         selected = {"device": selected_device(family, settings), "language": "auto"}
+    elif family != "moonshine" and apple_silicon():
+        # Auto is the Apple GPU, or the CPU runtime until a GPU one is
+        # installed; a Mac has no CUDA.
+        devices = [device for device in ("auto", "cpu") if is_installed(runtime_id(family, device))]
+        if devices and devices[0] != "auto":
+            devices.insert(0, "auto")
+        selected = {"device": selected_device(family, settings),
+                    "language": selected_language(family, setting_value(SettingsKey.LOCAL_ASR_LANGUAGE, settings))}
     else:
         # The Vulkan runtime needs only the card, not the CUDA libraries
         # CTranslate2 counts it with.

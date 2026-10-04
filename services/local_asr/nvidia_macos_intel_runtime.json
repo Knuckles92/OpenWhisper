@@ -1,0 +1,15 @@
+{
+  "version": "0.1.0-macos-x86_64-cpu",
+  "component_api": 1,
+  "platform": "darwin_x86_64",
+  "install_bytes": 10176142,
+  "archives": [
+    {
+      "name": "nemo-speech-0.1.0-macos-x86_64-cpu.tar.gz",
+      "url": "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-macos-x86_64-cpu.tar.gz",
+      "sha256": "042a4612e07460fab6a39b5d862aa1e39d0ac3eaedfdb979f3f5fc12de510c20",
+      "size_bytes": 3618245,
+      "extract": "nemo-tar"
+    }
+  ]
+}

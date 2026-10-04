@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Build the Apple Silicon macOS 14+ DMG for OpenWhisper.
 #
-# Produces an ad-hoc-signed (unnotarized) OpenWhisper.app packed as
-# OpenWhisper-<version>-macos-arm64.dmg. PyInstaller does not cross-compile;
-# this script must run on Darwin arm64.
+# Produces OpenWhisper.app packed as OpenWhisper-<version>-macos-arm64.dmg:
+# ad-hoc signed and unnotarized by default, or Developer ID signed under the
+# hardened runtime, notarized and stapled when the variables below are set.
+# PyInstaller does not cross-compile; this script must run on Darwin arm64.
 set -Eeuo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,6 +28,13 @@ Environment:
   OPENWHISPER_MACOS_CODESIGN_IDENTITY
       Optional Developer ID Application identity. When unset, PyInstaller
       ad-hoc-signs the bundle (the default for the unnotarized preview).
+  OPENWHISPER_MACOS_NOTARY_PROFILE
+      notarytool keychain profile (xcrun notarytool store-credentials), or:
+  OPENWHISPER_MACOS_NOTARY_KEY, OPENWHISPER_MACOS_NOTARY_KEY_ID,
+  OPENWHISPER_MACOS_NOTARY_ISSUER
+      App Store Connect API key (.p8 path), its key ID and issuer ID.
+      Either set notarizes and staples the app and the DMG. Requires the
+      Developer ID identity above.
 EOF
 }
 
@@ -92,6 +100,45 @@ for command in codesign file hdiutil iconutil lipo otool plutil shasum; do
     command -v "$command" >/dev/null || fail "required build command not found: $command"
 done
 
+NOTARIZE=0
+if [[ -n "${OPENWHISPER_MACOS_NOTARY_PROFILE:-}" ]]; then
+    NOTARY_ARGS=(--keychain-profile "$OPENWHISPER_MACOS_NOTARY_PROFILE")
+    NOTARIZE=1
+elif [[ -n "${OPENWHISPER_MACOS_NOTARY_KEY:-}" ]]; then
+    [[ -f "$OPENWHISPER_MACOS_NOTARY_KEY" ]] || fail "OPENWHISPER_MACOS_NOTARY_KEY is not a file"
+    [[ -n "${OPENWHISPER_MACOS_NOTARY_KEY_ID:-}" && -n "${OPENWHISPER_MACOS_NOTARY_ISSUER:-}" ]] || \
+        fail "OPENWHISPER_MACOS_NOTARY_KEY needs OPENWHISPER_MACOS_NOTARY_KEY_ID and OPENWHISPER_MACOS_NOTARY_ISSUER"
+    NOTARY_ARGS=(
+        --key "$OPENWHISPER_MACOS_NOTARY_KEY"
+        --key-id "$OPENWHISPER_MACOS_NOTARY_KEY_ID"
+        --issuer "$OPENWHISPER_MACOS_NOTARY_ISSUER"
+    )
+    NOTARIZE=1
+fi
+if (( NOTARIZE )); then
+    [[ -n "${OPENWHISPER_MACOS_CODESIGN_IDENTITY:-}" ]] || \
+        fail "notarization needs OPENWHISPER_MACOS_CODESIGN_IDENTITY (a Developer ID Application identity)"
+    command -v xcrun >/dev/null || fail "required build command not found: xcrun"
+fi
+
+# Submit one artifact and wait; print Apple's log when it is not accepted.
+notarize() {
+    local artifact="$1" label="$2"
+    local result="$WORKDIR/notary-$label.json" status id
+    if ! xcrun notarytool submit "$artifact" "${NOTARY_ARGS[@]}" \
+        --wait --timeout 2h --output-format json >"$result"; then
+        cat "$result" >&2 || true
+        fail "notarization of the $label did not complete"
+    fi
+    status="$("$PYTHON" -c 'import json, sys; print(json.load(open(sys.argv[1])).get("status", ""))' "$result")"
+    id="$("$PYTHON" -c 'import json, sys; print(json.load(open(sys.argv[1])).get("id", ""))' "$result")"
+    if [[ "$status" != "Accepted" ]]; then
+        [[ -n "$id" ]] && xcrun notarytool log "$id" "${NOTARY_ARGS[@]}" >&2 || true
+        fail "Apple did not accept the $label for notarization (status: ${status:-unknown})"
+    fi
+    echo "    $label notarized (submission $id)"
+}
+
 VERSION="$("$PYTHON" -c 'import _version; print(_version.__version__)')"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid _version.py value: $VERSION"
 "$PYTHON" -c 'import PyInstaller' >/dev/null 2>&1 || \
@@ -116,6 +163,11 @@ echo "    Python : $($PYTHON --version 2>&1)"
 echo "    Host   : $(uname -s) $(uname -m)"
 if [[ -n "${OPENWHISPER_MACOS_CODESIGN_IDENTITY:-}" ]]; then
     echo "    Sign   : $OPENWHISPER_MACOS_CODESIGN_IDENTITY"
+    if (( NOTARIZE )); then
+        echo "    Notary : yes (app and DMG, stapled)"
+    else
+        echo "    Notary : no (set OPENWHISPER_MACOS_NOTARY_* to notarize)"
+    fi
 else
     echo "    Sign   : ad-hoc (unnotarized preview)"
 fi
@@ -218,6 +270,9 @@ codesign -dv --verbose=2 "$DIST_APP" >"$CODESIGN_DV" 2>&1 || true
 if [[ -n "${OPENWHISPER_MACOS_CODESIGN_IDENTITY:-}" ]]; then
     grep -q "Authority=" "$CODESIGN_DV" \
         || fail "expected a real signing authority when OPENWHISPER_MACOS_CODESIGN_IDENTITY is set"
+    # Notarization requires the hardened runtime on every signed binary.
+    grep -Eq 'flags=0x[0-9a-f]*\(runtime\)' "$CODESIGN_DV" \
+        || fail "the Developer ID build is missing the hardened runtime"
 else
     if grep -Eqi 'Signature=adhoc|flags=0x[0-9a-f]*adhoc|Authority=\(ad hoc\)|signed by|adhoc' \
         "$CODESIGN_DV"; then
@@ -279,6 +334,17 @@ echo "    all Mach-O files include arm64; no absolute host library paths"
 app_bytes="$(du -sk "$DIST_APP" | awk '{print $1 * 1024}')"
 echo "    app size: $(format_size "$app_bytes")"
 
+if (( NOTARIZE )); then
+    step "Notarizing and stapling OpenWhisper.app"
+    APP_ZIP="$WORKDIR/${APP_NAME}.zip"
+    ditto -c -k --keepParent "$DIST_APP" "$APP_ZIP"
+    notarize "$APP_ZIP" app
+    xcrun stapler staple "$DIST_APP"
+    xcrun stapler validate "$DIST_APP"
+    # A notarized build must pass Gatekeeper; the ad-hoc preview cannot.
+    spctl --assess --type execute --verbose=2 "$DIST_APP"
+fi
+
 if (( SKIP_DMG )); then
     step "Done (DMG packing skipped)"
     echo "    App bundle: $DIST_APP"
@@ -322,6 +388,15 @@ hdiutil detach "$MOUNT_POINT" >/dev/null
 rm -rf -- "$MOUNT_POINT"
 MOUNT_POINT=""
 
+if (( NOTARIZE )); then
+    step "Signing, notarizing and stapling the DMG"
+    codesign --sign "$OPENWHISPER_MACOS_CODESIGN_IDENTITY" --timestamp "$DMG_ARTIFACT"
+    notarize "$DMG_ARTIFACT" dmg
+    xcrun stapler staple "$DMG_ARTIFACT"
+    xcrun stapler validate "$DMG_ARTIFACT"
+    spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG_ARTIFACT"
+fi
+
 dmg_bytes="$(stat -f%z "$DMG_ARTIFACT" 2>/dev/null || wc -c <"$DMG_ARTIFACT")"
 dmg_hash="$(shasum -a 256 "$DMG_ARTIFACT" | awk '{print $1}')"
 
@@ -334,8 +409,13 @@ echo "  Arch    : arm64"
 echo "  Size    : $(format_size "$dmg_bytes")  (app $(format_size "$app_bytes"))"
 echo "  SHA-256 : $dmg_hash"
 echo ""
-echo "  The app inside this DMG is ad-hoc signed; the DMG is unnotarized."
-echo "  Gatekeeper will warn on first open; users approve via System Settings →"
-echo "  Privacy & Security → Open Anyway."
+if (( NOTARIZE )); then
+    echo "  Developer ID signed, notarized and stapled: Gatekeeper opens it normally."
+else
+    echo "  The app inside this DMG is not notarized ($([[ -n "${OPENWHISPER_MACOS_CODESIGN_IDENTITY:-}" ]] \
+        && echo "Developer ID signed" || echo "ad-hoc signed"))."
+    echo "  Gatekeeper will warn on first open; users approve via System Settings →"
+    echo "  Privacy & Security → Open Anyway."
+fi
 echo "  Do not disable Gatekeeper or strip quarantine attributes as install advice."
 echo ""

@@ -8,6 +8,12 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+### Added
+- **Meeting agents on macOS** — install Pi and the OpenCode SDK from **Downloads → Components** on Apple Silicon Macs, and on Intel Macs running from source, so the default Pi meeting engine works on a fresh Mac install.
+- **Speech engines on Apple Silicon** — Qwen3-ASR (Apple GPU through PyTorch MPS, or CPU) and Moonshine (CPU, macOS 15+) runtimes, and the **NVIDIA Speech GPU (Metal)** runtime that runs Parakeet and Nemotron on the Apple GPU. Intel Macs running from source get NVIDIA Speech CPU.
+- **In-place Mac updates** — **Help → Check for Updates** installs the verified release and restarts, keeping the previous version until the new one starts and restoring it otherwise. Copies that cannot replace themselves still open the verified DMG.
+- **Notarized Mac builds** — the macOS build signs with a Developer ID under the hardened runtime and notarizes and staples the app and DMG when signing credentials are configured. Builds without them stay ad-hoc signed.
+
 ## [2.6.13] - 2026-10-03
 
 ### Added

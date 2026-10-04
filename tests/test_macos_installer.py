@@ -60,9 +60,24 @@ def test_spec_builds_macos_app_bundle_with_stable_identity():
     assert "NSScreenCaptureUsageDescription" not in spec
     assert 'target_arch = "arm64" if sys.platform == "darwin" else None' in spec
     assert "OPENWHISPER_MACOS_CODESIGN_IDENTITY" in spec
-    assert "entitlements_file=None" in spec
-    assert "App Sandbox" in spec or "no permissive hardened-runtime" in spec.lower() \
-        or "No App Sandbox" in spec
+    # Entitlements only for a Developer ID (hardened runtime) build.
+    assert "entitlements_file=str(MACOS_ENTITLEMENTS) if _codesign_identity else None" in spec
+    assert "No App Sandbox" in spec
+
+
+def test_hardened_runtime_entitlements_are_minimal_and_valid():
+    import plistlib
+
+    with open(ROOT / "installer" / "macos" / "OpenWhisper.entitlements", "rb") as handle:
+        entitlements = plistlib.load(handle)
+    assert entitlements == {
+        "com.apple.security.device.audio-input": True,
+        "com.apple.security.cs.disable-library-validation": True,
+        "com.apple.security.cs.allow-jit": True,
+        "com.apple.security.cs.allow-unsigned-executable-memory": True,
+    }
+    # No sandbox, Apple Events or other capabilities beyond the above.
+    assert not any(key.startswith("com.apple.security.app-sandbox") for key in entitlements)
 
 
 def test_spec_retains_lazy_macos_framework_imports():
@@ -135,8 +150,13 @@ def test_macos_build_script_enforces_host_and_artifact_contract():
     assert "codesign --verify --deep --strict" in script
     assert 'codesign --verify --deep --strict --verbose=2 "$MOUNTED_APP"' in script
     assert 'rm -rf -- "$MOUNT_POINT"' in script
-    # Comment may mention spctl; the builder must not invoke it as a gate.
-    assert not re.search(r"(^|\n)\s*spctl\b", script)
+    # Gatekeeper gates only the notarized build; the ad-hoc preview cannot pass.
+    notarized = [block.split("\nfi\n", 1)[0] for block in script.split("if (( NOTARIZE )); then")[1:]]
+    outside = script
+    for block in notarized:
+        outside = outside.replace(block, "")
+    assert not re.search(r"(^|\n)\s*spctl\b", outside)
+    assert sum("spctl --assess" in block for block in notarized) == 2
     assert "lipo -archs" in script
     assert "otool -L" in script
     assert "hdiutil create" in script
@@ -157,13 +177,30 @@ def test_release_workflow_includes_macos_arm64_dmg():
     assert "needs: [windows, linux, macos]" in workflow
     assert "expected_artifacts=5" in workflow
     assert 'gh release upload "$RELEASE_TAG" release/* --clobber' in workflow
-    # No Apple secrets or notarization in the first path.
-    assert "notarytool" not in workflow
+    macos = workflow.split("\n  macos:")[1].split("\n  bundle:")[0]
+    # Signing is opt-in: the credentials step runs only when both secrets
+    # exist, and the keychain and key are removed whatever happens.
+    assert "if: env.MACOS_CERTIFICATE_P12 != '' && env.MACOS_NOTARY_KEY_P8 != ''" in macos
+    assert "${{ secrets.MACOS_CERTIFICATE_P12 }}" in macos
+    assert 'echo "OPENWHISPER_MACOS_CODESIGN_IDENTITY=$identity"' in macos
+    assert "security delete-keychain" in macos and "if: always()" in macos
     assert "APPLE_ID" not in workflow
-    assert "ASC_KEY" not in workflow
-    assert "OPENWHISPER_MACOS_CODESIGN_IDENTITY" not in workflow.split(
-        "macos:"
-    )[1].split("bundle:")[0]
+
+
+def test_macos_build_notarizes_only_with_credentials_and_identity():
+    script = BUILD_SCRIPT.read_text(encoding="utf-8")
+    assert "NOTARIZE=0" in script
+    assert "OPENWHISPER_MACOS_NOTARY_PROFILE" in script
+    assert "OPENWHISPER_MACOS_NOTARY_KEY" in script
+    assert "notarization needs OPENWHISPER_MACOS_CODESIGN_IDENTITY" in script
+    assert 'xcrun notarytool submit "$artifact"' in script
+    assert 'xcrun stapler staple "$DIST_APP"' in script
+    assert 'xcrun stapler staple "$DMG_ARTIFACT"' in script
+    assert 'codesign --sign "$OPENWHISPER_MACOS_CODESIGN_IDENTITY" --timestamp "$DMG_ARTIFACT"' in script
+    assert "missing the hardened runtime" in script
+    # The DMG is staged from the stapled app, and hashed after its own staple.
+    assert script.index('xcrun stapler staple "$DIST_APP"') < script.index('ditto -- "$DIST_APP"')
+    assert script.index('xcrun stapler staple "$DMG_ARTIFACT"') < script.index('dmg_hash="$(shasum')
 
 
 def test_frozen_macos_install_channel_is_notify_only():

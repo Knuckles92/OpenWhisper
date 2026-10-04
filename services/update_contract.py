@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from typing import Final, Optional, Tuple
 
 APP_NAME: Final[str] = "OpenWhisper"
@@ -143,9 +144,14 @@ def validate_transaction_id(transaction_id: str) -> str:
 
 
 def local_app_dir() -> str:
-    """Per-user data root (``%LOCALAPPDATA%\\OpenWhisper`` on Windows)."""
+    """Per-user data root (``%LOCALAPPDATA%\\OpenWhisper`` on Windows).
+
+    Mirrors ``config.local_app_dir``, which this stdlib-only module cannot import.
+    """
     if os.name == "nt":
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    elif sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
     else:
         base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
     return os.path.join(base, APP_NAME)

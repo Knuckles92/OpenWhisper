@@ -125,8 +125,8 @@ _CATALOG: dict[str, ComponentDetails] = {
         family="Pi sidecar",
         requires="An OpenRouter API key. Used by Meeting Mode.",
         payload=(
-            "Portable Node 22 (node.exe on Windows, node on Linux) plus the "
-            "Pi sidecar (bundle.cjs)"
+            "Portable Node 22 (node.exe on Windows, node on Linux and macOS) "
+            "plus the Pi sidecar (bundle.cjs)"
         ),
         local_format=(
             "Flat extract: platform Node runtime and bundle.cjs side by side"
@@ -139,8 +139,8 @@ _CATALOG: dict[str, ComponentDetails] = {
         limitations=(
             "Needs an OpenRouter API key and a network connection while "
             "the agent runs.",
-            "Offered on Windows x64 and Linux x86_64/aarch64. macOS is not "
-            "supported for this downloadable payload.",
+            "Offered on Windows x64, Linux x86_64/aarch64 and macOS (Apple "
+            "Silicon, and Intel Macs running from source).",
             "Download size depends on the platform Node archive.",
             "Meeting Mode still works without it — the Direct agent and "
             "Me/Others labels do not depend on Pi.",
@@ -180,7 +180,7 @@ _CATALOG: dict[str, ComponentDetails] = {
         limitations=(
             "The app pins a tested OpenCode SDK and Bun version; updates arrive as new "
             "component versions.",
-            "Offered on Windows x64 and Linux x86_64/aarch64. macOS is not supported.",
+            "Offered on Windows x64, Linux x86_64/aarch64 and macOS (Apple Silicon, and Intel Macs running from source).",
             "Larger than the Pi agent: up to 130 MB to download and 470 MB installed.",
             "If the engine fails, recording continues and meeting intelligence is marked "
             "unavailable; it does not switch to another agent core.",
@@ -196,7 +196,8 @@ for _id, _name, _source, _license, _description in (
     ("asr-nvidia-cpu", "NVIDIA Speech CPU", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0; Python PSF", "CPU runtime shared by Parakeet and Nemotron."),
     ("asr-nvidia-cuda", "NVIDIA Speech GPU", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0; NVIDIA CUDA; Python PSF", "NVIDIA GPU runtime shared by Parakeet and Nemotron."),
     ("asr-nvidia-vulkan", "NVIDIA Speech GPU (Vulkan)", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0", "Vulkan GPU runtime shared by Parakeet and Nemotron, for NVIDIA GPUs older than Turing, such as the GTX 10 series."),
-    ("asr-qwen", "Qwen3-ASR runtime", "https://github.com/QwenLM/Qwen3-ASR", "Apache-2.0 and bundled dependency licenses", "Isolated Python, PyTorch CUDA 12.4, and Qwen3-ASR. Also supports CPU."),
+    ("asr-nvidia-metal", "NVIDIA Speech GPU (Metal)", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0", "Apple GPU runtime shared by Parakeet and Nemotron on Apple Silicon Macs. Auto uses it once installed."),
+    ("asr-qwen", "Qwen3-ASR runtime", "https://github.com/QwenLM/Qwen3-ASR", "Apache-2.0 and bundled dependency licenses", "PyTorch and Qwen3-ASR: CUDA 12.4 on Windows, the Apple GPU on Apple Silicon Macs. Also supports CPU."),
     ("asr-moonshine", "Moonshine runtime", "https://github.com/moonshine-ai/moonshine", "MIT and bundled dependency licenses", "Isolated Moonshine Voice runtime for CPU transcription."),
     ("asr-parakeet-mlx", "Parakeet MLX runtime", "https://github.com/senstella/parakeet-mlx", "Apache-2.0; MIT and bundled dependency licenses", "Parakeet MLX on Apple Silicon. Auto uses the Apple GPU; CPU is also available."),
 ):
@@ -208,16 +209,19 @@ for _id, _name, _source, _license, _description in (
         maintainer="Upstream publishers; packaged by OpenWhisper", family="Speech runtime",
         requires=(
             "Apple Silicon Mac, macOS 14 or newer, Python 3.12" if _id == "asr-parakeet-mlx"
-            else "Windows x64, Linux x86_64 (glibc 2.31+), or Apple Silicon macOS" if _id == "asr-nvidia-cpu"
+            else "Windows x64, Linux x86_64 (glibc 2.31+), or macOS (Apple Silicon or Intel)" if _id == "asr-nvidia-cpu"
             else "Windows x64 or Linux x86_64 (glibc 2.31+), and an NVIDIA GPU (Turing or newer) with its driver" if _id == "asr-nvidia-cuda"
             else "Linux x86_64 (glibc 2.31+), and an NVIDIA GPU older than Turing with its driver and the Vulkan loader" if _id == "asr-nvidia-vulkan"
+            else "Apple Silicon Mac, macOS 14 or newer" if _id == "asr-nvidia-metal"
+            else "Windows x64, or an Apple Silicon Mac with macOS 14 or newer" if _id == "asr-qwen"
+            else "Windows x64, or an Apple Silicon Mac with macOS 15 or newer" if _id == "asr-moonshine"
             else "Windows x64"
         ),
         payload=(
             "Verified macOS arm64 Python wheels, MLX and Metal libraries" if _id == "asr-parakeet-mlx"
-            else "Verified native libraries" if _id == "asr-nvidia-vulkan"
+            else "Verified native libraries" if _id in ("asr-nvidia-vulkan", "asr-nvidia-metal")
             else "Verified native libraries; portable Python on Windows" if _id.startswith("asr-nvidia")
-            else "Portable Python 3.12 and verified runtime binaries"
+            else "Portable Python 3.12 and verified runtime binaries on Windows; verified Python wheels on a Mac"
         ),
         local_format="Isolated worker process", license=_license,
         best_for=_description, limitations=("Model weights are a separate download.",),
