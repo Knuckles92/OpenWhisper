@@ -2,8 +2,11 @@
 
 import json
 
-from PyQt6.QtWidgets import QApplication, QLineEdit
+import pytest
+from PyQt6.QtCore import QPoint
+from PyQt6.QtWidgets import QAbstractButton, QApplication, QLineEdit, QScrollArea
 
+from services.agent_mcp.controls import SETTING_CONTROLS
 from services.agent_mcp.runtime import DEFAULT_PORT, McpRuntime, ServerStatus
 from services.settings import SettingsKey, SettingsManager
 from ui_qt.dialogs.settings_mcp import McpSettingsPage
@@ -235,3 +238,110 @@ def test_other_computer_setup_is_not_copyable_until_access_enabled(tmp_path):
     finally:
         page.close()
         page.deleteLater()
+
+
+def test_disclosures_keep_connection_formats_and_copy_actions_available(tmp_path):
+    page, _, server = make_page(tmp_path)
+    page.show()
+    try:
+        assert not page.advanced.body.isVisible()
+        page.advanced.toggle.click()
+        assert page.port.isEnabled()
+        assert page.tailscale_enabled.isEnabled()
+        page.enabled.click()
+        server.current = ServerStatus("running", "Ready", DEFAULT_PORT)
+        page.refresh()
+        assert not page.port.isEnabled()
+        assert not page.tailscale_enabled.isEnabled()
+        page.copy_url.click()
+        assert QApplication.clipboard().text() == server.current.url
+        for index, label in enumerate(
+            ("setup prompt", "Claude Code command", "Cursor JSON")
+        ):
+            page.setup_kind.buttons[index].click()
+            page.preview.toggle.setChecked(True)
+            assert page.setup_text.isVisible()
+            assert label in page.copy_setup.text()
+            assert TOKEN not in page.setup_text.toPlainText()
+            page.copy_setup.click()
+            assert QApplication.clipboard().text() == page.setup_text.toPlainText()
+        page.copy_token.click()
+        assert QApplication.clipboard().text() == TOKEN
+        assert page.notice.isVisible()
+        assert page.notice.text() == "Copied to clipboard."
+    finally:
+        page.close()
+        page.deleteLater()
+
+
+@pytest.mark.parametrize("ui_mode", ["classic", "omarchy"])
+@pytest.mark.parametrize("theme", ["dark", "light"])
+@pytest.mark.parametrize("font_percent", [100, 130])
+def test_split_layout_and_individual_grants_survive_narrow_windows(
+    tmp_path, monkeypatch, ui_mode, theme, font_percent
+):
+    from ui_qt.utils.font_scale import (
+        apply_ui_font_scale,
+        current_ui_font_scale_percent,
+    )
+    from ui_qt.utils.palette import current_palette, set_current_palette
+    from ui_qt.utils.theme_manager import ThemeManager
+
+    monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
+    app = QApplication.instance()
+    previous_scale, previous_palette = (
+        current_ui_font_scale_percent(),
+        current_palette(),
+    )
+    previous_sheet = app.styleSheet()
+    manager = ThemeManager(theme)
+    page, settings, server = make_page(tmp_path)
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setWidget(page)
+    try:
+        apply_ui_font_scale(font_percent, app=app, theme_manager=manager)
+        scroll.resize(1300, 900)
+        scroll.show()
+        app.processEvents()
+        assert page.permissions_card.x() > page.connection_card.x()
+        assert not page.preview.body.isVisible()
+        page.preferences.toggle.click()
+        page.permission_checks[SettingsKey.MCP_SETTINGS_ACCESS].click()
+        for group in page.setting_groups.values():
+            group.toggle.click()
+        assert set(page.setting_checks) == {control.key for control in SETTING_CONTROLS}
+        assert all(
+            check.isVisible() and check.isEnabled()
+            for check in page.setting_checks.values()
+        )
+        page.setting_checks[SettingsKey.UI_THEME].click()
+        assert "1 allowed to change" in page.permission_summary.text()
+        page.advanced.toggle.click()
+        for width in (480 if ui_mode == "omarchy" else 680, 1300):
+            scroll.resize(width, 900)
+            app.processEvents()
+            assert scroll.horizontalScrollBar().maximum() == 0
+            if width < 1000:
+                assert page.permissions_card.y() > page.connection_card.y()
+            else:
+                assert page.permissions_card.x() > page.connection_card.x()
+            for button in page.findChildren(QAbstractButton):
+                if not button.isVisible():
+                    continue
+                position = button.mapTo(page, QPoint(0, 0))
+                assert position.x() >= 0
+                assert position.x() + button.width() <= page.width()
+        assert settings.get(SettingsKey.MCP_WRITABLE_SETTINGS) == {
+            SettingsKey.UI_THEME: True
+        }
+        assert not server.starts
+        page.permission_checks[SettingsKey.MCP_SETTINGS_ACCESS].click()
+        assert not page.setting_checks[SettingsKey.UI_THEME].isEnabled()
+        assert page.setting_checks[SettingsKey.UI_THEME].isChecked()
+    finally:
+        scroll.close()
+        scroll.deleteLater()
+        apply_ui_font_scale(previous_scale, app=app)
+        set_current_palette(previous_palette)
+        app.setStyleSheet(previous_sheet)

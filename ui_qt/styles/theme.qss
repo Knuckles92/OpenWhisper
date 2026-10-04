@@ -931,6 +931,132 @@ QFrame#settingsTile QCheckBox::indicator:checked:disabled {
     border-color: @accent-muted;
 }
 
+/* MCP keeps connection controls and optional permissions together, while
+   advanced fields and individual grants expand only when needed. */
+QWidget#mcpSettingsPage,
+QWidget#mcpChoiceBar,
+QWidget#mcpConnection,
+QWidget#mcpDisclosure,
+QWidget#mcpDisclosureBody,
+QWidget#mcpSettingsPermissions,
+QWidget#mcpSettingsPage QLabel {
+    background-color: transparent;
+    border: none;
+}
+
+QFrame#mcpCard,
+QFrame#mcpServerBar {
+    background-color: @slate-surface;
+    border: 1px solid @slate-border;
+    border-radius: 12px;
+}
+
+QLabel#mcpCardTitle {
+    color: @slate-text;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+QLabel#mcpIncluded {
+    color: @success-text;
+    font-size: 12px;
+}
+
+QLabel#mcpNotice {
+    color: @slate-text-2;
+    font-size: 13px;
+}
+
+QPushButton#mcpChoice {
+    color: @slate-text-2;
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 8px;
+    padding: 8px 4px;
+    font-size: 13px;
+    min-height: 16px;
+}
+
+QPushButton#mcpChoice[detail="true"] {
+    min-height: 28px;
+}
+
+QPushButton#mcpChoice:hover,
+QPushButton#mcpChoice:focus {
+    border-color: @accent;
+}
+
+QPushButton#mcpChoice:checked {
+    color: @slate-text;
+    background-color: @accent-tint;
+    border-color: @accent;
+}
+
+QPushButton#mcpChoice:disabled {
+    color: @slate-text-disabled;
+    background-color: @slate-disabled;
+    border-color: @slate-border-subtle;
+}
+
+QToolButton#mcpDisclosureToggle {
+    color: @slate-text-2;
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 8px;
+    padding: 8px;
+    font-size: 13px;
+    text-align: left;
+}
+
+QToolButton#mcpDisclosureToggle[group="true"] {
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 8px 0;
+    font-weight: 600;
+}
+
+QToolButton#mcpDisclosureToggle:hover,
+QToolButton#mcpDisclosureToggle:focus {
+    color: @slate-text;
+    border-color: @accent;
+}
+
+QToolButton#mcpDisclosureToggle:disabled {
+    color: @slate-text-disabled;
+}
+
+QFrame#mcpPermissionRow {
+    background-color: transparent;
+    border: none;
+    border-bottom: 1px solid @slate-border-subtle;
+    border-radius: 0;
+}
+
+QWidget#mcpSettingsPage QLineEdit,
+QWidget#mcpSettingsPage QPlainTextEdit {
+    color: @slate-text;
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 8px;
+    padding: 10px;
+    font-size: 13px;
+}
+
+QWidget#mcpSettingsPage QLineEdit:disabled {
+    color: @slate-text-disabled;
+}
+
+QWidget#mcpSettingsPage QCheckBox {
+    color: @slate-text-2;
+    font-size: 12px;
+    spacing: 8px;
+}
+
+QWidget#mcpSettingsPage QCheckBox:disabled {
+    color: @slate-text-disabled;
+}
+
 /* Backup cards contain nested form wrappers and labels. The global QWidget
    background otherwise paints opaque strips across the card surface. */
 QWidget#backupSettingsPage,

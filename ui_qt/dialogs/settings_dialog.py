@@ -761,8 +761,8 @@ class SettingsDialog(QDialog):
         )
         self._add_page(
             MCP,
-            "MCP",
-            "Connect your agent to your OpenWhisper history.",
+            "Connect your AI assistant",
+            "MCP · Search your saved dictations and meetings.",
             self._build_mcp_page,
         )
         self._add_page(

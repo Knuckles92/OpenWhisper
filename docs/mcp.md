@@ -1,24 +1,30 @@
 # Connect an agent to OpenWhisper
 
-Open **Settings → MCP** and turn on **Enable MCP**. When the status changes to
-**Running**, copy the setup prompt into your agent, or choose a manual setup
-option. OpenWhisper includes the MCP server; users of the installed desktop app
+Open **Advanced Settings → App → MCP** (the **Connect your AI assistant** page)
+and turn on **Enable MCP**. When the status changes to **Running**, copy the setup
+prompt into your agent, or choose a manual setup option. OpenWhisper includes the
+MCP server; users of the installed desktop app
 do not need to install Python or start another process.
 
-The page offers:
+Connection and permissions appear side by side, or stack in narrow windows.
+The page follows the app's light, dark, system, or Omarchy theme and offers:
 
-- **Agent runs on**, choosing this computer or another computer over Tailscale.
-- **Server URL**, normally `http://127.0.0.1:8767/mcp` for this computer, or the
-  OpenWhisper host's Tailscale address when remote access is enabled.
+- **This computer / Another computer**, choosing where the assistant runs.
+- **Advanced connection → Server URL**, normally `http://127.0.0.1:8767/mcp` for
+  this computer, or the OpenWhisper host's Tailscale address when remote access
+  is enabled.
 - **Access token**, hidden on screen with a separate copy button.
-- **Agent setup prompt**, which tells the agent how to register the server and
-  verify it. The prompt asks for the token separately.
-- **Claude Code command**, ready to copy after replacing `<PASTE_TOKEN>`.
-- **Client JSON (Cursor)**, to merge into the client's `mcpServers` configuration
+- **Setup prompt**, which tells the agent how to register the server and
+  verify it. Copy it directly or expand its preview. The prompt asks for the
+  token separately.
+- **Claude Code**, with a command ready to copy after replacing `<PASTE_TOKEN>`.
+- **Cursor**, with JSON to merge into the client's `mcpServers` configuration
   after replacing `<PASTE_TOKEN>`. Other clients may use a different config format.
-- **Agent permissions**, with separate switches for retitling transcription
-  history, retitling saved meetings, and accessing settings. Settings access has
-  individual checkboxes for every preference an agent may change.
+- **Permissions**, with separate switches for **Rename dictations**,
+  **Rename finished meetings**, and **Read app preferences**. Expand
+  **Choose individual preferences** and its categories for all 20 write permissions.
+  Reading preferences does not grant permission to change them. Permissions can
+  be configured while MCP is off and apply to every assistant using the token.
 
 The URL uses **Streamable HTTP**, not a web page. Agents must send
 `Authorization: Bearer <token>`. Browser clients and cloud-hosted agents cannot
@@ -32,10 +38,10 @@ host such as `jed` into an agent on your Windows computer will not reach `jed`.
 The same-computer prompt identifies its originating computer and tells the agent
 to request remote setup instead of enabling an unrelated local instance.
 
-On the computer running OpenWhisper, turn MCP off, enable **Allow agents over
-Tailscale**, then turn MCP on again. Choose **Another computer (Tailscale)** in
-Settings → MCP to copy its remote URL, prompt, or manual configuration. Both
-computers must be connected to the same Tailscale network. Host mode displays
+On the computer running OpenWhisper, turn MCP off, expand **Advanced connection**,
+enable **Allow agents over Tailscale**, then turn MCP on again. Choose
+**Another computer** in Settings → MCP to copy its remote URL, prompt, or manual
+configuration. Both computers must be connected to the same Tailscale network. Host mode displays
 the Tailscale URL and its copy-prompt button uses that URL when enabled.
 
 For example, a host with Tailscale address `100.82.22.3` offers
@@ -64,8 +70,9 @@ may store it in that client's config file; share it only with trusted agents.
 MCP is off by default. Once enabled, it starts with the desktop app. Closing
 Settings leaves it running; quitting OpenWhisper stops it. Turning it off rejects
 new requests immediately while requests already in progress finish. To change
-the port, turn MCP off, edit **Local port**, then enable it and update your agent's
-URL. A port conflict appears as an error instead of an incorrect Running status.
+the port, turn MCP off, expand **Advanced connection**, edit **Local port**, then
+enable it and update your agent's URL. A port conflict appears as an error instead
+of an incorrect Running status.
 
 ## Available tools
 
@@ -144,7 +151,7 @@ open dashboard. Titles must contain 1–200 characters without control character
 Only local records can be changed; active, paused, recovering, or finalizing
 meetings must finish first.
 
-**Allow settings access** permits reading the supported preference catalog.
+**Read app preferences** permits reading the supported preference catalog.
 Each preference has its own checkbox granting write access. The initial catalog
 covers dictation output, recording shortcut mode, language, live preview,
 appearance, cleanup instructions and reasoning, meeting report views, deletion

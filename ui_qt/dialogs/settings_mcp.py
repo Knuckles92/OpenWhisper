@@ -1,14 +1,19 @@
 """Settings destination for the app-owned MCP server and agent onboarding."""
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QPushButton,
+    QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -17,58 +22,258 @@ from services.agent_mcp.controls import SETTING_CONTROLS, writable_settings
 from services.agent_mcp.runtime import DEFAULT_PORT, runtime
 from services.agent_mcp.setup import agent_prompt, claude_command, client_config
 from services.settings import SettingsKey
+from ui_qt.dialogs.settings_basic import SettingsSwitch
+from ui_qt.utils.font_scale import current_ui_font_scale
+from ui_qt.utils.icons import design_icon
 from ui_qt.widgets import (
     Button,
-    ElidingComboBox,
     FieldTile,
     NoWheelSpinBox,
+    PrimaryButton,
     SettingTile,
     WrappedLabel,
 )
+from ui_qt.widgets.engine_field import EngineStatus, StatusDot
+
+
+class _ChoiceBar(QWidget):
+    currentIndexChanged = pyqtSignal(int)
+
+    def __init__(self, choices, *, parent=None):
+        super().__init__(parent)
+        self.setObjectName("mcpChoiceBar")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        self._group = QButtonGroup(self)
+        self._index = -1
+        self.buttons = []
+        for index, (title, detail) in enumerate(choices):
+            button = QPushButton(title + ("\n" + detail if detail else ""))
+            button.setObjectName("mcpChoice")
+            button.setCheckable(True)
+            button.setProperty("detail", bool(detail))
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setAccessibleName(title)
+            button.setAccessibleDescription(detail)
+            button.setSizePolicy(
+                QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+            )
+            self._group.addButton(button, index)
+            self.buttons.append(button)
+            layout.addWidget(button, 1)
+        self._group.idClicked.connect(self.setCurrentIndex)
+        self.setCurrentIndex(0)
+
+    def currentIndex(self):
+        return self._index
+
+    def setCurrentIndex(self, index):
+        if index == self._index or not 0 <= index < len(self.buttons):
+            return
+        self._index = index
+        self.buttons[index].setChecked(True)
+        self.currentIndexChanged.emit(index)
+
+
+class _Disclosure(QWidget):
+    def __init__(self, title, *, parent=None):
+        super().__init__(parent)
+        self.setObjectName("mcpDisclosure")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        self.toggle = QToolButton()
+        self.toggle.setObjectName("mcpDisclosureToggle")
+        self.toggle.setText(title)
+        self.toggle.setAccessibleName(title)
+        self.toggle.setCheckable(True)
+        self.toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.toggle.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        self.toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(self.toggle)
+        self.body = QWidget()
+        self.body.setObjectName("mcpDisclosureBody")
+        self.body_layout = QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(0, 0, 0, 0)
+        self.body_layout.setSpacing(10)
+        layout.addWidget(self.body)
+        self.body.hide()
+        self.toggle.toggled.connect(self._expand)
+
+    def _expand(self, expanded):
+        self.toggle.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
+        self.body.setVisible(expanded)
+
+
+class _PermissionRow(QFrame):
+    def __init__(self, title, description, icon):
+        super().__init__()
+        self.setObjectName("mcpPermissionRow")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 10, 0, 10)
+        layout.setSpacing(12)
+        mark = QLabel()
+        mark.setObjectName("settingsTileIcon")
+        mark.setPixmap(design_icon(icon).pixmap(20, 20))
+        layout.addWidget(mark, alignment=Qt.AlignmentFlag.AlignTop)
+        text = QVBoxLayout()
+        text.setSpacing(4)
+        title_label = WrappedLabel(title)
+        title_label.setObjectName("settingsTileTitle")
+        text.addWidget(title_label)
+        detail = WrappedLabel(description)
+        detail.setObjectName("settingsTileDescription")
+        text.addWidget(detail)
+        layout.addLayout(text, 1)
+        self.checkbox = SettingsSwitch()
+        self.checkbox.setAccessibleName(title)
+        self.checkbox.setAccessibleDescription(description)
+        layout.addWidget(self.checkbox)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.checkbox.isEnabled():
+            self.checkbox.toggle()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
 
 
 class McpSettingsPage(QWidget):
     def __init__(self, settings, *, server=None, parent=None):
         super().__init__(parent)
+        self.setObjectName("mcpSettingsPage")
         self.settings = settings
         self.server = server if server is not None else runtime
         if server is None:
             self.server.bind_settings(settings)
         self._notice = ""
+        self._wide = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
+        layout.setSpacing(18)
 
-        self.enable_tile = SettingTile(
-            "Enable MCP",
-            "Let connected agents search your saved dictations and meetings. "
-            "Starts automatically with OpenWhisper when enabled; quitting the app stops access.",
-        )
-        self.enabled = self.enable_tile.checkbox
-        self.enabled.setAccessibleName("Enable MCP")
-        self.enabled.toggled.connect(self._toggle)
-        layout.addWidget(self.enable_tile)
-
-        self.tailscale_tile = SettingTile(
-            "Allow agents over Tailscale",
-            "Let agents on other computers in your Tailscale network connect with the access token. "
-            "Turn MCP off to change this option. Your local connection remains available.",
-        )
-        self.tailscale_enabled = self.tailscale_tile.checkbox
-        self.tailscale_enabled.setAccessibleName("Allow agents over Tailscale")
-        self.tailscale_enabled.toggled.connect(self._save_tailscale)
-        layout.addWidget(self.tailscale_tile)
-
-        status_row = QHBoxLayout()
+        self.enable_tile = QFrame()
+        self.enable_tile.setObjectName("mcpServerBar")
+        status_row = QHBoxLayout(self.enable_tile)
+        status_row.setContentsMargins(16, 12, 16, 12)
+        status_row.setSpacing(12)
+        self.status_dot = StatusDot(diameter=10)
+        status_row.addWidget(self.status_dot)
         self.status_label = WrappedLabel("")
         self.status_label.setAccessibleName("MCP server status")
         status_row.addWidget(self.status_label, 1)
         self.retry = Button("Retry")
+        self.retry.set_base_minimum_size(70, 34)
         self.retry.clicked.connect(self._start)
         status_row.addWidget(self.retry)
-        layout.addLayout(status_row)
+        status_row.addWidget(QLabel("Enable MCP"))
+        self.enabled = SettingsSwitch()
+        self.enabled.setAccessibleName("Enable MCP")
+        self.enabled.setToolTip(
+            "Starts with OpenWhisper when enabled. Quitting the app stops access."
+        )
+        self.enabled.toggled.connect(self._toggle)
+        status_row.addWidget(self.enabled)
+        layout.addWidget(self.enable_tile)
 
+        self.columns = QGridLayout()
+        self.columns.setContentsMargins(0, 0, 0, 0)
+        self.columns.setSpacing(18)
+        layout.addLayout(self.columns)
+        self.connection_card, connection_layout = self._card(
+            "Connection", "Choose where your assistant connects from."
+        )
+        self.permissions_card, permissions_layout = self._card(
+            "Permissions",
+            "Read-only by default. Optional changes are off until you allow them.",
+        )
+
+        self.connection = QWidget()
+        self.connection.setObjectName("mcpConnection")
+        setup_layout = QVBoxLayout(self.connection)
+        setup_layout.setContentsMargins(0, 0, 0, 0)
+        setup_layout.setSpacing(10)
+        self.agent_location = _ChoiceBar(
+            (
+                ("This computer", "Local connection"),
+                ("Another computer", "Over Tailscale"),
+            )
+        )
+        self.agent_location.setAccessibleName("Agent computer")
+        self.agent_location.setCurrentIndex(
+            1 if settings.get(SettingsKey.MCP_TAILSCALE_ENABLED, False) is True else 0
+        )
+        self.agent_location.currentIndexChanged.connect(self._render_setup)
+        setup_layout.addWidget(self.agent_location)
+        self.setup_kind = _ChoiceBar(
+            (("Setup prompt", ""), ("Claude Code", ""), ("Cursor", ""))
+        )
+        self.setup_kind.setAccessibleName("Agent setup method")
+        self.setup_kind.currentIndexChanged.connect(self._render_setup)
+        setup_layout.addWidget(self.setup_kind)
+        self.setup_hint = self._detail("")
+        setup_layout.addWidget(self.setup_hint)
+        self.copy_setup = PrimaryButton("Copy setup prompt")
+        self.copy_setup.set_base_minimum_size(0, 44)
+        self.copy_setup.setIcon(design_icon("copy-gray.svg"))
+        self.copy_setup.clicked.connect(
+            lambda: self._copy(self.setup_text.toPlainText())
+        )
+        setup_layout.addWidget(self.copy_setup)
+        self.preview = _Disclosure("Preview setup prompt")
+        self.setup_text = QPlainTextEdit()
+        self.setup_text.setReadOnly(True)
+        self.setup_text.setMinimumHeight(160)
+        self.setup_text.setMaximumHeight(210)
+        self.setup_text.setAccessibleName("MCP setup instructions")
+        self.preview.body_layout.addWidget(self.setup_text)
+        setup_layout.addWidget(self.preview)
+        setup_layout.addWidget(self._label("Access token", "settingsTileTitle"))
+        self.token = QLineEdit()
+        self.token.setReadOnly(True)
+        self.token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.token.setAccessibleName("MCP access token")
+        self.token.setToolTip(
+            "Saved in your system credential store. Copy it separately when your assistant asks."
+        )
+        self.copy_token = self._copy_row(
+            setup_layout, "", self.token, "Copy access token", self.server.token
+        )
+        self.copy_token.setToolTip(
+            "Grants saved-history access and the permissions you choose. Share only with trusted assistants."
+        )
+        connection_layout.addWidget(self.connection)
+
+        self.advanced = _Disclosure("Advanced connection")
+        self.advanced.body_layout.addWidget(
+            self._detail(
+                "Turn MCP off to change the port or Tailscale access, then reconnect your assistant."
+            )
+        )
+        self.advanced.body_layout.addWidget(
+            self._detail(
+                "Localhost works on this computer; remote assistants need the same Tailscale network."
+            )
+        )
+        self.url = QLineEdit()
+        self.url.setReadOnly(True)
+        self.url.setAccessibleName("MCP server URL")
+        self.copy_url = self._copy_row(
+            self.advanced.body_layout,
+            "Server URL",
+            self.url,
+            "Copy URL",
+            lambda: self.url.text(),
+        )
         self.port = NoWheelSpinBox()
+        self.port.setAccessibleName("MCP local port")
         self.port.setRange(1, 65535)
         self.port.setKeyboardTracking(False)
         port = settings.get(SettingsKey.MCP_PORT, DEFAULT_PORT)
@@ -76,136 +281,80 @@ class McpSettingsPage(QWidget):
             port if type(port) is int and 1 <= port <= 65535 else DEFAULT_PORT
         )
         self.port.valueChanged.connect(self._port_changed)
-        layout.addWidget(
-            FieldTile(
-                "Local port",
-                "Turn MCP off to change its port. Reconnect your agent after changing it.",
-                self.port,
-                compact=True,
-            )
+        self.advanced.body_layout.addWidget(
+            FieldTile("Local port", "", self.port, compact=True)
         )
+        self.tailscale_tile = SettingTile(
+            "Allow agents over Tailscale",
+            "Connect from another computer on the same Tailscale network. Local access stays available.",
+            design_icon("world-blue.svg"),
+        )
+        self.tailscale_enabled = self.tailscale_tile.checkbox
+        self.tailscale_enabled.setAccessibleName("Allow agents over Tailscale")
+        self.tailscale_enabled.toggled.connect(self._save_tailscale)
+        self.advanced.body_layout.addWidget(self.tailscale_tile)
+        connection_layout.addWidget(self.advanced)
+        connection_layout.addStretch()
 
-        self.connection = QWidget()
-        connection_layout = QVBoxLayout(self.connection)
-        connection_layout.setContentsMargins(0, 0, 0, 0)
-        connection_layout.setSpacing(10)
-        connection_layout.addWidget(QLabel("Connect your agent"))
-        self.agent_location = ElidingComboBox()
-        self.agent_location.addItems(["This computer", "Another computer (Tailscale)"])
-        self.agent_location.setAccessibleName("Agent computer")
-        self.agent_location.setCurrentIndex(
-            1 if settings.get(SettingsKey.MCP_TAILSCALE_ENABLED, False) is True else 0
+        baseline = _PermissionRow(
+            "Read saved text",
+            "Search saved dictations, transcripts and meeting insights whenever MCP is on.",
+            "file-music-blue.svg",
         )
-        self.agent_location.currentIndexChanged.connect(self._render_setup)
-        connection_layout.addWidget(
-            FieldTile("Agent runs on", "", self.agent_location, compact=True)
-        )
-        self.url = QLineEdit()
-        self.url.setReadOnly(True)
-        self.url.setAccessibleName("MCP server URL")
-        self.copy_url = self._copy_row(
-            connection_layout,
-            "Server URL",
-            self.url,
-            "Copy URL",
-            lambda: self.url.text(),
-        )
-
-        self.token = QLineEdit()
-        self.token.setReadOnly(True)
-        self.token.setEchoMode(QLineEdit.EchoMode.Password)
-        self.token.setAccessibleName("MCP access token")
-        self._copy_row(
-            connection_layout,
-            "Access token",
-            self.token,
-            "Copy token",
-            self.server.token,
-        )
-        connection_layout.addWidget(
-            WrappedLabel(
-                "The token grants access to your saved history and the actions you allow below. It is saved in your system "
-                "credential store. Share it only with agents you trust.",
-            )
-        )
-
-        self.setup_kind = ElidingComboBox()
-        self.setup_kind.addItems(
-            ["Agent setup prompt", "Claude Code command", "Client JSON (Cursor)"]
-        )
-        self.setup_kind.setAccessibleName("Agent setup method")
-        self.setup_kind.currentIndexChanged.connect(self._render_setup)
-        connection_layout.addWidget(self.setup_kind)
-        self.setup_text = QPlainTextEdit()
-        self.setup_text.setReadOnly(True)
-        self.setup_text.setMinimumHeight(160)
-        self.setup_text.setMaximumHeight(210)
-        self.setup_text.setAccessibleName("MCP setup instructions")
-        connection_layout.addWidget(self.setup_text)
-        setup_row = QHBoxLayout()
-        setup_row.addWidget(
-            WrappedLabel(
-                "Paste the prompt into your agent, or use a manual option and replace "
-                "<PASTE_TOKEN> with the access token above.",
-            ),
-            1,
-        )
-        self.copy_setup = Button("Copy setup")
-        self.copy_setup.clicked.connect(
-            lambda: self._copy(self.setup_text.toPlainText())
-        )
-        setup_row.addWidget(self.copy_setup)
-        connection_layout.addLayout(setup_row)
-        layout.addWidget(self.connection)
-
-        layout.addWidget(QLabel("Agent permissions"))
-        layout.addWidget(
-            WrappedLabel(
-                "Choose what connected agents may change. New permissions are off by default. "
-                "Turning one off blocks future changes immediately."
-            )
-        )
+        baseline.checkbox.hide()
+        baseline.setCursor(Qt.CursorShape.ArrowCursor)
+        baseline.checkbox.setEnabled(False)
+        baseline.layout().addWidget(self._label("Included", "mcpIncluded"))
+        permissions_layout.addWidget(baseline)
         self.permission_checks = {}
-        for key, title, description in (
+        for key, title, description, icon in (
             (
                 SettingsKey.MCP_RETITLE_TRANSCRIPTIONS,
-                "Retitle transcription history",
-                "Change display titles while keeping the original text and source filename.",
+                "Rename dictations",
+                "Keep the original text and source filename.",
+                "typography-blue.svg",
             ),
             (
                 SettingsKey.MCP_RETITLE_MEETINGS,
-                "Retitle saved meetings",
-                "Change titles of finished meetings saved on this computer.",
+                "Rename finished meetings",
+                "Change titles of local saved meetings.",
+                "box-blue.svg",
             ),
             (
                 SettingsKey.MCP_SETTINGS_ACCESS,
-                "Allow settings access",
-                "Read supported preferences. Choose each preference agents may change below.",
+                "Read app preferences",
+                "Read supported preferences. Allow individual changes below.",
+                "layout-grid-blue.svg",
             ),
         ):
-            tile = SettingTile(title, description)
-            check = tile.checkbox
-            check.setAccessibleName(title)
+            row = _PermissionRow(title, description, icon)
+            check = row.checkbox
             check.toggled.connect(
                 lambda checked, key=key: self._save_permission(key, checked)
             )
             self.permission_checks[key] = check
-            layout.addWidget(tile)
+            permissions_layout.addWidget(row)
 
+        self.preferences = _Disclosure("Choose individual preferences")
+        self.permission_summary = self._detail("")
+        self.preferences.body_layout.addWidget(
+            self._detail(
+                "Each checkbox allows changes to that preference. Permissions apply to every assistant using this token; turning one off blocks future changes immediately."
+            )
+        )
         self.settings_permissions = QWidget()
-        permissions_layout = QVBoxLayout(self.settings_permissions)
-        permissions_layout.setContentsMargins(0, 0, 0, 0)
+        self.settings_permissions.setObjectName("mcpSettingsPermissions")
+        preferences_layout = QVBoxLayout(self.settings_permissions)
+        preferences_layout.setContentsMargins(0, 0, 0, 0)
+        preferences_layout.setSpacing(10)
         self.setting_checks = {}
-        groups = {}
+        self.setting_groups = {}
         for control in SETTING_CONTROLS:
-            if control.group not in groups:
-                permissions_layout.addWidget(QLabel(control.group))
-                grid = QGridLayout()
-                grid.setColumnStretch(0, 1)
-                grid.setColumnStretch(1, 1)
-                permissions_layout.addLayout(grid)
-                groups[control.group] = (grid, 0)
-            grid, index = groups[control.group]
+            if control.group not in self.setting_groups:
+                group = _Disclosure(control.group)
+                group.toggle.setProperty("group", True)
+                self.setting_groups[control.group] = group
+                preferences_layout.addWidget(group)
             check = QCheckBox(control.label)
             check.setAccessibleName(f"Allow agent changes: {control.label}")
             check.setToolTip(control.effect)
@@ -214,32 +363,75 @@ class McpSettingsPage(QWidget):
                     key, checked
                 )
             )
-            grid.addWidget(check, index // 2, index % 2)
-            groups[control.group] = (grid, index + 1)
+            self.setting_groups[control.group].body_layout.addWidget(check)
             self.setting_checks[control.key] = check
-        layout.addWidget(self.settings_permissions)
-
-        layout.addWidget(
-            WrappedLabel(
-                "Agents can read saved text and meeting insights, and use the permissions selected above. "
-                "They cannot start recordings, delete history, edit transcript text, or change their permissions. "
-                "A cloud-powered agent may send retrieved text to its provider. "
-                "The local URL works only for agents running on this computer.",
+        self.preferences.body_layout.addWidget(self.settings_permissions)
+        permissions_layout.addWidget(self.preferences)
+        permissions_layout.addWidget(self.permission_summary)
+        permissions_layout.addWidget(
+            self._detail(
+                "No recording, deletion, transcript edits, audio access or permission changes. A cloud-powered assistant may send saved text to its provider."
             )
         )
+        permissions_layout.addStretch()
+
         self.notice = WrappedLabel("")
+        self.notice.setObjectName("mcpNotice")
         self.notice.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.notice)
         self.timer = QTimer(self)
         self.timer.setInterval(500)
         self.timer.timeout.connect(self.refresh)
+        self._arrange_columns()
         self.refresh()
 
+    @staticmethod
+    def _label(text, name):
+        label = WrappedLabel(text)
+        label.setObjectName(name)
+        return label
+
+    @classmethod
+    def _detail(cls, text):
+        return cls._label(text, "settingsTileDescription")
+
+    @classmethod
+    def _card(cls, title, description):
+        card = QFrame()
+        card.setObjectName("mcpCard")
+        card.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+        layout.addWidget(cls._label(title, "mcpCardTitle"))
+        layout.addWidget(cls._detail(description))
+        return card, layout
+
+    def _arrange_columns(self):
+        wide = self.width() >= round(860 * current_ui_font_scale())
+        if self._wide == wide:
+            return
+        self._wide = wide
+        self.columns.removeWidget(self.connection_card)
+        self.columns.removeWidget(self.permissions_card)
+        self.columns.addWidget(self.connection_card, 0, 0)
+        self.columns.addWidget(
+            self.permissions_card, 0 if wide else 1, 1 if wide else 0
+        )
+        self.columns.setColumnStretch(0, 6 if wide else 1)
+        self.columns.setColumnStretch(1, 5 if wide else 0)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._arrange_columns()
+
     def _copy_row(self, layout, title, field, button_text, value):
-        layout.addWidget(QLabel(title))
+        if title:
+            layout.addWidget(self._label(title, "settingsTileTitle"))
         row = QHBoxLayout()
         row.addWidget(field, 1)
         button = Button(button_text)
+        button.set_base_minimum_size(0, 38)
         button.clicked.connect(lambda: self._copy(value()))
         row.addWidget(button)
         layout.addLayout(row)
@@ -251,6 +443,7 @@ class McpSettingsPage(QWidget):
         QApplication.clipboard().setText(text)
         self._notice = "Copied to clipboard."
         self.notice.setText(self._notice)
+        self.notice.show()
 
     def _toggle(self, checked):
         try:
@@ -322,6 +515,18 @@ class McpSettingsPage(QWidget):
         ready = status.state == "running" and bool(url)
         self.copy_setup.setEnabled(ready)
         self.copy_url.setEnabled(ready)
+        self.url.setEnabled(ready)
+        kinds = ("setup prompt", "Claude Code command", "Cursor JSON")
+        kind = self.setup_kind.currentIndex()
+        self.copy_setup.setText(f"Copy {kinds[kind]}")
+        self.preview.toggle.setText(f"Preview {kinds[kind]}")
+        self.preview.toggle.setAccessibleName(self.preview.toggle.text())
+        hints = (
+            "Paste the setup prompt into your assistant. Copy the access token separately when asked.",
+            "Paste the command into your terminal. Replace <PASTE_TOKEN> with the access token.",
+            "Merge this JSON into Cursor's MCP configuration. Replace <PASTE_TOKEN> with the access token.",
+        )
+        self.setup_hint.setText(hints[kind])
         if not ready:
             self.url.setText(
                 "Tailscale access is not enabled"
@@ -331,8 +536,10 @@ class McpSettingsPage(QWidget):
             self.setup_text.setPlainText(
                 "To connect an agent on another computer, turn MCP off, enable "
                 "Allow agents over Tailscale, then turn MCP on again."
-                if status.state == "running" else "Connection instructions appear when MCP is running."
+                if status.state == "running"
+                else "Connection instructions appear when MCP is running."
             )
+            self.setup_hint.setText(self.setup_text.toPlainText())
             return
         self.url.setText(url)
         options = (
@@ -340,7 +547,7 @@ class McpSettingsPage(QWidget):
             claude_command(url),
             client_config(url, "<PASTE_TOKEN>"),
         )
-        text = options[self.setup_kind.currentIndex()]
+        text = options[kind]
         if self.setup_text.toPlainText() != text:
             self.setup_text.setPlainText(text)
 
@@ -360,13 +567,23 @@ class McpSettingsPage(QWidget):
         self.settings_permissions.setEnabled(
             preferences.get(SettingsKey.MCP_SETTINGS_ACCESS) is True
         )
+        access = self.settings_permissions.isEnabled()
+        self.permission_summary.setText(
+            f"{len(SETTING_CONTROLS)} preferences · {len(granted) if access else 0} allowed to change"
+            if access
+            else "Enable Read app preferences to allow individual changes."
+        )
         self.enabled.blockSignals(True)
         self.enabled.setChecked(saved)
         self.enabled.blockSignals(False)
         self.tailscale_enabled.blockSignals(True)
-        self.tailscale_enabled.setChecked(preferences.get(SettingsKey.MCP_TAILSCALE_ENABLED) is True)
+        self.tailscale_enabled.setChecked(
+            preferences.get(SettingsKey.MCP_TAILSCALE_ENABLED) is True
+        )
         self.tailscale_enabled.blockSignals(False)
-        self.tailscale_tile.setEnabled(status.state in {"stopped", "error"} and not saved)
+        self.tailscale_tile.setEnabled(
+            status.state in {"stopped", "error"} and not saved
+        )
         self.enable_tile.setEnabled(status.state != "stopping")
         self.port.setEnabled(status.state in {"stopped", "error"} and not saved)
         self.retry.setVisible(status.state == "error" and saved)
@@ -377,7 +594,19 @@ class McpSettingsPage(QWidget):
             "stopping": "Stopping",
             "error": "Could not start",
         }
-        self.status_label.setText(f"{labels[status.state]} · {status.message}")
+        detail = (
+            "Keep OpenWhisper open." if status.state == "running" else status.message
+        )
+        self.status_label.setText(f"{labels[status.state]} · {detail}")
+        self.status_label.setToolTip(status.message)
+        self.status_dot.set_status(
+            EngineStatus.READY
+            if status.state == "running"
+            else EngineStatus.ATTENTION
+            if status.state == "error"
+            else EngineStatus.UNKNOWN
+        )
+        self.status_dot.set_busy(status.state in {"starting", "stopping"})
         ready = status.state == "running"
         self.connection.setEnabled(ready)
         self._render_setup()
@@ -387,6 +616,7 @@ class McpSettingsPage(QWidget):
                 "Connection instructions appear when MCP is running."
             )
         self.notice.setText(self._notice)
+        self.notice.setVisible(bool(self._notice))
 
     def showEvent(self, event):
         super().showEvent(event)
