@@ -220,8 +220,13 @@ def test_available_component_ids_by_platform():
     with patch.object(components.sys, "platform", "darwin"), patch.object(
         components.platform_module, "machine", return_value="arm64"
     ):
-        assert components.available_component_ids() == (ComponentId.ASR_NVIDIA_CPU, ComponentId.ASR_PARAKEET_MLX)
-        assert len(ComponentCoordinator().list_components()) == 2
+        # OpenCode is listed once its macOS archive is pinned.
+        assert components.available_component_ids() == (
+            ComponentId.MEETING_AGENT,
+            ComponentId.ASR_NVIDIA_CPU,
+            ComponentId.ASR_PARAKEET_MLX,
+        )
+        assert len(ComponentCoordinator().list_components()) == 3
 
     with patch.object(components.sys, "platform", "darwin"), patch.object(
         components.platform_module, "machine", return_value="x86_64"
@@ -269,6 +274,7 @@ def test_meeting_agent_catalog_is_published():
         components.PLATFORM_WIN_AMD64: ("node-exe", 101_658_517),
         components.PLATFORM_LINUX_X86_64: ("node-tar", 139_497_605),
         components.PLATFORM_LINUX_AARCH64: ("node-tar", 136_820_317),
+        components.PLATFORM_DARWIN_ARM64: ("node-tar", 127_598_925),
     }
     for tag, (node_extract, install_bytes) in expected.items():
         assert components.component_is_published(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -105,6 +106,12 @@ def resolve_runtime(backend: str, requested: str) -> tuple[str, str]:
         if requested not in ("auto", "cpu"):
             raise ValueError("Parakeet MLX supports Auto (Apple GPU) or CPU, not CUDA.")
         return MLX_RUNTIME, "cpu" if requested == "cpu" else "metal"
+    if backend == "qwen_asr" and sys.platform == "darwin":
+        # PyTorch reaches the Apple GPU through MPS; the worker uses the CPU
+        # on a Mac without it.
+        if requested not in ("auto", "cpu"):
+            raise ValueError("Qwen3-ASR on a Mac supports Auto (Apple GPU) or CPU, not CUDA.")
+        return "asr-qwen", "cpu" if requested == "cpu" else "mps"
     device = requested
     if device == "auto":
         try:
@@ -139,10 +146,12 @@ def runtime_catalog() -> dict:
         with Path(__file__).with_name(filename).open(encoding="utf-8-sig") as stream:
             entries[key] = {"platforms": {"win_amd64": json.load(stream)}}
     # The app's interpreter runs workers on macOS/Linux, using downloaded
-    # native libraries or the macOS MLX wheel tree.
+    # native libraries or a macOS wheel tree (MLX, Qwen, Moonshine).
     for key, platform, filename in (
         (MLX_RUNTIME, "darwin_arm64", "mlx_runtime.json"),
         ("asr-nvidia-cpu", "darwin_arm64", "nvidia_macos_runtime.json"),
+        ("asr-qwen", "darwin_arm64", "qwen_macos_runtime.json"),
+        ("asr-moonshine", "darwin_arm64", "moonshine_macos_runtime.json"),
         ("asr-nvidia-cpu", "linux_x86_64", "nvidia_linux_cpu_runtime.json"),
         ("asr-nvidia-cuda", "linux_x86_64", "nvidia_linux_cuda_runtime.json"),
         (NVIDIA_VULKAN_RUNTIME, "linux_x86_64", "nvidia_linux_vulkan_runtime.json"),

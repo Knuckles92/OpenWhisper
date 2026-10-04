@@ -12,7 +12,7 @@ block plus the matching ``install_bytes``. Entries point straight at PyPI,
 whose published wheels are immutable.
 
 ``meeting-agent`` pins official Node.js archives for Windows x64, Linux x64,
-and Linux ARM64 from nodejs.org (SHA-256 from that release's
+Linux ARM64 and Apple Silicon macOS from nodejs.org (SHA-256 from that release's
 ``SHASUMS256.txt``), builds ``sidecar/dist/bundle.cjs`` once, zips the bundle
 into ``dist/components/``, and prints ready-to-paste platform catalog entries.
 The emitted GitHub URL uses this checkout's ``_version.py``. Set
@@ -57,6 +57,7 @@ from services.components import (  # noqa: E402
     MEETING_AGENT_COMPONENT_VERSION,
     MEETING_AGENT_NODE_VERSION,
     MEETING_AGENT_RELEASE_TAG,
+    PLATFORM_DARWIN_ARM64,
     PLATFORM_LINUX_AARCH64,
     PLATFORM_LINUX_X86_64,
     PLATFORM_WIN_AMD64,
@@ -86,6 +87,13 @@ NODE_TARGETS = (
         "filename": f"node-v{NODE_VERSION}-linux-arm64.tar.xz",
         "extract": "node-tar",
         "member": f"node-v{NODE_VERSION}-linux-arm64/bin/node",
+        "runtime_name": "node",
+    },
+    {
+        "platform": PLATFORM_DARWIN_ARM64,
+        "filename": f"node-v{NODE_VERSION}-darwin-arm64.tar.xz",
+        "extract": "node-tar",
+        "member": f"node-v{NODE_VERSION}-darwin-arm64/bin/node",
         "runtime_name": "node",
     },
 )

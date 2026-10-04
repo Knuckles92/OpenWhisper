@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import config
+from config import config, parakeet_mlx_supported
 from services.components import component_coordinator
 from services.hf_access import (
     MODEL_DOWNLOAD_SIZE_MB,
@@ -65,6 +65,10 @@ from ui_qt.widgets.buttons import fit_compact_button
 from ui_qt.widgets.component_row_widget import ComponentRowWidget
 from ui_qt.widgets.model_row_widget import ModelRowWidget
 from ui_qt.widgets.wrapped_label import WrappedLabel
+from ui_qt.widgets.speech_backend_picker import (
+    backend_picker_label,
+    backend_picker_tooltip,
+)
 
 
 class BatchDownloadDialog(QDialog):
@@ -357,9 +361,13 @@ class DownloadsPage(QWidget):
         self.backend_filter_combo = ElidingComboBox()
         self.backend_filter_combo.setObjectName("modelManagerBackendFilter")
         self.backend_filter_combo.addItem("All backends", "all")
-        self.backend_filter_combo.addItem("Whisper", WHISPER_BACKEND)
-        for backend_id, backend_label in BACKENDS.items():
-            self.backend_filter_combo.addItem(backend_label, backend_id)
+        backends = {WHISPER_BACKEND: "Whisper", **BACKENDS}
+        for backend_id, backend_label in sorted(backends.items(), key=lambda item: item[1].casefold()):
+            self.backend_filter_combo.addItem(backend_picker_label(backend_label), backend_id)
+            self.backend_filter_combo.setItemData(
+                self.backend_filter_combo.count() - 1,
+                backend_picker_tooltip(backend_label), Qt.ItemDataRole.ToolTipRole,
+            )
         self.backend_filter_combo.setToolTip("Show one speech backend's models")
         self.backend_filter_combo.currentIndexChanged.connect(self._apply_filter)
         toolbar.addWidget(self.backend_filter_combo)
@@ -1380,14 +1388,12 @@ class DownloadsPage(QWidget):
             return (row.sort_size_bytes, name)
         if mode == "name":
             return (name,)
-        # Recommended: downloaded first, then smallest — keep the order stable
-        # so a state change does not make a row jump under the pointer.
+        # Recommended: prefer MLX on a supported Mac, then downloaded and size.
         recommended = (not row.is_cached, row.sort_size_bytes, name)
         if mode == "backend":
-            # Backends in the order the filter combo lists them (Whisper
-            # first, then the optional families), recommended order inside.
+            # Match the alphabetical filter combo, recommended order inside.
             return (self.backend_filter_combo.findData(row.backend), *recommended)
-        return recommended
+        return (parakeet_mlx_supported() and row.backend != "parakeet_mlx", *recommended)
 
     @staticmethod
     def _usage_for(

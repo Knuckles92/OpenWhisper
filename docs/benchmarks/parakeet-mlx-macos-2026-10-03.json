@@ -1,0 +1,1227 @@
+{
+  "schema_version": 1,
+  "date_local": "2026-10-03",
+  "issue": "https://github.com/Knuckles92/OpenWhisper/issues/30",
+  "base_commit": "0214932b2d5cebbf9d10d5f9cfb9784191fbfa9d",
+  "working_tree": "Local validation fixes applied; not committed at measurement time",
+  "source_sha256": {
+    "OpenWhisper.spec": "05e4d52cd7029948dcefb478e7aa47c38ac3f340521349e1ca78f84cb1f5320b",
+    "config.py": "4fce3e381d4d70a499614a9c6aeb4eb4104e0bc2dbe972d9c1ed9d9e4753d3f1",
+    "main.py": "ee8bde07bf063b8b2f17bfa0be351daaf29ed7349c726e8db60777db9d689713",
+    "meeting/asr/engine.py": "9fa36d2b26d30dd928d7814d113aaf0a1c791e793e8d77b2d33a5d25dacd37ed",
+    "services/local_asr/mlx.py": "ac08333629ef3426399b2d94c3ae60470dceabb8128d6e50d1e60f5870416013",
+    "services/local_asr/worker.py": "7ec57a62e1d27e3d1cf30a32deeccc96b74ef0b46e8bd0be9abda4b68d31bbf1",
+    "tests/test_parakeet_mlx.py": "2873c4f93684437ee5eba05e622184f94488d31d3cea6cb4325ac8ae5a66cc62",
+    "tests/test_parakeet_mlx_hardware.py": "7fb39073929391899aa4cc0beee6229a321c7f6fab06b1021294d1f1ee12e0be"
+  },
+  "hardware": {
+    "model": "Mac17,4",
+    "chip": "Apple M5",
+    "ram_bytes": 17179869184,
+    "architecture": "arm64",
+    "macos": "26.6.2",
+    "macos_build": "25G83"
+  },
+  "python": "3.12.13",
+  "runtime": {
+    "parakeet_mlx": "0.5.3",
+    "mlx": "0.32.3",
+    "mlx_metal": "0.32.3",
+    "component_version": "parakeet-mlx-0.5.3-mlx-0.32.3-db0dcfd455cc",
+    "pinned_wheels_verified": 50
+  },
+  "model": {
+    "key": "parakeet-v3-mlx",
+    "repository": "mlx-community/parakeet-tdt-0.6b-v3",
+    "revision": "ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15",
+    "model_safetensors_sha256": "05e01c7f396c298cf7d23f61da7b504adeab698f0aaeafd9c82d198625464592",
+    "config_json_sha256": "f320f1292511f34ec47f513755fe20fd01dbfc09a925d42730e66059a6e1ef4c"
+  },
+  "fixtures": {
+    "source": "Local macOS say, 165 words/minute; no private recording",
+    "english_voice": "Samantha",
+    "english_seconds": 8.9860625,
+    "spanish_voice": "Mónica",
+    "spanish_seconds": 8.692125,
+    "sample_rate": 16000,
+    "channels": 1,
+    "long_file_seconds": 305.526125,
+    "long_file_repetitions": 34,
+    "noise": "Seeded synthetic noise, 1 second",
+    "limits": "Synthetic functional checks; not an accuracy benchmark of human speech or noisy meetings"
+  },
+  "direct_adapter": {
+    "metal": {
+      "device": "metal",
+      "offline": true,
+      "cases": [
+        {
+          "name": "english-cold",
+          "audio_s": 8.9860625,
+          "result": {
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+            "segments": [
+              {
+                "text": " Today we are testing local speech recognition on an Apple Silicon Mac.",
+                "start": 0.0,
+                "end": 4.24
+              },
+              {
+                "text": " The meeting starts at 9.30.",
+                "start": 4.24,
+                "end": 6.08
+              },
+              {
+                "text": " Please save the transcript and check the timestamps.",
+                "start": 6.08,
+                "end": 8.96
+              }
+            ]
+          },
+          "timestamps_bounded": true,
+          "decode_s": 1.762045625015162,
+          "mlx_peak_bytes": 1756275020,
+          "peak_rss_bytes": 829177856
+        },
+        {
+          "name": "english-warm",
+          "audio_s": 8.9860625,
+          "result": {
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+            "segments": [
+              {
+                "text": " Today we are testing local speech recognition on an Apple Silicon Mac.",
+                "start": 0.0,
+                "end": 4.24
+              },
+              {
+                "text": " The meeting starts at 9.30.",
+                "start": 4.24,
+                "end": 6.08
+              },
+              {
+                "text": " Please save the transcript and check the timestamps.",
+                "start": 6.08,
+                "end": 8.96
+              }
+            ]
+          },
+          "timestamps_bounded": true,
+          "decode_s": 0.11894058401230723,
+          "mlx_peak_bytes": 1756275020,
+          "peak_rss_bytes": 842891264
+        },
+        {
+          "name": "spanish",
+          "audio_s": 8.692125,
+          "result": {
+            "text": "Hoy estamos probando el reconocimiento de voz en un ordenador de Apple. La reunión empieza a las nueve y media. Por favor, guarda la transcripción y comprueba los tiempos.",
+            "segments": [
+              {
+                "text": " Hoy estamos probando el reconocimiento de voz en un ordenador de Apple.",
+                "start": 0.0,
+                "end": 3.4400000000000004
+              },
+              {
+                "text": " La reunión empieza a las nueve y media.",
+                "start": 3.44,
+                "end": 5.5200000000000005
+              },
+              {
+                "text": " Por favor, guarda la transcripción y comprueba los tiempos.",
+                "start": 5.5200000000000005,
+                "end": 8.64
+              }
+            ]
+          },
+          "timestamps_bounded": true,
+          "decode_s": 0.1204978339956142,
+          "mlx_peak_bytes": 1756275020,
+          "peak_rss_bytes": 846725120
+        },
+        {
+          "name": "empty",
+          "audio_s": 0.0,
+          "result": {
+            "text": "",
+            "segments": []
+          },
+          "timestamps_bounded": true,
+          "decode_s": 5.542009603232145e-06,
+          "mlx_peak_bytes": 1756275020,
+          "peak_rss_bytes": 846725120
+        },
+        {
+          "name": "one-sample",
+          "audio_s": 6.25e-05,
+          "result": {
+            "text": "",
+            "segments": []
+          },
+          "timestamps_bounded": true,
+          "decode_s": 0.11763479199726135,
+          "mlx_peak_bytes": 1756275020,
+          "peak_rss_bytes": 847118336
+        },
+        {
+          "name": "five-ms",
+          "audio_s": 0.005,
+          "result": {
+            "text": "",
+            "segments": []
+          },
+          "timestamps_bounded": true,
+          "decode_s": 0.015936375013552606,
+          "mlx_peak_bytes": 1756275020,
+          "peak_rss_bytes": 847167488
+        },
+        {
+          "name": "silence-one-second",
+          "audio_s": 1.0,
+          "result": {
+            "text": "",
+            "segments": []
+          },
+          "timestamps_bounded": true,
+          "decode_s": 0.14193720801267773,
+          "mlx_peak_bytes": 1756275020,
+          "peak_rss_bytes": 847937536
+        },
+        {
+          "name": "noise-one-second",
+          "audio_s": 1.0,
+          "result": {
+            "text": "",
+            "segments": []
+          },
+          "timestamps_bounded": true,
+          "decode_s": 0.03025208303006366,
+          "mlx_peak_bytes": 1756275020,
+          "peak_rss_bytes": 848248832
+        }
+      ],
+      "load_s": 0.2587769170058891,
+      "mlx": "0.32.3",
+      "observed_device": "Device(gpu, 0)",
+      "metal_available": true,
+      "device_info": {
+        "device_name": "Apple M5",
+        "max_recommended_working_set_size": 12713115648,
+        "memory_size": 17179869184,
+        "architecture": "applegpu_g17g",
+        "max_buffer_length": 9534832640,
+        "resource_limit": 499000
+      },
+      "blocked_connection_attempts": [],
+      "peak_rss_bytes": 849526784
+    },
+    "cpu": {
+      "device": "cpu",
+      "offline": true,
+      "cases": [
+        {
+          "name": "english-cold",
+          "audio_s": 8.9860625,
+          "result": {
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+            "segments": [
+              {
+                "text": " Today we are testing local speech recognition on an Apple Silicon Mac.",
+                "start": 0.0,
+                "end": 4.24
+              },
+              {
+                "text": " The meeting starts at 9.30.",
+                "start": 4.24,
+                "end": 6.08
+              },
+              {
+                "text": " Please save the transcript and check the timestamps.",
+                "start": 6.08,
+                "end": 8.96
+              }
+            ]
+          },
+          "timestamps_bounded": true,
+          "decode_s": 0.40637054201215506,
+          "mlx_peak_bytes": 2551372544,
+          "peak_rss_bytes": 2847522816
+        },
+        {
+          "name": "english-warm",
+          "audio_s": 8.9860625,
+          "result": {
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+            "segments": [
+              {
+                "text": " Today we are testing local speech recognition on an Apple Silicon Mac.",
+                "start": 0.0,
+                "end": 4.24
+              },
+              {
+                "text": " The meeting starts at 9.30.",
+                "start": 4.24,
+                "end": 6.08
+              },
+              {
+                "text": " Please save the transcript and check the timestamps.",
+                "start": 6.08,
+                "end": 8.96
+              }
+            ]
+          },
+          "timestamps_bounded": true,
+          "decode_s": 0.3328604589914903,
+          "mlx_peak_bytes": 2626655096,
+          "peak_rss_bytes": 2851438592
+        },
+        {
+          "name": "spanish",
+          "audio_s": 8.692125,
+          "result": {
+            "text": "Hoy estamos probando el reconocimiento de voz en un ordenador de Apple. La reunión empieza a las nueve y media. Por favor, guarda la transcripción y comprueba los tiempos.",
+            "segments": [
+              {
+                "text": " Hoy estamos probando el reconocimiento de voz en un ordenador de Apple.",
+                "start": 0.0,
+                "end": 3.4400000000000004
+              },
+              {
+                "text": " La reunión empieza a las nueve y media.",
+                "start": 3.44,
+                "end": 5.5200000000000005
+              },
+              {
+                "text": " Por favor, guarda la transcripción y comprueba los tiempos.",
+                "start": 5.5200000000000005,
+                "end": 8.64
+              }
+            ]
+          },
+          "timestamps_bounded": true,
+          "decode_s": 0.32899912499124184,
+          "mlx_peak_bytes": 2626671480,
+          "peak_rss_bytes": 2936586240
+        },
+        {
+          "name": "empty",
+          "audio_s": 0.0,
+          "result": {
+            "text": "",
+            "segments": []
+          },
+          "timestamps_bounded": true,
+          "decode_s": 5.292007699608803e-06,
+          "mlx_peak_bytes": 2626671480,
+          "peak_rss_bytes": 2936586240
+        },
+        {
+          "name": "one-sample",
+          "audio_s": 6.25e-05,
+          "result": {
+            "text": "",
+            "segments": []
+          },
+          "timestamps_bounded": true,
+          "decode_s": 0.03969395800959319,
+          "mlx_peak_bytes": 2626671480,
+          "peak_rss_bytes": 2937044992
+        },
+        {
+          "name": "five-ms",
+          "audio_s": 0.005,
+          "result": {
+            "text": "",
+            "segments": []
+          },
+          "timestamps_bounded": true,
+          "decode_s": 0.040833165985532105,
+          "mlx_peak_bytes": 2626671480,
+          "peak_rss_bytes": 2937061376
+        },
+        {
+          "name": "silence-one-second",
+          "audio_s": 1.0,
+          "result": {
+            "text": "Oh",
+            "segments": [
+              {
+                "text": " Oh",
+                "start": 0.24,
+                "end": 0.32
+              }
+            ]
+          },
+          "timestamps_bounded": true,
+          "decode_s": 0.09955916600301862,
+          "mlx_peak_bytes": 2626671480,
+          "peak_rss_bytes": 2953986048
+        },
+        {
+          "name": "noise-one-second",
+          "audio_s": 1.0,
+          "result": {
+            "text": "",
+            "segments": []
+          },
+          "timestamps_bounded": true,
+          "decode_s": 0.09453979099635035,
+          "mlx_peak_bytes": 2626671480,
+          "peak_rss_bytes": 2954018816
+        }
+      ],
+      "load_s": 0.22802895901259035,
+      "mlx": "0.32.3",
+      "observed_device": "Device(cpu, 0)",
+      "metal_available": true,
+      "device_info": {
+        "device_name": "Apple M5",
+        "architecture": "arm64"
+      },
+      "blocked_connection_attempts": [],
+      "peak_rss_bytes": 2954084352
+    }
+  },
+  "source_workflows": {
+    "kind": "source_real_mlx_workflows",
+    "offline_network_denied_by_os": true,
+    "devices": [
+      {
+        "requested_device": "auto",
+        "load": {
+          "seconds": 0.2691205409937538,
+          "result": "Parakeet TDT 0.6B v3 (MLX) | metal"
+        },
+        "warmup": {
+          "seconds": 0.39674120798008516,
+          "result": true
+        },
+        "dictation": {
+          "seconds": 0.15319083299254999,
+          "result": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+        },
+        "spanish_file": {
+          "seconds": 0.1468935830052942,
+          "result": "Hoy estamos probando el reconocimiento de voz en un ordenador de Apple. La reunión empieza a las nueve y media. Por favor, guarda la transcripción y comprueba los tiempos."
+        },
+        "live_preview": {
+          "seconds": 0.1998853749828413,
+          "result": {
+            "events": [
+              {
+                "text": "Today we are testing local speech recognition on an apple.",
+                "final": true
+              }
+            ],
+            "final": "Today we are testing local speech recognition on an apple. Silicon Mac, the meeting starts at 9.30."
+          }
+        },
+        "silence": {
+          "seconds": 2.7291011065244675e-05,
+          "result": {
+            "text": "",
+            "segments": []
+          }
+        },
+        "noise": {
+          "seconds": 0.04342079203343019,
+          "result": {
+            "text": "",
+            "segments": []
+          }
+        },
+        "long_file": {
+          "seconds": 4.766254582966212,
+          "result": {
+            "repetitions": 34,
+            "word_count": 879,
+            "audio_s": 305.526125
+          }
+        },
+        "meeting": {
+          "seconds": 2.5441285420092754,
+          "result": {
+            "preview_events": [
+              {
+                "channel": "mic",
+                "text": "Local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+                "start_s": 13.4860625,
+                "end_s": 21.4860625,
+                "final": false
+              }
+            ],
+            "chunks": 2,
+            "segments": 6,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps. Hoy estamos probando el reconocimiento de voz en un ordenador de Apple. La reunión empieza a las nueve y media. Por favor, guarda la transcripción y comprueba los tiempos.",
+            "timestamps_bounded": true
+          }
+        },
+        "cancellation": {
+          "seconds": 0.3447203329997137,
+          "result": {
+            "cancel_s": 0.28936979098943993,
+            "worker_exit": -15,
+            "error": "Transcription canceled"
+          }
+        },
+        "reload_0": {
+          "seconds": 0.7166472499957308,
+          "result": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+        },
+        "reload_1": {
+          "seconds": 0.5262112080235966,
+          "result": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+        },
+        "reload_2": {
+          "seconds": 0.5170670000370592,
+          "result": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+        },
+        "close_all_workers": {
+          "seconds": 0.018165707995649427,
+          "result": -15
+        },
+        "restart_after_close": {
+          "seconds": 0.502906667010393,
+          "result": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+        }
+      },
+      {
+        "requested_device": "cpu",
+        "load": {
+          "seconds": 0.26499166595749557,
+          "result": "Parakeet TDT 0.6B v3 (MLX) | cpu"
+        },
+        "warmup": {
+          "seconds": 0.3438972079893574,
+          "result": true
+        },
+        "dictation": {
+          "seconds": 0.3406247500097379,
+          "result": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+        },
+        "spanish_file": {
+          "seconds": 0.34871495800325647,
+          "result": "Hoy estamos probando el reconocimiento de voz en un ordenador de Apple. La reunión empieza a las nueve y media. Por favor, guarda la transcripción y comprueba los tiempos."
+        },
+        "live_preview": {
+          "seconds": 0.3416162090143189,
+          "result": {
+            "events": [
+              {
+                "text": "Today we are testing local speech recognition on an apple.",
+                "final": true
+              }
+            ],
+            "final": "Today we are testing local speech recognition on an apple. Silicon Mac, the meeting starts at 9.30."
+          }
+        },
+        "silence": {
+          "seconds": 3.620801726356149e-05,
+          "result": {
+            "text": "",
+            "segments": []
+          }
+        },
+        "noise": {
+          "seconds": 0.09669929195661098,
+          "result": {
+            "text": "",
+            "segments": []
+          }
+        },
+        "long_file": {
+          "seconds": 10.55745520896744,
+          "result": {
+            "repetitions": 34,
+            "word_count": 878,
+            "audio_s": 305.526125
+          }
+        },
+        "meeting": {
+          "seconds": 3.368927375006024,
+          "result": {
+            "preview_events": [
+              {
+                "channel": "mic",
+                "text": "Local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+                "start_s": 13.4860625,
+                "end_s": 21.4860625,
+                "final": false
+              }
+            ],
+            "chunks": 2,
+            "segments": 6,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps. Hoy estamos probando el reconocimiento de voz en un ordenador de Apple. La reunión empieza a las nueve y media. Por favor, guarda la transcripción y comprueba los tiempos.",
+            "timestamps_bounded": true
+          }
+        },
+        "cancellation": {
+          "seconds": 0.23061616602353752,
+          "result": {
+            "cancel_s": 0.17847004102077335,
+            "worker_exit": -15,
+            "error": "Transcription canceled"
+          }
+        },
+        "reload_0": {
+          "seconds": 1.096089333994314,
+          "result": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+        },
+        "reload_1": {
+          "seconds": 0.7509831249481067,
+          "result": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+        },
+        "reload_2": {
+          "seconds": 0.7565925000235438,
+          "result": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+        },
+        "close_all_workers": {
+          "seconds": 0.03898204100551084,
+          "result": -15
+        },
+        "restart_after_close": {
+          "seconds": 0.7215026670019142,
+          "result": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+        }
+      }
+    ],
+    "long_audio_s": 305.526125
+  },
+  "frozen_workers": {
+    "metal": {
+      "kind": "real_frozen_worker",
+      "device": "metal",
+      "network_denied_by_os": true,
+      "tests": [
+        {
+          "name": "load",
+          "result": {
+            "device": "metal"
+          },
+          "seconds": 0.6489849159843288
+        },
+        {
+          "name": "english",
+          "result": {
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+            "segments": [
+              {
+                "text": " Today we are testing local speech recognition on an Apple Silicon Mac.",
+                "start": 0.0,
+                "end": 4.24
+              },
+              {
+                "text": " The meeting starts at 9.30.",
+                "start": 4.24,
+                "end": 6.08
+              },
+              {
+                "text": " Please save the transcript and check the timestamps.",
+                "start": 6.08,
+                "end": 8.96
+              }
+            ]
+          },
+          "seconds": 1.4775644590263255
+        },
+        {
+          "name": "spanish",
+          "result": {
+            "text": "Hoy estamos probando el reconocimiento de voz en un ordenador de Apple. La reunión empieza a las nueve y media. Por favor, guarda la transcripción y comprueba los tiempos.",
+            "segments": [
+              {
+                "text": " Hoy estamos probando el reconocimiento de voz en un ordenador de Apple.",
+                "start": 0.0,
+                "end": 3.4400000000000004
+              },
+              {
+                "text": " La reunión empieza a las nueve y media.",
+                "start": 3.44,
+                "end": 5.5200000000000005
+              },
+              {
+                "text": " Por favor, guarda la transcripción y comprueba los tiempos.",
+                "start": 5.5200000000000005,
+                "end": 8.64
+              }
+            ]
+          },
+          "seconds": 0.11534108297200873
+        },
+        {
+          "name": "shutdown",
+          "result": 0,
+          "seconds": 0.13094750000163913
+        },
+        {
+          "name": "offline_restart",
+          "result": {
+            "device": "metal"
+          },
+          "seconds": 0.5112990410416387
+        },
+        {
+          "name": "english_after_restart",
+          "result": {
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+            "segments": [
+              {
+                "text": " Today we are testing local speech recognition on an Apple Silicon Mac.",
+                "start": 0.0,
+                "end": 4.24
+              },
+              {
+                "text": " The meeting starts at 9.30.",
+                "start": 4.24,
+                "end": 6.08
+              },
+              {
+                "text": " Please save the transcript and check the timestamps.",
+                "start": 6.08,
+                "end": 8.96
+              }
+            ]
+          },
+          "seconds": 0.36459741700673476
+        },
+        {
+          "name": "cancel_inference",
+          "result": {
+            "cancel_s": 0.03739995800424367,
+            "worker_exit": -15
+          },
+          "seconds": 0.1502493749721907
+        },
+        {
+          "name": "restart_after_cancel",
+          "result": {
+            "device": "metal"
+          },
+          "seconds": 0.3873197920038365
+        },
+        {
+          "name": "english_after_cancel",
+          "result": {
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+            "segments": [
+              {
+                "text": " Today we are testing local speech recognition on an Apple Silicon Mac.",
+                "start": 0.0,
+                "end": 4.24
+              },
+              {
+                "text": " The meeting starts at 9.30.",
+                "start": 4.24,
+                "end": 6.08
+              },
+              {
+                "text": " Please save the transcript and check the timestamps.",
+                "start": 6.08,
+                "end": 8.96
+              }
+            ]
+          },
+          "seconds": 0.2707255420391448
+        },
+        {
+          "name": "final_shutdown",
+          "result": 0,
+          "seconds": 0.07586712500778958
+        }
+      ],
+      "peak_child_rss_bytes": 1689501696
+    },
+    "cpu": {
+      "kind": "real_frozen_worker",
+      "device": "cpu",
+      "network_denied_by_os": true,
+      "tests": [
+        {
+          "name": "load",
+          "result": {
+            "device": "cpu"
+          },
+          "seconds": 0.38131224998505786
+        },
+        {
+          "name": "english",
+          "result": {
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+            "segments": [
+              {
+                "text": " Today we are testing local speech recognition on an Apple Silicon Mac.",
+                "start": 0.0,
+                "end": 4.24
+              },
+              {
+                "text": " The meeting starts at 9.30.",
+                "start": 4.24,
+                "end": 6.08
+              },
+              {
+                "text": " Please save the transcript and check the timestamps.",
+                "start": 6.08,
+                "end": 8.96
+              }
+            ]
+          },
+          "seconds": 0.8642246659728698
+        },
+        {
+          "name": "spanish",
+          "result": {
+            "text": "Hoy estamos probando el reconocimiento de voz en un ordenador de Apple. La reunión empieza a las nueve y media. Por favor, guarda la transcripción y comprueba los tiempos.",
+            "segments": [
+              {
+                "text": " Hoy estamos probando el reconocimiento de voz en un ordenador de Apple.",
+                "start": 0.0,
+                "end": 3.4400000000000004
+              },
+              {
+                "text": " La reunión empieza a las nueve y media.",
+                "start": 3.44,
+                "end": 5.5200000000000005
+              },
+              {
+                "text": " Por favor, guarda la transcripción y comprueba los tiempos.",
+                "start": 5.5200000000000005,
+                "end": 8.64
+              }
+            ]
+          },
+          "seconds": 0.41895695799030364
+        },
+        {
+          "name": "shutdown",
+          "result": 0,
+          "seconds": 0.12716287502553314
+        },
+        {
+          "name": "offline_restart",
+          "result": {
+            "device": "cpu"
+          },
+          "seconds": 0.486161999986507
+        },
+        {
+          "name": "english_after_restart",
+          "result": {
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+            "segments": [
+              {
+                "text": " Today we are testing local speech recognition on an Apple Silicon Mac.",
+                "start": 0.0,
+                "end": 4.24
+              },
+              {
+                "text": " The meeting starts at 9.30.",
+                "start": 4.24,
+                "end": 6.08
+              },
+              {
+                "text": " Please save the transcript and check the timestamps.",
+                "start": 6.08,
+                "end": 8.96
+              }
+            ]
+          },
+          "seconds": 0.6116772920358926
+        },
+        {
+          "name": "cancel_inference",
+          "result": {
+            "cancel_s": 0.12778575002448633,
+            "worker_exit": -15
+          },
+          "seconds": 0.2424478330067359
+        },
+        {
+          "name": "restart_after_cancel",
+          "result": {
+            "device": "cpu"
+          },
+          "seconds": 0.43666008295258507
+        },
+        {
+          "name": "english_after_cancel",
+          "result": {
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+            "segments": [
+              {
+                "text": " Today we are testing local speech recognition on an Apple Silicon Mac.",
+                "start": 0.0,
+                "end": 4.24
+              },
+              {
+                "text": " The meeting starts at 9.30.",
+                "start": 4.24,
+                "end": 6.08
+              },
+              {
+                "text": " Please save the transcript and check the timestamps.",
+                "start": 6.08,
+                "end": 8.96
+              }
+            ]
+          },
+          "seconds": 0.5446272079716437
+        },
+        {
+          "name": "final_shutdown",
+          "result": 0,
+          "seconds": 0.07591700000921264
+        }
+      ],
+      "peak_child_rss_bytes": 2866348032
+    }
+  },
+  "package": {
+    "version": "2.6.13",
+    "artifact": "dist/OpenWhisper.app",
+    "executable_sha256": "2a4c275d832b2228ceb91912fcfaf43693b138c9423d5047393dd3bb74c9ca7b",
+    "bundle_bytes": 313618432,
+    "self_test": "passed including lazy widget exports",
+    "signature": "ad-hoc; deep strict validation passed",
+    "architecture_audit": "All Mach-O files include arm64; no absolute host library dependencies",
+    "relocated_gui_launch": "passed",
+    "dmg_created": false,
+    "notarized": false
+  },
+  "native_ui": {
+    "source_classic_cpu_english_upload": "passed",
+    "packaged_classic_metal_spanish_upload": "passed",
+    "classic_minimum_window_logical_pixels": [
+      650,
+      580
+    ],
+    "omarchy_minimum_window_logical_pixels": [
+      550,
+      490
+    ],
+    "model_name_elision": "Expected at narrow widths; complete label available in control",
+    "omarchy_auto_to_cpu_switch": "passed; loaded status changed metal to cpu",
+    "omarchy_quit_during_cpu_upload": "passed; app exit 0 and no test worker remained",
+    "downloads_screen": "Displayed installed runtime and downloaded model; install itself invoked production APIs"
+  },
+  "automated_checks": {
+    "hardware": {
+      "passed": 6
+    },
+    "affected_regression": {
+      "passed": 370,
+      "skipped": 2
+    },
+    "package_regression": {
+      "passed": 36
+    },
+    "ruff_changed_mlx_adapter_and_tests": "passed",
+    "git_diff_check": "passed"
+  },
+  "remaining_validation": [
+    "Physical microphone capture and macOS permission prompt pending user approval",
+    "Paired remote engine not exercised: no second computer",
+    "Real human and noisy multilingual corpus not exercised",
+    "Settings download button itself not used: verified production installer APIs and installed state in UI",
+    "DMG drag-to-Applications, Gatekeeper and notarization not exercised"
+  ],
+  "memory_notes": "Adapter RSS is process high-water RSS; MLX allocation peak includes GPU allocations and is not additive to RSS. Frozen child RSS is RUSAGE_CHILDREN high-water across lifecycle test workers. The source workflow sampler was blocked by the network-denial sandbox and its invalid zero reading was removed.",
+  "offline_notes": "Adapter audit hook reported no connection attempts; production source workflows and frozen lifecycle workers ran with all OS network operations denied after initial download.",
+  "backend_comparison": {
+    "kind": "production_backend_comparison",
+    "date_local": "2026-10-03",
+    "network_denied_by_os": true,
+    "hardware": "Apple M5, 16 GiB",
+    "fixtures": {
+      "english_seconds": 8.9860625,
+      "spanish_seconds": 8.692125,
+      "long_seconds": 305.526125,
+      "source": "Locally synthesized speech, identical WAV input for all backends"
+    },
+    "limitations": [
+      "Sequential single-machine run with one warmup and three English repeats; no shuffled order or accuracy corpus",
+      "Different production models/precision/decoding defaults; measures product configurations, not only implementation",
+      "No physical microphone or power/battery measurements",
+      "Whisper runs followed the Parakeet/MLX run; their sandbox permitted localhost worker IPC only. Turbo long-file timing was deliberately canceled after the completed short comparison; no timing is reported."
+    ],
+    "runs": [
+      {
+        "label": "Existing Parakeet GGUF CPU",
+        "family": "parakeet",
+        "model": "parakeet-v3",
+        "requested_device": "cpu",
+        "warm_english": [
+          {
+            "seconds": 0.31245825003134087,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+          },
+          {
+            "seconds": 0.30669254198437557,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+          },
+          {
+            "seconds": 0.3201337920036167,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+          }
+        ],
+        "observed_device": "cpu",
+        "decoding": {
+          "language": "auto",
+          "precision": "q8_0"
+        },
+        "load": {
+          "seconds": 0.11728920799214393,
+          "result": true
+        },
+        "cold_english": {
+          "seconds": 0.603264041012153,
+          "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+          "phrase_repetitions": 1
+        },
+        "warm_english_median_s": 0.31245825003134087,
+        "spanish": {
+          "seconds": 0.30275437503587455,
+          "text": "Hoy estamos probando el reconocimiento de voz en un ordenador de Apple. La reunión empieza a las nueve y media. Por favor, guarda la transcripción y comprueba los tiempos.",
+          "phrase_repetitions": 0
+        },
+        "long_file": {
+          "seconds": 8.750800917041488,
+          "phrase_repetitions": 34,
+          "word_count": 871,
+          "text_sha256": "071be90f760c895406ad46d504d73db1b0af44bad8c6283cf56e0f7e6378e307"
+        }
+      },
+      {
+        "label": "Parakeet MLX CPU",
+        "family": "parakeet_mlx",
+        "model": "parakeet-v3-mlx",
+        "requested_device": "cpu",
+        "warm_english": [
+          {
+            "seconds": 0.5253604169702157,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+          },
+          {
+            "seconds": 0.3140372500056401,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+          },
+          {
+            "seconds": 0.3063687499961816,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+          }
+        ],
+        "observed_device": "cpu",
+        "decoding": {
+          "language": "auto",
+          "precision": "float32"
+        },
+        "load": {
+          "seconds": 0.44189487502444535,
+          "result": true
+        },
+        "cold_english": {
+          "seconds": 0.8037883339566179,
+          "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+          "phrase_repetitions": 1
+        },
+        "warm_english_median_s": 0.3140372500056401,
+        "spanish": {
+          "seconds": 0.31413987500127405,
+          "text": "Hoy estamos probando el reconocimiento de voz en un ordenador de Apple. La reunión empieza a las nueve y media. Por favor, guarda la transcripción y comprueba los tiempos.",
+          "phrase_repetitions": 0
+        },
+        "long_file": {
+          "seconds": 9.374674000020605,
+          "phrase_repetitions": 34,
+          "word_count": 878,
+          "text_sha256": "a7543231cb3eafad8ac03b186b39390b08a30784ab8b443d64e8d05eb9e33c37"
+        }
+      },
+      {
+        "label": "Parakeet MLX Metal",
+        "family": "parakeet_mlx",
+        "model": "parakeet-v3-mlx",
+        "requested_device": "auto",
+        "warm_english": [
+          {
+            "seconds": 0.12490220798645169,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+          },
+          {
+            "seconds": 0.11933758301893249,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+          },
+          {
+            "seconds": 0.11704566603293642,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+          }
+        ],
+        "observed_device": "metal",
+        "decoding": {
+          "language": "auto",
+          "precision": "bfloat16"
+        },
+        "load": {
+          "seconds": 0.3532316670170985,
+          "result": true
+        },
+        "cold_english": {
+          "seconds": 0.2925932499929331,
+          "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+          "phrase_repetitions": 1
+        },
+        "warm_english_median_s": 0.11933758301893249,
+        "spanish": {
+          "seconds": 0.11475262499880046,
+          "text": "Hoy estamos probando el reconocimiento de voz en un ordenador de Apple. La reunión empieza a las nueve y media. Por favor, guarda la transcripción y comprueba los tiempos.",
+          "phrase_repetitions": 0
+        },
+        "long_file": {
+          "seconds": 3.6454287079977803,
+          "phrase_repetitions": 34,
+          "word_count": 879,
+          "text_sha256": "e88097454752d321e1749ec2f7c3e02bb71a19477d92fe821e9f46365273a529"
+        }
+      },
+      {
+        "label": "Existing Whisper base CPU",
+        "family": "whisper",
+        "model": "base",
+        "requested_device": "cpu",
+        "warm_english": [
+          {
+            "seconds": 0.6791982079739682,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30, please save the transcript and check the timestamps."
+          },
+          {
+            "seconds": 0.6787634170032106,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30, please save the transcript and check the timestamps."
+          },
+          {
+            "seconds": 0.7196829590247944,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30, please save the transcript and check the timestamps."
+          }
+        ],
+        "observed_device": "cpu",
+        "compute_type": "int8",
+        "decoding": {
+          "beam_size": 5,
+          "vad_enabled": true,
+          "language": "auto"
+        },
+        "load": {
+          "seconds": 0.4750318750157021,
+          "result": true
+        },
+        "cold_english": {
+          "seconds": 0.7757053330424242,
+          "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30, please save the transcript and check the timestamps.",
+          "phrase_repetitions": 1
+        },
+        "warm_english_median_s": 0.6791982079739682,
+        "spanish": {
+          "seconds": 0.7747747499961406,
+          "text": "Hoy estamos probando el reconocimiento de voz en un ordenador de Apple. La reunión empieza a las nueve y media. Por favor, guarda la transcripción y comproe a los tiempos.",
+          "phrase_repetitions": 0
+        },
+        "long_file": {
+          "seconds": 63.38963029201841,
+          "phrase_repetitions": 34,
+          "word_count": 850,
+          "text_sha256": "3f366f26eaaa9c50b3cae861310f42952d72b539207686ff2f5a3ed5a5391e2d"
+        }
+      },
+      {
+        "label": "Existing Whisper turbo CPU",
+        "family": "whisper",
+        "model": "turbo",
+        "requested_device": "cpu",
+        "warm_english": [
+          {
+            "seconds": 10.198037624999415,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+          },
+          {
+            "seconds": 10.152506500016898,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+          },
+          {
+            "seconds": 10.274179375031963,
+            "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps."
+          }
+        ],
+        "observed_device": "cpu",
+        "compute_type": "int8",
+        "decoding": {
+          "beam_size": 5,
+          "vad_enabled": true,
+          "language": "auto"
+        },
+        "load": {
+          "seconds": 1.0574720830190927,
+          "result": true
+        },
+        "cold_english": {
+          "seconds": 9.905416541965678,
+          "text": "Today we are testing local speech recognition on an Apple Silicon Mac. The meeting starts at 9.30. Please save the transcript and check the timestamps.",
+          "phrase_repetitions": 1
+        },
+        "warm_english_median_s": 10.198037624999415,
+        "spanish": {
+          "seconds": 10.597174874972552,
+          "text": "Hoy estamos probando el reconocimiento de voz en un ordenador de Apple. La reunión empieza a las 9 y media. Por favor, guarda la transcripción y comprueba los tiempos.",
+          "phrase_repetitions": 0
+        },
+        "long_file_status": "Not measured: optional long timing deliberately canceled after short comparisons completed"
+      }
+    ],
+    "existing_parakeet_weights_bytes": 713975456,
+    "mlx_model_weights_bytes": 2508288736,
+    "comparison_harness_sha256": "7ecacfb5e0cede487722157aba8287322f211753015d5ae6ba107b51358490a6",
+    "whisper_sandbox": {
+      "external_network_denied_by_os": true,
+      "loopback_ipc_allowed": true,
+      "reason": "Isolated Whisper workers use localhost sockets. A deny-all-network profile blocks their IPC, so Whisper runs allowed only localhost connections. External connection denial was verified."
+    },
+    "whisper_model_revisions": {
+      "base": {
+        "repo": "Systran/faster-whisper-base",
+        "revision": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+        "cached_file_bytes": 147882941
+      },
+      "turbo": {
+        "repo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+        "revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+        "cached_file_bytes": 1621665983
+      }
+    },
+    "whisper_harness_sha256": "8a8e125dad59e92428a23f5ac29e31653362755f3b6ec7a7821dcf8e5c619c6b",
+    "speedups_vs_mlx_metal": {
+      "Existing Parakeet GGUF CPU": {
+        "warm_english": 2.6182719821112053,
+        "long_file": 2.40048609312889
+      },
+      "Parakeet MLX CPU": {
+        "warm_english": 2.631503354277078,
+        "long_file": 2.5716245607693042
+      },
+      "Existing Whisper base CPU": {
+        "warm_english": 5.691402413154419,
+        "long_file": 17.38879988324737
+      },
+      "Existing Whisper turbo CPU": {
+        "warm_english": 85.45537262457823
+      }
+    },
+    "sources": {
+      "parakeet_languages": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
+      "whisper_languages": "https://github.com/openai/whisper",
+      "mlx_devices": "https://github.com/ml-explore/mlx"
+    }
+  },
+  "issue_update": {
+    "state": "OPEN",
+    "comment_url": "https://github.com/Knuckles92/OpenWhisper/issues/30#issuecomment-5975313032",
+    "reason": "User requested leaving it open for other Apple Silicon testers",
+    "fixes_pushed": false
+  }
+}

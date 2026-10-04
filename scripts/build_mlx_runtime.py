@@ -21,8 +21,10 @@ import json
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from email.parser import BytesParser
+from http.client import IncompleteRead
 from pathlib import Path
 from urllib.parse import unquote, urlparse
+from urllib.error import URLError
 from urllib.request import urlopen
 
 from packaging.markers import default_environment
@@ -33,9 +35,16 @@ ROOT = Path(__file__).resolve().parents[1]
 MODEL_REPO = "mlx-community/parakeet-tdt-0.6b-v3"
 
 
-def fetch(url):
-    with urlopen(url, timeout=120) as response:
-        return response.read()
+def fetch(url, attempts=3):
+    # A dropped connection must not abort a pin of dozens of wheels; the
+    # digest check in pin_wheel still rejects anything that arrives wrong.
+    for attempt in range(attempts):
+        try:
+            with urlopen(url, timeout=120) as response:
+                return response.read()
+        except (IncompleteRead, URLError, TimeoutError):
+            if attempt + 1 == attempts:
+                raise
 
 
 def pin_wheel(item):

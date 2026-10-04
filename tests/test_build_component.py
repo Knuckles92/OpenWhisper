@@ -16,7 +16,7 @@ def _load_module():
     return module
 
 
-def test_node_archive_specs_cover_windows_and_linux_arches():
+def test_node_archive_specs_cover_windows_linux_and_macos_arches():
     module = _load_module()
     specs = module.node_archive_specs(version="22.23.2")
     platforms = {entry["platform"] for entry in specs}
@@ -24,6 +24,7 @@ def test_node_archive_specs_cover_windows_and_linux_arches():
         module.PLATFORM_WIN_AMD64,
         module.PLATFORM_LINUX_X86_64,
         module.PLATFORM_LINUX_AARCH64,
+        module.PLATFORM_DARWIN_ARM64,
     }
     by_platform = {entry["platform"]: entry for entry in specs}
     assert by_platform[module.PLATFORM_WIN_AMD64]["extract"] == "node-exe"
@@ -38,6 +39,11 @@ def test_node_archive_specs_cover_windows_and_linux_arches():
         by_platform[module.PLATFORM_LINUX_AARCH64]["member"]
         == "node-v22.23.2-linux-arm64/bin/node"
     )
+    assert by_platform[module.PLATFORM_DARWIN_ARM64]["extract"] == "node-tar"
+    assert (
+        by_platform[module.PLATFORM_DARWIN_ARM64]["member"]
+        == "node-v22.23.2-darwin-arm64/bin/node"
+    )
 
 
 def test_node_archive_specs_apply_provided_shasums():
@@ -49,6 +55,7 @@ def test_node_archive_specs_apply_provided_shasums():
             "node-v22.23.2-win-x64.zip": digest,
             "node-v22.23.2-linux-x64.tar.xz": digest,
             "node-v22.23.2-linux-arm64.tar.xz": digest,
+            "node-v22.23.2-darwin-arm64.tar.xz": digest,
         },
     )
     assert all(entry["sha256"] == digest for entry in specs)

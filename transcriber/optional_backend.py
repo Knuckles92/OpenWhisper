@@ -93,12 +93,17 @@ class LocalSpeechBackend(TranscriptionBackend):
         component, device = resolve_runtime(self.backend_id, requested)
         self.runtime_component = component
         if not is_installed(component):
-            from services.components import catalog_entry_for_platform
-            if catalog_entry_for_platform(component) is None:
+            from services.components import catalog_entry_for_platform, check_compatibility
+            entry = catalog_entry_for_platform(component)
+            reason = check_compatibility(entry) if entry is not None else None
+            if entry is None:
                 self.runtime_component = None
                 self.last_error = f"{self.name}'s {device.upper()} runtime is not available on this platform."
+            elif reason:
+                self.runtime_component = None
+                self.last_error = f"{self.name} is not available on this computer. {reason}."
             else:
-                kind = "MLX" if self.backend_id == "parakeet_mlx" else ('GPU' if device == 'cuda' else 'CPU')
+                kind = "MLX" if self.backend_id == "parakeet_mlx" else ('GPU' if device in ('cuda', 'mps') else 'CPU')
                 self.last_error = f"Install {self.name}'s {kind} runtime in Downloads."
             return
         if self.is_model_missing:

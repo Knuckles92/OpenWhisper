@@ -31,6 +31,7 @@ from ui_qt.utils.restyle import repolish, set_style_property
 from ui_qt.widgets.buttons import Button, DangerButton, PrimaryButton
 from ui_qt.widgets.download_row import DownloadRow, row_style
 from ui_qt.widgets.eliding_label import ElidingLabel
+from ui_qt.widgets.speech_backend_picker import speech_model_picker_label
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +157,7 @@ class ModelRowWidget(DownloadRow):
 
         from services.local_asr.catalog import MODELS
         from services.whisper_sources import custom_model_label, is_custom_model
-        label = (MODELS[self.model_name].label if self.model_name in MODELS else
+        label = (speech_model_picker_label(self.model_name) if self.model_name in MODELS else
                  custom_model_label(self.model_name) if is_custom_model(self.model_name) else self.model_name)
         name_label = ElidingLabel(label)
         name_label.setToolTip(self.model_name)

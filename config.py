@@ -28,15 +28,30 @@ def optional_speech_backends_supported(
 ) -> bool:
     """True where every optional local speech runtime is packaged (Windows x64).
 
-    That is where Parakeet is the default. Linux x86_64 and Apple Silicon
-    have only the NVIDIA runtimes, which are opt-in, so Local Whisper stays
-    their default. Mirrors ``services.components.current_platform_tag``
+    That is where the native Parakeet runtime is the default. Apple Silicon
+    uses Parakeet MLX when supported; Linux keeps Local Whisper as its default.
+    Mirrors ``services.components.current_platform_tag``
     without importing it: that module imports this one, so the check is
     repeated here.
     """
     host = platform_name or sys.platform
     arch = (machine if machine is not None else platform.machine()).strip().lower()
     return host.startswith("win") and arch in {"amd64", "x86_64", "x64"}
+
+
+def parakeet_mlx_supported(
+    platform_name: str = None, machine: str = None, macos_version: str = None,
+) -> bool:
+    """Whether this host meets the packaged MLX runtime's macOS 14 baseline."""
+    host = platform_name or sys.platform
+    arch = (machine if machine is not None else platform.machine()).strip().lower()
+    if host != "darwin" or arch not in {"arm64", "aarch64"}:
+        return False
+    release = macos_version if macos_version is not None else platform.mac_ver()[0]
+    try:
+        return int(release.split(".")[0]) >= 14
+    except (ValueError, AttributeError):
+        return False
 
 
 def bundle_root() -> str:
@@ -205,6 +220,7 @@ class AppConfig:
         'Local Whisper',
         'API',
         'Parakeet', 'Qwen3-ASR', 'Nemotron Streaming', 'Moonshine',
+        'Parakeet MLX',
         # A paired computer's engine (services/remote_asr).
         'Remote computer',
     )
@@ -212,10 +228,8 @@ class AppConfig:
     MODEL_VALUE_MAP: Dict[str, str] = None
 
     # Backend ID used for a fresh install or an invalid saved selection.
-    # Parakeet is faster and more accurate than Whisper, so it is the default
-    # wherever its runtime ships (Windows x64); the other platforms have no
-    # optional runtimes, so Local Whisper stays their default. Set in
-    # __post_init__.
+    # Prefer Parakeet MLX on Apple Silicon with macOS 14+, native Parakeet on
+    # Windows x64, and Local Whisper elsewhere. Set in __post_init__.
     DEFAULT_BACKEND: str = None
 
     API_MODEL_CHOICES: tuple[str, ...] = (
@@ -505,6 +519,7 @@ class AppConfig:
 
     # Meeting Mode defaults
     MEETING_WHISPER_MODEL: str = "auto"
+    MEETING_ASR_MODEL: str = None
     MEETING_LANGUAGE: str = "auto"
     MEETING_LLM_MODEL: str = "openrouter/free"
     MEETING_AGENT_CORE: str = "pi"
@@ -559,7 +574,13 @@ class AppConfig:
 
         if self.DEFAULT_BACKEND is None:
             self.DEFAULT_BACKEND = (
+                'parakeet_mlx' if parakeet_mlx_supported() else
                 'parakeet' if optional_speech_backends_supported() else 'local_whisper'
+            )
+
+        if self.MEETING_ASR_MODEL is None:
+            self.MEETING_ASR_MODEL = (
+                'parakeet-v3-mlx' if parakeet_mlx_supported() else ''
             )
 
         if self.WHISPER_MODEL_CHOICES is None:

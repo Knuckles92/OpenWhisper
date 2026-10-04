@@ -102,6 +102,11 @@ from ui_qt.widgets.local_model_picker import LocalModelPicker
 from ui_qt.widgets.nav_rail import NavRail
 from ui_qt.widgets.text_model_picker import TextModelPicker
 from ui_qt.widgets.wrapped_label import WrappedLabel
+from ui_qt.widgets.speech_backend_picker import (
+    backend_display_name,
+    backend_picker_tooltip,
+    populate_backend_combo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,8 +124,7 @@ WHISPER_FILTER = "local_whisper"
 
 
 def _display_name_for_backend(model_value: str) -> str:
-    names = {value: display for display, value in config.MODEL_VALUE_MAP.items()}
-    return names.get(model_value) or names[config.DEFAULT_BACKEND]
+    return backend_display_name(model_value)
 
 
 def agent_core_label(core: str) -> str:
@@ -286,8 +290,7 @@ class ModelAssignments(QObject):
         self.engine_combo = ElidingComboBox()
         self.engine_combo.setObjectName("ondemandEngineCombo")
         self.engine_combo.setMinimumHeight(40)
-        for display in config.MODEL_CHOICES:
-            self.engine_combo.addItem(display, config.MODEL_VALUE_MAP[display])
+        populate_backend_combo(self.engine_combo)
         self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
         card.addWidget(self._field("Recording engine", self.engine_combo))
 
@@ -1365,7 +1368,10 @@ class ModelAssignments(QObject):
             except Exception:
                 model_value = config.DEFAULT_BACKEND
             blocker = self.engine_combo.blockSignals(True)
-            self.engine_combo.setCurrentIndex(max(0, self.engine_combo.findText(_display_name_for_backend(model_value))))
+            index = self.engine_combo.findData(model_value)
+            if index < 0:
+                index = self.engine_combo.findData(config.DEFAULT_BACKEND)
+            self.engine_combo.setCurrentIndex(max(0, index))
             self.engine_combo.blockSignals(blocker)
             self._update_engine_caption()
             self._update_ondemand_whisper_enabled()
@@ -1391,6 +1397,10 @@ class ModelAssignments(QObject):
         value = self.engine_combo.currentData() or "local_whisper"
         from services.local_asr.catalog import BACKENDS, DEFAULT_MODELS, MODELS
         caption = MODELS[DEFAULT_MODELS[value]].purpose + ". Runs locally." if value in BACKENDS else _ENGINE_CAPTIONS.get(value, "")
+        display_name = _display_name_for_backend(value)
+        tip = backend_picker_tooltip(display_name)
+        if tip != display_name:
+            caption += " " + tip
         self.engine_caption.setText(caption)
 
     def _update_ondemand_whisper_enabled(self) -> None:

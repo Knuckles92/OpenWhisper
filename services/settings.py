@@ -478,6 +478,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE: True,
     SettingsKey.CONFIRM_MEETING_DELETE: True,
     # Meeting Mode
+    SettingsKey.MEETING_ASR_MODEL: config.MEETING_ASR_MODEL,
     SettingsKey.MEETING_WHISPER_MODEL: config.MEETING_WHISPER_MODEL,
     SettingsKey.MEETING_LANGUAGE: config.MEETING_LANGUAGE,
     SettingsKey.MEETING_LLM_PROVIDER: TranscriptCleanupProvider.OPENROUTER,
@@ -1110,7 +1111,7 @@ def resolve_meeting_asr_source(settings: Optional[Dict[str, Any]] = None) -> str
 def resolve_meeting_whisper_model(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Return a valid Meeting Mode Whisper model."""
+    """Return a saved Meeting Mode speech model or the platform default."""
     if settings is None:
         settings = settings_manager.load_all_settings()
 
@@ -1123,7 +1124,8 @@ def resolve_meeting_whisper_model(
         from services.whisper_sources import custom_models
         if model in [*config.WHISPER_MODEL_CHOICES, *custom_models(settings)]:
             return model
-    return SETTING_DEFAULTS[SettingsKey.MEETING_WHISPER_MODEL]
+    return (SETTING_DEFAULTS[SettingsKey.MEETING_ASR_MODEL]
+            or SETTING_DEFAULTS[SettingsKey.MEETING_WHISPER_MODEL])
 
 
 def resolve_meeting_language(

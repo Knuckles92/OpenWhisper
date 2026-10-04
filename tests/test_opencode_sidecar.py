@@ -165,7 +165,7 @@ def test_question_operations_are_reported_to_scheduler(authorized_agent):
     assert agent._checkpoint_op_results["active"][0].op["op"] == "ask_question"
 
 
-@pytest.mark.parametrize("platform", ["win_amd64", "linux_x86_64", "linux_aarch64"])
+@pytest.mark.parametrize("platform", ["win_amd64", "linux_x86_64", "linux_aarch64", "darwin_arm64"])
 def test_payload_resolution_does_not_hide_broken_install(monkeypatch, tmp_path, platform):
     monkeypatch.setattr(components, "current_platform_tag", lambda: platform)
     monkeypatch.setattr(components, "is_installed", lambda _: True)
@@ -175,11 +175,12 @@ def test_payload_resolution_does_not_hide_broken_install(monkeypatch, tmp_path, 
 
 
 def test_payload_resolution_and_initialize_are_platform_gated(monkeypatch):
-    monkeypatch.setattr(components, "current_platform_tag", lambda: "darwin_arm64")
+    # Intel Macs have no OpenCode payload; Apple Silicon does.
+    monkeypatch.setattr(components, "current_platform_tag", lambda: None)
     monkeypatch.setattr(components, "is_installed", Mock(side_effect=AssertionError("not consulted")))
     assert components.meeting_agent_payload_dir("opencode") is None
     agent = OpenCodeSidecarAgent("payload")
-    with pytest.raises(RuntimeError, match="Windows x64 and Linux"):
+    with pytest.raises(RuntimeError, match="Windows x64, Linux x64/ARM64 and Apple Silicon"):
         agent.initialize(AgentConfig("m", "openrouter", "test", "key", "charter"), Mock())
     assert agent._runtime_root is None
 
@@ -187,7 +188,7 @@ def test_payload_resolution_and_initialize_are_platform_gated(monkeypatch):
 def test_catalog_offers_every_supported_platform_only_once_pinned():
     from services.opencode_catalog import COMPONENT_VERSION, RELEASE_TAG
     component = components.ComponentId.MEETING_AGENT_OPENCODE
-    assert set(SUPPORTED_PLATFORMS) == {"win_amd64", "linux_x86_64", "linux_aarch64"}
+    assert set(SUPPORTED_PLATFORMS) == {"win_amd64", "linux_x86_64", "linux_aarch64", "darwin_arm64"}
     for platform in SUPPORTED_PLATFORMS:
         entry = components.catalog_entry_for_platform(component, platform_tag=platform)
         assert entry["platform"] == platform and entry["version"] == COMPONENT_VERSION

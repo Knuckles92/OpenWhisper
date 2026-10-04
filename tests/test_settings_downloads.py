@@ -465,7 +465,9 @@ class TestFilter(_DialogTestCase):
         dialog, _values = self._make_dialog()
         combo = dialog.backend_filter_combo
         ids = [combo.itemData(i) for i in range(combo.count())]
-        assert ids == ["all", "local_whisper", *BACKENDS]
+        backends = {"local_whisper": "Whisper", **BACKENDS}
+        expected = sorted(backends, key=lambda key: backends[key].casefold())
+        assert ids == ["all", *expected]
         assert combo.currentData() == "all"
 
     def test_backend_filter_combines_with_status_and_search(self):
@@ -512,8 +514,15 @@ class TestSorting(_DialogTestCase):
 
     def test_default_keeps_assigned_model_in_place(self):
         """Recommended sort must not pin the assigned model to the top."""
+        from config import parakeet_mlx_supported
         dialog, _values = self._make_dialog(active_model="medium")
-        assert self._row_order(dialog)[0] == "tiny"
+        assert self._row_order(dialog)[0] == ("parakeet-v3-mlx" if parakeet_mlx_supported() else "tiny")
+
+    @pytest.mark.parametrize("supported,first", [(True, "parakeet-v3-mlx"), (False, "tiny")])
+    def test_recommended_sort_prefers_mlx_only_on_supported_macs(self, monkeypatch, supported, first):
+        monkeypatch.setattr(dialog_module, "parakeet_mlx_supported", lambda: supported)
+        dialog, _values = self._make_dialog()
+        assert self._row_order(dialog)[0] == first
 
     def test_downloaded_first_groups_cached_models(self):
         dialog, _values = self._make_dialog(
@@ -534,15 +543,16 @@ class TestSorting(_DialogTestCase):
         assert order == sorted(order, key=str.casefold)
 
     def test_backend_sort_keeps_each_family_contiguous(self):
-        """Whisper first, then the optional backends in filter-combo order."""
+        """Families follow the alphabetical backend filter."""
         dialog, _values = self._make_dialog(active_model="medium")
         dialog.sort_combo.setCurrentIndex(dialog.sort_combo.findData("backend"))
         backends = [dialog.rows[name].backend for name in self._row_order(dialog)]
         first_seen = list(dict.fromkeys(backends))
-        assert first_seen == ["local_whisper", "parakeet", "qwen_asr", "nemotron", "moonshine", "parakeet_mlx"]
+        assert first_seen == ["moonshine", "nemotron", "parakeet", "parakeet_mlx", "qwen_asr", "local_whisper"]
         assert backends == sorted(backends, key=first_seen.index)
         # Inside a family the recommended order still applies.
-        assert self._row_order(dialog)[0] == "tiny"
+        whisper_order = [name for name in self._row_order(dialog) if dialog.rows[name].backend == "local_whisper"]
+        assert whisper_order[0] == "tiny"
 
 
 class TestActions(_DialogTestCase):

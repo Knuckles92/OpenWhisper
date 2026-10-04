@@ -1468,7 +1468,8 @@ class TestApiModelField:
         monkeypatch.setattr(module, "settings_manager", manager)
         tab = UploadFileTab()
         local_model = tab.local_engine.model_combo.currentText()
-        assert [tab.model_combo.itemText(i) for i in range(tab.model_combo.count())] == list(config.MODEL_CHOICES)
+        expected_backends = [config.MODEL_VALUE_MAP[name] for name in sorted(config.MODEL_CHOICES, key=str.casefold)]
+        assert [tab.model_combo.itemData(i) for i in range(tab.model_combo.count())] == expected_backends
         tab.choose_backend("API")
         assert tab.local_engine.isHidden()
         assert not tab.api_model_field.isHidden()

@@ -44,6 +44,10 @@ from ui_qt.widgets.remote_link import RemoteLinkGlyph
 from ui_qt.widgets.remote_engine_controls import RemoteEngineControls
 from ui_qt.widgets.remote_model_notice import RemoteModelNotice
 from ui_qt.widgets.wrapped_label import WrappedLabel
+from ui_qt.widgets.speech_backend_picker import (
+    backend_display_name,
+    populate_backend_combo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +228,11 @@ class TranscriptionTabBase(QWidget):
         engine_layout.setContentsMargins(14, 12, 14, 12)
         engine_layout.setSpacing(10)
 
-        self.model_combo = engine_combo(config.MODEL_CHOICES, primary=True)
+        self.model_combo = engine_combo((), primary=True)
+        populate_backend_combo(self.model_combo)
+        self.model_combo.setCurrentIndex(
+            self.model_combo.findData(config.MODEL_VALUE_MAP[self.current_model])
+        )
         self._apply_backend_status(EngineStatus.UNKNOWN)
 
         self.local_engine = LocalEngineControls()
@@ -559,7 +567,8 @@ class TranscriptionTabBase(QWidget):
         """Whether the backend runs here, so its model, device and quant apply."""
         return config.MODEL_VALUE_MAP.get(display_name) not in ("api", "remote")
 
-    def _on_backend_changed(self, display_name: str):
+    def _on_backend_changed(self, _label: str):
+        display_name = backend_display_name(self.model_combo.currentData())
         self.current_model = display_name
         self.refresh_api_model()
         self.local_engine.set_backend(config.MODEL_VALUE_MAP.get(display_name, "local_whisper"))
@@ -573,7 +582,9 @@ class TranscriptionTabBase(QWidget):
                 self.refresh_api_model()
                 self.model_changed.emit(display_name)
             return
-        self.model_combo.setCurrentText(display_name)
+        index = self.model_combo.findData(config.MODEL_VALUE_MAP.get(display_name))
+        if index >= 0:
+            self.model_combo.setCurrentIndex(index)
 
     def current_backend(self) -> str:
         """The selected backend's ``config.MODEL_CHOICES`` label."""
@@ -581,7 +592,7 @@ class TranscriptionTabBase(QWidget):
 
     def set_backend(self, display_name: str):
         """Show a backend as selected without emitting ``model_changed``."""
-        index = self.model_combo.findText(display_name)
+        index = self.model_combo.findData(config.MODEL_VALUE_MAP.get(display_name))
         if index < 0:
             return
         self.model_combo.blockSignals(True)

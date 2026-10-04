@@ -80,6 +80,13 @@ def _run_package_self_test() -> None:
     for module_name in modules:
         importlib.import_module(module_name)
 
+    # The UI's lazy public exports are invisible to static freeze analysis.
+    # Import each one here so a missing inactive screen also fails the build.
+    from ui_qt import widgets
+
+    for name in widgets.__all__:
+        getattr(widgets, name)
+
     from PyQt6.QtWidgets import QApplication
 
     qt_app = QApplication.instance() or QApplication([])

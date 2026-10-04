@@ -441,7 +441,7 @@ class TestMeetingSettings:
         self.resolve_port = resolve_meeting_server_port
 
     def test_defaults_come_from_config(self):
-        assert self.resolve_whisper_model({}) == config.MEETING_WHISPER_MODEL
+        assert self.resolve_whisper_model({}) == (config.MEETING_ASR_MODEL or config.MEETING_WHISPER_MODEL)
         assert self.resolve_language({}) == config.MEETING_LANGUAGE
         assert self.resolve_provider({}) == "openrouter"
         assert self.resolve_llm_model({}) == config.MEETING_LLM_MODEL
@@ -547,7 +547,7 @@ class TestMeetingSettings:
             self.keys.MEETING_SPEAKER_ID_BACKEND: "not-a-backend",
             self.keys.MEETING_SERVER_BIND: "everywhere",
         }
-        assert self.resolve_whisper_model(saved) == config.MEETING_WHISPER_MODEL
+        assert self.resolve_whisper_model(saved) == (config.MEETING_ASR_MODEL or config.MEETING_WHISPER_MODEL)
         assert self.resolve_language(saved) == config.MEETING_LANGUAGE
         assert self.resolve_provider(saved) == "openrouter"
         assert self.resolve_llm_model(saved) == config.MEETING_LLM_MODEL
@@ -807,14 +807,53 @@ def test_model_selection_falls_back_to_platform_default(tmp_path):
     assert manager.load_model_selection() == "local_whisper"
 
 
-def test_default_backend_is_parakeet_only_where_its_runtime_ships():
-    from config import optional_speech_backends_supported
+def test_default_backend_prefers_the_supported_platform_runtime():
+    from config import optional_speech_backends_supported, parakeet_mlx_supported
 
     assert optional_speech_backends_supported("win32", "AMD64")
     assert optional_speech_backends_supported("win32", "x86_64")
     assert not optional_speech_backends_supported("win32", "ARM64")
     assert not optional_speech_backends_supported("linux", "x86_64")
     assert not optional_speech_backends_supported("darwin", "arm64")
-    expected = "parakeet" if optional_speech_backends_supported() else "local_whisper"
+    expected = ("parakeet_mlx" if parakeet_mlx_supported() else
+                "parakeet" if optional_speech_backends_supported() else "local_whisper")
     assert config.DEFAULT_BACKEND == expected
     assert config.DEFAULT_BACKEND in config.MODEL_VALUE_MAP.values()
+
+
+@pytest.mark.parametrize("host,arch,release,backend,meeting_model", [
+    ("darwin", "arm64", "14.0", "parakeet_mlx", "parakeet-v3-mlx"),
+    ("darwin", "aarch64", "26.0.1", "parakeet_mlx", "parakeet-v3-mlx"),
+    ("darwin", "arm64", "13.6", "local_whisper", ""),
+    ("darwin", "arm64", "", "local_whisper", ""),
+    ("darwin", "arm64", "unknown", "local_whisper", ""),
+    ("darwin", "x86_64", "14.0", "local_whisper", ""),
+    ("win32", "AMD64", "", "parakeet", ""),
+    ("win32", "ARM64", "", "local_whisper", ""),
+    ("linux", "aarch64", "14.0", "local_whisper", ""),
+    ("linux", "x86_64", "", "local_whisper", ""),
+])
+def test_speech_defaults_follow_mlx_hardware_and_os_support(
+    monkeypatch, host, arch, release, backend, meeting_model,
+):
+    from config import AppConfig, parakeet_mlx_supported
+
+    monkeypatch.setattr("config.sys.platform", host)
+    monkeypatch.setattr("config.platform.machine", lambda: arch)
+    monkeypatch.setattr("config.platform.mac_ver", lambda: (release, (), arch))
+    defaults = AppConfig()
+    assert parakeet_mlx_supported() == (backend == "parakeet_mlx")
+    assert defaults.DEFAULT_BACKEND == backend
+    assert defaults.MEETING_ASR_MODEL == meeting_model
+
+
+def test_mlx_meeting_default_preserves_explicit_selections(monkeypatch):
+    from services import settings as module
+    from services.settings import resolve_meeting_whisper_model
+
+    defaults = {**module.SETTING_DEFAULTS, SettingsKey.MEETING_ASR_MODEL: "parakeet-v3-mlx"}
+    monkeypatch.setattr(module, "SETTING_DEFAULTS", defaults)
+    assert resolve_meeting_whisper_model({}) == "parakeet-v3-mlx"
+    assert resolve_meeting_whisper_model({SettingsKey.MEETING_WHISPER_MODEL: "auto"}) == "auto"
+    assert resolve_meeting_whisper_model({SettingsKey.MEETING_WHISPER_MODEL: "tiny"}) == "tiny"
+    assert resolve_meeting_whisper_model({SettingsKey.MEETING_ASR_MODEL: "parakeet-v3"}) == "parakeet-v3"

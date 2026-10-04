@@ -1,4 +1,4 @@
-"""Compact local-Whisper assignment control for the Settings model pages."""
+"""Compact local speech-model assignment control for Settings."""
 from typing import Dict, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -13,10 +13,14 @@ from PyQt6.QtWidgets import (
 from config import config
 from services.hf_access import CachedModelInfo, resolve_model_repo
 from ui_qt.widgets.no_wheel import ElidingComboBox
+from ui_qt.widgets.speech_backend_picker import (
+    backend_picker_tooltip,
+    speech_model_picker_label,
+)
 
 
 class LocalModelPicker(QWidget):
-    """Assign a local Whisper model from ``auto`` plus downloaded sizes.
+    """Assign a local model from Whisper sizes and optional speech engines.
 
     Settings → Downloads owns download and delete. Each Settings model
     page uses this picker to choose which cached model it should load.
@@ -71,7 +75,7 @@ class LocalModelPicker(QWidget):
         layout.addWidget(self.caption_label)
 
     def current_model(self) -> str:
-        """Return the staged Whisper model name."""
+        """Return the staged speech-model ID."""
         data = self.model_combo.currentData()
         if isinstance(data, str) and data:
             return data
@@ -97,7 +101,7 @@ class LocalModelPicker(QWidget):
 
         Args:
             cached: Repo-id keyed cache scan from ``scan_cached_models``.
-            selected: Persisted model name, including ``auto``.
+            selected: Persisted speech-model ID, including ``auto``.
             resolved: Concrete model ``auto`` currently maps to, if known.
         """
         from services.local_asr.catalog import MODELS
@@ -105,7 +109,10 @@ class LocalModelPicker(QWidget):
         choices = [*config.WHISPER_MODEL_CHOICES]
         choices.extend(custom or [])
         if self.include_speech_models:
-            choices.extend(key for key, model in MODELS.items() if model.meeting)
+            choices.extend(sorted(
+                (key for key, model in MODELS.items() if model.meeting),
+                key=lambda key: MODELS[key].label.casefold(),
+            ))
         if selected not in choices:
             selected = config.DEFAULT_WHISPER_MODEL
         self._selected = selected
@@ -126,7 +133,7 @@ class LocalModelPicker(QWidget):
             if name == "auto":
                 label = "auto — turbo on GPU · base on CPU"
             else:
-                label = (MODELS[name].label if name in MODELS else
+                label = (speech_model_picker_label(name) if name in MODELS else
                          custom_model_label(name) if is_custom_model(name) else name)
             self.model_combo.addItem(label, name)
             self.model_combo.setItemData(self.model_combo.count() - 1, name,
@@ -139,6 +146,11 @@ class LocalModelPicker(QWidget):
             self.set_caption(f"Automatic selection currently resolves to {resolved}.")
         elif selected == "auto":
             self.set_caption("Automatic selection: turbo on GPU, base on CPU.")
+        elif selected in MODELS:
+            from services.local_asr.catalog import BACKENDS
+            display = BACKENDS[MODELS[selected].backend]
+            tip = backend_picker_tooltip(display)
+            self.set_caption(tip if tip != display else "")
         else:
             self.set_caption("")
 

@@ -120,7 +120,7 @@ def fake_mlx(monkeypatch):
         text="Hello world.",
         sentences=[SimpleNamespace(text="Hello world.", start=0.1, end=0.8)],
     )
-    model = Mock(preprocessor_config=SimpleNamespace(sample_rate=16000, hop_length=160))
+    model = Mock(preprocessor_config=SimpleNamespace(sample_rate=16000, hop_length=160, n_fft=512))
     model.generate.return_value = [result]
     core = SimpleNamespace(
         cpu="cpu",
@@ -136,7 +136,9 @@ def fake_mlx(monkeypatch):
         clear_cache=Mock(),
     )
     loader = Mock(return_value=model)
-    logmel = Mock(return_value="mel")
+    mel = Mock()
+    mel.astype.side_effect = lambda dtype: f"mel-{dtype}"
+    logmel = Mock(return_value=mel)
     monkeypatch.setitem(sys.modules, "mlx", SimpleNamespace(core=core))
     monkeypatch.setitem(sys.modules, "mlx.core", core)
     monkeypatch.setitem(
@@ -167,7 +169,10 @@ def test_mlx_decodes_pcm_and_preserves_meeting_timestamps(
         "segments": [{"text": "Hello world.", "start": 0.1, "end": 0.8}],
     }
     assert len(fake_mlx.logmel.call_args.args[0]) == 16000
-    fake_mlx.model.generate.assert_called_once_with("mel")
+    assert fake_mlx.core.array.call_args.kwargs == {"dtype": "float32"}
+    np.testing.assert_allclose(fake_mlx.core.array.call_args.args[0], [0.01] * 16000)
+    fake_mlx.logmel.return_value.astype.assert_called_once_with(dtype)
+    fake_mlx.model.generate.assert_called_once_with(f"mel-{dtype}")
     engine.close()
     fake_mlx.core.clear_cache.assert_called_once()
 
@@ -179,7 +184,7 @@ def test_mlx_handles_empty_and_very_short_audio(fake_mlx, tmp_path):
     assert engine.transcribe(array.array("f")) == {"text": "", "segments": []}
     fake_mlx.model.generate.assert_not_called()
     result = engine.transcribe(array.array("f", [0.01] * 80))
-    assert len(fake_mlx.logmel.call_args.args[0]) == 160
+    assert len(fake_mlx.logmel.call_args.args[0]) == 512
     assert result["segments"][0]["end"] == 80 / 16000
 
 
@@ -280,3 +285,33 @@ def test_mlx_controls_expose_auto_and_cpu_and_automatic_language():
     assert not controls.language_combo.isEnabled()
     assert controls.model_combo.currentData() == "parakeet-v3-mlx"
     controls.close()
+
+
+@pytest.mark.parametrize("tab_name", ["quick_record_tab", "upload_file_tab"])
+def test_mlx_can_be_selected_in_transcription_tabs(tab_name):
+    from importlib import import_module
+
+    module = import_module(f"ui_qt.widgets.{tab_name}")
+    tab_type = module.QuickRecordTab if tab_name == "quick_record_tab" else module.UploadFileTab
+    tab = tab_type()
+    tab.set_model_selection("parakeet_mlx")
+    assert tab.current_backend() == "Parakeet MLX"
+    assert tab.local_engine.model_combo.currentData() == "parakeet-v3-mlx"
+    assert tab.local_engine.language_combo.currentText() == "Auto"
+    tab.close()
+
+
+def test_mlx_meeting_starts_window_preview(monkeypatch):
+    from meeting.asr.engine import MeetingAsrEngine
+
+    monkeypatch.setattr(LocalSpeechBackend, "_settings", staticmethod(lambda: {}))
+    backend = LocalSpeechBackend("parakeet_mlx")
+    engine = MeetingAsrEngine("parakeet-v3-mlx", "mlx-test", Mock(), defer_load=True)
+    engine._backend = backend
+    factory = Mock()
+    monkeypatch.setattr("meeting.asr.preview.WindowSpeechPreview", factory)
+    callback = Mock()
+    engine.start_preview(callback)
+    assert engine._preview is factory.return_value
+    assert factory.call_args.args[:2] == (backend, callback)
+    engine.stop()

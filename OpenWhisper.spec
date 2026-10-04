@@ -19,7 +19,7 @@ from importlib.metadata import distribution
 from importlib.util import find_spec
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 REPO_ROOT = Path(SPECPATH).resolve()
 sys.path.insert(0, str(REPO_ROOT))
@@ -82,6 +82,10 @@ hiddenimports = [
     "openpyxl",
     "lxml",
 ]
+# The public widget exports use import_module(), so freeze analysis cannot
+# discover them from callers such as MainWindow. Keep inactive screens lazy
+# at runtime while including their modules in the packaged app.
+hiddenimports += collect_submodules("ui_qt.widgets")
 
 # services/credentials.py chooses one explicit OS backend at runtime rather
 # than allowing keyring entry-point discovery. Keep the matching backend in

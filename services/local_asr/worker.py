@@ -9,9 +9,23 @@ import sys
 import traceback
 
 # Embedded Python deliberately ignores the app environment and script directory.
+# A source worker does have this directory on sys.path. Remove it so mlx.py
+# (and nvidia.py) cannot shadow the downloaded namespace packages.
+worker_dir = Path(__file__).resolve().parent
+sys.path[:] = [entry for entry in sys.path if Path(entry).resolve() != worker_dir]
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from services.local_asr.languages import native_language_code, qwen_language_name
+from services.local_asr.languages import native_language_code, qwen_language_name  # noqa: E402
+
+
+def use_runtime_packages(runtime):
+    """Put a macOS runtime's verified wheel tree ahead of the app's packages.
+
+    Windows runtimes are embedded Pythons with no ``site-packages`` folder.
+    """
+    packages = Path(runtime) / "site-packages"
+    if packages.is_dir() and str(packages) not in sys.path:
+        sys.path.insert(0, str(packages))
 
 
 def main():
@@ -36,17 +50,21 @@ def main():
                     from services.local_asr.nvidia import NvidiaRecognizer
                     engine = NvidiaRecognizer(request["runtime"], request["model_path"], device)
                 elif family == "moonshine":
+                    use_runtime_packages(request["runtime"])
                     from services.local_asr.moonshine import MoonshineRecognizer
                     engine = MoonshineRecognizer(request["model_path"], request["model"])
                     device = "cpu"
                 elif family == "qwen_asr":
+                    use_runtime_packages(request["runtime"])
                     import torch
                     from qwen_asr import Qwen3ASRModel
                     if device == "cuda" and not torch.cuda.is_available():
                         raise RuntimeError("CUDA is unavailable for Qwen. Select CPU or install a compatible NVIDIA driver.")
+                    if device == "mps" and not torch.backends.mps.is_available():
+                        device = "cpu"
                     engine = Qwen3ASRModel.from_pretrained(
                         request["model_path"], device_map=device,
-                        dtype=torch.float16 if device == "cuda" else torch.float32,
+                        dtype=torch.float16 if device in ("cuda", "mps") else torch.float32,
                         max_inference_batch_size=1, max_new_tokens=2048,
                     )
                     generate = engine.model.generate
@@ -98,4 +116,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

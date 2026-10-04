@@ -28,7 +28,7 @@ class OpenCodeSidecarAgent(SidecarAgent):
         from services.components import current_platform_tag
         from services.opencode_component import SUPPORTED_PLATFORMS, clean_stale_runtime_dirs
         if current_platform_tag() not in SUPPORTED_PLATFORMS:
-            raise RuntimeError("OpenCode runs on Windows x64 and Linux x64/ARM64 only.")
+            raise RuntimeError("OpenCode runs on Windows x64, Linux x64/ARM64 and Apple Silicon Macs only.")
         from services.component_leases import acquire_component
         from services.components import ComponentId
         clean_stale_runtime_dirs()

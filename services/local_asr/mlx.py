@@ -45,11 +45,15 @@ class MlxRecognizer:
             return dict(text="", segments=[])
         # Audio arrives already resampled to 16 kHz. Use the low-level array
         # API so dictation needs no ffmpeg executable or extra audio file.
-        audio = self.mx.array(samples.tolist(), dtype=self.dtype)
-        minimum = self.model.preprocessor_config.hop_length
+        # MLX's FFT returns complex64 even for bfloat16 input. The pinned
+        # preprocessor views that output as its input dtype, so bfloat16
+        # doubles the frequency dimension and breaks the mel projection.
+        # Keep the waveform/FFT in float32, then cast features for the model.
+        audio = self.mx.array(samples.tolist(), dtype=self.mx.float32)
+        minimum = self.model.preprocessor_config.n_fft
         if len(samples) < minimum:
             audio = self.mx.pad(audio, [(0, minimum - len(samples))])
-        mel = self.get_logmel(audio, self.model.preprocessor_config)
+        mel = self.get_logmel(audio, self.model.preprocessor_config).astype(self.dtype)
         result = self.model.generate(mel)[0]
         duration = len(samples) / 16000
         segments = [

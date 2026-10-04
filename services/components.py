@@ -157,6 +157,7 @@ MEETING_AGENT_RELEASE_TAG: Final[str] = "v2.6.01"
 PLATFORM_WIN_AMD64: Final[str] = "win_amd64"
 PLATFORM_LINUX_X86_64: Final[str] = "linux_x86_64"
 PLATFORM_LINUX_AARCH64: Final[str] = "linux_aarch64"
+PLATFORM_DARWIN_ARM64: Final[str] = "darwin_arm64"
 
 # Official WeSpeaker ResNet34-LM ONNX (~26.5 MB). Input is Kaldi 80-dim
 # fbank [1, T, 80] — the same tensor ``meeting.diarize.embedder`` builds.
@@ -253,6 +254,34 @@ _BUILTIN_MEETING_AGENT_BY_PLATFORM: Final[Dict[str, dict]] = {
                 "extract": "node-tar",
                 "member": (
                     f"node-v{MEETING_AGENT_NODE_VERSION}-linux-arm64/bin/node"
+                ),
+            },
+            dict(_MEETING_AGENT_BUNDLE_ARCHIVE),
+        ),
+    },
+    PLATFORM_DARWIN_ARM64: {
+        "published": True,
+        "version": MEETING_AGENT_COMPONENT_VERSION,
+        "component_api": COMPONENT_API,
+        "platform": PLATFORM_DARWIN_ARM64,
+        # Exact Node binary + uncompressed bundle.cjs bytes. The official
+        # darwin build is signed by the OpenJS Foundation, and urllib sets no
+        # quarantine attribute, so Gatekeeper does not block the runtime.
+        "install_bytes": 127_598_925,
+        "archives": (
+            {
+                "name": f"node-v{MEETING_AGENT_NODE_VERSION}-darwin-arm64.tar.xz",
+                "url": (
+                    f"https://nodejs.org/dist/v{MEETING_AGENT_NODE_VERSION}/"
+                    f"node-v{MEETING_AGENT_NODE_VERSION}-darwin-arm64.tar.xz"
+                ),
+                "sha256": (
+                    "5eff7a9011895aae3f29d06f167b84a62b028a591370c7cafb59103559fd26e1"
+                ),
+                "size_bytes": 25_950_400,
+                "extract": "node-tar",
+                "member": (
+                    f"node-v{MEETING_AGENT_NODE_VERSION}-darwin-arm64/bin/node"
                 ),
             },
             dict(_MEETING_AGENT_BUNDLE_ARCHIVE),
@@ -366,6 +395,8 @@ class ComponentId:
     ASR_NVIDIA_CPU: Final[str] = "asr-nvidia-cpu"
     ASR_NVIDIA_CUDA: Final[str] = "asr-nvidia-cuda"
     ASR_NVIDIA_VULKAN: Final[str] = "asr-nvidia-vulkan"
+    ASR_QWEN: Final[str] = "asr-qwen"
+    ASR_MOONSHINE: Final[str] = "asr-moonshine"
     ASR_PARAKEET_MLX: Final[str] = "asr-parakeet-mlx"
 
 
@@ -438,7 +469,7 @@ def current_platform_tag(
     host = platform or sys.platform
     arch = (machine if machine is not None else platform_module.machine()).strip().lower()
     if host == "darwin" and arch in {"arm64", "aarch64"}:
-        return "darwin_arm64"
+        return PLATFORM_DARWIN_ARM64
     if host.startswith("win"):
         if arch in {"amd64", "x86_64", "x64"}:
             return PLATFORM_WIN_AMD64
@@ -490,10 +521,11 @@ def available_component_ids(
 
     GPU Acceleration (the CUDA libraries Local Whisper loads) is offered on
     Windows x64 and Linux x86_64. The Pi and OpenCode meeting agents are
-    offered on Windows x64 and Linux x86_64/aarch64. Linux x86_64 also offers the native NVIDIA
-    Speech CPU and CUDA runtimes, and the Vulkan one to a computer whose
-    NVIDIA GPU is older than Turing (or that already has it); Apple Silicon
-    Macs offer the CPU one and Parakeet MLX for the Apple GPU.
+    offered on Windows x64, Linux x86_64/aarch64 and Apple Silicon. Linux
+    x86_64 also offers the native NVIDIA Speech CPU and CUDA runtimes, and the
+    Vulkan one to a computer whose NVIDIA GPU is older than Turing (or that
+    already has it); Apple Silicon Macs offer the CPU one and Parakeet MLX for
+    the Apple GPU.
 
     Returns:
         Installable component identifiers, in display order.
@@ -523,13 +555,24 @@ def available_component_ids(
             candidates += (ComponentId.ASR_NVIDIA_VULKAN,)
     elif tag == PLATFORM_LINUX_AARCH64:
         candidates = (ComponentId.MEETING_AGENT, ComponentId.MEETING_AGENT_OPENCODE)
-    elif tag == "darwin_arm64":
-        candidates = (ComponentId.ASR_NVIDIA_CPU, ComponentId.ASR_PARAKEET_MLX)
+    elif tag == PLATFORM_DARWIN_ARM64:
+        candidates = (
+            ComponentId.MEETING_AGENT,
+            ComponentId.MEETING_AGENT_OPENCODE,
+            ComponentId.ASR_NVIDIA_CPU,
+            ComponentId.ASR_PARAKEET_MLX,
+            ComponentId.ASR_QWEN,
+            ComponentId.ASR_MOONSHINE,
+        )
     else:
         return ()
     return tuple(
         component_id for component_id in candidates
         if component_is_published(component_id, platform_tag=tag)
+        # A runtime built for a newer macOS than this one cannot load here.
+        and (platform_tag is not None or not _below_macos_minimum(
+            catalog_entry_for_platform(component_id, platform_tag=tag) or {}
+        ))
     )
 
 
@@ -992,6 +1035,31 @@ def _current_abi() -> str:
     return f"cp{sys.version_info.major}{sys.version_info.minor}"
 
 
+def _macos_version() -> Optional[Tuple[int, ...]]:
+    """This Mac's version, or None off macOS or when it cannot be read."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        return tuple(int(part) for part in platform_module.mac_ver()[0].split("."))
+    except ValueError:
+        return None
+
+
+def _below_macos_minimum(manifest: Mapping) -> Optional[str]:
+    """The ``macos_min`` a runtime needs when this Mac is older, else None."""
+    minimum = manifest.get("macos_min")
+    if not isinstance(minimum, str) or not minimum:
+        return None
+    host = _macos_version()
+    try:
+        required = tuple(int(part) for part in minimum.split("."))
+    except ValueError:
+        return None
+    if host is None or host >= required:
+        return None
+    return minimum
+
+
 def check_compatibility(manifest: dict) -> Optional[str]:
     """Return why a manifest is incompatible, or None."""
     api = manifest.get("component_api")
@@ -1006,6 +1074,10 @@ def check_compatibility(manifest: dict) -> Optional[str]:
     if platform_tag:
         if host_tag is None or platform_tag != host_tag:
             return f"Built for {platform_tag}, which this app cannot use"
+
+    minimum = _below_macos_minimum(manifest)
+    if minimum:
+        return f"Requires macOS {minimum} or later"
 
     # Only components that put Python packages on sys.path carry an ABI tag.
     # A DLL-only payload such as gpu-accel omits it.
@@ -1265,7 +1337,7 @@ def _safe_extract_node_tar(
     *,
     member_name: str,
 ) -> None:
-    """Extract only the Node binary from an official Linux tar.xz archive."""
+    """Extract only the Node binary from an official Linux or macOS tar.xz."""
     raw_member = (member_name or "").replace("\\", "/")
     # Reject absolute configured names before any stripping so the contract is
     # exact against the archive member path.
@@ -1379,6 +1451,21 @@ def _safe_extract_nemo_tar(
             progress(InstallPhase.EXTRACTING, index + 1, len(members))
 
 
+#: Files that prove a macOS wheel-tree speech runtime extracted completely.
+_MACOS_WHEEL_RUNTIME_FILES: Final[Mapping[str, Tuple[str, ...]]] = MappingProxyType({
+    ComponentId.ASR_MOONSHINE: (
+        "moonshine_voice/__init__.py",
+        "_sounddevice_data/portaudio-binaries/libportaudio.dylib",
+    ),
+    ComponentId.ASR_QWEN: (
+        "qwen_asr/__init__.py",
+        "torch/__init__.py",
+        "torch/lib/libtorch_cpu.dylib",
+        "transformers/__init__.py",
+    ),
+})
+
+
 def _validate_component_payload(component_id: str, target_dir: str) -> None:
     if component_id == ComponentId.MEETING_AGENT_OPENCODE:
         from services.opencode_component import validate_payload
@@ -1386,7 +1473,15 @@ def _validate_component_payload(component_id: str, target_dir: str) -> None:
         return
     if component_id in RUNTIME_IDS:
         tag = current_platform_tag()
-        if tag == "darwin_arm64":
+        if tag == PLATFORM_DARWIN_ARM64:
+            if component_id in _MACOS_WHEEL_RUNTIME_FILES:
+                packages = os.path.join(target_dir, "site-packages")
+                if any(
+                    not os.path.isfile(os.path.join(packages, name))
+                    for name in _MACOS_WHEEL_RUNTIME_FILES[component_id]
+                ):
+                    raise ComponentError("The speech runtime is missing required files.")
+                return
             if component_id == ComponentId.ASR_PARAKEET_MLX:
                 packages = os.path.join(target_dir, "site-packages")
                 required = ("parakeet_mlx/__init__.py", "mlx/nn/__init__.py", "mlx/lib/libmlx.dylib", "mlx/lib/mlx.metallib", "librosa/__init__.py", "dacite/__init__.py")
