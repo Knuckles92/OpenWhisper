@@ -162,6 +162,16 @@
 .pf-check-state.pf-ready { color: var(--success); }
 .pf-check-state.pf-warn { color: var(--warning); }
 
+.pf-audio-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hair);
+}
+
+.pf-audio-checks p { margin: 0; color: var(--soft); font-size: 12px; }
+
 .pf-copy {
   padding: 4px 12px;
   border-radius: 999px;

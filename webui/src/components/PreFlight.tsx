@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { MeetingInfo, MeetingStateDoc, Op, Participant } from '../types';
 import { initials, speakerColor } from '../people';
 import MeetingBrief from './MeetingBrief';
+import AudioCheck from './AudioCheck';
 import './preflight.css';
 
 export interface PreFlightProps {
@@ -74,9 +75,13 @@ export default function PreFlight({
   const cloud: [Readiness, string] = !state.cloud_enabled
     ? ['off', 'Off — transcript only']
     : state.intelligence_online ? ['ready', 'Online'] : ['warn', 'Offline'];
+  const micWaiting = capture?.mic_available && capture.mic_receiving === false;
+  const loopbackWaiting = capture?.loopback_available && capture.loopback_receiving === false;
   const rows: Array<{ label: string; state: Readiness; detail: string }> = [
-    { label: 'Microphone', state: capture?.mic_available ? 'ready' : 'warn', detail: capture?.mic_available ? 'Detected' : 'Not detected' },
-    { label: 'System audio', state: capture?.loopback_available ? 'ready' : 'off', detail: capture?.loopback_available ? 'Capturing' : 'Not captured' },
+    { label: 'Microphone', state: micWaiting ? 'warn' : capture?.mic_available ? 'ready' : 'warn',
+      detail: micWaiting ? 'Connected · waiting for audio blocks' : capture?.mic_available ? 'Detected' : 'Not detected' },
+    { label: 'System audio', state: loopbackWaiting ? 'warn' : capture?.loopback_available ? 'ready' : 'off',
+      detail: loopbackWaiting ? 'Connected · waiting for audio blocks' : capture?.loopback_available ? 'Capturing' : 'Not captured' },
     ...(state.speech?.source === 'remote' ? [{
       label: 'Remote speech', state: (state.speech.connected ? 'ready' : 'warn') as Readiness,
       detail: state.speech.connected ? state.speech.host : 'Reconnecting · audio saved here',
@@ -135,6 +140,13 @@ export default function PreFlight({
               </li>
             )}
           </ul>
+          {isHost && capture && (
+            <div className="pf-audio-checks">
+              <p>Verify each source before relying on the transcript.</p>
+              <AudioCheck capture={capture} channel="mic" paused={paused} />
+              <AudioCheck capture={capture} channel="loopback" paused={paused} />
+            </div>
+          )}
           <span className="sr-only" role="status" aria-live="polite">{copied ? 'Guest link copied.' : ''}</span>
         </div>
 

@@ -81,7 +81,8 @@ test('note request no-op and exception preserve draft; rerender offline prevents
 
 test('selection effects open dialog; failed save retains correction; retry saves exact op and restores focus', async () => {
   const calls = [], pending = deferred();
-  await mount(SelectionInsight, {live:true, online:true, onSend: op => { calls.push(op); return calls.length === 1 ? pending.promise : Promise.resolve(true); }});
+  await mount(SelectionInsight, {live:true, online:true, resolvePassageSelection: () => null,
+    onSend: op => { calls.push(op); return calls.length === 1 ? pending.promise : Promise.resolve(true); }});
   const source = document.createElement('textarea');
   source.value = 'Entropic builds models'; document.body.prepend(source);
   source.focus(); source.setSelectionRange(0, 8);
@@ -91,6 +92,9 @@ test('selection effects open dialog; failed save retains correction; retry saves
   assert.equal(dialog.open, true);
   assert.equal(dialog.querySelector('blockquote').textContent, 'Entropic');
   await input(dialog.querySelector('input'), 'Anthropic');
+  const meetingScope = dialog.querySelector('input[type=radio]');
+  assert.equal(meetingScope.checked, false);
+  await click(meetingScope);
   await input(dialog.querySelector('textarea'), 'The AI company.');
   const send = dialog.querySelector('[type=submit]');
   await click(send);
@@ -98,7 +102,7 @@ test('selection effects open dialog; failed save retains correction; retry saves
   await act(async () => pending.resolve(false));
   assert.equal(dialog.open, true);
   assert.equal(dialog.querySelector('input').value, 'Anthropic');
-  assert.match(dialog.textContent, /please retry/);
+  assert.match(dialog.textContent, /reselect the passage and try again/);
   await click(send);
   assert.equal(dialog.open, false);
   assert.equal(document.activeElement, source);

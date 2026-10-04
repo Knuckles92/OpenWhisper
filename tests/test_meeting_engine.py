@@ -1468,6 +1468,60 @@ class TestEndLifecycle:
 # Capture recovery
 
 class TestCaptureRecovery:
+    def test_open_portaudio_stream_without_callbacks_is_restarted(
+            self, make_engine, fakes, monkeypatch):
+        import meeting.capture.health as health
+        import meeting.engine as engine_module
+
+        monkeypatch.setattr(FakeSource, "requires_audio_blocks", True, raising=False)
+        monkeypatch.setattr(health, "FIRST_BLOCK_GRACE_S", 0.08)
+        monkeypatch.setattr(engine_module, "CAPTURE_WATCHDOG_INTERVAL_S", 0.01)
+        monkeypatch.setattr(engine_module, "CAPTURE_RETRY_INTERVAL_S", 0.0)
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        original = engine._capture_source("mic")
+        deadline = time.monotonic() + 1.5
+        while time.monotonic() < deadline and engine._capture_source("mic") is original:
+            time.sleep(0.01)
+        assert engine._capture_source("mic") is not original
+        assert original.stopped is True
+        assert "mic" in engine._capture_stall_channels
+
+    def test_quiet_callbacks_keep_capture_live_without_signal_claim(
+            self, make_engine, monkeypatch):
+        from meeting.interfaces import CaptureBlock
+        import meeting.capture.health as health
+        import meeting.engine as engine_module
+
+        monkeypatch.setattr(FakeSource, "requires_audio_blocks", True, raising=False)
+        monkeypatch.setattr(health, "FIRST_BLOCK_GRACE_S", 0.08)
+        monkeypatch.setattr(health, "BLOCK_STALL_S", 0.08)
+        monkeypatch.setattr(engine_module, "CAPTURE_WATCHDOG_INTERVAL_S", 0.01)
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        mic = engine._capture_source("mic")
+        for _ in range(10):
+            mic.callback(CaptureBlock(
+                channel="mic", frames=np.zeros(1600, np.int16),
+                sample_rate=16000, t_mono=time.monotonic(),
+            ))
+            time.sleep(0.02)
+            assert engine._capture_source("mic") is mic
+        engine._update_capture_status()
+        capture = engine.store.snapshot()["capture"]
+        assert capture["mic_receiving"] is True
+        assert capture["mic_signal_windows"] == 0
+
+    def test_microphone_stall_guidance_survives_microphone_only_message(
+            self, make_engine):
+        engine = make_engine(cloud_enabled=False, system_audio_policy="disabled")
+        engine.start()
+        engine._capture_stall_channels.add("mic")
+        engine._update_capture_status()
+        message = engine.store.snapshot()["capture"]["message"]
+        assert "microphone-only choice" in message
+        assert "no audio blocks are arriving" in message
+
     def test_default_loopback_change_restarts_only_that_channel(
             self, make_engine, fakes, monkeypatch):
         import meeting.engine as engine_module

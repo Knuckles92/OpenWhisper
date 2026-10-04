@@ -175,6 +175,8 @@ class MeetingEngine:
         self._capture_watchdog_stop: Optional[threading.Event] = None
         self._capture_watchdog_thread: Optional[threading.Thread] = None
         self._capture_last_attempt: Dict[str, float] = {}
+        self._capture_monitors: Dict[str, Any] = {}
+        self._capture_stall_channels: set[str] = set()
         self._system_audio_disabled = False
         self._loopback_was_available = False
         self._explicit_capture_message: Optional[str] = None
@@ -1667,6 +1669,8 @@ class MeetingEngine:
             ) from exc
 
         self._sources = []
+        self._capture_monitors = {}
+        self._capture_stall_channels = set()
         self._system_audio_disabled = (
             str(self.options.system_audio_policy or "auto").lower() == "disabled"
         )
@@ -1794,11 +1798,18 @@ class MeetingEngine:
             channel. An existing reused spool is left intact on failure.
         """
         from meeting.capture.spool import SpoolWriter  # already validated
+        from meeting.capture.health import CaptureSignalMonitor
 
         channel = source.channel
         created_spool = False
         with self._capture_lock:
             spool = self._spools.get(channel) if reuse_spool else None
+            monitor = self._capture_monitors.get(channel)
+            if monitor is None:
+                monitor = CaptureSignalMonitor()
+                self._capture_monitors[channel] = monitor
+            else:
+                monitor.reset_stream()
         if spool is None:
             spool = SpoolWriter(
                 self.meeting_id, channel, self._spool_dir,
@@ -1810,7 +1821,7 @@ class MeetingEngine:
             created_spool = True
         started = False
         try:
-            source.start(self._make_block_router(channel, spool))
+            source.start(self._make_block_router(channel, spool, monitor))
             started = True
             active = bool(source.is_active())
         except Exception:
@@ -1842,11 +1853,23 @@ class MeetingEngine:
             self._sources.append(source)
         return True
 
-    def _make_block_router(self, channel: str, spool: Any) -> Callable[[CaptureBlock], None]:
+    def _make_block_router(self, channel: str, spool: Any,
+                           monitor: Optional[Any] = None) -> Callable[[CaptureBlock], None]:
         """Audio-thread callback: drops blocks while paused, never raises."""
         error_logged = [False]
+        health_error_logged = [False]
 
         def route(block: CaptureBlock) -> None:
+            if monitor is not None:
+                try:
+                    monitor.observe(
+                        block,
+                        signal_enabled=self._active and not self.clock.is_paused,
+                    )
+                except Exception:
+                    if not health_error_logged[0]:
+                        health_error_logged[0] = True
+                        logger.exception("Capture health observation failed on %s", channel)
             if not self._active or self.clock.is_paused:
                 return
             try:
@@ -1928,6 +1951,18 @@ class MeetingEngine:
                     desired = self._probe_capture_device(channel)
                     source = self._capture_source(channel)
                     active = source is not None and bool(source.is_active())
+                    monitor = self._capture_monitors.get(channel)
+                    health = monitor.snapshot() if monitor is not None else None
+                    if active and health is not None and health["receiving"]:
+                        self._capture_stall_channels.discard(channel)
+                    if (active and health is not None and health["stalled"]
+                            and getattr(source, "requires_audio_blocks", False)):
+                        # PortAudio can report an open/active stream without
+                        # ever invoking its callback. Other capture backends
+                        # already include block delivery in is_active().
+                        active = False
+                        self._capture_stall_channels.add(channel)
+                        logger.warning("%s capture stream stalled despite an open device", channel)
                     changed = False
                     if active:
                         source_id = getattr(source, "device_id", None)
@@ -2032,6 +2067,11 @@ class MeetingEngine:
                 source.channel for source in self._sources
                 if bool(source.is_active())
             }
+            monitors = dict(self._capture_monitors)
+        health = {
+            channel: monitor.snapshot()
+            for channel, monitor in monitors.items()
+        }
         loopback_available = CHANNEL_LOOPBACK in active
         if (
             loopback_available
@@ -2042,24 +2082,44 @@ class MeetingEngine:
             self._explicit_capture_message = None
         self._loopback_was_available = loopback_available
         if not message:
+            missing = []
+            if CHANNEL_MIC not in active:
+                missing.append("Microphone unavailable")
+            elif CHANNEL_MIC in self._capture_stall_channels:
+                missing.append(
+                    "Microphone is connected but no audio blocks are arriving; "
+                    "check the selected input device"
+                )
+            if CHANNEL_LOOPBACK not in active:
+                if self._system_audio_disabled:
+                    missing.append(
+                        "System audio disabled for this meeting by your "
+                        "microphone-only choice"
+                    )
+                else:
+                    missing.append("System audio unavailable")
+            elif CHANNEL_LOOPBACK in self._capture_stall_channels:
+                missing.append(
+                    "System audio is connected but no audio blocks are arriving; "
+                    "check the output device"
+                )
             if self._explicit_capture_message and not loopback_available:
+                # A deliberate microphone-only message must not hide a new
+                # microphone callback stall.
                 message = self._explicit_capture_message
+                if CHANNEL_MIC in self._capture_stall_channels:
+                    message += " " + missing[0]
             else:
-                missing = []
-                if CHANNEL_MIC not in active:
-                    missing.append("Microphone unavailable")
-                if CHANNEL_LOOPBACK not in active:
-                    if self._system_audio_disabled:
-                        missing.append(
-                            "System audio disabled for this meeting by your "
-                            "microphone-only choice"
-                        )
-                    else:
-                        missing.append("System audio unavailable")
                 message = "; ".join(missing)
         capture = {
             "mic_available": CHANNEL_MIC in active,
             "loopback_available": loopback_available,
+            "mic_receiving": bool(health.get(CHANNEL_MIC, {}).get("receiving")),
+            "loopback_receiving": bool(health.get(CHANNEL_LOOPBACK, {}).get("receiving")),
+            "mic_signal_windows": int(health.get(CHANNEL_MIC, {}).get("signal_windows", 0)),
+            "loopback_signal_windows": int(health.get(CHANNEL_LOOPBACK, {}).get("signal_windows", 0)),
+            "mic_source_generation": int(health.get(CHANNEL_MIC, {}).get("generation", 0)),
+            "loopback_source_generation": int(health.get(CHANNEL_LOOPBACK, {}).get("generation", 0)),
             "message": message,
         }
         previous = self.store.with_state(lambda state: dict(state.capture))

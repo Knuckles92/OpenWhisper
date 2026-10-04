@@ -1,0 +1,67 @@
+{
+  "date": "2026-10-03",
+  "proposal": "Make claim evidence checks affect the final meeting record, including acceptance, owner, deadline, retraction, and coverage review.",
+  "scope": "Public AMI meetings IN1005, IN1007, IN1009; 26 existing action and decision cards from two generated package arms; same cards and draft transcripts for every check.",
+  "label_provenance": "Prior blind Gemini 3.8 Flash audit against human AMI transcript windows around cited ASR times. These are model labels, not human gold judgments.",
+  "label_source_sha256": "aa5437a860e5a83867582cfe81fd524a29f1138ec03cff160039b8381699e616",
+  "labels": {"supported": 20, "overstated": 5, "unclear": 1},
+  "model": "jev-1.13.0",
+  "current_default": {
+    "cards_retained": 26,
+    "supported_retained": 20,
+    "overstated_retained": 5,
+    "audit_agreement_precision": 0.7692,
+    "supported_retention": 1.0,
+    "overstated_flag_recall": 0.0
+  },
+  "existing_cited_only_opt_in": {
+    "cards_retained_as_supported": 0,
+    "supported_retention": 0.0,
+    "overstated_flag_recall": 1.0,
+    "interpretation": "Flags every claim; it has no useful selective coverage on this set."
+  },
+  "existing_expanded_review": {
+    "cards_retained_as_inferred": 0,
+    "supported_retention": 0.0,
+    "overstated_flag_recall": 1.0,
+    "interpretation": "All cards are provisional; this is a human-review queue, not an automatically more accurate final record."
+  },
+  "meeting_separated_calibration": {
+    "method": "Search one-score thresholds on IN1005 and IN1009 only, require at least three retained cards, maximize balanced accuracy with precision and recall tie breaks; apply unchanged to IN1007.",
+    "chosen_gate": "acceptance >= 0.2",
+    "training": {
+      "cards": 16,
+      "retained": 9,
+      "audit_agreement_precision": 0.8889,
+      "supported_retention": 0.6667,
+      "non_supported_flag_recall": 0.75
+    },
+    "held_out_IN1007": {
+      "cards": 10,
+      "retained": 10,
+      "audit_agreement_precision": 0.8,
+      "supported_retention": 1.0,
+      "overstated_flag_recall": 0.0,
+      "all_pass_baseline_precision": 0.8
+    },
+    "interpretation": "The selected gate provides no gain on the held-out meeting. The split was chosen after score inspection and is exploratory, not blind prospective validation."
+  },
+  "cost": {
+    "type_safe_requests": 52,
+    "failures": 0,
+    "input_tokens": 110423,
+    "input_tokens_per_card_two_checks": 4247,
+    "citation_median_seconds": 0.100,
+    "expanded_review_median_seconds": 0.128
+  },
+  "not_measured": [
+    "Recall of actions or decisions omitted entirely by the generator",
+    "Human acceptance and correction time for flagged cards",
+    "End-to-end final-record accuracy after human review",
+    "Live meeting latency and UI impact"
+  ],
+  "reproduce": [
+    "python -m benchmarks.meeting_mode.evidence_check_eval",
+    "python -m benchmarks.meeting_mode.evidence_check_calibration"
+  ]
+}

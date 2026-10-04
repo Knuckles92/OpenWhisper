@@ -64,6 +64,20 @@ test('remote speech shows its host and outage without claiming capture stopped',
   assert.doesNotMatch(container.textContent, /Host offline/);
 });
 
+test('live header distinguishes connected devices from arriving audio blocks', async () => {
+  const state = {...meetingState('m_current', 'Current meeting'), status: 'active',
+    capture: {mic_available:true, loopback_available:true, mic_receiving:false,
+      loopback_receiving:false, message:''}};
+  await mount(HeaderBar, headerProps({state, meetingEnded:false, showHistory:false}));
+  assert.match(container.querySelector('.cb-capture').textContent, /waiting for audio blocks/);
+  await rerender(HeaderBar, headerProps({state: {...state, capture: {...state.capture,
+    mic_receiving:true, loopback_receiving:false}}, meetingEnded:false, showHistory:false}));
+  assert.match(container.querySelector('.cb-capture').textContent, /system audio waiting for audio blocks/);
+  await rerender(HeaderBar, headerProps({state: {...state, capture: {...state.capture,
+    mic_receiving:true, loopback_receiving:true}}, meetingEnded:false, showHistory:false}));
+  assert.equal(container.querySelector('.cb-capture').textContent, 'Mic + system audio');
+});
+
 test('the history header opens the selected meeting instead of leaving for this dashboard', async () => {
   const pressed = [];
   await mount(HeaderBar, headerProps({

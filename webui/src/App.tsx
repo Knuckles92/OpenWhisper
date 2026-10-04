@@ -5,7 +5,7 @@ import RecordingPlayer, { type PlaybackMoment } from './components/RecordingPlay
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api } from './api';
 import SelectionInsight from './components/SelectionInsight';
-import { correctedSegments, correctionText } from './corrections';
+import { correctedSegments, correctionText, segmentFingerprint, stableOccurrenceIndex } from './corrections';
 import { hydrateTranscript, sendDashboardAction, type TranscriptLoadState } from './dashboardActions';
 import CardsPane from './components/CardsPane';
 import HeaderBar from './components/HeaderBar';
@@ -165,11 +165,20 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
     );
   }, [onActionError]);
 
-  // Term corrections come from the user_notes card alone; keying on it keeps
+  // Transcript corrections come from the user_notes card; keying on it keeps
   // unrelated state ticks from re-mapping every transcript row.
   const userNotes = ui.state?.cards.user_notes;
   const correct = useMemo(() => correctionText(userNotes), [userNotes]);
-  const segments = useMemo(() => correctedSegments(ui.segments, correct), [ui.segments, correct]);
+  const segments = useMemo(() => correctedSegments(ui.segments, correct, userNotes), [ui.segments, correct, userNotes]);
+  const resolvePassageSelection = useCallback((segmentId: string, source: string,
+    displayStart: number, displayed: string): { occurrenceIndex: number; baseFingerprint: string } | null => {
+    const segment = ui.segments.find((item) => item.id === segmentId);
+    if (!segment) return null;
+    const base = correct(segment.original_text ?? segment.text);
+    const occurrenceIndex = stableOccurrenceIndex(base, displayed,
+      userNotes, segmentId, source, displayStart);
+    return occurrenceIndex === null ? null : { occurrenceIndex, baseFingerprint: segmentFingerprint(base) };
+  }, [ui.segments, correct, userNotes]);
 
   const participants = useMemo(
     () => (ui.state ? Object.values(ui.state.participants) : []),
@@ -249,7 +258,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
 
   return (
     <div className="app-shell">
-      {!showHistory && <SelectionInsight key={ui.state.meeting_id} onSend={sendOp} live={ui.state.status === 'active'} online={ui.state.cloud_enabled && ui.state.intelligence_online} />}
+      {!showHistory && <SelectionInsight key={ui.state.meeting_id} onSend={sendOp} live={ui.state.status === 'active'} online={ui.state.cloud_enabled && ui.state.intelligence_online} resolvePassageSelection={resolvePassageSelection} />}
       <HeaderBar
         token={token}
         isHost={isHost}

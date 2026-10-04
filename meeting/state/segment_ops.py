@@ -53,6 +53,7 @@ def handle_segment_op(
         new_text = effect.get("text") or ""
         updated = dict(prior)
         updated["text"] = new_text
+        updated["original_text"] = new_text
         result.effect = {
             "entity": "segment_text",
             "segment_id": segment_id,
@@ -62,7 +63,10 @@ def handle_segment_op(
         return {
             "op": "revise_segment_text",
             "segment_id": segment_id,
-            "text": prior.get("text") or "",
+            # Repository reads project active human corrections into `text`.
+            # Undo must restore the stored ASR/polish text, never that view.
+            "text": prior.get("original_text") if isinstance(prior.get("original_text"), str)
+            else prior.get("text") or "",
             "evidence": [segment_id],
         }
 

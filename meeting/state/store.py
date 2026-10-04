@@ -23,6 +23,7 @@ from copy import copy, deepcopy
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from meeting.interfaces import OpResult
+from meeting.corrections import StaleCorrectionSelection
 from meeting.state.patches import SEGMENT_OPS, OpContext, apply_ops
 from meeting.state.schema import MeetingState
 
@@ -241,6 +242,12 @@ class MeetingStateStore:
                         )
                         if isinstance(persisted, dict):
                             candidate = self._reconcile_persisted(candidate, persisted)
+                    except StaleCorrectionSelection:
+                        for result in applied:
+                            result.ok = False
+                            result.reason = "stale_selection"
+                            result.seq = None
+                        return results
                     except Exception:
                         logger.exception(
                             "State persistence failed (meeting %s)",

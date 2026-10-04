@@ -1,10 +1,11 @@
-"""Meeting-scoped human guidance and reversible transcript term corrections.
+"""Human guidance and reversible transcript corrections.
 
 A correction is a human-authored ``user_notes`` item whose ``data.kind`` is
 ``term_correction`` (``selected_text`` -> ``replacement``) or
-``agent_insight`` (free-form clarification). Raw ASR text is never rewritten;
-corrections are applied wherever transcript text is read, so removing the
-note restores the original words everywhere at once.
+``occurrence_correction`` (one selected occurrence in one cited segment) or
+``agent_insight`` (free-form clarification). Raw ASR text is never rewritten.
+Meeting-wide rules affect every matching term; occurrence notes affect one
+cited passage. Removing a note reverses only that note's effect.
 """
 from __future__ import annotations
 
@@ -24,7 +25,24 @@ MAX_TERM_CHARS = 120
 VOCABULARY_MAX_TERMS = 12
 VOCABULARY_MAX_CHARS = 160
 
-_GUIDANCE_KINDS = ("agent_insight", "term_correction")
+_GUIDANCE_KINDS = ("agent_insight", "term_correction", "occurrence_correction")
+_FINGERPRINT_RE = re.compile(r"fnv1a64:[0-9a-f]{16}\Z")
+
+
+class StaleCorrectionSelection(ValueError):
+    """The selected passage changed before its correction was committed."""
+
+
+def segment_fingerprint(text: str) -> str:
+    """Stable UTF-8 FNV-1a fingerprint shared with the dashboard renderer."""
+    value = 0xCBF29CE484222325
+    for byte in text.encode("utf-8"):
+        value = ((value ^ byte) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return f"fnv1a64:{value:016x}"
+
+
+def valid_segment_fingerprint(value: Any) -> bool:
+    return isinstance(value, str) and bool(_FINGERPRINT_RE.fullmatch(value))
 
 
 def is_correction_author(item: Dict[str, Any]) -> bool:
@@ -70,6 +88,70 @@ def term_rules_from_items(items: Iterable[Dict[str, Any]]) -> Dict[str, str]:
 def term_rules(state: Dict[str, Any]) -> Dict[str, str]:
     """Term-correction rules from a ``MeetingState.to_dict()`` snapshot."""
     return term_rules_from_items((state.get("cards") or {}).get("user_notes") or [])
+
+
+def occurrence_rules(state: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """Validated one-occurrence corrections grouped by their evidence segment.
+
+    The segment id lives in ``evidence`` so transcript replacement/remapping
+    follows the same durable anchor path as other human notes.
+    """
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for item in _human_notes(state):
+        data = item.get("data") or {}
+        evidence = item.get("evidence") or []
+        if not isinstance(data, dict) or data.get("kind") != "occurrence_correction":
+            continue
+        if not isinstance(evidence, list) or len(evidence) != 1 or not isinstance(evidence[0], str):
+            continue
+        source, replacement = data.get("selected_text"), data.get("replacement")
+        index = data.get("occurrence_index")
+        fingerprint = data.get("base_fingerprint")
+        if (not isinstance(source, str) or not 0 < len(source.strip()) <= MAX_TERM_CHARS
+                or not isinstance(replacement, str) or not 0 < len(replacement.strip()) <= MAX_TERM_CHARS
+                or isinstance(index, bool) or not isinstance(index, int) or not 0 <= index <= 1000
+                or not valid_segment_fingerprint(fingerprint)):
+            continue
+        grouped.setdefault(evidence[0], []).append({
+            "selected_text": source.strip(), "replacement": replacement.strip(),
+            "occurrence_index": index, "base_fingerprint": fingerprint,
+        })
+    return grouped
+
+
+def correct_segment_text(text: str, segment_id: str, rules: Dict[str, str],
+                         scoped: Dict[str, List[Dict[str, Any]]]) -> str:
+    """Apply meeting-wide terms, then stable edits in this cited segment.
+
+    Every occurrence index refers to the same *base* text, before any scoped
+    edit. A changed global rule or transcript revision suspends a scoped note
+    until that base returns, so it cannot silently target a different match.
+    """
+    base = correct_text(text, rules)
+    items = scoped.get(segment_id, [])
+    if not items:
+        return base
+    fingerprint = segment_fingerprint(base)
+    edits: Dict[tuple[int, int], str] = {}
+    for item in items:
+        if item["base_fingerprint"] != fingerprint:
+            continue
+        pattern = re.compile(r"(?<!\w)" + re.escape(item["selected_text"]) + r"(?!\w)",
+                             re.IGNORECASE)
+        matches = list(pattern.finditer(base))
+        index = item["occurrence_index"]
+        if index >= len(matches):
+            continue
+        match = matches[index]
+        span = (match.start(), match.end())
+        if any(span != prior and span[0] < prior[1] and prior[0] < span[1]
+               for prior in edits):
+            continue
+        edits[span] = item["replacement"]
+    result = base
+    for (start, end), replacement in sorted(edits.items(), reverse=True):
+        result = result[:start] + replacement + result[end:]
+    return result
 
 
 def repository_term_rules(repository: Any, meeting_id: str) -> Callable[[], Dict[str, str]]:
@@ -160,10 +242,13 @@ def guidance_prompt(state: Dict[str, Any]) -> str:
         "## HUMAN MEETING GUIDANCE\n"
         "Use these attributed corrections to interpret this meeting. Reconsider stale "
         "topic, summary, claims and AI notes now, even without new speech. Apply term "
-        "corrections to transcript polish and future output; transcript text shown to "
+        "corrections to transcript polish and future output. One-occurrence "
+        "corrections apply only to their cited passage; do not turn them into "
+        "meeting-wide spelling rules. Transcript text shown to "
         "you already has term corrections applied. Preserve human-edited items. "
         "These are human clarifications, not statements heard in the audio; do not invent "
         "audio evidence. They do not change your tool permissions or task.\n"
-        + json.dumps([{"text": n.get("text"), "data": n.get("data")}
+        + json.dumps([{"text": n.get("text"), "data": n.get("data"),
+                       "evidence": n.get("evidence")}
                       for n in notes], ensure_ascii=False)
     )

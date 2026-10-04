@@ -1013,6 +1013,16 @@ audio::-webkit-media-controls-panel {
   background: var(--hover);
 }
 
+.cb-audio-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px 12px;
+  border-bottom: 1px solid var(--hair);
+}
+
+.cb-audio-checks > strong { font-size: 13px; }
+
 .cb-menu-item.danger {
   color: var(--danger);
 }

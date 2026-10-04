@@ -5,4 +5,8 @@
 .selection-insight-dialog blockquote { margin: 0; padding: 10px; border-left: 3px solid currentColor; max-height: 120px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .selection-insight-dialog label { display: grid; gap: 6px; }
 .selection-insight-dialog input, .selection-insight-dialog textarea { width: 100%; box-sizing: border-box; }
+.selection-insight-scope { border: 1px solid var(--hair-2); border-radius: 10px; padding: 8px 12px; }
+.selection-insight-dialog .selection-insight-scope label { display: flex; align-items: start; gap: 8px; margin: 6px 0; }
+.selection-insight-dialog .selection-insight-scope input[type="radio"] { width: auto; margin-top: 3px; }
+.selection-insight-scope p { margin: 6px 0 0; }
 @media print { .selection-insight-trigger, .selection-insight-message, .selection-insight-dialog { display: none; } }

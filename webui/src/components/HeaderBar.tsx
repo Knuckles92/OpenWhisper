@@ -9,6 +9,7 @@ import { enabledReportViews, type ReportViewId } from '../report';
 import { initials, speakerColor } from '../people';
 import ThemePicker from './ThemePicker';
 import ConfirmDialog from './ConfirmDialog';
+import AudioCheck from './AudioCheck';
 import ReportDownload from './report/ReportDownload';
 import ReportViewSelect from './report/ReportViewSelect';
 
@@ -60,10 +61,18 @@ function statusLabel(status: string): string {
 
 function captureLabel(capture: MeetingStateDoc['capture'] | undefined): string {
   if (!capture) return '';
-  if (capture.mic_available && capture.loopback_available) return 'Mic + system audio';
-  if (capture.mic_available) return 'Mic only';
-  if (capture.loopback_available) return 'System audio only';
-  return 'No audio input';
+  const base = capture.mic_available && capture.loopback_available ? 'Mic + system audio'
+    : capture.mic_available ? 'Mic only'
+      : capture.loopback_available ? 'System audio only' : 'No audio input';
+  const waiting = [
+    capture.mic_available && capture.mic_receiving === false ? 'mic' : null,
+    capture.loopback_available && capture.loopback_receiving === false ? 'system audio' : null,
+  ].filter(Boolean);
+  if (!waiting.length) return base;
+  if (waiting.length === 2) return `${base} · waiting for audio blocks`;
+  if (base === 'Mic only') return 'Mic connected · waiting for audio blocks';
+  if (base === 'System audio only') return 'System audio connected · waiting for audio blocks';
+  return `${base} · ${waiting[0]} waiting for audio blocks`;
 }
 
 /** Wall-clock meeting time, minus pauses; frozen while paused or ended. */
@@ -402,6 +411,13 @@ export default function HeaderBar({
                   </svg>
                 </summary>
                 <div className="cb-menu">
+                  {isHost && sessionRunning && (
+                    <div className="cb-audio-checks">
+                      <strong>Audio check</strong>
+                      <AudioCheck capture={state.capture} channel="mic" paused={!meetingLive} />
+                      <AudioCheck capture={state.capture} channel="loopback" paused={!meetingLive} />
+                    </div>
+                  )}
                   <label className="cb-menu-item cb-toggle">
                     <span>
                       <strong>AI insights</strong>

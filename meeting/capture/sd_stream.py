@@ -33,6 +33,10 @@ _MAX_LOGGED_CALLBACK_ERRORS = 5
 class SdCaptureSource:
     """A single sounddevice input stream implementing ``CaptureSource``."""
 
+    # PortAudio's active flag only confirms the stream is open. The engine's
+    # health monitor must also require callbacks before treating it as live.
+    requires_audio_blocks = True
+
     def __init__(self, channel: str, device_index: int, samplerate: int,
                  n_channels: int) -> None:
         self.channel = channel

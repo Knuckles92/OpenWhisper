@@ -13,7 +13,9 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import case, func, or_, text as sql_text
 from sqlalchemy.orm import object_session
-from meeting.corrections import correct_text, term_rules
+from meeting.corrections import (StaleCorrectionSelection, correct_segment_text,
+                                 correct_text, occurrence_rules, segment_fingerprint,
+                                 term_rules)
 
 from meeting.interfaces import OpResult, TranscriptSegment
 from meeting.state.schema import parse_state_json
@@ -88,19 +90,19 @@ def _chunk_to_dict(row: MeetingAudioChunk) -> Dict[str, Any]:
 def _segment_to_dict(row: MeetingSegment) -> Dict[str, Any]:
     session = object_session(row)
     rules = {}
+    scoped = {}
     if session is not None:
         # Cache only within this short-lived transaction. Keep raw ASR intact.
-        cache = session.info.setdefault("meeting_term_rules", {})
+        cache = session.info.setdefault("meeting_correction_rules", {})
         if row.meeting_id not in cache:
             meeting = session.get(MeetingSession, row.meeting_id)
-            cache[row.meeting_id] = term_rules(
-                (parse_state_json(meeting.state_json) or {}) if meeting else {}
-            )
-        rules = cache[row.meeting_id]
+            state = (parse_state_json(meeting.state_json) or {}) if meeting else {}
+            cache[row.meeting_id] = (term_rules(state), occurrence_rules(state))
+        rules, scoped = cache[row.meeting_id]
     return {
         "id": row.id, "meeting_id": row.meeting_id, "chunk_id": row.chunk_id,
         "channel": row.channel, "start_s": row.start_s, "end_s": row.end_s,
-        "text": correct_text(row.text, rules),
+        "text": correct_segment_text(row.text, row.id, rules, scoped),
         "original_text": row.text,
         "speaker_participant_id": row.speaker_participant_id,
         "speaker_source": row.speaker_source,
@@ -995,6 +997,29 @@ class SqlMeetingRepository:
             # A dashboard snapshot may predate an MCP or another dashboard's
             # rename. Serialize the read/merge/write and only retitle on intent.
             session.execute(sql_text("BEGIN IMMEDIATE"))
+            scoped_adds = [result for result in results
+                           if result.op.get("op") == "add_item"
+                           and result.op.get("card") == "user_notes"
+                           and (result.op.get("data") or {}).get("kind") == "occurrence_correction"]
+            if scoped_adds:
+                # Validate against the raw row inside the write transaction.
+                # Rules come from the final candidate state, after any
+                # meeting-wide correction in the same batch, but before
+                # scoped replacements are projected onto the transcript.
+                global_rules = term_rules(state)
+                revised_raw = {result.effect["segment_id"]: result.effect["text"]
+                               for result in results
+                               if result.effect and result.effect.get("entity") == "segment_text"}
+                for result in scoped_adds:
+                    segment_id = result.op["evidence"][0]
+                    row = session.query(MeetingSegment.text).filter(
+                        MeetingSegment.meeting_id == meeting_id,
+                        MeetingSegment.id == segment_id,
+                    ).one_or_none()
+                    raw = revised_raw.get(segment_id, row[0] if row else None)
+                    expected = result.op["data"]["base_fingerprint"]
+                    if raw is None or segment_fingerprint(correct_text(raw, global_rules)) != expected:
+                        raise StaleCorrectionSelection(segment_id)
             for result in results:
                 undo_seq = result.op.get("_undo_event_seq")
                 action = result.op.get("op", "unknown")

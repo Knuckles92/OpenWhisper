@@ -19,6 +19,7 @@ import logging
 import re
 from typing import Any, Callable, Dict, List, Optional
 
+from meeting.corrections import MAX_TERM_CHARS, valid_segment_fingerprint
 from meeting.state.custom_reports import CUSTOM_REPORT_HANDLERS
 from meeting.state.review import REVIEW_HANDLERS, item_effect
 from meeting.fast_state import FAST_HANDLERS
@@ -287,6 +288,27 @@ def _op_add_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> OpR
     reason = _check_data_size(data)
     if reason:
         return _reject(op, reason)
+    if card == "user_notes" and data.get("kind") == "occurrence_correction":
+        # A one-off correction must be attached to exactly one real passage.
+        # Arbitrary page selections cannot silently become global text rules.
+        evidence = op.get("evidence") or []
+        source, replacement = data.get("selected_text"), data.get("replacement")
+        index = data.get("occurrence_index")
+        fingerprint = data.get("base_fingerprint")
+        if not ctx.is_human:
+            return _reject(op, "human_only_card")
+        if (not isinstance(evidence, list) or len(evidence) != 1
+                or not isinstance(evidence[0], str) or not evidence[0]):
+            return _reject(op, "invalid_evidence")
+        if ctx.segment_exists is None or not ctx.segment_exists(evidence[0]):
+            return _reject(op, "unknown_evidence")
+        if (not isinstance(source, str) or not 0 < len(source.strip()) <= MAX_TERM_CHARS
+                or not isinstance(replacement, str) or not 0 < len(replacement.strip()) <= MAX_TERM_CHARS):
+            return _reject(op, "invalid_data")
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index <= 1000:
+            return _reject(op, "invalid_data")
+        if not valid_segment_fingerprint(fingerprint):
+            return _reject(op, "invalid_data")
     if card == "timeline" and (ctx.is_agent or ctx.actor_type == "system"):
         reason = _check_timeline_data(data)
         if reason:
@@ -875,6 +897,15 @@ def _op_revise_segment_text(state: MeetingState, op: Dict[str, Any],
         return _reject(op, "invalid_segment")
     if ctx.segment_exists is not None and not ctx.segment_exists(segment_id):
         return _reject(op, "unknown_segment", target_id=segment_id)
+    if ctx.is_agent and any(
+        item.status != "removed"
+        and item.data.get("kind") == "occurrence_correction"
+        and segment_id in item.evidence
+        for item in state.cards.get("user_notes", [])
+    ):
+        # Agents see a correction-projected transcript. Revising that text
+        # would bake the human replacement into the raw row, defeating undo.
+        return _reject(op, "human_scoped_correction", target_id=segment_id)
     text_reason = _check_text(op.get("text"), MAX_TEXT_LEN)
     if text_reason:
         return _reject(op, text_reason, target_id=segment_id)

@@ -226,6 +226,14 @@ export interface MeetingStateDoc {
   capture: {
     mic_available: boolean;
     loopback_available: boolean;
+    /** Whether callbacks are currently delivering buffers on each channel. */
+    mic_receiving?: boolean;
+    loopback_receiving?: boolean;
+    /** Counts 0.25-second signal windows; used by explicit audio checks. */
+    mic_signal_windows?: number;
+    loopback_signal_windows?: number;
+    mic_source_generation?: number;
+    loopback_source_generation?: number;
     message: string;
   };
   participants: Record<string, Participant>;

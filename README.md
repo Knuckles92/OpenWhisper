@@ -129,7 +129,12 @@ Other speech engines use their own runtimes from Downloads. On Apple Silicon Mac
 
 ## Updates
 
-Use **Help → Check for Updates**. Windows applies an in-app update or opens setup. macOS installs the verified update and restarts, keeping the previous version until the new one starts and restoring it otherwise; when OpenWhisper cannot replace itself (another account installed it, or it runs from a read-only location), the verified DMG opens for replacement in Applications. On Linux, install the new package with the same command as above. Source users run `git pull --ff-only` and reinstall requirements if dependencies changed. Automatic checks and notifications are configurable in **Settings → General**.
+Use **Help → Check for Updates**. Configure automatic checks and notifications in **Settings → General**.
+
+- **Windows:** Apply the in-app update or follow the setup prompt.
+- **macOS:** The verified update installs and restarts the app, restoring the previous version if startup fails. If the app cannot replace itself, it opens the verified DMG for replacement in Applications.
+- **Linux:** Install the new package with the same command used for installation.
+- **From source:** Run `git pull --ff-only` and reinstall requirements if dependencies changed.
 
 ## Get started
 
@@ -174,25 +179,11 @@ Choose **Settings → General → Theme → Omarchy desktop** to follow your des
 | OpenAI API | GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027 | Cloud; API key and network required | Dictation, uploads |
 | Remote computer | Whichever engine the paired computer has selected | Another computer running OpenWhisper on your network | Dictation with that engine's preview, uploads, meetings with a supported host model |
 
-Optional local engines offer English, Russian, Spanish, French, Portuguese, Mandarin, and Auto where supported. Parakeet and Orukeet omit Mandarin; Moonshine offers English only. Qwen supports all these presets; Nemotron includes Mandarin in its broader coverage tier, where accuracy may vary. Auto detects other languages supported by the model. These controls transcribe speech rather than translate it. Paired computers expose the same host-supported choices.
+- **Downloads:** Install both the model and its required runtime in **Settings → Downloads**. Each entry shows its size, publisher, license, and download checks.
+- **Languages:** Choose a supported language or **Auto** for detection. Coverage varies by engine; Moonshine is English-only. Language selection controls transcription, not translation.
+- **Apple Silicon:** Choose **Auto** to use the Apple GPU where supported. See [GPU acceleration](#gpu-acceleration) for engine-specific support.
 
-Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. On Apple Silicon Macs, select **Parakeet MLX**, download its runtime and model, and choose **Auto** to use the Apple GPU through Metal, or **CPU** to use the processor. The MLX weights download is about 2.5 GB. Parakeet, Nemotron, Qwen3-ASR and Moonshine also run on Apple Silicon; **Auto** uses the Apple GPU where the engine supports it. Moonshine's runtime needs macOS 15. Local Whisper uses CPU on macOS; see [GPU acceleration](#gpu-acceleration) for Windows and Linux. Intel Macs running from source can use Parakeet and Nemotron on the CPU.
-
-Orukeet is an optional 25-language adaptation of NVIDIA Parakeet from Oruk AI,
-including Russian and English. Its r3 native Q8 download is 714 MB and uses the
-existing NVIDIA Speech runtime. Tested with the pinned Windows and Linux CPU/CUDA
-runtimes; Apple Silicon validation for Orukeet is pending. It remains a community model; evaluate it on
-your recordings. Its weights are CC BY-SA 4.0, with attribution and applicable
-ShareAlike terms; see [the publisher's notice](https://huggingface.co/oruk/orukeet/blob/main/NOTICE.md).
-
-Downloads shows the publisher, source host, license, selected version, and download
-checks. Optional ASR weights and runtime archives are pinned by version, size, and
-SHA-256. Built-in Whisper aliases use pinned Hugging Face commits; custom sources
-retain their publisher-selected version. Integrity checks do not guarantee model
-or runtime security. Keep OpenWhisper and its runtimes updated, and review important
-transcripts for errors. Local transcription runs on this computer after installation;
-downloading connects to the listed host. Cloud transcription, remote engines, and
-AI cleanup have their own network behavior.
+See [speech model details](docs/speech-models.md) for language coverage, platform requirements, download verification, and Orukeet's license and validation status.
 
 ### Custom Whisper models
 
@@ -201,7 +192,10 @@ Choose **Add custom models…** in **Settings → Downloads**, **Dictation → V
 - **Local files:** Choose a model folder or a parent folder containing several models. OpenWhisper lists complete model folders for you to select.
 - **Hugging Face:** Enter an `owner/model` repository and, optionally, a subfolder such as `ct2_int8_float16`. **Find on Hugging Face** lists compatible model folders without downloading weights. You can also discover models already in the local Hugging Face cache.
 
-Select the models you want and click **Add selected**, then choose one in **Voice model** or **Voice & speakers** to load it. Downloads follow your existing Hugging Face policy; cached models load offline. Custom folders must contain a CTranslate2 Whisper `model.bin`, valid `config.json`, and `tokenizer.json`. Original PyTorch weights need conversion before use. Removing a custom entry keeps its source files.
+Click **Add selected**, then choose a model in **Voice model** or **Voice & speakers** to load it.
+
+- **Format:** CTranslate2 Whisper folders with `model.bin`, a valid `config.json`, and `tokenizer.json`. Convert original PyTorch weights before use.
+- **Storage:** Downloads follow your Hugging Face policy; cached models load offline. Removing a custom entry keeps its source files.
 
 ### Remote engine
 
@@ -215,24 +209,28 @@ The host's selected engine handles transcription. Traffic is encrypted and limit
 
 - **Meetings:** Select **Remote computer** in **Settings → Meeting Mode → Voice & speakers → Speech engine**. Audio goes to the host for transcription; capture, recordings, and transcripts stay on the computer running the meeting.
 - **Host models:** Use **Manage host models** to choose or download a model and install speech runtimes. The host must first enable **Allow paired computers to manage models**.
-- **History through the host's MCP:** Enable **Allow the paired host to query this computer's history** on the client to let agents search its saved transcripts and meetings while it is online. Agents use `include_clients`; choose **Both** storage to keep host copies available while this computer is offline. See [direct client queries](docs/mcp.md#query-paired-clients-directly).
+- **Shared history:** Enable **Allow the paired host to query this computer's history** on the client so agents on the host can search it while the client is online. See [MCP setup](docs/mcp.md#query-paired-clients-directly) for queries and offline copies.
 - **Away from home:** Install [Tailscale](https://tailscale.com/download) on both computers. Hosts on your tailnet appear in the app; computers on the same Tailscale account can connect without a pairing code when the host allows it.
 
-### AI cleanup and meeting intelligence
+## AI cleanup and meeting intelligence
 
-Choose separate text models in **Settings → AI cleanup** and **Settings → Intelligence**. Providers include OpenAI, OpenRouter, Ollama, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. Ollama needs a separately managed server.
+Use AI cleanup to polish dictation and meeting intelligence to generate notes and insights. Each has its own text-model settings.
 
-Custom endpoints offer an **API** choice of **Chat Completions** or **Responses**. Choose the API your server supports; existing custom endpoints keep Chat Completions. Supported modern OpenAI text models use Responses automatically.
+- **Dictation:** Enable **Settings → AI cleanup** and choose a text model. Teach spelling and style in **Learned rules**, or use [Profiles](docs/cleanup-profiles.md) for reusable formats.
+- **Providers:** OpenAI, OpenRouter, Ollama, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. Add keys in **Settings → API keys**; Ollama needs a separately managed server.
+- **Meetings:** Choose an engine in **Settings → Meeting Mode → Intelligence** using the options below.
 
-Add credentials in **Settings → API keys**; keys use the OS credential store. Environment variables or `.env` provide a fallback: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENCODE_GO_API_KEY`, and `OPENCODE_ZEN_API_KEY`.
+| Meeting engine | Setup |
+| --- | --- |
+| Pi (default) | Uses your selected text endpoint and API key. Install from **Downloads → Components** where available. |
+| Claude Code, Codex, or OpenCode | Select an installed agent's tile to use its sign-in, providers, and models. Install, update, and sign in to the agent yourself. |
+| OpenCode SDK | Install from **Downloads → Components** where available, then select it under **Agent core**. |
 
-Enable cleanup in **Settings → AI cleanup**, teach spelling and style in **Learned rules**, and use [Profiles](docs/cleanup-profiles.md) for reusable formats.
+Meeting passes count toward the installed agent's account or API usage. These agents refresh live insights less often. If an engine is unavailable, select another or continue recording without AI insights.
 
-**Meeting engine choices.** Pi is the default. Choose **Pi** in **Settings → Meeting Mode → Intelligence** to use Pi with your selected text endpoint and API key, or choose an installed Claude Code, Codex, or OpenCode agent. The packaged OpenCode SDK remains available under **Agent core**, and its tile shows **OpenCode SDK** when selected. Install Pi or OpenCode SDK from **Downloads → Components** when available on your platform. Standard API is retired: saved `direct` selections now resolve to Pi, and missing agents never silently fall back to direct API calls. Install/update the chosen agent or select another; meeting recording remains available without AI insights. Existing `opencode` settings continue to select the packaged SDK.
+See [AI and meeting setup](docs/meeting-intelligence.md) for custom endpoints, environment variables, agent behavior, and compatibility with older settings.
 
-**Meeting insights through your own coding agent.** If you use **Claude Code**, **Codex**, or **OpenCode**, choose its tile in **Settings → Meeting Mode → Intelligence**. OpenWhisper detects existing installations and sign-in status. Choose a model or keep the agent's default; meeting passes use that agent's sign-in, providers, and models. Claude Code and Codex run headlessly with built-in tools disabled; unrelated MCP servers are excluded. Installed OpenCode uses the [Agent Client Protocol](https://agentclientprotocol.com) with its own tools denied and has the separate setting `opencode_cli`. Every engine uses the shared meeting tools and validation rules for cards, notes, polish, finalization, and retries. Saved meetings recorded with an installed agent and their custom reports retain that agent. Passes count toward the agent's account or API usage; installed agents use a slower live cadence. OpenWhisper never installs, updates, or signs into these agents for you.
-
-### Offline use
+## Offline use
 
 Downloaded speech models load from the local cache without network metadata checks. Install any required runtime before going offline.
 

@@ -56,6 +56,20 @@ test('readiness reflects real capture state and asks for a brief when none is se
   assert.match(container.textContent, /Waiting for the first words/);
 });
 
+test('an open stream without callbacks does not claim audio is being captured', async () => {
+  const capture = {mic_available:true, loopback_available:true,
+    mic_receiving:false, loopback_receiving:false, message:''};
+  const container = await mount({state: state({capture}), isHost:true, onSendOp: async () => true});
+  const rows = [...container.querySelectorAll('.pf-check')];
+  for (const label of ['Microphone', 'System audio']) {
+    const row = rows.find((item) => item.textContent.includes(label));
+    assert.ok(row);
+    assert.match(row.textContent, /Connected · waiting for audio blocks/);
+    assert.ok(row.querySelector('.pf-glyph.pf-warn'));
+  }
+  assert.doesNotMatch(rows.find((item) => item.textContent.includes('System audio')).textContent, /Capturing/);
+});
+
 test('the brief becomes the headline and the level moves only while speech is heard', async () => {
   const container = await mount({
     state: state({intent: {text: 'Agree Phase 1 scope', updated_at: '', author_id: 'me'}, cloud_enabled: false}),
