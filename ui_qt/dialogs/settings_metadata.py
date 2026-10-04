@@ -4,6 +4,10 @@ Control routes are explicit so existing deep links can request a control and
 build its owning page. Search metadata mirrors the page's tile/field copy.
 """
 CONTROL_DESTINATIONS = {'mcp_page': 'mcp',
+ 'backup_page': 'backup',
+ 'backup_create_tile': 'backup',
+ 'backup_restore_tile': 'backup',
+ 'backup_schedule_tile': 'backup',
  'hf_policy_combo': 'downloads',
  'auto_paste_tile': 'general',
  'auto_paste_check': 'general',
@@ -298,7 +302,13 @@ PAGE_SEARCH_FIELDS = {'general': [('auto_paste_tile', 'Paste into the active win
                    ('meeting_source_combo', 'Speech engine', ''),
                    ('meeting_language_combo', 'Spoken language', ''),
                    ('meeting_speaker_id_combo', 'Speaker identification', '')],
- 'runtime': [('device_combo', 'Device', ''), ('compute_combo', 'Quantization', '')]}
+ 'runtime': [('device_combo', 'Device', ''), ('compute_combo', 'Quantization', '')],
+ 'backup': [('backup_create_tile', 'Back up local data',
+             'Save local settings, transcription history, meeting data, and optionally recordings.'),
+            ('backup_restore_tile', 'Inspect and restore',
+             'Review a backup archive before staging a restore and restart.'),
+            ('backup_schedule_tile', 'Schedule',
+             'Automatic local backups: off, daily, or weekly; set destination and retention count.')]}
 
 PAGE_HELP_TEXT = {'voice_model': ['For dictation previews, Nemotron uses native streaming; Parakeet transcribes '
                  'short audio chunks with the loaded model; Local Whisper uses a separate tiny.en '

@@ -1,19 +1,21 @@
 """Background ASR engine for Meeting Mode.
 
 ``MeetingAsrEngine`` owns a dedicated speech backend (local weights or a paired
-remote connection, separate from dictation) and a single daemon worker that consumes an unbounded
-queue of spooled chunks — durability first: chunks are never dropped, failures
-are retried up to :data:`MAX_ATTEMPTS` times, and anything still unfinished
-survives in the database (``asr_status``) for startup recovery via
+remote connection, separate from dictation) and a single daemon worker. Only
+a bounded number of chunk references live in memory; the registered WAV and
+SQLite row remain durable when that queue is full. Retryable failures use
+bounded backoff, and anything still unfinished survives for recovery via
 :meth:`MeetingAsrEngine.requeue_pending`.
 """
 from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import queue
 import threading
 import time
+import wave
 from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
@@ -27,6 +29,23 @@ logger = logging.getLogger(__name__)
 
 #: Total transcription attempts per chunk before giving up.
 MAX_ATTEMPTS = 3
+
+#: In-memory chunk references, including the in-flight chunk. The capture
+#: spool registers every WAV in SQLite before enqueue; excess work is fetched
+#: in bounded pages by the worker instead of blocking audio capture.
+MAX_IN_MEMORY_CHUNKS = 64
+
+#: Pauses before local/backend/commit retries. Avoid hot loops when a model or
+#: database fails while preserving the existing three-attempt budget.
+RETRY_BACKOFF_S = (0.5, 2.0)
+
+#: Disconnected hosts do not spend decode attempts. Retry slowly, but wake
+#: immediately when the meeting stops.
+REMOTE_RETRY_BACKOFF_S = (5.0, 10.0, 20.0, 40.0, 60.0)
+REMOTE_BUSY_MIN_RETRY_S = 0.5
+
+#: Recheck SQLite when a prior refill failed; committed audio remains there.
+REFILL_RETRY_S = 5.0
 
 #: Chunks waiting behind the in-flight chunk before live ASR switches to a
 #: faster single-beam decode.  This preserves normal quality until the worker
@@ -55,7 +74,11 @@ LANGUAGE_VOTE_MIN_PROB = 0.8
 LANGUAGE_VOTE_MIN_COUNT = 5
 LANGUAGE_VOTE_SHARE = 0.9
 
-#: Queue sentinel telling the worker to exit.
+
+class PermanentChunkError(RuntimeError):
+    """The saved WAV needs repair or replacement before ASR can retry."""
+
+
 _STOP = object()
 
 
@@ -79,6 +102,8 @@ class MeetingAsrEngine:
         on_connection_status: Optional[Callable[[str, bool], None]] = None,
         *,
         defer_load: bool = False,
+        on_backlog_status: Optional[Callable[[str, bool], None]] = None,
+        on_chunk_failure: Optional[Callable[[str], None]] = None,
     ) -> None:
         """Load a dedicated Whisper model for one meeting.
 
@@ -106,6 +131,8 @@ class MeetingAsrEngine:
         self.is_available = False
         self.last_error = ""
         self._connection_status = on_connection_status
+        self._backlog_status = on_backlog_status
+        self._chunk_failure = on_chunk_failure
         self._last_connection_status = None
         self._stop_event = threading.Event()
         self._backend_lock = threading.RLock()
@@ -113,7 +140,8 @@ class MeetingAsrEngine:
         self._remote = remote
         self._defer_load = defer_load
 
-        self._queue: "queue.Queue" = queue.Queue()  # unbounded: never drop chunks
+        self._queue: "queue.Queue[SpooledChunk | object]" = queue.Queue(
+            maxsize=MAX_IN_MEMORY_CHUNKS)
         self._on_chunk_result: Optional[
             Callable[[SpooledChunk, List[TranscriptSegment]], None]
         ] = None
@@ -125,6 +153,11 @@ class MeetingAsrEngine:
         self._idle_cond = threading.Condition()
         self._outstanding = 0
         self._queued_ids: set = set()
+        self._refilling = False
+        self._refill_needed = False
+        self._next_refill_at = 0.0
+        self._deferred_known = False
+        self._backlog_overloaded = False
         self._attempts: Dict[int, int] = {}
         self._enqueued_at: Dict[int, float] = {}
         self._queue_wait_warned: set = set()
@@ -251,13 +284,53 @@ class MeetingAsrEngine:
         if preview is not None:
             preview.stop()
 
-    def enqueue(self, chunk: SpooledChunk) -> None:
-        """Queue a finalized chunk for transcription."""
+    def enqueue(self, chunk: SpooledChunk, *, _from_refill: bool = False) -> bool:
+        """Queue a registered chunk without blocking capture.
+
+        False means the bounded memory queue is full or stopping. Its SQLite
+        row and WAV remain pending for the worker's next bounded refill.
+        """
+        overloaded = False
         with self._idle_cond:
-            self._outstanding += 1
-            self._queued_ids.add(chunk.chunk_id)
-            self._enqueued_at.setdefault(chunk.chunk_id, time.monotonic())
-        self._queue.put(chunk)
+            if self._stopping or self._stop_event.is_set():
+                return False
+            if chunk.chunk_id in self._queued_ids:
+                return True
+            if (len(self._queued_ids) >= MAX_IN_MEMORY_CHUNKS or
+                    (self._deferred_known and not _from_refill)):
+                self._deferred_known = True
+                self._refill_needed = True
+                overloaded = True
+            else:
+                self._queue.put_nowait(chunk)
+                self._queued_ids.add(chunk.chunk_id)
+                self._enqueued_at.setdefault(chunk.chunk_id, time.monotonic())
+                self._outstanding += 1
+                self._idle_cond.notify_all()
+        if overloaded:
+            self._report_backlog(True)
+            return False
+        return True
+
+    def _report_backlog(self, overloaded: bool) -> None:
+        with self._idle_cond:
+            if self._backlog_overloaded == overloaded:
+                return
+            self._backlog_overloaded = overloaded
+        message = (
+            "Live transcription is behind; audio is saved and captions will catch up."
+            if overloaded else "Live transcription caught up."
+        )
+        if overloaded:
+            logger.warning("Meeting ASR in-memory backlog reached %d chunks",
+                           MAX_IN_MEMORY_CHUNKS)
+        else:
+            logger.info("Meeting ASR backlog recovered")
+        if self._backlog_status is not None:
+            try:
+                self._backlog_status(message, overloaded)
+            except Exception:
+                logger.exception("Could not report meeting ASR backlog status")
 
     def drain(self, timeout_s: float) -> bool:
         """Block until every enqueued chunk has finished (or given up).
@@ -270,17 +343,35 @@ class MeetingAsrEngine:
             timeout, False otherwise.
         """
         deadline = time.monotonic() + max(0.0, timeout_s)
-        with self._idle_cond:
-            while self._outstanding > 0:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    logger.warning(
-                        "ASR drain timed out with %d chunk(s) outstanding",
-                        self._outstanding,
-                    )
-                    return False
-                self._idle_cond.wait(remaining)
-        return True
+        while True:
+            with self._idle_cond:
+                while self._outstanding > 0 or self._refilling:
+                    if self._stopping or self._stop_event.is_set():
+                        return False
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        logger.warning(
+                            "ASR drain timed out with %d in-memory chunk(s) outstanding",
+                            self._outstanding,
+                        )
+                        return False
+                    self._idle_cond.wait(remaining)
+            if self._stopping or self._stop_event.is_set():
+                return False
+            if self._refill_needed and time.monotonic() >= deadline:
+                return False
+            # A full in-memory queue may have left registered chunks in
+            # SQLite; verify it before claiming the meeting is drained.
+            added = self.requeue_pending()
+            with self._idle_cond:
+                if (added == 0 and self._outstanding == 0 and
+                        not self._refilling and not self._refill_needed):
+                    return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            with self._idle_cond:
+                self._idle_cond.wait(min(REFILL_RETRY_S, remaining))
 
     def transcribe_offline_session(
         self,
@@ -348,6 +439,8 @@ class MeetingAsrEngine:
         """Stop the worker and release the model."""
         self._stopping = True
         self._stop_event.set()
+        with self._idle_cond:
+            self._idle_cond.notify_all()
         if getattr(self._backend, "is_remote", False):
             # Interrupt network waits before joining either worker.
             self._backend.cancel_transcription()
@@ -355,12 +448,30 @@ class MeetingAsrEngine:
         self.stop_preview()
         thread = self._thread
         if thread is not None and thread.is_alive():
-            self._queue.put(_STOP)
+            try:
+                self._queue.put_nowait(_STOP)
+            except queue.Full:
+                pass  # The active worker sees stop_event after its chunk.
             thread.join(timeout=10.0)
             if thread.is_alive():
                 logger.warning("Meeting ASR worker did not stop within 10s")
+                # A native decode may still hold the backend. Keep its worker
+                # and references intact rather than cleaning them up in use.
+                return
         self._thread = None
         self._draft_context.clear()
+        with self._idle_cond:
+            self._queue = queue.Queue(maxsize=MAX_IN_MEMORY_CHUNKS)
+            self._outstanding = 0
+            self._queued_ids.clear()
+            self._attempts.clear()
+            self._enqueued_at.clear()
+            self._queue_wait_warned.clear()
+            self._refilling = False
+            self._refill_needed = False
+            self._next_refill_at = 0.0
+            self._deferred_known = False
+            self._idle_cond.notify_all()
 
         backend = self._backend
         self._backend = None
@@ -376,155 +487,249 @@ class MeetingAsrEngine:
             del backend
 
     def requeue_pending(self, *, rows: Optional[List[Dict[str, Any]]] = None) -> int:
-        """Re-enqueue this meeting's unfinished chunks from the database.
-
-        Pulls ``pending`` and retryable ``failed`` chunks via
-        ``repository.get_pending_chunks`` and enqueues them, skipping any
-        chunk already tracked by this engine. Used at startup recovery and
-        after engine start.
-
-        Returns:
-            Number of chunks enqueued.
-        """
-        if rows is None:
-            try:
-                rows = self._repository.get_pending_chunks(self.meeting_id)
-            except Exception:
-                logger.exception("Could not list pending chunks for %s", self.meeting_id)
+        """Refill at most one bounded page from durable pending rows."""
+        with self._idle_cond:
+            if self._stopping or self._stop_event.is_set() or self._refilling:
                 return 0
-        rows = sorted(rows, key=lambda row: (float(row.get("start_s") or 0),
-                                           int(row.get("seq") or 0),
-                                           str(row.get("channel") or ""), int(row["id"])))
-
+            if self._refill_needed and time.monotonic() < self._next_refill_at:
+                return 0
+            self._refilling = True
+            free = max(0, MAX_IN_MEMORY_CHUNKS - len(self._queued_ids))
+            excluded = tuple(self._queued_ids)
         requeued = 0
-        for row in rows:
-            chunk = SpooledChunk(
-                chunk_id=row["id"],
-                meeting_id=row["meeting_id"],
-                channel=row["channel"],
-                seq=row["seq"],
-                file_path=row["file_path"],
-                start_s=row["start_s"],
-                duration_s=row["duration_s"],
-                sample_rate=row["sample_rate"],
+        has_extra = False
+        failed = False
+        try:
+            if rows is None:
+                try:
+                    rows = self._repository.get_pending_chunks(
+                        self.meeting_id, limit=free + 1, exclude_ids=excluded)
+                except TypeError:
+                    # Older test/custom repositories may not support paging;
+                    # the app's SQL repository always does.
+                    rows = [row for row in self._repository.get_pending_chunks(self.meeting_id)
+                            if row["id"] not in excluded][:free + 1]
+            rows = sorted(
+                (row for row in rows if row["id"] not in excluded),
+                key=lambda row: (float(row.get("start_s") or 0),
+                                 int(row.get("seq") or 0),
+                                 str(row.get("channel") or ""), int(row["id"])),
             )
+            has_extra = len(rows) > free
+            for row in rows[:free]:
+                chunk = SpooledChunk(
+                    chunk_id=row["id"], meeting_id=row["meeting_id"],
+                    channel=row["channel"], seq=row["seq"],
+                    file_path=row["file_path"], start_s=row["start_s"],
+                    duration_s=row["duration_s"], sample_rate=row["sample_rate"],
+                )
+                with self._idle_cond:
+                    if chunk.chunk_id in self._queued_ids:
+                        continue
+                    self._attempts[chunk.chunk_id] = int(row.get("asr_attempts") or 0)
+                if self.enqueue(chunk, _from_refill=True):
+                    requeued += 1
+                else:
+                    has_extra = True
+        except Exception:
+            failed = True
+            has_extra = True
+            logger.exception("Could not refill saved ASR chunks for %s", self.meeting_id)
+        finally:
             with self._idle_cond:
-                if chunk.chunk_id in self._queued_ids:
-                    continue
-                # Seed local attempts from the database so a chunk that failed
-                # before a crash keeps its bounded retry budget.
-                self._attempts[chunk.chunk_id] = int(row.get("asr_attempts") or 0)
-            self.enqueue(chunk)
-            requeued += 1
+                self._refilling = False
+                self._refill_needed = has_extra
+                self._next_refill_at = (time.monotonic() + REFILL_RETRY_S
+                                        if failed else 0.0)
+                self._deferred_known = has_extra
+                quiet = (not has_extra and self._outstanding <=
+                         FAST_MODE_BACKLOG_CHUNKS)
+                self._idle_cond.notify_all()
+        if has_extra:
+            self._report_backlog(True)
+        elif quiet:
+            self._report_backlog(False)
         if requeued:
-            logger.info(
-                "Requeued %d pending chunk(s) for meeting %s",
-                requeued, self.meeting_id,
-            )
+            logger.info("Queued %d saved ASR chunk(s) for meeting %s",
+                        requeued, self.meeting_id)
         return requeued
 
     def _worker(self) -> None:
-        while True:
-            item = self._queue.get()
-            if item is _STOP:
-                break
-            requeued = False
+        while not self._stop_event.is_set():
             try:
-                requeued = self._process_chunk(item)
+                item = self._queue.get(timeout=REFILL_RETRY_S)
+            except queue.Empty:
+                if self._refill_needed:
+                    self.requeue_pending()
+                continue
+            if item is _STOP:
+                self._queue.task_done()
+                break
+            try:
+                self._process_chunk(item)
             except Exception:  # defensive: _process_chunk handles its own errors
                 logger.exception(
                     "Unexpected ASR worker error on chunk %s", item.chunk_id
                 )
+                self._set_status(item.chunk_id, "blocked",
+                                 "Unexpected ASR worker error; saved audio needs manual retry")
+                self._report_chunk_failure(
+                    item.chunk_id,
+                    "An unexpected transcription error occurred. Audio is saved; retry this meeting.",
+                )
             finally:
                 with self._idle_cond:
+                    self._queued_ids.discard(item.chunk_id)
+                    self._attempts.pop(item.chunk_id, None)
+                    self._enqueued_at.pop(item.chunk_id, None)
+                    self._queue_wait_warned.discard(item.chunk_id)
+                # Keep _outstanding nonzero through the DB refill so drain()
+                # cannot report success between a dequeue and its saved tail.
+                if not self._stop_event.is_set():
+                    self.requeue_pending()
+                with self._idle_cond:
                     self._outstanding -= 1
-                    if not requeued:
-                        self._queued_ids.discard(item.chunk_id)
-                        self._enqueued_at.pop(item.chunk_id, None)
-                        self._queue_wait_warned.discard(item.chunk_id)
-                    if self._outstanding <= 0:
-                        self._idle_cond.notify_all()
+                    quiet = (not self._deferred_known and
+                             self._outstanding <= FAST_MODE_BACKLOG_CHUNKS)
+                    self._idle_cond.notify_all()
+                if quiet:
+                    self._report_backlog(False)
+                self._queue.task_done()
         logger.debug("Meeting ASR worker exited")
 
-    def _process_chunk(self, chunk: SpooledChunk) -> bool:
-        """Transcribe one chunk; retry on failure.
-
-        Returns:
-            True when the chunk was re-enqueued for another attempt, False
-            when it finished (done, gave up, or engine unavailable).
-        """
+    def _process_chunk(self, chunk: SpooledChunk) -> None:
+        """Transcribe one durable chunk with classified, paced retries."""
         remote = getattr(self._backend, "is_remote", False)
-        if remote:
-            # Keep the oldest durable chunk in place while disconnected. New
-            # capture continues spooling; network failures spend no decode budget.
-            from meeting.asr.remote import RemoteMeetingUnavailable
-            while not self._stopping:
+        attempts = self._attempts.get(chunk.chunk_id, 0)
+        remote_failures = 0
+        while not self._stopping and not self._stop_event.is_set():
+            if remote:
+                # A disconnected host never spends the decode budget. The
+                # saved chunk stays pending while capture continues to spool.
+                from meeting.asr.remote import RemoteMeetingUnavailable
                 try:
                     self._backend.ensure_ready()
                     self._report_connection(f"Transcribing on {self._backend.host_name}", True)
-                    break
                 except RemoteMeetingUnavailable as exc:
                     self._set_status(chunk.chunk_id, "pending", str(exc))
                     self._report_connection(
                         f"{exc} Audio is saved locally; retrying the remote connection.", False
                     )
-                    self._stop_event.wait(5.0)
-            if self._stopping:
-                self._set_status(chunk.chunk_id, "pending")
-                return False
-        if self._backend is None or not self._backend.is_available():
-            # Leave asr_attempts untouched ('processing' is what increments
-            # it), so the chunk stays recoverable once a model is available.
-            logger.warning(
-                "ASR engine unavailable; leaving chunk %s for recovery",
-                chunk.chunk_id,
-            )
-            self._set_status(chunk.chunk_id, "failed", "ASR engine unavailable")
-            self._attempts.pop(chunk.chunk_id, None)
-            return False
+                    delay = self._remote_retry_delay(exc, remote_failures)
+                    remote_failures += 1
+                    if self._stop_event.wait(delay):
+                        return
+                    continue
+                except Exception as exc:
+                    if not getattr(exc, "retryable", False):
+                        raise
+                    self._set_status(chunk.chunk_id, "pending", str(exc))
+                    self._report_connection(
+                        f"{exc} Audio is saved locally; waiting for host capacity.",
+                        True,
+                    )
+                    delay = self._remote_retry_delay(exc, remote_failures)
+                    remote_failures += 1
+                    if self._stop_event.wait(delay):
+                        return
+                    continue
+            if self._backend is None or not self._backend.is_available():
+                self._set_status(
+                    chunk.chunk_id, "blocked",
+                    "Speech engine unavailable; select or install a model, then retry saved audio",
+                )
+                self._report_chunk_failure(
+                    chunk.chunk_id,
+                    "Speech engine unavailable. Select or install a model, then retry saved audio.",
+                )
+                logger.warning("ASR engine unavailable; chunk %s needs manual retry",
+                               chunk.chunk_id)
+                return
 
-        attempts = self._attempts.get(chunk.chunk_id, 0) + 1
-        self._attempts[chunk.chunk_id] = attempts
+            attempts += 1
+            self._attempts[chunk.chunk_id] = attempts
+            try:
+                self._set_status(chunk.chunk_id, "processing")
+                self._log_queue_wait(chunk)
+                segments = self._transcribe_chunk(
+                    chunk, beam_size=self._beam_size_for_backlog(),
+                    initial_prompt=self._draft_prompt(chunk),
+                )
+                if self._on_chunk_result is None:
+                    raise RuntimeError("No durable ASR result callback is registered")
+                self._on_chunk_result(chunk, segments)
+                # The callback is the durability boundary. A failed commit
+                # retries with the same preceding transcript prompt.
+                self._remember_draft_segments(chunk, segments)
+                return
+            except PermanentChunkError as exc:
+                logger.error("Saved ASR chunk %s needs repair: %s", chunk.chunk_id, exc)
+                self._set_status(chunk.chunk_id, "blocked", str(exc))
+                self._report_chunk_failure(chunk.chunk_id, str(exc))
+                return
+            except Exception as exc:
+                disconnected = remote and isinstance(exc, RemoteMeetingUnavailable)
+                if disconnected or (remote and getattr(exc, "retryable", False)):
+                    self._defer_remote_chunk(chunk.chunk_id, str(exc))
+                    attempts -= 1
+                    self._attempts[chunk.chunk_id] = attempts
+                    self._report_connection(
+                        (f"{exc} Audio is saved locally; retrying the remote connection."
+                         if disconnected else
+                         f"{exc} Audio is saved locally; waiting for host capacity."),
+                        not disconnected,
+                    )
+                    delay = self._remote_retry_delay(exc, remote_failures)
+                    remote_failures += 1
+                    if self._stop_event.wait(delay):
+                        return
+                    continue
+                logger.exception(
+                    "Transcription failed for chunk %s (attempt %d/%d)",
+                    chunk.chunk_id, attempts, MAX_ATTEMPTS,
+                )
+                self._set_status(chunk.chunk_id, "failed", str(exc))
+                if attempts >= MAX_ATTEMPTS:
+                    logger.error("Giving up on chunk %s after %d attempts; audio remains saved",
+                                 chunk.chunk_id, attempts)
+                    self._report_chunk_failure(
+                        chunk.chunk_id,
+                        "Transcription failed after three attempts. Audio is saved; "
+                        "check the speech engine and retry this meeting.",
+                    )
+                    return
+                delay = RETRY_BACKOFF_S[min(attempts - 1,
+                                            len(RETRY_BACKOFF_S) - 1)]
+                if self._stop_event.wait(delay):
+                    return
+
+    def _defer_remote_chunk(self, chunk_id: int, error: str) -> None:
+        defer = getattr(self._repository, "defer_chunk_after_connection_failure", None)
+        if callable(defer):
+            try:
+                defer(chunk_id, error)
+                return
+            except Exception:
+                logger.exception("Could not refund disconnected ASR attempt for %s", chunk_id)
+        self._set_status(chunk_id, "pending", error)
+
+    @staticmethod
+    def _remote_retry_delay(error: Exception, failures: int) -> float:
+        suggested = getattr(error, "retry_after_s", None)
+        if (isinstance(suggested, (int, float)) and not isinstance(suggested, bool)
+                and math.isfinite(suggested) and suggested >= 0):
+            return min(REMOTE_RETRY_BACKOFF_S[-1],
+                       max(REMOTE_BUSY_MIN_RETRY_S, float(suggested)))
+        return REMOTE_RETRY_BACKOFF_S[min(failures,
+                                          len(REMOTE_RETRY_BACKOFF_S) - 1)]
+
+    def _report_chunk_failure(self, chunk_id: int, reason: str) -> None:
+        if self._chunk_failure is None:
+            return
         try:
-            self._set_status(chunk.chunk_id, "processing")
-            self._log_queue_wait(chunk)
-            segments = self._transcribe_chunk(
-                chunk,
-                beam_size=self._beam_size_for_backlog(),
-                initial_prompt=self._draft_prompt(chunk),
-            )
-            if self._on_chunk_result is None:
-                raise RuntimeError("No durable ASR result callback is registered")
-            self._on_chunk_result(chunk, segments)
-            # Advance context only after the result callback returns, because
-            # that callback is the durability boundary. A failed commit and
-            # retry must see the same preceding prompt as the first attempt.
-            self._remember_draft_segments(chunk, segments)
-            self._attempts.pop(chunk.chunk_id, None)
-            return False
-        except Exception as e:
-            if remote:
-                from meeting.asr.remote import RemoteMeetingUnavailable
-                if isinstance(e, RemoteMeetingUnavailable):
-                    self._set_status(chunk.chunk_id, "pending", str(e))
-                    self._attempts[chunk.chunk_id] = attempts - 1
-                    if not self._stopping:
-                        self.enqueue(chunk)
-                        return True
-                    return False
-            logger.exception(
-                "Transcription failed for chunk %s (attempt %d/%d)",
-                chunk.chunk_id, attempts, MAX_ATTEMPTS,
-            )
-            self._set_status(chunk.chunk_id, "failed", str(e))
-            if attempts < MAX_ATTEMPTS and not self._stopping:
-                self.enqueue(chunk)
-                return True
-            self._attempts.pop(chunk.chunk_id, None)
-            logger.error(
-                "Giving up on chunk %s after %d attempt(s)", chunk.chunk_id, attempts
-            )
-            return False
+            self._chunk_failure(f"Saved audio chunk {chunk_id}: {reason}")
+        except Exception:
+            logger.exception("Could not report terminal ASR failure")
 
     def _report_connection(self, message: str, connected: bool) -> None:
         if (message, connected) == self._last_connection_status:
@@ -595,11 +800,21 @@ class MeetingAsrEngine:
             Meeting-clock-timestamped segments; empty when the chunk holds no
             speech.
         """
-        frames, sample_rate = load_wav_int16(chunk.file_path)
+        try:
+            frames, sample_rate = load_wav_int16(chunk.file_path)
+        except (FileNotFoundError, PermissionError, wave.Error, ValueError) as exc:
+            raise PermanentChunkError(
+                f"Saved audio cannot be read ({exc}); restore or replace the WAV, then retry"
+            ) from exc
         if self._is_digital_silence(frames):
             logger.debug("Skipping digitally silent meeting chunk %s", chunk.chunk_id)
             return []
-        audio = prepare_for_whisper(frames, sample_rate)
+        try:
+            audio = prepare_for_whisper(frames, sample_rate)
+        except (ValueError, ZeroDivisionError) as exc:
+            raise PermanentChunkError(
+                f"Saved audio has invalid sample data ({exc}); repair the WAV, then retry"
+            ) from exc
         if audio.size == 0:
             return []
 

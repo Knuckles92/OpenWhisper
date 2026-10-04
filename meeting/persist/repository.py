@@ -12,6 +12,7 @@ import os
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import case, func, or_, text as sql_text
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import object_session
 from meeting.corrections import (StaleCorrectionSelection, correct_segment_text,
                                  correct_text, occurrence_rules, segment_fingerprint,
@@ -22,11 +23,13 @@ from meeting.state.schema import parse_state_json
 from meeting.time_utils import utc_now_iso
 from services.titles import normalize_title
 from services.models import (
+    MeetingAgentDeliveryCursor,
     MeetingAudioChunk,
     MeetingEvent,
     MeetingParticipant,
     MeetingQuestion,
     MeetingSegment,
+    MeetingSegmentDelivery,
     MeetingSession,
     MeetingStateItem,
 )
@@ -419,6 +422,16 @@ class SqlMeetingRepository:
             "preview_text": "",
         }
 
+    def record_owners(self) -> list:
+        with self._db.get_session() as session:
+            rows = session.query(MeetingSession.origin_device_id,
+                                 func.max(MeetingSession.origin_device_name),
+                                 func.count(MeetingSession.id)).filter(
+                MeetingSession.origin_device_id.is_not(None)
+            ).group_by(MeetingSession.origin_device_id).all()
+        return [{"id": owner, "name": name or "Unnamed computer", "count": count}
+                for owner, name, count in rows]
+
     def origin_spools(self, origin: str) -> List[Tuple[str, str]]:
         """``(meeting_id, spool_dir)`` of the meetings a paired computer stored here."""
         with self._db.get_session() as session:
@@ -579,28 +592,35 @@ class SqlMeetingRepository:
             if error is not None:
                 row.asr_error = error[:2000]
 
-    def get_pending_chunks(self, meeting_id: str) -> List[Dict[str, Any]]:
+    def get_pending_chunks(
+        self, meeting_id: str, *, limit: Optional[int] = None,
+        exclude_ids: Iterable[int] = (),
+    ) -> List[Dict[str, Any]]:
         """Chunks awaiting transcription, including retryable failures.
 
         ``processing`` counts as retryable: a chunk in that state belongs to
         a transcription that never reported back (a crash mid-Whisper), and
         excluding it would silently lose 20-32 s of speech forever. Attempts
         are incremented on the transition into ``processing``, so the retry
-        budget stays bounded.
+        budget stays bounded across process restarts.  A bounded ``limit`` and
+        tracked-id exclusion let the live worker refill a small memory queue
+        from durable SQLite rows without loading a long meeting all at once.
         """
         with self._db.get_session() as session:
-            rows = session.query(MeetingAudioChunk).filter(
+            query = session.query(MeetingAudioChunk).filter(
                 MeetingAudioChunk.meeting_id == meeting_id,
-                (
-                    (MeetingAudioChunk.asr_status == "pending")
-                    | (
-                        MeetingAudioChunk.asr_status.in_(
-                            ("failed", "processing")
-                        )
-                        & (MeetingAudioChunk.asr_attempts < MAX_CHUNK_ATTEMPTS)
-                    )
-                ),
-            ).order_by(MeetingAudioChunk.start_s).all()
+                MeetingAudioChunk.asr_status.in_(("pending", "failed", "processing")),
+                MeetingAudioChunk.asr_attempts < MAX_CHUNK_ATTEMPTS,
+            )
+            excluded = tuple(int(value) for value in exclude_ids)
+            if excluded:
+                query = query.filter(~MeetingAudioChunk.id.in_(excluded))
+            query = query.order_by(MeetingAudioChunk.start_s, MeetingAudioChunk.id)
+            if limit is not None:
+                if limit <= 0:
+                    return []
+                query = query.limit(limit)
+            rows = query.all()
             return [_chunk_to_dict(r) for r in rows]
 
     def count_unfinished_chunks(self, meeting_id: str) -> int:
@@ -611,18 +631,39 @@ class SqlMeetingRepository:
                 MeetingAudioChunk.asr_status != "done",
             ).count()
 
-    def reset_unfinished_chunks(self, meeting_id: str) -> int:
-        """Reset all unfinished chunks for an explicit recovery attempt."""
+    def reset_unfinished_chunks(self, meeting_id: str, *, force: bool = False) -> int:
+        """Resume interrupted work without resetting its retry budget.
+
+        ``force=True`` is reserved for an explicit repair/retry request. A
+        startup recovery must not hot-loop exhausted or invalid chunks on
+        every launch.
+        """
         with self._db.get_session() as session:
             rows = session.query(MeetingAudioChunk).filter(
                 MeetingAudioChunk.meeting_id == meeting_id,
                 MeetingAudioChunk.asr_status != "done",
             ).all()
+            reset = 0
             for row in rows:
+                if not force and (row.asr_status == "blocked" or
+                                  row.asr_attempts >= MAX_CHUNK_ATTEMPTS):
+                    continue
                 row.asr_status = "pending"
-                row.asr_attempts = 0
-                row.asr_error = None
-            return len(rows)
+                if force:
+                    row.asr_attempts = 0
+                    row.asr_error = None
+                reset += 1
+            return reset
+
+    def defer_chunk_after_connection_failure(self, chunk_id: int, error: str) -> None:
+        """Return a disconnected remote chunk to pending without spending an attempt."""
+        with self._db.get_session() as session:
+            row = session.get(MeetingAudioChunk, chunk_id)
+            if row is None or row.asr_status == "done":
+                return
+            row.asr_status = "pending"
+            row.asr_attempts = max(0, row.asr_attempts - 1)
+            row.asr_error = error[:2000]
 
     def get_audio_chunks(self, meeting_id: str) -> List[Dict[str, Any]]:
         """Return durable audio chunks in timeline/channel order."""
@@ -798,6 +839,52 @@ class SqlMeetingRepository:
             if limit:
                 q = q.limit(limit)
             return [_segment_to_dict(r) for r in q.all()]
+
+    def get_segments_delivery_page(
+        self, meeting_id: str, after_seq: int = 0, limit: int = 300,
+    ) -> List[Dict[str, Any]]:
+        """One bounded page in commit order, including late old-start speech."""
+        limit = max(1, min(int(limit), 301))
+        with self._db.get_session() as session:
+            rows = session.query(MeetingSegmentDelivery, MeetingSegment).join(
+                MeetingSegment, MeetingSegment.id == MeetingSegmentDelivery.segment_id,
+            ).filter(
+                MeetingSegmentDelivery.meeting_id == meeting_id,
+                MeetingSegmentDelivery.seq > max(0, int(after_seq)),
+            ).order_by(MeetingSegmentDelivery.seq).limit(limit).all()
+            return [{**_segment_to_dict(segment), "delivery_seq": delivery.seq}
+                    for delivery, segment in rows]
+
+    def get_delivery_cursor(self, meeting_id: str, consumer: str) -> int:
+        """Last successfully delivered insertion sequence for cards or notes."""
+        if consumer not in ("cards", "notes"):
+            raise ValueError("unknown transcript delivery consumer")
+        with self._db.get_session() as session:
+            row = session.get(MeetingAgentDeliveryCursor, (meeting_id, consumer))
+            return int(row.seq) if row is not None else 0
+
+    def advance_delivery_cursor(self, meeting_id: str, consumer: str, seq: int) -> None:
+        """Persist a successful delivery without ever moving its cursor back."""
+        if consumer not in ("cards", "notes") or seq < 0:
+            raise ValueError("invalid transcript delivery cursor")
+        table = MeetingAgentDeliveryCursor.__table__
+        statement = sqlite_insert(table).values(
+            meeting_id=meeting_id, consumer=consumer, seq=int(seq),
+        )
+        statement = statement.on_conflict_do_update(
+            index_elements=[table.c.meeting_id, table.c.consumer],
+            set_={"seq": func.max(table.c.seq, statement.excluded.seq)},
+        )
+        with self._db.get_session() as session:
+            session.execute(statement)
+
+    def get_delivery_high_water(self, meeting_id: str) -> int:
+        """Current greatest segment sequence, used when cloud sharing resumes."""
+        with self._db.get_session() as session:
+            value = session.query(func.max(MeetingSegmentDelivery.seq)).filter(
+                MeetingSegmentDelivery.meeting_id == meeting_id,
+            ).scalar()
+            return int(value or 0)
 
     def mark_chunks_done(self, meeting_id: str) -> int:
         """Mark every audio chunk transcribed so recovery will not re-decode.

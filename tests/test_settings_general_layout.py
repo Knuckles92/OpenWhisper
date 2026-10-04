@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 from ui_qt.dialogs.settings_dialog import (
     ADVANCED,
     API_KEYS,
+    BACKUP,
     CLEANUP,
     CLEANUP_RULES,
     CLEANUP_PROFILES,
@@ -77,6 +78,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     MEETING_DASHBOARD,
                     DOWNLOADS,
                     RUNTIME,
+                    BACKUP,
                     GENERAL,
                     HOTKEYS,
                     API_KEYS,

@@ -30,6 +30,7 @@ import shutil
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
@@ -105,6 +106,7 @@ class RecordSync:
         self._connect_fn = connect
         self._cache_dir = cache_dir
         self._lock = threading.RLock()
+        self._transfer_lock = threading.RLock()
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -430,6 +432,19 @@ class RecordSync:
         return connection
 
     def run_once(self, *, startup: bool = False) -> None:
+        with self._transfer_lock:
+            self._run_once(startup=startup)
+
+    @contextmanager
+    def paused_for_backup(self):
+        if not self._transfer_lock.acquire(timeout=30):
+            raise RuntimeError("Records are still moving to or from the paired host. Try backup again after sync finishes.")
+        try:
+            yield
+        finally:
+            self._transfer_lock.release()
+
+    def _run_once(self, *, startup: bool = False) -> None:
         """One pass over the outbox. Blocking; the worker thread's body."""
         pairing, _token = self._pairing()
         if pairing is None:
@@ -592,6 +607,10 @@ class RecordSync:
         code = getattr(exc, "code", None)
         if code == "forbidden":
             self._set(host_keeps=False)
+            raise RecordsUnavailable(message) from exc
+        if code == "busy":
+            # A backup pause must not exhaust a record's retry budget or
+            # cause host-only storage to discard the client's only copy.
             raise RecordsUnavailable(message) from exc
         if isinstance(exc, RemoteEngineError):
             # The connection dropped; everything after this fails the same way.
@@ -879,6 +898,10 @@ class RecordSync:
         return parent
 
     def bring_back(self, progress: Optional[Callable[[str], None]] = None) -> int:
+        with self._transfer_lock:
+            return self._bring_back(progress)
+
+    def _bring_back(self, progress: Optional[Callable[[str], None]] = None) -> int:
         """Move every record the host holds for this computer back here. Blocking."""
         moved = 0
         connection = self._open()

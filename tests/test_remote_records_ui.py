@@ -13,7 +13,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from services.remote_records import sync as sync_module
 from services.remote_records.sync import SyncStatus
@@ -202,6 +202,57 @@ def test_the_host_toggle_saves_the_opt_in():
     section.keep_records_tile.checkbox.setChecked(True)
     assert service.keep == [True]
     dialog.close()
+
+
+@pytest.mark.parametrize("mode", ["classic", "omarchy"])
+@pytest.mark.parametrize("accepted", [False, True])
+def test_host_record_recovery_requires_explicit_assignment(mode, accepted, monkeypatch):
+    monkeypatch.setenv("OPENWHISPER_UI", mode)
+
+    class RecoveryService(_Service):
+        def __init__(self):
+            super().__init__()
+            self.recovered = []
+
+        def host_state(self):
+            state = super().host_state()
+            state["devices"] = [{"id": "new-laptop", "name": "Laptop"}]
+            return state
+
+        def records_summary(self, device_id):
+            return {}
+
+        def recoverable_record_owners(self):
+            return [{"id": "old-laptop", "name": "Laptop", "counts": {"dictation": 2, "meeting": 1}}]
+
+        def recover_device_records(self, owner_id, device_id):
+            self.recovered.append((owner_id, device_id))
+
+    service = RecoveryService()
+    dialog, section = _section(FakeRecords(), service)
+    try:
+        dialog.resize(520, 740)
+        QApplication.processEvents()
+        assert section.recover_records_button.isEnabled()
+        choices = []
+
+        def review(modal):
+            from ui_qt.widgets import ElidingComboBox
+
+            source = modal.findChild(ElidingComboBox, "remoteRecoveryOwnerCombo")
+            target = modal.findChild(ElidingComboBox, "remoteRecoveryDeviceCombo")
+            choices.append((source.currentData(), target.currentData()))
+            return QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected
+
+        monkeypatch.setattr(QDialog, "exec", review)
+        section.recover_records_button.click()
+        assert choices == [("old-laptop", "new-laptop")]
+        assert _pump(lambda: not section._recovery_busy)
+        assert service.recovered == ([("old-laptop", "new-laptop")] if accepted else [])
+        if accepted:
+            assert "available" in section.recovery_message.text()
+    finally:
+        dialog.close()
 
 
 @pytest.mark.parametrize("mode", ["classic", "omarchy"])

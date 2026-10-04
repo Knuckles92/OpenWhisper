@@ -23,7 +23,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
-from sqlalchemy import Boolean, Float, Integer, LargeBinary, String, Text
+from sqlalchemy import Boolean, Float, Integer, LargeBinary, String, Text, func
 
 from services.remote_records.host_store import MANIFEST, safe_name
 
@@ -175,6 +175,21 @@ class DictationRecords:
         if os.path.dirname(path) != inside or not os.path.isfile(path):
             return None
         return path
+
+    def owns(self, device_id: str, record_id: str) -> bool:
+        entry = self.db.get_history_entry_by_id(record_id)
+        return entry is not None and entry.origin_device_id == device_id
+
+    def owners(self) -> list:
+        from services.models import TranscriptionHistory as Model
+
+        with self.db.get_session() as session:
+            rows = session.query(Model.origin_device_id, func.max(Model.origin_device_name),
+                                 func.count(Model.id)).filter(
+                Model.origin_device_id.is_not(None)
+            ).group_by(Model.origin_device_id).all()
+        return [{"id": owner, "name": name or "Unnamed computer", "count": count}
+                for owner, name, count in rows]
 
     # ---- this computer's own ----
 
@@ -442,6 +457,13 @@ class MeetingRecords:
         if meeting is None or meeting.get("origin_device_id") != origin:
             raise LookupError("That meeting isn't here anymore.")
         return meeting
+
+    def owns(self, device_id: str, record_id: str) -> bool:
+        meeting = self.repository.get_meeting(record_id)
+        return meeting is not None and meeting.get("origin_device_id") == device_id
+
+    def owners(self) -> list:
+        return self.repository.record_owners()
 
     def _spool(self, meeting: Optional[dict]) -> Optional[str]:
         """The meeting's folder, if it is where meetings are kept here."""

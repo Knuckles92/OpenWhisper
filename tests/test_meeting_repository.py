@@ -249,6 +249,41 @@ class TestChunks:
         repo.set_chunk_status(chunk_id, "done")
         assert repo.get_pending_chunks("m_test1") == []
 
+    def test_bounded_pending_page_and_recovery_preserve_retry_budget(self, repo):
+        make_meeting(repo)
+        chunks = [repo.register_chunk(
+            meeting_id="m_test1", channel="mic", seq=index,
+            file_path=f"/tmp/c{index}.wav", start_s=float(index),
+            duration_s=1.0, sample_rate=16000,
+        ) for index in range(4)]
+        repo.set_chunk_status(chunks[1], "processing")
+        repo.set_chunk_status(chunks[1], "failed", error="transient")
+        repo.set_chunk_status(chunks[2], "processing")
+        repo.set_chunk_status(chunks[2], "blocked", error="Saved WAV is missing")
+        for _ in range(3):
+            repo.set_chunk_status(chunks[3], "processing")
+            repo.set_chunk_status(chunks[3], "failed", error="backend failed")
+
+        assert [row["id"] for row in repo.get_pending_chunks(
+            "m_test1", limit=1, exclude_ids=(chunks[0],))] == [chunks[1]]
+        assert repo.reset_unfinished_chunks("m_test1") == 2
+        rows = {row["id"]: row for row in repo.get_audio_chunks("m_test1")}
+        assert rows[chunks[1]]["asr_attempts"] == 1
+        assert rows[chunks[2]]["asr_status"] == "blocked"
+        assert rows[chunks[3]]["asr_attempts"] == 3
+        assert {row["id"] for row in repo.get_pending_chunks("m_test1")} == set(chunks[:2])
+
+        assert repo.reset_unfinished_chunks("m_test1", force=True) == 4
+        assert {row["id"] for row in repo.get_pending_chunks("m_test1")} == set(chunks)
+        assert all(row["asr_attempts"] == 0 for row in repo.get_audio_chunks("m_test1"))
+
+        repo.set_chunk_status(chunks[0], "processing")
+        repo.defer_chunk_after_connection_failure(chunks[0], "host offline")
+        remote = next(row for row in repo.get_audio_chunks("m_test1")
+                      if row["id"] == chunks[0])
+        assert (remote["asr_status"], remote["asr_attempts"], remote["asr_error"]) == (
+            "pending", 0, "host offline")
+
     def test_atomic_commit_is_idempotent_and_done_cannot_regress(self, repo):
         make_meeting(repo)
         chunk_id = repo.register_chunk(

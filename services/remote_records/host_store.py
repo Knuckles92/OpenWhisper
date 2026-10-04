@@ -6,8 +6,8 @@ services/remote_asr/protocol.py). Each device stages its uploads in its own
 folder, every file is checked against the size and SHA-256 the client
 declared, and only a complete record is imported, by the handler for its
 kind, into this computer's own history or meetings with the device as its
-origin. From then on it shows up here like any other, and that device (and
-only that device) can list, fetch and delete it again.
+origin. From then on it shows up here like any other. That device, or a new
+pairing explicitly assigned by the host owner, can access it again.
 
 Nothing a client sends becomes a path without passing ``safe_name``, and
 record ids are checked the same way, so a device can't write outside its
@@ -73,6 +73,10 @@ class RecordKind(Protocol):
     def delete_all(self, device_id: str) -> int: ...
 
     def summary(self, device_id: str) -> dict: ...
+
+    def owners(self) -> list: ...
+
+    def owns(self, device_id: str, record_id: str) -> bool: ...
 
 
 def safe_name(name) -> str:
@@ -150,37 +154,51 @@ class HostRecordStore:
 
     def handle(self, op: str, header: dict, payload: bytes, device: dict) -> dict:
         device_id = device.get("id")
+        # Only the host service supplies these grants, after the host owner
+        # assigns an unpaired computer's records to a fresh pairing.
+        owners = list(dict.fromkeys([device_id, *device.get("record_owner_ids", [])]))
+        for owner in owners:
+            self._device_dir("staging", owner)
         if op == "records_list":
             kind = safe_kind(header.get("kind"))
             query = header.get("query") if isinstance(header.get("query"), str) else ""
             limit = header.get("limit", 100)
             limit = limit if isinstance(limit, int) and not isinstance(limit, bool) else 100
-            return {"records": self.kinds[kind].list(device_id, query[:200], max(1, min(limit, MAX_LIST)))}
+            limit = max(1, min(limit, MAX_LIST))
+            records = [item for owner in owners
+                       for item in self.kinds[kind].list(owner, query[:200], limit)]
+            records.sort(key=lambda item: item.get("timestamp") or item.get("started_at") or "", reverse=True)
+            return {"records": records[:limit]}
         if op == "records_clear":
             kind = safe_kind(header.get("kind"))
-            return {"deleted": self.kinds[kind].delete_all(device_id)}
+            return {"deleted": sum(self.kinds[kind].delete_all(owner) for owner in owners)}
         kind = safe_kind(header.get("kind"))
         record_id = safe_record_id(header.get("record_id"))
+        owner_id = device_id
+        if len(owners) > 1 and op in (
+            "records_stat", "records_commit", "records_open", "records_fetch", "records_delete",
+        ):
+            owner_id = next((owner for owner in owners if self.kinds[kind].owns(owner, record_id)), device_id)
         if op == "records_stat":
             # What an earlier copy of this record left here, so a sender can
             # skip files that haven't changed (a meeting's audio, after an edit).
-            return {"stored": self.kinds[kind].stored_files(device_id, record_id)}
+            return {"stored": self.kinds[kind].stored_files(owner_id, record_id)}
         if op == "records_begin":
             return self.begin(device_id, kind, record_id, header)
         if op == "records_put":
             return self.put(device_id, kind, record_id, header, payload)
         if op == "records_commit":
-            return self.commit(device, kind, record_id)
+            return self.commit(device, kind, record_id, owner_id=owner_id)
         if op == "records_abort":
             self.abort(device_id, kind, record_id)
             return {}
         if op == "records_open":
-            return self.open(device_id, kind, record_id)
+            return self.open(owner_id, kind, record_id)
         if op == "records_fetch":
-            return self.fetch(device_id, kind, record_id, header)
+            return self.fetch(owner_id, kind, record_id, header)
         if op == "records_delete":
-            deleted = self.kinds[kind].delete(device_id, record_id)
-            shutil.rmtree(self._upload_dir("exports", device_id, kind, record_id), ignore_errors=True)
+            deleted = self.kinds[kind].delete(owner_id, record_id)
+            shutil.rmtree(self._upload_dir("exports", owner_id, kind, record_id), ignore_errors=True)
             return {"deleted": bool(deleted)}
         raise ValueError(f"Unknown operation: {op!r}")
 
@@ -307,7 +325,7 @@ class HostRecordStore:
             self._write_manifest(upload_dir, manifest)
             return {"received": have, "done": True}
 
-    def commit(self, device: dict, kind: str, record_id: str) -> dict:
+    def commit(self, device: dict, kind: str, record_id: str, *, owner_id=None) -> dict:
         device_id = device.get("id")
         upload_dir = self._upload_dir("staging", device_id, kind, record_id)
         with self._lock(device_id, kind, record_id):
@@ -329,7 +347,8 @@ class HostRecordStore:
                 raise ValueError("The record's record.json can't be read.") from exc
             if not isinstance(record, dict) or record.get("kind") != kind:
                 raise ValueError("The record's record.json is for another kind of record.")
-            result = self.kinds[kind].import_record(record_id, files_dir, record, dict(device))
+            owner = dict(device, id=owner_id or device_id)
+            result = self.kinds[kind].import_record(record_id, files_dir, record, owner)
             shutil.rmtree(upload_dir, ignore_errors=True)
             logger.info("Stored %s record %s for paired computer %s",
                         kind, record_id, device.get("name"))

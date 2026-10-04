@@ -4,5 +4,17 @@
     "component": "application",
     "category": "ConnectionError",
     "line": 1833
+  },
+  {
+    "utc": "2026-10-04T19:55:11.841458+00:00",
+    "component": "recorder",
+    "category": "LoggedError",
+    "line": 422
+  },
+  {
+    "utc": "2026-10-04T19:55:11.967988+00:00",
+    "component": "runtime.transcription",
+    "category": "LoggedError",
+    "line": 325
   }
 ]

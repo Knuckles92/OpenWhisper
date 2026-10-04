@@ -16,7 +16,7 @@ from services.models import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 
 class DatabaseManager:
@@ -74,6 +74,7 @@ class DatabaseManager:
         Base.metadata.create_all(self.engine)
         self._drop_removed_meeting_tables()
         self._ensure_meeting_fts()
+        self._ensure_meeting_delivery()
 
         with self.get_session() as session:
             version_row = session.get(SchemaVersion, SCHEMA_VERSION)
@@ -82,6 +83,39 @@ class DatabaseManager:
                 session.add(SchemaVersion(version=SCHEMA_VERSION))
 
         logger.info("Database schema initialized")
+
+    def _ensure_meeting_delivery(self) -> None:
+        """Track commit order for transcript delivery, including existing rows.
+
+        Segment start times can arrive out of order when one ASR channel lags.
+        SQLite AUTOINCREMENT keeps this cursor monotonic even after a segment
+        is deleted; updates to an existing segment don't create another event.
+        """
+        with self.engine.begin() as conn:
+            conn.execute(text("""
+                CREATE TRIGGER IF NOT EXISTS meeting_segments_delivery_ai
+                AFTER INSERT ON meeting_segments BEGIN
+                    INSERT INTO meeting_segment_delivery(segment_id, meeting_id)
+                    VALUES (new.id, new.meeting_id);
+                END
+            """))
+            missing_count = conn.execute(text("""
+                SELECT (SELECT count(*) FROM meeting_segments)
+                     - (SELECT count(*) FROM meeting_segment_delivery)
+            """)).scalar()
+            if missing_count:
+                # Existing databases need one deterministic backfill. Normal
+                # startups avoid scanning or attempting an insert for every
+                # segment; ignored inserts can consume AUTOINCREMENT values.
+                conn.execute(text("""
+                    INSERT INTO meeting_segment_delivery(segment_id, meeting_id)
+                    SELECT s.id, s.meeting_id FROM meeting_segments AS s
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM meeting_segment_delivery AS d
+                        WHERE d.segment_id = s.id
+                    )
+                    ORDER BY s.rowid
+                """))
 
     def _drop_removed_meeting_tables(self) -> None:
         """Drop meeting-mode tables that may exist from older app versions.

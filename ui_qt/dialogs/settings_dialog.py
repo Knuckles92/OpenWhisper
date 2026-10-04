@@ -106,6 +106,7 @@ from ui_qt.utils.list_reconcile import HistoryDelivery
 from ui_qt.dialogs.settings_destinations import (
     ADVANCED,
     API_KEYS,
+    BACKUP,
     CLEANUP,
     CLEANUP_PROFILES,
     CLEANUP_RULES,
@@ -126,6 +127,7 @@ from ui_qt.dialogs.settings_destinations import (
     resolve_destination,
 )
 from ui_qt.dialogs.settings_downloads import DownloadsPage
+from ui_qt.dialogs.settings_backup import BackupSettingsPage
 from ui_qt.dialogs.settings_fields import (
     group_title,
     settings_caption,
@@ -304,6 +306,7 @@ class SettingsDialog(QDialog):
         parent=None,
         get_loaded_model: Optional[Callable[[], Optional[str]]] = None,
         background_cache_scan: bool = True,
+        backup_coordinator=None,
     ):
         """Register destinations and build only the selected page.
 
@@ -324,6 +327,8 @@ class SettingsDialog(QDialog):
 
         self._get_loaded_model = get_loaded_model
         self._background_cache_scan = bool(background_cache_scan)
+        self._backup_coordinator = backup_coordinator
+        self._backup_busy = False
         self._pages_ready = False
         self._built_pages = set()
         self._building_pages = set()
@@ -394,6 +399,8 @@ class SettingsDialog(QDialog):
             shortcut = QShortcut(sequence, self)
             shortcut.activated.connect(self.open_search)
             self._search_shortcuts.append(shortcut)
+        if self._backup_coordinator is not None:
+            self._backup_coordinator.busy_changed.connect(self._on_backup_busy_changed)
         self._search_flash_timer = QTimer(self)
         self._search_flash_timer.setSingleShot(True)
         self._search_flash_timer.setInterval(1600)
@@ -409,6 +416,11 @@ class SettingsDialog(QDialog):
         self._pages_ready = True
         self.rail.select(OVERVIEW)
         self.refresh()
+        if self._backup_coordinator is not None:
+            try:
+                self._on_backup_busy_changed(bool(self._backup_coordinator.snapshot().get("busy")))
+            except Exception:
+                logger.exception("Could not read backup coordinator state")
 
     def _setup_ui(self) -> None:
         root = QHBoxLayout(self)
@@ -514,6 +526,7 @@ class SettingsDialog(QDialog):
             ("Models & storage", (
                 (DOWNLOADS, "Downloads", "download-blue.svg"),
                 (RUNTIME, "Runtime", "cpu-blue.svg"),
+                (BACKUP, "Backup & restore", "box-blue.svg"),
             )),
             ("App", (
                 (GENERAL, "General", "bolt-green.svg"),
@@ -663,6 +676,12 @@ class SettingsDialog(QDialog):
             self.models.build_runtime_page,
         )
         self._add_page(
+            BACKUP,
+            "Backup & restore",
+            "Save a local copy of your data or inspect a backup before restoring it.",
+            self._build_backup_page,
+        )
+        self._add_page(
             GENERAL,
             "General",
             "How finished transcriptions leave the app, and how the window "
@@ -806,6 +825,14 @@ class SettingsDialog(QDialog):
         self.mcp_page = McpSettingsPage(settings_manager)
         layout.addWidget(self.mcp_page)
         layout.addStretch()
+
+    def _build_backup_page(self, layout: QVBoxLayout) -> None:
+        self.backup_page = BackupSettingsPage(self._backup_coordinator)
+        self.backup_page.operation_busy_changed.connect(self._on_backup_busy_changed)
+        self.backup_create_tile = self.backup_page.create_tile
+        self.backup_restore_tile = self.backup_page.restore_tile
+        self.backup_schedule_tile = self.backup_page.schedule_tile
+        layout.addWidget(self.backup_page)
 
     def _build_downloads_page(self, layout: QVBoxLayout) -> None:
         self.downloads.ensure_ui()
@@ -2380,6 +2407,8 @@ class SettingsDialog(QDialog):
     def select_destination(self, key: str) -> None:
         """Show one destination by stable key or legacy alias."""
         key = resolve_destination(key)
+        if self._backup_busy and key != BACKUP:
+            return
         if key in self._pages:
             self.ensure_page(key)
             self.rail.select(key)
@@ -2408,6 +2437,9 @@ class SettingsDialog(QDialog):
             self.downloads.focus_component(component_id)
 
     def _on_destination_changed(self, key: str) -> None:
+        if self._backup_busy and key != BACKUP:
+            self.rail.select(BACKUP)
+            return
         if key != HOTKEYS:
             self._cancel_hotkey_capture()
         page = self._pages.get(key)
@@ -2430,7 +2462,21 @@ class SettingsDialog(QDialog):
 
     def open_search(self, text: str = "") -> None:
         """Show the search palette over the window."""
+        if self._backup_busy:
+            return
         self.search_palette.open(text)
+
+    def _on_backup_busy_changed(self, busy: bool) -> None:
+        """Keep Settings on Backup & restore during a snapshot or restore."""
+        if busy and self.rail.current_key() != BACKUP:
+            self.select_destination(BACKUP)
+        self._backup_busy = bool(busy)
+        self.rail.setEnabled(not busy)
+        self.search_button.setEnabled(not busy)
+        for shortcut in self._search_shortcuts:
+            shortcut.setEnabled(not busy)
+        if busy:
+            self.search_palette.close_palette()
 
     def _search_index(self) -> list:
         pages = []
@@ -2557,6 +2603,8 @@ class SettingsDialog(QDialog):
                 visible = self.isVisible()
                 self.models.refresh(scan=visible)
                 self.downloads.refresh(scan=visible)
+                if BACKUP in self._built_pages:
+                    self.backup_page.refresh()
                 self._refresh_rail_values()
             finally:
                 self._loading = False
@@ -2662,6 +2710,11 @@ class SettingsDialog(QDialog):
         self.rail.set_value(API_KEYS, self._api_key_rail_value())
         self.rail.set_value(HOTKEYS, self._hotkey_rail_value())
         self.rail.set_value(DOWNLOADS, self.downloads.rail_value())
+        if BACKUP in self._built_pages:
+            frequency = self.backup_page.frequency_combo.currentData()
+            self.rail.set_value(BACKUP, "Off" if frequency == "off" else str(frequency).title())
+        else:
+            self.rail.set_value(BACKUP, "Local backups")
         self.rail.set_value(ADVANCED, "Developer mode on" if resolve_developer_mode(settings) else "Developer mode off")
         if self.rail.current_key() == OVERVIEW:
             self._refresh_overview()
@@ -3411,8 +3464,11 @@ class SettingsDialog(QDialog):
             error = ""
             try:
                 recorder.stop_recording()
-                recorder.wait_for_stop_completion()
-                if not recorder.has_recording_data():
+                if not recorder.wait_for_stop_completion():
+                    error = "Recording did not finish stopping; audio kept for recovery."
+                elif getattr(recorder, "last_capture_error", None):
+                    error = str(recorder.last_capture_error)
+                elif not recorder.has_recording_data():
                     error = "No audio was captured."
                 elif not recorder.save_recording(audio_path):
                     error = "Couldn't save the dictation audio."

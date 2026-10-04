@@ -14,6 +14,16 @@ class RemoteMeetingUnavailable(RuntimeError):
     """Audio remains on disk while the meeting waits for its speech host."""
 
 
+class RemoteMeetingBusy(RemoteMeetingUnavailable):
+    """The paired host refused a connection at its capacity limit."""
+
+    retryable = True
+
+    def __init__(self, message: str, *, retry_after_s=None):
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+
+
 def remote_route(settings=None) -> dict:
     from services.remote_asr.settings import load_client_pairing
 
@@ -63,6 +73,7 @@ class MeetingRemoteBackend(RemoteSpeechBackend):
         super().__init__()
         self.route = dict(route)
         self.host_name = str(route.get("host_name") or "the paired computer")
+        self._connection_busy = None
 
     def _check_pairing(self, pairing):
         if (pairing is None or not self.route.get("fingerprint")
@@ -73,8 +84,17 @@ class MeetingRemoteBackend(RemoteSpeechBackend):
             )
 
     def _connect(self, pairing, token, generation=None):
+        from services.remote_asr.client import RemoteHostBusy
+
         self._check_pairing(pairing)
-        connection, ready = super()._connect(pairing, token, generation)
+        self._connection_busy = None
+        try:
+            connection, ready = super()._connect(pairing, token, generation)
+        except RemoteHostBusy as exc:
+            # restore_link() records only a display string. Keep this typed
+            # capacity response for MeetingAsrEngine's paced retry.
+            self._connection_busy = exc
+            raise
         try:
             engine = ready.get("engine") or {}
             family, model = engine.get("family"), engine.get("model")
@@ -121,8 +141,14 @@ class MeetingRemoteBackend(RemoteSpeechBackend):
             raise
         self.check_link()
         if not self.is_available():
+            self._connection_busy = None
             self.restore_link()
         if not self.is_available():
+            if self._connection_busy is not None:
+                raise RemoteMeetingBusy(
+                    str(self._connection_busy),
+                    retry_after_s=self._connection_busy.retry_after_s,
+                )
             raise RemoteMeetingUnavailable(self.last_error or f"Cannot connect to {self.host_name}.")
 
     def _request_audio(self, op, audio, language=None, **options):

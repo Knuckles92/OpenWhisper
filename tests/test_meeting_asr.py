@@ -2,6 +2,7 @@
 Tests for live ASR (MeetingAsrEngine: fake backend, retry ×3, timestamped
 segments) and post-meeting offline ASR (silence split, overlap drop).
 """
+import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -12,6 +13,7 @@ from meeting.asr.engine import (
     DRAFT_PROMPT_WORDS,
     FAST_MODE_BACKLOG_CHUNKS,
     MAX_ATTEMPTS,
+    MAX_IN_MEMORY_CHUNKS,
     MeetingAsrEngine,
 )
 from meeting.asr.offline import (
@@ -34,9 +36,28 @@ class FakeRepository:
 
     def set_chunk_status(self, chunk_id, status, error=None):
         self.statuses.append((chunk_id, status, error))
+        for row in self.pending:
+            if row["id"] == chunk_id:
+                row["asr_status"] = status
+                if status == "processing":
+                    row["asr_attempts"] = row.get("asr_attempts", 0) + 1
+                if error is not None:
+                    row["asr_error"] = error
 
-    def get_pending_chunks(self, meeting_id):
-        return list(self.pending)
+    def get_pending_chunks(self, meeting_id, *, limit=None, exclude_ids=()):
+        excluded = set(exclude_ids)
+        rows = [row for row in self.pending
+                if row["meeting_id"] == meeting_id and row["id"] not in excluded
+                and row.get("asr_status", "pending") in ("pending", "failed", "processing")
+                and row.get("asr_attempts", 0) < MAX_ATTEMPTS]
+        return rows[:limit] if limit is not None else rows
+
+    def defer_chunk_after_connection_failure(self, chunk_id, error):
+        for row in self.pending:
+            if row["id"] == chunk_id:
+                row["asr_status"] = "pending"
+                row["asr_attempts"] = max(0, row.get("asr_attempts", 0) - 1)
+                row["asr_error"] = error
 
 
 def _make_engine(repo, backend):
@@ -60,6 +81,16 @@ def _chunk(tmp_path, chunk_id=1, start_s=10.0):
         chunk_id=chunk_id, meeting_id="m_test", channel="mic", seq=0,
         file_path=path, start_s=start_s, duration_s=0.5, sample_rate=16000,
     )
+
+
+def _chunk_row(chunk):
+    return {
+        "id": chunk.chunk_id, "meeting_id": chunk.meeting_id,
+        "channel": chunk.channel, "seq": chunk.seq,
+        "file_path": chunk.file_path, "start_s": chunk.start_s,
+        "duration_s": chunk.duration_s, "sample_rate": chunk.sample_rate,
+        "asr_status": "pending", "asr_attempts": 0,
+    }
 
 
 class FakeWhisperSeg:
@@ -257,6 +288,193 @@ class TestAsrRetry:
             assert any(s[1] == "done" for s in repo.statuses)
         finally:
             engine.stop()
+
+    def test_missing_wav_is_blocked_without_retries(self, tmp_path):
+        repo = FakeRepository()
+        model = MagicMock()
+        backend = SimpleNamespace(
+            is_available=lambda: True, model=model, cleanup=lambda: None,
+        )
+        engine = _make_engine(repo, backend)
+        failures = []
+        engine._chunk_failure = failures.append
+        chunk = _chunk(tmp_path)
+        (tmp_path / "c1.wav").unlink()
+        repo.pending = [_chunk_row(chunk)]
+        engine.start(lambda *_: pytest.fail("Missing audio cannot commit"))
+        try:
+            assert engine.enqueue(chunk)
+            assert engine.drain(3.0)
+            assert repo.pending[0]["asr_status"] == "blocked"
+            assert repo.pending[0]["asr_attempts"] == 1
+            assert "restore or replace" in repo.pending[0]["asr_error"]
+            assert failures and "Saved audio chunk 1" in failures[0]
+            model.transcribe.assert_not_called()
+            assert engine.requeue_pending() == 0
+        finally:
+            engine.stop()
+
+    def test_transient_retries_are_spaced(self, tmp_path, monkeypatch):
+        from meeting.asr import engine as asr_module
+
+        monkeypatch.setattr(asr_module, "RETRY_BACKOFF_S", (0.1, 0.2))
+        times = []
+
+        def fail_decode(*_args, **_kwargs):
+            times.append(time.monotonic())
+            raise RuntimeError("temporary backend failure")
+
+        model = SimpleNamespace(transcribe=fail_decode)
+        backend = SimpleNamespace(
+            is_available=lambda: True, model=model, cleanup=lambda: None,
+        )
+        repo = FakeRepository()
+        engine = _make_engine(repo, backend)
+        engine.start(lambda *_: None)
+        try:
+            engine.enqueue(_chunk(tmp_path))
+            assert engine.drain(3.0)
+            assert len(times) == MAX_ATTEMPTS
+            assert times[1] - times[0] >= 0.08
+            assert times[2] - times[1] >= 0.18
+        finally:
+            engine.stop()
+
+    def test_remote_disconnect_after_attempt_refunds_budget(self, tmp_path, monkeypatch):
+        from meeting.asr import engine as asr_module
+        from meeting.asr.remote import RemoteMeetingUnavailable
+
+        monkeypatch.setattr(asr_module, "REMOTE_RETRY_BACKOFF_S", (0.01,))
+        repo = FakeRepository()
+        model = MagicMock()
+        model.transcribe.side_effect = [
+            RemoteMeetingUnavailable("Host dropped the request"),
+            ([FakeWhisperSeg(0.0, 0.2, "returned")], SimpleNamespace()),
+        ]
+        backend = SimpleNamespace(
+            is_remote=True, host_name="peer", ensure_ready=lambda: None,
+            is_available=lambda: True, model=model, cleanup=lambda: None,
+            cancel_transcription=lambda: None,
+        )
+        engine = _make_engine(repo, backend)
+        chunk = _chunk(tmp_path)
+        repo.pending = [_chunk_row(chunk)]
+        engine.start(lambda done, _segments: repo.set_chunk_status(done.chunk_id, "done"))
+        try:
+            assert engine.enqueue(chunk)
+            assert engine.drain(3.0)
+            assert model.transcribe.call_count == 2
+            assert repo.pending[0]["asr_attempts"] == 1
+            assert repo.pending[0]["asr_status"] == "done"
+        finally:
+            engine.stop()
+
+    def test_remote_host_busy_waits_without_spending_decode_budget(self, tmp_path,
+                                                                    monkeypatch):
+        from meeting.asr import engine as asr_module
+        from services.remote_asr.client import RemoteRequestError
+
+        monkeypatch.setattr(asr_module, "REMOTE_BUSY_MIN_RETRY_S", 0.01)
+        busy = RemoteRequestError(
+            "Host at capacity", code="busy", retry_after_ms=20)
+        call_times = []
+
+        def transcribe(*_args, **_kwargs):
+            call_times.append(time.monotonic())
+            if len(call_times) <= MAX_ATTEMPTS + 1:
+                raise busy
+            return [FakeWhisperSeg(0.0, 0.2, "eventually")], SimpleNamespace()
+
+        repo = FakeRepository()
+        backend = SimpleNamespace(
+            is_remote=True, host_name="peer", ensure_ready=lambda: None,
+            is_available=lambda: True, model=SimpleNamespace(transcribe=transcribe),
+            cleanup=lambda: None, cancel_transcription=lambda: None,
+        )
+        engine = _make_engine(repo, backend)
+        chunk = _chunk(tmp_path)
+        repo.pending = [_chunk_row(chunk)]
+        engine.start(lambda done, _segments: repo.set_chunk_status(done.chunk_id, "done"))
+        try:
+            assert engine.enqueue(chunk)
+            assert engine.drain(3.0)
+            assert len(call_times) == MAX_ATTEMPTS + 2
+            assert all(b - a >= 0.015 for a, b in zip(call_times, call_times[1:]))
+            assert repo.pending[0]["asr_attempts"] == 1
+            assert repo.pending[0]["asr_status"] == "done"
+            assert not any(status == "failed" for _, status, _ in repo.statuses)
+        finally:
+            engine.stop()
+
+    def test_bounded_queue_refills_from_persisted_rows(self, tmp_path):
+        repo = FakeRepository()
+        model = MagicMock()
+        model.transcribe.return_value = ([], SimpleNamespace())
+        backend = SimpleNamespace(
+            is_available=lambda: True, model=model, cleanup=lambda: None,
+        )
+        overload = []
+        engine = _make_engine(repo, backend)
+        engine._backlog_status = lambda message, active: overload.append((message, active))
+        chunks = [_chunk(tmp_path, chunk_id=index, start_s=float(index))
+                  for index in range(1, MAX_IN_MEMORY_CHUNKS + 2)]
+        repo.pending = [_chunk_row(chunk) for chunk in chunks]
+        for chunk in chunks[:-1]:
+            assert engine.enqueue(chunk)
+        assert engine._queue.qsize() == MAX_IN_MEMORY_CHUNKS
+        assert len(engine._queued_ids) == MAX_IN_MEMORY_CHUNKS
+        assert engine.enqueue(chunks[-1]) is False
+        assert overload and overload[-1][1] is True
+
+        engine.start(lambda chunk, _segments: repo.set_chunk_status(chunk.chunk_id, "done"))
+        try:
+            assert engine.drain(10.0)
+            assert all(row["asr_status"] == "done" for row in repo.pending)
+            assert overload[-1][1] is False
+        finally:
+            engine.stop()
+
+    def test_stop_keeps_deferred_chunks_replayable(self, tmp_path):
+        repo = FakeRepository()
+        model = MagicMock()
+        model.transcribe.return_value = ([], SimpleNamespace())
+        backend = SimpleNamespace(
+            is_available=lambda: True, model=model, cleanup=lambda: None,
+        )
+        chunks = [_chunk(tmp_path, chunk_id=index, start_s=float(index))
+                  for index in range(1, MAX_IN_MEMORY_CHUNKS + 2)]
+        repo.pending = [_chunk_row(chunk) for chunk in chunks]
+        first = _make_engine(repo, backend)
+        for chunk in chunks[:-1]:
+            first.enqueue(chunk)
+        assert first.enqueue(chunks[-1]) is False
+        first.stop()
+        assert len(repo.get_pending_chunks("m_test")) == len(chunks)
+
+        second = _make_engine(repo, backend)
+        second.start(lambda chunk, _segments: repo.set_chunk_status(chunk.chunk_id, "done"))
+        try:
+            assert second.requeue_pending() == MAX_IN_MEMORY_CHUNKS
+            assert second.drain(10.0)
+            assert all(row["asr_status"] == "done" for row in repo.pending)
+        finally:
+            second.stop()
+
+    def test_failed_refill_does_not_poll_database_in_a_hot_loop(self):
+        class FailingRepository(FakeRepository):
+            calls = 0
+
+            def get_pending_chunks(self, meeting_id, *, limit=None, exclude_ids=()):
+                self.calls += 1
+                raise RuntimeError("database unavailable")
+
+        repo = FailingRepository()
+        backend = SimpleNamespace(
+            is_available=lambda: True, model=MagicMock(), cleanup=lambda: None,
+        )
+        engine = _make_engine(repo, backend)
+        assert engine.drain(0.3) is False
+        assert repo.calls == 1
 
 
 class TestOfflineLanguage:

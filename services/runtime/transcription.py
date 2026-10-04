@@ -99,7 +99,8 @@ class TranscriptionRuntime:
     def _claim_job(self) -> bool:
         """Atomically reserve the single transcription workflow slot."""
         with self._job_lock:
-            if self._job_active or getattr(self.controller, '_shutting_down', False) is True:
+            if (self._job_active or getattr(self.controller, '_shutting_down', False) is True
+                    or getattr(self.controller, '_backup_in_progress', False) is True):
                 return False
             self._job_active = True
             self._cancel_requested.clear()
@@ -166,6 +167,9 @@ class TranscriptionRuntime:
             return self._start_recording(profile_id)
 
     def _start_recording(self, profile_id: str) -> bool:
+        if getattr(self.controller, "_backup_in_progress", False) is True:
+            self.controller.status_update.emit("Wait for backup or restore preparation to finish")
+            return False
         if self.controller.is_meeting_active():
             self.controller.status_update.emit(
                 "Meeting Mode is active — end the meeting to use dictation"
@@ -276,9 +280,11 @@ class TranscriptionRuntime:
         the failure paths.
         """
         try:
+            stop_completed = False
             try:
-                if not self.controller.recorder.wait_for_stop_completion():
-                    logger.warning("Proceeding without confirmed post-roll completion")
+                stop_completed = bool(
+                    self.controller.recorder.wait_for_stop_completion()
+                )
             finally:
                 # The window preview stops without decoding its unfinished
                 # window, so the final decode starts at once; that window is
@@ -296,14 +302,31 @@ class TranscriptionRuntime:
                 self._abandon_canceled_job("during post-roll")
                 return
 
-            if not self.controller.recorder.has_recording_data():
-                logger.error("No recording data available")
-                self.controller.transcription_failed.emit("No audio data recorded")
+            if not stop_completed:
+                message = (
+                    "Recording did not finish stopping; captured audio was "
+                    "kept for recovery."
+                )
+                fail_capture = getattr(self.controller.recorder, '_fail_capture', None)
+                if callable(fail_capture):
+                    fail_capture(message)
+                self.controller.transcription_failed.emit(message)
                 return
 
-            if not self.controller.recorder.save_recording():
+            if not self.controller.recorder.has_recording_data():
+                logger.error("No recording data available")
+                self.controller.transcription_failed.emit(
+                    getattr(self.controller.recorder, 'last_capture_error', None)
+                    or "No audio data recorded"
+                )
+                return
+
+            if not self.controller.recorder.save_recording(allow_incomplete=True):
                 logger.error("Failed to save recording")
-                self.controller.transcription_failed.emit("Failed to save audio file; recovery copy kept")
+                self.controller.transcription_failed.emit(
+                    getattr(self.controller.recorder, 'last_capture_error', None)
+                    or "Failed to save audio file; recovery copy kept"
+                )
                 return
 
             if not os.path.exists(config.RECORDED_AUDIO_FILE):

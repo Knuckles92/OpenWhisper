@@ -15,6 +15,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 LIMITS = {"fixture_ready_s": 15, "stop_to_result_p95_s": 2, "cancel_s": 2,
           "restart_s": 2, "cleanup_s": 2, "peak_rss_mb": 1500}
+REQUIRED_CHECKS = ("recording_recovery", "backup_restore", "previous_data_preserved")
 
 
 def failures(report, baseline=None) -> list[str]:
@@ -24,6 +25,10 @@ def failures(report, baseline=None) -> list[str]:
     if not isinstance(metrics, dict):
         return ["Missing lifecycle metrics"]
     failed = []
+    checks = report.get("checks", {})
+    for name in REQUIRED_CHECKS:
+        if not isinstance(checks, dict) or checks.get(name) is not True:
+            failed.append(f"{name}: missing successful data-safety check")
     for key, limit in LIMITS.items():
         value = metrics.get(key)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:

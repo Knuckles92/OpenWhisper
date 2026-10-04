@@ -5,10 +5,12 @@ import wave
 from datetime import datetime, timedelta
 
 import numpy as np
+import pytest
 
 from meeting.interfaces import SpooledChunk
 from meeting.recovery import (
     STALE_HEARTBEAT_S,
+    RecoveryScanError,
     _mark_ended,
     _pid_alive,
     finalize_meeting,
@@ -38,7 +40,7 @@ class FakeRepository:
             raise RuntimeError("db down")
         return list(self.interrupted)
 
-    def reset_unfinished_chunks(self, meeting_id):
+    def reset_unfinished_chunks(self, meeting_id, *, force=False):
         if self.fail_pending:
             raise RuntimeError("chunks unavailable")
         self.reset_calls.append(meeting_id)
@@ -184,6 +186,26 @@ def test_mark_ended_cloud_off_becomes_disabled():
     assert patched["finalization"]["status"] == "disabled"
 
 
+def test_mark_ended_keeps_permanent_capture_gap_after_transcription():
+    state = MeetingState(meeting_id="m_gap", status="needs_recovery")
+    payload = state.to_dict()
+    payload["capture"].update(
+        audio_incomplete=True,
+        integrity_error="mic audio blocks were dropped",
+        message="mic audio blocks were dropped",
+    )
+    repo = FakeRepository()
+    _mark_ended(repo, {"id": "m_gap", "state_json": json.dumps(payload)})
+
+    fields = repo.updates[-1][1]
+    assert fields["status"] == "failed"
+    saved = json.loads(fields["state_json"])
+    reloaded = MeetingState.from_dict(saved)
+    assert reloaded.status == "failed"
+    assert reloaded.capture["audio_incomplete"] is True
+    assert "dropped" in reloaded.capture["integrity_error"]
+
+
 def test_pid_alive_rejects_missing_and_dead_pids():
     assert _pid_alive(None) is False
     assert _pid_alive(0) is False
@@ -257,10 +279,18 @@ def test_find_recoverable_meetings_skips_deferred_cards():
     assert [m["id"] for m in recovered] == ["m_crash"]
 
 
-def test_find_recoverable_meetings_returns_empty_on_scan_failure():
+def test_find_recoverable_meetings_raises_on_query_failure():
     repo = FakeRepository()
     repo.fail_list = True
-    assert find_recoverable_meetings(repo) == []
+    with pytest.raises(RecoveryScanError, match="query interrupted"):
+        find_recoverable_meetings(repo)
+
+
+def test_find_recoverable_meetings_raises_on_reconciliation_inventory_failure():
+    repo = FakeRepository()
+    repo.list_meetings = lambda: (_ for _ in ()).throw(OSError("disk unavailable"))
+    with pytest.raises(RecoveryScanError, match="list meetings"):
+        find_recoverable_meetings(repo)
 
 
 def test_finalize_meeting_rejects_missing_id():

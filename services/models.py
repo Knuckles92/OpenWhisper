@@ -190,6 +190,36 @@ class MeetingSegment(Base):
     )
 
 
+class MeetingSegmentDelivery(Base):
+    """Insertion order for agent delivery, independent of speech start time."""
+    __tablename__ = 'meeting_segment_delivery'
+
+    seq: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    segment_id: Mapped[str] = mapped_column(
+        ForeignKey('meeting_segments.id', ondelete='CASCADE'), unique=True,
+        nullable=False,
+    )
+    meeting_id: Mapped[str] = mapped_column(
+        ForeignKey('meeting_sessions.id', ondelete='CASCADE'), nullable=False,
+    )
+
+    __table_args__ = (
+        Index('idx_msegment_delivery_page', 'meeting_id', 'seq'),
+        {'sqlite_autoincrement': True},
+    )
+
+
+class MeetingAgentDeliveryCursor(Base):
+    """Last successful transcript delivery for each meeting agent consumer."""
+    __tablename__ = 'meeting_agent_delivery_cursors'
+
+    meeting_id: Mapped[str] = mapped_column(
+        ForeignKey('meeting_sessions.id', ondelete='CASCADE'), primary_key=True,
+    )
+    consumer: Mapped[str] = mapped_column(String, primary_key=True)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 class MeetingParticipant(Base):
     """A person in the meeting (host, diarized remote cluster, or web guest)."""
     __tablename__ = 'meeting_participants'

@@ -12,6 +12,13 @@ from ui_qt.startup_profiler import StartupProfiler
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def isolated_startup_data(tmp_path, monkeypatch):
+    # Importing main applies pending restores before importing the UI. Child
+    # import probes must inherit a disposable root as well as the parent.
+    monkeypatch.setenv("OPENWHISPER_DATA_DIR", str(tmp_path))
+
+
 @pytest.mark.parametrize("module", ["ui_qt.main_window", "ui_qt.widgets"])
 def test_ui_import_in_fresh_process(module):
     # Collection imports SettingsDialog first, which can hide circular imports.

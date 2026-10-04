@@ -40,12 +40,30 @@ class RemoteEngineError(RuntimeError):
     """A user-facing reason the remote engine can't be used right now."""
 
 
+class RemoteHostBusy(RemoteEngineError):
+    """The host rejected a connection before work; a later retry is safe."""
+
+    retryable = True
+
+    def __init__(self, message: str, *, retry_after_ms=None):
+        super().__init__(message)
+        self.retry_after_s = (
+            retry_after_ms / 1000 if isinstance(retry_after_ms, (int, float))
+            and not isinstance(retry_after_ms, bool) and retry_after_ms >= 0 else None
+        )
+
+
 class RemoteRequestError(RuntimeError):
     """The host answered a request with an error; ``code`` names the kind, if any."""
 
-    def __init__(self, message: str, *, code=None):
+    def __init__(self, message: str, *, code=None, retry_after_ms=None):
         super().__init__(message)
         self.code = code if isinstance(code, str) else None
+        self.retry_after_s = (
+            retry_after_ms / 1000 if isinstance(retry_after_ms, (int, float))
+            and not isinstance(retry_after_ms, bool) and retry_after_ms >= 0 else None
+        )
+        self.retryable = self.code == "busy"
 
 
 class RemoteConnectionLost(RemoteEngineError):
@@ -385,6 +403,11 @@ class RemoteConnection:
             ws.send(json.dumps(hello))
             reply = _read_json(ws, HANDSHAKE_TIMEOUT_S)
             if reply.get("type") == "error":
+                if reply.get("code") == "busy":
+                    raise RemoteHostBusy(
+                        str(reply.get("message") or "The host is busy. Try again shortly."),
+                        retry_after_ms=reply.get("retry_after_ms"),
+                    )
                 raise RemoteEngineError(str(reply.get("message") or "The host refused the connection."))
             if reply.get("type") != "ready":
                 raise RemoteEngineError("The host sent a reply this version can't read.")
@@ -510,7 +533,10 @@ class RemoteConnection:
                     self._mark_closed()
                     raise RemoteConnectionLost(str(reply.get("error")), sent=True)
                 if "error" in reply:
-                    raise RemoteRequestError(str(reply["error"]), code=reply.get("code"))
+                    raise RemoteRequestError(
+                        str(reply["error"]), code=reply.get("code"),
+                        retry_after_ms=reply.get("retry_after_ms"),
+                    )
                 result = reply.get("result")
                 host_ms = reply.get("host_ms")
                 host_s = host_ms / 1000 if isinstance(host_ms, (int, float)) and host_ms >= 0 else None

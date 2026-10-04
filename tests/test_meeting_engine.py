@@ -70,15 +70,19 @@ class FakeAsr:
     instances = []
 
     def __init__(self, model, meeting_id, repository, language=None,
-                 term_rules=None, *, defer_load=False):
+                 term_rules=None, *, defer_load=False,
+                 on_backlog_status=None, on_chunk_failure=None):
         self.model = model
         self.meeting_id = meeting_id
         self.language = language
         self.term_rules = term_rules
         self.repository = repository
+        self.on_backlog_status = on_backlog_status
+        self.on_chunk_failure = on_chunk_failure
         self.is_available = True
         self.on_segments = None
         self.chunks = []
+        self._queued_ids = set()
         self.drains = 0
         self.stops = 0
         self.requeues = 0
@@ -93,7 +97,11 @@ class FakeAsr:
         self.on_segments = on_segments
 
     def enqueue(self, chunk):
+        if chunk.chunk_id in self._queued_ids:
+            return True
+        self._queued_ids.add(chunk.chunk_id)
         self.chunks.append(chunk)
+        return True
 
     def drain(self, timeout_s):
         self.drains += 1
@@ -108,7 +116,13 @@ class FakeAsr:
 
     def requeue_pending(self, *, rows=None):
         self.requeues += 1
-        for row in rows or []:
+        if rows is None:
+            rows = self.repository.get_pending_chunks(self.meeting_id)
+        rows = sorted(rows, key=lambda row: (
+            float(row.get("start_s") or 0), int(row.get("seq") or 0),
+            str(row.get("channel") or ""), int(row["id"]),
+        ))
+        for row in rows:
             self.enqueue(SpooledChunk(
                 chunk_id=row["id"], meeting_id=row["meeting_id"],
                 channel=row["channel"], seq=row["seq"], file_path=row["file_path"],
@@ -968,6 +982,47 @@ class TestCloudToggle:
 # End / lifecycle
 
 class TestEndLifecycle:
+    def test_spool_loss_is_visible_and_never_ends_as_complete(
+            self, make_engine, repo):
+        from meeting.state.schema import MeetingState
+
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        engine._spools["mic"].health_error = (
+            "mic audio blocks were dropped because storage fell behind."
+        )
+        engine._check_spool_health()
+        capture = engine.store.snapshot()["capture"]
+        assert capture["audio_incomplete"] is True
+        assert "dropped" in capture["integrity_error"]
+        assert MeetingState.from_dict(engine.store.snapshot()).capture[
+            "audio_incomplete"
+        ] is True
+        assert [event["code"] for event in events_of(engine, "error")][-1] == (
+            "capture_incomplete"
+        )
+
+        engine.end()
+        engine.wait_for_end()
+        assert repo.get_meeting(engine.meeting_id)["status"] == "needs_recovery"
+        ended = events_of(engine, "ended")[-1]
+        assert "dropped" in ended["capture_error"]
+
+    def test_remote_connection_update_keeps_backlog_and_chunk_error(
+            self, make_engine):
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        engine._on_asr_backlog_status("Captions are catching up", True)
+        engine._on_asr_chunk_failure("Saved chunk cannot be read")
+        engine._on_asr_connection_status("Remote link restored", True)
+
+        speech = engine.store.snapshot()["speech"]
+        assert speech["backlog"] is True
+        assert speech["chunk_error"] == "Saved chunk cannot be read"
+        assert speech["connected"] is True
+        engine.end()
+        engine.wait_for_end()
+
     def test_end_failure_still_emits_ended(self, make_engine, repo):
         engine = make_engine(cloud_enabled=False)
         engine.start()

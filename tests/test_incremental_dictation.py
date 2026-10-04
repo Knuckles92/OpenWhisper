@@ -101,7 +101,8 @@ def controller(backend, recorder):
     return SimpleNamespace(current_backend=backend, recorder=recorder, is_meeting_active=lambda: False)
 
 
-def capture(recorder, pcm, session=None, *, polls=BLOCKS_PER_POLL, rng=None):
+def capture(recorder, pcm, session=None, *, polls=BLOCKS_PER_POLL,
+            rng=None, journal_drain_every=None):
     """Feed PCM through the recorder callback, polling the session as its thread would."""
     recorder.is_recording = True
     if recorder._audio_spool is None:
@@ -114,6 +115,10 @@ def capture(recorder, pcm, session=None, *, polls=BLOCKS_PER_POLL, rng=None):
         start += size
         recorder._audio_callback(chunk.reshape(-1, 1), len(chunk), None, None)
         since_poll += 1
+        if journal_drain_every and since_poll % journal_drain_every == 0:
+            # Synthetic callbacks run much faster than real-time capture.
+            # Drain only the storage writer; leave early ASR unpolled.
+            recorder._audio_spool._queue.join()
         if since_poll >= due:
             recorder._audio_spool._queue.join()
             if session is not None:
@@ -307,7 +312,8 @@ def test_short_dictation_costs_nothing_and_falls_through(controller, recorder, b
 
 def test_nothing_decoded_early_means_the_plain_path(controller, recorder, backend):
     session = DictationSession(controller, backend, recorder)
-    capture(recorder, speech_like(31, seed=10), session, polls=10_000)  # no poll before the end
+    capture(recorder, speech_like(31, seed=10), session, polls=10_000,
+            journal_drain_every=128)  # no ASR poll before the end
     path = stop(recorder)
     assert session.finish(path) is None
 

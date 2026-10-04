@@ -78,6 +78,9 @@ _CONSOLIDATION_JOIN_S = 10.0
 #: after it. The fetch re-reads this window and drops ids already sent, which is
 #: what keeps whole stretches of one channel from becoming invisible forever.
 _REFETCH_WINDOW_S = 180.0
+#: An agent payload is bounded even when transcription catches up after a
+#: long outage. The extra row tells the scheduler to continue on the next tick.
+_DELIVERY_PAGE_SIZE = 300
 #: Fire a transcript polish pass after this many successful card checkpoints.
 #: Card/topic freshness takes priority because both jobs share one agent.
 _POLISH_EVERY_N_CHECKPOINTS = 6
@@ -225,6 +228,19 @@ class CheckpointScheduler:
         self._notes_sent_starts: Dict[str, float] = {}
         self._notes_max_sent_start_s = -1.0
         self._note_requests = deque()
+        self._delivery_enabled = all(callable(getattr(engine, name, None)) for name in (
+            "get_transcript_delivery_page", "get_transcript_delivery_cursor",
+            "advance_transcript_delivery_cursor", "get_transcript_delivery_high_water",
+        ))
+        self._card_cursor_seq = (
+            int(engine.get_transcript_delivery_cursor("cards"))
+            if self._delivery_enabled else 0
+        )
+        self._notes_cursor_seq = (
+            int(engine.get_transcript_delivery_cursor("notes"))
+            if self._delivery_enabled else 0
+        )
+        self._notes_resume_pending = False
 
     def _pace(self, name: str, default: float) -> float:
         """A cadence value: the core's own, else the module default.
@@ -239,6 +255,14 @@ class CheckpointScheduler:
         """Start the worker thread. Idempotent."""
         if self._thread is not None and self._thread.is_alive():
             return
+        # Query the durable backlog before starting: a failed database read
+        # must not leave an orphan scheduler thread behind.
+        high_water = (
+            self._engine.get_transcript_delivery_high_water()
+            if self._delivery_enabled else 0
+        )
+        has_backlog = high_water > self._card_cursor_seq
+        self._notes_resume_pending = high_water > self._notes_cursor_seq
         self._stop_event.clear()
         self._last_fire_mono = self._monotonic()
         self._started_mono = self._last_fire_mono
@@ -247,6 +271,10 @@ class CheckpointScheduler:
             daemon=True,
         )
         self._thread.start()
+        if has_backlog:
+            self.notify_segments(1)
+        elif self._notes_resume_pending:
+            self._wake.set()
         logger.info(
             "Checkpoint scheduler started (base=%.0fs min=%.0fs max=%.0fs)",
             self._base_interval_s, self._min_interval_s, self._max_interval_s,
@@ -311,6 +339,26 @@ class CheckpointScheduler:
             for seg_id, start_s in self._notes_sent_starts.items()
             if start_s > prune_cursor
         }
+        if self._delivery_enabled:
+            high_water = self._engine.get_transcript_delivery_high_water()
+            self._engine.advance_transcript_delivery_cursor("cards", high_water)
+            self._engine.advance_transcript_delivery_cursor("notes", high_water)
+            self._card_cursor_seq = max(self._card_cursor_seq, high_water)
+            self._notes_cursor_seq = max(self._notes_cursor_seq, high_water)
+            self._notes_resume_pending = False
+
+    def _delivery_page(self, consumer: str) -> tuple[List[Dict[str, Any]], bool, int]:
+        """Return a bounded insertion-order page and its acknowledgment point."""
+        cursor = self._card_cursor_seq if consumer == "cards" else self._notes_cursor_seq
+        fetched = self._engine.get_transcript_delivery_page(
+            after_seq=cursor, limit=_DELIVERY_PAGE_SIZE + 1,
+        )
+        page = fetched[:_DELIVERY_PAGE_SIZE]
+        last_seq = int(page[-1]["delivery_seq"]) if page else cursor
+        # The agent still reads speech in timeline order. The acknowledgment
+        # stays in commit order, so a late old-start segment cannot disappear.
+        page.sort(key=lambda seg: (float(seg.get("start_s") or 0.0), str(seg.get("id") or "")))
+        return page, len(fetched) > _DELIVERY_PAGE_SIZE, last_seq
 
     def request_note_adjustment(self, text: str) -> Future:
         """Queue an explicit request on the same worker as periodic passes."""
@@ -574,20 +622,25 @@ class CheckpointScheduler:
         # while the checkpoint executes fires immediately after completion.
         self._last_fire_mono = self._monotonic()
 
+        more_delivery = False
+        delivery_seq = self._card_cursor_seq
         try:
-            fetched = self._engine.get_transcript(
-                after_start_s=-1.0 if guidance else self._fetch_cursor_s()
-            )
+            if self._delivery_enabled and not guidance:
+                fetched, more_delivery, delivery_seq = self._delivery_page("cards")
+            else:
+                fetched = self._engine.get_transcript(
+                    after_start_s=-1.0 if guidance else self._fetch_cursor_s()
+                )
         except Exception as exc:
             logger.exception("Checkpoint transcript fetch failed")
             if guidance:
                 self.notify_guidance()
             self._record_failure(claimed, str(exc))
             return
-        segments = [
+        segments = ([
             seg for seg in fetched
             if guidance or str(seg.get("id") or "") not in self._sent_starts
-        ]
+        ] if not self._delivery_enabled or guidance else fetched)
         if guidance:
             # Segments are read with term corrections applied, so a guidance
             # pass shows the agent the corrected recent transcript.
@@ -618,6 +671,14 @@ class CheckpointScheduler:
             result = AgentResult(ok=False, error=str(exc))
 
         if result.ok:
+            if self._delivery_enabled and not guidance:
+                try:
+                    self._engine.advance_transcript_delivery_cursor("cards", delivery_seq)
+                except Exception as exc:
+                    logger.exception("Could not save checkpoint transcript cursor")
+                    self._record_failure(claimed, str(exc), request_id=payload.request_id)
+                    return
+                self._card_cursor_seq = delivery_seq
             self._consecutive_failures = 0
             self._mark_sent(segments)
             self._set_online(True)
@@ -634,6 +695,8 @@ class CheckpointScheduler:
                     self._guidance_generation += 1
             self._maybe_fire_notes()
             self._maybe_fire_polish()
+            if more_delivery:
+                self.notify_segments(1)
         else:
             if guidance:
                 self.notify_guidance()
@@ -733,26 +796,36 @@ class CheckpointScheduler:
             and (self._monotonic() - self._last_notes_mono)
             >= self._pace("notes_min_interval_s", _NOTES_MIN_INTERVAL_S)
         ) or (self._last_notes_mono == 0.0 and self._successful_checkpoints >= 1)
-        if not (guidance or due_by_count or due_by_time):
+        resume_due = self._notes_resume_pending and (
+            self._last_notes_mono == 0.0
+            or self._monotonic() - self._last_notes_mono >= self._pace(
+                "notes_min_interval_s", _NOTES_MIN_INTERVAL_S,
+            )
+        )
+        if not (guidance or due_by_count or due_by_time or resume_due):
             return
         if not self._agent.is_healthy():
             return
-        # Same late-arrival window logic as card checkpoints: re-read a
-        # window behind the newest consumed segment, drop already-sent ids.
+        more_delivery = False
+        delivery_seq = self._notes_cursor_seq
+        # New installations page the durable insertion ledger. Older engine
+        # fakes retain the time-window API for compatibility.
         if not guidance and self._notes_max_sent_start_s >= 0.0:
-            cursor = max(
-                -1.0, self._notes_max_sent_start_s - _REFETCH_WINDOW_S
-            )
+            cursor = max(-1.0, self._notes_max_sent_start_s - _REFETCH_WINDOW_S)
         else:
             cursor = -1.0
         try:
-            fetched = self._engine.get_transcript(after_start_s=cursor)
+            if self._delivery_enabled and not guidance:
+                fetched, more_delivery, delivery_seq = self._delivery_page("notes")
+            else:
+                fetched = self._engine.get_transcript(after_start_s=cursor)
         except Exception:
             logger.exception("Notes transcript fetch failed")
             return
         segments = [
             seg for seg in fetched
-            if guidance or str(seg.get("id") or "") not in self._notes_sent_starts
+            if guidance or self._delivery_enabled
+            or str(seg.get("id") or "") not in self._notes_sent_starts
         ]
         if not segments and not guidance:
             return
@@ -784,6 +857,16 @@ class CheckpointScheduler:
         self._last_notes_mono = self._monotonic()
         self._notes_checkpoint_mark = self._successful_checkpoints
         if result.ok:
+            if self._delivery_enabled and not guidance:
+                try:
+                    self._engine.advance_transcript_delivery_cursor("notes", delivery_seq)
+                except Exception:
+                    logger.exception("Could not save note-taker transcript cursor")
+                    self._notes_retry_not_before = self._monotonic() + self._pace(
+                        "notes_min_interval_s", _NOTES_MIN_INTERVAL_S)
+                    return
+                self._notes_cursor_seq = delivery_seq
+                self._notes_resume_pending = more_delivery
             applied = sum(1 for r in result.op_results if r.ok)
             logger.info(
                 "Note-taker pass %s done: %d/%d ops applied",
@@ -814,6 +897,8 @@ class CheckpointScheduler:
                 for seg_id, start_s in self._notes_sent_starts.items()
                 if start_s > prune_cursor
             }
+            if more_delivery:
+                self._wake.set()
         else:
             self._notes_retry_not_before = self._monotonic() + self._pace(
                 "notes_min_interval_s", _NOTES_MIN_INTERVAL_S)

@@ -371,16 +371,75 @@ if sys.platform.startswith("linux"):
 # and Linux shared-library preflight have been configured.
 _handle_package_self_test()
 
+# A restore must finish before the UI can import settings or open SQLite. Keep
+# the shared data lease for the process lifetime after any pending restore.
+from config import data_root
+from services.backup_startup import (
+    RESTART_FOR_RESTORE_EXIT_CODE,
+    acquire_startup_data_lease,
+    release_startup_data_lease,
+    spawn_restore_restart,
+)
+
+
+def _show_restore_startup_error(message: str) -> None:
+    print(f"OpenWhisper: {message}", file=sys.stderr)
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        from PyQt6.QtWidgets import QApplication, QMessageBox
+
+        app = QApplication.instance() or QApplication([])
+        QMessageBox.critical(None, "OpenWhisper backup restore", message)
+        del app
+    except Exception:
+        # The stderr message remains available when Qt itself cannot start.
+        pass
+
+
+try:
+    _APP_DATA_LEASE = acquire_startup_data_lease(data_root())
+except Exception as exc:
+    _show_restore_startup_error(
+        f"Could not safely open application data: {exc} "
+        "The backup restore remains pending. Close other OpenWhisper processes "
+        "and start the app again."
+    )
+    raise SystemExit(1) from exc
+
 from ui_qt.bootstrap import main
 
 __all__ = ["main"]
 
 
 if __name__ == "__main__":
-    exit_code = main()
+    try:
+        exit_code = main()
+    finally:
+        # main() has drained persistence and closed SQLite before returning.
+        # A restart must not inherit our lease or race its own restore.
+        release_startup_data_lease()
     # ``main`` has already run every cleanup path and logged the shutdown.
     # Finalizing on top of Qt's teardown and the keyboard library's listener
     # thread — which cannot be stopped — instead produced access violations in
     # openwhisper.crash.log on the way out. Nothing is left to lose here.
     logging.shutdown()
+    if exit_code == RESTART_FOR_RESTORE_EXIT_CODE:
+        try:
+            if sys.platform == "win32" and getattr(sys, "frozen", False):
+                # The fresh process acquires these mutexes without waiting.
+                # Release them after cleanup or the child can exit before this
+                # process reaches os._exit().
+                from services.app_update_apply import release_application_mutex_for_setup
+
+                release_application_mutex_for_setup()
+            spawn_restore_restart(__file__)
+        except Exception as exc:
+            _show_restore_startup_error(
+                f"Could not restart to apply the backup restore: {exc} "
+                "Please start OpenWhisper again manually."
+            )
+            exit_code = 1
+        else:
+            exit_code = 0
     os._exit(exit_code)

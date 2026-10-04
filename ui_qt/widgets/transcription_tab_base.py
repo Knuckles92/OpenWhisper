@@ -725,8 +725,8 @@ class TranscriptionTabBase(QWidget):
         self.status_dot.set_busy(busy)
         self.status_dot.setVisible(not showing_link and (self._engine_dot_visible or busy))
         self.link_glyph.setVisible(showing_link)
-        if showing_link:
-            # Otherwise the label keeps its own tooltip, the full message.
+        if showing_link and message == link_text:
+            # Status messages keep their full text even while Remote is shown.
             self.resolved_label.setToolTip(self._link_tooltip())
         counting = showing_link and self._remote_link.retry_at is not None
         if counting and not self._link_countdown.isActive():

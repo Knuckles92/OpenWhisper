@@ -729,6 +729,9 @@ class SpoolWriter:
         self._stop_requested = False
         self._dropped_blocks = 0
         self._feed_error_logged = False
+        # Written by the capture or writer thread and inspected by the engine's
+        # watchdog/end worker. Keep the audio callback free of UI and disk work.
+        self.health_error: Optional[str] = None
 
         # Writer-thread-only state.
         self._rate: Optional[int] = None
@@ -788,16 +791,28 @@ class SpoolWriter:
             )
         except queue.Full:
             self._dropped_blocks += 1
+            self._record_health_error(
+                f"{self._channel} audio blocks were dropped because recording "
+                "storage fell behind. This meeting's audio is incomplete."
+            )
             if self._dropped_blocks == 1:
                 logger.error(
                     "Spool queue full on channel %s; dropping capture blocks "
                     "(writer thread is behind)", self._channel,
                 )
         except Exception:
+            self._record_health_error(
+                f"{self._channel} audio could not be queued for storage. "
+                "This meeting's audio is incomplete."
+            )
             if not self._feed_error_logged:
                 self._feed_error_logged = True
                 logger.exception("Spool feed failed on channel %s",
                                  self._channel)
+
+    def _record_health_error(self, message: str) -> None:
+        if self.health_error is None:
+            self.health_error = message
 
     def flush(self, timeout_s: float = FLUSH_TIMEOUT_S) -> Optional[SpooledChunk]:
         """Stop the writer, finalize the remainder, and join (end of meeting).
@@ -822,6 +837,10 @@ class SpoolWriter:
                     pass  # the writer exits via _stop_requested once drained
                 self._thread.join(timeout=timeout_s)
                 if self._thread.is_alive():
+                    self._record_health_error(
+                        f"{self._channel} audio storage did not finish. "
+                        "Partial meeting audio was kept for recovery."
+                    )
                     logger.error(
                         "Spool writer for channel %s did not finish within "
                         "%.0fs", self._channel, timeout_s,
@@ -846,18 +865,34 @@ class SpoolWriter:
                 try:
                     self._process_block(*item)
                 except Exception:
+                    self._record_health_error(
+                        f"{self._channel} audio storage failed while writing. "
+                        "This meeting's audio is incomplete."
+                    )
                     logger.exception("Spool writer failed on a block (%s)",
                                      self._channel)
         except Exception:
+            self._record_health_error(
+                f"{self._channel} audio storage stopped unexpectedly. "
+                "This meeting's audio is incomplete."
+            )
             logger.exception("Spool writer thread crashed (%s)", self._channel)
         try:
             self._finalize_remainder()
         except Exception:
+            self._record_health_error(
+                f"{self._channel} audio could not be finalized. "
+                "Partial meeting audio was kept for recovery."
+            )
             logger.exception("Spool remainder finalization failed (%s)",
                              self._channel)
         try:
             self._finalize_session()
         except Exception:
+            self._record_health_error(
+                f"{self._channel} session audio could not be finalized. "
+                "Partial meeting audio was kept for recovery."
+            )
             logger.exception("Session WAV finalization failed (%s)",
                              self._channel)
 
@@ -1028,6 +1063,10 @@ class SpoolWriter:
             try:
                 self._session_fp.flush()
             except OSError:
+                self._record_health_error(
+                    f"{self._channel} session audio could not be flushed. "
+                    "Partial meeting audio was kept for recovery."
+                )
                 logger.exception("Session PCM flush failed (%s)", self._channel)
         origin = self._session_meeting_origin_s
         if origin is None:
@@ -1059,6 +1098,10 @@ class SpoolWriter:
                 pcm_active=pcm_active,
             )
         except Exception:
+            self._record_health_error(
+                f"{self._channel} session metadata could not be written. "
+                "Partial meeting audio was kept for recovery."
+            )
             logger.exception("Session metadata write failed (%s)", self._channel)
 
     def _close_session_pcm(self) -> Optional[str]:
@@ -1069,6 +1112,10 @@ class SpoolWriter:
                 handle.flush()
                 handle.close()
             except OSError:
+                self._record_health_error(
+                    f"{self._channel} session audio could not be closed. "
+                    "Partial meeting audio was kept for recovery."
+                )
                 logger.exception("Session PCM close failed (%s)", self._channel)
         self._write_session_meta()
         pcm_path = session_pcm_path(self._spool_dir, self._channel)
@@ -1094,6 +1141,10 @@ class SpoolWriter:
             self._session_16k_samples += int(written or 0)
             converted = True
         except Exception:
+            self._record_health_error(
+                f"{self._channel} session audio could not be converted. "
+                "Partial meeting audio was kept for recovery."
+            )
             logger.exception("Session PCM resample failed (%s)", self._channel)
         if converted:
             try:
@@ -1114,6 +1165,10 @@ class SpoolWriter:
         try:
             pcm16k_to_wav(self._session_16k_pcm, wav_path)
         except Exception:
+            self._record_health_error(
+                f"{self._channel} session audio could not be written. "
+                "Partial meeting audio was kept for recovery."
+            )
             logger.exception("Session WAV wrap failed (%s)", self._channel)
             return
         try:
@@ -1169,6 +1224,10 @@ class SpoolWriter:
                 )
             os.replace(tmp_path, file_path)
         except Exception:
+            self._record_health_error(
+                f"{self._channel} audio chunk could not be written. "
+                "Partial meeting audio was kept for recovery."
+            )
             logger.exception("Failed to write spool chunk %s", file_path)
             try:
                 if os.path.exists(tmp_path):
@@ -1269,5 +1328,9 @@ class SpoolWriter:
         logger.error(
             "Chunk %s could not be registered; audio kept at %s for startup "
             "recovery", file_path, orphan_path,
+        )
+        self._record_health_error(
+            f"{self._channel} audio could not be added to the meeting. "
+            "Its file was kept for recovery."
         )
         return None

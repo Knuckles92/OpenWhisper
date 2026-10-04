@@ -26,6 +26,7 @@ MEETING_DASHBOARD: Final[str] = "meeting_dashboard"
 # Models & storage
 DOWNLOADS: Final[str] = "downloads"
 RUNTIME: Final[str] = "runtime"
+BACKUP: Final[str] = "backup"
 
 # App
 GENERAL: Final[str] = "general"

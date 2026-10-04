@@ -149,19 +149,35 @@ class MeetingRuntime:
     def _recovery_scan_worker(self) -> None:
         try:
             from meeting.recovery import find_recoverable_meetings
-        except Exception as exc:
-            logger.debug(f"Meeting recovery module unavailable: {exc}")
+        except Exception:
+            logger.exception("Meeting recovery module unavailable")
+            self.controller.meeting_recovery_scan_failed.emit(
+                "Recovery could not check saved meetings. Retry the scan; "
+                "your meeting files have not been removed."
+            )
             return
 
         try:
             meetings = find_recoverable_meetings(self._repository())
         except Exception as exc:
-            logger.error(f"Meeting recovery scan failed: {exc}")
+            logger.exception("Meeting recovery scan failed")
+            self.controller.meeting_recovery_scan_failed.emit(
+                "Recovery could not check saved meetings. Retry the scan; "
+                "your meeting files have not been removed. "
+                f"Details: {exc}"
+            )
             return
 
         if meetings:
             logger.info(f"Found {len(meetings)} interrupted meeting(s)")
             self.controller.meeting_recovery_found.emit(list(meetings))
+
+    def retry_recovery_scan(self) -> None:
+        """Retry the inventory off Qt after a visible startup scan failure."""
+        threading.Thread(
+            target=self._recovery_scan_worker,
+            name="meeting-recovery-retry", daemon=True,
+        ).start()
 
     def _restore_last_finalization_worker(self) -> None:
         if self.is_active or self.controller.meeting_active:
@@ -623,6 +639,9 @@ class MeetingRuntime:
         with self._lock:
             finalizing = self._finalizing
             busy = self._starting or self.controller.meeting_active or self.is_active
+            if getattr(self.controller, "_backup_in_progress", False) is True:
+                self.controller.meeting_status_update.emit("Wait for backup or restore preparation to finish")
+                return
         if finalizing:
             self.controller.meeting_status_update.emit(
                 "Final insights are still being prepared."
@@ -643,6 +662,9 @@ class MeetingRuntime:
         # ``_starting`` is True.
         self._file_leftover_card()
         with self._lock:
+            if getattr(self.controller, "_backup_in_progress", False) is True:
+                self.controller.meeting_status_update.emit("Wait for backup or restore preparation to finish")
+                return
             if (
                 self._starting
                 or self.controller.meeting_active
@@ -1049,6 +1071,9 @@ class MeetingRuntime:
         )
 
         step_key = str(from_step or "failed").strip() or "failed"
+        if getattr(self.controller, "_backup_in_progress", False) is True:
+            self.controller.meeting_status_update.emit("Wait for backup or restore preparation to finish")
+            return
         if step_key == "speaker_id":
             # The retry skips a refused speaker pass anyway; refusing here
             # also spares re-running the steps after it for nothing.
@@ -1063,6 +1088,7 @@ class MeetingRuntime:
                 or self.controller.meeting_active
                 or self.is_active
                 or self._finalizing
+                or getattr(self.controller, "_backup_in_progress", False) is True
             ):
                 logger.warning(
                     "Cannot retry finalization: meeting is active, starting, "
@@ -1570,10 +1596,18 @@ class MeetingRuntime:
                     "transcription may still be pending"
                 )
                 return
-            self.controller.meeting_status_update.emit(
-                "Interrupted meeting finalized"
-            )
-            follow_up = self._recovered_follow_up_step(meeting, settings)
+            recovered = repository.get_meeting(meeting_id) or meeting
+            if str(recovered.get("status") or "") == "failed":
+                self.controller.meeting_status_update.emit(
+                    "Meeting transcription finished; captured audio remains "
+                    "incomplete. Review the partial meeting in History."
+                )
+                follow_up = None
+            else:
+                self.controller.meeting_status_update.emit(
+                    "Interrupted meeting finalized"
+                )
+                follow_up = self._recovered_follow_up_step(meeting, settings)
         except Exception as exc:
             logger.error(f"Failed to finalize meeting '{meeting_id}': {exc}")
             self.controller.meeting_error.emit(
@@ -1902,6 +1936,11 @@ class MeetingRuntime:
                     finalizing = self._finalizing
                 if finalizing:
                     message = "Meeting ended — preparing final insights…"
+                elif payload.get("capture_error"):
+                    message = (
+                        "Meeting ended — audio capture was incomplete; "
+                        "partial audio was kept in Meeting History"
+                    )
                 elif status == "needs_recovery":
                     message = "Meeting ended — transcription recovery needed"
                 else:

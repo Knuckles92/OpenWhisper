@@ -123,6 +123,33 @@ class TestAudioRecorder:
             "13:05:07",
         )
 
+    def test_capture_loss_requires_explicit_partial_save(self):
+        self.recorder = AudioRecorder(output_file=self.test_audio_file)
+        audio = np.arange(500, dtype=np.int16)
+        self._feed(audio)
+        self.recorder.dropped_frames = 128
+        assert self.recorder.save_recording(self.test_audio_file) is False
+        assert self.recorder.last_capture_error
+        assert not os.path.exists(self.test_audio_file)
+        assert self.recorder._audio_spool.path.exists()
+
+        assert self.recorder.save_recording(
+            self.test_audio_file, allow_incomplete=True
+        ) is True
+        with wave.open(self.test_audio_file, "rb") as wav_file:
+            assert wav_file.readframes(len(audio)) == audio.tobytes()
+
+    def test_storage_error_refuses_even_partial_save_and_keeps_journal(self):
+        self.recorder = AudioRecorder(output_file=self.test_audio_file)
+        self._feed(np.arange(500, dtype=np.int16))
+        self.recorder._audio_spool.error = "Storage stopped writing"
+        assert self.recorder.save_recording(
+            self.test_audio_file, allow_incomplete=True
+        ) is False
+        assert self.recorder.last_capture_error == "Storage stopped writing"
+        assert not os.path.exists(self.test_audio_file)
+        assert self.recorder._audio_spool.path.exists()
+
     def test_save_recording_keeps_wav_when_metadata_stamp_fails(self):
         audio = np.arange(32, dtype=np.int16)
         self._feed(audio)

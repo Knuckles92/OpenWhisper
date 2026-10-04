@@ -605,6 +605,8 @@ class MeetingState:
         "mic_available": False,
         "loopback_available": False,
         "message": "",
+        "audio_incomplete": False,
+        "integrity_error": "",
     })
     participants: Dict[str, Participant] = field(default_factory=dict)
     cards: Dict[str, List[CardItem]] = field(
@@ -710,6 +712,12 @@ class MeetingState:
                     (d.get("capture") or {}).get("loopback_available", False)
                 ),
                 "message": str((d.get("capture") or {}).get("message", "")),
+                "audio_incomplete": bool(
+                    (d.get("capture") or {}).get("audio_incomplete", False)
+                ),
+                "integrity_error": str(
+                    (d.get("capture") or {}).get("integrity_error", "")
+                ),
             },
             finalization=finalization,
             insight_review=dict(d.get("insight_review") or {}),

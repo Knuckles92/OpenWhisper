@@ -24,6 +24,7 @@ tmp_meeting_eval/
 /:memory:.ses
 openwhisper_settings.json
 openwhisper.db
+.openwhisper-data.lock
 # WAL journaling (enabled for Meeting Mode) keeps two sidecar files alongside it
 openwhisper.db-wal
 openwhisper.db-shm

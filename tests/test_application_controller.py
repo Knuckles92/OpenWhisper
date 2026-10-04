@@ -153,7 +153,7 @@ class FakeRecorder:
     def has_recording_data(self):
         return True
 
-    def save_recording(self):
+    def save_recording(self, *, allow_incomplete=False):
         Path(config.RECORDED_AUDIO_FILE).write_bytes(b"x" * 256)
         return True
 
@@ -466,6 +466,7 @@ class DummyUIController:
         self.platform_ack_requests = 0
         self.platform_ack_result = True
         self.meeting_recovery_requests = []
+        self.meeting_recovery_scan_errors = []
         self.update_checks = []
         self.update_download_progress_events = []
         self.update_download_results = []
@@ -536,6 +537,9 @@ class DummyUIController:
 
     def show_meeting_recovery_dialog(self, meetings, on_finalize, on_discard):
         self.meeting_recovery_requests.append(meetings)
+
+    def show_meeting_recovery_scan_error(self, message, on_retry):
+        self.meeting_recovery_scan_errors.append((message, on_retry))
 
     def on_update_check_finished(self, result, error, manual):
         self.update_checks.append((result, error, manual))
@@ -870,6 +874,81 @@ class TestApplicationController:
         controller._startup_executor = FakeExecutor()
         controller.persistence_executor = FakeExecutor()
         return controller
+
+    def test_backup_reservation_blocks_capture_jobs_and_meetings(self):
+        controller = self._create_controller()
+        controller._startup_database_ready = True
+        enabled = [True]
+        central = types.SimpleNamespace(
+            isEnabled=lambda: enabled[0],
+            setEnabled=lambda value: enabled.__setitem__(0, value),
+        )
+        controller.ui_controller.main_window.centralWidget = lambda: central
+        assert controller._acquire_backup() is None
+        assert enabled == [False]
+        assert controller.transcription_runtime.start_recording() is False
+        assert controller.transcription_runtime._claim_job() is False
+        controller.meeting_runtime.start_meeting(cloud_enabled=False)
+        assert not controller.meeting_runtime.is_claimed
+        with pytest.raises(RuntimeError, match="backup"):
+            controller.transcribe_clip("unused.wav")
+        controller._release_backup()
+        assert enabled == [True]
+        assert controller._backup_in_progress is False
+        assert controller.transcription_runtime._claim_job() is True
+        controller.transcription_runtime._finish_job()
+
+    def test_backup_waits_for_startup_recovery_and_active_work(self):
+        from concurrent.futures import Future
+
+        controller = self._create_controller()
+        assert "starting" in controller._acquire_backup()
+        controller._startup_database_ready = True
+        controller._startup_recovery_future = Future()
+        assert "recovery" in controller._acquire_backup()
+        controller._startup_recovery_future.set_result(None)
+        controller.recorder.is_recording = True
+        assert "recording" in controller._acquire_backup()
+        controller.recorder.is_recording = False
+        controller.transcription_runtime._job_active = True
+        assert "transcription" in controller._acquire_backup()
+        controller.transcription_runtime._job_active = False
+        controller.meeting_runtime._starting = True
+        assert "meeting" in controller._acquire_backup()
+        assert not controller._backup_in_progress
+
+    def test_backup_restore_only_requests_restart_after_success(self):
+        exits = []
+        controller = self._create_controller()
+        qt_widgets = types.ModuleType("PyQt6.QtWidgets")
+        qt_widgets.QApplication = types.SimpleNamespace(exit=exits.append)
+        with patch.dict(sys.modules, {"PyQt6.QtWidgets": qt_widgets}):
+            controller._on_restore_staged("", "Failed validation")
+            assert not exits
+            controller._on_restore_staged("test.owbackup", "")
+        assert exits == [73]
+
+    def test_backup_pauses_client_sync_and_host_requests_and_releases_both(self):
+        from contextlib import contextmanager
+
+        controller = self._create_controller()
+        events = []
+
+        @contextmanager
+        def pause(name):
+            events.append(f"enter {name}")
+            try:
+                yield
+            finally:
+                events.append(f"leave {name}")
+
+        controller.record_sync = types.SimpleNamespace(paused_for_backup=lambda: pause("client"))
+        controller.remote_engine = types.SimpleNamespace(paused_records_for_backup=lambda: pause("host"))
+        with pytest.raises(ValueError, match="disk full"):
+            with controller._backup_record_context():
+                events.append("backup")
+                raise ValueError("disk full")
+        assert events == ["enter client", "enter host", "backup", "leave host", "leave client"]
 
     def test_model_switch_updates_backend_and_device_info(self):
         controller = self._create_controller()
@@ -3050,6 +3129,29 @@ class TestApplicationController:
         assert self.history_manager.preserved
         assert "microphone disconnected" in controller.ui_controller.statuses[-1]
         assert not runtime.has_active_job
+
+    def test_stop_timeout_preserves_journal_and_does_not_transcribe(self):
+        from unittest.mock import Mock
+
+        controller = self._create_controller()
+        controller.recorder.wait_for_stop_completion = lambda: False
+        controller.current_backend.transcribe = Mock()
+        runtime = controller.transcription_runtime
+        assert runtime._claim_job()
+        runtime.finish_recording_job()
+        controller.current_backend.transcribe.assert_not_called()
+        assert "did not finish stopping" in controller.ui_controller.statuses[-1]
+        assert not runtime.has_active_job
+
+    def test_recovery_scan_failure_routes_retry_to_runtime(self):
+        controller = self._create_controller()
+        retried = []
+        controller.meeting_runtime.retry_recovery_scan = lambda: retried.append(True)
+        controller.meeting_recovery_scan_failed.emit("database unavailable")
+        message, retry = controller.ui_controller.meeting_recovery_scan_errors[-1]
+        assert "database unavailable" in message
+        retry()
+        assert retried == [True]
 
     def test_queued_capture_error_after_cancel_does_not_stop_new_recording(self):
         controller = self._create_controller()

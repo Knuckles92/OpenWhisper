@@ -3,6 +3,7 @@ Tests for the Meeting Mode spool: gap-fill (>120ms), quiet/hard cuts, and the
 ``SpoolWriter`` timeline (drift, overlap trimming, pause, atomic sequence).
 """
 import os
+import threading
 import wave
 
 import numpy as np
@@ -215,6 +216,56 @@ def _start_clock():
     clock = MeetingClock()
     clock.start()
     return clock, time.monotonic()
+
+
+def test_queue_overflow_marks_audio_incomplete_and_keeps_accepted_blocks(tmp_path):
+    repo = FakeRepo()
+    collector = Collector(repo)
+    clock, t0 = _start_clock()
+    writer = SpoolWriter(
+        "m_test", "mic", str(tmp_path), clock, repo, on_chunk=collector,
+        queue_size=1,
+    )
+    entered, release = threading.Event(), threading.Event()
+    real_process = writer._process_block
+
+    def slow_process(*args):
+        entered.set()
+        assert release.wait(3)
+        real_process(*args)
+
+    writer._process_block = slow_process
+    block = CaptureBlock("mic", np.full(1600, 2000, np.int16), 16000, t0)
+    writer.feed(block)
+    assert entered.wait(3)
+    writer.feed(block)
+    writer.feed(block)
+    assert writer._dropped_blocks == 1
+    assert "dropped" in writer.health_error
+    release.set()
+    writer.flush()
+    assert (tmp_path / "mic_session.wav").exists()
+
+
+def test_chunk_write_failure_marks_audio_incomplete(tmp_path, monkeypatch):
+    repo = FakeRepo()
+    collector = Collector(repo)
+    clock, _t0 = _start_clock()
+    writer = _make_writer(tmp_path, repo, collector, clock)
+    real_replace = os.replace
+
+    def fail_chunk_replace(source, destination):
+        if str(destination).endswith("_00000.wav"):
+            raise OSError("disk full")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr("meeting.capture.spool.os.replace", fail_chunk_replace)
+    try:
+        assert writer._emit_chunk(np.full(16000, 2000, np.int16), 0.0, 16000) is None
+        assert "could not be written" in writer.health_error
+        assert collector.chunks == []
+    finally:
+        writer.flush()
 
 class TestSpoolWriterTimeline:
     def test_no_drift_over_60s_at_44100(self, tmp_path):

@@ -219,8 +219,15 @@ QLineEdit:focus {
 /* Model Manager — rail and stack; Downloads shares the same surfaces */
 QDialog#settingsDialog,
 QDialog#componentDetailsDialog,
-QDialog#batchDownloadDialog {
+QDialog#batchDownloadDialog,
+QDialog#remoteRecordRecoveryDialog {
     background-color: @slate-bg;
+}
+
+QDialog#remoteRecordRecoveryDialog QLabel {
+    background-color: transparent;
+    color: @slate-text-2;
+    border: none;
 }
 
 QWidget#modelManagerBody,
@@ -922,6 +929,169 @@ QFrame#settingsTile QCheckBox::indicator:disabled {
 QFrame#settingsTile QCheckBox::indicator:checked:disabled {
     background-color: @accent-muted;
     border-color: @accent-muted;
+}
+
+/* Backup cards contain nested form wrappers and labels. The global QWidget
+   background otherwise paints opaque strips across the card surface. */
+QWidget#backupSettingsPage,
+QWidget#backupScheduleBody,
+QWidget#backupScheduleFields,
+QWidget#backupFieldGroup,
+QWidget#backupDestinationRow,
+QWidget#backupCalendar,
+QWidget#backupSettingsPage QLabel,
+QWidget#backupSettingsPage QCheckBox {
+    background-color: transparent;
+}
+
+QWidget#backupSettingsPage QLabel {
+    border: none;
+    color: @slate-text-3;
+    font-size: 12px;
+}
+
+QWidget#backupSettingsPage QFrame#settingsTile {
+    border-radius: 14px;
+}
+
+QWidget#backupSettingsPage QFrame#settingsTile[backupCard="create"] {
+    border-color: @accent-tint-border;
+}
+
+QWidget#backupSettingsPage QLabel#settingsTileTitle {
+    color: @slate-text;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+QWidget#backupSettingsPage QLabel#backupLastCreated,
+QWidget#backupSettingsPage QLabel#backupScheduleSummary {
+    color: @slate-text-2;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QWidget#backupSettingsPage QCheckBox {
+    color: @slate-text-2;
+    font-size: 13px;
+    spacing: 8px;
+}
+
+QWidget#backupSettingsPage QLineEdit,
+QWidget#backupSettingsPage QComboBox,
+QWidget#backupSettingsPage QSpinBox {
+    background-color: @slate-field;
+    color: @slate-text;
+    border: 1px solid @slate-border-strong;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    min-height: 20px;
+}
+
+QWidget#backupSettingsPage QComboBox {
+    padding-right: 30px;
+}
+
+QWidget#backupSettingsPage QComboBox::down-arrow {
+    image: url(ui_qt/assets/tabler/chevron-down-slate@icon-suffix.svg);
+    border: none;
+    width: 16px;
+    height: 16px;
+    margin-right: 10px;
+}
+
+QWidget#backupSettingsPage QLineEdit:focus,
+QWidget#backupSettingsPage QComboBox:focus,
+QWidget#backupSettingsPage QSpinBox:focus {
+    border-color: @accent;
+}
+
+QWidget#backupSettingsPage QPushButton {
+    color: @slate-text-2;
+    background-color: @slate-raised;
+    border: 1px solid @slate-border-strong;
+    border-radius: 8px;
+    padding: 9px 14px;
+    font-size: 13px;
+}
+
+QWidget#backupSettingsPage QPushButton:hover {
+    background-color: @slate-surface-hover;
+    border-color: @slate-border-hover;
+    color: @slate-text;
+}
+
+QWidget#backupSettingsPage QPushButton#backupCreateButton,
+QWidget#backupSettingsPage QPushButton#backupRestoreButton {
+    color: @on-accent;
+    background-color: @accent;
+    border-color: @accent;
+}
+
+QWidget#backupSettingsPage QPushButton#backupCreateButton:hover,
+QWidget#backupSettingsPage QPushButton#backupRestoreButton:hover {
+    background-color: @accent-hover;
+    border-color: @accent-hover;
+}
+
+QWidget#backupSettingsPage QPushButton:disabled,
+QWidget#backupSettingsPage QPushButton#backupCreateButton:disabled,
+QWidget#backupSettingsPage QPushButton#backupRestoreButton:disabled,
+QWidget#backupSettingsPage QLineEdit:disabled,
+QWidget#backupSettingsPage QSpinBox:disabled {
+    background-color: @slate-disabled;
+    color: @slate-text-disabled;
+    border-color: @slate-border-subtle;
+}
+
+QCalendarWidget#backupCalendarGrid,
+QCalendarWidget#backupCalendarGrid QWidget {
+    background-color: transparent;
+    border: none;
+}
+
+QCalendarWidget#backupCalendarGrid QAbstractItemView {
+    background-color: @slate-surface;
+    alternate-background-color: @slate-surface;
+    color: @slate-text-3;
+    selection-background-color: transparent;
+    selection-color: @slate-text;
+    border: none;
+    outline: none;
+    font-size: 12px;
+}
+
+QWidget#backupSettingsPage QLabel#backupCalendarMonth {
+    color: @slate-text;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QWidget#backupSettingsPage QToolButton#backupCalendarNav {
+    background-color: transparent;
+    color: @slate-text-2;
+    border: 1px solid @slate-border;
+    border-radius: 6px;
+    padding: 4px 8px;
+    min-height: 20px;
+    font-size: 12px;
+}
+
+QWidget#backupSettingsPage QToolButton#backupCalendarNav:hover,
+QWidget#backupSettingsPage QToolButton#backupCalendarNav:focus {
+    background-color: @slate-raised;
+    border-color: @accent-border;
+}
+
+QWidget#backupSettingsPage QLabel#backupCalendarLatest {
+    color: @success-text;
+    font-size: 11px;
+}
+
+QWidget#backupSettingsPage QLabel#backupCalendarPlanned {
+    color: @accent-soft;
+    font-size: 11px;
 }
 
 /* Meeting intelligence: who runs AI insights. The tiles paint their own

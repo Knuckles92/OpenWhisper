@@ -103,7 +103,7 @@ def test_cancel_before_transcription_starts_skips_the_engine(tmp_path, monkeypat
     controller.current_backend.transcribe = lambda path: decodes.append(path) or "text"
     assert runtime._claim_job()
 
-    def save_then_cancel():
+    def save_then_cancel(*, allow_incomplete=False):
         runtime._cancel_requested.set()  # cancel pressed while the WAV saves
         return True
 

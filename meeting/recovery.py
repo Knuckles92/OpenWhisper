@@ -42,6 +42,10 @@ _ERROR_ACCESS_DENIED = 5
 RECOVERED_CHUNK_MAX_S = 20.0
 
 
+class RecoveryScanError(RuntimeError):
+    """The recovery inventory could not be checked reliably."""
+
+
 def _read_wav_duration(path: str) -> Optional[Tuple[int, float]]:
     """Validate a recoverable WAV and return ``(rate, duration_s)``."""
     try:
@@ -360,6 +364,8 @@ def _recover_pcm_tails(
 def reconcile_meeting_audio(
     repository: Any,
     meeting: Dict[str, Any],
+    *,
+    strict: bool = False,
 ) -> Dict[str, int]:
     """Reconcile crash artifacts into durable pending chunk rows.
 
@@ -380,6 +386,10 @@ def reconcile_meeting_audio(
         return {"orphan_chunks": orphans, "tail_chunks": tails}
     except Exception:
         logger.exception("Meeting audio reconciliation failed for %s", meeting_id)
+        if strict:
+            raise RecoveryScanError(
+                f"Could not check saved audio for meeting {meeting_id}"
+            )
         return {"orphan_chunks": 0, "tail_chunks": 0}
 
 
@@ -390,16 +400,16 @@ def reconcile_startup_audio(repository: Any) -> int:
         return 0
     try:
         meetings = list_meetings()
-    except Exception:
+    except Exception as exc:
         logger.exception("Failed to list meetings for audio reconciliation")
-        return 0
+        raise RecoveryScanError("Could not list meetings for audio recovery") from exc
     recovered = 0
     for meeting in meetings:
         status = str(meeting.get("status") or "")
         if status in ("active", "paused", "ending", "needs_recovery"):
             if not is_session_dead(meeting):
                 continue
-        result = reconcile_meeting_audio(repository, meeting)
+        result = reconcile_meeting_audio(repository, meeting, strict=True)
         recovered += result["orphan_chunks"] + result["tail_chunks"]
     return recovered
 
@@ -477,8 +487,8 @@ def find_recoverable_meetings(repository: Any) -> List[Dict[str, Any]]:
         repository: A ``MeetingRepository``.
 
     Returns:
-        Meeting dicts eligible for finalize/resume/discard, or an empty list
-        when the scan fails.
+        Meeting dicts eligible for finalize/resume/discard. A failed scan
+        raises ``RecoveryScanError`` so callers cannot mistake it for none.
     """
     # Registration failures and sub-chunk PCM tails are filesystem evidence,
     # so reconcile them before the database query decides which terminal
@@ -486,9 +496,9 @@ def find_recoverable_meetings(repository: Any) -> List[Dict[str, Any]]:
     reconcile_startup_audio(repository)
     try:
         candidates = repository.find_interrupted_meetings()
-    except Exception:
+    except Exception as exc:
         logger.exception("Failed to scan for interrupted meetings")
-        return []
+        raise RecoveryScanError("Could not query interrupted meetings") from exc
     recoverable = []
     for meeting in candidates:
         if not is_session_dead(meeting):
@@ -546,7 +556,10 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
 
     try:
         reconcile_meeting_audio(repository, meeting)
-        repository.reset_unfinished_chunks(meeting_id)
+        # This function is an explicit recovery action chosen by the user.
+        # Retry blocked/exhausted rows after the source file or model is fixed;
+        # ordinary startup replay must leave those rows parked.
+        repository.reset_unfinished_chunks(meeting_id, force=True)
         pending = repository.get_pending_chunks(meeting_id)
     except Exception:
         logger.exception("Failed to list pending chunks for %s", meeting_id)
@@ -642,7 +655,7 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
 
 
 def _mark_ended(repository: Any, meeting: Dict[str, Any]) -> None:
-    """Mark a meeting ended, patching status and historical finalization.
+    """Mark transcription complete without hiding permanent capture loss.
 
     Headless ASR finalize never runs the cloud consolidation pass, so any
     interrupted ``pending``/``running`` finalization is normalized to a durable
@@ -657,7 +670,13 @@ def _mark_ended(repository: Any, meeting: Dict[str, Any]) -> None:
             logger.warning("Unparseable state_json on meeting %s; "
                            "leaving snapshot untouched", meeting.get("id"))
         else:
-            state = dict(state, status="ended")
+            capture = state.get("capture") or {}
+            if isinstance(capture, dict) and capture.get("audio_incomplete"):
+                # A retry can transcribe saved chunks, but it cannot recreate
+                # blocks dropped by capture. Leave a terminal warning without
+                # prompting for the same recovery on every startup.
+                fields["status"] = "failed"
+            state = dict(state, status=fields["status"])
             cloud_enabled = bool(
                 meeting.get("cloud_enabled", state.get("cloud_enabled", False))
             )
@@ -665,7 +684,7 @@ def _mark_ended(repository: Any, meeting: Dict[str, Any]) -> None:
             state["finalization"] = FinalizationState.normalize_historical(
                 state.get("finalization"),
                 cloud_enabled=cloud_enabled,
-                meeting_status="ended",
+                meeting_status=fields["status"],
             ).to_dict()
             fields["state_json"] = json.dumps(state, ensure_ascii=False)
     try:

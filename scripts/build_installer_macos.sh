@@ -384,6 +384,15 @@ codesign --verify --deep --strict --verbose=2 "$MOUNTED_APP"
 mounted_version="$("$MOUNTED_APP/Contents/MacOS/${APP_NAME}" --version)"
 [[ "$mounted_version" == "OpenWhisper $VERSION" ]] || \
     fail "mounted app reported '$mounted_version', expected 'OpenWhisper $VERSION'"
+step "Checking an app installed from the DMG"
+INSTALLED_APP="$WORKDIR/Installed Applications/${APP_NAME}.app"
+mkdir -p -- "$(dirname -- "$INSTALLED_APP")"
+ditto -- "$MOUNTED_APP" "$INSTALLED_APP"
+codesign --verify --deep --strict --verbose=2 "$INSTALLED_APP"
+"$PYTHON" -c 'import subprocess, sys; subprocess.run([sys.argv[1], "--self-test"], check=True, timeout=120)' \
+    "$INSTALLED_APP/Contents/MacOS/${APP_NAME}"
+"$PYTHON" scripts/check_release_health.py --executable "$INSTALLED_APP/Contents/MacOS/${APP_NAME}" \
+    --output build/installed-release-health.json --timeout 45
 hdiutil detach "$MOUNT_POINT" >/dev/null
 rm -rf -- "$MOUNT_POINT"
 MOUNT_POINT=""

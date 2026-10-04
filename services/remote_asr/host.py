@@ -11,11 +11,13 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+import re
 import secrets
 import socket
 import threading
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
@@ -24,6 +26,7 @@ from services.remote_asr import protocol, tailscale
 from services.remote_asr.activity import HostActivity
 from services.remote_asr.engines import HostEngine, UnavailableEngine
 from services.remote_asr.tls import HostIdentity, server_context
+from services.remote_records.gate import RecordsBusy
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,16 @@ PAIRING_TTL_S = 300.0
 MAX_PAIRING_FAILURES = 5
 PAIRING_CODE_DIGITS = 6
 MAX_DEVICE_NAME = 60
+#: A connection owns a server thread and may hold a history or speech stream.
+MAX_CLIENT_CONNECTIONS = 12
+#: Engine/model/record operations share a small fair work pool. Waiting work
+#: is bounded too, so one overloaded host cannot accumulate unbounded threads.
+MAX_ACTIVE_JOBS = 2
+MAX_QUEUED_JOBS = 4
+MAX_JOB_WAIT_S = 30.0
+# Keep inbound frames buffered per connection small while a job waits; each
+# individual frame is bounded by the protocol's WebSocket max_size below.
+MAX_QUEUED_FRAMES_PER_CLIENT = 2
 #: last_seen is persisted at most this often per device.
 _LAST_SEEN_PERSIST_S = 60.0
 
@@ -67,12 +80,20 @@ class DeviceRegistry:
         raw = self._load()
         if not isinstance(raw, list):
             return []
-        return [
+        entries = [
             dict(entry) for entry in raw
             if isinstance(entry, dict)
             and isinstance(entry.get("id"), str)
             and isinstance(entry.get("token_sha256"), str)
         ]
+        for entry in entries:
+            owners = entry.get("record_owner_ids")
+            if "record_owner_ids" in entry:
+                entry["record_owner_ids"] = list(dict.fromkeys(
+                    owner for owner in (owners if isinstance(owners, list) else [])
+                    if isinstance(owner, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", owner)
+                ))
+        return entries
 
     def list(self) -> List[dict]:
         """Entries without their token digests, for display."""
@@ -106,6 +127,21 @@ class DeviceRegistry:
                 return False
             self._save(kept)
             return True
+
+    def attach_record_owner(self, device_id: str, owner_id: str) -> None:
+        """Host-owner action; never exposed as a client pairing or RPC option."""
+        if not isinstance(owner_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", owner_id):
+            raise ValueError("Invalid stored record owner.")
+        with self._lock:
+            entries = self._entries()
+            target = next((entry for entry in entries if entry["id"] == device_id), None)
+            if target is None:
+                raise ValueError("Pair the receiving computer again before recovering its records.")
+            for entry in entries:
+                if owner_id == entry["id"] or owner_id in entry.get("record_owner_ids", []):
+                    raise ValueError("These records already belong to a paired computer.")
+            target["record_owner_ids"] = [*target.get("record_owner_ids", []), owner_id]
+            self._save(entries)
 
     def authenticate(self, token) -> Optional[dict]:
         if not isinstance(token, str) or not token:
@@ -158,6 +194,47 @@ class _Client:
     since: float = 0.0
 
 
+class _WorkAdmission:
+    """FIFO admission for costly requests across all paired connections."""
+
+    def __init__(self, active: int, queued: int, wait_s: float) -> None:
+        self._active_limit = active
+        self._queue_limit = queued
+        self._wait_s = wait_s
+        self._condition = threading.Condition()
+        self._active = 0
+        self._queue = deque()
+
+    def acquire(self, still_connected: Callable[[], bool]) -> bool:
+        with self._condition:
+            if self._active < self._active_limit and not self._queue:
+                self._active += 1
+                return True
+            if len(self._queue) >= self._queue_limit:
+                return False
+            ticket = object()
+            self._queue.append(ticket)
+            deadline = time.monotonic() + self._wait_s
+            try:
+                while True:
+                    if not still_connected() or time.monotonic() >= deadline:
+                        return False
+                    if self._queue[0] is ticket and self._active < self._active_limit:
+                        self._queue.popleft()
+                        self._active += 1
+                        return True
+                    self._condition.wait(timeout=0.1)
+            finally:
+                if ticket in self._queue:
+                    self._queue.remove(ticket)
+                    self._condition.notify_all()
+
+    def release(self) -> None:
+        with self._condition:
+            self._active -= 1
+            self._condition.notify_all()
+
+
 class SpeechHost:
     """A TLS WebSocket server in front of ``engine_provider()``.
 
@@ -197,6 +274,9 @@ class SpeechHost:
         records: Optional[Callable[[str, dict, bytes, dict], dict]] = None,
         records_summary: Optional[Callable[[str], dict]] = None,
         history=None,
+        max_connections: int = MAX_CLIENT_CONNECTIONS,
+        max_active_jobs: int = MAX_ACTIVE_JOBS,
+        max_queued_jobs: int = MAX_QUEUED_JOBS,
     ):
         self._engine_provider = engine_provider
         self.registry = registry
@@ -222,6 +302,10 @@ class SpeechHost:
         self._thread: Optional[threading.Thread] = None
         self._pairing: Optional[_Pairing] = None
         self._clients: Dict[str, _Client] = {}
+        self._connection_slots = threading.BoundedSemaphore(max(1, int(max_connections)))
+        self._work_admission = _WorkAdmission(
+            max(1, int(max_active_jobs)), max(0, int(max_queued_jobs)), MAX_JOB_WAIT_S,
+        )
         self.port: Optional[int] = None
         #: What paired computers asked of this host since sharing started.
         self.activity = HostActivity()
@@ -246,6 +330,7 @@ class SpeechHost:
                 ssl=server_context(self.identity),
                 process_request=self._check_path,
                 max_size=max(protocol.MAX_REQUEST_BYTES, protocol.MAX_REPLY_BYTES),
+                max_queue=MAX_QUEUED_FRAMES_PER_CLIENT,
                 compression=None,
                 open_timeout=HANDSHAKE_TIMEOUT_S,
                 ping_interval=20,
@@ -409,6 +494,21 @@ class SpeechHost:
         ws.send(json.dumps(message, separators=(",", ":")))
 
     def _handle(self, ws) -> None:
+        if not self._connection_slots.acquire(blocking=False):
+            try:
+                self._send(ws, {"type": "error", "code": "busy",
+                                "message": "The host is busy. Try again shortly.",
+                                "retry_after_ms": 1000})
+                ws.close(protocol.CLOSE_BUSY, "host busy")
+            except Exception:
+                logger.debug("Could not send connection limit response", exc_info=True)
+            return
+        try:
+            self._handle_admitted(ws)
+        finally:
+            self._connection_slots.release()
+
+    def _handle_admitted(self, ws) -> None:
         peer = ws.remote_address
         address = str(peer[0]) if isinstance(peer, tuple) and peer else "unknown"
         try:
@@ -634,7 +734,7 @@ class SpeechHost:
                         ws.close(protocol.CLOSE_UNAUTHORIZED, "device removed")
                         break
                     reply = self._dispatch(frame, engine, identity, connection_id, streams,
-                                           device["name"], device["id"])
+                                           device["name"], device["id"], ws)
                     self._send(ws, reply)
                 finally:
                     self._set_in_request(connection_id, False)
@@ -656,11 +756,41 @@ class SpeechHost:
 
     def _dispatch(self, frame, engine: HostEngine, identity: tuple,
                   connection_id: str, streams: set, device_name: str = "",
-                  device_id: str = "") -> dict:
+                   device_id: str = "", ws=None) -> dict:
         try:
             header, payload = protocol.unpack_frame(frame)
         except protocol.ProtocolError as exc:
             return {"id": None, "error": str(exc), "code": "bad_request"}
+        request_id = header.get("id")
+        op = header.get("op")
+        costly = (op in ("transcribe", "stream", "select_model", "configure_runtime",
+                         "model_catalog", "download_model", "install_runtime")
+                  or isinstance(op, str) and op.startswith("records_"))
+        if costly:
+            from websockets.protocol import State
+
+            def still_connected() -> bool:
+                return (self.running and ws is not None and ws.state is State.OPEN)
+
+            if not self._work_admission.acquire(still_connected):
+                return {"id": request_id, "code": "busy",
+                        "error": "The host is busy. Try again shortly.",
+                        "retry_after_ms": 1000}
+            try:
+                return self._dispatch_unpacked(
+                    header, payload, engine, identity, connection_id, streams,
+                    device_name, device_id,
+                )
+            finally:
+                self._work_admission.release()
+        return self._dispatch_unpacked(
+            header, payload, engine, identity, connection_id, streams,
+            device_name, device_id,
+        )
+
+    def _dispatch_unpacked(self, header: dict, payload: bytes, engine: HostEngine,
+                           identity: tuple, connection_id: str, streams: set,
+                           device_name: str, device_id: str) -> dict:
         request_id = header.get("id")
         op = header.get("op")
         if isinstance(op, str) and op.startswith("records_"):
@@ -783,6 +913,9 @@ class SpeechHost:
             return {"id": request_id, "code": "bad_request", "error": "Unknown device."}
         try:
             result = self._records(op, header, payload, device)
+        except RecordsBusy as exc:
+            return {"id": request_id, "code": "busy", "retry_after_ms": 1000,
+                    "error": str(exc)}
         except LookupError as exc:
             return {"id": request_id, "code": "not_found", "error": str(exc) or "No such record."}
         except ValueError as exc:

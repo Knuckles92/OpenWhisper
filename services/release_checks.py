@@ -168,6 +168,7 @@ def run_workflow_smoke(*, repeats: int = 5) -> dict:
                              "History did not survive a database restart")
                 finally:
                     database.close()
+            checks = _check_data_recovery(root, samples.tobytes())
         finally:
             cleanup_started = time.perf_counter()
             decoder.release.set()
@@ -178,8 +179,8 @@ def run_workflow_smoke(*, repeats: int = 5) -> dict:
     metrics = dict(fixture_ready_s=ready_s, stop_to_result_p50_s=statistics.median(timings),
                    stop_to_result_p95_s=p95, cancel_s=cancel_s, restart_s=restart_s,
                    cleanup_s=cleanup_s, peak_rss_mb=peak_rss_mb())
-    report = dict(schema=1, kind="synthetic_service_lifecycle", repeats=repeats,
-                  metrics=metrics, passed=True,
+    report = dict(schema=2, kind="synthetic_service_lifecycle", repeats=repeats,
+                  metrics=metrics, checks=checks, passed=True,
                   limitations=["Fixture decoder; no real speech recognition or model startup",
                                "No physical capture device, native inference, VRAM or dropped-audio measurement",
                                "Service/database restart and cleanup; not full application process restart"])
@@ -187,3 +188,57 @@ def run_workflow_smoke(*, repeats: int = 5) -> dict:
     if sys.stdout is not None:
         print(json.dumps(report, sort_keys=True), flush=True)
     return report
+
+
+def _check_data_recovery(root: Path, pcm: bytes) -> dict:
+    from services.backup import create_backup, prepare_restore, previous_data_dir
+    from services.backup_startup import acquire_startup_data_lease, release_startup_data_lease
+    from services.database import DatabaseManager
+    from services.recording_journal import RecordingJournal, recover_recordings
+
+    source, target = root / "source-data", root / "restored-data"
+    source.mkdir()
+    target.mkdir()
+    errors = []
+    journal = RecordingJournal(source / "recorded_audio.wav", 16000, 1, 2, errors.append)
+    try:
+        _require(journal.append(pcm), "Recovery fixture could not queue audio")
+        _require(journal.finish(), "Recovery fixture writer did not finish")
+    finally:
+        _require(journal.close(), "Recovery fixture writer did not close")
+    _require(not errors, "Recovery fixture reported a storage error")
+    recovered = recover_recordings(str(source / "recorded_audio.wav"), str(source / "recordings"))
+    _require(len(recovered) == 1, "Interrupted recording was not recovered exactly once")
+    with wave.open(recovered[0], "rb") as wav:
+        _require(wav.readframes(wav.getnframes()) == pcm, "Recovered recording changed its audio")
+    _require(not recover_recordings(str(source / "recorded_audio.wav"), str(source / "recordings")),
+             "Recording recovery duplicated an earlier result")
+    with _isolated_legacy_history(source / "absent.json"):
+        database = DatabaseManager(str(source / "openwhisper.db"))
+        try:
+            database.add_history_entry("recoverable", "backup fixture", "2000-01-01T00:00:00", "fixture",
+                                       audio_file=Path(recovered[0]).name)
+            archive = root / "portable.owbackup"
+            create_backup(archive, data_dir=source)
+        finally:
+            database.close()
+        original_settings = '{"before_restore": true}'
+        (target / "openwhisper_settings.json").write_text(original_settings, encoding="utf-8")
+        prepare_restore(archive, data_dir=target)
+        try:
+            acquire_startup_data_lease(str(target))
+            database = DatabaseManager(str(target / "openwhisper.db"))
+            try:
+                row = database.get_history_entry_by_id("recoverable")
+                _require(row is not None and row.text == "backup fixture", "Restored history is missing")
+                with wave.open(str(target / "recordings" / row.audio_file), "rb") as wav:
+                    _require(wav.readframes(wav.getnframes()) == pcm, "Restored recording differs")
+            finally:
+                database.close()
+            previous = previous_data_dir(target)
+            _require(previous is not None and
+                     (previous / "openwhisper_settings.json").read_text(encoding="utf-8") == original_settings,
+                     "Restore did not retain previous user data")
+        finally:
+            release_startup_data_lease()
+    return {"recording_recovery": True, "backup_restore": True, "previous_data_preserved": True}

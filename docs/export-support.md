@@ -21,6 +21,8 @@ Meeting Markdown's intelligence toggle controls pulses, cards, clarifications, q
 
 JSON preserves provider/model metadata, state, evidence, pulse assessments, and original/corrected segment text. Dashboard access tokens, process-liveness fields, and the duplicate `state_json` are excluded. Exports contain recording references where applicable, **not audio files**; the JSON document is not a portable recording backup.
 
+For a portable copy of local application data and recordings, use **Settings → Backup & restore**. See [Backup and restore](backup-restore.md) for archive contents, automatic backups, and restart behavior.
+
 History JSON preserves every currently persisted history field. Markdown includes cleaned/raw text according to the selected toggles; TXT includes the saved text and any raw version. Both retain cleanup provider/model information and uploaded-file or batch source names.
 
 ## Regression coverage

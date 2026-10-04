@@ -21,6 +21,7 @@ from services.remote_asr import protocol
 from services.remote_asr import settings as remote_settings
 from services.remote_asr import tailscale
 from services.remote_asr.engines import HostEngine, host_engine_for, host_models
+from services.remote_records.gate import RecordGate
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,7 @@ class RemoteEngineService:
         self._backend_provider = backend_provider
         self._records_root = records_root
         self._records = None
+        self._record_gate = RecordGate()
         from services.remote_asr.host import DeviceRegistry
         from services.remote_history.channel import HistoryBroker
 
@@ -311,11 +313,51 @@ class RemoteEngineService:
             return self._records
 
     def records_request(self, op: str, header: dict, payload: bytes, device: dict) -> dict:
-        return self.record_store().handle(op, header, payload, device)
+        with self._record_gate.request():
+            grant = dict(device)
+            grant["record_owner_ids"] = self._record_owners(device["id"])[1:]
+            return self.record_store().handle(op, header, payload, grant)
+
+    def paused_records_for_backup(self):
+        return self._record_gate.paused()
+
+    def _record_owners(self, device_id: str) -> list:
+        device = next((entry for entry in self._registry.list() if entry["id"] == device_id), {})
+        return [device_id, *device.get("record_owner_ids", [])]
 
     def records_summary(self, device_id: str) -> dict:
         """What a paired computer keeps here, per kind: ``{"count", "bytes"}``."""
-        return self.record_store().summary(device_id)
+        combined = {}
+        store = self.record_store()
+        for owner in self._record_owners(device_id):
+            for kind, summary in store.summary(owner).items():
+                total = combined.setdefault(kind, {"count": 0, "bytes": 0})
+                for key in total:
+                    total[key] += int(summary.get(key) or 0)
+        return combined
+
+    def recoverable_record_owners(self) -> list:
+        paired = set()
+        for device in self._registry.list():
+            paired.update([device["id"], *device.get("record_owner_ids", [])])
+        groups = {}
+        for kind, handler in self.record_store().kinds.items():
+            for owner in handler.owners():
+                if owner["id"] in paired:
+                    continue
+                group = groups.setdefault(owner["id"], {
+                    "id": owner["id"], "name": owner["name"], "counts": {},
+                })
+                group["counts"][kind] = owner["count"]
+        return sorted(groups.values(), key=lambda group: (group["name"], group["id"]))
+
+    def recover_device_records(self, owner_id: str, device_id: str) -> None:
+        """Assign orphaned records only through the host owner's local UI."""
+        with self._record_gate.paused():
+            if not any(group["id"] == owner_id for group in self.recoverable_record_owners()):
+                raise ValueError("These records are no longer available for recovery.")
+            self._registry.attach_record_owner(device_id, owner_id)
+        self._notify("records")
 
     def set_keep_records(self, enabled: bool) -> None:
         from services.settings import SettingsKey, settings_manager
@@ -494,6 +536,13 @@ class RemoteEngineService:
         Kept records stay in this computer's History and Past Meetings,
         badged with the computer they came from.
         """
+        if delete_records:
+            with self._record_gate.paused():
+                for owner in self._record_owners(device_id):
+                    self.record_store().delete_device(owner)
+                removed = self.remove_device(device_id)
+            self._notify("records")
+            return removed
         with self._lock:
             host = self._host
         if host is not None:
@@ -501,9 +550,6 @@ class RemoteEngineService:
         else:
             removed = self._registry.remove(device_id)
             self._notify("devices")
-        if delete_records:
-            self.record_store().delete_device(device_id)
-            self._notify("records")
         return removed
 
     def engine_changed(self) -> None:

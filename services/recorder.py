@@ -454,7 +454,7 @@ class AudioRecorder:
             if post_roll_end_event.wait(max(0.0, remaining)):
                 reason = self._post_roll_end_reason or "quiet"
         except Exception as e:
-            logger.error(f"Error while recording audio: {e}")
+            self._fail_capture(f'Audio capture stopped unexpectedly: {e}')
         finally:
             if self.stream:
                 try:
@@ -525,9 +525,31 @@ class AudioRecorder:
         except Exception as e:
             logger.debug(f"Error calculating audio level: {e}")
 
-    def save_recording(self, filename: str = None) -> bool:
-        """Atomically stream captured PCM into a WAV file."""
+    def save_recording(self, filename: str = None, *,
+                       allow_incomplete: bool = False) -> bool:
+        """Atomically stream captured PCM into a WAV file.
+
+        An ordinary save refuses capture loss. The failure-preservation path
+        may explicitly save intact journal bytes as a partial recording.
+        """
         filename = filename or self.output_file
+
+        journal = self._audio_spool
+        if journal is not None and not journal.finish():
+            self._fail_capture(
+                'Recording storage did not finish; audio kept for recovery.'
+            )
+            return False
+        if journal is not None and journal.error:
+            self._fail_capture(journal.error)
+            return False
+        if self.dropped_frames and not self.last_capture_error:
+            self._fail_capture(
+                'Audio blocks were lost; the partial recording was kept.'
+            )
+        if self.last_capture_error and not allow_incomplete:
+            logger.warning('Refusing to save an incomplete recording as complete')
+            return False
 
         # Trailing silence prevents some ASR models from dropping the last word.
         padding_bytes = b''
@@ -542,9 +564,6 @@ class AudioRecorder:
             temp_fd, temp_path = tempfile.mkstemp(suffix='.wav', dir=directory)
 
             try:
-                journal = self._audio_spool
-                if journal is not None and not journal.finish():
-                    raise TimeoutError('Recording storage is still busy; audio kept for recovery')
                 with self._callback_lock:
                     if journal is None or journal.written_bytes <= 0:
                         os.close(temp_fd)

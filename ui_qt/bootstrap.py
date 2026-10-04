@@ -326,6 +326,7 @@ def main() -> int:
 
         # Whisper load, HF consent, meeting recovery, and streaming setup
         # run after the window is visible — never on the splash path.
+        app_controller.setup_backup()
         app_controller.notify_main_ui_ready()
         from services.agent_mcp.runtime import runtime as mcp_runtime
         from services.settings import settings_manager

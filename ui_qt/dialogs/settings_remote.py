@@ -17,6 +17,8 @@ from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QButtonGroup,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -32,6 +34,7 @@ from ui_qt.utils.palette import current_palette
 from ui_qt.widgets import (
     Button,
     DangerButton,
+    ElidingComboBox,
     FieldTile,
     InfoTile,
     NoWheelSpinBox,
@@ -101,6 +104,7 @@ class RemoteEngineSection(QObject):
     _scan_finished = pyqtSignal(object)
     _records_event = pyqtSignal(str)
     _records_job_done = pyqtSignal(str)
+    _recovery_job_done = pyqtSignal(str)
 
     def __init__(self, parent=None, records=None):
         super().__init__(parent)
@@ -116,6 +120,8 @@ class RemoteEngineSection(QObject):
         self._records_listener = lambda kind: self._records_event.emit(kind)
         self._records_event.connect(self._on_records_event)
         self._records_job_done.connect(self._on_records_job_done)
+        self._recovery_job_done.connect(self._on_recovery_job_done)
+        self._recovery_busy = False
         self._select_engine: Optional[Callable[[str], None]] = None
         self._set_rail_value: Optional[Callable[[str], None]] = None
         self._pairing_busy = False
@@ -408,6 +414,16 @@ class RemoteEngineSection(QObject):
         self._devices_layout.setContentsMargins(0, 0, 0, 0)
         self._devices_layout.setSpacing(6)
         self.devices_tile.add_body(self.devices_list)
+        self.recover_records_button = Button("Recover stored records…")
+        self.recover_records_button.setObjectName("remoteRecoverRecordsButton")
+        self.recover_records_button.setToolTip("Reconnect records from an old pairing to a paired computer")
+        self.recover_records_button.clicked.connect(self._recover_records)
+        self.devices_tile.add_body(self.recover_records_button)
+        self.recovery_message = WrappedLabel("")
+        self.recovery_message.setObjectName("infoLabel")
+        self.recovery_message.setTextFormat(Qt.TextFormat.PlainText)
+        self.recovery_message.hide()
+        self.devices_tile.add_body(self.recovery_message)
 
         dialog._tile_group(
             layout,
@@ -783,6 +799,9 @@ class RemoteEngineSection(QObject):
         self.pair_device_button.setEnabled(running)
         self._show_pairing(state["pairing"] if running else None)
         self._rebuild_devices(state["devices"], {c["device_id"] for c in state["clients"]})
+        self.recover_records_button.setEnabled(
+            not self._recovery_busy and hasattr(service, "recover_device_records")
+        )
 
         pairing = service.client_pairing()
         if running:
@@ -1115,7 +1134,85 @@ class RemoteEngineSection(QObject):
             if clicked not in (keep, delete):
                 return
             delete_records = clicked is delete
-        self._service.remove_device(device_id, delete_records=delete_records)
+        try:
+            self._service.remove_device(device_id, delete_records=delete_records)
+        except Exception as exc:
+            QMessageBox.warning(self.devices_tile.window(), "Could not remove computer", str(exc))
+        self.refresh()
+
+    def _recover_records(self) -> None:
+        service = self._service
+        if service is None or self._recovery_busy:
+            return
+        try:
+            owners = service.recoverable_record_owners()
+            devices = service.host_state()["devices"]
+        except Exception as exc:
+            QMessageBox.warning(self.devices_tile.window(), "Could not load stored records", str(exc))
+            return
+        if not owners or not devices:
+            QMessageBox.information(
+                self.devices_tile.window(), "Recover stored records",
+                "Pair the original computer again, then assign its old records here."
+                if not devices else "No records from unpaired computers need recovery.",
+            )
+            return
+        dialog = QDialog(self.devices_tile.window())
+        dialog.setObjectName("remoteRecordRecoveryDialog")
+        dialog.setWindowTitle("Recover stored records")
+        dialog.setMinimumWidth(300)
+        dialog.resize(460, 280)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+        layout.addWidget(WrappedLabel(
+            "Choose the old computer's records and its new pairing. "
+            "The selected paired computer will be able to read, edit, and delete these records."
+        ))
+        source = ElidingComboBox()
+        source.setObjectName("remoteRecoveryOwnerCombo")
+        source.setAccessibleName("Stored records from old computer")
+        for owner in owners:
+            counts = {kind: {"count": count} for kind, count in owner["counts"].items()}
+            source.addItem(f"{owner['name']} · {owner['id'][:8]} · {_stored_phrase(counts)}", owner["id"])
+        layout.addWidget(QLabel("Stored records from"))
+        layout.addWidget(source)
+        target = ElidingComboBox()
+        target.setObjectName("remoteRecoveryDeviceCombo")
+        target.setAccessibleName("Paired computer to receive access")
+        for device in devices:
+            target.addItem(f"{device['name']} · {device['id'][:8]}", device["id"])
+        layout.addWidget(QLabel("Assign to paired computer"))
+        layout.addWidget(target)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        recover = buttons.addButton("Recover records", QDialogButtonBox.ButtonRole.AcceptRole)
+        recover.setObjectName("primaryButton")
+        recover.setDefault(False)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        owner_id, device_id = source.currentData(), target.currentData()
+        self._recovery_busy = True
+        self.recovery_message.setText("Recovering stored records…")
+        self.recovery_message.show()
+        self.refresh()
+
+        def work():
+            try:
+                service.recover_device_records(owner_id, device_id)
+                message = "Stored records are available to the paired computer. Refresh its history to see them."
+            except Exception as exc:
+                message = f"Could not recover records: {exc}"
+            self._recovery_job_done.emit(message)
+
+        threading.Thread(target=work, name="remote-record-recovery", daemon=True).start()
+
+    def _on_recovery_job_done(self, message: str) -> None:
+        self._recovery_busy = False
+        self.recovery_message.setText(message)
+        self.recovery_message.show()
         self.refresh()
 
     def _on_service_event(self, kind: str) -> None:

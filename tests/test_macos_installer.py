@@ -174,9 +174,11 @@ def test_release_workflow_includes_macos_arm64_dmg():
     assert 'test "$(uname -m)" = "arm64"' in workflow
     assert "./scripts/build_installer_macos.sh --clean" in workflow
     assert "OpenWhisper-*-macos-arm64.dmg" in workflow
-    assert "needs: [windows, linux, macos]" in workflow
+    assert "needs: [source, windows, linux, macos]" in workflow
     assert "expected_artifacts=5" in workflow
-    assert 'gh release upload "$RELEASE_TAG" release/* --clobber' in workflow
+    qualification = (ROOT / ".github/workflows/qualify-release.yml").read_text(encoding="utf-8")
+    assert 'gh release upload "$RELEASE_TAG" release/* --clobber' in qualification
+    assert "check_release_qualification.py" in qualification
     macos = workflow.split("\n  macos:")[1].split("\n  bundle:")[0]
     # Signing is opt-in: the credentials step runs only when both secrets
     # exist, and the keychain and key are removed whatever happens.
@@ -248,5 +250,6 @@ def test_release_workflow_supports_documented_setup_only_recovery():
     assert "rm -f release/OpenWhisper-*-win64.tar.xz" in workflow
     assert "expected_artifacts=4" in workflow
     assert "expected_artifacts=5" in workflow
-    assert 'gh release delete-asset "$RELEASE_TAG" "$archive_name" --yes' in workflow
-    assert 'release/* --clobber' in workflow
+    qualification = (ROOT / ".github/workflows/qualify-release.yml").read_text(encoding="utf-8")
+    assert 'gh release delete-asset "$RELEASE_TAG" "$archive_name" --yes' in qualification
+    assert 'release/* --clobber' in qualification

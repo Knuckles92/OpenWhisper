@@ -1,0 +1,108 @@
+name: Qualify candidate and upload draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful Build native installers run containing the tested candidate
+        required: true
+        type: string
+      release_tag:
+        description: Existing draft release tag for that exact candidate
+        required: true
+        type: string
+      hardware_report:
+        description: Completed hardware qualification JSON for those exact artifacts
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: native-installers-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.release_tag }}
+      - name: Verify candidate run provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run_id }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          [[ "$CANDIDATE_RUN" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/$REPOSITORY/actions/runs/$CANDIDATE_RUN" > candidate-run.json
+          python3 - <<'PY'
+          import json
+          import os
+          run = json.load(open("candidate-run.json"))
+          assert run["conclusion"] == "success", "Candidate build did not succeed"
+          assert run["event"] == "workflow_dispatch", "Unexpected candidate trigger"
+          assert run["path"] == ".github/workflows/build-installers.yml", "Unexpected build workflow"
+          assert run["repository"]["full_name"] == os.environ["REPOSITORY"], "Unexpected repository"
+          PY
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: openwhisper-release-candidate
+          path: release
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Require checksum and hardware qualification
+        env:
+          HARDWARE_REPORT: ${{ inputs.hardware_report }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run_id }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          report = json.loads(os.environ["HARDWARE_REPORT"])
+          Path("hardware-qualification.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+          PY
+          python3 scripts/check_release_qualification.py --candidate release \
+            --report hardware-qualification.json --expected-commit "$(git rev-parse HEAD)" \
+            --expected-run "$CANDIDATE_RUN"
+          cp hardware-qualification.json release/HARDWARE-QUALIFICATION.json
+          (cd release && sha256sum HARDWARE-QUALIFICATION.json >> SHA256SUMS.txt)
+      - name: Upload verified artifacts to existing draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          version="$(python3 -c 'import _version; print(_version.__version__)')"
+          test "$RELEASE_TAG" = "v$version"
+          git fetch --no-tags origin "refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$(git rev-parse HEAD)"
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+          release_api="$(gh release view "$RELEASE_TAG" --json apiUrl --jq .apiUrl)"
+          gh api "$release_api" > draft-assets.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from scripts.check_release_qualification import validate_draft_assets
+          validate_draft_assets(Path("release"), json.loads(Path("draft-assets.json").read_text()))
+          PY
+          archive_name="OpenWhisper-$version-win64.tar.xz"
+          if [[ ! -f "release/$archive_name" ]] && gh release view "$RELEASE_TAG" \
+              --json assets --jq '.assets[].name' | grep -Fxq "$archive_name"; then
+            gh release delete-asset "$RELEASE_TAG" "$archive_name" --yes
+          fi
+          gh release upload "$RELEASE_TAG" release/* --clobber
+          gh api "$release_api" > uploaded-release.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from scripts.check_release_qualification import validate_draft_assets
+          validate_draft_assets(Path("release"), json.loads(Path("uploaded-release.json").read_text()), uploaded=True)
+          PY

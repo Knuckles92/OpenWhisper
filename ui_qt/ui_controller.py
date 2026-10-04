@@ -113,6 +113,7 @@ class UIController(QObject):
         )
 
         self.main_window = MainWindow()
+        self._meeting_recovery_scan_dialog: Optional[QMessageBox] = None
         from ui_qt.utils.desktop import is_wayland
 
         self.overlay = WaveformOverlay(self.main_window if is_wayland() else None)
@@ -203,6 +204,7 @@ class UIController(QObject):
         self._meeting_urls: dict = {}
 
         self._settings_dialog = None
+        self.backup_coordinator = None
         self._download_progress_dialog = None
 
         self.cancel_animation_timer = QTimer()
@@ -875,7 +877,8 @@ class UIController(QObject):
     def _ensure_settings_dialog(self):
         if self._settings_dialog is None:
             dialog = SettingsDialog(
-                self.main_window, get_loaded_model=self._loaded_local_model
+                self.main_window, get_loaded_model=self._loaded_local_model,
+                backup_coordinator=self.backup_coordinator,
             )
             downloads = dialog.downloads
             downloads.component_install_requested.connect(
@@ -1491,6 +1494,41 @@ class UIController(QObject):
         dialog.on_finalize = on_finalize
         dialog.on_discard = on_discard
         dialog.exec()
+
+    def show_meeting_recovery_scan_error(
+        self, message: str, on_retry: Callable[[], None]
+    ) -> None:
+        """Keep a failed startup scan visible and offer an in-app retry."""
+        self.set_meeting_status("Meeting recovery scan failed")
+        existing = self._meeting_recovery_scan_dialog
+        if existing is not None and existing.isVisible():
+            existing.setText(message)
+            existing.raise_()
+            return
+        dialog = QMessageBox(self.main_window)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setModal(False)
+        dialog.setWindowTitle("Meeting Recovery")
+        dialog.setText(message)
+        dialog.setInformativeText(
+            "Saved meeting audio remains on this computer. Retry the scan "
+            "to find interrupted meetings."
+        )
+        retry = dialog.addButton(
+            "Retry scan", QMessageBox.ButtonRole.ActionRole
+        )
+        dialog.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+        self._meeting_recovery_scan_dialog = dialog
+
+        def _finished(_result: int) -> None:
+            if self._meeting_recovery_scan_dialog is dialog:
+                self._meeting_recovery_scan_dialog = None
+            if dialog.clickedButton() is retry:
+                on_retry()
+            dialog.deleteLater()
+
+        dialog.finished.connect(_finished)
+        dialog.show()
 
     def copy_meeting_guest_link(self, url: str) -> None:
         """Copy the guest dashboard URL to the clipboard.

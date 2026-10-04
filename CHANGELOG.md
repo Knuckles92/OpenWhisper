@@ -8,6 +8,19 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+### Added
+- **Local backup and restore** — a dedicated page in Settings saves settings, history, meetings, and optional recordings to a verified `.owbackup` archive. Restore previews the archive, applies it during a clean restart, and retains the previous data for recovery. Optional daily or weekly backups run while the app is open and idle, with configurable retention.
+
+### Fixed
+- **Incomplete recordings** — capture drops, storage failures, and unfinished audio writes now remain visible as failures. Quick Record keeps recoverable audio without sending a partial result as a successful transcription; meetings retain an incomplete-audio warning.
+- **Recovery scans** — a failed meeting recovery scan shows an error with a Retry action instead of appearing to find no interrupted meetings.
+- **Meeting transcription under load** — the live queue has a fixed memory limit, with excess work retained in SQLite and audio files. Transient errors retry with a delay, while missing audio and exhausted retries remain available for an explicit recovery attempt.
+- **Late meeting transcripts** — insights and notes track committed segments with separate durable cursors, so delayed audio remains eligible for processing after newer speech or an application restart.
+
+### Changed
+- **Shared speech host capacity** — concurrent connections and costly requests have fixed limits. Overloaded hosts return a retryable busy response, and queued work has a bounded wait.
+- **Release qualification** — native candidates require the full source CI suite at the same commit. Packaged checks cover interrupted recording recovery and backup restore; uploading a candidate to a draft release requires hardware test evidence tied to its exact artifact checksums. See [Release health](docs/release-health.md).
+
 ## [2.6.14] - 2026-10-03
 
 ### Added

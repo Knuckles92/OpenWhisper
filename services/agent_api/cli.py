@@ -27,22 +27,42 @@ def main(argv=None):
 
     import uvicorn
 
-    from config import config
+    from config import config, data_root
+
+    # The default database belongs to the same data root restored at desktop
+    # startup. Hold its shared lease throughout the API server's lifetime so
+    # a pending restore cannot replace a database this process has open.
+    primary_database = os.path.normcase(os.path.realpath(config.DATABASE_FILE))
+    requested_database = os.path.normcase(os.path.realpath(args.database or config.DATABASE_FILE))
+    use_primary_data = requested_database == primary_database
+    if use_primary_data:
+        from services.backup_startup import acquire_startup_data_lease, release_startup_data_lease
+
+        try:
+            acquire_startup_data_lease(data_root())
+        except Exception as exc:
+            print(f"History API: Could not safely open application data: {exc}", file=sys.stderr)
+            return 1
+
     from services.agent_api.app import create_app
 
     try:
-        app = create_app(args.database or config.DATABASE_FILE, token)
-    except Exception as exc:
-        # SQLAlchemy errors include filesystem paths and queries; keep startup
-        # diagnostics useful without dumping the database connection details.
-        message = (
-            str(exc)
-            if isinstance(exc, ValueError)
-            else "Could not open the existing database. Open OpenWhisper first and verify --database."
+        try:
+            app = create_app(args.database or config.DATABASE_FILE, token)
+        except Exception as exc:
+            # SQLAlchemy errors include filesystem paths and queries; keep startup
+            # diagnostics useful without dumping the database connection details.
+            message = (
+                str(exc)
+                if isinstance(exc, ValueError)
+                else "Could not open the existing database. Open OpenWhisper first and verify --database."
+            )
+            print(f"History API: {message}", file=sys.stderr)
+            return 1
+        uvicorn.run(
+            app, host="127.0.0.1", port=args.port, access_log=False, proxy_headers=False
         )
-        print(f"History API: {message}", file=sys.stderr)
-        return 1
-    uvicorn.run(
-        app, host="127.0.0.1", port=args.port, access_log=False, proxy_headers=False
-    )
-    return 0
+        return 0
+    finally:
+        if use_primary_data:
+            release_startup_data_lease()

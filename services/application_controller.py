@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -177,6 +178,7 @@ class ApplicationController(QObject):
     meeting_error = pyqtSignal(str)
     meeting_server_started = pyqtSignal(object)
     meeting_recovery_found = pyqtSignal(object)
+    meeting_recovery_scan_failed = pyqtSignal(str)
     # One-time cloud-intelligence consent; the connected slot shows the
     # consent dialog on the Qt main thread and routes the result back into
     # MeetingRuntime.on_consent_result (mirrors hf_consent_requested).
@@ -209,11 +211,15 @@ class ApplicationController(QObject):
         self.recorder.error_callback = self.recording_capture_failed.emit
         self._shutdown_cancel = threading.Event()
         self._shutting_down = False
+        self._backup_in_progress = False
+        self.backup_coordinator = None
         self.executor = ThreadPoolExecutor(max_workers=2)
         self._startup_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="database-startup"
         )
         self._startup_database_requested = False
+        self._startup_database_ready = False
+        self._startup_recovery_future = None
         self.persistence_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="history-save"
         )
@@ -922,6 +928,62 @@ class ApplicationController(QObject):
             return
         self.ui_controller.on_update_download_finished(handoff, error)
 
+    def setup_backup(self) -> None:
+        from services.backup_manager import BackupCoordinator
+
+        self.backup_coordinator = BackupCoordinator(
+            self, acquire=self._acquire_backup, release=self._release_backup,
+            worker_context=self._backup_record_context,
+        )
+        self.ui_controller.backup_coordinator = self.backup_coordinator
+        self.backup_coordinator.restore_staged.connect(self._on_restore_staged)
+
+    @contextmanager
+    def _backup_record_context(self):
+        with self.record_sync.paused_for_backup():
+            with self.remote_engine.paused_records_for_backup():
+                yield
+
+    def _acquire_backup(self):
+        if self._shutting_down or not self._startup_database_ready:
+            return "Wait for OpenWhisper to finish starting before backing up or restoring."
+        recovery = self._startup_recovery_future
+        if recovery is not None and not recovery.done():
+            return "Wait for recording recovery to finish before backing up or restoring."
+        runtime, meeting = self.transcription_runtime, self.meeting_runtime
+        with runtime._capture_lock, meeting._lock, runtime._job_lock:
+            if (self._backup_in_progress or self.recorder.is_recording
+                    or runtime._job_active
+                    or bool(getattr(self.current_backend, "is_transcribing", False))):
+                return "Finish recording or transcription before backing up or restoring."
+            if (meeting.is_claimed or meeting.is_finalizing or meeting._background_engines
+                    or meeting._archive_starting or meeting._retry_meeting_id):
+                return "Finish the meeting and its processing before backing up or restoring."
+            dialog = getattr(self.ui_controller, "_settings_dialog", None)
+            if dialog is not None and getattr(dialog, "_rule_dictation_state", "idle") != "idle":
+                return "Finish dictating the cleanup rule before backing up or restoring."
+            self._backup_in_progress = True
+        central = self.ui_controller.main_window.centralWidget()
+        self._backup_central_enabled = central.isEnabled() if central else False
+        if central:
+            central.setEnabled(False)
+        return None
+
+    def _release_backup(self):
+        self._backup_in_progress = False
+        if not self._shutting_down:
+            central = self.ui_controller.main_window.centralWidget()
+            if central:
+                central.setEnabled(self._backup_central_enabled)
+
+    def _on_restore_staged(self, _path, error):
+        if not error and not self._shutting_down:
+            from PyQt6.QtWidgets import QApplication
+            from services.backup_startup import RESTART_FOR_RESTORE_EXIT_CODE
+
+            # main.py relaunches only after bootstrap closes every data writer.
+            QApplication.exit(RESTART_FOR_RESTORE_EXIT_CODE)
+
     def notify_main_ui_ready(self) -> None:
         """Called by bootstrap once the main window is shown.
 
@@ -992,10 +1054,13 @@ class ApplicationController(QObject):
             self.update_readiness_error = error
             self.ui_controller.set_status(error)
             return
-        self.executor.submit(self.transcription_runtime.recover_recordings)
+        self._startup_database_ready = True
+        self._startup_recovery_future = self.executor.submit(self.transcription_runtime.recover_recordings)
         self.meeting_runtime.setup()
         self.record_sync.start()
         self.remote_engine.start_client_history()
+        if self.backup_coordinator is not None:
+            self.backup_coordinator.start()
 
     def _warm_openai_sdk(self) -> None:
         """Import the openai SDK on a worker when this session is set to use it.
@@ -2271,6 +2336,9 @@ class ApplicationController(QObject):
         )
 
     def _refuse_dictation_during_meeting(self) -> bool:
+        if self._backup_in_progress:
+            self.status_update.emit("Wait for backup or restore preparation to finish")
+            return True
         if not self.is_meeting_active():
             return False
         logger.info("Dictation start refused: Meeting Mode is active")
@@ -2332,6 +2400,8 @@ class ApplicationController(QObject):
             RuntimeError: When Meeting Mode is active, no backend is ready, or
                 the engine is busy.
         """
+        if self._backup_in_progress:
+            raise RuntimeError("Wait for backup or restore preparation to finish")
         if self.is_meeting_active():
             # Exclusive mode: the meeting owns the microphone and a dedicated
             # Whisper instance; a second capture stream and model would fight
@@ -2417,6 +2487,14 @@ class ApplicationController(QObject):
         except Exception as exc:
             logger.error(f"Meeting recovery dialog failed: {exc}")
 
+    def _on_meeting_recovery_scan_failed(self, message: str) -> None:
+        try:
+            self.ui_controller.show_meeting_recovery_scan_error(
+                message, on_retry=self.meeting_runtime.retry_recovery_scan,
+            )
+        except Exception:
+            logger.exception("Could not show meeting recovery scan failure")
+
     def _connect_signals(self) -> None:
         self.startup_database_ready.connect(self._on_startup_database_ready)
         self.profile_record_requested.connect(self.toggle_profile_recording)
@@ -2487,6 +2565,9 @@ class ApplicationController(QObject):
             self.ui_controller.on_meeting_server_started
         )
         self.meeting_recovery_found.connect(self._on_meeting_recovery_found)
+        self.meeting_recovery_scan_failed.connect(
+            self._on_meeting_recovery_scan_failed
+        )
         self.meeting_consent_requested.connect(self._on_meeting_consent_requested)
         self.meeting_platform_ack_requested.connect(
             self._on_meeting_platform_ack_requested
@@ -2543,6 +2624,8 @@ class ApplicationController(QObject):
         logger.info("Starting application cleanup...")
         shutdown_started = time.perf_counter()
         self._shutting_down = True
+        if self.backup_coordinator is not None:
+            self.backup_coordinator.shutdown()
         self._startup_executor.shutdown(wait=True, cancel_futures=True)
         if hasattr(self, "_shutdown_cancel"):
             self._shutdown_cancel.set()

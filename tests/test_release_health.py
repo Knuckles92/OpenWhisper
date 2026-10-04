@@ -6,14 +6,24 @@ import sys
 
 import pytest
 
-from scripts.check_release_health import LIMITS, failures
+from scripts.check_release_health import LIMITS, REQUIRED_CHECKS, failures
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _report():
     return dict(schema=1, kind="synthetic_service_lifecycle", passed=True,
-                metrics={key: value / 10 for key, value in LIMITS.items()})
+                metrics={key: value / 10 for key, value in LIMITS.items()},
+                checks=dict.fromkeys(REQUIRED_CHECKS, True))
+
+
+@pytest.mark.parametrize("name", REQUIRED_CHECKS)
+def test_missing_or_failed_recovery_proof_cannot_pass_gate(name):
+    report = _report()
+    report["checks"].pop(name)
+    assert failures(report)
+    report["checks"][name] = False
+    assert failures(report)
 
 
 @pytest.mark.parametrize("bad", [None, -1, float("nan"), float("inf"), True, "0.1"])

@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -36,6 +37,7 @@ class _Controller(QObject):
     meeting_guest_link_ready = pyqtSignal(str)
     meeting_consent_requested = pyqtSignal()
     meeting_recovery_found = pyqtSignal(object)
+    meeting_recovery_scan_failed = pyqtSignal(str)
     past_meetings_refresh_requested = pyqtSignal()
     status_update = pyqtSignal(str)
 
@@ -1326,7 +1328,9 @@ def test_recovery_scan_emits_dead_sessions(runtime, monkeypatch):
 def test_recovery_scan_silent_when_none(runtime, monkeypatch):
     rt, controller = runtime
     found = []
+    failures = []
     controller.meeting_recovery_found.connect(found.append)
+    controller.meeting_recovery_scan_failed.connect(failures.append)
     monkeypatch.setattr(rt, "_repository", lambda: object())
     monkeypatch.setattr(
         "meeting.recovery.find_recoverable_meetings",
@@ -1336,6 +1340,35 @@ def test_recovery_scan_silent_when_none(runtime, monkeypatch):
     rt._recovery_scan_worker()
 
     assert found == []
+    assert failures == []
+
+
+def test_recovery_scan_failure_is_visible_and_retryable(runtime, monkeypatch, qapp):
+    rt, controller = runtime
+    found, failures = [], []
+    controller.meeting_recovery_found.connect(found.append)
+    controller.meeting_recovery_scan_failed.connect(failures.append)
+    monkeypatch.setattr(rt, "_repository", lambda: object())
+
+    def fail(_repository):
+        raise OSError("database unavailable")
+
+    monkeypatch.setattr("meeting.recovery.find_recoverable_meetings", fail)
+    rt._recovery_scan_worker()
+    assert found == []
+    assert failures and "database unavailable" in failures[-1]
+    assert "Retry" in failures[-1]
+
+    monkeypatch.setattr(
+        "meeting.recovery.find_recoverable_meetings",
+        lambda _repository: [{"id": "m_saved"}],
+    )
+    rt.retry_recovery_scan()
+    deadline = time.monotonic() + 2
+    while not found and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+    assert found == [[{"id": "m_saved"}]]
 
 
 def test_finalize_recovered_passes_meeting_dict(runtime, monkeypatch):
@@ -1400,6 +1433,30 @@ def test_finalize_recovered_hands_off_to_the_retry_pipeline(runtime, monkeypatch
     rt._finalize_recovered_worker("m_dead")
 
     assert retried == [("redecode", "m_dead")]
+
+
+def test_finalize_recovered_keeps_incomplete_capture_warning(runtime, monkeypatch):
+    rt, controller = runtime
+    meeting = {"id": "m_gap", "status": "needs_recovery", "spool_dir": "/saved"}
+    repo = SimpleNamespace(get_meeting=lambda meeting_id: dict(meeting))
+    monkeypatch.setattr(rt, "_repository", lambda: repo)
+
+    def finish_transcription(*_args, **_kwargs):
+        meeting["status"] = "failed"
+        return True
+
+    monkeypatch.setattr(
+        "meeting.recovery.finalize_meeting", finish_transcription,
+    )
+    statuses, retried = [], []
+    controller.meeting_status_update.connect(statuses.append)
+    monkeypatch.setattr(
+        rt, "retry_finalization",
+        lambda *args, **kwargs: retried.append((args, kwargs)),
+    )
+    rt._finalize_recovered_worker("m_gap")
+    assert "audio remains incomplete" in statuses[-1]
+    assert retried == []
 
 
 @pytest.mark.parametrize(

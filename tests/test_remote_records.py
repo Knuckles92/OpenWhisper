@@ -51,8 +51,8 @@ class Host:
         from meeting.persist.repository import SqlMeetingRepository
 
         self.root = root
-        root.mkdir(parents=True)
-        self.db = DatabaseManager(db_path=str(root / "host.db"))
+        root.mkdir(parents=True, exist_ok=True)
+        self.db = DatabaseManager(db_path=str(root / "openwhisper.db"))
         self.recordings = root / "recordings"
         self.meetings = root / "meetings"
         self.repository = SqlMeetingRepository(db=self.db)

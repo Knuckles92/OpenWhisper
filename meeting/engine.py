@@ -180,6 +180,7 @@ class MeetingEngine:
         self._system_audio_disabled = False
         self._loopback_was_available = False
         self._explicit_capture_message: Optional[str] = None
+        self._capture_integrity_error: Optional[str] = None
         self._asr: Optional[Any] = None
         self._diarizer: Optional[Any] = None
         self._server: Optional[Any] = None
@@ -843,7 +844,7 @@ class MeetingEngine:
             except Exception:
                 logger.exception("Could not verify unfinished ASR chunks")
                 unfinished = 1
-            complete = drained and unfinished == 0
+            complete = drained and unfinished == 0 and not self._capture_integrity_error
             scheduler = self._scheduler
             asr = self._asr
             will_offline = bool(
@@ -973,6 +974,7 @@ class MeetingEngine:
                 "canceled": False,
                 "status": status,
                 "unfinished_chunks": unfinished,
+                "capture_error": self._capture_integrity_error,
             })
             ended_emitted = True
 
@@ -1676,6 +1678,7 @@ class MeetingEngine:
         )
         self._loopback_was_available = False
         self._explicit_capture_message = None
+        self._capture_integrity_error = None
         mic_dev = None
         try:
             mic_dev = find_mic_device(self.options.mic_device_id)
@@ -1907,9 +1910,35 @@ class MeetingEngine:
                 chunk = spool.flush()
             except Exception:
                 logger.exception("Spool flush failed")
+                self._record_capture_integrity_error(
+                    "Meeting audio storage could not finish. Partial audio was kept."
+                )
                 continue
             if chunk is not None:
                 self._on_chunk(chunk)
+        self._check_spool_health()
+
+    def _check_spool_health(self) -> None:
+        """Surface writer failures away from the real-time audio callback."""
+        with self._capture_lock:
+            spools = list(self._spools.values())
+        for spool in spools:
+            error = getattr(spool, "health_error", None)
+            if error:
+                self._record_capture_integrity_error(str(error))
+
+    def _record_capture_integrity_error(self, message: str) -> None:
+        with self._capture_lock:
+            if self._capture_integrity_error:
+                return
+            self._capture_integrity_error = message
+        logger.error("Meeting audio incomplete: %s", message)
+        self._update_capture_status()
+        self._emit("error", {
+            "code": "capture_incomplete",
+            "message": message + " Check available audio in Meeting History and "
+                       "free storage or reduce system load before recording again.",
+        })
 
     def _start_capture_watchdog(self) -> None:
         """Start device-loss/default-device monitoring for this meeting."""
@@ -1995,6 +2024,7 @@ class MeetingEngine:
                     self._restart_capture_channel(channel, desired)
                 except Exception:
                     logger.exception("Capture watchdog failed for %s", channel)
+            self._check_spool_health()
             self._update_capture_status()
 
     def _probe_capture_device(self, channel: str) -> Optional[Dict[str, Any]]:
@@ -2111,6 +2141,10 @@ class MeetingEngine:
                     message += " " + missing[0]
             else:
                 message = "; ".join(missing)
+        if self._capture_integrity_error:
+            message = (
+                f"{self._capture_integrity_error} {message}".strip()
+            )
         capture = {
             "mic_available": CHANNEL_MIC in active,
             "loopback_available": loopback_available,
@@ -2121,6 +2155,8 @@ class MeetingEngine:
             "mic_source_generation": int(health.get(CHANNEL_MIC, {}).get("generation", 0)),
             "loopback_source_generation": int(health.get(CHANNEL_LOOPBACK, {}).get("generation", 0)),
             "message": message,
+            "audio_incomplete": bool(self._capture_integrity_error),
+            "integrity_error": self._capture_integrity_error or "",
         }
         previous = self.store.with_state(lambda state: dict(state.capture))
         if capture == previous:
@@ -2140,6 +2176,8 @@ class MeetingEngine:
                 # delivery, so a spool callback cannot overtake that replay.
                 return
             try:
+                # False means the bounded ASR queue deferred this durable
+                # SQLite row; its refill worker will pick it up.
                 self._asr.enqueue(chunk)
                 self._enqueued_chunk_ids.add(chunk.chunk_id)
             except Exception:
@@ -2155,6 +2193,8 @@ class MeetingEngine:
                 self.repository,
                 language=None if language == "auto" else language,
                 term_rules=self._active_term_rules,
+                on_backlog_status=self._on_asr_backlog_status,
+                on_chunk_failure=self._on_asr_chunk_failure,
                 **({"defer_load": True} if defer_load else {}),
                 **({"remote": self.options.asr_remote,
                     "on_connection_status": self._on_asr_connection_status}
@@ -2208,27 +2248,11 @@ class MeetingEngine:
                 return
             self._asr = asr
             with self._chunk_lock:
-                rows = self.repository.get_pending_chunks(self.meeting_id)
-                rows.sort(key=lambda row: (float(row.get("start_s") or 0),
-                                          int(row.get("seq") or 0),
-                                          str(row.get("channel") or ""), int(row["id"])))
-                for row in rows:
-                    chunk = SpooledChunk(
-                        chunk_id=row["id"], meeting_id=row["meeting_id"],
-                        channel=row["channel"], seq=row["seq"],
-                        file_path=row["file_path"], start_s=row["start_s"],
-                        duration_s=row["duration_s"], sample_rate=row["sample_rate"],
-                    )
-                    self._chunk_index[chunk.chunk_id] = chunk
                 self._preview_frontiers = {}
                 asr.start(self._on_chunk_result)
                 requeue = getattr(asr, "requeue_pending", None)
                 if callable(requeue):
-                    requeue(rows=rows)
-                else:
-                    for row in rows:
-                        asr.enqueue(self._chunk_index[row["id"]])
-                self._enqueued_chunk_ids.update(row["id"] for row in rows)
+                    requeue()
                 self._asr_ready = True
             start_preview = getattr(asr, "start_preview", None)
             if callable(start_preview):
@@ -2238,11 +2262,36 @@ class MeetingEngine:
         if self.store is None:
             return
         route = self.options.asr_remote or {}
-        self.store.update_runtime_fields(speech={
+        speech = self.store.with_state(lambda state: dict(state.speech))
+        speech.update({
             "source": "remote", "host": route.get("host_name", ""),
             "model": route.get("model", ""), "connected": connected, "message": message,
         })
+        self.store.update_runtime_fields(speech=speech)
         self._emit_status(note=message)
+
+    def _on_asr_backlog_status(self, message: str, overloaded: bool) -> None:
+        """Tell the desktop and dashboard when durable ASR is catching up."""
+        if self.store is None:
+            return
+        speech = self.store.with_state(lambda state: dict(state.speech))
+        speech.update({"backlog": bool(overloaded), "message": message})
+        if self.store.update_runtime_fields(speech=speech):
+            self._emit_status(note=message)
+
+    def _on_asr_chunk_failure(self, message: str) -> None:
+        """Keep a saved but untranscribed chunk visible to the host."""
+        if self.store is not None:
+            speech = self.store.with_state(lambda state: dict(state.speech))
+            speech.update({"chunk_error": message, "message": message})
+            if self.store.update_runtime_fields(speech=speech):
+                self._emit_status(note=message)
+        self._emit("error", {
+            "code": "asr_chunk_failed",
+            "message": message + " After fixing the audio file or speech "
+                       "engine, restart the app and retry this meeting "
+                       "from Recovery.",
+        })
 
     def _on_speech_preview(self, payload) -> None:
         frontier = getattr(self, "_preview_frontiers", {}).get(payload["channel"], -1)
@@ -2256,6 +2305,10 @@ class MeetingEngine:
         self, chunk: SpooledChunk, segments: List[TranscriptSegment]
     ) -> None:
         """Assign speakers, atomically commit the chunk, then publish it."""
+        # Backlog refill reads bounded SQLite pages; it does not populate the
+        # live chunk index at startup. Keep this chunk available to diarization.
+        self._chunk_index[chunk.chunk_id] = chunk
+        self._enqueued_chunk_ids.add(chunk.chunk_id)
         try:
             self._assign_speakers(segments)
         except Exception:
@@ -3172,3 +3225,25 @@ class MeetingEngine:
         return self.repository.get_segments(
             self.meeting_id, after_start_s=after_start_s, limit=limit
         )
+
+    def get_transcript_delivery_page(self, after_seq: int = 0,
+                                     limit: int = 300) -> List[Dict[str, Any]]:
+        if not self.meeting_id:
+            return []
+        return self.repository.get_segments_delivery_page(
+            self.meeting_id, after_seq=after_seq, limit=limit,
+        )
+
+    def get_transcript_delivery_cursor(self, consumer: str) -> int:
+        if not self.meeting_id:
+            return 0
+        return self.repository.get_delivery_cursor(self.meeting_id, consumer)
+
+    def advance_transcript_delivery_cursor(self, consumer: str, seq: int) -> None:
+        if self.meeting_id:
+            self.repository.advance_delivery_cursor(self.meeting_id, consumer, seq)
+
+    def get_transcript_delivery_high_water(self) -> int:
+        if not self.meeting_id:
+            return 0
+        return self.repository.get_delivery_high_water(self.meeting_id)

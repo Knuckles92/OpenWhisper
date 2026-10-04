@@ -77,6 +77,9 @@ class _FakeApplicationController:
     should_raise = False
     instances = []
 
+    def setup_backup(self):
+        self.backup_initialized = True
+
     def __init__(self, ui_controller, local_backend=None):
         if self.should_raise:
             raise RuntimeError("controller init failed")
