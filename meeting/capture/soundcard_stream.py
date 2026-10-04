@@ -187,6 +187,7 @@ class SoundcardLoopbackSource:
         """Stop the recorder thread and release the device."""
         self._running = False
         self._on_block = None
+        self._settled.set()
         thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
@@ -349,14 +350,6 @@ class SoundcardLoopbackSource:
             else:
                 # The block just finished being captured.
                 t_mono = now - frames.size / float(SAMPLERATE)
-            self._last_block_mono = now
-            if not self._active:
-                self._active = True
-                self._settled.set()
-                logger.info(
-                    "Soundcard loopback first audio block: %d frames @ %d Hz",
-                    frames.size, SAMPLERATE,
-                )
             on_block = self._on_block
             if on_block is not None and self._running:
                 on_block(CaptureBlock(
@@ -365,6 +358,14 @@ class SoundcardLoopbackSource:
                     sample_rate=SAMPLERATE,
                     t_mono=t_mono,
                 ))
+                self._last_block_mono = now
+                if not self._active:
+                    self._active = True
+                    self._settled.set()
+                    logger.info(
+                        "Soundcard loopback first audio block: %d frames @ %d Hz",
+                        frames.size, SAMPLERATE,
+                    )
         except Exception:
             self._callback_errors += 1
             if self._callback_errors <= _MAX_LOGGED_CALLBACK_ERRORS:
