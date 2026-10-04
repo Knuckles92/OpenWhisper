@@ -1872,6 +1872,10 @@ def _refuse_launch(message: str) -> None:
 
 
 def write_health_acknowledgement(token: str, appdata: Optional[str] = None) -> bool:
+    if sys.platform == "darwin":
+        from services.app_update_macos import write_health_acknowledgement as acknowledge
+
+        return acknowledge(token, appdata)
     root = updates_root(appdata)
     tx_root = os.path.join(root, "tx")
     if not os.path.isdir(tx_root):

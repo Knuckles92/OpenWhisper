@@ -365,7 +365,12 @@ class AppUpdateDialog(QDialog):
             return ""
         parts = []
         if self._result.apply_mode == ApplyMode.MACOS_DMG:
-            parts.append("The verified disk image will open and OpenWhisper will quit. Drag OpenWhisper to Applications and replace the previous copy, then reopen it.")
+            parts.append(
+                "OpenWhisper installs the verified update and restarts, and goes back "
+                "to this version if the new one does not start. When it cannot replace "
+                "itself here, the disk image opens instead: drag OpenWhisper to "
+                "Applications and replace the previous copy."
+            )
         if self._result.git_summary:
             parts.append(f"Local git: {self._result.git_summary}")
         if self._result.git_hint:
@@ -378,8 +383,6 @@ class AppUpdateDialog(QDialog):
         if self._result.status != UpdateStatus.UPDATE_AVAILABLE:
             return ""
         if self._result.can_apply:
-            if self._result.apply_mode == ApplyMode.MACOS_DMG:
-                return "Download Mac update"
             return "Download and install"
         return "Open release notes"
 

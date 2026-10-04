@@ -23,6 +23,8 @@ def use_runtime_packages(runtime):
 
     Windows runtimes are embedded Pythons with no ``site-packages`` folder.
     """
+    if not runtime:
+        return
     packages = Path(runtime) / "site-packages"
     if packages.is_dir() and str(packages) not in sys.path:
         sys.path.insert(0, str(packages))
@@ -50,12 +52,12 @@ def main():
                     from services.local_asr.nvidia import NvidiaRecognizer
                     engine = NvidiaRecognizer(request["runtime"], request["model_path"], device)
                 elif family == "moonshine":
-                    use_runtime_packages(request["runtime"])
+                    use_runtime_packages(request.get("runtime"))
                     from services.local_asr.moonshine import MoonshineRecognizer
                     engine = MoonshineRecognizer(request["model_path"], request["model"])
                     device = "cpu"
                 elif family == "qwen_asr":
-                    use_runtime_packages(request["runtime"])
+                    use_runtime_packages(request.get("runtime"))
                     import torch
                     from qwen_asr import Qwen3ASRModel
                     if device == "cuda" and not torch.cuda.is_available():
@@ -67,6 +69,14 @@ def main():
                         dtype=torch.float16 if device in ("cuda", "mps") else torch.float32,
                         max_inference_batch_size=1, max_new_tokens=2048,
                     )
+                    if device == "mps":
+                        # torch 2.6's MPS matmul cannot broadcast grouped-query
+                        # attention (16 query over 8 key/value heads) as SDPA
+                        # asks it to; eager attention repeats those heads first.
+                        for module in engine.model.modules():
+                            config = getattr(module, "config", None)
+                            if config is not None:
+                                config._attn_implementation = "eager"
                     generate = engine.model.generate
                     def checked_generate(*args, **kwargs):
                         output = generate(*args, **kwargs)

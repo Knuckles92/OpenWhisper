@@ -823,7 +823,14 @@ def apply_update(
     if mode == ApplyMode.MACOS_DMG:
         if resolve_release_apply_mode(detect_channel(), release) != ApplyMode.MACOS_DMG:
             raise AppUpdateError("This copy of OpenWhisper cannot install the Mac update.")
-        return download_release_asset(release.macos_asset, progress=progress, cancel=cancel)
+        image = download_release_asset(release.macos_asset, progress=progress, cancel=cancel)
+        from services.app_update_macos import prepare_in_place_update
+
+        # The staged app installs itself on restart; a copy that cannot
+        # replace itself gets the disk image back to install by hand.
+        return prepare_in_place_update(
+            image, release.version, result.current_version, cancel=cancel
+        )
     if mode == ApplyMode.NATIVE and release.native_asset is not None:
         try:
             archive_path = download_release_asset(
@@ -863,11 +870,15 @@ def apply_update(
 
 def discard_prepared_result(handoff: str) -> None:
     from services.app_update_apply import abandon_prepared_update
+    from services.app_update_macos import decode_result, discard
     from services.update_contract import decode_native_result
 
     transaction_id = decode_native_result(handoff)
     if transaction_id:
         abandon_prepared_update(transaction_id)
+    transaction_id = decode_result(handoff)
+    if transaction_id:
+        discard(transaction_id)
 
 
 def _parsed_url_is_well_formed(parts: urllib.parse.SplitResult) -> bool:

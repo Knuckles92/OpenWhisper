@@ -375,14 +375,16 @@ def _macos_icon_path():
 def _macos_codesign_identity():
     """Return the optional Developer ID identity, or None for ad-hoc signing.
 
-    The first public macOS app is intentionally ad-hoc signed and distributed
-    in an unnotarized DMG. Setting ``OPENWHISPER_MACOS_CODESIGN_IDENTITY`` opts
-    into a real identity later without changing the packaging layout.
+    Without it the app is ad-hoc signed and distributed in an unnotarized
+    DMG. Setting ``OPENWHISPER_MACOS_CODESIGN_IDENTITY`` signs with that
+    Developer ID under the hardened runtime, and the build script notarizes
+    when notary credentials are also set, without changing the layout.
     """
     identity = (os.environ.get("OPENWHISPER_MACOS_CODESIGN_IDENTITY") or "").strip()
     return identity or None
 
 
+MACOS_ENTITLEMENTS = REPO_ROOT / "installer" / "macos" / "OpenWhisper.entitlements"
 _macos_icon = _macos_icon_path() if sys.platform == "darwin" else None
 _codesign_identity = _macos_codesign_identity() if sys.platform == "darwin" else None
 _target_arch = "arm64" if sys.platform == "darwin" else None
@@ -412,8 +414,9 @@ exe = EXE(
     argv_emulation=False,
     target_arch=_target_arch,
     codesign_identity=_codesign_identity,
-    # No App Sandbox and no permissive hardened-runtime entitlements for v1.
-    entitlements_file=None,
+    # No App Sandbox. Ad-hoc builds have no hardened runtime, so entitlements
+    # apply only to a Developer ID build, which notarization requires.
+    entitlements_file=str(MACOS_ENTITLEMENTS) if _codesign_identity else None,
     # Linux desktop environments take their icon from the installed PNG and
     # .desktop file; executable icon resources are a Windows/macOS concept.
     icon=_exe_icon,

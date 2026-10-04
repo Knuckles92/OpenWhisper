@@ -22,6 +22,7 @@ def dependency_options(family: str) -> list[dict]:
         BACKENDS,
         CUDA_MIN_COMPUTE_CAPABILITY,
         WHISPER_BACKEND,
+        apple_silicon,
         runtime_id,
     )
 
@@ -30,7 +31,12 @@ def dependency_options(family: str) -> list[dict]:
     gpu = nvidia_gpu()
     available = available_component_ids()
     options = []
-    devices = ("auto", "cpu") if family == "parakeet_mlx" else ("cpu",) if family == "moonshine" else ("cpu", "cuda")
+    devices = (
+        ("cpu",) if family == "moonshine"
+        # Auto is the Apple GPU's runtime; a Mac has no CUDA.
+        else ("auto", "cpu") if family == "parakeet_mlx" or (family != WHISPER_BACKEND and apple_silicon())
+        else ("cpu", "cuda")
+    )
     for device in devices:
         component = (
             (ComponentId.GPU_ACCEL if device == "cuda" else "")

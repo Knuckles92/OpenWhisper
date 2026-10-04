@@ -14,6 +14,7 @@ ARCHIVES = {
     "linux_x86_64": dict(_PLACEHOLDER),
     "linux_aarch64": dict(_PLACEHOLDER),
     "darwin_arm64": dict(_PLACEHOLDER),
+    "darwin_x86_64": dict(_PLACEHOLDER),
 }
 
 

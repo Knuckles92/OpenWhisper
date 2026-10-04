@@ -134,6 +134,10 @@ def _handle_early_cli() -> None:
 
         main()
         raise SystemExit(0)
+    if sys.argv[1:2] == ["--macos-update-helper"] and sys.platform == "darwin":
+        from services.app_update_macos import run_helper
+
+        raise SystemExit(run_helper(sys.argv[2:]))
     if sys.argv[1:] == ["--version"]:
         from _version import __version__
 

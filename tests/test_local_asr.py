@@ -323,7 +323,8 @@ def test_auto_can_use_cpu_runtime_but_explicit_cuda_cannot(monkeypatch):
 
 def test_unsupported_runtime_does_not_point_to_downloads(monkeypatch):
     monkeypatch.setattr(LocalSpeechBackend, "_settings", staticmethod(lambda: {}))
-    monkeypatch.setattr("services.components.current_platform_tag", lambda: "darwin_arm64")
+    # Qwen has Windows and Apple Silicon runtimes, but none for Linux ARM64.
+    monkeypatch.setattr("services.components.current_platform_tag", lambda: "linux_aarch64")
     monkeypatch.setattr("services.components.is_installed", lambda _: False)
     backend = LocalSpeechBackend("qwen_asr", device="cpu")
     backend.reload_model()

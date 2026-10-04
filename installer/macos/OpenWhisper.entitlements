@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for a Developer ID-signed, notarized build.
+  Ad-hoc builds have no hardened runtime and do not use this file.
+
+  audio-input                     Dictation and meeting microphone capture.
+  disable-library-validation      Speech runtimes downloaded from Downloads
+                                  (MLX, NeMo-Speech.cpp, PyTorch) are signed by
+                                  their publishers, not by this team; the
+                                  speech worker is this executable.
+  allow-jit                       Numba/llvmlite JIT in the Qwen3-ASR and MLX
+                                  runtimes' audio preprocessing (librosa).
+  allow-unsigned-executable-memory  ctypes/cffi callbacks in those runtimes.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+</dict>
+</plist>

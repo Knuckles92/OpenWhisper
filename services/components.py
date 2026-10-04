@@ -158,6 +158,7 @@ PLATFORM_WIN_AMD64: Final[str] = "win_amd64"
 PLATFORM_LINUX_X86_64: Final[str] = "linux_x86_64"
 PLATFORM_LINUX_AARCH64: Final[str] = "linux_aarch64"
 PLATFORM_DARWIN_ARM64: Final[str] = "darwin_arm64"
+PLATFORM_DARWIN_X86_64: Final[str] = "darwin_x86_64"
 
 # Official WeSpeaker ResNet34-LM ONNX (~26.5 MB). Input is Kaldi 80-dim
 # fbank [1, T, 80] — the same tensor ``meeting.diarize.embedder`` builds.
@@ -287,6 +288,33 @@ _BUILTIN_MEETING_AGENT_BY_PLATFORM: Final[Dict[str, dict]] = {
             dict(_MEETING_AGENT_BUNDLE_ARCHIVE),
         ),
     },
+    # Intel Macs run OpenWhisper from source.
+    PLATFORM_DARWIN_X86_64: {
+        "published": True,
+        "version": MEETING_AGENT_COMPONENT_VERSION,
+        "component_api": COMPONENT_API,
+        "platform": PLATFORM_DARWIN_X86_64,
+        # Exact Node binary + uncompressed bundle.cjs bytes.
+        "install_bytes": 130_101_517,
+        "archives": (
+            {
+                "name": f"node-v{MEETING_AGENT_NODE_VERSION}-darwin-x64.tar.xz",
+                "url": (
+                    f"https://nodejs.org/dist/v{MEETING_AGENT_NODE_VERSION}/"
+                    f"node-v{MEETING_AGENT_NODE_VERSION}-darwin-x64.tar.xz"
+                ),
+                "sha256": (
+                    "96dff79f4e19a78715da559ec7cac2028f4985a175ea0c3454625a269c21deb7"
+                ),
+                "size_bytes": 27_517_304,
+                "extract": "node-tar",
+                "member": (
+                    f"node-v{MEETING_AGENT_NODE_VERSION}-darwin-x64/bin/node"
+                ),
+            },
+            dict(_MEETING_AGENT_BUNDLE_ARCHIVE),
+        ),
+    },
 }
 
 # Version of the gpu-accel payload. Derived from the CUDA libraries it carries,
@@ -395,6 +423,7 @@ class ComponentId:
     ASR_NVIDIA_CPU: Final[str] = "asr-nvidia-cpu"
     ASR_NVIDIA_CUDA: Final[str] = "asr-nvidia-cuda"
     ASR_NVIDIA_VULKAN: Final[str] = "asr-nvidia-vulkan"
+    ASR_NVIDIA_METAL: Final[str] = "asr-nvidia-metal"
     ASR_QWEN: Final[str] = "asr-qwen"
     ASR_MOONSHINE: Final[str] = "asr-moonshine"
     ASR_PARAKEET_MLX: Final[str] = "asr-parakeet-mlx"
@@ -470,6 +499,8 @@ def current_platform_tag(
     arch = (machine if machine is not None else platform_module.machine()).strip().lower()
     if host == "darwin" and arch in {"arm64", "aarch64"}:
         return PLATFORM_DARWIN_ARM64
+    if host == "darwin" and arch in {"x86_64", "amd64"}:
+        return PLATFORM_DARWIN_X86_64
     if host.startswith("win"):
         if arch in {"amd64", "x86_64", "x64"}:
             return PLATFORM_WIN_AMD64
@@ -521,11 +552,13 @@ def available_component_ids(
 
     GPU Acceleration (the CUDA libraries Local Whisper loads) is offered on
     Windows x64 and Linux x86_64. The Pi and OpenCode meeting agents are
-    offered on Windows x64, Linux x86_64/aarch64 and Apple Silicon. Linux
+    offered on Windows x64, Linux x86_64/aarch64 and macOS. Linux
     x86_64 also offers the native NVIDIA Speech CPU and CUDA runtimes, and the
     Vulkan one to a computer whose NVIDIA GPU is older than Turing (or that
-    already has it); Apple Silicon Macs offer the CPU one and Parakeet MLX for
-    the Apple GPU.
+    already has it). Apple Silicon Macs offer NVIDIA Speech for the CPU and
+    Metal, Parakeet MLX, and Qwen3-ASR and Moonshine wheel trees (Moonshine
+    needs macOS 15). Intel Macs, which run from source, offer the meeting
+    agents and NVIDIA Speech CPU.
 
     Returns:
         Installable component identifiers, in display order.
@@ -560,9 +593,16 @@ def available_component_ids(
             ComponentId.MEETING_AGENT,
             ComponentId.MEETING_AGENT_OPENCODE,
             ComponentId.ASR_NVIDIA_CPU,
+            ComponentId.ASR_NVIDIA_METAL,
             ComponentId.ASR_PARAKEET_MLX,
             ComponentId.ASR_QWEN,
             ComponentId.ASR_MOONSHINE,
+        )
+    elif tag == PLATFORM_DARWIN_X86_64:
+        candidates = (
+            ComponentId.MEETING_AGENT,
+            ComponentId.MEETING_AGENT_OPENCODE,
+            ComponentId.ASR_NVIDIA_CPU,
         )
     else:
         return ()
@@ -1473,7 +1513,7 @@ def _validate_component_payload(component_id: str, target_dir: str) -> None:
         return
     if component_id in RUNTIME_IDS:
         tag = current_platform_tag()
-        if tag == PLATFORM_DARWIN_ARM64:
+        if tag in (PLATFORM_DARWIN_ARM64, PLATFORM_DARWIN_X86_64):
             if component_id in _MACOS_WHEEL_RUNTIME_FILES:
                 packages = os.path.join(target_dir, "site-packages")
                 if any(
@@ -1490,8 +1530,13 @@ def _validate_component_payload(component_id: str, target_dir: str) -> None:
                 if not any(name.startswith("core.") and name.endswith(".so") for name in os.listdir(os.path.join(packages, "mlx"))):
                     raise ComponentError("The MLX speech runtime is missing its native extension.")
                 return
-            library = os.path.join(target_dir, "nemo-speech", "lib", "libnemo_speech_asr_c.dylib")
-            if component_id != ComponentId.ASR_NVIDIA_CPU or not os.path.isfile(library):
+            lib_dir = os.path.join(target_dir, "nemo-speech", "lib")
+            required = ["libnemo_speech_asr_c.dylib"]
+            if component_id == ComponentId.ASR_NVIDIA_METAL:
+                required.append("libggml-metal.dylib")
+            elif component_id != ComponentId.ASR_NVIDIA_CPU:
+                raise ComponentError("The speech runtime is missing required files.")
+            if any(not os.path.isfile(os.path.join(lib_dir, name)) for name in required):
                 raise ComponentError("The speech runtime is missing required files.")
             return
         if tag == PLATFORM_LINUX_X86_64:

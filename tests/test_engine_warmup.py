@@ -77,6 +77,9 @@ def workers(monkeypatch):
         return process
 
     monkeypatch.setattr(LocalSpeechBackend, "_settings", staticmethod(lambda: {}))
+    # These tests drive the CUDA device; on an Apple Silicon host "cuda" would
+    # resolve to the Apple GPU's Metal runtime instead.
+    monkeypatch.setattr("services.components.current_platform_tag", lambda *a: "win_amd64")
     monkeypatch.setattr("services.components.is_installed", lambda _: True)
     monkeypatch.setattr("services.components.component_dir", lambda _: ".")
     monkeypatch.setattr(cache, "is_cached", lambda _: True)
