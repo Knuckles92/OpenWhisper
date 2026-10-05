@@ -935,6 +935,7 @@ QFrame#settingsTile QCheckBox::indicator:checked:disabled {
    advanced fields and individual grants expand only when needed. */
 QWidget#mcpSettingsPage,
 QWidget#mcpChoiceBar,
+QWidget#mcpCopyField,
 QWidget#mcpConnection,
 QWidget#mcpDisclosure,
 QWidget#mcpDisclosureBody,
@@ -957,6 +958,12 @@ QLabel#mcpCardTitle {
     font-weight: 600;
 }
 
+QLabel#mcpSectionLabel {
+    color: @slate-text;
+    font-size: 13px;
+    font-weight: 600;
+}
+
 QLabel#mcpIncluded {
     color: @success-text;
     font-size: 12px;
@@ -972,13 +979,19 @@ QPushButton#mcpChoice {
     background-color: @slate-field;
     border: 1px solid @slate-border;
     border-radius: 8px;
-    padding: 8px 4px;
-    font-size: 13px;
-    min-height: 16px;
+    padding: 0;
 }
 
-QPushButton#mcpChoice[detail="true"] {
-    min-height: 28px;
+QLabel#mcpChoiceTitle {
+    color: @slate-text-2;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#mcpChoiceDetail {
+    color: @slate-text-3;
+    font-size: 12px;
+    font-weight: 400;
 }
 
 QPushButton#mcpChoice:hover,
@@ -992,18 +1005,59 @@ QPushButton#mcpChoice:checked {
     border-color: @accent;
 }
 
+QLabel#mcpChoiceTitle[selected="true"] {
+    color: @accent;
+}
+
 QPushButton#mcpChoice:disabled {
     color: @slate-text-disabled;
     background-color: @slate-disabled;
     border-color: @slate-border-subtle;
 }
 
-QToolButton#mcpDisclosureToggle {
-    color: @slate-text-2;
+QLabel#mcpChoiceTitle:disabled,
+QLabel#mcpChoiceTitle[selected="true"]:disabled,
+QLabel#mcpChoiceDetail:disabled {
+    color: @slate-text-disabled;
+}
+
+QWidget#mcpSettingsPage QPushButton#primaryButton {
+    font-size: 14px;
+    padding: 12px 16px;
+    border: 1px solid @accent;
+}
+
+QWidget#mcpSettingsPage QPushButton#primaryButton:disabled {
+    color: @slate-text-disabled;
+    background-color: @slate-disabled;
+    border-color: @slate-border;
+}
+
+QPushButton#mcpCopyButton {
+    color: @slate-text;
     background-color: @slate-field;
     border: 1px solid @slate-border;
+    padding: 9px 14px;
+    font-size: 13px;
+}
+
+QPushButton#mcpCopyButton:hover,
+QPushButton#mcpCopyButton:focus,
+QWidget#mcpSettingsPage QPushButton#primaryButton:focus {
+    border-color: @accent-soft;
+}
+
+QPushButton#mcpCopyButton:disabled {
+    color: @slate-text-disabled;
+    border-color: @slate-border-subtle;
+}
+
+QToolButton#mcpDisclosureToggle {
+    color: @slate-text-2;
+    background-color: transparent;
+    border: 1px solid transparent;
     border-radius: 8px;
-    padding: 8px;
+    padding: 10px 8px;
     font-size: 13px;
     text-align: left;
 }
@@ -1020,6 +1074,7 @@ QToolButton#mcpDisclosureToggle:hover,
 QToolButton#mcpDisclosureToggle:focus {
     color: @slate-text;
     border-color: @accent;
+    background-color: @slate-field;
 }
 
 QToolButton#mcpDisclosureToggle:disabled {

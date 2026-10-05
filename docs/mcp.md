@@ -20,6 +20,8 @@ The page follows the app's light, dark, system, or Omarchy theme and offers:
 - **Claude Code**, with a command ready to copy after replacing `<PASTE_TOKEN>`.
 - **Cursor**, with JSON to merge into the client's `mcpServers` configuration
   after replacing `<PASTE_TOKEN>`. Other clients may use a different config format.
+- **ChatGPT**, with TOML to merge into the desktop app's `~/.codex/config.toml`
+  after replacing `<PASTE_TOKEN>`. It uses the selected local or Tailscale address.
 - **Permissions**, with separate switches for **Rename dictations**,
   **Rename finished meetings**, and **Read app preferences**. Expand
   **Choose individual preferences** and its categories for all 20 write permissions.
@@ -198,5 +200,6 @@ preserving its validation and read-only data boundary without a second listener.
 MCP mutations use a separate permission-checked control service; the standalone
 History API remains read-only. The desktop migrates existing databases to add
 transcription display titles. MCP never creates or migrates a database itself.
-Setup formats follow the [Claude Code](https://code.claude.com/docs/en/mcp)
-and [Cursor](https://cursor.com/docs/mcp) documentation.
+Setup formats follow the [Claude Code](https://code.claude.com/docs/en/mcp),
+[Cursor](https://cursor.com/docs/mcp), and
+[OpenAI MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) documentation.

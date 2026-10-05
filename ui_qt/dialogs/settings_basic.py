@@ -169,15 +169,21 @@ class BasicSettingsPage(QWidget):
     def _reflow_rows(self):
         narrow = self.width() < round(640 * current_ui_font_scale())
         for row, control in self._rows:
+            expanding = (
+                control.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+            )
             row.setDirection(
                 QBoxLayout.Direction.TopToBottom
                 if narrow
                 else QBoxLayout.Direction.LeftToRight
             )
             row.setSpacing(8 if narrow else 24)
+            row.setStretch(1, 2 if expanding and not narrow else 0)
             row.setAlignment(
                 control,
-                Qt.AlignmentFlag.AlignLeft if narrow else Qt.AlignmentFlag.AlignVCenter,
+                Qt.AlignmentFlag.AlignLeft
+                if narrow and not expanding
+                else Qt.AlignmentFlag.AlignVCenter,
             )
 
     def resizeEvent(self, event):
@@ -192,12 +198,15 @@ class BasicSettingsPage(QWidget):
         ) and hasattr(self, "_rows"):
             self._reflow_rows()
 
-    def _combo(self):
+    def _combo(self, *, expanding=False):
         combo = ElidingComboBox()
         combo.setObjectName("basicSettingsCombo")
         combo.setMinimumHeight(38)
         combo.setMinimumWidth(160)
-        combo.setMaximumWidth(260)
+        if expanding:
+            combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        else:
+            combo.setMaximumWidth(260)
         return combo
 
     def _bind(self, control, destination, attribute, key, resolver=None):
@@ -250,7 +259,7 @@ class BasicSettingsPage(QWidget):
         # Audio discovery already runs on a worker and keeps unavailable saved
         # devices selectable. Share its inventory between all three views.
         self.dialog.ensure_page(RECORDING)
-        combo = self._combo()
+        combo = self._combo(expanding=True)
         self._row(group, "Microphone", "Used for dictation and meetings.", combo)
         self._bind(
             combo,

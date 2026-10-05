@@ -25,6 +25,14 @@ def claude_command(url: str) -> str:
     return f'claude mcp add --transport http --scope user openwhisper {url} --header "Authorization: Bearer <PASTE_TOKEN>"'
 
 
+def chatgpt_config(url: str) -> str:
+    return (
+        "[mcp_servers.openwhisper]\n"
+        f"url = {json.dumps(url, ensure_ascii=False)}\n"
+        'http_headers = { Authorization = "Bearer <PASTE_TOKEN>" }\n'
+    )
+
+
 def agent_prompt(url: str) -> str:
     local = urlsplit(url).hostname in {"127.0.0.1", "localhost", "::1"}
     location = (

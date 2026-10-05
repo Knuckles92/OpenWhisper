@@ -1,10 +1,20 @@
 """Settings controls must reflect the listener, not merely the saved preference."""
 
 import json
+import tomllib
 
 import pytest
-from PyQt6.QtCore import QPoint
-from PyQt6.QtWidgets import QAbstractButton, QApplication, QLineEdit, QScrollArea
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import (
+    QAbstractButton,
+    QApplication,
+    QLabel,
+    QLineEdit,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 from services.agent_mcp.controls import SETTING_CONTROLS
 from services.agent_mcp.runtime import DEFAULT_PORT, McpRuntime, ServerStatus
@@ -75,6 +85,15 @@ def test_enable_status_setup_copy_and_stop(tmp_path):
         page.setup_kind.setCurrentIndex(2)
         config = json.loads(page.setup_text.toPlainText())
         assert config["mcpServers"]["openwhisper"]["url"] == page.url.text()
+        page.setup_kind.buttons[3].click()
+        config = tomllib.loads(page.setup_text.toPlainText())
+        assert config["mcp_servers"]["openwhisper"] == {
+            "url": page.url.text(),
+            "http_headers": {"Authorization": "Bearer <PASTE_TOKEN>"},
+        }
+        page.copy_setup.click()
+        assert QApplication.clipboard().text() == page.setup_text.toPlainText()
+        assert TOKEN not in QApplication.clipboard().text()
         page._copy(server.token())
         assert QApplication.clipboard().text() == TOKEN
         assert TOKEN not in (tmp_path / "settings.json").read_text()
@@ -214,8 +233,14 @@ def test_tailscale_setup_uses_host_url_and_separate_token(tmp_path):
             ]
             == remote_url
         )
+        page.setup_kind.setCurrentIndex(3)
+        config = tomllib.loads(page.setup_text.toPlainText())
+        assert config["mcp_servers"]["openwhisper"]["url"] == remote_url
+        assert TOKEN not in page.setup_text.toPlainText()
         page.agent_location.setCurrentIndex(0)
         assert page.url.text() == server.current.url
+        config = tomllib.loads(page.setup_text.toPlainText())
+        assert config["mcp_servers"]["openwhisper"]["url"] == server.current.url
         page.setup_kind.setCurrentIndex(0)
         assert (
             "Do not connect to or enable a different" in page.setup_text.toPlainText()
@@ -245,6 +270,8 @@ def test_disclosures_keep_connection_formats_and_copy_actions_available(tmp_path
     page.show()
     try:
         assert not page.advanced.body.isVisible()
+        assert page.url.isVisible()
+        assert page.copy_url.isVisible()
         page.advanced.toggle.click()
         assert page.port.isEnabled()
         assert page.tailscale_enabled.isEnabled()
@@ -253,10 +280,14 @@ def test_disclosures_keep_connection_formats_and_copy_actions_available(tmp_path
         page.refresh()
         assert not page.port.isEnabled()
         assert not page.tailscale_enabled.isEnabled()
+        page.advanced.toggle.click()
+        assert not page.advanced.body.isVisible()
+        assert page.url.isVisible() and page.url.isEnabled()
+        assert page.copy_url.isVisible() and page.copy_url.isEnabled()
         page.copy_url.click()
         assert QApplication.clipboard().text() == server.current.url
         for index, label in enumerate(
-            ("setup prompt", "Claude Code command", "Cursor JSON")
+            ("setup prompt", "Claude Code command", "Cursor JSON", "ChatGPT config")
         ):
             page.setup_kind.buttons[index].click()
             page.preview.toggle.setChecked(True)
@@ -339,6 +370,93 @@ def test_split_layout_and_individual_grants_survive_narrow_windows(
         page.permission_checks[SettingsKey.MCP_SETTINGS_ACCESS].click()
         assert not page.setting_checks[SettingsKey.UI_THEME].isEnabled()
         assert page.setting_checks[SettingsKey.UI_THEME].isChecked()
+    finally:
+        scroll.close()
+        scroll.deleteLater()
+        apply_ui_font_scale(previous_scale, app=app)
+        set_current_palette(previous_palette)
+        app.setStyleSheet(previous_sheet)
+
+
+@pytest.mark.parametrize("ui_mode", ["classic", "omarchy"])
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_connection_text_fits_in_settings_container_at_all_font_sizes(
+    tmp_path, monkeypatch, ui_mode, theme
+):
+    """A stretch below the page used to compress buttons below their text height."""
+    from ui_qt.utils.font_scale import (
+        apply_ui_font_scale,
+        current_ui_font_scale_percent,
+    )
+    from ui_qt.utils.palette import current_palette, set_current_palette
+    from ui_qt.utils.theme_manager import ThemeManager
+
+    monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
+    app = QApplication.instance()
+    previous_scale = current_ui_font_scale_percent()
+    previous_palette, previous_sheet = current_palette(), app.styleSheet()
+    manager = ThemeManager(theme)
+    page, _, server = make_page(tmp_path)
+    server.current = ServerStatus("running", "Ready", DEFAULT_PORT)
+    page.refresh()
+    wrapper = QWidget()
+    layout = QVBoxLayout(wrapper)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.addWidget(page)
+    layout.addStretch()
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setWidget(wrapper)
+    scroll.show()
+
+    def settle():
+        # Wrapping and reflow propagate through nested layouts over several events.
+        for _ in range(8):
+            app.processEvents()
+
+    try:
+        for width in (360, 480, 940, 1300):
+            scroll.resize(width, 720)
+            # Exercise live changes without resizing the window between scales.
+            for scale in (100, 130, 100):
+                apply_ui_font_scale(scale, app=app, theme_manager=manager)
+                for kind in range(len(page.setup_kind.buttons)):
+                    page.setup_kind.setCurrentIndex(kind)
+                    page.preview.toggle.setChecked(kind == 1)
+                    page.advanced.toggle.setChecked(kind == 2)
+                    settle()
+                    assert scroll.horizontalScrollBar().maximum() == 0
+                    buttons = page.agent_location.buttons + page.setup_kind.buttons
+                    buttons += [
+                        page.copy_setup,
+                        page.copy_token,
+                        page.copy_url,
+                        page.preview.toggle,
+                    ]
+                    for button in buttons:
+                        assert button.width() >= button.sizeHint().width(), (
+                            button.text()
+                        )
+                        assert button.height() >= button.sizeHint().height(), (
+                            button.text()
+                        )
+                        for label in button.findChildren(QLabel):
+                            assert (
+                                label.width()
+                                >= label.fontMetrics().horizontalAdvance(label.text())
+                            )
+                            assert label.height() >= label.fontMetrics().height()
+                            assert button.rect().contains(label.geometry())
+                    for field in (page.token, page.url):
+                        assert field.height() >= field.sizeHint().height()
+                        assert field.width() >= round(160 * scale / 100)
+        page.setup_kind.buttons[1].setFocus()
+        QTest.keyClick(page.setup_kind.buttons[1], Qt.Key.Key_Space)
+        assert page.setup_kind.currentIndex() == 1
+        assert sum(button.isChecked() for button in page.setup_kind.buttons) == 1
+        page.copy_setup.click()
+        assert "claude mcp add" in QApplication.clipboard().text()
+        assert TOKEN not in QApplication.clipboard().text()
     finally:
         scroll.close()
         scroll.deleteLater()

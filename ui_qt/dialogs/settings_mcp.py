@@ -1,8 +1,9 @@
 """Settings destination for the app-owned MCP server and agent onboarding."""
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
+    QBoxLayout,
     QButtonGroup,
     QCheckBox,
     QFrame,
@@ -13,6 +14,9 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QStyle,
+    QStyleOptionButton,
+    QStylePainter,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -20,20 +24,83 @@ from PyQt6.QtWidgets import (
 
 from services.agent_mcp.controls import SETTING_CONTROLS, writable_settings
 from services.agent_mcp.runtime import DEFAULT_PORT, runtime
-from services.agent_mcp.setup import agent_prompt, claude_command, client_config
+from services.agent_mcp.setup import (
+    agent_prompt,
+    chatgpt_config,
+    claude_command,
+    client_config,
+)
 from services.settings import SettingsKey
 from ui_qt.dialogs.settings_basic import SettingsSwitch
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets import (
     Button,
     FieldTile,
     NoWheelSpinBox,
-    PrimaryButton,
     SettingTile,
     WrappedLabel,
 )
 from ui_qt.widgets.engine_field import EngineStatus, StatusDot
+
+
+class _ActionButton(Button):
+    """Respect the styled text height even inside a compressed settings card."""
+
+    def _refresh_size(self):
+        super()._refresh_size()
+        self.setMinimumHeight(max(self._base_min_height, self.sizeHint().height()))
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (
+            QEvent.Type.FontChange,
+            QEvent.Type.StyleChange,
+        ) and hasattr(self, "_base_min_height"):
+            self._refresh_size()
+
+
+class _ChoiceButton(QPushButton):
+    """A native, keyboard-accessible button with independently sized text lines."""
+
+    def __init__(self, title, detail):
+        super().__init__(title)
+        self.setObjectName("mcpChoice")
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAccessibleName(title)
+        self.setAccessibleDescription(detail)
+        self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(4)
+        for text, name in ((title, "mcpChoiceTitle"), (detail, "mcpChoiceDetail")):
+            if not text:
+                continue
+            label = QLabel(text)
+            label.setObjectName(name)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            layout.addWidget(label)
+        self.toggled.connect(
+            lambda checked: set_style_property(
+                layout.itemAt(0).widget(), "selected", checked
+            )
+        )
+
+    def sizeHint(self):
+        return self.layout().sizeHint().expandedTo(QSize(0, 42))
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
+
+    def paintEvent(self, event):
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        option.text = ""  # Child labels provide the title and supporting text.
+        painter = QStylePainter(self)
+        painter.drawControl(QStyle.ControlElement.CE_PushButton, option)
 
 
 class _ChoiceBar(QWidget):
@@ -42,6 +109,7 @@ class _ChoiceBar(QWidget):
     def __init__(self, choices, *, parent=None):
         super().__init__(parent)
         self.setObjectName("mcpChoiceBar")
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
@@ -49,21 +117,39 @@ class _ChoiceBar(QWidget):
         self._index = -1
         self.buttons = []
         for index, (title, detail) in enumerate(choices):
-            button = QPushButton(title + ("\n" + detail if detail else ""))
-            button.setObjectName("mcpChoice")
-            button.setCheckable(True)
-            button.setProperty("detail", bool(detail))
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.setAccessibleName(title)
-            button.setAccessibleDescription(detail)
-            button.setSizePolicy(
-                QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
-            )
+            button = _ChoiceButton(title, detail)
             self._group.addButton(button, index)
             self.buttons.append(button)
             layout.addWidget(button, 1)
+        self._reflow_timer = QTimer(self)
+        self._reflow_timer.setSingleShot(True)
+        self._reflow_timer.timeout.connect(self._reflow)
         self._group.idClicked.connect(self.setCurrentIndex)
         self.setCurrentIndex(0)
+
+    def _reflow(self):
+        widths = [button.sizeHint().width() for button in self.buttons]
+        required = sum(widths) + self.layout().spacing() * (len(self.buttons) - 1)
+        narrow = self.width() < required
+        self.layout().setDirection(
+            QBoxLayout.Direction.TopToBottom
+            if narrow
+            else QBoxLayout.Direction.LeftToRight
+        )
+        for index, width in enumerate(widths):
+            self.layout().setStretch(index, 0 if narrow else width)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (
+            QEvent.Type.FontChange,
+            QEvent.Type.StyleChange,
+        ) and hasattr(self, "_reflow_timer"):
+            self._reflow_timer.start(0)
 
     def currentIndex(self):
         return self._index
@@ -111,6 +197,51 @@ class _Disclosure(QWidget):
         self.body.setVisible(expanded)
 
 
+class _CopyField(QWidget):
+    """Keep copy actions readable and stack them when the field needs more room."""
+
+    def __init__(self, field, button):
+        super().__init__()
+        self.setObjectName("mcpCopyField")
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.field = field
+        self.button = button
+        field.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        layout.addWidget(field, 1)
+        layout.addWidget(button)
+        self._reflow_timer = QTimer(self)
+        self._reflow_timer.setSingleShot(True)
+        self._reflow_timer.timeout.connect(self._reflow)
+
+    def _reflow(self):
+        self.field.setMinimumHeight(self.field.sizeHint().height())
+        narrow = (
+            self.width()
+            < round(180 * current_ui_font_scale()) + self.button.sizeHint().width() + 8
+        )
+        self.layout().setDirection(
+            QBoxLayout.Direction.TopToBottom
+            if narrow
+            else QBoxLayout.Direction.LeftToRight
+        )
+        self.layout().setStretch(0, 0 if narrow else 1)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (
+            QEvent.Type.FontChange,
+            QEvent.Type.StyleChange,
+        ) and hasattr(self, "_reflow_timer"):
+            self._reflow_timer.start(0)
+
+
 class _PermissionRow(QFrame):
     def __init__(self, title, description, icon):
         super().__init__()
@@ -149,6 +280,7 @@ class McpSettingsPage(QWidget):
     def __init__(self, settings, *, server=None, parent=None):
         super().__init__(parent)
         self.setObjectName("mcpSettingsPage")
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.settings = settings
         self.server = server if server is not None else runtime
         if server is None:
@@ -169,7 +301,7 @@ class McpSettingsPage(QWidget):
         self.status_label = WrappedLabel("")
         self.status_label.setAccessibleName("MCP server status")
         status_row.addWidget(self.status_label, 1)
-        self.retry = Button("Retry")
+        self.retry = _ActionButton("Retry")
         self.retry.set_base_minimum_size(70, 34)
         self.retry.clicked.connect(self._start)
         status_row.addWidget(self.retry)
@@ -188,7 +320,7 @@ class McpSettingsPage(QWidget):
         self.columns.setSpacing(18)
         layout.addLayout(self.columns)
         self.connection_card, connection_layout = self._card(
-            "Connection", "Choose where your assistant connects from."
+            "Connection", "Connect your assistant in two simple steps."
         )
         self.permissions_card, permissions_layout = self._card(
             "Permissions",
@@ -199,7 +331,10 @@ class McpSettingsPage(QWidget):
         self.connection.setObjectName("mcpConnection")
         setup_layout = QVBoxLayout(self.connection)
         setup_layout.setContentsMargins(0, 0, 0, 0)
-        setup_layout.setSpacing(10)
+        setup_layout.setSpacing(12)
+        setup_layout.addWidget(
+            self._label("1. Choose your connection", "mcpSectionLabel")
+        )
         self.agent_location = _ChoiceBar(
             (
                 ("This computer", "Local connection"),
@@ -212,17 +347,39 @@ class McpSettingsPage(QWidget):
         )
         self.agent_location.currentIndexChanged.connect(self._render_setup)
         setup_layout.addWidget(self.agent_location)
+        self.url_label = self._label("MCP server address", "mcpSectionLabel")
+        setup_layout.addWidget(self.url_label)
+        self.url = QLineEdit()
+        self.url.setReadOnly(True)
+        self.url.setAccessibleName("MCP server address")
+        self.copy_url = self._copy_row(
+            setup_layout,
+            "",
+            self.url,
+            "Copy address",
+            lambda: self.url.text(),
+        )
+        self.copy_url.setAccessibleName("Copy MCP server address")
+        setup_layout.addSpacing(6)
+        setup_layout.addWidget(
+            self._label("2. Set up your assistant", "mcpSectionLabel")
+        )
         self.setup_kind = _ChoiceBar(
-            (("Setup prompt", ""), ("Claude Code", ""), ("Cursor", ""))
+            (
+                ("Setup prompt", ""),
+                ("Claude Code", ""),
+                ("Cursor", ""),
+                ("ChatGPT", ""),
+            )
         )
         self.setup_kind.setAccessibleName("Agent setup method")
         self.setup_kind.currentIndexChanged.connect(self._render_setup)
         setup_layout.addWidget(self.setup_kind)
         self.setup_hint = self._detail("")
         setup_layout.addWidget(self.setup_hint)
-        self.copy_setup = PrimaryButton("Copy setup prompt")
+        self.copy_setup = _ActionButton("Copy setup prompt")
+        self.copy_setup.setObjectName("primaryButton")
         self.copy_setup.set_base_minimum_size(0, 44)
-        self.copy_setup.setIcon(design_icon("copy-gray.svg"))
         self.copy_setup.clicked.connect(
             lambda: self._copy(self.setup_text.toPlainText())
         )
@@ -235,17 +392,23 @@ class McpSettingsPage(QWidget):
         self.setup_text.setAccessibleName("MCP setup instructions")
         self.preview.body_layout.addWidget(self.setup_text)
         setup_layout.addWidget(self.preview)
-        setup_layout.addWidget(self._label("Access token", "settingsTileTitle"))
+        setup_layout.addSpacing(6)
+        setup_layout.addWidget(self._label("Access token", "mcpSectionLabel"))
+        setup_layout.addWidget(
+            self._detail("Copy this separately when your assistant asks for it.")
+        )
         self.token = QLineEdit()
         self.token.setReadOnly(True)
         self.token.setEchoMode(QLineEdit.EchoMode.Password)
         self.token.setAccessibleName("MCP access token")
+        self.token.setPlaceholderText("Available when MCP is running")
         self.token.setToolTip(
             "Saved in your system credential store. Copy it separately when your assistant asks."
         )
         self.copy_token = self._copy_row(
-            setup_layout, "", self.token, "Copy access token", self.server.token
+            setup_layout, "", self.token, "Copy token", self.server.token
         )
+        self.copy_token.setAccessibleName("Copy access token")
         self.copy_token.setToolTip(
             "Grants saved-history access and the permissions you choose. Share only with trusted assistants."
         )
@@ -254,23 +417,8 @@ class McpSettingsPage(QWidget):
         self.advanced = _Disclosure("Advanced connection")
         self.advanced.body_layout.addWidget(
             self._detail(
-                "Turn MCP off to change the port or Tailscale access, then reconnect your assistant."
+                "Turn MCP off to change these settings. Remote assistants must be on the same Tailscale network."
             )
-        )
-        self.advanced.body_layout.addWidget(
-            self._detail(
-                "Localhost works on this computer; remote assistants need the same Tailscale network."
-            )
-        )
-        self.url = QLineEdit()
-        self.url.setReadOnly(True)
-        self.url.setAccessibleName("MCP server URL")
-        self.copy_url = self._copy_row(
-            self.advanced.body_layout,
-            "Server URL",
-            self.url,
-            "Copy URL",
-            lambda: self.url.text(),
         )
         self.port = NoWheelSpinBox()
         self.port.setAccessibleName("MCP local port")
@@ -401,14 +549,14 @@ class McpSettingsPage(QWidget):
         card.setObjectName("mcpCard")
         card.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(12)
+        layout.setContentsMargins(22, 22, 22, 22)
+        layout.setSpacing(16)
         layout.addWidget(cls._label(title, "mcpCardTitle"))
         layout.addWidget(cls._detail(description))
         return card, layout
 
     def _arrange_columns(self):
-        wide = self.width() >= round(860 * current_ui_font_scale())
+        wide = self.width() >= round(940 * current_ui_font_scale())
         if self._wide == wide:
             return
         self._wide = wide
@@ -425,16 +573,23 @@ class McpSettingsPage(QWidget):
         super().resizeEvent(event)
         self._arrange_columns()
 
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (
+            QEvent.Type.FontChange,
+            QEvent.Type.StyleChange,
+        ) and hasattr(self, "permissions_card"):
+            self._arrange_columns()
+
     def _copy_row(self, layout, title, field, button_text, value):
         if title:
             layout.addWidget(self._label(title, "settingsTileTitle"))
-        row = QHBoxLayout()
-        row.addWidget(field, 1)
-        button = Button(button_text)
+        button = _ActionButton(button_text)
+        button.setObjectName("mcpCopyButton")
         button.set_base_minimum_size(0, 38)
+        button.setAccessibleName(button_text)
         button.clicked.connect(lambda: self._copy(value()))
-        row.addWidget(button)
-        layout.addLayout(row)
+        layout.addWidget(_CopyField(field, button))
         return button
 
     def _copy(self, text):
@@ -510,13 +665,20 @@ class McpSettingsPage(QWidget):
     def _render_setup(self):
         status = self.server.status()
         url = status.url
-        if self.agent_location.currentIndex() == 1:
+        remote = self.agent_location.currentIndex() == 1
+        if remote:
             url = getattr(status, "remote_url", "")
+        self.url_label.setText(
+            "Tailscale MCP address" if remote else "Local MCP address"
+        )
         ready = status.state == "running" and bool(url)
+        self.url.setToolTip(
+            url if ready else "The address appears when this connection is available."
+        )
         self.copy_setup.setEnabled(ready)
         self.copy_url.setEnabled(ready)
         self.url.setEnabled(ready)
-        kinds = ("setup prompt", "Claude Code command", "Cursor JSON")
+        kinds = ("setup prompt", "Claude Code command", "Cursor JSON", "ChatGPT config")
         kind = self.setup_kind.currentIndex()
         self.copy_setup.setText(f"Copy {kinds[kind]}")
         self.preview.toggle.setText(f"Preview {kinds[kind]}")
@@ -525,6 +687,7 @@ class McpSettingsPage(QWidget):
             "Paste the setup prompt into your assistant. Copy the access token separately when asked.",
             "Paste the command into your terminal. Replace <PASTE_TOKEN> with the access token.",
             "Merge this JSON into Cursor's MCP configuration. Replace <PASTE_TOKEN> with the access token.",
+            "For the desktop app, merge this into ~/.codex/config.toml. Replace <PASTE_TOKEN> with the access token.",
         )
         self.setup_hint.setText(hints[kind])
         if not ready:
@@ -541,11 +704,14 @@ class McpSettingsPage(QWidget):
             )
             self.setup_hint.setText(self.setup_text.toPlainText())
             return
-        self.url.setText(url)
+        if self.url.text() != url:
+            self.url.setText(url)
+            self.url.setCursorPosition(0)
         options = (
             agent_prompt(url),
             claude_command(url),
             client_config(url, "<PASTE_TOKEN>"),
+            chatgpt_config(url),
         )
         text = options[kind]
         if self.setup_text.toPlainText() != text:
