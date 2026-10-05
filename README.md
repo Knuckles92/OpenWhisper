@@ -6,7 +6,7 @@ A desktop app for dictation, audio-file transcription, and meeting notes on Wind
 
 Use a [packaged release](#install) with bundled Python and dependencies, or [run from source](#run-from-source) using your own Python environment.
 
-**Issues:** If you’re unhappy with any part of the app, please [open a GitHub issue](https://github.com/Knuckles92/OpenWhisper/issues) and I’ll do my best to make it right ASAP.
+**Feedback:** If you’re unhappy with any part of the app, please [open a GitHub issue](https://github.com/Knuckles92/OpenWhisper/issues) and I’ll do my best to make it right ASAP.
 
 <p align="center">
   <img width="680" alt="OpenWhisper Quick Record" src="docs/screenshots/01-quick-record-idle.png" />
