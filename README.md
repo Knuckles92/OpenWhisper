@@ -2,6 +2,8 @@
 
 A desktop app for dictation, audio-file transcription, and meeting notes on Windows, macOS, and Linux. Transcribe with local speech models or the OpenAI API, then optionally use AI to clean up the text.
 
+If you’re unhappy with any part of the app, please [open a GitHub issue](https://github.com/Knuckles92/OpenWhisper/issues) and I’ll do my best to make it right ASAP.
+
 [Website](https://openwhisper.fiorilabs.tech/) · [Download](https://github.com/Knuckles92/OpenWhisper/releases/latest) · [Run from source](#run-from-source) · [Install](#install) · [Changelog](CHANGELOG.md)
 
 Use a [packaged release](#install) with bundled Python and dependencies, or [run from source](#run-from-source) using your own Python environment.
