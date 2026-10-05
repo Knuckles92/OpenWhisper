@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 from services.agent_mcp.controls import SETTING_CONTROLS, writable_settings
 from services.agent_mcp.runtime import DEFAULT_PORT, runtime
 from services.agent_mcp.setup import (
+    TOKEN_PLACEHOLDER,
     agent_prompt,
     chatgpt_config,
     claude_command,
@@ -45,6 +46,9 @@ from ui_qt.widgets import (
     WrappedLabel,
 )
 from ui_qt.widgets.engine_field import EngineStatus, StatusDot
+
+# Stands in for the access token in the on-screen preview; copies get the real one.
+_HIDDEN_TOKEN = "•" * 12
 
 
 class _ActionButton(Button):
@@ -526,9 +530,11 @@ class McpSettingsPage(QWidget):
         self.copy_setup = _ActionButton("Copy setup prompt")
         self.copy_setup.setObjectName("primaryButton")
         self.copy_setup.set_base_minimum_size(0, 38)
-        self.copy_setup.clicked.connect(
-            lambda: self._copy(self.setup_text.toPlainText())
+        self.copy_setup.setToolTip(
+            "Includes the access token, which grants saved-history access and the "
+            "permissions you choose. Share only with trusted assistants."
         )
+        self.copy_setup.clicked.connect(self._copy_setup)
         self.preview = _Disclosure("Preview setup prompt", inline=True)
         self.copy_actions = _AdaptiveRow(
             [(self.copy_setup, 0), None, (self.preview.toggle, 0)], spacing=10
@@ -545,7 +551,7 @@ class McpSettingsPage(QWidget):
         token_layout = QVBoxLayout()
         token_layout.setSpacing(4)
         token_label = self._label(
-            "<b>Access token</b> · copy it separately when your assistant asks",
+            "<b>Access token</b> · already included when you copy the setup above",
             "mcpFieldLabel",
         )
         token_label.setTextFormat(Qt.TextFormat.RichText)
@@ -556,7 +562,7 @@ class McpSettingsPage(QWidget):
         self.token.setAccessibleName("MCP access token")
         self.token.setPlaceholderText("Available when MCP is running")
         self.token.setToolTip(
-            "Saved in your system credential store. Copy it separately when your assistant asks."
+            "Saved in your system credential store. Copy it here if an assistant asks for it."
         )
         self.copy_token = self._copy_row(
             token_layout, "", self.token, "Copy token", self.server.token
@@ -836,12 +842,30 @@ class McpSettingsPage(QWidget):
             self.port.blockSignals(False)
         self.refresh()
 
+    def _setup_url(self, status):
+        if self.agent_location.currentIndex() == self._remote_index:
+            return getattr(status, "remote_url", "")
+        return status.url
+
+    def _setup_for(self, url, token):
+        """The selected setup format; an empty ``token`` leaves the placeholder."""
+        return (
+            agent_prompt(url, self.host_name, token),
+            claude_command(url, token or TOKEN_PLACEHOLDER),
+            client_config(url, token or TOKEN_PLACEHOLDER),
+            chatgpt_config(url, token or TOKEN_PLACEHOLDER),
+        )[self.setup_kind.currentIndex()]
+
+    def _copy_setup(self):
+        # Built at click time: the preview only ever holds the masked token.
+        url = self._setup_url(self.server.status())
+        if url:
+            self._copy(self._setup_for(url, self.server.token()))
+
     def _render_setup(self):
         status = self.server.status()
-        url = status.url
+        url = self._setup_url(status)
         remote = self.agent_location.currentIndex() == self._remote_index
-        if remote:
-            url = getattr(status, "remote_url", "")
         self.url_label.setText(
             "Tailscale MCP address"
             if remote
@@ -862,13 +886,23 @@ class McpSettingsPage(QWidget):
         self.preview.toggle.setText(f"Preview {kinds[kind]}")
         self.preview.toggle.setAccessibleName(self.preview.toggle.text())
         self.copy_actions.reflow()
+        has_token = bool(self.server.token())
         hints = (
-            "Paste the setup prompt into your assistant. Copy the access token separately when asked.",
-            "Paste the command into your terminal. Replace <PASTE_TOKEN> with the access token.",
-            "Merge this JSON into Cursor's MCP configuration. Replace <PASTE_TOKEN> with the access token.",
-            "For the desktop app, merge this into ~/.codex/config.toml. Replace <PASTE_TOKEN> with the access token.",
+            "Paste the setup prompt into your assistant.",
+            "Paste the command into your terminal.",
+            "Merge this JSON into Cursor's MCP configuration.",
+            "For the desktop app, merge this into ~/.codex/config.toml.",
         )
-        self.setup_hint.setText(hints[kind])
+        self.setup_hint.setText(
+            hints[kind]
+            + (
+                " Your access token is already filled in."
+                if has_token
+                else " Copy the access token separately when asked."
+                if kind == 0
+                else f" Replace {TOKEN_PLACEHOLDER} with the access token."
+            )
+        )
         if not ready:
             self.url.setText(
                 "Tailscale access is not enabled"
@@ -886,13 +920,7 @@ class McpSettingsPage(QWidget):
         if self.url.text() != url:
             self.url.setText(url)
             self.url.setCursorPosition(0)
-        options = (
-            agent_prompt(url, self.host_name),
-            claude_command(url),
-            client_config(url, "<PASTE_TOKEN>"),
-            chatgpt_config(url),
-        )
-        text = options[kind]
+        text = self._setup_for(url, _HIDDEN_TOKEN if has_token else "")
         if self.setup_text.toPlainText() != text:
             self.setup_text.setPlainText(text)
 

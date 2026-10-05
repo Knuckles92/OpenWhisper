@@ -1,11 +1,17 @@
-"""Copyable connection instructions; no credentials are written to disk."""
+"""Copyable connection instructions; no credentials are written to disk.
+
+Each format takes the access token so a copy is ready to paste. Without one it
+falls back to ``TOKEN_PLACEHOLDER`` for the user to replace.
+"""
 
 import json
 import socket
 from urllib.parse import urlsplit
 
+TOKEN_PLACEHOLDER = "<PASTE_TOKEN>"
 
-def client_config(url: str, token: str) -> str:
+
+def client_config(url: str, token: str = TOKEN_PLACEHOLDER) -> str:
     return json.dumps(
         {
             "mcpServers": {
@@ -16,25 +22,29 @@ def client_config(url: str, token: str) -> str:
             }
         },
         indent=2,
+        ensure_ascii=False,
     )
 
 
-def claude_command(url: str) -> str:
-    # Do not embed secrets in the preview/clipboard with the setup template.
-    # The user supplies the token separately. Generated tokens are URL-safe.
-    return f'claude mcp add --transport http --scope user openwhisper {url} --header "Authorization: Bearer <PASTE_TOKEN>"'
+def claude_command(url: str, token: str = TOKEN_PLACEHOLDER) -> str:
+    # Generated tokens are URL-safe, so double quotes suffice in every shell.
+    return f'claude mcp add --transport http --scope user openwhisper {url} --header "Authorization: Bearer {token}"'
 
 
-def chatgpt_config(url: str) -> str:
+def chatgpt_config(url: str, token: str = TOKEN_PLACEHOLDER) -> str:
+    header = json.dumps(f"Bearer {token}", ensure_ascii=False)
     return (
         "[mcp_servers.openwhisper]\n"
         f"url = {json.dumps(url, ensure_ascii=False)}\n"
-        'http_headers = { Authorization = "Bearer <PASTE_TOKEN>" }\n'
+        f"http_headers = {{ Authorization = {header} }}\n"
     )
 
 
-def agent_prompt(url: str, host_name: str | None = None) -> str:
-    """``host_name`` names the computer running OpenWhisper when it isn't this one."""
+def agent_prompt(url: str, host_name: str | None = None, token: str = "") -> str:
+    """``host_name`` names the computer running OpenWhisper when it isn't this one.
+
+    Without ``token`` the prompt has the agent ask the user for it.
+    """
     local = urlsplit(url).hostname in {"127.0.0.1", "localhost", "::1"}
     location = (
         f"Connect my agent to OpenWhisper running on computer {host_name or socket.gethostname()}. "
@@ -51,9 +61,15 @@ def agent_prompt(url: str, host_name: str | None = None) -> str:
     return (
         location
         + f"Register a server named openwhisper using Streamable HTTP at {url}. "
-        "It requires an Authorization: Bearer <token> header. Ask me for the "
-        "token from OpenWhisper Settings > MCP on the computer running OpenWhisper and save it using this client's "
-        "credential configuration. Preserve my other MCP servers. "
+        + (
+            f"It requires the header Authorization: Bearer {token}. Save the token "
+            "using this client's credential configuration and do not repeat it back to me. "
+            if token
+            else "It requires an Authorization: Bearer <token> header. Ask me for the "
+            "token from OpenWhisper Settings > MCP on the computer running OpenWhisper and save it using this client's "
+            "credential configuration. "
+        )
+        + "Preserve my other MCP servers. "
         "Verify the connection by listing tools, calling get_status, and checking get_capabilities. "
         "OpenWhisper must remain running with MCP enabled on that host computer. "
         "When I ask about my history, search narrowly, retrieve original "

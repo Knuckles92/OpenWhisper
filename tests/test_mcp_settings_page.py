@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 from services.agent_mcp.controls import SETTING_CONTROLS
 from services.agent_mcp.runtime import DEFAULT_PORT, McpRuntime, ServerStatus
 from services.settings import SettingsKey, SettingsManager
-from ui_qt.dialogs.settings_mcp import McpSettingsPage
+from ui_qt.dialogs.settings_mcp import _HIDDEN_TOKEN, McpSettingsPage
 
 TOKEN = "test-token-" + "a" * 32
 
@@ -77,23 +77,32 @@ def test_enable_status_setup_copy_and_stop(tmp_path):
         assert page.url.text() == "http://127.0.0.1:9123/mcp"
         assert page.token.echoMode() == QLineEdit.EchoMode.Password
         assert TOKEN not in page.setup_text.toPlainText()
+        assert "already filled in" in page.setup_hint.text()
         page.copy_setup.click()
         assert "get_status" in QApplication.clipboard().text()
+        assert f"Authorization: Bearer {TOKEN}." in QApplication.clipboard().text()
+        assert "Ask me for the token" not in QApplication.clipboard().text()
         page.setup_kind.setCurrentIndex(1)
         assert "claude mcp add" in page.setup_text.toPlainText()
-        assert "<PASTE_TOKEN>" in page.setup_text.toPlainText()
+        assert "<PASTE_TOKEN>" not in page.setup_text.toPlainText()
+        page.copy_setup.click()
+        assert f'"Authorization: Bearer {TOKEN}"' in QApplication.clipboard().text()
         page.setup_kind.setCurrentIndex(2)
         config = json.loads(page.setup_text.toPlainText())
         assert config["mcpServers"]["openwhisper"]["url"] == page.url.text()
+        page.copy_setup.click()
+        config = json.loads(QApplication.clipboard().text())
+        assert config["mcpServers"]["openwhisper"]["headers"] == {
+            "Authorization": f"Bearer {TOKEN}"
+        }
         page.setup_kind.buttons[3].click()
-        config = tomllib.loads(page.setup_text.toPlainText())
+        assert TOKEN not in page.setup_text.toPlainText()
+        page.copy_setup.click()
+        config = tomllib.loads(QApplication.clipboard().text())
         assert config["mcp_servers"]["openwhisper"] == {
             "url": page.url.text(),
-            "http_headers": {"Authorization": "Bearer <PASTE_TOKEN>"},
+            "http_headers": {"Authorization": f"Bearer {TOKEN}"},
         }
-        page.copy_setup.click()
-        assert QApplication.clipboard().text() == page.setup_text.toPlainText()
-        assert TOKEN not in QApplication.clipboard().text()
         page._copy(server.token())
         assert QApplication.clipboard().text() == TOKEN
         assert TOKEN not in (tmp_path / "settings.json").read_text()
@@ -208,7 +217,25 @@ def test_failed_permission_save_rolls_back_ui_and_preserves_other_grants(
         page.deleteLater()
 
 
-def test_tailscale_setup_uses_host_url_and_separate_token(tmp_path):
+def test_setup_falls_back_to_the_placeholder_without_a_token(tmp_path):
+    page, _, server = make_page(tmp_path)
+    try:
+        server.current = ServerStatus("running", "Ready", DEFAULT_PORT)
+        server.token = lambda: ""
+        page.refresh()
+        page.copy_setup.click()
+        assert "Ask me for the token" in QApplication.clipboard().text()
+        page.setup_kind.setCurrentIndex(1)
+        assert "Replace <PASTE_TOKEN>" in page.setup_hint.text()
+        page.copy_setup.click()
+        assert QApplication.clipboard().text() == page.setup_text.toPlainText()
+        assert '"Authorization: Bearer <PASTE_TOKEN>"' in QApplication.clipboard().text()
+    finally:
+        page.close()
+        page.deleteLater()
+
+
+def test_tailscale_setup_uses_host_url_and_masks_token_on_screen(tmp_path):
     page, settings, server = make_page(tmp_path)
     try:
         assert not page.tailscale_enabled.isChecked()
@@ -222,10 +249,10 @@ def test_tailscale_setup_uses_host_url_and_separate_token(tmp_path):
         assert not page.tailscale_tile.isEnabled()
         assert page.url.text() == remote_url
         assert "same Tailscale network" in page.setup_text.toPlainText()
-        assert "on the computer running OpenWhisper" in page.setup_text.toPlainText()
         assert TOKEN not in page.setup_text.toPlainText()
         page.copy_setup.click()
         assert remote_url in QApplication.clipboard().text()
+        assert TOKEN in QApplication.clipboard().text()
         page.setup_kind.setCurrentIndex(2)
         assert (
             json.loads(page.setup_text.toPlainText())["mcpServers"]["openwhisper"][
@@ -295,7 +322,10 @@ def test_disclosures_keep_connection_formats_and_copy_actions_available(tmp_path
             assert label in page.copy_setup.text()
             assert TOKEN not in page.setup_text.toPlainText()
             page.copy_setup.click()
-            assert QApplication.clipboard().text() == page.setup_text.toPlainText()
+            # The copy is the preview with the real token in place of the mask.
+            assert QApplication.clipboard().text() == page.setup_text.toPlainText().replace(
+                _HIDDEN_TOKEN, TOKEN
+            )
         page.copy_token.click()
         assert QApplication.clipboard().text() == TOKEN
         assert page.notice.isVisible()
@@ -498,7 +528,7 @@ def test_connection_text_fits_in_settings_container_at_all_font_sizes(
         assert sum(button.isChecked() for button in page.setup_kind.buttons) == 1
         page.copy_setup.click()
         assert "claude mcp add" in QApplication.clipboard().text()
-        assert TOKEN not in QApplication.clipboard().text()
+        assert TOKEN in QApplication.clipboard().text()
     finally:
         scroll.close()
         scroll.deleteLater()

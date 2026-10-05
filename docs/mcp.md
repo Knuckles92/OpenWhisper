@@ -15,13 +15,17 @@ The page follows the app's light, dark, system, or Omarchy theme and offers:
   is enabled.
 - **Access token**, hidden on screen with a separate copy button.
 - **Setup prompt**, which tells the agent how to register the server and
-  verify it. Copy it directly or expand its preview. The prompt asks for the
-  token separately.
-- **Claude Code**, with a command ready to copy after replacing `<PASTE_TOKEN>`.
-- **Cursor**, with JSON to merge into the client's `mcpServers` configuration
-  after replacing `<PASTE_TOKEN>`. Other clients may use a different config format.
-- **ChatGPT**, with TOML to merge into the desktop app's `~/.codex/config.toml`
-  after replacing `<PASTE_TOKEN>`. It uses the selected local or Tailscale address.
+  verify it. Copy it directly or expand its preview.
+- **Claude Code**, with a command ready to paste into a terminal.
+- **Cursor**, with JSON to merge into the client's `mcpServers` configuration.
+  Other clients may use a different config format.
+- **ChatGPT**, with TOML to merge into the desktop app's `~/.codex/config.toml`.
+  It uses the selected local or Tailscale address.
+
+Every copy includes the access token, so there is nothing to fill in. The
+on-screen preview shows `••••••••••••` in its place. If the token isn't
+available, the copy has `<PASTE_TOKEN>` (or the prompt asks for the token) and
+you paste it from **Access token**.
 - **Permissions**, with separate switches for **Rename dictations**,
   **Rename finished meetings**, and **Read app preferences**. Expand
   **Choose individual preferences** and its categories for all 20 write permissions.

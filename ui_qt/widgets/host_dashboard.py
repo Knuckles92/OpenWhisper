@@ -1610,6 +1610,7 @@ class HostDashboard(QWidget):
             return
         try:
             status = server.status()
+            token = server.token() if status.state == "running" else ""
         except Exception:
             logger.debug("Could not read the MCP server's status", exc_info=True)
             self.mcp_copy_prompt.setEnabled(False)
@@ -1619,7 +1620,8 @@ class HostDashboard(QWidget):
             return
         from services.agent_mcp.setup import agent_prompt
 
-        QApplication.clipboard().setText(agent_prompt(getattr(status, "remote_url", "") or status.url))
+        url = getattr(status, "remote_url", "") or status.url
+        QApplication.clipboard().setText(agent_prompt(url, token=token))
         self.mcp_copy_prompt.setText("Copied")
         self._mcp_copy_feedback_timer.start()
 

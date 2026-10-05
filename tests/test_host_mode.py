@@ -683,7 +683,7 @@ def test_host_copies_the_current_access_token_with_independent_feedback(service,
     page.mcp_copy_prompt.click()
     assert page.mcp_copy_prompt.text() == "Copied"
     assert page.mcp_copy_token.text() == "Copy access token"
-    assert server.access_token not in QApplication.clipboard().text()
+    assert f"Authorization: Bearer {server.access_token}" in QApplication.clipboard().text()
 
 
 @pytest.mark.parametrize("state", ["stopped", "starting", "stopping", "error"])
