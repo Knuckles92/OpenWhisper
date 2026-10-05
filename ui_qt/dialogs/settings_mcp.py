@@ -1229,7 +1229,10 @@ class McpSettingsView(QWidget):
         elif availability == mcp_link.UNSUPPORTED:
             self.gate.show_message(
                 f"{host} needs an update",
-                f"Update OpenWhisper on {host} to manage its MCP server from here.",
+                f"{host} is running a version of OpenWhisper from before this feature, so "
+                "there's nothing to switch on there yet. Update and restart OpenWhisper on "
+                f"{host}, then turn on “Allow paired computers to manage MCP” in Settings → "
+                "Remote engine on it.",
                 can_retry=True,
             )
         elif availability == mcp_link.OFFLINE:
