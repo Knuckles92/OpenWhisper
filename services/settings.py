@@ -199,6 +199,9 @@ class SettingsKey:
     REMOTE_HOST_TAILSCALE_TRUST: Final[str] = "remote_host_tailscale_trust"
     # Host opt-in: keep paired computers' records (history, meetings) here.
     REMOTE_HOST_KEEP_RECORDS: Final[str] = "remote_host_keep_records"
+    # Host opt-in: paired computers may switch this computer's MCP server and
+    # read its connection details (services/agent_mcp/host_control.py).
+    REMOTE_HOST_MANAGE_MCP: Final[str] = "remote_host_manage_mcp"
     # Client: where this computer's records are kept while paired:
     # "local" (default), "host" (moved there), or "both" (copied there).
     REMOTE_RECORDS_LOCATION: Final[str] = "remote_records_location"

@@ -77,19 +77,35 @@ class _ChoiceButton(QPushButton):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 8, 14, 8)
         layout.setSpacing(2)
+        self._layout = layout
+        self._detail = None
         for text, name in ((title, "mcpChoiceTitle"), (detail, "mcpChoiceDetail")):
             if not text:
                 continue
-            label = QLabel(text)
-            label.setObjectName(name)
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-            layout.addWidget(label)
+            label = self._line(text, name)
+            if name == "mcpChoiceDetail":
+                self._detail = label
         self.toggled.connect(
             lambda checked: set_style_property(
                 layout.itemAt(0).widget(), "selected", checked
             )
         )
+
+    def _line(self, text, name):
+        label = QLabel(text)
+        label.setObjectName(name)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._layout.addWidget(label)
+        return label
+
+    def set_detail(self, text):
+        """The supporting line under the title, which may change while shown."""
+        if self._detail is None:
+            self._detail = self._line(text, "mcpChoiceDetail")
+        self._detail.setText(text)
+        self.setAccessibleDescription(text)
+        self.updateGeometry()
 
     def sizeHint(self):
         return self.layout().sizeHint().expandedTo(QSize(0, 36))
@@ -109,6 +125,8 @@ class _ChoiceBar(QWidget):
     """A segmented tray. Equal-width choices wrap into rows instead of one tall stack."""
 
     currentIndexChanged = pyqtSignal(int)
+    #: Only a person's click, not ``setCurrentIndex`` called by the page.
+    activated = pyqtSignal(int)
 
     def __init__(self, choices, *, parent=None):
         super().__init__(parent)
@@ -130,8 +148,14 @@ class _ChoiceBar(QWidget):
         self._reflow_timer = QTimer(self)
         self._reflow_timer.setSingleShot(True)
         self._reflow_timer.timeout.connect(self._reflow)
+        self._group.idClicked.connect(self.activated)
         self._group.idClicked.connect(self.setCurrentIndex)
         self.setCurrentIndex(0)
+
+    def set_detail(self, index, text):
+        if self.buttons[index]._detail is None or self.buttons[index]._detail.text() != text:
+            self.buttons[index].set_detail(text)
+            self._reflow_timer.start(0)
 
     def _place(self, columns):
         if columns == self._columns:
@@ -368,7 +392,17 @@ class _PermissionRow(QFrame):
 
 
 class McpSettingsPage(QWidget):
-    def __init__(self, settings, *, server=None, parent=None):
+    """The MCP controls for one computer.
+
+    By default that is this one. With ``host_name`` it is a paired host's, read
+    and changed through ``settings``/``server`` stand-ins (services/remote_asr/
+    mcp_link.py) and ``link``, which reports changes the host refused. Nothing
+    else differs except which "where is your assistant" choice means the
+    Tailscale address: for a host that is "this computer", since the host is
+    the other machine.
+    """
+
+    def __init__(self, settings, *, server=None, parent=None, host_name=None, link=None):
         super().__init__(parent)
         self.setObjectName("mcpSettingsPage")
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -376,6 +410,11 @@ class McpSettingsPage(QWidget):
         self.server = server if server is not None else runtime
         if server is None:
             self.server.bind_settings(settings)
+        self.host_name = host_name
+        self.link = link
+        # Index of the chooser option that uses the Tailscale address.
+        self._remote_index = 0 if host_name else 1
+        self._local_index = 1 - self._remote_index
         self._notice = ""
         self._wide = None
         layout = QVBoxLayout(self)
@@ -436,12 +475,18 @@ class McpSettingsPage(QWidget):
         self.agent_location = _ChoiceBar(
             (
                 ("This computer", ""),
+                (f"On {host_name}", ""),
+            )
+            if host_name
+            else (
+                ("This computer", ""),
                 ("Another computer", ""),
             )
         )
         self.agent_location.setAccessibleName("Agent computer")
+        tailscale_on = settings.get(SettingsKey.MCP_TAILSCALE_ENABLED, False) is True
         self.agent_location.setCurrentIndex(
-            1 if settings.get(SettingsKey.MCP_TAILSCALE_ENABLED, False) is True else 0
+            self._remote_index if tailscale_on or host_name else self._local_index
         )
         self.agent_location.currentIndexChanged.connect(self._render_setup)
         setup_layout.addWidget(self.agent_location)
@@ -751,7 +796,9 @@ class McpSettingsPage(QWidget):
         try:
             self.settings.save_setting(SettingsKey.MCP_TAILSCALE_ENABLED, checked)
             self._notice = ""
-            self.agent_location.setCurrentIndex(1 if checked else 0)
+            self.agent_location.setCurrentIndex(
+                self._remote_index if checked else self._local_index
+            )
         except Exception:
             self._notice = "Could not save Tailscale access. Try again."
         self.refresh()
@@ -792,11 +839,15 @@ class McpSettingsPage(QWidget):
     def _render_setup(self):
         status = self.server.status()
         url = status.url
-        remote = self.agent_location.currentIndex() == 1
+        remote = self.agent_location.currentIndex() == self._remote_index
         if remote:
             url = getattr(status, "remote_url", "")
         self.url_label.setText(
-            "Tailscale MCP address" if remote else "Local MCP address"
+            "Tailscale MCP address"
+            if remote
+            else f"MCP address on {self.host_name}"
+            if self.host_name
+            else "Local MCP address"
         )
         ready = status.state == "running" and bool(url)
         self.url.setToolTip(
@@ -836,7 +887,7 @@ class McpSettingsPage(QWidget):
             self.url.setText(url)
             self.url.setCursorPosition(0)
         options = (
-            agent_prompt(url),
+            agent_prompt(url, self.host_name),
             claude_command(url),
             client_config(url, "<PASTE_TOKEN>"),
             chatgpt_config(url),
@@ -849,6 +900,14 @@ class McpSettingsPage(QWidget):
         status = self.server.status()
         preferences = self.settings.load_all_settings()
         saved = preferences.get(SettingsKey.MCP_ENABLED, False) is True
+        if self.link is not None:
+            # The host answers after the click, so what it refused arrives here.
+            self._notice = self.link.take_problem() or self._notice
+            port = preferences.get(SettingsKey.MCP_PORT)
+            if type(port) is int and port != self.port.value() and not self.port.hasFocus():
+                self.port.blockSignals(True)
+                self.port.setValue(port)
+                self.port.blockSignals(False)
         for key, check in self.permission_checks.items():
             check.blockSignals(True)
             check.setChecked(preferences.get(key) is True)
@@ -888,9 +947,14 @@ class McpSettingsPage(QWidget):
             "stopping": "Stopping",
             "error": "Could not start",
         }
+        where = self.host_name or ""
         details = {
-            "running": "Keep OpenWhisper open.",
-            "stopped": "Turn on to let an assistant search your saved dictations and meetings.",
+            "running": f"Keep OpenWhisper open on {where}."
+            if where
+            else "Keep OpenWhisper open.",
+            "stopped": f"Turn on to let an assistant search {where}'s saved dictations and meetings."
+            if where
+            else "Turn on to let an assistant search your saved dictations and meetings.",
         }
         detail = details.get(status.state, status.message)
         self.status_label.setText(
@@ -932,4 +996,228 @@ class McpSettingsPage(QWidget):
 
     def hideEvent(self, event):
         self.timer.stop()
+        super().hideEvent(event)
+
+
+class _HostGate(QFrame):
+    """Stands in for the host's controls while it can't be managed from here."""
+
+    retry = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("mcpGate")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(8)
+        self.title = WrappedLabel("")
+        self.title.setObjectName("mcpCardTitle")
+        self.body = WrappedLabel("")
+        self.body.setObjectName("settingsTileDescription")
+        self.button = _ActionButton("Check again")
+        self.button.setObjectName("mcpCopyButton")
+        self.button.set_base_minimum_size(0, 38)
+        self.button.clicked.connect(self.retry)
+        layout.addWidget(self.title)
+        layout.addWidget(self.body)
+        layout.addSpacing(4)
+        layout.addWidget(self.button, alignment=Qt.AlignmentFlag.AlignLeft)
+
+    def show_message(self, title, body, *, can_retry):
+        self.title.setText(title)
+        self.body.setText(body)
+        self.body.setVisible(bool(body))
+        self.button.setVisible(can_retry)
+
+
+class McpSettingsView(QWidget):
+    """MCP settings for this computer and, once paired, for its host.
+
+    Most people with a host will want the host's: that is where an assistant
+    should connect, and where their records live if they keep them there. The
+    tabs show up only while paired, and open on the host's when its MCP is
+    already running and this computer's is not.
+    """
+
+    _service_event = pyqtSignal(str)
+
+    def __init__(self, settings, *, parent=None):
+        super().__init__(parent)
+        self.setObjectName("mcpSettingsView")
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.local = McpSettingsPage(settings)
+        self.host_page = None
+        self.tabs = None
+        self._service = None
+        self._pairing = None
+        self._link = None
+        self._chosen = False
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(14)
+        self._layout.addWidget(self.local)
+        self.host_area = QWidget()
+        self.host_area.setObjectName("mcpHostArea")
+        self.host_layout = QVBoxLayout(self.host_area)
+        self.host_layout.setContentsMargins(0, 0, 0, 0)
+        self.gate = _HostGate()
+        self.gate.retry.connect(self._retry)
+        self.host_layout.addWidget(self.gate)
+        self.host_area.hide()
+        self._layout.addWidget(self.host_area)
+        self._timer = QTimer(self)
+        self._timer.setInterval(500)
+        self._timer.timeout.connect(self._sync)
+        self._service_event.connect(self._on_service_event)
+
+    # ---- the service ----
+
+    def bind(self, service):
+        """Attach the controller's remote engine service (built after the dialog)."""
+        if service is not self._service:
+            if self._service is not None:
+                self._service.remove_listener(self._listener)
+            self._service = service
+            if service is not None:
+                listener = self._listener
+                service.add_listener(listener)
+                self.destroyed.connect(lambda *_: service.remove_listener(listener))
+        self._refresh_pairing()
+
+    def _listener(self, kind):
+        # Called on whatever thread the change happened; the signal re-posts it.
+        self._service_event.emit(kind)
+
+    def _on_service_event(self, kind):
+        if kind == "client":
+            self._refresh_pairing()
+
+    def _refresh_pairing(self):
+        pairing = self._service.client_pairing() if self._service is not None else None
+        if pairing == self._pairing and (pairing is None) == (self._link is None):
+            return
+        self._pairing = pairing
+        if self.host_page is not None:
+            self.host_layout.removeWidget(self.host_page)
+            self.host_page.hide()
+            self.host_page.deleteLater()
+            self.host_page = None
+        if self.tabs is not None:
+            self._layout.removeWidget(self.tabs)
+            self.tabs.hide()
+            self.tabs.deleteLater()
+            self.tabs = None
+        self._link = None
+        self._chosen = False
+        if pairing is None:
+            self._show_tab(0)
+            return
+        from services.remote_asr.mcp_link import HostMcpLink
+
+        self._link = HostMcpLink(self._service, pairing)
+        self.tabs = _ChoiceBar((("This computer", ""), (self._host_name(), "")))
+        self.tabs.setAccessibleName("Whose MCP to manage")
+        self.tabs.currentIndexChanged.connect(self._show_tab)
+        self.tabs.activated.connect(self._choose)
+        self._layout.insertWidget(0, self.tabs)
+        self._show_tab(0)
+        self._link.poll()
+        self._sync()
+
+    def _host_name(self):
+        return getattr(self._pairing, "host_name", "") or "Host"
+
+    # ---- what shows ----
+
+    def _choose(self, _index):
+        self._chosen = True
+
+    def _show_tab(self, index):
+        host = index == 1 and self._link is not None
+        self.local.setVisible(not host)
+        self.host_area.setVisible(host)
+        if host:
+            self._link.refresh_now()
+            self._ensure_host_page()
+        self._sync()
+
+    def _ensure_host_page(self):
+        if self.host_page is not None or self._link is None:
+            return
+        from services.remote_asr.mcp_link import HostMcpServer, HostMcpSettings
+
+        self.host_page = McpSettingsPage(
+            HostMcpSettings(self._link),
+            server=HostMcpServer(self._link),
+            host_name=self._host_name(),
+            link=self._link,
+        )
+        self.host_layout.addWidget(self.host_page)
+        self.host_page.hide()
+
+    def _retry(self):
+        if self._link is not None:
+            self._link.refresh_now()
+            self._sync()
+
+    def _sync(self):
+        link = self._link
+        if link is None or self.tabs is None:
+            return
+        from services.remote_asr import mcp_link
+
+        link.poll()
+        availability = link.availability()
+        state = link.state() if availability == mcp_link.READY else None
+        local_running = self.local.server.status().state == "running"
+        self.tabs.set_detail(0, "MCP on" if local_running else "MCP off")
+        host = self._host_name()
+        host_running = state is not None and state["state"] == "running"
+        self.tabs.set_detail(1, {
+            mcp_link.READY: "Host · MCP on" if host_running else "Host · MCP off",
+            mcp_link.FORBIDDEN: "Host · not allowed",
+            mcp_link.UNSUPPORTED: "Host · needs update",
+            mcp_link.OFFLINE: "Host · unreachable",
+        }.get(availability, "Host · checking…"))
+        if (not self._chosen and host_running and not local_running
+                and self.tabs.currentIndex() == 0):
+            self.tabs.setCurrentIndex(1)
+        if self.tabs.currentIndex() != 1:
+            return
+        ready = availability == mcp_link.READY
+        if self.host_page is not None:
+            self.host_page.setVisible(ready)
+        self.gate.setVisible(not ready)
+        if ready:
+            return
+        if availability == mcp_link.FORBIDDEN:
+            self.gate.show_message(
+                f"{host} hasn't allowed this yet",
+                "To manage its MCP server from here, turn on “Allow paired computers "
+                f"to manage MCP” in Settings → Remote engine on {host}. It's off by "
+                "default because it lets paired computers turn MCP on and read its access token.",
+                can_retry=True,
+            )
+        elif availability == mcp_link.UNSUPPORTED:
+            self.gate.show_message(
+                f"{host} needs an update",
+                f"Update OpenWhisper on {host} to manage its MCP server from here.",
+                can_retry=True,
+            )
+        elif availability == mcp_link.OFFLINE:
+            self.gate.show_message(
+                f"Can't reach {host}", link.message(), can_retry=True
+            )
+        else:
+            self.gate.show_message(f"Checking {host}…", "", can_retry=False)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._link is not None:
+            self._link.refresh_now()
+        self._sync()
+        self._timer.start()
+
+    def hideEvent(self, event):
+        self._timer.stop()
         super().hideEvent(event)

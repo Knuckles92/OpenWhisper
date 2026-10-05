@@ -9,6 +9,7 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 ## [Unreleased]
 
 ### Added
+- **Manage your host's MCP from Settings** — a computer paired with a host gets a *This computer / host* switch on the MCP page, with the same controls for the host: turn MCP on or off, Tailscale access, agent permissions, and the address, setup prompt and access token for connecting an assistant to it. It opens on the host when only the host's MCP is running. The host's owner must turn on **Allow paired computers to manage MCP** under Settings → Remote engine (off by default, rechecked on every request, and cleared when a backup is restored). The MCP page is also more compact, with a status header that shows running and error states.
 - **Basic and Advanced settings** — everyday controls live in compact Dictation, Meetings, and App tabs. Advanced retains the complete settings sidebar, model configuration, and search. Both views save the same settings, remember the selected view, and preserve links to detailed pages.
 - **Local backup and restore** — a dedicated page in Settings saves settings, history, meetings, and optional recordings to a verified `.owbackup` archive. Restore previews the archive, applies it during a clean restart, and retains the previous data for recovery. Optional daily or weekly backups run while the app is open and idle, with configurable retention.
 

@@ -33,10 +33,11 @@ def chatgpt_config(url: str) -> str:
     )
 
 
-def agent_prompt(url: str) -> str:
+def agent_prompt(url: str, host_name: str | None = None) -> str:
+    """``host_name`` names the computer running OpenWhisper when it isn't this one."""
     local = urlsplit(url).hostname in {"127.0.0.1", "localhost", "::1"}
     location = (
-        f"Connect my agent to OpenWhisper running on computer {socket.gethostname()}. "
+        f"Connect my agent to OpenWhisper running on computer {host_name or socket.gethostname()}. "
         "This is that computer's localhost URL. Use it only if the agent runs on "
         "the same computer. If the agent runs elsewhere, ask me to enable Allow "
         "agents over Tailscale in OpenWhisper Settings > MCP on the host and copy "

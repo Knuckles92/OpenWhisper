@@ -69,6 +69,18 @@ resumable and verified:
   base64 in the JSON reply; ``records_delete`` removes one, ``records_clear``
   every one of a kind, and ``records_abort`` drops an unfinished upload.
 
+MCP control is advertised as ``ready.capabilities.mcp_control``: true when the
+host's owner allows paired computers to manage its MCP server (off by
+default), false when they haven't, and missing on older hosts. The permission
+is rechecked on every request. ``mcp_state`` returns whether MCP is on, its
+status, port, Tailscale access, the connection URLs, the access token while
+it is running, and which agent permissions and preferences are granted.
+``mcp_configure`` takes a bounded ``settings`` object (``enabled``, ``port``,
+``tailscale``, ``retitle_transcriptions``, ``retitle_meetings``,
+``settings_access`` and ``writable``, a map of preference key to bool),
+applies it all or none of it, and answers with the new state. Port and
+Tailscale can change only while MCP is off, as on the host's own page.
+
 A request frame is a 4-byte big-endian header length, the JSON header, then
 a payload. For decoding operations the payload is the audio as 16 kHz mono
 signed 16-bit little-endian PCM. Dictation audio is recorded as 16-bit and

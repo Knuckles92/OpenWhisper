@@ -4,6 +4,7 @@ Control routes are explicit so existing deep links can request a control and
 build its owning page. Search metadata mirrors the page's tile/field copy.
 """
 CONTROL_DESTINATIONS = {'mcp_page': 'mcp',
+ 'mcp_view': 'mcp',
  'backup_page': 'backup',
  'backup_create_tile': 'backup',
  'backup_restore_tile': 'backup',

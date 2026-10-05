@@ -863,6 +863,7 @@ class UIController(QObject):
             self._on_settings_recording_trigger_mode_changed
         )
         dialog.remote_section.bind(self.remote_engine, self.select_transcription_backend)
+        dialog.bind_remote_service(self.remote_engine)
         models = dialog.models
         models.on_set_active_requested = self._on_manager_set_active
         models.on_backend_changed = self.select_transcription_backend

@@ -140,7 +140,7 @@ from ui_qt.dialogs.settings_fields import (
     settings_caption,
     settings_field,
 )
-from ui_qt.dialogs.settings_mcp import McpSettingsPage
+from ui_qt.dialogs.settings_mcp import McpSettingsView
 from ui_qt.dialogs.settings_models import ModelAssignments
 from ui_qt.dialogs.settings_overview import OverviewPage, OverviewSummary
 from ui_qt.dialogs.settings_basic import BasicSettingsPage
@@ -630,6 +630,7 @@ class SettingsDialog(QDialog):
             defer_build=True,
         )
         self.overview = OverviewPage()
+        self._remote_service = None
         self.remote_section = RemoteEngineSection(self)
 
         self.stack = QStackedWidget()
@@ -893,9 +894,20 @@ class SettingsDialog(QDialog):
             self.ensure_page(key)
 
     def _build_mcp_page(self, layout: QVBoxLayout) -> None:
-        self.mcp_page = McpSettingsPage(settings_manager)
-        layout.addWidget(self.mcp_page)
+        self.mcp_view = McpSettingsView(settings_manager)
+        # This computer's own controls; the view adds the paired host's.
+        self.mcp_page = self.mcp_view.local
+        if self._remote_service is not None:
+            self.mcp_view.bind(self._remote_service)
+        layout.addWidget(self.mcp_view)
         layout.addStretch()
+
+    def bind_remote_service(self, service) -> None:
+        """Give the MCP page the remote engine service, so it can reach a paired host."""
+        self._remote_service = service
+        view = self.__dict__.get("mcp_view")
+        if view is not None:
+            view.bind(service)
 
     def _build_backup_page(self, layout: QVBoxLayout) -> None:
         self.backup_page = BackupSettingsPage(self._backup_coordinator)

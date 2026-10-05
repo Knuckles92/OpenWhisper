@@ -357,6 +357,17 @@ class RemoteEngineSection(QObject):
         self.keep_records_tile.setObjectName("remoteKeepRecordsTile")
         self.keep_records_tile.checkbox.toggled.connect(self._on_keep_records_toggled)
 
+        self.manage_mcp_tile = SettingTile(
+            "Allow paired computers to manage MCP",
+            "Off by default. Paired computers can turn this computer's MCP server on or off, "
+            "change what assistants may do, and copy its access token. That token can read "
+            "every saved dictation and meeting here, including records kept for other paired "
+            "computers. Turning this off blocks new requests at once.",
+            icon("key-blue.svg"),
+        )
+        self.manage_mcp_tile.setObjectName("remoteManageMcpTile")
+        self.manage_mcp_tile.checkbox.toggled.connect(self._on_manage_mcp_toggled)
+
         self.port_spin = NoWheelSpinBox()
         self.port_spin.setObjectName("remotePortSpin")
         self.port_spin.setRange(1024, 65535)
@@ -428,14 +439,14 @@ class RemoteEngineSection(QObject):
         dialog._tile_group(
             layout,
             "Share this computer",
-            [self.share_tile, self.management_tile, self.keep_records_tile, self.tailscale_tile,
-             self.port_tile, self.devices_tile],
+            [self.share_tile, self.management_tile, self.keep_records_tile,
+             self.manage_mcp_tile, self.tailscale_tile, self.port_tile, self.devices_tile],
             columns=1,
         )
         self._built = True
         self.refresh()
 
-    _UI_ATTRIBUTES = frozenset({'_set_rail_value', 'storage_status', 'tailnet_list', 'cancel_pairing_button', 'manage_button', 'meeting_use_button', 'client_tile', 'paired_row', 'pair_row', 'share_tile', 'code_edit', 'devices_list', 'tailnet_search_button', 'send_existing_button', 'pairing_code_label', 'client_message', 'tailscale_tile', 'pairing_expiry_label', 'retry_records_button', 'use_button', '_tailnet_layout', 'devices_tile', 'forget_button', 'pair_device_button', 'bring_back_button', 'storage_tile', 'host_status', 'share_history_tile', 'keep_records_tile', 'tailnet_tile', 'host_identity', 'management_tile', 'address_edit', '_built', '_location_group', '_devices_layout', 'pairing_box', 'pair_button', 'port_tile', 'location_buttons', 'port_spin'})
+    _UI_ATTRIBUTES = frozenset({'_set_rail_value', 'storage_status', 'tailnet_list', 'cancel_pairing_button', 'manage_button', 'meeting_use_button', 'client_tile', 'paired_row', 'pair_row', 'share_tile', 'code_edit', 'devices_list', 'tailnet_search_button', 'send_existing_button', 'pairing_code_label', 'client_message', 'tailscale_tile', 'pairing_expiry_label', 'retry_records_button', 'use_button', '_tailnet_layout', 'devices_tile', 'forget_button', 'pair_device_button', 'bring_back_button', 'storage_tile', 'host_status', 'share_history_tile', 'keep_records_tile', 'manage_mcp_tile', 'tailnet_tile', 'host_identity', 'management_tile', 'address_edit', '_built', '_location_group', '_devices_layout', 'pairing_box', 'pair_button', 'port_tile', 'location_buttons', 'port_spin'})
 
     def __getattr__(self, name):
         if name in self._UI_ATTRIBUTES and not self.__dict__.get("_built", False):
@@ -482,8 +493,8 @@ class RemoteEngineSection(QObject):
             return
         service = self._service
         for widget in (self.client_tile, self.tailnet_tile, self.share_tile,
-                       self.management_tile, self.keep_records_tile, self.tailscale_tile,
-                       self.port_tile, self.devices_tile):
+                       self.management_tile, self.keep_records_tile, self.manage_mcp_tile,
+                       self.tailscale_tile, self.port_tile, self.devices_tile):
             widget.setEnabled(service is not None)
         if service is None:
             self.client_tile.set_description("The remote engine isn't available in this window.")
@@ -740,7 +751,8 @@ class RemoteEngineSection(QObject):
         self.port_spin.blockSignals(blocked)
 
         for tile, key in ((self.management_tile, "model_management"),
-                          (self.keep_records_tile, "keep_records")):
+                          (self.keep_records_tile, "keep_records"),
+                          (self.manage_mcp_tile, "manage_mcp")):
             checkbox = tile.checkbox
             blocked = checkbox.blockSignals(True)
             checkbox.setChecked(state.get(key) is True)
@@ -995,6 +1007,10 @@ class RemoteEngineSection(QObject):
     def _on_keep_records_toggled(self, checked: bool) -> None:
         if self._service is not None:
             self._service.set_keep_records(checked)
+
+    def _on_manage_mcp_toggled(self, checked: bool) -> None:
+        if self._service is not None:
+            self._service.set_manage_mcp(checked)
 
     def _on_share_history_toggled(self, checked: bool) -> None:
         if self._service is not None:

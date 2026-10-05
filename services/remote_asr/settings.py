@@ -155,6 +155,13 @@ def host_keeps_records(settings: Optional[Dict[str, Any]] = None) -> bool:
     return _settings(settings).get(SettingsKey.REMOTE_HOST_KEEP_RECORDS) is True
 
 
+def host_manages_mcp(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """Off by default; pairing alone never lets a computer run this one's MCP."""
+    from services.settings import SettingsKey
+
+    return _settings(settings).get(SettingsKey.REMOTE_HOST_MANAGE_MCP) is True
+
+
 RECORD_LOCATIONS = ("local", "host", "both")
 
 

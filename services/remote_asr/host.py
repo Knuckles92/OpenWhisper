@@ -273,6 +273,8 @@ class SpeechHost:
         records_enabled: Optional[Callable[[], bool]] = None,
         records: Optional[Callable[[str, dict, bytes, dict], dict]] = None,
         records_summary: Optional[Callable[[str], dict]] = None,
+        mcp_enabled: Optional[Callable[[], bool]] = None,
+        mcp: Optional[Callable[[str, dict, str], dict]] = None,
         history=None,
         max_connections: int = MAX_CLIENT_CONNECTIONS,
         max_active_jobs: int = MAX_ACTIVE_JOBS,
@@ -294,6 +296,8 @@ class SpeechHost:
         self._records_enabled = records_enabled or (lambda: False)
         self._records = records
         self._records_summary = records_summary or (lambda _device_id: {})
+        self._mcp_enabled = mcp_enabled or (lambda: False)
+        self._mcp = mcp
         from services.remote_history.channel import HistoryBroker
 
         self.history = history if history is not None else HistoryBroker(registry)
@@ -584,6 +588,13 @@ class SpeechHost:
             logger.warning("Could not read the record storage permission", exc_info=True)
             return False
 
+    def _controls_mcp(self) -> bool:
+        try:
+            return self._mcp is not None and self._mcp_enabled() is True
+        except Exception:
+            logger.warning("Could not read the MCP control permission", exc_info=True)
+            return False
+
     def _stored_summary(self, device_id: str) -> dict:
         try:
             summary = self._records_summary(device_id)
@@ -705,6 +716,8 @@ class SpeechHost:
                              "runtime_installation": self._can_manage_models(),
                              "engine_controls": self._configure_runtime is not None},
         }
+        if self._mcp is not None:
+            ready["capabilities"]["mcp_control"] = self._controls_mcp()
         if self._records is not None:
             ready["capabilities"]["records"] = self._keeps_records()
             # Counted even while storage is off, so a client can still find
@@ -796,6 +809,8 @@ class SpeechHost:
         if isinstance(op, str) and op.startswith("records_"):
             return self._records_request(request_id, header, payload,
                                          {"id": device_id, "name": device_name})
+        if op in self._MCP_OPS:
+            return self._mcp_request(request_id, header, device_name)
         try:
             audio = protocol.payload_audio(payload)
         except protocol.ProtocolError as exc:
@@ -887,6 +902,43 @@ class SpeechHost:
             result = self._manage_models(op, header, device_name)
         except Exception as exc:
             return {"id": request_id, "error": str(exc) or type(exc).__name__}
+        return {"id": request_id, "result": result}
+
+    _MCP_OPS = frozenset({"mcp_state", "mcp_configure"})
+
+    def _mcp_request(self, request_id, header: dict, device_name: str) -> dict:
+        """This computer's MCP server, for a paired computer its owner allowed.
+
+        The permission is read on EVERY request, so turning it off also stops
+        computers that are already connected. The state includes the access
+        token, which is why this is an opt-in and not part of pairing.
+        """
+        if self._mcp is None:
+            return {"id": request_id, "code": "unsupported",
+                    "error": "Update OpenWhisper on the host to manage its MCP server."}
+        if not self._controls_mcp():
+            return {"id": request_id, "code": "forbidden", "error": (
+                f"{self.host_name} isn't letting paired computers manage its MCP server. "
+                "Turn on \"Allow paired computers to manage MCP\" in Settings → Remote engine there."
+            )}
+        op = header["op"]
+        allowed = {"id", "op"} | ({"settings"} if op == "mcp_configure" else set())
+        if set(header) - allowed or (op == "mcp_configure"
+                                     and not isinstance(header.get("settings"), dict)):
+            return {"id": request_id, "code": "bad_request", "error": "Invalid MCP request."}
+        try:
+            result = self._mcp(op, header, device_name)
+        except ValueError as exc:
+            # ControlError ("code: public text") carries nothing but a safe message.
+            code, _, text = str(exc).partition(": ")
+            return {"id": request_id, "code": code if text else "bad_request",
+                    "error": text or str(exc)}
+        except Exception as exc:
+            logger.warning("MCP request %s from %s failed", op, device_name, exc_info=True)
+            return {"id": request_id, "error": str(exc) or type(exc).__name__}
+        if op == "mcp_configure":
+            logger.info("%s changed this computer's MCP settings", device_name)
+            self._emit("mcp", {"by": device_name})
         return {"id": request_id, "result": result}
 
     #: Operations that store something; the rest read back or delete.

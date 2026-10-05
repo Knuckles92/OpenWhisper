@@ -936,18 +936,22 @@ QFrame#settingsTile QCheckBox::indicator:checked:disabled {
    the theme's tint tokens so state (running, error) reads as colour, not as
    another outlined box. */
 QWidget#mcpSettingsPage,
+QWidget#mcpSettingsView,
+QWidget#mcpHostArea,
 QWidget#mcpCopyField,
 QWidget#mcpConnection,
 QWidget#mcpDisclosure,
 QWidget#mcpDisclosureBody,
 QWidget#mcpSettingsPermissions,
 QWidget#mcpAdaptiveRow,
+QWidget#mcpSettingsView QLabel,
 QWidget#mcpSettingsPage QLabel {
     background-color: transparent;
     border: none;
 }
 
 QFrame#mcpCard,
+QFrame#mcpGate,
 QFrame#mcpServerBar {
     background-color: @slate-surface;
     border: 1px solid @slate-border-subtle;
@@ -962,6 +966,11 @@ QFrame#mcpServerBar[state="running"] {
 QFrame#mcpServerBar[state="error"] {
     background-color: rgba(@danger-rgb, 0.10);
     border-color: rgba(@danger-rgb, 0.38);
+}
+
+QFrame#mcpGate QLabel {
+    background-color: transparent;
+    border: none;
 }
 
 QWidget#mcpSettingsPage QLabel#mcpStatusText {

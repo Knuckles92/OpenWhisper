@@ -93,6 +93,7 @@ class RemoteEngineService:
         self._backend_provider = backend_provider
         self._records_root = records_root
         self._records = None
+        self._mcp_control = None
         self._record_gate = RecordGate()
         from services.remote_asr.host import DeviceRegistry
         from services.remote_history.channel import HistoryBroker
@@ -292,6 +293,8 @@ class RemoteEngineService:
                 records_enabled=remote_settings.host_keeps_records,
                 records=self.records_request,
                 records_summary=self.records_summary,
+                mcp_enabled=remote_settings.host_manages_mcp,
+                mcp=self.mcp_request,
                 history=self.history,
             )
         return self._host
@@ -370,6 +373,27 @@ class RemoteEngineService:
 
         settings_manager.save_setting(SettingsKey.REMOTE_HOST_MODEL_MANAGEMENT, bool(enabled))
         self._notify("state")
+
+    def set_manage_mcp(self, enabled: bool) -> None:
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_HOST_MANAGE_MCP, bool(enabled))
+        self._notify("state")
+
+    def mcp_request(self, op: str, header: dict, device_name: str) -> dict:
+        """A paired computer's MCP request; the host re-checked its permission."""
+        with self._lock:
+            if self._mcp_control is None:
+                from services.agent_mcp.host_control import HostMcpControl
+                from services.agent_mcp.runtime import runtime
+                from services.settings import settings_manager
+
+                # One instance, so its lock serializes every paired computer.
+                self._mcp_control = HostMcpControl(settings_manager, runtime)
+            control = self._mcp_control
+        if op == "mcp_state":
+            return control.state()
+        return control.configure(header["settings"])
 
     def manage_host_models(self, op: str, fields: dict, device_name: str) -> dict:
         """Authenticated host operations; permission remains host-controlled."""
@@ -617,6 +641,7 @@ class RemoteEngineService:
             "tailscale_trust": remote_settings.host_tailscale_trust(),
             "model_management": remote_settings.host_model_management(),
             "keep_records": remote_settings.host_keeps_records(),
+            "manage_mcp": remote_settings.host_manages_mcp(),
         }
         if running:
             try:
@@ -713,6 +738,51 @@ class RemoteEngineService:
             if op == "model_catalog" and self.on_host_catalog is not None:
                 self.on_host_catalog(pairing, ready, result)
             return result
+        finally:
+            connection.close()
+
+    def remote_mcp_request(self, op: str, *, expected_pairing=None, **fields) -> dict:
+        """One off-UI-thread request to the paired host's MCP server.
+
+        A ``RemoteRequestError`` whose ``code`` is "unsupported" (an older host)
+        or "forbidden" (its owner hasn't allowed it) says why the host won't
+        answer; any other ``RemoteEngineError`` means it is out of reach.
+        Writes are never retried:
+        a dropped reply may already have applied, and a fresh ``mcp_state``
+        read shows what the host now has.
+        """
+        from services.remote_asr.client import (
+            RemoteConnection,
+            RemoteEngineError,
+            RemoteRequestError,
+        )
+
+        if op not in ("mcp_state", "mcp_configure"):
+            raise ValueError("Unknown MCP operation.")
+        pairing = self.client_pairing()
+        token = remote_settings.load_client_token()
+        if pairing is None or not token:
+            raise RemoteEngineError("Pair with a host before managing its MCP server.")
+        if expected_pairing is not None and pairing != expected_pairing:
+            raise RemoteEngineError("The paired host changed.")
+        connection = RemoteConnection(
+            pairing.host, pairing.port, token, pairing.fingerprint, alternates=pairing.alternates,
+        )
+        try:
+            ready = connection.connect()
+            capabilities = ready.get("capabilities")
+            if not isinstance(capabilities, dict) or "mcp_control" not in capabilities:
+                raise RemoteRequestError(
+                    "Update OpenWhisper on the host to manage its MCP server from here.",
+                    code="unsupported",
+                )
+            if capabilities.get("mcp_control") is not True:
+                raise RemoteRequestError(
+                    f"{pairing.host_name} isn't letting paired computers manage its MCP server. "
+                    "Turn on \"Allow paired computers to manage MCP\" in Settings → Remote engine there.",
+                    code="forbidden",
+                )
+            return connection.request(op, timeout=30, **fields)
         finally:
             connection.close()
 
