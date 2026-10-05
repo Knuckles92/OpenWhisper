@@ -305,6 +305,48 @@ def test_disclosures_keep_connection_formats_and_copy_actions_available(tmp_path
         page.deleteLater()
 
 
+def test_status_bar_state_drives_styling_and_escapes_messages(tmp_path):
+    page, _, server = make_page(tmp_path)
+    try:
+        assert page.enable_tile.property("state") == "off"
+        server.current = ServerStatus("running", "Ready", DEFAULT_PORT)
+        page.refresh()
+        assert page.enable_tile.property("state") == "running"
+        server.current = ServerStatus("error", "<b>Port</b> is busy.", DEFAULT_PORT)
+        page.refresh()
+        assert page.enable_tile.property("state") == "error"
+        assert "&lt;b&gt;Port" in page.status_label.text()
+    finally:
+        page.close()
+        page.deleteLater()
+
+
+def test_page_is_two_columns_at_settings_width_and_chips_wrap_in_balanced_rows(
+    tmp_path,
+):
+    """A 1,400 px single column was the complaint: keep the cards side by side."""
+    page, _, _ = make_page(tmp_path)
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setWidget(page)
+    try:
+        scroll.resize(1000, 900)
+        scroll.show()
+        for _ in range(8):
+            QApplication.processEvents()
+        assert page.permissions_card.x() > page.connection_card.x()
+        assert page.sizeHint().height() < 800
+        scroll.resize(300, 900)
+        for _ in range(8):
+            QApplication.processEvents()
+        buttons = page.setup_kind.buttons
+        assert len({button.y() for button in buttons}) == 2
+        assert len({button.x() for button in buttons}) == 2
+    finally:
+        scroll.close()
+        scroll.deleteLater()
+
+
 @pytest.mark.parametrize("ui_mode", ["classic", "omarchy"])
 @pytest.mark.parametrize("theme", ["dark", "light"])
 @pytest.mark.parametrize("font_percent", [100, 130])

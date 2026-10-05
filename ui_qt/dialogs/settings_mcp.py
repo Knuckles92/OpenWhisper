@@ -1,5 +1,7 @@
 """Settings destination for the app-owned MCP server and agent onboarding."""
 
+import html
+
 from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
@@ -73,8 +75,8 @@ class _ChoiceButton(QPushButton):
         self.setAccessibleDescription(detail)
         self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(4)
+        layout.setContentsMargins(14, 8, 14, 8)
+        layout.setSpacing(2)
         for text, name in ((title, "mcpChoiceTitle"), (detail, "mcpChoiceDetail")):
             if not text:
                 continue
@@ -90,7 +92,7 @@ class _ChoiceButton(QPushButton):
         )
 
     def sizeHint(self):
-        return self.layout().sizeHint().expandedTo(QSize(0, 42))
+        return self.layout().sizeHint().expandedTo(QSize(0, 36))
 
     def minimumSizeHint(self):
         return self.sizeHint()
@@ -104,40 +106,57 @@ class _ChoiceButton(QPushButton):
 
 
 class _ChoiceBar(QWidget):
+    """A segmented tray. Equal-width choices wrap into rows instead of one tall stack."""
+
     currentIndexChanged = pyqtSignal(int)
 
     def __init__(self, choices, *, parent=None):
         super().__init__(parent)
         self.setObjectName("mcpChoiceBar")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout = QGridLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
         self._group = QButtonGroup(self)
         self._index = -1
+        self._columns = 0
         self.buttons = []
         for index, (title, detail) in enumerate(choices):
             button = _ChoiceButton(title, detail)
             self._group.addButton(button, index)
             self.buttons.append(button)
-            layout.addWidget(button, 1)
+        self._place(len(self.buttons))
         self._reflow_timer = QTimer(self)
         self._reflow_timer.setSingleShot(True)
         self._reflow_timer.timeout.connect(self._reflow)
         self._group.idClicked.connect(self.setCurrentIndex)
         self.setCurrentIndex(0)
 
+    def _place(self, columns):
+        if columns == self._columns:
+            return
+        self._columns = columns
+        layout = self.layout()
+        for button in self.buttons:
+            layout.removeWidget(button)
+        for index, button in enumerate(self.buttons):
+            layout.addWidget(button, index // columns, index % columns)
+        for column in range(len(self.buttons)):
+            layout.setColumnStretch(column, 1 if column < columns else 0)
+
     def _reflow(self):
-        widths = [button.sizeHint().width() for button in self.buttons]
-        required = sum(widths) + self.layout().spacing() * (len(self.buttons) - 1)
-        narrow = self.width() < required
-        self.layout().setDirection(
-            QBoxLayout.Direction.TopToBottom
-            if narrow
-            else QBoxLayout.Direction.LeftToRight
-        )
-        for index, width in enumerate(widths):
-            self.layout().setStretch(index, 0 if narrow else width)
+        layout = self.layout()
+        margins = layout.contentsMargins()
+        gap = layout.horizontalSpacing()
+        cell = max(button.sizeHint().width() for button in self.buttons)
+        for button in self.buttons:
+            button.setMinimumWidth(cell)
+        room = self.width() - margins.left() - margins.right() + gap
+        fits = max(1, min(len(self.buttons), room // (cell + gap)))
+        rows = -(-len(self.buttons) // fits)
+        # Balance the rows so four choices wrap 2 + 2, never 3 + 1.
+        self._place(-(-len(self.buttons) // rows))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -162,13 +181,75 @@ class _ChoiceBar(QWidget):
         self.currentIndexChanged.emit(index)
 
 
+class _AdaptiveRow(QWidget):
+    """Side-by-side while the widgets fit, stacked when they do not.
+
+    ``items`` are ``(widget, stretch)`` pairs; ``None`` is a flexible gap that
+    only exists in the side-by-side arrangement.
+    """
+
+    def __init__(self, items, *, spacing=8, parent=None):
+        super().__init__(parent)
+        self.setObjectName("mcpAdaptiveRow")
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._items = [item for item in items if item is not None]
+        self._stretches = []
+        layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(spacing)
+        for item in items:
+            if item is None:
+                layout.addStretch(1)
+                self._stretches.append(1)
+            else:
+                layout.addWidget(item[0], item[1])
+                self._stretches.append(item[1])
+        self._reflow_timer = QTimer(self)
+        self._reflow_timer.setSingleShot(True)
+        self._reflow_timer.timeout.connect(self.reflow)
+
+    def reflow(self):
+        layout = self.layout()
+        widgets = [widget for widget, _ in self._items if not widget.isHidden()]
+        required = sum(widget.sizeHint().width() for widget in widgets)
+        required += layout.spacing() * max(0, len(widgets) - 1)
+        narrow = self.width() < required
+        layout.setDirection(
+            QBoxLayout.Direction.TopToBottom
+            if narrow
+            else QBoxLayout.Direction.LeftToRight
+        )
+        for index, stretch in enumerate(self._stretches):
+            layout.setStretch(index, 0 if narrow else stretch)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.reflow()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (
+            QEvent.Type.FontChange,
+            QEvent.Type.StyleChange,
+        ) and hasattr(self, "_reflow_timer"):
+            self._reflow_timer.start(0)
+
+
 class _Disclosure(QWidget):
-    def __init__(self, title, *, parent=None):
+    """A collapsible section.
+
+    ``inline`` leaves the toggle for the caller to place beside other actions;
+    the section then occupies no space until it is expanded. ``trailing`` puts
+    a short status label beside the toggle.
+    """
+
+    def __init__(self, title, *, inline=False, trailing=None, parent=None):
         super().__init__(parent)
         self.setObjectName("mcpDisclosure")
+        self._inline = inline
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
         self.toggle = QToolButton()
         self.toggle.setObjectName("mcpDisclosureToggle")
         self.toggle.setText(title)
@@ -177,10 +258,16 @@ class _Disclosure(QWidget):
         self.toggle.setArrowType(Qt.ArrowType.RightArrow)
         self.toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.toggle.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+            QSizePolicy.Policy.Preferred
+            if inline or trailing is not None
+            else QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
         )
         self.toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        layout.addWidget(self.toggle)
+        if trailing is not None:
+            layout.addWidget(_AdaptiveRow([(self.toggle, 0), None, (trailing, 0)]))
+        elif not inline:
+            layout.addWidget(self.toggle)
         self.body = QWidget()
         self.body.setObjectName("mcpDisclosureBody")
         self.body_layout = QVBoxLayout(self.body)
@@ -188,6 +275,8 @@ class _Disclosure(QWidget):
         self.body_layout.setSpacing(10)
         layout.addWidget(self.body)
         self.body.hide()
+        if inline:
+            self.hide()
         self.toggle.toggled.connect(self._expand)
 
     def _expand(self, expanded):
@@ -195,6 +284,8 @@ class _Disclosure(QWidget):
             Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
         )
         self.body.setVisible(expanded)
+        if self._inline:
+            self.setVisible(expanded)
 
 
 class _CopyField(QWidget):
@@ -247,14 +338,14 @@ class _PermissionRow(QFrame):
         super().__init__()
         self.setObjectName("mcpPermissionRow")
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 10, 0, 10)
+        layout.setContentsMargins(0, 8, 0, 8)
         layout.setSpacing(12)
         mark = QLabel()
         mark.setObjectName("settingsTileIcon")
         mark.setPixmap(design_icon(icon).pixmap(20, 20))
         layout.addWidget(mark, alignment=Qt.AlignmentFlag.AlignTop)
         text = QVBoxLayout()
-        text.setSpacing(4)
+        text.setSpacing(2)
         title_label = WrappedLabel(title)
         title_label.setObjectName("settingsTileTitle")
         text.addWidget(title_label)
@@ -289,23 +380,27 @@ class McpSettingsPage(QWidget):
         self._wide = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(18)
+        layout.setSpacing(14)
 
         self.enable_tile = QFrame()
         self.enable_tile.setObjectName("mcpServerBar")
+        self.enable_tile.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
         status_row = QHBoxLayout(self.enable_tile)
-        status_row.setContentsMargins(16, 12, 16, 12)
+        status_row.setContentsMargins(18, 14, 18, 14)
         status_row.setSpacing(12)
         self.status_dot = StatusDot(diameter=10)
         status_row.addWidget(self.status_dot)
         self.status_label = WrappedLabel("")
+        self.status_label.setObjectName("mcpStatusText")
+        self.status_label.setTextFormat(Qt.TextFormat.RichText)
         self.status_label.setAccessibleName("MCP server status")
         status_row.addWidget(self.status_label, 1)
         self.retry = _ActionButton("Retry")
         self.retry.set_base_minimum_size(70, 34)
         self.retry.clicked.connect(self._start)
         status_row.addWidget(self.retry)
-        status_row.addWidget(QLabel("Enable MCP"))
         self.enabled = SettingsSwitch()
         self.enabled.setAccessibleName("Enable MCP")
         self.enabled.setToolTip(
@@ -317,28 +412,31 @@ class McpSettingsPage(QWidget):
 
         self.columns = QGridLayout()
         self.columns.setContentsMargins(0, 0, 0, 0)
-        self.columns.setSpacing(18)
+        self.columns.setSpacing(14)
         layout.addLayout(self.columns)
         self.connection_card, connection_layout = self._card(
-            "Connection", "Connect your assistant in two simple steps."
+            "Connection",
+            "Connect your assistant in two simple steps.",
+            "server-blue.svg",
         )
         self.permissions_card, permissions_layout = self._card(
             "Permissions",
             "Read-only by default. Optional changes are off until you allow them.",
+            "key-blue.svg",
         )
 
         self.connection = QWidget()
         self.connection.setObjectName("mcpConnection")
         setup_layout = QVBoxLayout(self.connection)
         setup_layout.setContentsMargins(0, 0, 0, 0)
-        setup_layout.setSpacing(12)
+        setup_layout.setSpacing(8)
         setup_layout.addWidget(
-            self._label("1. Choose your connection", "mcpSectionLabel")
+            self._label("1. Where is your assistant?", "mcpSectionLabel")
         )
         self.agent_location = _ChoiceBar(
             (
-                ("This computer", "Local connection"),
-                ("Another computer", "Over Tailscale"),
+                ("This computer", ""),
+                ("Another computer", ""),
             )
         )
         self.agent_location.setAccessibleName("Agent computer")
@@ -347,20 +445,23 @@ class McpSettingsPage(QWidget):
         )
         self.agent_location.currentIndexChanged.connect(self._render_setup)
         setup_layout.addWidget(self.agent_location)
-        self.url_label = self._label("MCP server address", "mcpSectionLabel")
-        setup_layout.addWidget(self.url_label)
+        address_layout = QVBoxLayout()
+        address_layout.setSpacing(4)
+        self.url_label = self._label("MCP server address", "mcpFieldLabel")
+        address_layout.addWidget(self.url_label)
         self.url = QLineEdit()
         self.url.setReadOnly(True)
         self.url.setAccessibleName("MCP server address")
         self.copy_url = self._copy_row(
-            setup_layout,
+            address_layout,
             "",
             self.url,
             "Copy address",
             lambda: self.url.text(),
         )
         self.copy_url.setAccessibleName("Copy MCP server address")
-        setup_layout.addSpacing(6)
+        setup_layout.addLayout(address_layout)
+        setup_layout.addSpacing(8)
         setup_layout.addWidget(
             self._label("2. Set up your assistant", "mcpSectionLabel")
         )
@@ -379,12 +480,15 @@ class McpSettingsPage(QWidget):
         setup_layout.addWidget(self.setup_hint)
         self.copy_setup = _ActionButton("Copy setup prompt")
         self.copy_setup.setObjectName("primaryButton")
-        self.copy_setup.set_base_minimum_size(0, 44)
+        self.copy_setup.set_base_minimum_size(0, 38)
         self.copy_setup.clicked.connect(
             lambda: self._copy(self.setup_text.toPlainText())
         )
-        setup_layout.addWidget(self.copy_setup)
-        self.preview = _Disclosure("Preview setup prompt")
+        self.preview = _Disclosure("Preview setup prompt", inline=True)
+        self.copy_actions = _AdaptiveRow(
+            [(self.copy_setup, 0), None, (self.preview.toggle, 0)], spacing=10
+        )
+        setup_layout.addWidget(self.copy_actions)
         self.setup_text = QPlainTextEdit()
         self.setup_text.setReadOnly(True)
         self.setup_text.setMinimumHeight(160)
@@ -392,11 +496,15 @@ class McpSettingsPage(QWidget):
         self.setup_text.setAccessibleName("MCP setup instructions")
         self.preview.body_layout.addWidget(self.setup_text)
         setup_layout.addWidget(self.preview)
-        setup_layout.addSpacing(6)
-        setup_layout.addWidget(self._label("Access token", "mcpSectionLabel"))
-        setup_layout.addWidget(
-            self._detail("Copy this separately when your assistant asks for it.")
+        setup_layout.addSpacing(8)
+        token_layout = QVBoxLayout()
+        token_layout.setSpacing(4)
+        token_label = self._label(
+            "<b>Access token</b> · copy it separately when your assistant asks",
+            "mcpFieldLabel",
         )
+        token_label.setTextFormat(Qt.TextFormat.RichText)
+        token_layout.addWidget(token_label)
         self.token = QLineEdit()
         self.token.setReadOnly(True)
         self.token.setEchoMode(QLineEdit.EchoMode.Password)
@@ -406,12 +514,13 @@ class McpSettingsPage(QWidget):
             "Saved in your system credential store. Copy it separately when your assistant asks."
         )
         self.copy_token = self._copy_row(
-            setup_layout, "", self.token, "Copy token", self.server.token
+            token_layout, "", self.token, "Copy token", self.server.token
         )
         self.copy_token.setAccessibleName("Copy access token")
         self.copy_token.setToolTip(
             "Grants saved-history access and the permissions you choose. Share only with trusted assistants."
         )
+        setup_layout.addLayout(token_layout)
         connection_layout.addWidget(self.connection)
 
         self.advanced = _Disclosure("Advanced connection")
@@ -452,7 +561,9 @@ class McpSettingsPage(QWidget):
         baseline.checkbox.hide()
         baseline.setCursor(Qt.CursorShape.ArrowCursor)
         baseline.checkbox.setEnabled(False)
-        baseline.layout().addWidget(self._label("Included", "mcpIncluded"))
+        included = QLabel("Included")
+        included.setObjectName("mcpIncluded")
+        baseline.layout().addWidget(included, alignment=Qt.AlignmentFlag.AlignVCenter)
         permissions_layout.addWidget(baseline)
         self.permission_checks = {}
         for key, title, description, icon in (
@@ -483,8 +594,11 @@ class McpSettingsPage(QWidget):
             self.permission_checks[key] = check
             permissions_layout.addWidget(row)
 
-        self.preferences = _Disclosure("Choose individual preferences")
-        self.permission_summary = self._detail("")
+        self.permission_summary = QLabel()
+        self.permission_summary.setObjectName("settingsTileDescription")
+        self.preferences = _Disclosure(
+            "Choose individual preferences", trailing=self.permission_summary
+        )
         self.preferences.body_layout.addWidget(
             self._detail(
                 "Each checkbox allows changes to that preference. Permissions apply to every assistant using this token; turning one off blocks future changes immediately."
@@ -515,18 +629,18 @@ class McpSettingsPage(QWidget):
             self.setting_checks[control.key] = check
         self.preferences.body_layout.addWidget(self.settings_permissions)
         permissions_layout.addWidget(self.preferences)
-        permissions_layout.addWidget(self.permission_summary)
-        permissions_layout.addWidget(
-            self._detail(
-                "No recording, deletion, transcript edits, audio access or permission changes. A cloud-powered assistant may send saved text to its provider."
-            )
+        limits = self._detail(
+            "Never allowed: recording, deletion, transcript edits, audio access or permission changes. A cloud-powered assistant may send saved text to its provider."
         )
+        limits.setObjectName("mcpNote")
+        permissions_layout.addWidget(limits)
         permissions_layout.addStretch()
 
         self.notice = WrappedLabel("")
         self.notice.setObjectName("mcpNotice")
         self.notice.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.notice)
+        layout.addStretch()
         self.timer = QTimer(self)
         self.timer.setInterval(500)
         self.timer.timeout.connect(self.refresh)
@@ -544,27 +658,40 @@ class McpSettingsPage(QWidget):
         return cls._label(text, "settingsTileDescription")
 
     @classmethod
-    def _card(cls, title, description):
+    def _card(cls, title, description, icon):
         card = QFrame()
         card.setObjectName("mcpCard")
         card.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(22, 22, 22, 22)
-        layout.setSpacing(16)
-        layout.addWidget(cls._label(title, "mcpCardTitle"))
-        layout.addWidget(cls._detail(description))
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+        header = QHBoxLayout()
+        header.setSpacing(12)
+        tile = QLabel()
+        tile.setObjectName("mcpCardIcon")
+        tile.setFixedSize(34, 34)
+        tile.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tile.setPixmap(design_icon(icon).pixmap(20, 20))
+        header.addWidget(tile, alignment=Qt.AlignmentFlag.AlignTop)
+        titles = QVBoxLayout()
+        titles.setSpacing(1)
+        titles.addWidget(cls._label(title, "mcpCardTitle"))
+        titles.addWidget(cls._detail(description))
+        header.addLayout(titles, 1)
+        layout.addLayout(header)
         return card, layout
 
     def _arrange_columns(self):
-        wide = self.width() >= round(940 * current_ui_font_scale())
+        wide = self.width() >= round(780 * current_ui_font_scale())
         if self._wide == wide:
             return
         self._wide = wide
         self.columns.removeWidget(self.connection_card)
         self.columns.removeWidget(self.permissions_card)
-        self.columns.addWidget(self.connection_card, 0, 0)
+        top = Qt.AlignmentFlag.AlignTop
+        self.columns.addWidget(self.connection_card, 0, 0, alignment=top)
         self.columns.addWidget(
-            self.permissions_card, 0 if wide else 1, 1 if wide else 0
+            self.permissions_card, 0 if wide else 1, 1 if wide else 0, alignment=top
         )
         self.columns.setColumnStretch(0, 6 if wide else 1)
         self.columns.setColumnStretch(1, 5 if wide else 0)
@@ -683,6 +810,7 @@ class McpSettingsPage(QWidget):
         self.copy_setup.setText(f"Copy {kinds[kind]}")
         self.preview.toggle.setText(f"Preview {kinds[kind]}")
         self.preview.toggle.setAccessibleName(self.preview.toggle.text())
+        self.copy_actions.reflow()
         hints = (
             "Paste the setup prompt into your assistant. Copy the access token separately when asked.",
             "Paste the command into your terminal. Replace <PASTE_TOKEN> with the access token.",
@@ -735,9 +863,9 @@ class McpSettingsPage(QWidget):
         )
         access = self.settings_permissions.isEnabled()
         self.permission_summary.setText(
-            f"{len(SETTING_CONTROLS)} preferences · {len(granted) if access else 0} allowed to change"
+            f"{len(granted)} allowed to change"
             if access
-            else "Enable Read app preferences to allow individual changes."
+            else "Needs read access"
         )
         self.enabled.blockSignals(True)
         self.enabled.setChecked(saved)
@@ -760,11 +888,24 @@ class McpSettingsPage(QWidget):
             "stopping": "Stopping",
             "error": "Could not start",
         }
-        detail = (
-            "Keep OpenWhisper open." if status.state == "running" else status.message
+        details = {
+            "running": "Keep OpenWhisper open.",
+            "stopped": "Turn on to let an assistant search your saved dictations and meetings.",
+        }
+        detail = details.get(status.state, status.message)
+        self.status_label.setText(
+            f"<b>{labels[status.state]}</b> · {html.escape(detail)}"
         )
-        self.status_label.setText(f"{labels[status.state]} · {detail}")
         self.status_label.setToolTip(status.message)
+        set_style_property(
+            self.enable_tile,
+            "state",
+            "running"
+            if status.state == "running"
+            else "error"
+            if status.state == "error"
+            else "off",
+        )
         self.status_dot.set_status(
             EngineStatus.READY
             if status.state == "running"
