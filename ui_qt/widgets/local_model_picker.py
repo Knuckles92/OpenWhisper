@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 
 from config import config
 from services.hf_access import CachedModelInfo, resolve_model_repo
+from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.no_wheel import ElidingComboBox
 from ui_qt.widgets.speech_backend_picker import (
     backend_picker_tooltip,
@@ -66,6 +67,7 @@ class LocalModelPicker(QWidget):
 
         self.custom_button = QPushButton("Add custom models…")
         self.custom_button.setFlat(True)
+        set_style_property(self.custom_button, "tone", "neutral")
         self.custom_button.clicked.connect(self.custom_models_requested)
         layout.addWidget(self.custom_button, alignment=Qt.AlignmentFlag.AlignLeft)
 

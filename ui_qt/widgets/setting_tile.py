@@ -4,7 +4,6 @@ from typing import Optional
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QIcon, QMouseEvent
 from PyQt6.QtWidgets import (
-    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -14,6 +13,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui_qt.utils.restyle import set_style_property
+from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 
@@ -113,11 +113,15 @@ class SettingTile(TileBase):
         self.setProperty("kind", "toggle")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        self.checkbox = QCheckBox()
+        # Named ``checkbox`` for the callers that bind it; it is a switch, like
+        # the Basic and MCP pages, and has the QAbstractButton API they use.
+        self.checkbox = SettingsSwitch()
         self.checkbox.setObjectName("settingsTileCheck")
-        self.checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.checkbox.setAccessibleName(title)
+        self.checkbox.setAccessibleDescription(description)
         self.checkbox.toggled.connect(self._sync_checked_property)
-        self.add_trailing(self.checkbox)
+        # Top-aligned, so in a tall tile it stays beside the title.
+        self._row.addWidget(self.checkbox, alignment=Qt.AlignmentFlag.AlignTop)
         self.setProperty("checked", False)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:

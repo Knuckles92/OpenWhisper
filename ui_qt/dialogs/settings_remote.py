@@ -42,6 +42,8 @@ from ui_qt.widgets import (
     SettingTile,
     WrappedLabel,
 )
+from ui_qt.widgets.buttons import compact_primary_button, neutral_button
+from ui_qt.widgets.segmented_bar import SegmentedBar
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,21 @@ def _stored_phrase(stored: dict) -> str:
 
 #: The storage choices, in the order the switch shows them.
 RECORD_LOCATIONS = ("local", "host", "both")
+
+
+class _TileSection(QWidget):
+    """Tiles that show or hide as one tab; their grids still reflow with the page."""
+
+    def __init__(self, page: QWidget):
+        super().__init__()
+        self.setObjectName("remoteSection")
+        self._page = page
+        self.column = QVBoxLayout(self)
+        self.column.setContentsMargins(0, 0, 0, 0)
+        self.column.setSpacing(8)
+
+    def add_tile_grid(self, grid, tiles, columns) -> None:
+        self._page.add_tile_grid(grid, tiles, columns)
 
 
 def _engine_phrase(engine: dict) -> str:
@@ -142,14 +159,32 @@ class RemoteEngineSection(QObject):
     def build(self, dialog, layout: QVBoxLayout, icon: Callable[[str], QIcon]) -> None:
         self._set_rail_value = lambda text: dialog.rail.set_value("remote_engine", text)
 
+        # Two audiences share this page: someone using another computer's
+        # engine, and someone sharing this one. Tabs keep each to one screen.
+        page = layout.parentWidget()
+        self.tabs = SegmentedBar(
+            (("Use another computer", "Not paired"), ("Share this computer", "Off"))
+        )
+        self.tabs.setAccessibleName("Remote engine role")
+        self.client_container = _TileSection(page)
+        self.host_container = _TileSection(page)
+        self.host_container.hide()
+        self._tab_chosen = False
+        self.tabs.activated.connect(lambda _index: setattr(self, "_tab_chosen", True))
+        self.tabs.currentIndexChanged.connect(self._show_section)
+        layout.addWidget(self.tabs)
+        layout.addWidget(self.client_container)
+        layout.addWidget(self.host_container)
+
         # Client: pair with a host, then select the engine.
         self.client_tile = InfoTile(
             "Paired host",
             "",
             icon("server-blue.svg"),
         )
-        self.client_tile.setObjectName("remoteClientTile")
+        self.client_tile.setProperty("tileId", "remoteClientTile")  # not setObjectName: the theme styles tiles by "settingsTile"
         self.pair_row = QWidget()
+        self.pair_row.setObjectName("remotePairRow")
         pair_layout = QHBoxLayout(self.pair_row)
         pair_layout.setContentsMargins(0, 0, 0, 0)
         pair_layout.setSpacing(8)
@@ -173,6 +208,7 @@ class RemoteEngineSection(QObject):
         self.client_tile.add_body(self.pair_row)
 
         self.paired_row = QWidget()
+        self.paired_row.setObjectName("remotePairedRow")
         paired_layout = QVBoxLayout(self.paired_row)
         paired_layout.setContentsMargins(0, 0, 0, 0)
         paired_layout.setSpacing(8)
@@ -211,12 +247,12 @@ class RemoteEngineSection(QObject):
 
         self.share_history_tile = SettingTile(
             "Allow the paired host to query this computer's history",
-            "Off by default. Agents connected to the paired host can search saved dictations "
+            "Agents connected to the paired host can search this computer's saved dictations "
             "and meetings and read their transcripts and insights while this app is running. "
             "Choose Both below to keep a copy available when this computer is offline.",
             icon("server-blue.svg"),
         )
-        self.share_history_tile.setObjectName("remoteShareHistoryTile")
+        self.share_history_tile.setProperty("tileId", "remoteShareHistoryTile")  # not setObjectName: the theme styles tiles by "settingsTile"
         self.share_history_tile.checkbox.toggled.connect(self._on_share_history_toggled)
 
         # Client: where this computer's history, recordings and meetings go.
@@ -225,7 +261,7 @@ class RemoteEngineSection(QObject):
             "",
             icon("box-blue.svg"),
         )
-        self.storage_tile.setObjectName("remoteStorageTile")
+        self.storage_tile.setProperty("tileId", "remoteStorageTile")  # not setObjectName: the theme styles tiles by "settingsTile"
         switch = QFrame()
         switch.setObjectName("recordsLocationSwitch")
         switch_layout = QHBoxLayout(switch)
@@ -274,7 +310,7 @@ class RemoteEngineSection(QObject):
             "",
             icon("world-blue.svg"),
         )
-        self.tailnet_tile.setObjectName("remoteTailnetTile")
+        self.tailnet_tile.setProperty("tileId", "remoteTailnetTile")  # not setObjectName: the theme styles tiles by "settingsTile"
         self.tailnet_list = QWidget()
         self.tailnet_list.setObjectName("remoteTailnetList")
         self._tailnet_layout = QVBoxLayout(self.tailnet_list)
@@ -291,14 +327,14 @@ class RemoteEngineSection(QObject):
         self.tailnet_tile.add_body_layout(search_row)
 
         dialog._tile_group(
-            layout,
-            "Use another computer",
+            self.client_container.column,
+            "",
             [self.client_tile, self.share_history_tile, self.storage_tile, self.tailnet_tile],
             columns=1,
             intro=(
                 "Dictate or record meetings here while a faster computer does the transcription, on "
-                "your network or anywhere over Tailscale. On that computer, turn "
-                "on sharing below; then pick it from your tailnet, or enter its "
+                "your network or anywhere over Tailscale. On that computer, open Share this "
+                "computer and turn on sharing; then pick it from your tailnet, or enter its "
                 "address and pairing code."
             ),
         )
@@ -306,14 +342,12 @@ class RemoteEngineSection(QObject):
         # Host: share the engine selected on this computer.
         self.share_tile = SettingTile(
             "Share this computer's engine",
-            "Paired computers can dictate or transcribe meetings with the engine selected on this "
-            "computer, and switch it to any model downloaded here. The "
-            "connection is encrypted and only computers you pair "
-            "can use it. Windows may ask once whether to allow OpenWhisper on "
-            "private networks.",
+            "Paired computers can dictate or transcribe meetings with the engine selected here, "
+            "and switch it to any model downloaded here. The connection is encrypted and only "
+            "computers you pair can use it. Windows may ask once to allow private networks.",
             icon("server-blue.svg"),
         )
-        self.share_tile.setObjectName("remoteShareTile")
+        self.share_tile.setProperty("tileId", "remoteShareTile")  # not setObjectName: the theme styles tiles by "settingsTile"
         self.share_tile.checkbox.toggled.connect(self._on_share_toggled)
         self.host_status = WrappedLabel("")
         self.host_status.setObjectName("remoteHostStatus")
@@ -328,44 +362,40 @@ class RemoteEngineSection(QObject):
             "",
             icon("world-blue.svg"),
         )
-        self.tailscale_tile.setObjectName("remoteTailscaleTile")
+        self.tailscale_tile.setProperty("tileId", "remoteTailscaleTile")  # not setObjectName: the theme styles tiles by "settingsTile"
         self.tailscale_tile.checkbox.toggled.connect(self._on_tailscale_trust_toggled)
 
         self.management_tile = SettingTile(
             "Allow paired computers to manage models",
-            "Off by default. All paired computers can browse the speech model catalog "
-            "and download models and install verified speech runtimes onto this computer. "
-            "Downloads use this computer's network and storage. Model weights still require "
-            "its Hugging Face download policy to allow them. "
-            "Turning this off blocks new requests; downloads already started continue. "
-            "Selecting already-downloaded models remains available without this setting.",
+            "Paired computers can browse the model catalog and download models and verified "
+            "speech runtimes here, using this computer's network and storage. Its Hugging Face "
+            "download policy still applies. Turning this off blocks new requests; downloads "
+            "already started continue. Choosing an already-downloaded model never needs it.",
             icon("server-blue.svg"),
         )
-        self.management_tile.setObjectName("remoteModelManagementTile")
+        self.management_tile.setProperty("tileId", "remoteModelManagementTile")  # not setObjectName: the theme styles tiles by "settingsTile"
         self.management_tile.checkbox.toggled.connect(self._on_model_management_toggled)
 
         self.keep_records_tile = SettingTile(
             "Keep records for paired computers",
-            "Off by default. Paired computers can choose to keep their dictation history, "
-            "recordings and meetings here, instead of or as well as on themselves. They show "
-            "in this computer's History and Past Meetings, marked with the computer they came "
-            "from, and use its storage. Each computer can see and delete only its own. "
-            "Turning this off stops new ones; what's kept stays until that computer brings "
-            "it back or you remove it below.",
+            "Paired computers can keep their dictation history, recordings and meetings here. "
+            "They show in History and Past Meetings, marked with the computer they came from, "
+            "and each computer can see and delete only its own. Turning this off stops new "
+            "ones; what's kept stays until that computer brings it back or you remove it below.",
             icon("box-blue.svg"),
         )
-        self.keep_records_tile.setObjectName("remoteKeepRecordsTile")
+        self.keep_records_tile.setProperty("tileId", "remoteKeepRecordsTile")  # not setObjectName: the theme styles tiles by "settingsTile"
         self.keep_records_tile.checkbox.toggled.connect(self._on_keep_records_toggled)
 
         self.manage_mcp_tile = SettingTile(
             "Allow paired computers to manage MCP",
-            "Off by default. Paired computers can turn this computer's MCP server on or off, "
-            "change what assistants may do, and copy its access token. That token can read "
-            "every saved dictation and meeting here, including records kept for other paired "
-            "computers. Turning this off blocks new requests at once.",
+            "Paired computers can turn this computer's MCP server on or off, change what "
+            "assistants may do, and copy its access token. That token can read every saved "
+            "dictation and meeting here, including other computers' records. Turning this off "
+            "blocks new requests at once.",
             icon("key-blue.svg"),
         )
-        self.manage_mcp_tile.setObjectName("remoteManageMcpTile")
+        self.manage_mcp_tile.setProperty("tileId", "remoteManageMcpTile")  # not setObjectName: the theme styles tiles by "settingsTile"
         self.manage_mcp_tile.checkbox.toggled.connect(self._on_manage_mcp_toggled)
 
         self.port_spin = NoWheelSpinBox()
@@ -390,8 +420,9 @@ class RemoteEngineSection(QObject):
             "Computers that can use this engine. Removing one cuts it off at once.",
             icon("key-blue.svg"),
         )
-        self.devices_tile.setObjectName("remoteDevicesTile")
+        self.devices_tile.setProperty("tileId", "remoteDevicesTile")  # not setObjectName: the theme styles tiles by "settingsTile"
         self.pairing_box = QWidget()
+        self.pairing_box.setObjectName("remotePairingBox")
         pairing_layout = QHBoxLayout(self.pairing_box)
         pairing_layout.setContentsMargins(0, 0, 0, 0)
         pairing_layout.setSpacing(12)
@@ -429,7 +460,11 @@ class RemoteEngineSection(QObject):
         self.recover_records_button.setObjectName("remoteRecoverRecordsButton")
         self.recover_records_button.setToolTip("Reconnect records from an old pairing to a paired computer")
         self.recover_records_button.clicked.connect(self._recover_records)
-        self.devices_tile.add_body(self.recover_records_button)
+        recover_row = QHBoxLayout()
+        recover_row.setContentsMargins(0, 0, 0, 0)
+        recover_row.addWidget(self.recover_records_button)
+        recover_row.addStretch(1)
+        self.devices_tile.add_body_layout(recover_row)
         self.recovery_message = WrappedLabel("")
         self.recovery_message.setObjectName("infoLabel")
         self.recovery_message.setTextFormat(Qt.TextFormat.PlainText)
@@ -437,16 +472,24 @@ class RemoteEngineSection(QObject):
         self.devices_tile.add_body(self.recovery_message)
 
         dialog._tile_group(
-            layout,
-            "Share this computer",
+            self.host_container.column,
+            "",
             [self.share_tile, self.management_tile, self.keep_records_tile,
              self.manage_mcp_tile, self.tailscale_tile, self.port_tile, self.devices_tile],
             columns=1,
         )
+        for button in (self.pair_button, self.use_button, self.pair_device_button):
+            compact_primary_button(button)
+        for button in (
+            self.manage_button, self.forget_button, self.meeting_use_button,
+            self.send_existing_button, self.bring_back_button, self.retry_records_button,
+            self.tailnet_search_button, self.cancel_pairing_button, self.recover_records_button,
+        ):
+            neutral_button(button)
         self._built = True
         self.refresh()
 
-    _UI_ATTRIBUTES = frozenset({'_set_rail_value', 'storage_status', 'tailnet_list', 'cancel_pairing_button', 'manage_button', 'meeting_use_button', 'client_tile', 'paired_row', 'pair_row', 'share_tile', 'code_edit', 'devices_list', 'tailnet_search_button', 'send_existing_button', 'pairing_code_label', 'client_message', 'tailscale_tile', 'pairing_expiry_label', 'retry_records_button', 'use_button', '_tailnet_layout', 'devices_tile', 'forget_button', 'pair_device_button', 'bring_back_button', 'storage_tile', 'host_status', 'share_history_tile', 'keep_records_tile', 'manage_mcp_tile', 'tailnet_tile', 'host_identity', 'management_tile', 'address_edit', '_built', '_location_group', '_devices_layout', 'pairing_box', 'pair_button', 'port_tile', 'location_buttons', 'port_spin'})
+    _UI_ATTRIBUTES = frozenset({'_set_rail_value', 'storage_status', 'tailnet_list', 'cancel_pairing_button', 'manage_button', 'meeting_use_button', 'client_tile', 'paired_row', 'pair_row', 'share_tile', 'code_edit', 'devices_list', 'tailnet_search_button', 'send_existing_button', 'pairing_code_label', 'client_message', 'tailscale_tile', 'pairing_expiry_label', 'retry_records_button', 'use_button', '_tailnet_layout', 'devices_tile', 'forget_button', 'pair_device_button', 'bring_back_button', 'storage_tile', 'host_status', 'share_history_tile', 'keep_records_tile', 'manage_mcp_tile', 'tabs', 'client_container', 'host_container', 'tailnet_tile', 'host_identity', 'management_tile', 'address_edit', '_built', '_location_group', '_devices_layout', 'pairing_box', 'pair_button', 'port_tile', 'location_buttons', 'port_spin'})
 
     def __getattr__(self, name):
         if name in self._UI_ATTRIBUTES and not self.__dict__.get("_built", False):
@@ -728,11 +771,11 @@ class RemoteEngineSection(QObject):
         label.setObjectName("remoteTailnetLabel")
         row_layout.addWidget(label, stretch=1)
         if host.can_pair_without_code:
-            button = PrimaryButton("Connect")
+            button = compact_primary_button(PrimaryButton("Connect"))
             button.setObjectName("remoteTailnetConnectButton")
             button.clicked.connect(lambda _checked=False, h=host: self._pair_tailscale(h))
         else:
-            button = Button("Use a code")
+            button = neutral_button(Button("Use a code"))
             button.setObjectName("remoteTailnetCodeButton")
             button.clicked.connect(lambda _checked=False, h=host: self._pair_with_code(h))
         button.setEnabled(host.compatible and not self._pairing_busy)
@@ -824,6 +867,22 @@ class RemoteEngineSection(QObject):
             rail = "Off"
         if self._set_rail_value is not None:
             self._set_rail_value(rail)
+        self._refresh_tabs(pairing, state, running)
+
+    def _refresh_tabs(self, pairing, state, running: bool) -> None:
+        """Say on each tab what is going on there, and open on the one in use."""
+        self.tabs.set_detail(0, f"Paired · {pairing.host_name}" if pairing else "Not paired")
+        self.tabs.set_detail(1, (
+            f"Sharing · {len(state['devices'])} paired" if running
+            else "Starting…" if state["enabled"] else "Off"
+        ))
+        if not self._tab_chosen and pairing is None and (running or state["enabled"]):
+            # Sharing and not using another computer: the host side is the one in use.
+            self.tabs.setCurrentIndex(1)
+
+    def _show_section(self, index: int) -> None:
+        self.client_container.setVisible(index == 0)
+        self.host_container.setVisible(index == 1)
 
     def _show_pairing(self, pairing) -> None:
         # The code replaces the button while it is valid.

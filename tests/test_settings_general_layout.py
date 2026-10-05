@@ -116,7 +116,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 if label.objectName() == "settingsTileGroupTitle"
             ]
             self.assertEqual(
-                group_titles, ["OUTPUT", "WINDOW", "APPEARANCE", "UPDATES"]
+                group_titles, ["Output", "Window", "Appearance", "Updates"]
             )
             recording = dialog._pages[RECORDING]
             forms = recording.findChildren(QFormLayout)

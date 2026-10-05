@@ -6,6 +6,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QBoxLayout,
     QCheckBox,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -27,9 +28,18 @@ from services.cleanup_profiles import (
 )
 from services.hotkey_manager import format_hotkey_display
 from services.settings import settings_manager
-from ui_qt.widgets.buttons import Button, PrimaryButton
+from ui_qt.widgets.buttons import (
+    Button,
+    PrimaryButton,
+    compact_primary_button,
+    neutral_button,
+)
 from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
 from ui_qt.widgets.wrapped_label import WrappedLabel
+
+
+#: Wide enough for Duplicate and Delete to sit side by side at every font scale.
+LIBRARY_WIDTH = 210
 
 
 class CleanupProfilesPanel(QWidget):
@@ -62,16 +72,17 @@ class CleanupProfilesPanel(QWidget):
         root.addLayout(columns, 1)
         library = self._library = QWidget()
         library.setObjectName("cleanupProfileLibrary")
-        library.setFixedWidth(180)
+        library.setFixedWidth(LIBRARY_WIDTH)
         library_layout = QVBoxLayout(library)
         library_layout.setContentsMargins(0, 0, 0, 0)
         library_layout.setSpacing(8)
         columns.addWidget(library)
         editor = self._editor = QWidget()
         editor.setObjectName("cleanupProfileEditor")
+        editor.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
         layout = QVBoxLayout(editor)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(6)
         columns.addWidget(editor, 1)
 
         self.profile_list = QListWidget()
@@ -83,16 +94,24 @@ class CleanupProfilesPanel(QWidget):
         self.profile_list.setMinimumHeight(95)
         self.profile_list.currentItemChanged.connect(self._selection_changed)
         library_layout.addWidget(self.profile_list, 1)
-        actions = self._library_actions = QVBoxLayout()
-        for text, callback in (
-            ("New profile", self.new_profile),
-            ("Duplicate", self.duplicate_profile),
-            ("Delete", self.delete_profile),
+        # "New profile" is the one action most visits want; the other two
+        # sit side by side beneath it instead of three stacked full-width blocks.
+        actions = self._library_actions = QGridLayout()
+        actions.setHorizontalSpacing(8)
+        actions.setVerticalSpacing(8)
+        for text, callback, row, column, span in (
+            ("New profile", self.new_profile, 0, 0, 2),
+            ("Duplicate", self.duplicate_profile, 1, 0, 1),
+            ("Delete", self.delete_profile, 1, 1, 1),
         ):
             button = Button(text)
-            button.set_base_minimum_size(80, 34)
+            if text == "New profile":
+                compact_primary_button(button)
+            else:
+                neutral_button(button)
+            button.set_base_minimum_size(0, 34)
             button.clicked.connect(callback)
-            actions.addWidget(button)
+            actions.addWidget(button, row, column, 1, span)
             if text == "Delete":
                 self.delete_button = button
             elif text == "Duplicate":
@@ -100,6 +119,7 @@ class CleanupProfilesPanel(QWidget):
         library_layout.addLayout(actions)
 
         label = QLabel("Name")
+        label.setObjectName("textModelFieldLabel")
         self.name_edit = QLineEdit()
         self.name_edit.setMaxLength(80)
         self.name_edit.setPlaceholderText("e.g. Support ticket, Email, Release notes")
@@ -107,6 +127,7 @@ class CleanupProfilesPanel(QWidget):
         layout.addWidget(label)
         layout.addWidget(self.name_edit)
         label = QLabel("Output instructions")
+        label.setObjectName("textModelFieldLabel")
         self.instructions_edit = QTextEdit()
         self.instructions_edit.setAcceptRichText(False)
         self.instructions_edit.setMinimumHeight(135)
@@ -117,10 +138,12 @@ class CleanupProfilesPanel(QWidget):
         layout.addWidget(label)
         layout.addWidget(self.instructions_edit, 1)
         templates = QHBoxLayout()
-        templates.addWidget(QLabel("Start from:"))
+        start_from = QLabel("Start from")
+        start_from.setObjectName("textModelFieldLabel")
+        templates.addWidget(start_from)
         for profile in STARTER_PROFILES:
-            button = Button(profile.name)
-            button.set_base_minimum_size(60, 30)
+            button = neutral_button(Button(profile.name))
+            button.set_base_minimum_size(0, 30)
             button.clicked.connect(
                 lambda _checked=False, p=profile: self.use_template(p)
             )
@@ -131,13 +154,14 @@ class CleanupProfilesPanel(QWidget):
         layout.addWidget(self.rules_check)
 
         shortcut_label = QLabel("Recording shortcut (optional)")
+        shortcut_label.setObjectName("textModelFieldLabel")
         self.hotkey_input = ProfileHotkeyInput()
         shortcut_label.setBuddy(self.hotkey_input)
         self.hotkey_input.capture_changed.connect(self.capture_changed)
         layout.addWidget(shortcut_label)
         shortcut = QHBoxLayout()
         shortcut.addWidget(self.hotkey_input, 1)
-        clear = Button("Clear")
+        clear = neutral_button(Button("Clear"))
         clear.set_base_minimum_size(60, 34)
         clear.clicked.connect(lambda: self.hotkey_input.set_hotkey(""))
         shortcut.addWidget(clear)
@@ -153,11 +177,12 @@ class CleanupProfilesPanel(QWidget):
         self.message.setObjectName("infoLabel")
         root.addWidget(self.message)
         footer = QHBoxLayout()
-        model = Button("Choose cleanup model…")
+        model = neutral_button(Button("Choose cleanup model…"))
         model.clicked.connect(self.model_requested)
         footer.addWidget(model)
         footer.addStretch()
-        self.save_button = PrimaryButton("Save profile")
+        self.save_button = compact_primary_button(PrimaryButton("Save profile"))
+        self.save_button.set_base_minimum_size(120, 36)
         self.save_button.clicked.connect(self.save_profile)
         footer.addWidget(self.save_button)
         root.addLayout(footer)
@@ -167,16 +192,13 @@ class CleanupProfilesPanel(QWidget):
         super().resizeEvent(event)
         if not hasattr(self, "_editor"):
             return
-        narrow = self.width() < 180 + self._columns.spacing() + self._editor.minimumSizeHint().width()
+        narrow = self.width() < LIBRARY_WIDTH + self._columns.spacing() + self._editor.minimumSizeHint().width()
         self._columns.setDirection(
             QBoxLayout.Direction.TopToBottom if narrow else QBoxLayout.Direction.LeftToRight
         )
-        self._library.setMinimumWidth(0 if narrow else 180)
-        self._library.setMaximumWidth(16777215 if narrow else 180)
+        self._library.setMinimumWidth(0 if narrow else LIBRARY_WIDTH)
+        self._library.setMaximumWidth(16777215 if narrow else LIBRARY_WIDTH)
         self.profile_list.setMaximumHeight(160 if narrow else 16777215)
-        self._library_actions.setDirection(
-            QBoxLayout.Direction.LeftToRight if narrow else QBoxLayout.Direction.TopToBottom
-        )
 
     def _draft(self) -> CleanupProfile:
         return CleanupProfile(

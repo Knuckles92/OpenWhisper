@@ -305,6 +305,29 @@ def fit_compact_button(button: Button, width: Optional[int] = None) -> None:
         button.setMaximumWidth(16777215)
 
 
+def neutral_button(button: Button) -> Button:
+    """Outlined, compact styling for a secondary action on a Settings page.
+
+    Driven by a property, not an object name, so it keeps a button's own
+    object name and never overrides the primary and danger styles.
+    """
+    set_style_property(button, "tone", "neutral")
+    button.set_base_minimum_size(0, 34)
+    return button
+
+
+def compact_primary_button(button: Button) -> Button:
+    """The accent fill of ``PrimaryButton`` at the compact size Settings uses.
+
+    ``PrimaryButton`` gets its look from its object name, so a caller that
+    renames one for lookup (tests, deep links) silently loses it. This keeps
+    the look with any object name.
+    """
+    set_style_property(button, "tone", "primary")
+    button.set_base_minimum_size(0, 34)
+    return button
+
+
 class PrimaryButton(Button):
     """Primary action button with gradient."""
 

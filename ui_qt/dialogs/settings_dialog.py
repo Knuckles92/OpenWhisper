@@ -170,7 +170,11 @@ from ui_qt.widgets import (
     SettingTile,
     WrappedLabel,
 )
-from ui_qt.widgets.buttons import fit_compact_button
+from ui_qt.widgets.buttons import (
+    compact_primary_button,
+    fit_compact_button,
+    neutral_button,
+)
 from ui_qt.widgets.hotkey_capture import HotkeyCaptureInput, HotkeyCaptureThread
 from ui_qt.widgets.cleanup_profiles_panel import CleanupProfilesPanel
 from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
@@ -469,8 +473,9 @@ class SettingsDialog(QDialog):
         row.setContentsMargins(20, 14, 20, 14)
         row.setSpacing(10)
         icon = QLabel()
-        icon.setObjectName("modelManagerHeaderIcon")
-        icon.setPixmap(app_icon().pixmap(28, 28))
+        # The mark is already a rounded tile; framing it again reads as a ring.
+        # 32 px is a native .ico size, so it stays crisp instead of resampled.
+        icon.setPixmap(app_icon().pixmap(32, 32))
         row.addWidget(icon)
         brand = QLabel("OpenWhisper")
         self.settings_brand = brand
@@ -959,7 +964,7 @@ class SettingsDialog(QDialog):
         A trailing odd tile spans the rest of its row so no column is left
         empty. Returns the caption and intro labels for callers that gate them.
         """
-        caption = group_title(layout, title)
+        caption = group_title(layout, title) if title else None
         intro_label = None
         if intro:
             intro_label = settings_caption(intro)
@@ -1339,9 +1344,9 @@ class SettingsDialog(QDialog):
         self.transcript_cleanup_check.toggled.connect(
             self._on_cleanup_enabled_changed
         )
-        self._tile_group(layout, "AI cleanup", [self.transcript_cleanup_tile])
+        # No captions: each card's own title already says what it is.
+        self._tile_group(layout, "", [self.transcript_cleanup_tile])
 
-        group_title(layout, "Model")
         self.cleanup_model_tile = self.models.build_cleanup_model_section(layout)
         layout.addSpacing(6)
 
@@ -1364,17 +1369,17 @@ class SettingsDialog(QDialog):
         cleanup_btn_row = QHBoxLayout()
         cleanup_btn_row.setContentsMargins(0, 0, 0, 0)
         cleanup_btn_row.setSpacing(8)
-        self.cleanup_prompt_edit_btn = Button("Open editor…")
+        self.cleanup_prompt_edit_btn = neutral_button(Button("Open editor…"))
         fit_compact_button(self.cleanup_prompt_edit_btn, 120)
         self.cleanup_prompt_edit_btn.clicked.connect(self._open_cleanup_prompt_editor)
         cleanup_btn_row.addWidget(self.cleanup_prompt_edit_btn)
-        self.cleanup_prompt_reset_btn = Button("Reset to default")
+        self.cleanup_prompt_reset_btn = neutral_button(Button("Reset to default"))
         fit_compact_button(self.cleanup_prompt_reset_btn, 140)
         self.cleanup_prompt_reset_btn.clicked.connect(self._reset_cleanup_prompt)
         cleanup_btn_row.addWidget(self.cleanup_prompt_reset_btn)
         cleanup_btn_row.addStretch()
         self.cleanup_prompt_tile.add_body_layout(cleanup_btn_row)
-        self._tile_group(layout, "Prompt", [self.cleanup_prompt_tile])
+        self._tile_group(layout, "", [self.cleanup_prompt_tile])
 
     def _build_cleanup_profiles_page(self, layout: QVBoxLayout) -> None:
         self.cleanup_profiles_panel = CleanupProfilesPanel(manager=settings_manager)
@@ -1468,7 +1473,7 @@ class SettingsDialog(QDialog):
         self.cleanup_rule_status.hide()
         self.cleanup_rules_composer_tile.add_body(self.cleanup_rule_status)
         self._tile_group(
-            layout, "Teach a rule", [self.cleanup_rules_composer_tile], columns=1
+            layout, "", [self.cleanup_rules_composer_tile], columns=1
         )
 
         self.cleanup_rules_library_tile = InfoTile(
@@ -1510,19 +1515,19 @@ class SettingsDialog(QDialog):
         rule_btn_row.setContentsMargins(0, 0, 0, 0)
         rule_btn_row.setSpacing(8)
         rule_btn_row.addStretch()
-        self.cleanup_rule_edit_btn = Button("Edit rule")
+        self.cleanup_rule_edit_btn = neutral_button(Button("Edit rule"))
         self.cleanup_rule_edit_btn.setObjectName("cleanupRuleEditButton")
         self.cleanup_rule_edit_btn.set_base_minimum_size(96, 34)
         self.cleanup_rule_edit_btn.clicked.connect(self._edit_cleanup_rule)
         rule_btn_row.addWidget(self.cleanup_rule_edit_btn)
-        self.cleanup_rule_delete_btn = Button("Delete")
+        self.cleanup_rule_delete_btn = neutral_button(Button("Delete"))
         self.cleanup_rule_delete_btn.setObjectName("cleanupRuleDeleteButton")
         self.cleanup_rule_delete_btn.set_base_minimum_size(88, 34)
         self.cleanup_rule_delete_btn.clicked.connect(self._delete_cleanup_rule)
         rule_btn_row.addWidget(self.cleanup_rule_delete_btn)
         self.cleanup_rules_library_tile.add_body_layout(rule_btn_row)
         self._tile_group(
-            layout, "Rule library", [self.cleanup_rules_library_tile], columns=1
+            layout, "", [self.cleanup_rules_library_tile], columns=1
         )
         self._update_cleanup_prompt_ui()
 
@@ -1623,9 +1628,8 @@ class SettingsDialog(QDialog):
 
         self.typesafe_enabled_tile = SettingTile(
             "TypeSafe fast judgments (Experimental)",
-            "Off by default. Answers narrow yes/no questions about a minute of "
-            "transcript in about 0.2 s; never writes text. Key: API keys → "
-            "TypeSafe.",
+            "Answers narrow yes/no questions about a minute of transcript in "
+            "about 0.2 s. It never writes text.",
             design_icon("bolt-green.svg"),
         )
         self.typesafe_enabled_check = self.typesafe_enabled_tile.checkbox
@@ -1634,9 +1638,8 @@ class SettingsDialog(QDialog):
 
         self.typesafe_topic_shift_tile = SettingTile(
             "Semantic topic changes (Experimental)",
-            "Fire early checkpoints on a judged topic change instead of "
-            "word overlap. Doubled precision on human-labelled meetings; "
-            "falls back to word overlap when no answer arrives.",
+            "Fires early checkpoints on a judged topic change instead of word "
+            "overlap, and falls back to word overlap if no answer arrives.",
             design_icon("stack-purple.svg"),
         )
         self.typesafe_topic_shift_check = self.typesafe_topic_shift_tile.checkbox
@@ -1649,9 +1652,9 @@ class SettingsDialog(QDialog):
 
         self.typesafe_voice_commands_tile = SettingTile(
             "Spoken instructions (Experimental)",
-            "\"Note taker, mark that as a decision\", \"…add an action item\", "
-            "\"…put that in the notes\", \"…new topic: budget\". Only segments "
-            "naming the assistant are judged. Recap updates notes; \"replace X with Y\" applies a reversible transcript correction.",
+            "Say “Note taker, mark that as a decision”, “…add an action item” or "
+            "“…new topic: budget”. Only segments naming the assistant are judged. "
+            "“Replace X with Y” applies a reversible transcript correction.",
             design_icon("stack-slate.svg"),
         )
         self.typesafe_voice_commands_check = (
@@ -1668,13 +1671,13 @@ class SettingsDialog(QDialog):
         self.typesafe_feature_tiles = {}
         for feature, key, title, description in (
             ("citations", SettingsKey.TYPESAFE_CITATIONS_ENABLED, "Advisory citation checks",
-             "Send generated claims and their cited transcript excerpts to TypeSafe/Jev. Flags weak evidence without changing the claim."),
+             "Sends generated claims and their cited excerpts to TypeSafe/Jev. Flags weak evidence without changing the claim."),
             ("semantic_search", SettingsKey.TYPESAFE_SEMANTIC_SEARCH_ENABLED, "Semantic history search",
-             "Send your search query and shortlisted excerpts from past meetings that had AI insights on to TypeSafe/Jev to rank by meaning. Keyword search stays available."),
+             "Sends your search and shortlisted excerpts from past AI-insight meetings to TypeSafe/Jev to rank by meaning. Keyword search stays available."),
             ("question_radar", SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED, "Open questions radar",
-             "Send a minute of transcript and tracked questions to TypeSafe/Jev to find unanswered questions and suggest answers."),
+             "Sends a minute of transcript and tracked questions to TypeSafe/Jev to find unanswered questions and suggest answers."),
             ("highlights", SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED, "Live highlight pulses",
-             "Send a minute of transcript to TypeSafe/Jev to mark decisions, disagreement, dated commitments, numbers and takeaways (key insights, lessons learned and conclusions). Click a pulse to play that moment."),
+             "Sends a minute of transcript to TypeSafe/Jev to mark decisions, disagreements, dated commitments, numbers and takeaways. Click a pulse to play that moment."),
         ):
             tile = SettingTile(title, description, design_icon("bolt-green.svg"))
             self._meeting_bindings.checkbox(
@@ -1739,11 +1742,10 @@ class SettingsDialog(QDialog):
 
         self.meeting_review_tile = SettingTile(
             "Review uncertain insights at the end (Experimental)",
-            "Optional, for new meetings. Sends relevant transcript excerpts, speaker names, "
-            "and insights to TypeSafe to identify ambiguities. Start with the three "
-            "highest-priority questions, then choose Review more to see the rest. No audio is sent. "
-            "Requires AI insights, TypeSafe fast judgments on the Fast judgments page, "
-            "and a TypeSafe API key (Settings → API keys or TYPESAFE_API_KEY).",
+            "For new meetings. Sends relevant excerpts, speaker names and insights to "
+            "TypeSafe to find ambiguities, and asks the three highest-priority questions "
+            "first. No audio is sent. Needs AI insights, Fast judgments and a TypeSafe "
+            "API key.",
             design_icon("check-green.svg"),
         )
         self.meeting_review_check = self.meeting_review_tile.checkbox
@@ -1914,7 +1916,7 @@ class SettingsDialog(QDialog):
         self.api_key_uses_caption = settings_caption("")
         self.api_key_credential_tile.add_body(self.api_key_uses_caption)
         self._tile_group(
-            layout, "Credential", [self.api_key_credential_tile], columns=1
+            layout, "", [self.api_key_credential_tile], columns=1
         )
 
         self.api_key_entry_tile = InfoTile(
@@ -1940,7 +1942,7 @@ class SettingsDialog(QDialog):
         self.api_key_edit.setMinimumHeight(40)
         self.api_key_edit.textChanged.connect(self._update_api_key_controls)
         self.api_key_edit.returnPressed.connect(self._save_api_key)
-        self.api_key_show_button = Button("Show")
+        self.api_key_show_button = neutral_button(Button("Show"))
         self.api_key_show_button.setObjectName("apiKeyShowButton")
         self.api_key_show_button.setCheckable(True)
         self.api_key_show_button.set_base_minimum_size(80, 40)
@@ -1959,11 +1961,11 @@ class SettingsDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(8)
-        self.api_key_save_button = PrimaryButton("Save key")
+        self.api_key_save_button = compact_primary_button(PrimaryButton("Save key"))
         self.api_key_save_button.setObjectName("apiKeySaveButton")
         fit_compact_button(self.api_key_save_button, 120)
         self.api_key_save_button.clicked.connect(self._save_api_key)
-        self.api_key_test_button = Button("Test")
+        self.api_key_test_button = neutral_button(Button("Test"))
         self.api_key_test_button.setObjectName("apiKeyTestButton")
         fit_compact_button(self.api_key_test_button, 90)
         self.api_key_test_button.clicked.connect(self._test_api_key)
@@ -1976,7 +1978,7 @@ class SettingsDialog(QDialog):
         buttons.addStretch()
         buttons.addWidget(self.api_key_remove_button)
         self.api_key_entry_tile.add_body_layout(buttons)
-        self._tile_group(layout, "New key", [self.api_key_entry_tile], columns=1)
+        self._tile_group(layout, "", [self.api_key_entry_tile], columns=1)
 
     @staticmethod
     def _api_key_store_copy() -> str:
@@ -2263,9 +2265,6 @@ class SettingsDialog(QDialog):
         )
 
     def _build_hotkeys_page(self, layout: QVBoxLayout) -> None:
-        profile_link = Button("Profile recording shortcuts…")
-        profile_link.clicked.connect(lambda: self.select_destination(CLEANUP_PROFILES))
-        layout.addWidget(profile_link)
         instruction_card = QFrame()
         instruction_card.setObjectName("hotkeyInstructionCard")
         instruction_row = QHBoxLayout(instruction_card)
@@ -2350,12 +2349,17 @@ class SettingsDialog(QDialog):
         )
 
         actions = QHBoxLayout()
+        profile_link = neutral_button(Button("Profile recording shortcuts…"))
+        profile_link.clicked.connect(lambda: self.select_destination(CLEANUP_PROFILES))
+        fit_compact_button(profile_link, 0)
+        actions.addWidget(profile_link)
         actions.addStretch()
-        reset_button = Button("Reset to defaults")
+        reset_button = neutral_button(Button("Reset to defaults"))
         reset_button.setObjectName("hotkeyResetButton")
         fit_compact_button(reset_button, 150)
         reset_button.clicked.connect(self._confirm_reset_hotkeys)
         actions.addWidget(reset_button)
+        layout.addSpacing(4)
         layout.addLayout(actions)
 
     def _build_recording_trigger_mode_row(self) -> QWidget:
@@ -2368,10 +2372,29 @@ class SettingsDialog(QDialog):
             "Push and hold — release to stop", RecordingTriggerMode.PUSH_HOLD
         )
         self.record_mode_combo.setMinimumHeight(40)
+        self.record_mode_combo.setMinimumWidth(round(260 * current_ui_font_scale()))
         self.record_mode_combo.currentIndexChanged.connect(
             self._on_recording_trigger_mode_changed
         )
-        return settings_field("How the record hotkey activates", self.record_mode_combo)
+        card = QFrame()
+        card.setObjectName("hotkeyModeCard")
+        row = QHBoxLayout(card)
+        row.setContentsMargins(14, 8, 12, 8)
+        row.setSpacing(16)
+        copy = QVBoxLayout()
+        copy.setSpacing(2)
+        name = QLabel("How the record hotkey activates")
+        name.setObjectName("hotkeyShortcutName")
+        copy.addWidget(name)
+        detail = WrappedLabel(
+            "Toggle starts and stops with each press. Push and hold records while "
+            "the key is down."
+        )
+        detail.setObjectName("hotkeyShortcutDescription")
+        copy.addWidget(detail)
+        row.addLayout(copy, stretch=1)
+        row.addWidget(self.record_mode_combo, alignment=Qt.AlignmentFlag.AlignVCenter)
+        return card
 
     def _on_recording_trigger_mode_changed(self, _index: int = 0) -> None:
         mode = self.record_mode_combo.currentData()

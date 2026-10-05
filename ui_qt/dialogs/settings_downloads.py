@@ -28,13 +28,14 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStyle,
     QVBoxLayout,
     QWidget,
 )
 
 from config import config, parakeet_mlx_supported
-from services.components import component_coordinator
+from services.components import ComponentState, component_coordinator
 from services.hf_access import (
     MODEL_DOWNLOAD_SIZE_MB,
     CachedModelInfo,
@@ -61,8 +62,10 @@ from ui_qt.dialogs.component_details_dialog import ComponentDetailsDialog
 from ui_qt.utils.app_icon import app_icon
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets import Button, ElidingComboBox, ElidingLabel, PrimaryButton
+from ui_qt.widgets.button_row import ButtonRow
 from ui_qt.widgets.buttons import fit_compact_button
 from ui_qt.widgets.component_row_widget import ComponentRowWidget
+from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.model_row_widget import ModelRowWidget
 from ui_qt.widgets.wrapped_label import WrappedLabel
 from ui_qt.widgets.speech_backend_picker import (
@@ -223,7 +226,7 @@ class DownloadsPage(QWidget):
         if not defer_build:
             self.ensure_ui()
 
-    _UI_ATTRIBUTES = frozenset({'inspector_best_for_heading', 'inspector_detail_scroll', '_inspector_open', 'policy_row', 'inspector_source_note', 'inspector_best_for', '_cache_scan_generation', '_downloading_model', '_batch_queue', '_toolbar_layout', 'backend_filter_combo', 'download_all_button', 'stats_label', 'inspector_close_button', 'inspector_license_button', 'clear_selection_button', 'download_selected_button', '_selected_model', 'inspector', 'message_row', 'stop_batch_button', '_batch_failed', 'selection_summary', '_cached_sizes', 'inspector_tradeoffs_heading', '_download_fraction', 'library_scroll_area', '_batch_done', 'inspector_tags', 'catalog_column', '_background_cache_scan', '_downloads_blocked', 'select_all_button', 'custom_models_button', 'inspector_usage', 'inspector_description', '_get_loaded_model', 'inspector_tradeoffs', 'list_layout', 'inspector_origin_button', '_details', 'env_banner', '_split', 'message_label', 'sort_combo', '_cache_inventory_loading', 'status_filter_combo', 'empty_label', 'inspector_repo_button', 'inspector_facts', 'filter_edit', 'inspector_name', '_inspector_docked'})
+    _UI_ATTRIBUTES = frozenset({'tabs', 'models_section', 'components_section', 'components_scroll', 'inspector_best_for_heading', 'inspector_detail_scroll', '_inspector_open', 'policy_row', 'inspector_source_note', 'inspector_best_for', '_cache_scan_generation', '_downloading_model', '_batch_queue', '_toolbar_layout', 'backend_filter_combo', 'download_all_button', 'stats_label', 'inspector_close_button', 'inspector_license_button', 'clear_selection_button', 'download_selected_button', '_selected_model', 'inspector', 'message_row', 'stop_batch_button', '_batch_failed', 'selection_summary', '_cached_sizes', 'inspector_tradeoffs_heading', '_download_fraction', 'library_scroll_area', '_batch_done', 'inspector_tags', 'catalog_column', '_background_cache_scan', '_downloads_blocked', 'select_all_button', 'custom_models_button', 'inspector_usage', 'inspector_description', '_get_loaded_model', 'inspector_tradeoffs', 'list_layout', 'inspector_origin_button', 'inspector_links', '_details', 'env_banner', '_split', 'message_label', 'sort_combo', '_cache_inventory_loading', 'status_filter_combo', 'empty_label', 'inspector_repo_button', 'inspector_facts', 'filter_edit', 'inspector_name', '_inspector_docked'})
 
     def __getattr__(self, name):
         if (name in self._UI_ATTRIBUTES and "_ui_built" in self.__dict__
@@ -245,7 +248,23 @@ class DownloadsPage(QWidget):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
+
+        # Models and components are different jobs. The catalog has its own
+        # filters and batch bar, and components used to sit under all of it,
+        # six screens down. One-line tabs, since the model list needs the height.
+        self.tabs = SegmentedBar(
+            (("Speech models", ""), ("Components", "")), compact=True
+        )
+        self.tabs.setAccessibleName("Downloads section")
+        self.tabs.currentIndexChanged.connect(self._show_section)
+        layout.addWidget(self.tabs)
+
+        self.models_section = QWidget()
+        self.models_section.setObjectName("downloadsModelsSection")
+        models_layout = QVBoxLayout(self.models_section)
+        models_layout.setContentsMargins(0, 0, 0, 0)
+        models_layout.setSpacing(8)
 
         header_row = QHBoxLayout()
         header_row.setSpacing(8)
@@ -278,14 +297,14 @@ class DownloadsPage(QWidget):
         )
         open_folder_btn.clicked.connect(self._on_open_cache_folder)
         header_row.addWidget(open_folder_btn)
-        layout.addLayout(header_row)
+        models_layout.addLayout(header_row)
 
         # Settings places the Hugging Face download policy here, next to the
         # catalog it governs.
         self.policy_row = QHBoxLayout()
         self.policy_row.setContentsMargins(0, 0, 0, 0)
         self.policy_row.setSpacing(10)
-        layout.addLayout(self.policy_row)
+        models_layout.addLayout(self.policy_row)
 
         self.env_banner = QLabel(
             "Downloads are disabled by the HF_HUB_OFFLINE environment "
@@ -294,7 +313,7 @@ class DownloadsPage(QWidget):
         self.env_banner.setObjectName("downloadsEnvBanner")
         self.env_banner.setWordWrap(True)
         self.env_banner.setVisible(False)
-        layout.addWidget(self.env_banner)
+        models_layout.addWidget(self.env_banner)
 
         self._split = QHBoxLayout()
         self._split.setSpacing(12)
@@ -302,8 +321,16 @@ class DownloadsPage(QWidget):
         self._split.addWidget(self.catalog_column, stretch=1)
         self.inspector = self._build_inspector()
         self._split.addWidget(self.inspector)
-        layout.addLayout(self._split, stretch=1)
+        models_layout.addLayout(self._split, stretch=1)
+        layout.addWidget(self.models_section, stretch=1)
 
+        self.components_section = self._build_components_section()
+        self.components_section.hide()
+        layout.addWidget(self.components_section, stretch=1)
+        # A platform with nothing installable has nothing to switch to.
+        self.tabs.setVisible(bool(self._component_rows))
+
+        # Shared by both tabs: batch progress and component install results.
         self.message_row = QHBoxLayout()
         self.message_row.setSpacing(8)
         self.message_label = QLabel("")
@@ -319,8 +346,6 @@ class DownloadsPage(QWidget):
         self.stop_batch_button.setVisible(False)
         self.message_row.addWidget(self.stop_batch_button)
         layout.addLayout(self.message_row)
-
-        # Runtime rows live inside the existing catalog scroller.
 
     def add_policy_control(self, label: str, control: QWidget) -> None:
         """Place a labeled control on the row under the header."""
@@ -432,6 +457,9 @@ class DownloadsPage(QWidget):
         self.library_scroll_area = QScrollArea()
         self.library_scroll_area.setObjectName("modelManagerLibraryScroll")
         self.library_scroll_area.setWidgetResizable(True)
+        # Low floor: at Settings' smallest size the filters, the batch bar and the
+        # section tabs already fill most of the page, and the list scrolls anyway.
+        self.library_scroll_area.setMinimumHeight(40)
         self.library_scroll_area.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
@@ -461,7 +489,6 @@ class DownloadsPage(QWidget):
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_label.setVisible(False)
         self.list_layout.addWidget(self.empty_label)
-        self.list_layout.addWidget(self._build_component_strip())
         self.list_layout.addStretch()
 
         self.library_scroll_area.setWidget(list_container)
@@ -609,11 +636,17 @@ class DownloadsPage(QWidget):
         # here is taller than the panel: without a floor of its own it would ask
         # for the whole profile and the column would pay for it by squeezing the
         # name, the facts, and the source buttons.
-        detail_scroll.setMinimumHeight(120)
+        # Small, because this region scrolls: at the window's minimum height the page
+        # must still fit once the section tabs above it have taken their share.
+        detail_scroll.setMinimumHeight(60)
         self.inspector_detail_scroll = detail_scroll
 
         content = QWidget()
         content.setObjectName("downloadsInspectorContent")
+        # Horizontal scrolling is off, so the content must be exactly as wide as the
+        # viewport. By default it would grow to its widest unbreakable word, wrap
+        # every paragraph for that width, and be cut off at the viewport's edge.
+        content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         detail = QVBoxLayout(content)
         detail.setContentsMargins(0, 0, 6, 0)
         detail.setSpacing(12)
@@ -663,29 +696,56 @@ class DownloadsPage(QWidget):
         self.inspector_usage.setVisible(False)
         outer.addWidget(self.inspector_usage)
 
-        actions = QHBoxLayout()
-        actions.setSpacing(8)
         self.inspector_repo_button = Button("Hugging Face ↗")
         self.inspector_repo_button.setObjectName("downloadsRepoButton")
         fit_compact_button(self.inspector_repo_button, 0)
         self.inspector_repo_button.clicked.connect(self._open_repository)
-        actions.addWidget(self.inspector_repo_button, stretch=1)
 
         self.inspector_origin_button = Button("Original ↗")
         self.inspector_origin_button.setObjectName("downloadsOriginButton")
         fit_compact_button(self.inspector_origin_button, 0)
         self.inspector_origin_button.clicked.connect(self._open_origin)
-        actions.addWidget(self.inspector_origin_button, stretch=1)
+
         self.inspector_license_button = Button("License ↗")
         self.inspector_license_button.setObjectName("downloadsLicenseButton")
         fit_compact_button(self.inspector_license_button, 0)
         self.inspector_license_button.clicked.connect(self._open_license)
-        actions.addWidget(self.inspector_license_button, stretch=1)
-        outer.addLayout(actions)
+        # The 300 px column cannot hold three labels side by side at larger font
+        # scales; the row wraps rather than letting the buttons overlap.
+        self.inspector_links = ButtonRow(
+            (
+                self.inspector_repo_button,
+                self.inspector_origin_button,
+                self.inspector_license_button,
+            )
+        )
+        outer.addWidget(self.inspector_links)
 
         self._details: Optional[ModelDetails] = None
         self._set_inspector_enabled(False)
         return panel
+
+    def _build_components_section(self) -> QScrollArea:
+        """The optional components, on their own tab with room to breathe."""
+        scroll = QScrollArea()
+        scroll.setObjectName("downloadsComponentsScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        container = QWidget()
+        container.setObjectName("downloadsComponentsContainer")
+        column = QVBoxLayout(container)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
+        column.addWidget(self._build_component_strip())
+        column.addStretch()
+        scroll.setWidget(container)
+        self.components_scroll = scroll
+        return scroll
+
+    def _show_section(self, index: int) -> None:
+        self.models_section.setVisible(index == 0)
+        self.components_section.setVisible(index == 1)
 
     def _build_component_strip(self) -> QWidget:
         """Build the optional-components strip.
@@ -701,7 +761,7 @@ class DownloadsPage(QWidget):
         strip = QFrame()
         strip.setObjectName("downloadsComponentStrip")
         layout = QVBoxLayout(strip)
-        layout.setContentsMargins(0, 12, 0, 12)
+        layout.setContentsMargins(0, 2, 0, 12)
         layout.setSpacing(8)
 
         infos = component_coordinator.list_components()
@@ -709,9 +769,6 @@ class DownloadsPage(QWidget):
             strip.setVisible(False)
             return strip
 
-        heading = QLabel("COMPONENTS")
-        heading.setObjectName("downloadsEyebrow")
-        layout.addWidget(heading)
         caption = WrappedLabel(
             "Optional add-ons, downloaded on demand so the installer stays small."
         )
@@ -753,11 +810,13 @@ class DownloadsPage(QWidget):
             self.filter_edit.clear()
             self.backend_filter_combo.setCurrentIndex(0)
             self.status_filter_combo.setCurrentIndex(0)
+        self.tabs.setCurrentIndex(0)
         self.select_model(model_name)
         self.library_scroll_area.ensureWidgetVisible(row, 0, 12)
 
     def show_backend(self, backend: str) -> None:
         """Filter the catalog to one backend; an empty value shows every model."""
+        self.tabs.setCurrentIndex(0)
         index = self.backend_filter_combo.findData(backend or "all")
         self.backend_filter_combo.setCurrentIndex(max(0, index))
 
@@ -782,6 +841,7 @@ class DownloadsPage(QWidget):
         self.inspector_repo_button.setToolTip(details.repository_url)
         self.inspector_origin_button.setToolTip(details.origin_url)
         self.inspector_license_button.setToolTip(details.license_url or details.origin_url)
+        self.inspector_links.refresh()
         memory = details.memory_guidance
         if details.model_name not in MODELS:
             # For this computer's card: the compute type it will really run.
@@ -819,7 +879,9 @@ class DownloadsPage(QWidget):
             caption_label.setAlignment(
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
             )
-            value_label = WrappedLabel(value)
+            # Values include commit hashes and local model folders, which have
+            # nowhere to wrap unless told they may.
+            value_label = WrappedLabel(value, break_long_words=True)
             value_label.setObjectName("downloadsFactValue")
             value_label.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse
@@ -848,6 +910,7 @@ class DownloadsPage(QWidget):
             self.inspector_license_button,
         ):
             widget.setVisible(enabled)
+        self.inspector_links.refresh()
 
     def _open_repository(self) -> None:
         if self._details is not None:
@@ -1019,10 +1082,13 @@ class DownloadsPage(QWidget):
         """Bring a required runtime and its install action into view."""
         if component_id not in self._component_rows:
             return
+        self.tabs.setCurrentIndex(1)
         for cid, row in self._component_rows.items():
             set_style_property(row, "selected", cid == component_id)
         row = self._component_rows[component_id]
-        self.library_scroll_area.ensureWidgetVisible(row, 0, 12)
+        # The tab was just shown: lay it out so the row has a position to scroll to.
+        self.components_scroll.widget().layout().activate()
+        self.components_scroll.ensureWidgetVisible(row, 0, 12)
         row.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _show_component_details(self, component_id: str) -> None:
@@ -1190,7 +1256,11 @@ class DownloadsPage(QWidget):
             self.stats_label.setText(
                 f"Checking downloaded models… · {get_hf_cache_dir()}"
             )
+            self.tabs.set_title(0, "Speech models")
         else:
+            self.tabs.set_title(
+                0, f"Speech models · {len(seen_repos)} of {len(self.rows)} downloaded"
+            )
             self.stats_label.setText(
                 f"{len(seen_repos)} of {len(self.rows)} speech models · "
                 f"{format_size_bytes(total_bytes)} used · {get_hf_cache_dir()}"
@@ -1253,11 +1323,17 @@ class DownloadsPage(QWidget):
         return MODELS[model_name].label if model_name in MODELS else model_name
 
     def refresh_components(self) -> None:
+        infos = []
         for component_id, row in self._component_rows.items():
-            row.update_state(
-                component_coordinator.describe(component_id),
-                component_coordinator.is_installing(component_id),
-            )
+            info = component_coordinator.describe(component_id)
+            infos.append(info)
+            row.update_state(info, component_coordinator.is_installing(component_id))
+        if infos:
+            updates = sum(info.state == ComponentState.UPDATE_AVAILABLE for info in infos)
+            title = f"Components · {sum(info.is_usable for info in infos)} of {len(infos)} installed"
+            if updates:
+                title += f" · {updates} update" + ("s" if updates > 1 else "")
+            self.tabs.set_title(1, title)
 
     def set_component_progress(
         self, component_id: str, phase: str, done: int, total: int

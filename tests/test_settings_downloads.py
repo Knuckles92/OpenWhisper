@@ -23,7 +23,12 @@ from PyQt6.QtWidgets import (
 
 from services.model_catalog import WHISPER_REVISIONS
 from services.component_catalog import PI_HOME_URL, get_component_details
-from services.components import ComponentId, ComponentInfo, ComponentState
+from services.components import (
+    ComponentId,
+    ComponentInfo,
+    ComponentState,
+    component_coordinator,
+)
 from services.hf_access import CachedModelInfo, get_hf_cache_dir
 from services.settings import SettingsKey
 from tests.fakes.settings import InMemorySettings
@@ -173,15 +178,18 @@ class TestPageShell(_DialogTestCase):
         assert dialog.inspector.isVisible()
         assert dialog.inspector.property("overlay") is False
 
-    def test_only_the_catalog_and_inspector_body_scroll(self):
+    def test_only_the_designated_regions_scroll(self):
+        """The catalog, the inspector, and the components tab; never the page."""
         dialog, _values = self._make_dialog()
         scrollers = dialog.findChildren(QScrollArea)
         assert set(scrollers) == {
             dialog.library_scroll_area,
             dialog.inspector_detail_scroll,
+            dialog.components_scroll,
         }
         assert dialog.library_scroll_area.widgetResizable()
         assert dialog.inspector_detail_scroll.widgetResizable()
+        assert dialog.components_scroll.widgetResizable()
 
     def test_rows_share_the_right_edge_with_the_toolbar(self):
         """The list's scroll bar must not pull its rows in past the filters."""
@@ -635,6 +643,57 @@ class TestInspector(_DialogTestCase):
         finally:
             self.app.setStyleSheet(previous_stylesheet)
 
+    def test_source_links_never_paint_over_each_other(self):
+        """Three themed link buttons cannot share the 300 px column: they wrap."""
+        previous_stylesheet = self.app.styleSheet()
+        self.app.setStyleSheet(ThemeManager().stylesheet)
+        try:
+            dialog, _values = self._make_dialog()
+            dialog.show()
+            for name in ("base", "moonshine-small"):  # "Hugging Face" and "Repository" labels
+                dialog.select_model(name)
+                self.app.processEvents()
+                buttons = [
+                    dialog.inspector_repo_button,
+                    dialog.inspector_origin_button,
+                    dialog.inspector_license_button,
+                ]
+                for index, first in enumerate(buttons):
+                    for second in buttons[index + 1:]:
+                        assert not first.geometry().intersects(second.geometry()), (
+                            name, first.text(), second.text()
+                        )
+                for button in buttons:
+                    assert button.width() >= button.sizeHint().width(), (name, button.text())
+                    assert button.isVisibleTo(dialog)
+        finally:
+            self.app.setStyleSheet(previous_stylesheet)
+
+    def test_profile_text_fits_the_scroll_area_for_every_model(self):
+        """Horizontal scrolling is off: any text wider than the viewport is cut off."""
+        previous_stylesheet = self.app.styleSheet()
+        self.app.setStyleSheet(ThemeManager().stylesheet)
+        try:
+            dialog, _values = self._make_dialog()
+            dialog.resize(1000, 700)
+            dialog.show()
+            scroll = dialog.inspector_detail_scroll
+            # A custom model shows its folder; that, and a commit hash, have nowhere to wrap.
+            folder = "D:" + "\\models\\a-very-long-unbroken-model-folder-name-without-dashes_or_spaces"
+            for name in dialog.rows:
+                dialog.select_model(name)
+                dialog.fact_labels["Origin"].setText(folder)
+                self.app.processEvents()
+                content = scroll.widget()
+                assert content.width() == scroll.viewport().width(), name
+                for label in content.findChildren(QLabel):
+                    if label.isVisibleTo(content) and label.text():
+                        # Its own width, not the widest word's, is what the text wraps at.
+                        assert label.minimumSizeHint().width() <= label.width(), (name, label.text())
+                        assert label.geometry().right() <= content.width(), (name, label.text())
+        finally:
+            self.app.setStyleSheet(previous_stylesheet)
+
     def test_row_click_signal_selects_that_model(self):
         dialog, _values = self._make_dialog()
         dialog.rows["small"].details_requested.emit("small")
@@ -1048,3 +1107,84 @@ class TestComponents(_DialogTestCase):
         assert popup.origin_button.toolTip() == details.origin_url
         assert opened == [details.source_url, PI_HOME_URL]
         popup.close()
+
+
+class TestSectionTabs(_DialogTestCase):
+    """Models and components are separate tabs; components were six screens down."""
+
+    def _components_dialog(self):
+        dialog, values = self._make_dialog()
+        if not dialog._component_rows:
+            pytest.skip("no installable components on this platform")
+        dialog.show()
+        self.app.processEvents()
+        return dialog
+
+    def test_components_are_not_in_the_model_list(self):
+        dialog = self._components_dialog()
+        for row in dialog._component_rows.values():
+            assert dialog.components_section.isAncestorOf(row)
+            assert not dialog.library_scroll_area.isAncestorOf(row)
+
+    def test_opens_on_models_and_the_tabs_switch_sections(self):
+        dialog = self._components_dialog()
+        assert dialog.tabs.currentIndex() == 0
+        assert dialog.models_section.isVisible() and not dialog.components_section.isVisible()
+        dialog.tabs.buttons[1].click()
+        assert dialog.components_section.isVisible() and not dialog.models_section.isVisible()
+        # Every component is on screen at once, not behind a scroll.
+        first = next(iter(dialog._component_rows.values()))
+        assert first.isVisibleTo(dialog)
+
+    def test_tab_titles_count_what_is_downloaded_and_installed(self):
+        dialog = self._components_dialog()
+        models = dialog.tabs.buttons[0]._title.text()
+        components = dialog.tabs.buttons[1]._title.text()
+        assert models.startswith("Speech models · ") and f"of {len(dialog.rows)} downloaded" in models
+        assert components.startswith("Components · ") and f"of {len(dialog._component_rows)} installed" in components
+
+    def test_an_available_update_is_visible_from_the_tab(self):
+        dialog = self._components_dialog()
+        target = next(iter(dialog._component_rows))
+        real = component_coordinator.describe
+
+        def describe_with(updating):
+            def describe(cid):
+                info = real(cid)
+                state = (ComponentState.UPDATE_AVAILABLE if cid in updating
+                         else ComponentState.INSTALLED)
+                return ComponentInfo(
+                    cid, info.display_name, info.summary, state,
+                    "1", "2", info.download_bytes, info.install_bytes,
+                )
+            return describe
+
+        # Pinned for every component, so the real machine's state can't change the count.
+        with patch.object(component_coordinator, "describe", describe_with(set())):
+            dialog.refresh_components()
+        assert "update" not in dialog.tabs.buttons[1]._title.text()
+        with patch.object(component_coordinator, "describe", describe_with({target})):
+            dialog.refresh_components()
+        assert dialog.tabs.buttons[1]._title.text().endswith("· 1 update")
+        with patch.object(component_coordinator, "describe", describe_with(set(dialog._component_rows))):
+            dialog.refresh_components()
+        assert dialog.tabs.buttons[1]._title.text().endswith(f"· {len(dialog._component_rows)} updates")
+
+    def test_deep_links_switch_to_the_tab_that_has_what_they_want(self):
+        dialog = self._components_dialog()
+        component_id = next(iter(dialog._component_rows))
+        dialog.focus_component(component_id)
+        assert dialog.tabs.currentIndex() == 1 and dialog.components_section.isVisible()
+        assert dialog._component_rows[component_id].property("selected")
+        dialog.show_backend("parakeet")
+        assert dialog.tabs.currentIndex() == 0 and dialog.models_section.isVisible()
+        dialog.focus_component(component_id)
+        dialog.reveal_model("base")
+        assert dialog.tabs.currentIndex() == 0
+
+    def test_a_platform_with_no_components_shows_no_tabs(self):
+        with patch.object(component_coordinator, "list_components", return_value=[]):
+            dialog, _values = self._make_dialog()
+            dialog.show()
+            self.app.processEvents()
+        assert dialog.tabs.isHidden() and dialog.models_section.isVisible()

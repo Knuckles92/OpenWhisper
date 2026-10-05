@@ -26,9 +26,8 @@ def settings_caption(text: str) -> WrappedLabel:
 
 
 def group_title(layout: QVBoxLayout, text: str) -> QLabel:
-    """Add an uppercase group eyebrow to ``layout`` and return it."""
-    # Qt stylesheets have no text-transform, so the eyebrow case is set here.
-    caption = QLabel(text.upper())
+    """Add a group heading to ``layout`` and return it."""
+    caption = QLabel(text)
     caption.setObjectName("settingsTileGroupTitle")
     layout.addWidget(caption)
     return caption

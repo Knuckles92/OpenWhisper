@@ -31,6 +31,7 @@ from ui_qt.dialogs.settings_fields import settings_caption
 from ui_qt.utils.icons import design_icon
 from ui_qt.widgets import Button, ElidingComboBox, InfoTile, PrimaryButton
 from ui_qt.widgets.backup_calendar import BackupCalendar
+from ui_qt.widgets.buttons import compact_primary_button, neutral_button
 from ui_qt.widgets.eliding_label import ElidingLabel
 
 
@@ -105,10 +106,13 @@ class BackupSettingsPage(QWidget):
         self.last_location_label.setObjectName("backupLastLocation")
         self.last_size_label = settings_caption("")
         self.last_size_label.setObjectName("backupLastSize")
+        # Nothing to say until a backup exists; start collapsed like refresh() does.
+        self.last_location_label.hide()
+        self.last_size_label.hide()
         self.include_recordings_check = QCheckBox("Include saved recordings")
         self.include_recordings_check.setObjectName("backupIncludeRecordings")
         self.include_recordings_check.setChecked(True)
-        self.create_button = PrimaryButton("Create backup…")
+        self.create_button = compact_primary_button(PrimaryButton("Create backup…"))
         self.create_button.setObjectName("backupCreateButton")
         self.create_button.clicked.connect(self._choose_backup_destination)
         self.create_tile.add_body(self.last_backup_label)
@@ -137,11 +141,11 @@ class BackupSettingsPage(QWidget):
         )
         restore_actions = self.restore_actions = QBoxLayout(QBoxLayout.Direction.LeftToRight)
         restore_actions.setContentsMargins(0, 0, 0, 0)
-        self.inspect_button = Button("Choose backup…")
+        self.inspect_button = neutral_button(Button("Choose backup…"))
         self.inspect_button.setObjectName("backupInspectButton")
         self.inspect_button.clicked.connect(self._choose_restore_source)
         restore_actions.addWidget(self.inspect_button)
-        self.restore_button = PrimaryButton("Restore and restart")
+        self.restore_button = compact_primary_button(PrimaryButton("Restore and restart"))
         self.restore_button.setObjectName("backupRestoreButton")
         self.restore_button.setEnabled(False)
         self.restore_button.clicked.connect(self._confirm_restore)
@@ -194,7 +198,7 @@ class BackupSettingsPage(QWidget):
         self.destination_edit.setObjectName("backupScheduleDestination")
         self.destination_edit.setReadOnly(True)
         self.destination_edit.setPlaceholderText("Choose a local folder")
-        self.destination_button = Button("Browse…")
+        self.destination_button = neutral_button(Button("Browse…"))
         self.destination_button.setObjectName("backupScheduleBrowseButton")
         self.destination_button.clicked.connect(self._choose_schedule_destination)
         destination_row = QWidget()
@@ -212,7 +216,7 @@ class BackupSettingsPage(QWidget):
         self.retention_spin.setSuffix(" backups")
         self.retention_spin.setKeyboardTracking(False)
         fields_layout.addWidget(self._field_row("Keep latest", self.retention_spin))
-        self.save_schedule_button = Button("Save schedule")
+        self.save_schedule_button = neutral_button(Button("Save schedule"))
         self.save_schedule_button.setObjectName("backupSaveScheduleButton")
         self.save_schedule_button.clicked.connect(self._save_schedule)
         fields_layout.addWidget(self.save_schedule_button, alignment=Qt.AlignmentFlag.AlignLeft)
@@ -238,7 +242,7 @@ class BackupSettingsPage(QWidget):
         self.progress_bar.setObjectName("backupProgressBar")
         self.progress_bar.hide()
         layout.addWidget(self.progress_bar)
-        self.cancel_button = Button("Cancel")
+        self.cancel_button = neutral_button(Button("Cancel"))
         self.cancel_button.setObjectName("backupCancelButton")
         self.cancel_button.clicked.connect(self._cancel)
         self.cancel_button.hide()

@@ -64,6 +64,58 @@ QPushButton#primaryButton:pressed {
     background-color: @accent-pressed;
 }
 
+/* Settings actions, chosen by property (ui_qt/widgets/buttons.py) so a button
+   keeps its own object name. A property selector ranks below the #id rules
+   above and below, so these never override the primary and danger buttons. */
+QPushButton[tone="neutral"] {
+    color: @slate-text;
+    background-color: transparent;
+    border: 1px solid @slate-border-strong;
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QPushButton[tone="neutral"]:hover {
+    background-color: @slate-field;
+    border-color: @slate-border-hover;
+}
+
+QPushButton[tone="neutral"]:pressed {
+    background-color: @slate-raised;
+}
+
+QPushButton[tone="neutral"]:disabled {
+    color: @slate-text-disabled;
+    background-color: transparent;
+    border-color: @slate-border-subtle;
+}
+
+QPushButton[tone="primary"] {
+    color: @on-accent;
+    background-color: @accent;
+    border: 1px solid @accent;
+    border-radius: 8px;
+    padding: 6px 16px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QPushButton[tone="primary"]:hover {
+    background-color: @accent-hover;
+}
+
+QPushButton[tone="primary"]:pressed {
+    background-color: @accent-pressed;
+}
+
+QPushButton[tone="primary"]:disabled {
+    color: @slate-text-disabled;
+    background-color: @slate-disabled;
+    border-color: @slate-border;
+}
+
 /* Danger buttons (for cancel/stop) */
 QPushButton#dangerButton {
     background-color: @danger; /* Apple System Red */
@@ -232,6 +284,7 @@ QDialog#remoteRecordRecoveryDialog QLabel {
 
 QWidget#modelManagerBody,
 QWidget#modelManagerStack,
+QWidget#downloadsModelsSection,
 QWidget#downloadsCatalogColumn,
 QWidget#downloadsSelectionBar,
 QWidget#downloadsListContainer,
@@ -400,13 +453,6 @@ QLabel#modelRowUsage {
 
 QWidget#textModelPicker {
     background-color: transparent;
-}
-
-QLabel#modelManagerHeaderIcon {
-    background-color: @accent-tint;
-    border: 1px solid @accent-border;
-    border-radius: 8px;
-    padding: 1px;
 }
 
 QLabel#modelManagerTitle {
@@ -739,6 +785,7 @@ QLabel#downloadsSourceNote {
 
 QPushButton#downloadsRepoButton,
 QPushButton#downloadsOriginButton,
+QPushButton#downloadsLicenseButton,
 QPushButton#downloadsToolButton {
     color: @slate-text-2;
     background-color: @slate-field;
@@ -749,6 +796,7 @@ QPushButton#downloadsToolButton {
 
 QPushButton#downloadsRepoButton:hover,
 QPushButton#downloadsOriginButton:hover,
+QPushButton#downloadsLicenseButton:hover,
 QPushButton#downloadsToolButton:hover {
     color: @slate-text;
     background-color: @slate-raised;
@@ -827,13 +875,12 @@ QLabel#batchDestPath {
    just the indicator, is the click target, so hover and the checked tint tell
    the user the whole card reacts. */
 QLabel#settingsTileGroupTitle {
-    color: @slate-text-3;
+    color: @slate-text-2;
     background-color: transparent;
     border: none;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    padding-top: 2px;
+    font-size: 14px;
+    font-weight: 600;
+    padding-top: 4px;
 }
 
 QFrame#settingsTile {
@@ -875,7 +922,15 @@ QFrame#settingsTile[kind="notice"]:hover {
 }
 
 QWidget#settingsTileBody,
-QWidget#settingsTileText {
+QWidget#settingsTileText,
+QWidget#remoteSection,
+QWidget#remotePairRow,
+QWidget#remotePairedRow,
+QWidget#remotePairingBox,
+QWidget#remoteTailnetList,
+QWidget#remoteTailnetRow,
+QWidget#remoteDevicesList,
+QWidget#remoteDeviceRow {
     background-color: transparent;
 }
 
@@ -1036,6 +1091,13 @@ QPushButton#mcpChoice {
     border: 1px solid transparent;
     border-radius: 8px;
     padding: 0;
+}
+
+/* The chooser is also used outside the MCP page, so its labels must not
+   depend on a page-level transparent-label rule. */
+QPushButton#mcpChoice QLabel {
+    background-color: transparent;
+    border: none;
 }
 
 QLabel#mcpChoiceTitle {
@@ -1421,6 +1483,7 @@ QPushButton#agentLookAgainButton:disabled {
 
 /* Integrated Hotkeys destination */
 QFrame#hotkeyInstructionCard,
+QFrame#hotkeyModeCard,
 QFrame#hotkeyShortcutCard {
     background-color: @slate-surface;
     border: 1px solid @slate-border;
@@ -1441,12 +1504,12 @@ QLabel#hotkeyShortcutDescription {
 }
 
 QLabel#hotkeyGroupTitle {
-    color: @slate-text-3;
+    color: @slate-text-2;
     background-color: transparent;
     border: none;
-    font-size: 11px;
-    font-weight: 700;
-    padding-top: 2px;
+    font-size: 14px;
+    font-weight: 600;
+    padding-top: 4px;
 }
 
 QLabel#hotkeyShortcutName {
@@ -1469,10 +1532,16 @@ QLineEdit#hotkeyInput {
 
 QWidget#cleanupProfilesPanel,
 QWidget#cleanupProfileLibrary,
-QWidget#cleanupProfileEditor,
 QWidget#cleanupProfilesPanel QLabel,
 QWidget#cleanupProfilesPanel QCheckBox {
     background: transparent;
+}
+
+/* The editor is a card, like the tiles on the other Settings pages. */
+QWidget#cleanupProfileEditor {
+    background-color: @slate-surface;
+    border: 1px solid @slate-border;
+    border-radius: 12px;
 }
 
 QListWidget#cleanupProfilesList {
