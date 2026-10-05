@@ -117,7 +117,10 @@ class RemoteEngineSection(QObject):
     """Builds the page's tiles and keeps them in step with the service."""
 
     _service_event = pyqtSignal(str)
-    _pair_finished = pyqtSignal(object, str)
+    #: (pairing or None, the exception or None, the NearbyHost it was for or None)
+    _pair_finished = pyqtSignal(object, object, object)
+    #: The six digits a pairing request shows while the host's owner decides.
+    _pair_code = pyqtSignal(str)
     _scan_finished = pyqtSignal(object)
     _records_event = pyqtSignal(str)
     _records_job_done = pyqtSignal(str)
@@ -146,9 +149,15 @@ class RemoteEngineSection(QObject):
         self._scan = None
         self._scan_busy = False
         self._scan_at = 0.0
+        self._sweeping = False
+        #: The address-and-code row is open (asked for, or "Use a code").
+        self._manual = False
+        #: While a pairing request waits on the host: {"name", "sas", "canceled"}.
+        self._request = None
         self._listener = lambda kind: self._service_event.emit(kind)
         self._service_event.connect(self._on_service_event)
         self._pair_finished.connect(self._on_pair_finished)
+        self._pair_code.connect(self._on_pair_code)
         self._scan_finished.connect(self._on_scan_finished)
         self._countdown = QTimer(self)
         self._countdown.setInterval(1000)
@@ -175,6 +184,63 @@ class RemoteEngineSection(QObject):
         layout.addWidget(self.tabs)
         layout.addWidget(self.client_container)
         layout.addWidget(self.host_container)
+
+        # Client, before pairing: the computers nearby that share their
+        # engine, found on this network and the tailnet; or an address and
+        # code typed in.
+        self.find_tile = InfoTile(
+            "Find a computer",
+            "",
+            icon("world-blue.svg"),
+        )
+        self.find_tile.setProperty("tileId", "remoteFindTile")  # not setObjectName: the theme styles tiles by "settingsTile"
+        self.find_list = QWidget()
+        self.find_list.setObjectName("remoteFindList")
+        self._find_layout = QVBoxLayout(self.find_list)
+        self._find_layout.setContentsMargins(0, 0, 0, 0)
+        self._find_layout.setSpacing(6)
+        self.find_tile.add_body(self.find_list)
+
+        # While the host's owner decides on a pairing request: the number
+        # both screens show, and a way to stop waiting.
+        self.wait_box = QWidget()
+        self.wait_box.setObjectName("remoteWaitBox")
+        wait_layout = QHBoxLayout(self.wait_box)
+        wait_layout.setContentsMargins(0, 0, 0, 0)
+        wait_layout.setSpacing(12)
+        self.wait_code_label = QLabel("")
+        self.wait_code_label.setObjectName("remoteWaitCode")
+        self.wait_code_label.setAccessibleName("Pairing number")
+        self.wait_label = WrappedLabel("")
+        self.wait_label.setObjectName("remoteWaitLabel")
+        self.wait_cancel_button = Button("Cancel")
+        self.wait_cancel_button.setObjectName("remoteWaitCancelButton")
+        self.wait_cancel_button.clicked.connect(self._cancel_request)
+        wait_layout.addWidget(self.wait_code_label)
+        wait_layout.addWidget(self.wait_label, stretch=1)
+        wait_layout.addWidget(self.wait_cancel_button)
+        self.wait_box.hide()
+        self.find_tile.add_body(self.wait_box)
+
+        find_actions = QHBoxLayout()
+        find_actions.setContentsMargins(0, 0, 0, 0)
+        self.search_button = Button("Search again")
+        self.search_button.setObjectName("remoteSearchButton")
+        self.search_button.clicked.connect(lambda: self.scan_nearby(force=True))
+        self.sweep_button = Button("Check every address")
+        self.sweep_button.setObjectName("remoteSweepButton")
+        self.sweep_button.setToolTip(
+            "Try each address on this network, for routers that hide computers from a search"
+        )
+        self.sweep_button.clicked.connect(lambda: self.scan_nearby(force=True, sweep=True))
+        self.manual_button = Button("Enter an address")
+        self.manual_button.setObjectName("remoteManualButton")
+        self.manual_button.clicked.connect(self._show_manual)
+        find_actions.addWidget(self.search_button)
+        find_actions.addWidget(self.sweep_button)
+        find_actions.addWidget(self.manual_button)
+        find_actions.addStretch(1)
+        self.find_tile.add_body_layout(find_actions)
 
         # Client: pair with a host, then select the engine.
         self.client_tile = InfoTile(
@@ -205,7 +271,11 @@ class RemoteEngineSection(QObject):
         pair_layout.addWidget(self.address_edit, stretch=1)
         pair_layout.addWidget(self.code_edit)
         pair_layout.addWidget(self.pair_button)
-        self.client_tile.add_body(self.pair_row)
+        self.pair_row.hide()
+        self.find_tile.add_body(self.pair_row)
+        self.find_message = WrappedLabel("")
+        self.find_message.setObjectName("remoteFindMessage")
+        self.find_tile.add_body(self.find_message)
 
         self.paired_row = QWidget()
         self.paired_row.setObjectName("remotePairedRow")
@@ -244,6 +314,13 @@ class RemoteEngineSection(QObject):
         self.client_message = WrappedLabel("")
         self.client_message.setObjectName("remoteClientMessage")
         self.client_tile.add_body(self.client_message)
+        # Paired on this network only: how to keep using it away from home.
+        self.tailscale_hint = WrappedLabel("")
+        self.tailscale_hint.setObjectName("remoteTailscaleHint")
+        self.tailscale_hint.setTextFormat(Qt.TextFormat.RichText)
+        self.tailscale_hint.setOpenExternalLinks(True)
+        self.tailscale_hint.hide()
+        self.client_tile.add_body(self.tailscale_hint)
 
         self.share_history_tile = SettingTile(
             "Allow the paired host to query this computer's history",
@@ -304,38 +381,15 @@ class RemoteEngineSection(QObject):
         storage_actions.addStretch(1)
         self.storage_tile.add_body_layout(storage_actions)
 
-        # Client, over Tailscale: computers on the tailnet that are sharing.
-        self.tailnet_tile = InfoTile(
-            "Computers on your tailnet",
-            "",
-            icon("world-blue.svg"),
-        )
-        self.tailnet_tile.setProperty("tileId", "remoteTailnetTile")  # not setObjectName: the theme styles tiles by "settingsTile"
-        self.tailnet_list = QWidget()
-        self.tailnet_list.setObjectName("remoteTailnetList")
-        self._tailnet_layout = QVBoxLayout(self.tailnet_list)
-        self._tailnet_layout.setContentsMargins(0, 0, 0, 0)
-        self._tailnet_layout.setSpacing(6)
-        self.tailnet_tile.add_body(self.tailnet_list)
-        self.tailnet_search_button = Button("Search again")
-        self.tailnet_search_button.setObjectName("remoteTailnetSearchButton")
-        self.tailnet_search_button.clicked.connect(lambda: self.scan_tailnet(force=True))
-        search_row = QHBoxLayout()
-        search_row.setContentsMargins(0, 0, 0, 0)
-        search_row.addWidget(self.tailnet_search_button)
-        search_row.addStretch(1)
-        self.tailnet_tile.add_body_layout(search_row)
-
         dialog._tile_group(
             self.client_container.column,
             "",
-            [self.client_tile, self.share_history_tile, self.storage_tile, self.tailnet_tile],
+            [self.find_tile, self.client_tile, self.share_history_tile, self.storage_tile],
             columns=1,
             intro=(
-                "Dictate or record meetings here while a faster computer does the transcription, on "
-                "your network or anywhere over Tailscale. On that computer, open Share this "
-                "computer and turn on sharing; then pick it from your tailnet, or enter its "
-                "address and pairing code."
+                "Dictate or record meetings here while a faster computer does the transcription. "
+                "On that computer, open Share this computer and turn on sharing; it then shows "
+                "up below."
             ),
         )
 
@@ -356,6 +410,15 @@ class RemoteEngineSection(QObject):
         self.host_identity.setObjectName("remoteHostIdentity")
         self.host_identity.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.share_tile.add_body(self.host_identity)
+        # What may keep other computers out (services/remote_asr/reachability.py).
+        self.host_notes = QWidget()
+        self.host_notes.setObjectName("remoteHostNotes")
+        self._host_notes_layout = QVBoxLayout(self.host_notes)
+        self._host_notes_layout.setContentsMargins(0, 0, 0, 0)
+        self._host_notes_layout.setSpacing(6)
+        self._host_notes_shown: tuple = ()
+        self.host_notes.hide()
+        self.share_tile.add_body(self.host_notes)
 
         self.tailscale_tile = SettingTile(
             "Pair my Tailscale computers without a code",
@@ -417,7 +480,8 @@ class RemoteEngineSection(QObject):
 
         self.devices_tile = InfoTile(
             "Paired computers",
-            "Computers that can use this engine. Removing one cuts it off at once.",
+            "Computers that can use this engine. One that finds this computer can ask to pair, "
+            "and you're asked here to allow it. Removing one cuts it off at once.",
             icon("key-blue.svg"),
         )
         self.devices_tile.setProperty("tileId", "remoteDevicesTile")  # not setObjectName: the theme styles tiles by "settingsTile"
@@ -428,11 +492,12 @@ class RemoteEngineSection(QObject):
         pairing_layout.setSpacing(12)
         self.pairing_code_label = QLabel("")
         self.pairing_code_label.setObjectName("remotePairingCode")
-        font = self.pairing_code_label.font()
-        font.setPointSizeF(font.pointSizeF() * 1.8)
-        font.setBold(True)
-        font.setLetterSpacing(font.SpacingType.AbsoluteSpacing, 3)
-        self.pairing_code_label.setFont(font)
+        for label in (self.pairing_code_label, self.wait_code_label):
+            font = label.font()
+            font.setPointSizeF(font.pointSizeF() * 1.8)
+            font.setBold(True)
+            font.setLetterSpacing(font.SpacingType.AbsoluteSpacing, 3)
+            label.setFont(font)
         self.pairing_expiry_label = WrappedLabel("")
         self.pairing_expiry_label.setObjectName("remotePairingExpiry")
         self.cancel_pairing_button = Button("Cancel")
@@ -442,7 +507,10 @@ class RemoteEngineSection(QObject):
         pairing_layout.addWidget(self.pairing_expiry_label, stretch=1)
         pairing_layout.addWidget(self.cancel_pairing_button)
         self.devices_tile.add_body(self.pairing_box)
-        self.pair_device_button = PrimaryButton("Pair a device")
+        self.pair_device_button = PrimaryButton("Show a pairing code")
+        self.pair_device_button.setToolTip(
+            "For a computer that enters this one's address, or runs an older OpenWhisper"
+        )
         self.pair_device_button.setObjectName("remotePairDeviceButton")
         self.pair_device_button.clicked.connect(self._open_pairing)
         button_row = QHBoxLayout()
@@ -483,13 +551,14 @@ class RemoteEngineSection(QObject):
         for button in (
             self.manage_button, self.forget_button, self.meeting_use_button,
             self.send_existing_button, self.bring_back_button, self.retry_records_button,
-            self.tailnet_search_button, self.cancel_pairing_button, self.recover_records_button,
+            self.search_button, self.sweep_button, self.manual_button, self.wait_cancel_button,
+            self.cancel_pairing_button, self.recover_records_button,
         ):
             neutral_button(button)
         self._built = True
         self.refresh()
 
-    _UI_ATTRIBUTES = frozenset({'_set_rail_value', 'storage_status', 'tailnet_list', 'cancel_pairing_button', 'manage_button', 'meeting_use_button', 'client_tile', 'paired_row', 'pair_row', 'share_tile', 'code_edit', 'devices_list', 'tailnet_search_button', 'send_existing_button', 'pairing_code_label', 'client_message', 'tailscale_tile', 'pairing_expiry_label', 'retry_records_button', 'use_button', '_tailnet_layout', 'devices_tile', 'forget_button', 'pair_device_button', 'bring_back_button', 'storage_tile', 'host_status', 'share_history_tile', 'keep_records_tile', 'manage_mcp_tile', 'tabs', 'client_container', 'host_container', 'tailnet_tile', 'host_identity', 'management_tile', 'address_edit', '_built', '_location_group', '_devices_layout', 'pairing_box', 'pair_button', 'port_tile', 'location_buttons', 'port_spin'})
+    _UI_ATTRIBUTES = frozenset({'_set_rail_value', 'storage_status', 'find_list', 'cancel_pairing_button', 'manage_button', 'meeting_use_button', 'client_tile', 'paired_row', 'pair_row', 'share_tile', 'code_edit', 'devices_list', 'search_button', 'sweep_button', 'manual_button', 'find_message', 'wait_box', 'wait_code_label', 'wait_label', 'wait_cancel_button', 'tailscale_hint', 'host_notes', '_host_notes_layout', '_host_notes_shown', 'send_existing_button', 'pairing_code_label', 'client_message', 'tailscale_tile', 'pairing_expiry_label', 'retry_records_button', 'use_button', '_find_layout', 'devices_tile', 'forget_button', 'pair_device_button', 'bring_back_button', 'storage_tile', 'host_status', 'share_history_tile', 'keep_records_tile', 'manage_mcp_tile', 'tabs', 'client_container', 'host_container', 'find_tile', 'host_identity', 'management_tile', 'address_edit', '_built', '_location_group', '_devices_layout', 'pairing_box', 'pair_button', 'port_tile', 'location_buttons', 'port_spin'})
 
     def __getattr__(self, name):
         if name in self._UI_ATTRIBUTES and not self.__dict__.get("_built", False):
@@ -515,7 +584,7 @@ class RemoteEngineSection(QObject):
                 service.add_listener(self._listener)
                 self._records.add_listener(self._records_listener)
         self.refresh()
-        if self._built and self.client_tile.isVisible():
+        if self._built and self.client_container.isVisible():
             self.on_shown()
 
     def on_shown(self) -> None:
@@ -527,7 +596,7 @@ class RemoteEngineSection(QObject):
                              name="remote-records-summary", daemon=True).start()
             return
         if time.monotonic() - self._scan_at > TAILNET_RESCAN_S:
-            self.scan_tailnet()
+            self.scan_nearby()
 
     # ---- state ----
 
@@ -535,16 +604,16 @@ class RemoteEngineSection(QObject):
         if not self._built:
             return
         service = self._service
-        for widget in (self.client_tile, self.tailnet_tile, self.share_tile,
+        for widget in (self.client_tile, self.find_tile, self.share_tile,
                        self.management_tile, self.keep_records_tile, self.manage_mcp_tile,
                        self.tailscale_tile, self.port_tile, self.devices_tile):
             widget.setEnabled(service is not None)
         if service is None:
+            self.client_tile.show()
             self.client_tile.set_description("The remote engine isn't available in this window.")
-            self.pair_row.hide()
             self.paired_row.hide()
             self.pairing_box.hide()
-            self.tailnet_tile.hide()
+            self.find_tile.hide()
             self.tailscale_tile.hide()
             self.storage_tile.hide()
             self.share_history_tile.hide()
@@ -558,7 +627,7 @@ class RemoteEngineSection(QObject):
         checkbox.setChecked(client_shares_history())
         checkbox.blockSignals(blocked)
         self._refresh_records()
-        self._refresh_tailnet(service)
+        self._refresh_find(service)
         self._refresh_host(service)
 
     def _refresh_records(self) -> None:
@@ -633,13 +702,11 @@ class RemoteEngineSection(QObject):
 
     def _refresh_client(self, service) -> None:
         pairing = service.client_pairing()
+        self.client_tile.setVisible(pairing is not None)
+        self.find_tile.setVisible(pairing is None)
         if pairing is None:
-            self.client_tile.set_description(
-                "Not paired. Enter the address and code shown on the other "
-                "computer under \"Share this computer's engine\"."
-            )
-            self.pair_row.show()
             self.paired_row.hide()
+            self.tailscale_hint.hide()
         else:
             identity = protocol.short_fingerprint(pairing.fingerprint)
             if pairing.over_tailscale:
@@ -651,111 +718,134 @@ class RemoteEngineSection(QObject):
             self.client_tile.set_description(
                 f"Paired with {pairing.host_name} {where}. Its identity is {identity}."
             )
-            self.pair_row.hide()
             self.paired_row.show()
+            # Paired on this network only. Away from home is Tailscale's job;
+            # say so once it's clear the home network works.
+            home_only = (pairing.via != "tailscale" and not pairing.over_tailscale
+                         and not pairing.tailscale_fallback)
+            self.tailscale_hint.setVisible(home_only)
+            if home_only:
+                self.tailscale_hint.setText(
+                    f"Works while both computers are on the same network. To use "
+                    f"{pairing.host_name} away from home too, {self._tailscale_link('get Tailscale')} "
+                    "on both computers and sign in with the same account."
+                )
         self.pair_button.setEnabled(not self._pairing_busy)
 
-    # ---- tailnet ----
+    @staticmethod
+    def _tailscale_link(text: str) -> str:
+        return (f'<a href="{TAILSCALE_DOWNLOAD_URL}" style="color: '
+                f'{current_palette().css("accent")}; text-decoration: underline;">{text}</a>')
 
-    def scan_tailnet(self, force: bool = False) -> None:
+    # ---- finding a computer ----
+
+    def scan_nearby(self, force: bool = False, sweep: bool = False) -> None:
+        """Look for computers sharing their engine, here and on the tailnet."""
         if self._service is None or self._scan_busy:
             return
         if not force and time.monotonic() - self._scan_at <= TAILNET_RESCAN_S:
             return
         self._scan_busy = True
+        self._sweeping = sweep
         service = self._service
 
         def work():
             try:
-                scan = service.scan_tailnet()
+                scan = service.scan_nearby(sweep=sweep)
             except Exception as exc:
+                logger.warning("Looking for computers to pair with failed: %s", exc)
                 scan = exc
             self._scan_finished.emit(scan)
 
-        threading.Thread(target=work, name="remote-engine-tailnet-scan", daemon=True).start()
+        threading.Thread(target=work, name="remote-engine-nearby-scan", daemon=True).start()
         self.refresh()
 
     def _on_scan_finished(self, scan) -> None:
         self._scan_busy = False
+        self._sweeping = False
         self._scan_at = time.monotonic()
         self._scan = None if isinstance(scan, Exception) else scan
         self.refresh()
 
-    def _clear_tailnet_rows(self) -> None:
-        while self._tailnet_layout.count():
-            item = self._tailnet_layout.takeAt(0)
+    def _clear_find_rows(self) -> None:
+        while self._find_layout.count():
+            item = self._find_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                # Hidden now: deleteLater waits for the event loop, and a row
+                # taken out of the layout would paint over the new ones until then.
+                widget.hide()
                 widget.deleteLater()
 
-    def _tailnet_note(self, text: str, link: bool = False) -> None:
+    def _find_note(self, text: str, link: bool = False) -> None:
         note = WrappedLabel(text)
-        note.setObjectName("remoteTailnetNote")
+        note.setObjectName("remoteFindNote")
         if link:
             note.setTextFormat(Qt.TextFormat.RichText)
             note.setOpenExternalLinks(True)
-        self._tailnet_layout.addWidget(note)
+        self._find_layout.addWidget(note)
 
-    def _refresh_tailnet(self, service) -> None:
+    def _refresh_find(self, service) -> None:
         if service.client_pairing() is not None:
-            self.tailnet_tile.hide()
             return
-        self.tailnet_tile.show()
-        self._clear_tailnet_rows()
+        self._clear_find_rows()
+        waiting = self._request is not None
+        self.wait_box.setVisible(waiting and bool(self._request.get("sas")))
+        self.pair_row.setVisible(self._manual and not waiting)
+        self.manual_button.setVisible(not self._manual and not waiting)
+        self.search_button.setEnabled(not self._scan_busy and not self._pairing_busy)
+        self.sweep_button.setEnabled(not self._scan_busy and not self._pairing_busy)
         scan = self._scan
         status = scan.status if scan is not None else service.tailscale_status()
-        self.tailnet_search_button.setEnabled(not self._scan_busy)
-        self.tailnet_search_button.setVisible(status is None or status.running)
-        if status is None or (self._scan_busy and scan is None):
-            self.tailnet_tile.set_description("Looking for computers on your tailnet...")
-            return
-        if status.state == "not_installed":
-            self.tailnet_tile.set_description(
-                "With Tailscale on both computers, this one can use the other's "
-                "engine from anywhere, not only at home."
-            )
-            self._tailnet_note(
-                f'<a href="{TAILSCALE_DOWNLOAD_URL}" style="color: '
-                f'{current_palette().css("accent")}; text-decoration: underline;">'
-                "Get Tailscale</a>, sign in on both computers with the same account, "
-                "then come back here.",
-                link=True,
-            )
-            return
-        if not status.running:
-            reason = {
-                "stopped": "Tailscale is installed but turned off.",
-                "needs_login": "Tailscale is installed but not signed in.",
-                "starting": "Tailscale is still starting.",
-            }.get(status.state, "Tailscale isn't answering right now.")
-            self.tailnet_tile.set_description(
-                f"{reason} Turn it on to find your computers from anywhere."
-            )
-            self.tailnet_search_button.show()
-            return
-        who = f" as {status.owner}" if status.owner else ""
+        tailnet = status is not None and status.running
+        where = "on this network and your tailnet" if tailnet else "on this network"
         if self._scan_busy:
-            self.tailnet_tile.set_description(f"Signed in to Tailscale{who}. Searching...")
-        else:
-            self.tailnet_tile.set_description(f"Signed in to Tailscale{who}.")
-        hosts = scan.hosts if scan is not None else ()
-        if scan is not None and not hosts:
-            self._tailnet_note(
-                "No computer on your tailnet is sharing its engine yet. Turn on "
-                "\"Share this computer's engine\" there; OpenWhisper finds it on "
-                f"port {protocol.DEFAULT_PORT}."
+            self.find_tile.set_description(
+                "Checking every address on this network..." if self._sweeping
+                else f"Looking for computers {where}..."
             )
+        else:
+            description = f"Computers {where} that share their engine."
+            if tailnet and status.owner:
+                description += f" Signed in to Tailscale as {status.owner}."
+            self.find_tile.set_description(description)
+        hosts = scan.hosts if scan is not None else ()
+        self.sweep_button.setVisible(scan is not None and not hosts and not scan.swept)
         for host in hosts:
-            self._tailnet_layout.addWidget(self._tailnet_row(host))
+            self._find_layout.addWidget(self._find_row(host))
+        if scan is None or hosts or self._scan_busy:
+            return
+        self._find_note(
+            "None found. On the computer you want to use, open Settings → Remote engine → "
+            "Share this computer and turn on sharing."
+            + (" Checked every address on this network as well." if scan.swept else
+               " If it's on, your router may be hiding it from the search: try Check every "
+               "address, or enter its address.")
+        )
+        if status is not None and not tailnet:
+            reason = {
+                "stopped": "Tailscale is installed but turned off; turn it on to find your "
+                           "computers on other networks too.",
+                "needs_login": "Tailscale is installed but not signed in; sign in to find your "
+                               "computers on other networks too.",
+                "starting": "Tailscale is still starting.",
+            }.get(status.state)
+            if reason is None and status.state == "not_installed":
+                self._find_note(
+                    f"On a different network? {self._tailscale_link('Get Tailscale')} on both "
+                    "computers and sign in with the same account.",
+                    link=True,
+                )
+            elif reason is not None:
+                self._find_note(reason)
 
-    def _tailnet_row(self, host) -> QWidget:
+    def _find_row(self, host) -> QWidget:
         row = QWidget()
-        row.setObjectName("remoteTailnetRow")
+        row.setObjectName("remoteFindRow")
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.setSpacing(8)
-        peer = host.peer
-        details = [peer.name]
+        details = [host.name]
         engine = _engine_phrase(host.engine)
         if not host.compatible:
             details.append("needs an OpenWhisper update to pair")
@@ -763,21 +853,25 @@ class RemoteEngineSection(QObject):
             details.append(engine)
         else:
             details.append("sharing, but no engine is ready")
-        if peer.mine:
+        peer = host.tailnet.peer if host.tailnet is not None else None
+        if peer is not None and peer.mine:
             details.append("your computer")
-        elif peer.owner:
+        elif peer is not None and peer.owner:
             details.append(f"shared by {peer.owner}")
+        elif host.lan is not None:
+            details.append("on this network")
         label = WrappedLabel(" · ".join(details))
-        label.setObjectName("remoteTailnetLabel")
+        label.setObjectName("remoteFindLabel")
+        label.setToolTip(host.address)
         row_layout.addWidget(label, stretch=1)
-        if host.can_pair_without_code:
+        if host.compatible and (host.can_pair_without_code or host.approval):
             button = compact_primary_button(PrimaryButton("Connect"))
-            button.setObjectName("remoteTailnetConnectButton")
-            button.clicked.connect(lambda _checked=False, h=host: self._pair_tailscale(h))
+            button.setObjectName("remoteFindConnectButton")
+            button.clicked.connect(lambda _checked=False, h=host: self._connect(h))
         else:
             button = neutral_button(Button("Use a code"))
-            button.setObjectName("remoteTailnetCodeButton")
-            button.clicked.connect(lambda _checked=False, h=host: self._pair_with_code(h))
+            button.setObjectName("remoteFindCodeButton")
+            button.clicked.connect(lambda _checked=False, h=host: self._use_code(h))
         button.setEnabled(host.compatible and not self._pairing_busy)
         row_layout.addWidget(button)
         return row
@@ -835,6 +929,7 @@ class RemoteEngineSection(QObject):
             self.host_identity.show()
         else:
             self.host_identity.hide()
+        self._show_host_notes(state.get("notes") or [] if running else [])
 
         # Only offered where it can work: Tailscale running under a person's
         # account (tagged servers have no owner to compare against).
@@ -848,7 +943,7 @@ class RemoteEngineSection(QObject):
             self.tailscale_tile.set_description(
                 f"Computers signed in to Tailscale as {tailnet.owner} can pair by "
                 "picking this one from their tailnet. Anyone else on your tailnet "
-                "still needs a pairing code."
+                "still asks first, and you allow it here."
             )
 
         self.pair_device_button.setEnabled(running)
@@ -883,6 +978,45 @@ class RemoteEngineSection(QObject):
     def _show_section(self, index: int) -> None:
         self.client_container.setVisible(index == 0)
         self.host_container.setVisible(index == 1)
+        if index == 0 and self._service is not None and self._service.client_pairing() is None:
+            # The page may have opened on the sharing tab; search on first look here.
+            self.scan_nearby()
+
+    def _show_host_notes(self, notes: list) -> None:
+        """What may keep other computers out, each with its fix (rebuilt only on change)."""
+        shown = tuple((note.kind, note.message, note.action, note.url) for note in notes)
+        if shown == self._host_notes_shown:
+            return
+        self._host_notes_shown = shown
+        while self._host_notes_layout.count():
+            item = self._host_notes_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.deleteLater()
+        for note in notes:
+            row = QWidget()
+            row.setObjectName("remoteHostNoteRow")
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            label = WrappedLabel(note.message)
+            label.setObjectName("remoteHostNote")
+            row_layout.addWidget(label, stretch=1)
+            if note.action and note.url:
+                button = neutral_button(Button(note.action))
+                button.setObjectName("remoteHostNoteButton")
+                button.clicked.connect(lambda _checked=False, url=note.url: self._open_url(url))
+                row_layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignTop)
+            self._host_notes_layout.addWidget(row)
+        self.host_notes.setVisible(bool(notes))
+
+    @staticmethod
+    def _open_url(url: str) -> None:
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+
+        QDesktopServices.openUrl(QUrl(url))
 
     def _show_pairing(self, pairing) -> None:
         # The code replaces the button while it is valid.
@@ -948,7 +1082,15 @@ class RemoteEngineSection(QObject):
     # ---- actions ----
 
     def _say(self, text: str) -> None:
+        # One line in each state's tile, so a message survives the switch
+        # between finding a computer and being paired with one.
         self.client_message.setText(text)
+        self.find_message.setText(text)
+
+    def _show_manual(self) -> None:
+        self._manual = True
+        self.refresh()
+        self.address_edit.setFocus()
 
     def _pair(self) -> None:
         if self._service is None or self._pairing_busy:
@@ -965,7 +1107,8 @@ class RemoteEngineSection(QObject):
             return
         self._start_pairing(address, code, tailscale=False)
 
-    def _start_pairing(self, address: str, code: Optional[str], *, tailscale: bool) -> None:
+    def _start_pairing(self, address: str, code: Optional[str], *, tailscale: bool,
+                       host=None) -> None:
         self._pairing_busy = True
         self.pair_button.setEnabled(False)
         self._say("Pairing...")
@@ -975,39 +1118,109 @@ class RemoteEngineSection(QObject):
             try:
                 pairing = service.pair(address, code, tailscale=tailscale)
             except Exception as exc:
-                self._pair_finished.emit(None, str(exc) or type(exc).__name__)
+                self._pair_finished.emit(None, exc, host)
             else:
-                self._pair_finished.emit(pairing, "")
+                self._pair_finished.emit(pairing, None, host)
 
         threading.Thread(target=work, name="remote-engine-pair", daemon=True).start()
         self.refresh()
 
-    def _pair_tailscale(self, host) -> None:
+    def _connect(self, host) -> None:
+        """Pair with a computer from the list: through Tailscale, or by asking it."""
         if self._service is None or self._pairing_busy:
             return
-        self._start_pairing(host.address, None, tailscale=True)
+        if host.can_pair_without_code:
+            self._start_pairing(host.address, None, tailscale=True, host=host)
+        else:
+            self._request_pairing(host)
 
-    def _pair_with_code(self, host) -> None:
-        self.address_edit.setText(
-            host.peer.address if host.port == protocol.DEFAULT_PORT else host.address
+    def _request_pairing(self, host) -> None:
+        """Ask the host's owner to allow this computer; both screens show a number."""
+        canceled = threading.Event()
+        self._pairing_busy = True
+        self._request = {"name": host.name, "sas": "", "canceled": canceled}
+        self.pair_button.setEnabled(False)
+        self._say(f"Asking {host.name}...")
+        service = self._service
+
+        def work():
+            try:
+                pairing = service.request_pairing(
+                    host.address, on_code=self._pair_code.emit, canceled=canceled
+                )
+            except Exception as exc:
+                self._pair_finished.emit(None, exc, host)
+            else:
+                self._pair_finished.emit(pairing, None, host)
+
+        threading.Thread(target=work, name="remote-engine-pair-request", daemon=True).start()
+        self.refresh()
+
+    def _on_pair_code(self, sas: str) -> None:
+        if self._request is None:
+            return
+        self._request["sas"] = sas
+        name = self._request["name"]
+        self.wait_code_label.setText(protocol.format_sas(sas))
+        self.wait_label.setText(
+            f"On {name}, click Allow if it shows this number. If it shows a different "
+            "one, click Deny there: something else is answering for it."
         )
+        self._say(f"Waiting for {name} to allow this computer...")
+        self.refresh()
+
+    def _cancel_request(self) -> None:
+        if self._request is not None:
+            self._request["canceled"].set()
+            self._say("Canceling...")
+
+    def _use_code(self, host) -> None:
+        """A host that can't take requests (an older OpenWhisper): type its code."""
+        self._manual = True
+        self.address_edit.setText(host.address)
+        self.refresh()
         self.code_edit.setFocus()
         self._say(
-            f"On {host.peer.name}, click \"Pair a device\", then enter the code it "
-            "shows and click Pair."
+            f"On {host.name}, click \"Show a pairing code\" under Settings → Remote engine → "
+            "Share this computer (\"Pair a device\" in older versions), then enter the code "
+            "here and click Pair."
         )
 
-    def _on_pair_finished(self, pairing, error: str) -> None:
+    def _pair_error(self, exc, host) -> str:
+        from services.remote_asr.client import PairingCanceled, RemoteUnreachable
+
+        if isinstance(exc, PairingCanceled):
+            return "Pairing canceled."
+        if isinstance(exc, RemoteUnreachable) and host is not None and host.lan is not None \
+                and not exc.refused:
+            # It answered the search, so it is on this network; the
+            # connection itself is what's being stopped.
+            return (
+                f"{host.name} answered the search but didn't accept the connection. Its "
+                f"firewall may be blocking OpenWhisper: on {host.name}, open Settings → Remote "
+                "engine → Share this computer to see what to change."
+            )
+        return str(exc) or type(exc).__name__
+
+    def _on_pair_finished(self, pairing, error, host) -> None:
         self._pairing_busy = False
+        self._request = None
+        self.wait_box.hide()
         self.pair_button.setEnabled(True)
-        if error:
-            self._say(error)
+        if error is not None:
+            self._say(self._pair_error(error, host))
         elif pairing.via == "tailscale":
             self._say(
                 f"Paired with {pairing.host_name} through your Tailscale account. "
                 "Click \"Use for dictation\" to start using it."
             )
+        elif pairing.via == "approval":
+            self._manual = False
+            self._say(
+                f"Paired with {pairing.host_name}. Click \"Use for dictation\" to start using it."
+            )
         else:
+            self._manual = False
             self.code_edit.clear()
             self._say(
                 f"Paired with {pairing.host_name}. Check that its identity, "
@@ -1053,11 +1266,18 @@ class RemoteEngineSection(QObject):
                     return
             self._service.forget_host()
             self._say("Forgot the host. Pair again to use it.")
-            self.scan_tailnet(force=True)
+            self.scan_nearby(force=True)
 
     def _on_share_toggled(self, checked: bool) -> None:
-        if self._service is not None:
-            self._service.set_host_enabled(checked)
+        if self._service is None:
+            return
+        self._service.set_host_enabled(checked)
+        state = self._service.host_state() if checked else None
+        if state is not None and state["running"] and not state["devices"] and not state["pairing"]:
+            # Someone turning sharing on is about to pair a computer; have a
+            # code ready for one that types it, as well as for its request.
+            self._service.open_pairing()
+            self.refresh()
 
     def _on_model_management_toggled(self, checked: bool) -> None:
         if self._service is not None:

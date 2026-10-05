@@ -9,11 +9,12 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+import secrets
 import socket
 import threading
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from services.remote_asr import protocol
 from services.remote_asr.tls import client_context, peer_fingerprint
@@ -34,6 +35,9 @@ KEEPALIVE_TIMEOUT_S = 20.0
 #: How often a request waiting on the host checks for a cancel, which keeps
 #: the connection and so can't interrupt the read the way closing it did.
 _REQUEST_POLL_S = 0.05
+#: A host missing from its saved addresses is looked for on the network at
+#: most this often.
+REDISCOVER_INTERVAL_S = 30.0
 
 
 class RemoteEngineError(RuntimeError):
@@ -74,6 +78,23 @@ class RemoteConnectionLost(RemoteEngineError):
         self.sent = sent
 
 
+class RemoteUnreachable(RemoteEngineError):
+    """Nothing accepted a connection at the address.
+
+    ``refused`` when a computer there turned it away (nothing listening on
+    the port), as opposed to no answer at all (a firewall, another network,
+    or nothing at that address).
+    """
+
+    def __init__(self, message: str, *, refused: bool = False):
+        super().__init__(message)
+        self.refused = refused
+
+
+class PairingCanceled(RemoteEngineError):
+    """The person stopped waiting for the host to allow pairing."""
+
+
 @dataclass(frozen=True)
 class PairingResult:
     token: str
@@ -91,6 +112,10 @@ class ProbeResult:
     protocol: int
     engine: dict
     tailscale_pairing: bool
+    #: The certificate the host presented, so finds by different routes merge.
+    fingerprint: str = ""
+    #: Takes pairing requests its owner allows on its own screen.
+    approval: bool = False
 
     @property
     def compatible(self) -> bool:
@@ -129,9 +154,15 @@ def _open(host: str, port: int, timeout: float):
     except InvalidHandshake as exc:
         raise RemoteEngineError(f"{where} isn't an OpenWhisper remote engine.") from exc
     except socket.gaierror as exc:
-        raise RemoteEngineError(f"Couldn't find a computer named {host}.") from exc
+        raise RemoteUnreachable(f"Couldn't find a computer named {host}.") from exc
+    except ConnectionRefusedError as exc:
+        raise RemoteUnreachable(
+            f"Couldn't reach {where}: nothing there is accepting connections on that "
+            "port. Check that the host is sharing its engine, on that port.",
+            refused=True,
+        ) from exc
     except (OSError, TimeoutError) as exc:
-        raise RemoteEngineError(
+        raise RemoteUnreachable(
             f"Couldn't reach {where}. Check that the host is on, sharing its "
             "engine, and allowed through its firewall."
         ) from exc
@@ -168,6 +199,7 @@ def probe_host(host: str, port: int = protocol.DEFAULT_PORT, *,
     """Ask whether ``host`` is sharing an engine, without pairing or a token."""
     ws = _open(host, port, timeout)
     try:
+        fingerprint = peer_fingerprint(ws.socket)
         ws.send(json.dumps({"type": "probe", "protocol": protocol.PROTOCOL_VERSION}))
         reply = _read_json(ws, timeout)
     finally:
@@ -185,6 +217,37 @@ def probe_host(host: str, port: int = protocol.DEFAULT_PORT, *,
         protocol=version,
         engine=engine,
         tailscale_pairing=reply.get("tailscale_pairing") is True,
+        fingerprint=fingerprint,
+        approval=reply.get("approval") is True,
+    )
+
+
+def _pairing_result(reply: dict, fingerprint: str, host: str, via: str) -> PairingResult:
+    """The host's ``paired`` reply, checked against the certificate this socket saw."""
+    if reply.get("type") == "error":
+        raise RemoteEngineError(str(reply.get("message") or "The host refused to pair."))
+    token = reply.get("token")
+    host_info = reply.get("host") if isinstance(reply.get("host"), dict) else {}
+    if reply.get("type") != "paired" or not isinstance(token, str) or not token:
+        raise RemoteEngineError("The host sent a pairing reply this version can't read.")
+    advertised = str(host_info.get("fingerprint") or "")
+    if advertised and not hmac.compare_digest(advertised.upper(), fingerprint):
+        # The certificate we saw is not the one the host says it has: someone
+        # is between the two computers.
+        raise RemoteEngineError(
+            "The host's certificate didn't match what it reported. Pairing was "
+            "stopped; try again on a network you trust."
+        )
+    addresses = host_info.get("addresses") if isinstance(host_info.get("addresses"), list) else []
+    return PairingResult(
+        token=token,
+        device_id=str(reply.get("device_id") or ""),
+        host_name=str(host_info.get("name") or host),
+        fingerprint=fingerprint,
+        alternates=tuple(dict.fromkeys(
+            str(a) for a in addresses if isinstance(a, str) and a and a != host
+        )),
+        via=via,
     )
 
 
@@ -223,31 +286,94 @@ def pair_with_host(
         reply = _read_json(ws, HANDSHAKE_TIMEOUT_S)
     finally:
         _quiet_close(ws)
-    if reply.get("type") == "error":
-        raise RemoteEngineError(str(reply.get("message") or "The host refused to pair."))
-    token = reply.get("token")
-    host_info = reply.get("host") if isinstance(reply.get("host"), dict) else {}
-    if reply.get("type") != "paired" or not isinstance(token, str) or not token:
-        raise RemoteEngineError("The host sent a pairing reply this version can't read.")
-    advertised = str(host_info.get("fingerprint") or "")
-    if advertised and not hmac.compare_digest(advertised.upper(), fingerprint):
-        # The certificate we saw is not the one the host says it has: someone
-        # is between the two computers.
-        raise RemoteEngineError(
-            "The host's certificate didn't match what it reported. Pairing was "
-            "stopped; try again on a network you trust."
-        )
-    addresses = host_info.get("addresses") if isinstance(host_info.get("addresses"), list) else []
-    return PairingResult(
-        token=token,
-        device_id=str(reply.get("device_id") or ""),
-        host_name=str(host_info.get("name") or host),
-        fingerprint=fingerprint,
-        alternates=tuple(dict.fromkeys(
-            str(a) for a in addresses if isinstance(a, str) and a and a != host
-        )),
-        via="tailscale" if tailscale else "code",
-    )
+    return _pairing_result(reply, fingerprint, host, "tailscale" if tailscale else "code")
+
+
+#: Longest a pairing request waits for the host's owner to answer.
+APPROVAL_WAIT_S = 150.0
+
+
+def request_pairing(
+    host: str,
+    port: int,
+    device_name: str,
+    *,
+    on_code: Callable[[str], None],
+    canceled: Optional[threading.Event] = None,
+    timeout: float = CONNECT_TIMEOUT_S,
+) -> PairingResult:
+    """Ask the host's owner to allow this computer, with no code to type.
+
+    ``on_code`` gets the six digits to show here once both sides have them
+    (see ``protocol.pairing_sas``); the host shows the same six while it
+    asks. Blocks until the host answers, or ``canceled`` is set, which
+    raises PairingCanceled.
+    """
+    canceled = canceled or threading.Event()
+    ws = _open(host, port, timeout)
+    try:
+        fingerprint = peer_fingerprint(ws.socket)
+        ws.send(json.dumps({
+            "type": "pair_request",
+            "protocol": protocol.PROTOCOL_VERSION,
+            "device_name": device_name,
+        }))
+        reply = _read_json(ws, HANDSHAKE_TIMEOUT_S)
+        if reply.get("type") == "error":
+            raise RemoteEngineError(str(reply.get("message") or "The host refused to pair."))
+        commitment = reply.get("commit")
+        if reply.get("type") != "pair_commit" or not isinstance(commitment, str):
+            raise RemoteEngineError("The host sent a pairing reply this version can't read.")
+        client_nonce = secrets.token_bytes(protocol.PAIRING_NONCE_BYTES)
+        ws.send(json.dumps({"type": "pair_nonce", "nonce": client_nonce.hex()}))
+        reveal = _read_json(ws, HANDSHAKE_TIMEOUT_S)
+        if reveal.get("type") == "error":
+            raise RemoteEngineError(str(reveal.get("message") or "The host refused to pair."))
+        try:
+            host_nonce = bytes.fromhex(str(reveal.get("nonce") or ""))
+        except ValueError:
+            host_nonce = b""
+        if (reveal.get("type") != "pair_reveal"
+                or len(host_nonce) != protocol.PAIRING_NONCE_BYTES
+                or not hmac.compare_digest(protocol.pairing_commitment(host_nonce), commitment)):
+            raise RemoteEngineError(
+                "The host's pairing answer didn't check out. Pairing was stopped; "
+                "try again on a network you trust."
+            )
+        on_code(protocol.pairing_sas(host_nonce, client_nonce, fingerprint))
+        reply = _await_decision(ws, canceled)
+    finally:
+        _quiet_close(ws)
+    return _pairing_result(reply, fingerprint, host, "approval")
+
+
+def _await_decision(ws, canceled: threading.Event) -> dict:
+    """The host's answer once its owner decides; cancel tells the host and stops."""
+    from websockets.exceptions import ConnectionClosed
+
+    deadline = time.monotonic() + APPROVAL_WAIT_S
+    while True:
+        if canceled.is_set():
+            try:
+                ws.send(json.dumps({"type": "pair_cancel"}))
+            except Exception:
+                logger.debug("Could not tell the host pairing was canceled", exc_info=True)
+            raise PairingCanceled("Pairing canceled.")
+        if time.monotonic() >= deadline:
+            raise RemoteEngineError("The host didn't answer in time. Try again.")
+        try:
+            raw = ws.recv(timeout=0.2)
+        except TimeoutError:
+            continue
+        except ConnectionClosed as exc:
+            raise RemoteEngineError("The host closed the connection before answering.") from exc
+        try:
+            message = json.loads(raw) if isinstance(raw, str) else None
+        except ValueError:
+            message = None
+        if not isinstance(message, dict):
+            raise RemoteEngineError("The host sent a reply this version can't read.")
+        return message
 
 
 class _WrongPlace(RemoteEngineError):
@@ -358,7 +484,13 @@ class RemoteConnection:
         return self._hosts
 
     def connect(self) -> dict:
-        """Open, verify the pinned certificate, authenticate. Returns ``ready``."""
+        """Open, verify the pinned certificate, authenticate. Returns ``ready``.
+
+        When no known address has the host, it is looked for on this network
+        by its certificate (``discovery.find_host``), which follows a host
+        the router gave a new address. The certificate is checked there as
+        anywhere else, so a forged discovery answer gets no token.
+        """
         candidates = self._candidates()
         errors = {}
         for index, host in enumerate(candidates):
@@ -372,12 +504,66 @@ class RemoteConnection:
                     logger.info("Remote engine not at %s (%s); trying %s",
                                 host, exc, candidates[index + 1])
                 continue
-            if len(candidates) > 1:
-                with self._last_good_lock:
-                    self._last_good[self._fingerprint] = host
+            self._arrived(host, reply, remember_route=len(candidates) > 1)
             return reply
+        moved = self._search_network(candidates)
+        if moved is not None:
+            logger.info("Remote engine isn't at its saved addresses; trying %s, where it answered",
+                        moved.where)
+            port, self.port = self.port, moved.port
+            try:
+                reply = self._connect_to(moved.address, self._timeout)
+            except _WrongPlace as exc:
+                self.port = port
+                errors[moved.address] = exc
+            else:
+                self._hosts = (*self._hosts, moved.address)
+                self._arrived(moved.address, reply, remember_route=True)
+                return reply
         # Report the address the user paired with; the others were a bonus.
         raise errors.get(self._hosts[0]) or next(iter(errors.values()))
+
+    #: When each certificate was last looked for on the network, so a host
+    #: that is simply off isn't searched for on every retry.
+    _searched_at: dict = {}
+
+    def _search_network(self, tried) -> Optional[object]:
+        """Where the host answers discovery now, if that's somewhere not yet tried."""
+        fingerprint = self._fingerprint
+        if not fingerprint:
+            return None
+        now = time.monotonic()
+        with self._last_good_lock:
+            last = self._searched_at.get(fingerprint)
+            if last is not None and now - last < REDISCOVER_INTERVAL_S:
+                return None
+            self._searched_at[fingerprint] = now
+        try:
+            from services.remote_asr import discovery
+
+            found = discovery.find_host(fingerprint)
+        except Exception:
+            logger.debug("Looking for the remote engine on the network failed", exc_info=True)
+            return None
+        if found is None or (found.address in tried and found.port == self.port):
+            return None
+        return found
+
+    def _arrived(self, host: str, reply: dict, *, remember_route: bool) -> None:
+        if remember_route:
+            with self._last_good_lock:
+                self._last_good[self._fingerprint] = host
+        info = reply.get("host") if isinstance(reply.get("host"), dict) else {}
+        addresses = info.get("addresses")
+        if not isinstance(addresses, list):
+            return
+        try:
+            from services.remote_asr import settings as remote_settings
+
+            # The host lists where it is now; a saved pairing follows it.
+            remote_settings.remember_host_addresses(self._fingerprint, host, self.port, addresses)
+        except Exception:
+            logger.debug("Could not save the remote engine's addresses", exc_info=True)
 
     def _connect_to(self, host: str, timeout: float) -> dict:
         try:

@@ -1422,18 +1422,22 @@ def test_settings_page_pairs_with_a_host_and_lists_the_device(tmp_path, engine):
         section = dialog.remote_section
         section.bind(service, selected.append)
         dialog.select_destination(REMOTE_ENGINE)
-        assert not section.pair_row.isHidden()
+        # Unpaired: the search comes first, typing an address second.
+        assert not section.find_tile.isHidden() and section.client_tile.isHidden()
+        assert section.pair_row.isHidden()
+        section.manual_button.click()
+        assert not section.pair_row.isHidden() and section.manual_button.isHidden()
         assert not section.pair_device_button.isEnabled()
 
         section.share_tile.checkbox.setChecked(True)
         QApplication.processEvents()
         assert service.host_state()["running"]
-        assert section.pair_device_button.isEnabled()
         assert "Sharing Fake Parakeet on cuda" in section.host_status.text()
 
-        section.pair_device_button.click()
+        # Nothing is paired yet, so turning sharing on has a code ready.
         code = service.host_state()["pairing"][0]
         assert section.pairing_code_label.text() == f"{code[:3]} {code[3:]}"
+        assert section.pair_device_button.isHidden()
 
         section.address_edit.setText(f"127.0.0.1:{port}")
         section.code_edit.setText(code)
@@ -1442,7 +1446,7 @@ def test_settings_page_pairs_with_a_host_and_lists_the_device(tmp_path, engine):
         assert section.client_message.text().startswith("Paired with ")
         assert service.client_pairing() is not None
         assert section.paired_row.isVisibleTo(section.client_tile)
-        assert not section.pair_row.isVisibleTo(section.client_tile)
+        assert section.find_tile.isHidden() and not section.client_tile.isHidden()
         labels = section.devices_list.findChildren(WrappedLabel)
         assert any("paired" in label.text() for label in labels)
 
@@ -1837,22 +1841,24 @@ def test_settings_page_connects_to_a_tailnet_computer_without_a_code(tmp_path, e
         dialog.show()
         dialog.select_destination(REMOTE_ENGINE)
         assert pump_until(lambda: section._scan is not None and not section._scan_busy)
-        assert not section.tailnet_tile.isHidden()
-        assert "Signed in to Tailscale as owner@example.com" in section.tailnet_tile.description_label.text()
-        rows = [label.text() for label in section.tailnet_list.findChildren(WrappedLabel)]
+        assert not section.find_tile.isHidden()
+        assert "Signed in to Tailscale as owner@example.com" in section.find_tile.description_label.text()
+        rows = [label.text() for label in section.find_list.findChildren(WrappedLabel)]
         assert rows == ["devbox · Fake Parakeet on cuda · your computer"]
         assert not section.tailscale_tile.isHidden()
         assert section.tailscale_tile.checkbox.isChecked()
         assert "and on Tailscale as laptop (100.64.0.1)" in section.host_status.text()
 
-        connect = [b for b in section.tailnet_list.findChildren(PrimaryButton) if b.text() == "Connect"]
+        connect = [b for b in section.find_list.findChildren(PrimaryButton) if b.text() == "Connect"]
         assert len(connect) == 1
         connect[0].click()
         assert pump_until(lambda: not section._pairing_busy)
         pairing = service.client_pairing()
         assert pairing is not None and pairing.via == "tailscale", section.client_message.text()
         assert "through your Tailscale account" in section.client_message.text()
-        assert section.tailnet_tile.isHidden()
+        assert section.find_tile.isHidden()
+        # Paired over Tailscale already works away from home.
+        assert section.tailscale_hint.isHidden()
         labels = section.devices_list.findChildren(WrappedLabel)
         assert any("over Tailscale" in label.text() for label in labels)
 
@@ -1865,6 +1871,7 @@ def test_settings_page_connects_to_a_tailnet_computer_without_a_code(tmp_path, e
 
 
 def test_settings_page_explains_how_to_get_tailscale(tmp_path):
+    """Found nothing here: Tailscale is offered for a computer on another network."""
     from PyQt6.QtWidgets import QApplication
     from services.remote_asr.service import RemoteEngineService
     from ui_qt.dialogs.settings_destinations import REMOTE_ENGINE
@@ -1880,9 +1887,14 @@ def test_settings_page_explains_how_to_get_tailscale(tmp_path):
         dialog.select_destination(REMOTE_ENGINE)
         assert _wait_for(lambda: (QApplication.processEvents() or True)
                          and section._scan is not None and not section._scan_busy, 10)
-        assert "With Tailscale on both computers" in section.tailnet_tile.description_label.text()
-        notes = [label.text() for label in section.tailnet_list.findChildren(WrappedLabel)]
-        assert any("https://tailscale.com/download" in note for note in notes)
+        assert section.find_tile.description_label.text() == (
+            "Computers on this network that share their engine."
+        )
+        notes = [label.text() for label in section.find_list.findChildren(WrappedLabel)]
+        assert notes[0].startswith("None found.")
+        assert any("On a different network?" in note and "https://tailscale.com/download" in note
+                   for note in notes)
+        assert not section.sweep_button.isHidden()
         assert section.tailscale_tile.isHidden()
     finally:
         service.shutdown()

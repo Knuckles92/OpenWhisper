@@ -1311,7 +1311,8 @@ class HostDashboard(QWidget):
             note = (f"Computers signed in to Tailscale as {owner} can pair by picking "
                     "this one from their tailnet, without a code.")
         else:
-            note = "On the other computer, open Settings → Remote engine and enter the code shown here."
+            note = ("On the other computer, open Settings → Remote engine and pick this one; "
+                    "you're asked here to allow it. Or enter the code shown here.")
         self.pair_note.setText(note)
         self.pair_button.setEnabled(running)
         # A code only works while sharing; the note says so instead.

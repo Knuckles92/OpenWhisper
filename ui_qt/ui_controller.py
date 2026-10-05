@@ -221,6 +221,14 @@ class UIController(QObject):
     @remote_engine.setter
     def remote_engine(self, service) -> None:
         self._remote_engine = service
+        # A computer on the network asking to pair is answered here, with
+        # Settings open or not.
+        from ui_qt.dialogs.pair_request_dialog import PairRequestPrompter
+
+        prompter = getattr(self, "_pair_prompter", None)
+        if prompter is not None:
+            prompter.detach()
+        self._pair_prompter = PairRequestPrompter(service, self.main_window) if service is not None else None
         # Host Mode's dashboard reads the same service.
         if isinstance(getattr(self.main_window, "_screen_widgets", None), dict):
             self.main_window.bind_host_service(service)

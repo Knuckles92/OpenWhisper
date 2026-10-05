@@ -272,11 +272,21 @@ QLineEdit:focus {
 QDialog#settingsDialog,
 QDialog#componentDetailsDialog,
 QDialog#batchDownloadDialog,
-QDialog#remoteRecordRecoveryDialog {
+QDialog#remoteRecordRecoveryDialog,
+QDialog#pairRequestDialog {
     background-color: @slate-bg;
 }
 
-QDialog#remoteRecordRecoveryDialog QLabel {
+QDialog#pairRequestDialog QLabel#pairRequestCode {
+    background-color: @slate-surface;
+    border: 1px solid @slate-border;
+    border-radius: 10px;
+    color: @slate-text;
+    padding: 10px 16px;
+}
+
+QDialog#remoteRecordRecoveryDialog QLabel,
+QDialog#pairRequestDialog QLabel {
     background-color: transparent;
     color: @slate-text-2;
     border: none;
@@ -927,10 +937,27 @@ QWidget#remoteSection,
 QWidget#remotePairRow,
 QWidget#remotePairedRow,
 QWidget#remotePairingBox,
-QWidget#remoteTailnetList,
-QWidget#remoteTailnetRow,
+QWidget#remoteFindList,
+QWidget#remoteFindRow,
+QWidget#remoteWaitBox,
+QWidget#remoteHostNotes,
+QWidget#remoteHostNoteRow,
 QWidget#remoteDevicesList,
-QWidget#remoteDeviceRow {
+QWidget#remoteDeviceRow,
+QLabel#remoteClientMessage,
+QLabel#remoteTailscaleHint,
+QLabel#remoteFindMessage,
+QLabel#remoteFindLabel,
+QLabel#remoteFindNote,
+QLabel#remoteWaitLabel,
+QLabel#remoteWaitCode,
+QLabel#remotePairingCode,
+QLabel#remotePairingExpiry,
+QLabel#remoteHostStatus,
+QLabel#remoteHostIdentity,
+QLabel#remoteHostNote,
+QLabel#remoteDeviceLabel,
+QLabel#remoteStorageStatus {
     background-color: transparent;
 }
 

@@ -251,6 +251,26 @@ def _isolated_credential_store():
 
 
 @pytest.fixture(autouse=True)
+def _no_real_network_discovery():
+    """Keep every test off this computer's real network.
+
+    A sharing host answers discovery on a fixed UDP port and a client
+    broadcasts to the LAN (services/remote_asr/discovery.py); Windows also
+    reads its network profiles through PowerShell. Here hosts answer on a
+    free port, searches go nowhere unless a test names its targets, and
+    there are no network profiles.
+    """
+    from services.remote_asr import discovery, reachability
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(discovery, "DISCOVERY_PORT", 0)
+        patcher.setattr(discovery, "broadcast_targets", lambda: [])
+        patcher.setattr(discovery, "sweep_addresses", lambda: [])
+        patcher.setattr(reachability, "windows_network_profiles", lambda timeout=8.0: [])
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _no_installed_agent_probes(request):
     """Keep Settings from running the user's real coding agents.
 

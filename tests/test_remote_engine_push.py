@@ -225,6 +225,7 @@ def test_host_state_labels_a_vpn_address(tmp_path, monkeypatch):
         running=True, port=47821, identity=SimpleNamespace(fingerprint="AB"),
         pairing_status=lambda: None, connected_clients=lambda: [],
         registry=SimpleNamespace(list=lambda: []),
+        pending_request=lambda: None, discovery=SimpleNamespace(error=""),
     )
     service._engine = lambda: SimpleNamespace(describe=lambda: {})
     monkeypatch.setattr(

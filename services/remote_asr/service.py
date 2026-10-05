@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
-from services.remote_asr import protocol
+from services.remote_asr import discovery, protocol
 from services.remote_asr import settings as remote_settings
 from services.remote_asr import tailscale
 from services.remote_asr.engines import HostEngine, host_engine_for, host_models
@@ -35,6 +35,8 @@ SWITCH_TIMEOUT_S = 240.0
 _SWITCH_POLL_S = 0.1
 #: Peers probed at once while looking for hosts on the tailnet.
 _PROBE_WORKERS = 12
+#: Windows network profiles older than this are read again (in the background).
+NETWORK_PROFILES_MAX_AGE_S = 60.0
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,8 @@ class TailnetHost:
     engine: dict
     tailscale_pairing: bool
     compatible: bool
+    fingerprint: str = ""
+    approval: bool = False
 
     @property
     def address(self) -> str:
@@ -61,6 +65,47 @@ class TailnetHost:
 class TailnetScan:
     status: tailscale.TailscaleStatus
     hosts: Tuple[TailnetHost, ...] = ()
+
+
+@dataclass(frozen=True)
+class NearbyHost:
+    """A computer sharing its engine, found on this network, the tailnet, or both.
+
+    Finds by both routes are one entry, matched by certificate.
+    """
+
+    host_name: str
+    fingerprint: str
+    engine: dict
+    compatible: bool
+    #: Takes pairing requests that its owner allows on its own screen.
+    approval: bool
+    lan: Optional[discovery.LanHost] = None
+    tailnet: Optional[TailnetHost] = None
+
+    @property
+    def name(self) -> str:
+        """Its Tailscale machine name when it has one, as the tailnet lists it."""
+        return self.tailnet.peer.name if self.tailnet is not None else self.host_name
+
+    @property
+    def can_pair_without_code(self) -> bool:
+        return self.tailnet is not None and self.tailnet.can_pair_without_code
+
+    @property
+    def address(self) -> str:
+        """Where to pair: the tailnet for a code-free pairing, else this network."""
+        if self.lan is not None and not self.can_pair_without_code:
+            return self.lan.where
+        return self.tailnet.address if self.tailnet is not None else ""
+
+
+@dataclass(frozen=True)
+class NearbyScan:
+    status: tailscale.TailscaleStatus
+    hosts: Tuple[NearbyHost, ...] = ()
+    #: Every address of this network was tried as well (see discovery.sweep).
+    swept: bool = False
 
 
 def _default_identity_dir() -> str:
@@ -123,6 +168,9 @@ class RemoteEngineService:
         self._tailscale: Optional[tailscale.TailscaleStatus] = None
         self._tailscale_at = 0.0
         self._tailscale_refreshing = False
+        self._profiles = None
+        self._profiles_at = 0.0
+        self._profiles_refreshing = False
         from services.remote_asr.model_management import HostModelManager
 
         self._model_manager = HostModelManager(lambda: self._notify("models"))
@@ -252,6 +300,8 @@ class RemoteEngineService:
                 engine=result.engine,
                 tailscale_pairing=result.tailscale_pairing,
                 compatible=result.compatible,
+                fingerprint=result.fingerprint,
+                approval=result.approval,
             )
 
         if not peers:
@@ -259,6 +309,94 @@ class RemoteEngineService:
         with ThreadPoolExecutor(max_workers=min(_PROBE_WORKERS, len(peers))) as pool:
             found = [host for host in pool.map(probe, peers) if host is not None]
         return TailnetScan(status, tuple(found))
+
+    def scan_lan(self, *, sweep: bool = False) -> List[discovery.LanHost]:
+        """Computers on this network sharing their engine. Blocking, a second or so.
+
+        With ``sweep``, also every address of this network that accepts a
+        connection on the default port, for routers that drop broadcasts.
+        """
+        from services.remote_asr import client
+
+        found = {host.fingerprint: host for host in discovery.search()}
+        if not sweep:
+            return list(found.values())
+        seen = {host.address for host in found.values()}
+        port = protocol.DEFAULT_PORT
+
+        def probe(address):
+            try:
+                result = client.probe_host(address, port)
+            except client.RemoteEngineError:
+                return None
+            except Exception:
+                logger.debug("Probe of %s failed", address, exc_info=True)
+                return None
+            return discovery.LanHost(
+                address=address, port=port, host_name=result.host_name,
+                fingerprint=result.fingerprint, engine=result.engine,
+                protocol=result.protocol, approval=result.approval,
+            )
+
+        answered = [address for address in discovery.sweep(port) if address not in seen]
+        if answered:
+            with ThreadPoolExecutor(max_workers=min(_PROBE_WORKERS, len(answered))) as pool:
+                for host in pool.map(probe, answered):
+                    if host is not None and host.fingerprint:
+                        found.setdefault(host.fingerprint, host)
+        return list(found.values())
+
+    def scan_nearby(self, *, sweep: bool = False) -> NearbyScan:
+        """This network and the tailnet searched together, one entry per computer. Blocking.
+
+        A broadcast reaches this computer too, so its own answer (when it
+        shares as well) is left out; Tailscale never lists this computer.
+        """
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            tailnet_future = pool.submit(self.scan_tailnet)
+            lan_future = pool.submit(self.scan_lan, sweep=sweep)
+            try:
+                lan_hosts = lan_future.result()
+            except Exception:
+                logger.warning("Searching this network for hosts failed", exc_info=True)
+                lan_hosts = []
+            tailnet = tailnet_future.result()
+        own = self._own_fingerprint()
+        lan_hosts = [host for host in lan_hosts if not own or host.fingerprint != own]
+        merged: dict = {}
+        for host in tailnet.hosts:
+            key = host.fingerprint or f"tailnet:{host.peer.address}"
+            merged[key] = NearbyHost(
+                host_name=host.host_name, fingerprint=host.fingerprint, engine=host.engine,
+                compatible=host.compatible, approval=host.approval, tailnet=host,
+            )
+        for host in lan_hosts:
+            known = merged.get(host.fingerprint)
+            if known is not None:
+                merged[host.fingerprint] = NearbyHost(
+                    host_name=known.host_name, fingerprint=known.fingerprint,
+                    engine=known.engine, compatible=known.compatible,
+                    approval=known.approval or host.approval, lan=host, tailnet=known.tailnet,
+                )
+            else:
+                merged[host.fingerprint] = NearbyHost(
+                    host_name=host.host_name, fingerprint=host.fingerprint, engine=host.engine,
+                    compatible=host.compatible, approval=host.approval, lan=host,
+                )
+        hosts = tuple(sorted(merged.values(), key=lambda host: host.name.lower()))
+        return NearbyScan(tailnet.status, hosts, swept=sweep)
+
+    def _own_fingerprint(self) -> str:
+        with self._lock:
+            host = self._host
+        if host is not None:
+            return host.identity.fingerprint
+        from services.remote_asr.tls import own_fingerprint
+
+        try:
+            return own_fingerprint(self._identity_dir or _default_identity_dir())
+        except Exception:
+            return ""
 
     # ---- host ----
 
@@ -515,7 +653,9 @@ class RemoteEngineService:
                 if host.running and host.port != port:
                     host.stop()
                 if not host.running:
-                    host.start(port, bind=self._bind)
+                    host.start(port, bind=self._bind, discovery_port=discovery.DISCOVERY_PORT)
+                    # Read fresh: the network may have changed since sharing was last on.
+                    self.network_profiles(refresh=True)
                 self._host_error = ""
             except OSError as exc:
                 self._host_error = (
@@ -553,6 +693,79 @@ class RemoteEngineService:
             host = self._host
         if host is not None:
             host.close_pairing()
+
+    def pending_pair_request(self) -> Optional[dict]:
+        """A computer asking to pair, waiting for an answer here: id, name, address, sas."""
+        with self._lock:
+            host = self._host
+        return host.pending_request() if host is not None and host.running else None
+
+    def pairing_grants(self) -> List[str]:
+        """What a newly paired computer may do here beyond transcribing, as phrases."""
+        grants = []
+        if remote_settings.host_model_management():
+            grants.append("download models and runtimes here")
+        if remote_settings.host_keeps_records():
+            grants.append("keep its dictations and meetings here")
+        if remote_settings.host_manages_mcp():
+            grants.append("manage MCP here, including the access token that reads every "
+                          "saved dictation and meeting")
+        return grants
+
+    def answer_pair_request(self, request_id: str, allow: bool) -> bool:
+        """Allow or deny it. False when it's gone (answered, canceled, or timed out)."""
+        with self._lock:
+            host = self._host
+        return host is not None and host.answer_request(request_id, allow)
+
+    # ---- whether other computers can reach this one ----
+
+    def network_profiles(self, *, refresh: bool = False):
+        """The Windows network profiles; None until first read. Never blocks.
+
+        Like ``tailscale_status``: a stale or missing answer is read again on
+        a background thread, and listeners hear "state" when it changes.
+        """
+        import sys
+
+        if sys.platform != "win32":
+            return []
+        with self._lock:
+            profiles = self._profiles
+            stale = time.monotonic() - self._profiles_at > NETWORK_PROFILES_MAX_AGE_S
+            start = (refresh or stale or profiles is None) and not self._profiles_refreshing
+            if start:
+                self._profiles_refreshing = True
+        if start:
+            threading.Thread(
+                target=self._refresh_profiles, name="remote-engine-network-profiles", daemon=True
+            ).start()
+        return profiles
+
+    def _refresh_profiles(self) -> None:
+        from services.remote_asr.reachability import windows_network_profiles
+
+        try:
+            profiles = windows_network_profiles()
+        finally:
+            with self._lock:
+                self._profiles_refreshing = False
+        with self._lock:
+            changed = profiles != self._profiles
+            self._profiles = profiles
+            self._profiles_at = time.monotonic()
+        if changed:
+            self._notify("state")
+
+    def _reachability_notes(self, lan, discovery_error: str) -> list:
+        from services.lan_address import local_ipv4_addresses
+        from services.remote_asr.reachability import host_notes
+
+        try:
+            return host_notes(lan, local_ipv4_addresses(), self.network_profiles(), discovery_error)
+        except Exception:
+            logger.debug("Reachability check failed", exc_info=True)
+            return []
 
     def remove_device(self, device_id: str, *, delete_records: bool = False) -> bool:
         """Forget a paired computer; with ``delete_records``, what it stored here too.
@@ -642,8 +855,12 @@ class RemoteEngineService:
             "model_management": remote_settings.host_model_management(),
             "keep_records": remote_settings.host_keeps_records(),
             "manage_mcp": remote_settings.host_manages_mcp(),
+            "pair_request": host.pending_request() if running else None,
+            # Why other computers may not reach this one (reachability.Note).
+            "notes": [],
         }
         if running:
+            lan = None
             try:
                 from services.lan_address import best_lan_address
 
@@ -652,6 +869,7 @@ class RemoteEngineService:
                     state["address"], state["address_kind"] = lan.address, lan.kind
             except Exception:
                 logger.debug("LAN address lookup failed", exc_info=True)
+            state["notes"] = self._reachability_notes(lan, host.discovery.error)
         return state
 
     def shutdown(self) -> None:
@@ -693,6 +911,23 @@ class RemoteEngineService:
 
         host, port = protocol.parse_address(address)
         result = pair_with_host(host, port, code, socket.gethostname(), tailscale=tailscale)
+        return self._paired(host, port, result)
+
+    def request_pairing(self, address: str, *, on_code: Callable[[str], None],
+                        canceled: Optional[threading.Event] = None) -> remote_settings.ClientPairing:
+        """Ask the host at ``address`` to let this computer pair, with no code to type.
+
+        Blocking until its owner answers; run it off the UI thread.
+        ``on_code`` gets the six digits to show here, which the host shows too.
+        """
+        from services.remote_asr.client import request_pairing
+
+        host, port = protocol.parse_address(address)
+        result = request_pairing(host, port, socket.gethostname(), on_code=on_code,
+                                 canceled=canceled)
+        return self._paired(host, port, result)
+
+    def _paired(self, host: str, port: int, result) -> remote_settings.ClientPairing:
         pairing = remote_settings.save_client_pairing(host, port, result)
         if self._history_client is not None:
             self._history_client.refresh()

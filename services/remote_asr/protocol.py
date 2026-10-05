@@ -95,6 +95,19 @@ host replies with ``ready.capabilities.client_history: true``, then sends JSON
 error code. This channel carries no audio, accepts only read operations, and
 the client rechecks its permission for every query. Older hosts omit the
 capability, so clients close the dedicated connection without sending history.
+
+Pairing by approval, for a host found on the network (``probe`` answers
+``approval: true``): the first message is ``pair_request`` (``device_name``).
+The host answers ``pair_commit`` with the SHA-256 commitment to a random
+nonce, the client sends its own nonce in ``pair_nonce``, and the host reveals
+its nonce in ``pair_reveal``. Both sides then show ``pairing_sas`` of the two
+nonces and the certificate fingerprint, and the host's owner allows the
+request only if the numbers match; the host answers ``paired`` exactly as for
+a code, or an error (``pair_denied``, ``pair_timeout``). The host committed to
+its nonce before seeing the client's, so a computer in the middle can't steer
+the two numbers to match, and the fingerprint is in the hash, so relaying the
+nonces unchanged gives two different numbers. The client may send
+``pair_cancel`` while it waits. Older hosts close the connection.
 """
 from __future__ import annotations
 
@@ -209,6 +222,36 @@ def short_fingerprint(fingerprint: str, groups: int = 5) -> str:
 def token_digest(token: str) -> str:
     """What the host stores for a device token. The token itself never is."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+#: Bytes in each side's pairing nonce.
+PAIRING_NONCE_BYTES = 32
+SAS_DIGITS = 6
+
+
+def pairing_commitment(nonce: bytes) -> str:
+    """What the host sends before it has seen the client's nonce."""
+    return hashlib.sha256(b"openwhisper-pair-commit-v1" + nonce).hexdigest()
+
+
+def pairing_sas(host_nonce: bytes, client_nonce: bytes, fingerprint: str) -> str:
+    """The six digits both screens show while a pairing waits for approval.
+
+    A computer in the middle has its own certificate, so the client hashes a
+    different fingerprint than the host does; to make the two numbers match
+    it would have to choose nonces after seeing the other side's, which the
+    commitment rules out. One try in a million is left to luck.
+    """
+    digest = hashlib.sha256(
+        b"openwhisper-pair-sas-v1" + host_nonce + client_nonce
+        + (fingerprint or "").upper().encode("ascii", "replace")
+    ).digest()
+    return f"{int.from_bytes(digest[:8], 'big') % 10 ** SAS_DIGITS:0{SAS_DIGITS}d}"
+
+
+def format_sas(sas: str) -> str:
+    """``123 456``, easier to compare across a room than ``123456``."""
+    return f"{sas[:3]} {sas[3:]}" if len(sas) == SAS_DIGITS else sas
 
 
 def parse_address(text: str, default_port: int = DEFAULT_PORT) -> Tuple[str, int]:

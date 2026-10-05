@@ -18,11 +18,11 @@ import threading
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
 
-from services.remote_asr import protocol, tailscale
+from services.remote_asr import discovery, protocol, tailscale
 from services.remote_asr.activity import HostActivity
 from services.remote_asr.engines import HostEngine, UnavailableEngine
 from services.remote_asr.tls import HostIdentity, server_context
@@ -50,6 +50,11 @@ MAX_JOB_WAIT_S = 30.0
 MAX_QUEUED_FRAMES_PER_CLIENT = 2
 #: last_seen is persisted at most this often per device.
 _LAST_SEEN_PERSIST_S = 60.0
+#: How long a pairing request waits for this computer's owner to answer.
+APPROVAL_TIMEOUT_S = 120.0
+#: Pairing requests one address may make within APPROVAL_WINDOW_S.
+MAX_APPROVAL_REQUESTS = 4
+APPROVAL_WINDOW_S = 600.0
 
 HostEvent = Callable[[str, dict], None]
 
@@ -175,6 +180,25 @@ class _Pairing:
     code: str
     expires_at: float
     failures: int = 0
+
+
+@dataclass
+class PairRequest:
+    """A computer on the network asking to pair, waiting for this one's owner.
+
+    ``sas`` stays empty until both nonces are in; only then is the request
+    shown, since the number is what the owner compares.
+    """
+
+    id: str
+    name: str
+    address: str
+    expires_at: float
+    sas: str = ""
+    decision: Optional[bool] = None
+    #: Sharing stopped while it waited.
+    stopped: bool = False
+    done: threading.Event = field(default_factory=threading.Event)
 
 
 @dataclass
@@ -305,6 +329,11 @@ class SpeechHost:
         self._server = None
         self._thread: Optional[threading.Thread] = None
         self._pairing: Optional[_Pairing] = None
+        self._request: Optional[PairRequest] = None
+        self._request_log: Dict[str, deque] = {}
+        #: Answers discovery queries while sharing (see discovery.py), when
+        #: start() was given a discovery port.
+        self.discovery = discovery.DiscoveryResponder(self._discovery_info)
         self._clients: Dict[str, _Client] = {}
         self._connection_slots = threading.BoundedSemaphore(max(1, int(max_connections)))
         self._work_admission = _WorkAdmission(
@@ -320,8 +349,13 @@ class SpeechHost:
     def running(self) -> bool:
         return self._server is not None
 
-    def start(self, port: int = protocol.DEFAULT_PORT, bind: str = "0.0.0.0") -> int:
-        """Listen on ``bind:port`` (0 picks a free port). Raises OSError if taken."""
+    def start(self, port: int = protocol.DEFAULT_PORT, bind: str = "0.0.0.0",
+              discovery_port: Optional[int] = None) -> int:
+        """Listen on ``bind:port`` (0 picks a free port). Raises OSError if taken.
+
+        With ``discovery_port``, also answer discovery queries on that UDP
+        port; a taken one leaves ``discovery.error`` set and sharing running.
+        """
         from websockets.sync.server import serve
 
         with self._lock:
@@ -350,15 +384,22 @@ class SpeechHost:
             self._thread.start()
             self.activity.reset()
         logger.info("Remote engine host listening on %s:%s", bind, self.port)
+        if discovery_port is not None:
+            self.discovery.start(discovery_port, bind)
         self._emit("state", {})
         return self.port
 
     def stop(self) -> None:
         self.history.remove()
+        self.discovery.stop()
         with self._lock:
             server, self._server = self._server, None
             thread, self._thread = self._thread, None
             self._pairing = None
+            request = self._request
+        if request is not None:
+            request.stopped = True
+            request.done.set()
         if server is None:
             return
         try:
@@ -407,6 +448,31 @@ class SpeechHost:
                 self._pairing = None
                 return None
             return pairing.code, left
+
+    def pending_request(self) -> Optional[dict]:
+        """The pairing request waiting for an answer here, if one is."""
+        with self._lock:
+            request = self._request
+        if request is None or not request.sas or request.done.is_set():
+            return None
+        return {
+            "id": request.id,
+            "name": request.name,
+            "address": request.address,
+            "sas": request.sas,
+            "seconds_left": max(0.0, request.expires_at - time.monotonic()),
+        }
+
+    def answer_request(self, request_id: str, allow: bool) -> bool:
+        """Allow or deny the waiting request. False when it's gone already."""
+        with self._lock:
+            request = self._request
+            if (request is None or request.id != request_id or not request.sas
+                    or request.done.is_set()):
+                return False
+            request.decision = bool(allow)
+        request.done.set()
+        return True
 
     def connected_clients(self) -> List[dict]:
         with self._lock:
@@ -550,6 +616,8 @@ class SpeechHost:
             self._pair_tailscale(ws, message, address)
         elif kind == "pair":
             self._pair(ws, message, address)
+        elif kind == "pair_request":
+            self._pair_request(ws, message, address)
         elif kind == "hello":
             self._serve(ws, message, address)
         else:
@@ -621,8 +689,20 @@ class SpeechHost:
                 key: engine.get(key) for key in ("label", "device", "available", "family")
             },
             "tailscale_pairing": bool(self._tailscale_pairing_owner()),
+            "approval": True,
         })
         ws.close()
+
+    def _discovery_info(self) -> dict:
+        """What a discovery answer says: the probe's subset, plus where to connect."""
+        engine = self._engine().describe()
+        return {
+            "name": self.host_name,
+            "port": self.port,
+            "fingerprint": self.identity.fingerprint,
+            "engine": {key: engine.get(key) for key in ("label", "device", "available", "family")},
+            "approval": True,
+        }
 
     def _finish_pairing(self, ws, name: str, address: str, via: str) -> None:
         device, token = self.registry.add(name, via=via)
@@ -670,7 +750,7 @@ class SpeechHost:
                 pairing = self._pairing = None
             if pairing is None:
                 error = ("pairing_closed", "Pairing isn't open on the host. Click "
-                         "\"Pair a device\" there and enter the code it shows.")
+                         "\"Show a pairing code\" there and enter the code it shows.")
             elif not hmac.compare_digest(code, pairing.code):
                 pairing.failures += 1
                 if pairing.failures >= MAX_PAIRING_FAILURES:
@@ -689,6 +769,113 @@ class SpeechHost:
                 self._emit("pairing", {"open": False})
             return
         self._finish_pairing(ws, name, address, "code")
+
+    def _admit_request(self, name: str, address: str):
+        """Reserve the one request slot: a PairRequest, or (code, message) refusing."""
+        if not discovery.allowed_sender(address):
+            return ("approval_refused", "This host only takes pairing requests from its own "
+                    "network. Enter the pairing code shown there instead.")
+        now = time.monotonic()
+        with self._lock:
+            log = self._request_log.setdefault(address, deque())
+            while log and now - log[0] > APPROVAL_WINDOW_S:
+                log.popleft()
+            if len(log) >= MAX_APPROVAL_REQUESTS:
+                return ("approval_limited", "Too many pairing requests from this computer. Wait "
+                        "a few minutes, or enter the pairing code shown on the host.")
+            current = self._request
+            if current is not None and not current.done.is_set() and current.expires_at > now:
+                return ("approval_busy", f"{self.host_name} is already asking about another "
+                        "computer. Try again in a minute.")
+            log.append(now)
+            self._request = PairRequest(
+                id=uuid.uuid4().hex[:12], name=name, address=address,
+                expires_at=now + HANDSHAKE_TIMEOUT_S + APPROVAL_TIMEOUT_S,
+            )
+            return self._request
+
+    def _pair_request(self, ws, message: dict, address: str) -> None:
+        """Pair a computer found on the network once this computer's owner allows it.
+
+        The nonce exchange (see protocol.pairing_sas) gives both screens the
+        same six digits only when nobody is in the middle; the owner allows
+        the request if they match.
+        """
+        from websockets.exceptions import ConnectionClosed
+
+        name = clean_device_name(message.get("device_name"))
+        admitted = self._admit_request(name, address)
+        if not isinstance(admitted, PairRequest):
+            logger.info("Refused a pairing request from %s: %s", address, admitted[0])
+            self._send(ws, {"type": "error", "code": admitted[0], "message": admitted[1]})
+            ws.close(protocol.CLOSE_UNAUTHORIZED, admitted[0])
+            return
+        request = admitted
+        shown = False
+        try:
+            host_nonce = secrets.token_bytes(protocol.PAIRING_NONCE_BYTES)
+            self._send(ws, {
+                "type": "pair_commit",
+                "commit": protocol.pairing_commitment(host_nonce),
+                "timeout_s": int(APPROVAL_TIMEOUT_S),
+            })
+            try:
+                raw = ws.recv(timeout=HANDSHAKE_TIMEOUT_S)
+                reply = json.loads(raw) if isinstance(raw, str) else None
+                client_nonce = (bytes.fromhex(str(reply.get("nonce") or ""))
+                                if isinstance(reply, dict) and reply.get("type") == "pair_nonce"
+                                else b"")
+            except (TimeoutError, ValueError):
+                client_nonce = b""
+            except ConnectionClosed:
+                return
+            if len(client_nonce) != protocol.PAIRING_NONCE_BYTES:
+                ws.close(protocol.CLOSE_BAD_REQUEST, "expected pair_nonce")
+                return
+            sas = protocol.pairing_sas(host_nonce, client_nonce, self.identity.fingerprint)
+            self._send(ws, {"type": "pair_reveal", "nonce": host_nonce.hex()})
+            with self._lock:
+                request.expires_at = time.monotonic() + APPROVAL_TIMEOUT_S
+                request.sas = sas
+            shown = True
+            logger.info("Pairing request from %r at %s is waiting for an answer here",
+                        name, address)
+            self._emit("pair_request", {"name": name, "address": address})
+            outcome = self._await_answer(ws, request)
+            logger.info("Pairing request from %r at %s: %s", name, address, outcome)
+            if outcome == "allowed":
+                self._finish_pairing(ws, name, address, "approval")
+            elif outcome != "canceled":
+                code, text = {
+                    "denied": ("pair_denied", f"{self.host_name} declined the request."),
+                    "stopped": ("pair_closed", f"{self.host_name} stopped sharing its engine."),
+                    "timeout": ("pair_timeout", f"Nobody answered on {self.host_name}. Try again "
+                                "while someone is at it, or pair with a code."),
+                }[outcome]
+                self._send(ws, {"type": "error", "code": code, "message": text})
+                ws.close(protocol.CLOSE_UNAUTHORIZED, code)
+        except ConnectionClosed:
+            logger.info("Pairing request from %r at %s ended with the connection", name, address)
+        finally:
+            with self._lock:
+                if self._request is request:
+                    self._request = None
+            request.done.set()
+            if shown:
+                self._emit("pair_request", {})
+
+    def _await_answer(self, ws, request: PairRequest) -> str:
+        """``allowed``, ``denied``, ``stopped``, ``timeout`` or ``canceled`` (the client left)."""
+        from websockets.protocol import State
+
+        while not request.done.wait(0.2):
+            if ws.state is not State.OPEN:
+                return "canceled"
+            if time.monotonic() >= request.expires_at:
+                return "timeout"
+        if request.stopped:
+            return "stopped"
+        return "allowed" if request.decision else "denied"
 
     def _serve(self, ws, message: dict, address: str) -> None:
         device = self.registry.authenticate(message.get("token"))

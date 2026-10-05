@@ -7,29 +7,47 @@ digests only).
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
 from services.remote_asr import protocol
 
 logger = logging.getLogger(__name__)
 
 TOKEN_CREDENTIAL = "OPENWHISPER_REMOTE_ENGINE_TOKEN"
+#: Pairing, forgetting, and following a moved host each read then write the
+#: saved pairing; a connection finishing as the host is forgotten must not
+#: write it back.
+_PAIRING_LOCK = threading.RLock()
+
+
+#: How a computer paired: a code from the host's screen, the owner's own
+#: Tailscale account, or the host's owner allowing a request on their screen.
+PAIRING_ROUTES = ("code", "tailscale", "approval")
 
 
 @dataclass(frozen=True)
 class ClientPairing:
-    host: str
-    port: int
-    fingerprint: str
-    host_name: str
+    """The paired host. Two are equal when they are the same pairing.
+
+    The addresses aren't compared: they follow the host as it moves (see
+    ``remember_host_addresses``), and an open window holding the pairing
+    from before must still find it the same one.
+    """
+
+    host: str = field(compare=False)
+    port: int = field(compare=False)
+    fingerprint: str = ""
+    host_name: str = ""
     device_id: str = ""
     paired_at: str = ""
     #: The host's other addresses (LAN, Tailscale), tried when ``host`` isn't.
-    alternates: tuple = ()
-    #: "code" or "tailscale": how this computer paired.
+    alternates: tuple = field(default=(), compare=False)
+    #: One of PAIRING_ROUTES: how this computer paired.
     via: str = "code"
 
     @property
@@ -85,7 +103,7 @@ def load_client_pairing(settings: Optional[Dict[str, Any]] = None) -> Optional[C
         device_id=str(raw.get("device_id") or ""),
         paired_at=str(raw.get("paired_at") or ""),
         alternates=tuple(a for a in alternates if isinstance(a, str) and a and a != host),
-        via="tailscale" if raw.get("via") == "tailscale" else "code",
+        via=raw.get("via") if raw.get("via") in PAIRING_ROUTES else "code",
     )
 
 
@@ -98,7 +116,6 @@ def load_client_token() -> Optional[str]:
 def save_client_pairing(host: str, port: int, result) -> ClientPairing:
     """Store a fresh pairing: token first, so settings never name a host we can't use."""
     from services.credentials import store
-    from services.settings import SettingsKey, settings_manager
 
     store().set(TOKEN_CREDENTIAL, result.token)
     pairing = ClientPairing(
@@ -111,6 +128,13 @@ def save_client_pairing(host: str, port: int, result) -> ClientPairing:
         alternates=tuple(a for a in getattr(result, "alternates", ()) if a != host),
         via=getattr(result, "via", "code"),
     )
+    _write_pairing(pairing)
+    return pairing
+
+
+def _write_pairing(pairing: ClientPairing) -> None:
+    from services.settings import SettingsKey, settings_manager
+
     settings_manager.save_setting(SettingsKey.REMOTE_ENGINE_CLIENT, {
         "host": pairing.host,
         "port": pairing.port,
@@ -121,7 +145,53 @@ def save_client_pairing(host: str, port: int, result) -> ClientPairing:
         "alternates": list(pairing.alternates),
         "via": pairing.via,
     })
-    return pairing
+
+
+def _is_ip(text: str) -> bool:
+    try:
+        ipaddress.ip_address(text)
+    except ValueError:
+        return False
+    return True
+
+
+def remember_host_addresses(fingerprint: str, reached: str, port: int,
+                            addresses: Iterable) -> Optional[ClientPairing]:
+    """Follow the paired host to where it is now. The new pairing, or None if unchanged.
+
+    ``addresses`` are the ones the host just listed in ``ready``, and
+    ``reached`` the one that answered on ``port``. The address paired with
+    stays first unless it's an IP the host no longer has that didn't answer,
+    as when the router gave the host a new one; the host's own LAN address
+    (or else the one that answered) takes its place. A Tailscale address
+    stays known while the host lists none, since Tailscale keeps it for good
+    and may only be off there for now.
+    """
+    from services.remote_asr.tailscale import is_tailscale_address
+
+    pairing = load_client_pairing()
+    if pairing is None or pairing.fingerprint.upper() != (fingerprint or "").upper():
+        return None
+    listed = list(dict.fromkeys(a for a in addresses if isinstance(a, str) and a))
+    host, host_port = pairing.host, pairing.port
+    if reached == host:
+        host_port = port
+    elif _is_ip(host) and host not in listed:
+        host = next((a for a in listed if not is_tailscale_address(a)), "") or reached
+        host_port = port
+    known_tailnet = [a for a in pairing.alternates if is_tailscale_address(a)]
+    if any(is_tailscale_address(a) for a in listed):
+        known_tailnet = []
+    alternates = tuple(dict.fromkeys(
+        a for a in (*listed, reached, *known_tailnet) if a and a != host
+    ))
+    if (host, host_port, alternates) == (pairing.host, pairing.port, pairing.alternates):
+        return None
+    moved = replace(pairing, host=host, port=host_port, alternates=alternates)
+    _write_pairing(moved)
+    if host != pairing.host:
+        logger.info("The paired host %s moved from %s to %s", pairing.host_name, pairing.host, host)
+    return moved
 
 
 def forget_client_pairing() -> None:
