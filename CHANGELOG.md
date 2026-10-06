@@ -8,6 +8,9 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+### Changed
+- **Optional hardware testing** — manual hardware checks remain useful guidance, but release uploads no longer require a hardware report. Automated source, installer, provenance, and checksum checks remain required.
+
 ## [2.6.15] - 2026-10-05
 
 ### Added

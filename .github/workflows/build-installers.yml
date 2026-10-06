@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Source tag to build (optional, e.g. v2.5.0); qualify the candidate before draft upload"
+        description: "Source tag to build (optional, e.g. v2.5.0); verify the candidate before draft upload"
         required: false
         type: string
       setup_only_windows:
@@ -16,7 +16,7 @@ on:
 permissions:
   contents: read
 
-# Serialize candidate builds and qualification uploads for the same tag.
+# Serialize candidate builds and verified uploads for the same tag.
 concurrency:
   group: native-installers-${{ inputs.release_tag || github.ref_name }}
   cancel-in-progress: false

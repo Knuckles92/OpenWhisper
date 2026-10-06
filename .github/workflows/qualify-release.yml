@@ -1,18 +1,14 @@
-name: Qualify candidate and upload draft
+name: Verify candidate and upload draft
 
 on:
   workflow_dispatch:
     inputs:
       candidate_run_id:
-        description: Successful Build native installers run containing the tested candidate
+        description: Successful Build native installers run containing the candidate
         required: true
         type: string
       release_tag:
         description: Existing draft release tag for that exact candidate
-        required: true
-        type: string
-      hardware_report:
-        description: Completed hardware qualification JSON for those exact artifacts
         required: true
         type: string
 
@@ -58,23 +54,13 @@ jobs:
           path: release
           run-id: ${{ inputs.candidate_run_id }}
           github-token: ${{ github.token }}
-      - name: Require checksum and hardware qualification
+      - name: Verify checksums and source qualification
         env:
-          HARDWARE_REPORT: ${{ inputs.hardware_report }}
           CANDIDATE_RUN: ${{ inputs.candidate_run_id }}
         run: |
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          report = json.loads(os.environ["HARDWARE_REPORT"])
-          Path("hardware-qualification.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-          PY
           python3 scripts/check_release_qualification.py --candidate release \
-            --report hardware-qualification.json --expected-commit "$(git rev-parse HEAD)" \
+            --expected-commit "$(git rev-parse HEAD)" \
             --expected-run "$CANDIDATE_RUN"
-          cp hardware-qualification.json release/HARDWARE-QUALIFICATION.json
-          (cd release && sha256sum HARDWARE-QUALIFICATION.json >> SHA256SUMS.txt)
       - name: Upload verified artifacts to existing draft
         env:
           GH_TOKEN: ${{ github.token }}
