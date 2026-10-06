@@ -128,6 +128,16 @@ class NavRail(QListWidget):
         # viewport, so a shrinking rail would leave rows under the scroll bar.
         self.updateEditorGeometries()
 
+    def scrollContentsBy(self, dx: int, dy: int) -> None:
+        # Layout refreshes already place rows at the scrollbar's current
+        # offset. Use that absolute geometry as the only source of position;
+        # Qt's relative viewport scroll would move the same rows a second time.
+        # Zero deltas preserve QListView's scroll bookkeeping without moving
+        # its child widgets. This small rail can repaint instead of pixel-scroll.
+        super().scrollContentsBy(0, 0)
+        self.updateEditorGeometries()
+        self.viewport().update()
+
     def add_group(self, title: str) -> None:
         item = QListWidgetItem(self)
         item.setFlags(Qt.ItemFlag.NoItemFlags)

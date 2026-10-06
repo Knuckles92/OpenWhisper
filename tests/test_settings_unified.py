@@ -16,7 +16,8 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtGui import QWheelEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
@@ -107,6 +108,76 @@ def make_dialog():
 
 
 class TestRouting:
+    def test_page_transitions_keep_sidebar_rows_over_their_click_targets(self, make_dialog):
+        from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+        from ui_qt.utils.theme_manager import ThemeManager
+
+        app = QApplication.instance()
+        previous_style, previous_font = app.styleSheet(), app.font()
+        previous_scale = current_ui_font_scale_percent()
+        apply_ui_font_scale(115, app=app, theme_manager=ThemeManager())
+        dialog, _store = make_dialog()
+        dialog.show()
+        try:
+            QTest.qWait(50)
+            for key in ("advanced", VOICE_MODEL, "meeting_dashboard", OVERVIEW,
+                        "cleanup_rules", "backup", RECORDING, VOICE_MODEL,
+                        "meeting_dashboard", "meeting_after", "api_keys", OVERVIEW):
+                dialog.select_destination(key)
+                QTest.qWait(50)
+                rail = dialog.rail
+                for destination, row in rail._rows.items():
+                    expected = rail.visualItemRect(rail._items[destination])
+                    assert row.geometry().top() == expected.top(), (key, destination, row.geometry(), expected)
+                    assert row.geometry().bottom() == expected.bottom(), (key, destination, row.geometry(), expected)
+        finally:
+            dialog.close()
+            apply_ui_font_scale(previous_scale, app=app)
+            app.setFont(previous_font)
+            app.setStyleSheet(previous_style)
+
+    @pytest.mark.parametrize("scale", [100, 115, 130])
+    @pytest.mark.parametrize("target", ["name_label", "value_label", "icon_label", "row"])
+    def test_scrolled_sidebar_clicks_open_the_visible_destination(self, make_dialog, scale, target):
+        from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+        from ui_qt.utils.theme_manager import ThemeManager
+
+        app = QApplication.instance()
+        previous_style = app.styleSheet()
+        previous_font = app.font()
+        previous_scale = current_ui_font_scale_percent()
+        apply_ui_font_scale(scale, app=app, theme_manager=ThemeManager())
+        dialog, _store = make_dialog()
+        dialog.show()
+        dialog.resize(1430, 850)
+        try:
+            app.processEvents()
+            rail = dialog.rail
+            point = rail.viewport().rect().center()
+            QApplication.sendEvent(rail.viewport(), QWheelEvent(
+                QPointF(point), QPointF(rail.viewport().mapToGlobal(point)),
+                QPoint(), QPoint(0, -2400), Qt.MouseButton.NoButton,
+                Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False,
+            ))
+            app.processEvents()
+            for key in ("hotkeys", "api_keys", "advanced"):
+                row = rail._rows[key]
+                label = row if target == "row" else getattr(row, target)
+                point = label.mapTo(rail.viewport(), label.rect().center())
+                assert rail.viewport().rect().contains(point)
+                assert rail.itemAt(point) is rail._items[key]
+                QTest.mouseClick(dialog.windowHandle(), Qt.MouseButton.LeftButton,
+                                 pos=label.mapTo(dialog, label.rect().center()))
+                app.processEvents()
+                assert rail.current_key() == key
+                assert dialog.stack.currentWidget() is dialog._page_scrolls[key]
+                assert dialog.page_title.text() == dialog._headings[key][0]
+        finally:
+            dialog.close()
+            apply_ui_font_scale(previous_scale, app=app)
+            app.setFont(previous_font)
+            app.setStyleSheet(previous_style)
+
     def test_window_opens_on_the_overview(self, make_dialog):
         dialog, _store = make_dialog()
         assert dialog.rail.current_key() == OVERVIEW
