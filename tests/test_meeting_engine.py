@@ -1548,6 +1548,13 @@ class TestCaptureRecovery:
         import meeting.capture.health as health
         import meeting.engine as engine_module
 
+        # Host scheduling can pause this test longer than its accelerated
+        # 80 ms stall threshold. Advance only the monitor's clock with audio,
+        # while the real watchdog still runs and inspects the quiet callbacks.
+        capture_clock = [100.0]
+        monkeypatch.setattr(
+            health, "time", types.SimpleNamespace(monotonic=lambda: capture_clock[0])
+        )
         monkeypatch.setattr(FakeSource, "requires_audio_blocks", True, raising=False)
         monkeypatch.setattr(health, "FIRST_BLOCK_GRACE_S", 0.08)
         monkeypatch.setattr(health, "BLOCK_STALL_S", 0.08)
@@ -1558,8 +1565,9 @@ class TestCaptureRecovery:
         for _ in range(10):
             mic.callback(CaptureBlock(
                 channel="mic", frames=np.zeros(1600, np.int16),
-                sample_rate=16000, t_mono=time.monotonic(),
+                sample_rate=16000, t_mono=capture_clock[0],
             ))
+            capture_clock[0] += 0.02
             time.sleep(0.02)
             assert engine._capture_source("mic") is mic
         engine._update_capture_status()
