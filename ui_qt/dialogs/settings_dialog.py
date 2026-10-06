@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from typing import Callable, Dict, Optional
 
 from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QKeySequence, QShortcut
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QDialog,
     QButtonGroup,
@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -29,7 +30,6 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
     QSystemTrayIcon,
     QTabBar,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -90,8 +90,8 @@ from services.settings import (
     resolve_ui_font_scale,
     resolve_ui_theme,
     resolve_settings_view,
+    resolve_transcript_cleanup_level,
     resolve_transcript_cleanup_model,
-    resolve_transcript_cleanup_prompt,
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
     resolve_transcript_cleanup_rules,
@@ -107,6 +107,9 @@ from services.text_llm import (
     profile_display_name,
     verify_api_key,
 )
+from services import cleanup_prompts
+from services.cleanup_prompts import CleanupLevel
+from ui_qt.dialogs import cleanup_levels
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
 from ui_qt.dialogs.settings_binder import SettingsBinder
@@ -184,6 +187,7 @@ from ui_qt.widgets import (
     SettingTile,
     WrappedLabel,
 )
+from ui_qt.widgets.button_row import ButtonRow
 from ui_qt.widgets.buttons import (
     compact_primary_button,
     fit_compact_button,
@@ -235,6 +239,12 @@ _SEARCH_ALIASES = {
         "Model Manager's choices now sit on Voice model, AI cleanup, Voice & "
         "speakers, Intelligence, and Runtime",
         "model manager models assign",
+    ),
+    CLEANUP: (
+        "Spoken corrections and lists",
+        "Dictation › AI cleanup › Cleanup level",
+        "self-correction scratch that actually bullet numbered list light medium high "
+        "rewrite polish formatting",
     ),
     DOWNLOADS: (
         "Download models and components",
@@ -417,6 +427,8 @@ class SettingsDialog(QDialog):
         self._page_modules: Dict[str, object] = {}
         self._flow_intro_tiles: list = []
         self._saved_cleanup_prompt = ""
+        # (tile, button) per "AI cleanup is off" notice; see cleanup_gate_tile.
+        self._cleanup_gates: list = []
         self._rule_polishing = False
         # Whether the words being polished came (at least partly) from
         # dictation, so the review dialog can say "said" instead of "typed".
@@ -1508,42 +1520,113 @@ class SettingsDialog(QDialog):
         self.transcript_cleanup_check.toggled.connect(
             self._on_cleanup_enabled_changed
         )
+        self.cleanup_level_bar = SegmentedBar(
+            [(title, detail) for _value, title, detail in cleanup_levels.SEGMENTS]
+        )
+        self.cleanup_level_bar.setAccessibleName("Cleanup level")
+        # activated, not currentIndexChanged: loading the saved level must
+        # not save it back or ask about a custom prompt.
+        self.cleanup_level_bar.activated.connect(self._on_cleanup_level_activated)
+        custom_segment = self.cleanup_level_bar.buttons[-1]
+        custom_segment.setToolTip("Write a custom prompt below to use it instead of a level")
+        self.cleanup_level_tile = FieldTile(
+            "Cleanup level",
+            "How much the AI changes your words. Every level keeps the "
+            "language you spoke and never adds anything you didn't say.",
+            self.cleanup_level_bar,
+            design_icon("wand-purple.svg"),
+        )
+        self.cleanup_level_note = WrappedLabel("")
+        self.cleanup_level_note.setObjectName("cleanupLevelNote")
+        self.cleanup_level_tile.add_body(self.cleanup_level_note)
         # No captions: each card's own title already says what it is.
-        self._tile_group(layout, "", [self.transcript_cleanup_tile])
+        self._tile_group(
+            layout, "", [self.transcript_cleanup_tile, self.cleanup_level_tile], columns=1
+        )
 
         self.cleanup_model_tile = self.models.build_cleanup_model_section(layout)
         layout.addSpacing(6)
 
-        self.cleanup_prompt_edit = QTextEdit()
-        self.cleanup_prompt_edit.setAcceptRichText(False)
-        self.cleanup_prompt_edit.setFont(QFont("Segoe UI", 11))
+        # Plain, not QTextEdit: its placeholder, the level's instructions,
+        # wraps instead of being clipped to one line.
+        self.cleanup_prompt_edit = QPlainTextEdit()
+        self.cleanup_prompt_edit.setObjectName("cleanupPromptEditor")
         self.cleanup_prompt_edit.setMinimumHeight(96)
         self.cleanup_prompt_edit.setMaximumHeight(120)
-        self.cleanup_prompt_edit.setPlaceholderText(
-            "Instructions for how the AI should clean up transcripts…"
-        )
+        self.cleanup_prompt_edit.setAccessibleName("Custom prompt")
         self.cleanup_prompt_edit.installEventFilter(self)
         self.cleanup_prompt_tile = FieldTile(
-            "Cleanup prompt",
-            "Instructions the model follows when rewriting a transcript.",
+            "Custom prompt (optional)",
+            "Replaces the level's instructions with your own. Learned rules "
+            "still apply. While it's empty, the box previews the level's "
+            "instructions.",
             self.cleanup_prompt_edit,
             design_icon("typography-blue.svg"),
         )
 
-        cleanup_btn_row = QHBoxLayout()
-        cleanup_btn_row.setContentsMargins(0, 0, 0, 0)
-        cleanup_btn_row.setSpacing(8)
         self.cleanup_prompt_edit_btn = neutral_button(Button("Open editor…"))
-        fit_compact_button(self.cleanup_prompt_edit_btn, 120)
+        self.cleanup_prompt_edit_btn.setToolTip(
+            "Edit in a larger window, starting from the level's instructions"
+        )
+        fit_compact_button(self.cleanup_prompt_edit_btn, 0)
         self.cleanup_prompt_edit_btn.clicked.connect(self._open_cleanup_prompt_editor)
-        cleanup_btn_row.addWidget(self.cleanup_prompt_edit_btn)
-        self.cleanup_prompt_reset_btn = neutral_button(Button("Reset to default"))
-        fit_compact_button(self.cleanup_prompt_reset_btn, 140)
+        self.cleanup_prompt_reset_btn = neutral_button(Button("Remove custom prompt"))
+        self.cleanup_prompt_reset_btn.setToolTip("Go back to the level's instructions")
+        fit_compact_button(self.cleanup_prompt_reset_btn, 0)
         self.cleanup_prompt_reset_btn.clicked.connect(self._reset_cleanup_prompt)
-        cleanup_btn_row.addWidget(self.cleanup_prompt_reset_btn)
-        cleanup_btn_row.addStretch()
-        self.cleanup_prompt_tile.add_body_layout(cleanup_btn_row)
+        # Wraps rather than overflowing a narrow tiled window at 130%.
+        self.cleanup_prompt_tile.add_body(
+            ButtonRow((self.cleanup_prompt_edit_btn, self.cleanup_prompt_reset_btn))
+        )
+        self.cleanup_prompt_edit.textChanged.connect(self._update_cleanup_prompt_buttons)
         self._tile_group(layout, "", [self.cleanup_prompt_tile])
+        # The bar selects a clicked segment after its activated handlers run,
+        # so a declined switch away from Custom is put back on the next turn.
+        self._cleanup_level_resync = QTimer(self)
+        self._cleanup_level_resync.setSingleShot(True)
+        self._cleanup_level_resync.setInterval(0)
+        self._cleanup_level_resync.timeout.connect(self._update_cleanup_level_ui)
+
+    def cleanup_gate_tile(self, description: str) -> InfoTile:
+        """An "AI cleanup is off" notice whose button turns cleanup on.
+
+        It is hidden while cleanup is on. Pages whose settings only matter
+        when cleanup runs (Learned rules, Apps & styles) put one at the top.
+        """
+        tile = InfoTile(
+            "AI cleanup is off", description, design_icon("info-warning.svg")
+        )
+        tile.setProperty("kind", "notice")
+        button = compact_primary_button(Button("Turn on"))
+        button.clicked.connect(self.turn_on_cleanup)
+        tile.add_trailing(button)
+        self._cleanup_gates.append((tile, button))
+        level = cleanup_prompts.resolve_level(self._settings_snapshot())
+        self._update_cleanup_gates(level != CleanupLevel.NONE)
+        return tile
+
+    def turn_on_cleanup(self) -> None:
+        """Turn AI cleanup on at its saved level, as its switch does."""
+        switch = self.__dict__.get("transcript_cleanup_check")
+        if switch is not None:
+            switch.setChecked(True)
+        else:
+            self._on_cleanup_enabled_changed(True)
+
+    def _update_cleanup_gates(self, enabled: bool) -> None:
+        settings = self._settings_snapshot()
+        if cleanup_prompts.custom_prompt(settings):
+            name = cleanup_prompts.CUSTOM_LABEL
+        else:
+            name = CleanupLevel.LABELS[resolve_transcript_cleanup_level(settings)]
+        for tile, button in self._cleanup_gates:
+            button.setText(f"Turn on ({name})")
+            if enabled:
+                tile.hide()
+            elif tile.parentWidget() is not None:
+                # Showing a tile before its page adopts it would open it
+                # as a window of its own.
+                tile.show()
 
     def _build_cleanup_profiles_page(self, layout: QVBoxLayout) -> None:
         self.cleanup_profiles_panel = CleanupProfilesPanel(manager=settings_manager)
@@ -1562,23 +1645,11 @@ class SettingsDialog(QDialog):
             self.on_profile_hotkey_capture(suspended)
 
     def _build_cleanup_rules_page(self, layout: QVBoxLayout) -> None:
-        self.cleanup_rules_gate_tile = InfoTile(
-            "AI cleanup is off",
-            "Learned rules only apply when cleanup runs. Teaching and "
-            "editing stay locked until you turn on Clean up transcripts "
-            "with AI.",
-            design_icon("info-warning.svg"),
+        self.cleanup_rules_gate_tile = self.cleanup_gate_tile(
+            "Learned rules only apply when AI cleanup runs, so teaching and "
+            "editing them waits until it's on."
         )
-        self.cleanup_rules_gate_tile.setProperty("kind", "notice")
-        self.open_cleanup_btn = QPushButton("Open Cleanup")
-        self.open_cleanup_btn.setObjectName("cleanupRulesOpenCleanupLink")
-        self.open_cleanup_btn.setFlat(True)
-        self.open_cleanup_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.open_cleanup_btn.setToolTip(
-            "Open Cleanup to turn on Clean up transcripts with AI"
-        )
-        self.open_cleanup_btn.clicked.connect(self.focus_cleanup_toggle)
-        self.cleanup_rules_gate_tile.add_trailing(self.open_cleanup_btn)
+        self.cleanup_rules_turn_on_btn = self._cleanup_gates[-1][1]
         layout.addWidget(self.cleanup_rules_gate_tile)
 
         self.cleanup_rules_composer_tile = InfoTile(
@@ -3081,8 +3152,10 @@ class SettingsDialog(QDialog):
         device_combo = self.__dict__.get("audio_device_combo")
         self.rail.set_value(RECORDING, device_combo.currentText() if device_combo is not None else "System Default")
         model = resolve_transcript_cleanup_model(settings)
-        cleanup = setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings)
-        self.rail.set_value(CLEANUP, (f"On · {model}" if model else "On") if cleanup else "Off")
+        cleanup = cleanup_prompts.level_label(settings)
+        if cleanup_prompts.resolve_level(settings) != CleanupLevel.NONE and model:
+            cleanup = f"{cleanup} · {model}"
+        self.rail.set_value(CLEANUP, cleanup)
         rule_list = self.__dict__.get("cleanup_rules_list")
         rule_count = rule_list.count() if rule_list is not None else len(resolve_transcript_cleanup_rules(settings))
         self.rail.set_value(CLEANUP_RULES, "No rules" if rule_count == 0 else f"{rule_count} rule{'' if rule_count == 1 else 's'}")
@@ -3123,7 +3196,10 @@ class SettingsDialog(QDialog):
             return
         models = self.models
         settings = self._settings_snapshot()
-        cleanup_on = setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings)
+        cleanup_on = cleanup_prompts.resolve_level(settings) != CleanupLevel.NONE
+        cleanup_value = cleanup_prompts.level_label(settings)
+        if cleanup_value == cleanup_prompts.CUSTOM_LABEL:
+            cleanup_value = "Custom prompt"
         cleanup_remote = self._provider_is_remote(models.active_text_provider)
         meeting_remote = models.meeting_intelligence_is_remote(self._provider_is_remote)
 
@@ -3167,7 +3243,7 @@ class SettingsDialog(QDialog):
         policy = settings.get(SettingsKey.HF_ACCESS_POLICY, HuggingFaceAccessPolicy.ASK)
         self.overview.update_summary(OverviewSummary(
             voice=(models.voice_summary(), models.voice_detail()),
-            cleanup=("On" if cleanup_on else "Off", models.text_summary()),
+            cleanup=(cleanup_value, models.text_summary()),
             cleanup_on=cleanup_on,
             profiles=(
                 f"{profile_count} profile{'' if profile_count == 1 else 's'}",
@@ -3426,21 +3502,84 @@ class SettingsDialog(QDialog):
         self.streaming_font_size_spinbox.setEnabled(enabled)
 
     def _on_cleanup_enabled_changed(self, checked: bool) -> None:
+        saved = self._persist(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, bool(checked))
+        # After saving: without the switch built, the saved value is the state.
         self._update_cleanup_prompt_ui()
-        if not self._persist(
-            SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, bool(checked)
-        ):
-            return
-        if self.on_cleanup_changed:
+        if saved and self.on_cleanup_changed:
             self.on_cleanup_changed()
 
+    def _on_cleanup_level_activated(self, index: int) -> None:
+        level = cleanup_levels.SEGMENTS[index][0]
+        # Custom can only be clicked while the custom prompt is in use.
+        if level != cleanup_levels.CUSTOM:
+            self.choose_cleanup_level(level)
+        # Started after the confirmation's own event loop has closed, so it
+        # runs once the bar has selected the clicked segment.
+        self._cleanup_level_resync.start()
+
+    def choose_cleanup_level(self, level: str) -> bool:
+        """Use ``level``'s preset for AI cleanup; Advanced and Basic share this.
+
+        A saved custom prompt replaces every preset, so choosing one removes
+        it, after asking. Returns whether the level was saved.
+        """
+        drops = ()
+        if cleanup_prompts.custom_prompt(self._settings_snapshot()):
+            if not self._confirm_custom_prompt_removal(level):
+                self._update_cleanup_level_ui()
+                return False
+            drops = (SettingsKey.TRANSCRIPT_CLEANUP_PROMPT,)
+        saved = self._persist_many(
+            {SettingsKey.TRANSCRIPT_CLEANUP_LEVEL: level}, drops=drops
+        )
+        if saved and drops:
+            self._forget_custom_prompt()
+        self._update_cleanup_prompt_ui()
+        if saved and self.on_cleanup_changed:
+            self.on_cleanup_changed()
+        return saved
+
+    def _confirm_custom_prompt_removal(self, level: str) -> bool:
+        name = CleanupLevel.LABELS.get(level, CleanupLevel.LABELS[CleanupLevel.MEDIUM])
+        reply = QMessageBox.question(
+            self,
+            "Remove your custom prompt?",
+            f"AI cleanup will go back to the {name} level's instructions. "
+            "Your learned rules stay.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
+    def _forget_custom_prompt(self) -> None:
+        self._saved_cleanup_prompt = ""
+        editor = self.__dict__.get("cleanup_prompt_edit")
+        if editor is not None:
+            editor.clear()
+
     def _persist_cleanup_prompt(self) -> None:
-        prompt_text = self.cleanup_prompt_edit.toPlainText().strip()
-        stored = prompt_text or config.TRANSCRIPT_CLEANUP_PROMPT
-        if stored == self._saved_cleanup_prompt:
+        """Save the editor as the custom prompt, or remove the saved one.
+
+        Empty text or a copy of a built-in prompt removes the key rather than
+        saving preset text, so the level's preset applies and stays current.
+        """
+        editor = self.cleanup_prompt_edit
+        custom = cleanup_prompts.custom_prompt(
+            {SettingsKey.TRANSCRIPT_CLEANUP_PROMPT: editor.toPlainText()}
+        )
+        if not custom and editor.toPlainText():
+            editor.clear()
+        if custom == self._saved_cleanup_prompt:
             return
-        if self._persist(SettingsKey.TRANSCRIPT_CLEANUP_PROMPT, stored):
-            self._saved_cleanup_prompt = stored
+        if custom:
+            saved = self._persist(SettingsKey.TRANSCRIPT_CLEANUP_PROMPT, custom)
+        else:
+            saved = self._persist_many(
+                {}, drops=(SettingsKey.TRANSCRIPT_CLEANUP_PROMPT,)
+            )
+        if saved:
+            self._saved_cleanup_prompt = custom
+            self._update_cleanup_prompt_ui()
 
     def _on_meeting_review_toggled(self, checked: bool) -> None:
         if self._loading:
@@ -3696,25 +3835,65 @@ class SettingsDialog(QDialog):
 
     def _update_cleanup_prompt_ui(self) -> None:
         control = self.__dict__.get("transcript_cleanup_check")
-        enabled = control.isChecked() if control is not None else setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, self._settings_snapshot())
-        for name in ("cleanup_prompt_tile", "cleanup_rules_composer_tile", "cleanup_rules_library_tile"):
+        if control is not None:
+            enabled = control.isChecked()
+        else:
+            level = cleanup_prompts.resolve_level(self._settings_snapshot())
+            enabled = level != CleanupLevel.NONE
+        for name in (
+            "cleanup_level_tile",
+            "cleanup_prompt_tile",
+            "cleanup_rules_composer_tile",
+            "cleanup_rules_library_tile",
+        ):
             widget = self.__dict__.get(name)
             if widget is not None:
                 widget.setEnabled(enabled)
-        gate = self.__dict__.get("cleanup_rules_gate_tile")
-        if gate is not None:
-            gate.setVisible(not enabled)
+        self._update_cleanup_gates(enabled)
+        if self.__dict__.get("cleanup_rules_gate_tile") is not None:
             self._update_cleanup_rule_controls()
+        self._update_cleanup_level_ui()
+
+    def _update_cleanup_level_ui(self) -> None:
+        """Show the saved level, or Custom while a custom prompt replaces it."""
+        bar = self.__dict__.get("cleanup_level_bar")
+        if bar is None:
+            return
+        settings = self._settings_snapshot()
+        level = resolve_transcript_cleanup_level(settings)
+        custom = bool(cleanup_prompts.custom_prompt(settings))
+        choice = cleanup_levels.CUSTOM if custom else level
+        bar.buttons[-1].setEnabled(custom)
+        bar.setCurrentIndex(cleanup_levels.segment_index(choice))
+        self.cleanup_level_note.setText(cleanup_levels.NOTES[choice])
+        self.cleanup_prompt_edit.setPlaceholderText(cleanup_prompts.preset(level))
+        self._update_cleanup_prompt_buttons()
+
+    def _update_cleanup_prompt_buttons(self) -> None:
+        self.cleanup_prompt_reset_btn.setEnabled(
+            bool(self._saved_cleanup_prompt or self.cleanup_prompt_edit.toPlainText().strip())
+        )
 
     def _open_cleanup_prompt_editor(self) -> None:
-        dialog = CleanupPromptDialog(self.cleanup_prompt_edit.toPlainText(), self)
+        # With no custom prompt yet, start from the level's instructions.
+        text = self.cleanup_prompt_edit.toPlainText().strip() or cleanup_prompts.preset(
+            resolve_transcript_cleanup_level(self._settings_snapshot())
+        )
+        dialog = CleanupPromptDialog(text, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.cleanup_prompt_edit.setPlainText(dialog.prompt_text())
             self._persist_cleanup_prompt()
 
     def _reset_cleanup_prompt(self) -> None:
-        self.cleanup_prompt_edit.setPlainText(config.TRANSCRIPT_CLEANUP_PROMPT)
-        self._persist_cleanup_prompt()
+        """Remove the custom prompt, after asking, so the level applies again."""
+        settings = self._settings_snapshot()
+        if cleanup_prompts.custom_prompt(settings) and not self._confirm_custom_prompt_removal(
+            resolve_transcript_cleanup_level(settings)
+        ):
+            return
+        if self._persist_many({}, drops=(SettingsKey.TRANSCRIPT_CLEANUP_PROMPT,)):
+            self._forget_custom_prompt()
+            self._update_cleanup_prompt_ui()
 
     def _staged_cleanup_rules(self) -> list:
         return [
@@ -4317,7 +4496,9 @@ class SettingsDialog(QDialog):
         self._bindings.load(settings, start=self._initial_binding_start)
         if self._page_is_loading(CLEANUP):
             self.transcript_cleanup_check.setChecked(setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings))
-            prompt = resolve_transcript_cleanup_prompt(settings)
+            # Empty unless a real custom prompt is saved; the preset shows
+            # as the placeholder.
+            prompt = cleanup_prompts.custom_prompt(settings)
             self.cleanup_prompt_edit.setPlainText(prompt)
             self._saved_cleanup_prompt = prompt
         if self._page_is_loading(CLEANUP_RULES):

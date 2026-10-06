@@ -71,7 +71,7 @@ def test_settings_first_show_and_search_do_not_build_hidden_destinations(monkeyp
     assert dialog._built_pages == {OVERVIEW}
     assert not dialog.downloads._ui_built
     entries = dialog._search_index()
-    assert any(entry.title == "Cleanup prompt" for entry in entries)
+    assert any(entry.title == "Custom prompt (optional)" for entry in entries)
     assert any(entry.model_name == "base" for entry in entries)
     assert dialog._built_pages == {OVERVIEW}
     assert not dialog.downloads._ui_built

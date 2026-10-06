@@ -225,8 +225,9 @@ def compose_cleanup_prompt(
     """The system prompt for one cleanup call.
 
     Order: the base prompt (a profile's, or the level preset or custom
-    prompt with the learned rules), the app's style (never with a profile),
-    the dictionary, the snippet guard, the text around the caret, and last
+    prompt with the learned rules), the app's style and the live list
+    layout (never with a profile), the dictionary, the snippet guard, the
+    text around the caret, and last
     a batch's description with its injection guard. Each block is separated
     by a blank line and left out when empty.
     """
@@ -255,6 +256,9 @@ def compose_cleanup_prompt(
     if use_style:
         blocks.append(_block("style", lambda: app_styles.prompt_block(
             app_styles.style_for(snapshot, settings))))
+    if profile is None and job is not None and job.mode == JobMode.DICTATION:
+        blocks.append(_block("lists", lambda: cleanup_prompts.inline_lists_block(
+            settings, job.snapshot(timeout=config.CONTEXT_CAPTURE_DEADLINE_S))))
     blocks.append(_block("dictionary", lambda: dictionary.prompt_block(
         dictionary.load_dictionary(settings))))
     blocks.append(_block("snippets", lambda: snippets.prompt_guard(prepared.plan)))

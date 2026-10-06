@@ -542,13 +542,13 @@ class TestRailValues:
         dialog.downloads.finish_download("tiny", True)
         assert dialog.rail.value(DOWNLOADS).startswith("1 of ")
 
-    def test_cleanup_rail_combines_the_switch_and_the_hosted_model(self, make_dialog):
+    def test_cleanup_rail_combines_the_level_and_the_hosted_model(self, make_dialog):
         dialog, _store = make_dialog({
             SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True,
             SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "openai",
             SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "gpt-test",
         })
-        assert dialog.rail.value(CLEANUP) == "On · gpt-test"
+        assert dialog.rail.value(CLEANUP) == "Medium · gpt-test"
         dialog.transcript_cleanup_check.setChecked(False)
         assert dialog.rail.value(CLEANUP) == "Off"
 

@@ -264,10 +264,11 @@ class TestTranscriptCleanupSettings:
         assert resolve_transcript_cleanup_prompt(
                 {SettingsKey.TRANSCRIPT_CLEANUP_PROMPT: custom}
             ) == custom
+        medium = config.TRANSCRIPT_CLEANUP_LEVEL_PROMPTS["medium"]
         assert resolve_transcript_cleanup_prompt(
                 {SettingsKey.TRANSCRIPT_CLEANUP_PROMPT: "   "}
-            ) == config.TRANSCRIPT_CLEANUP_PROMPT
-        assert resolve_transcript_cleanup_prompt({}) == config.TRANSCRIPT_CLEANUP_PROMPT
+            ) == medium
+        assert resolve_transcript_cleanup_prompt({}) == medium
 
     def test_resolve_provider_validates_and_falls_back(self):
         from config import config

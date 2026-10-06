@@ -19,6 +19,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from services import cleanup_prompts
+from services.cleanup_prompts import CleanupLevel
 from services.credentials import resolve_credential
 from services.settings import (
     SettingsKey,
@@ -27,6 +29,7 @@ from services.settings import (
     resolve_meeting_end_polish,
     resolve_meeting_end_report,
     resolve_recording_trigger_mode,
+    resolve_transcript_cleanup_level,
     resolve_transcript_cleanup_provider,
     resolve_ui_font_scale,
     resolve_ui_theme,
@@ -35,6 +38,7 @@ from services.settings import (
     setting_value,
 )
 from services.text_llm import get_profile, profile_display_name
+from ui_qt.dialogs import cleanup_levels
 from ui_qt.dialogs.settings_destinations import (
     BASIC_APP,
     BASIC_DICTATION,
@@ -226,6 +230,36 @@ class BasicSettingsPage(QWidget):
             lambda settings: settings.get(SettingsKey.AUDIO_INPUT_DEVICE),
         )
 
+    def _cleanup_level(self, group):
+        # Not a _bind projection: choosing a level can remove a custom prompt
+        # (after asking), which the AI cleanup page's handler owns.
+        combo = self._combo()
+        combo.setAccessibleName("Cleanup level")
+        combo.activated.connect(self._choose_cleanup_level)
+        self.cleanup_level_combo = combo
+        self.controls[SettingsKey.TRANSCRIPT_CLEANUP_LEVEL] = combo
+        self.cleanup_level_detail = self._row(group, "Cleanup level", "", combo)
+
+    def _choose_cleanup_level(self, index):
+        level = self.cleanup_level_combo.itemData(index)
+        if level != cleanup_levels.CUSTOM:
+            self.dialog.choose_cleanup_level(level)
+        # A declined confirmation saves nothing; show the saved choice again.
+        self._refresh_cleanup_level(self.dialog._settings_snapshot())
+
+    def _refresh_cleanup_level(self, settings):
+        combo = self.cleanup_level_combo
+        custom = bool(cleanup_prompts.custom_prompt(settings))
+        choice = cleanup_levels.CUSTOM if custom else resolve_transcript_cleanup_level(settings)
+        with QSignalBlocker(combo):
+            combo.clear()
+            for value, title, _detail in cleanup_levels.SEGMENTS:
+                if value != cleanup_levels.CUSTOM or custom:
+                    combo.addItem(title, value)
+            combo.setCurrentIndex(max(0, combo.findData(choice)))
+        combo.setEnabled(cleanup_prompts.resolve_level(settings) != CleanupLevel.NONE)
+        self.cleanup_level_detail.setText(cleanup_levels.SHORT_NOTES[choice])
+
     def _shortcut(self, group):
         holder = QWidget()
         holder.setObjectName("basicSettingsShortcut")
@@ -292,6 +326,7 @@ class BasicSettingsPage(QWidget):
             "transcript_cleanup_check",
             SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
         )
+        self._cleanup_level(transcribe)
         self.cleanup_status = WrappedLabel("")
         self.cleanup_status.setObjectName("basicSettingsStatus")
         transcribe.addWidget(self.cleanup_status)
@@ -489,6 +524,7 @@ class BasicSettingsPage(QWidget):
                 if not configured:
                     status += " API key needed."
             self.cleanup_status.setText(status)
+            self._refresh_cleanup_level(settings)
             self.refresh_shortcut(settings)
         elif self.destination == BASIC_APP:
             self.update_notify.setEnabled(

@@ -388,7 +388,10 @@ class UIController(QObject):
             self._on_settings_streaming_changed()
         if SettingsKey.STREAMING_OVERLAY_FONT_SIZE in changes:
             self.overlay.refresh_streaming_font_size()
-        if SettingsKey.TRANSCRIPT_CLEANUP_ENABLED in changes:
+        if (
+            SettingsKey.TRANSCRIPT_CLEANUP_ENABLED in changes
+            or SettingsKey.TRANSCRIPT_CLEANUP_LEVEL in changes
+        ):
             self.refresh_cleanup_controls()
         if SettingsKey.RECORDING_TRIGGER_MODE in changes:
             self._on_settings_recording_trigger_mode_changed(changes[SettingsKey.RECORDING_TRIGGER_MODE])

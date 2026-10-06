@@ -547,9 +547,10 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.LOCAL_ASR_LANGUAGE: "en",
     # Transcript cleanup and uploads. With no saved choice, cleanup uses
     # OpenRouter's free router; config.TRANSCRIPT_CLEANUP_MODEL is the OpenAI
-    # profile's default model, not this setting's.
+    # profile's default model, not this setting's. No saved prompt means the
+    # cleanup level's preset, so the prompt's default is empty.
     SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: config.TRANSCRIPT_CLEANUP_ENABLED,
-    SettingsKey.TRANSCRIPT_CLEANUP_PROMPT: config.TRANSCRIPT_CLEANUP_PROMPT,
+    SettingsKey.TRANSCRIPT_CLEANUP_PROMPT: "",
     SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: config.TRANSCRIPT_CLEANUP_PROVIDER,
     SettingsKey.TRANSCRIPT_CLEANUP_MODEL: config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL,
     SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT: config.TRANSCRIPT_CLEANUP_MODEL_SORT,
@@ -1149,14 +1150,16 @@ def resolve_streaming_overlay_font_size(
 def resolve_transcript_cleanup_prompt(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Return a non-empty cleanup prompt, falling back to the built-in."""
+    """The prompt standard cleanup starts from: the saved custom prompt, or
+    the saved level's preset when there is none."""
     if settings is None:
         settings = settings_manager.load_all_settings()
+    # cleanup_prompts imports this module.
+    from services import cleanup_prompts
 
-    prompt = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_PROMPT)
-    if isinstance(prompt, str) and prompt.strip():
-        return prompt.strip()
-    return SETTING_DEFAULTS[SettingsKey.TRANSCRIPT_CLEANUP_PROMPT]
+    return cleanup_prompts.base_prompt(
+        settings, resolve_transcript_cleanup_level(settings)
+    )
 
 
 def _known_text_llm_profile_ids(

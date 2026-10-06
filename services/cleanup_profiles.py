@@ -2,6 +2,7 @@
 
 from dataclasses import asdict, dataclass
 
+from config import config
 from services.hotkey_manager import format_hotkey, parse_hotkey
 from services.settings import (
     SettingsKey,
@@ -158,6 +159,7 @@ def compose_profile_prompt(profile: CleanupProfile, rules: list[str]) -> str:
     prompt = (
         "Transform this speech-to-text dictation into the requested output. "
         "Fix punctuation, remove fillers, and preserve meaning, names, and facts. "
+        f"{config.TRANSCRIPT_CLEANUP_SPOKEN_CORRECTIONS} "
         "Do not invent missing details. Return only the finished text, without "
         "commentary or surrounding code fences.\n\n"
         f"Output instructions:\n{profile.instructions}"

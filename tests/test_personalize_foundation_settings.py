@@ -111,7 +111,7 @@ def test_level_is_none_while_cleanup_is_off():
 def test_only_a_real_custom_prompt_counts(stored, custom):
     settings = {} if stored is None else {"transcript_cleanup_prompt": stored}
     assert cleanup_prompts.custom_prompt(settings) == custom
-    expected = custom or config.TRANSCRIPT_CLEANUP_PROMPT
+    expected = custom or config.TRANSCRIPT_CLEANUP_LEVEL_PROMPTS["medium"]
     assert cleanup_prompts.base_prompt(settings, "medium") == expected
 
 

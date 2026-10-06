@@ -183,7 +183,7 @@ class OverviewPage(QWidget):
         specs = (
             ("voice_model", "Dictation", "Voice model", "microphone-blue.svg"),
             ("cleanup", "Dictation", "AI cleanup", "stack-purple.svg"),
-            ("cleanup_profiles", "Dictation", "Cleanup profiles", "typography-blue.svg"),
+            ("cleanup_profiles", "Personalize", "Cleanup profiles", "typography-blue.svg"),
             ("meeting_voice", "Meeting Mode", "Voice & speakers", "microphone-blue.svg"),
             ("meeting_intelligence", "Meeting Mode", "Intelligence", "stack-purple.svg"),
             ("hotkeys", "App", "Hotkeys", "bolt-green.svg"),

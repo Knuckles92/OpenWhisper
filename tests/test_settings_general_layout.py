@@ -185,14 +185,15 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             helpers = recording.findChildren(WrappedLabel)
             self.assertGreaterEqual(len(helpers), 2)
             cleanup = dialog._pages[CLEANUP]
-            # Only the AI-cleanup switch.
+            # The AI-cleanup switch; the level and custom prompt fields.
             self.assertEqual(len(cleanup.findChildren(SettingTile)), 1)
-            self.assertEqual(len(cleanup.findChildren(FieldTile)), 1)
+            self.assertEqual(len(cleanup.findChildren(FieldTile)), 2)
             self.assertEqual(len(cleanup.findChildren(InfoTile)), 1)
             self.assertIs(
                 dialog.transcript_cleanup_check,
                 dialog.transcript_cleanup_tile.checkbox,
             )
+            self.assertIs(dialog.cleanup_level_tile.control, dialog.cleanup_level_bar)
             self.assertIs(
                 dialog.cleanup_prompt_tile.control, dialog.cleanup_prompt_edit
             )
@@ -203,7 +204,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             self.assertEqual(len(rules.findChildren(SettingTile)), 0)
             self.assertIs(dialog.cleanup_rules_gate_tile.parentWidget(), rules)
             self.assertIs(
-                dialog.open_cleanup_btn.parentWidget(),
+                dialog.cleanup_rules_turn_on_btn.parentWidget(),
                 dialog.cleanup_rules_gate_tile,
             )
             self.assertIs(
@@ -305,11 +306,13 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             dialog.ensure_all_pages()
         try:
             dialog.transcript_cleanup_check.setChecked(True)
+            self.assertTrue(dialog.cleanup_level_tile.isEnabled())
             self.assertTrue(dialog.cleanup_prompt_tile.isEnabled())
             self.assertTrue(dialog.cleanup_rules_composer_tile.isEnabled())
             self.assertTrue(dialog.cleanup_rules_gate_tile.isHidden())
             dialog.transcript_cleanup_check.setChecked(False)
             for tile in (
+                dialog.cleanup_level_tile,
                 dialog.cleanup_prompt_tile,
                 dialog.cleanup_rules_composer_tile,
                 dialog.cleanup_rules_library_tile,
@@ -322,15 +325,12 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             self.assertTrue(dialog.models.text_model_picker.isEnabled())
             self.assertFalse(dialog.cleanup_rules_gate_tile.isHidden())
             self.assertTrue(dialog.cleanup_rules_gate_tile.isEnabled())
-            self.assertTrue(dialog.open_cleanup_btn.isEnabled())
-            self.assertIn(
-                "Clean up transcripts with AI",
-                dialog.cleanup_rules_gate_tile.description_label.text(),
-            )
+            self.assertTrue(dialog.cleanup_rules_turn_on_btn.isEnabled())
+            self.assertEqual(dialog.cleanup_rules_turn_on_btn.text(), "Turn on (Medium)")
         finally:
             dialog.close()
 
-    def test_learned_rules_gate_link_opens_cleanup(self):
+    def test_learned_rules_gate_button_turns_cleanup_on(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
             dialog.set_settings_view("advanced", persist=False)
@@ -341,12 +341,12 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             self.app.processEvents()
             dialog.transcript_cleanup_check.setChecked(False)
             dialog.rail.select(CLEANUP_RULES)
-            self.assertEqual(dialog.rail.current_key(), CLEANUP_RULES)
-            dialog.open_cleanup_btn.click()
+            dialog.cleanup_rules_turn_on_btn.click()
             self.app.processEvents()
-            self.assertEqual(dialog.rail.current_key(), CLEANUP)
-            self.assertIs(dialog.stack.currentWidget(), dialog._page_scrolls[CLEANUP])
-            self.assertTrue(dialog.transcript_cleanup_check.hasFocus())
+            self.assertEqual(dialog.rail.current_key(), CLEANUP_RULES)
+            self.assertTrue(dialog.transcript_cleanup_check.isChecked())
+            self.assertTrue(dialog.cleanup_rules_gate_tile.isHidden())
+            self.assertTrue(dialog.cleanup_rules_composer_tile.isEnabled())
         finally:
             dialog.close()
 

@@ -17,6 +17,9 @@ CONFIG_NAME_EXCEPTIONS = {
     # The OpenAI profile's default model; cleanup with no saved choice uses
     # OpenRouter's free router (config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL).
     "TRANSCRIPT_CLEANUP_MODEL",
+    # The old built-in prompt; with no saved prompt cleanup uses the level's
+    # preset, so the setting's default is empty.
+    "TRANSCRIPT_CLEANUP_PROMPT",
 }
 
 

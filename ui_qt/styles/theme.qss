@@ -4599,6 +4599,41 @@ QFrame#settingsTile[kind="intro"]:hover {
 /* personalize:S1 end */
 
 /* personalize:S2 begin (cleanup levels) */
+/* AI cleanup: what the chosen cleanup level does, under its control. */
+QLabel#cleanupLevelNote {
+    color: @slate-text-2;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QLabel#cleanupLevelNote:disabled {
+    color: @slate-text-disabled;
+}
+
+/* The custom prompt editor, styled like the Learned rules input. */
+QPlainTextEdit#cleanupPromptEditor {
+    background-color: @slate-field;
+    color: @slate-text;
+    border: 1px solid @slate-border-strong;
+    border-radius: 9px;
+    padding: 6px 8px;
+    font-size: 13px;
+    selection-background-color: @accent;
+}
+
+QPlainTextEdit#cleanupPromptEditor:hover {
+    border-color: @slate-border-hover;
+}
+
+QPlainTextEdit#cleanupPromptEditor:focus {
+    border: 1px solid @accent;
+}
+
+QPlainTextEdit#cleanupPromptEditor:disabled {
+    color: @slate-text-disabled;
+    border-color: @slate-border-subtle;
+}
 /* personalize:S2 end */
 
 /* personalize:S3 begin (commands) */
