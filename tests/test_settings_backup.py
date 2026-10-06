@@ -12,6 +12,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QDate, QObject, QPoint, Qt, pyqtSignal
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QBoxLayout, QMessageBox
 
 from services.settings import SettingsManager
@@ -22,6 +23,7 @@ from ui_qt.dialogs.settings_backup import BackupSettingsPage
 from ui_qt.dialogs.settings_destinations import BACKUP
 from ui_qt.utils.palette import current_palette, set_current_palette
 from ui_qt.utils.theme_manager import ThemeManager
+from ui_qt.widgets.backup_calendar import BackupCalendar
 
 
 class FakeCoordinator(QObject):
@@ -236,6 +238,54 @@ def test_calendar_shows_saved_schedule_and_latest_backup_only():
     assert "off" in page.schedule_summary_label.text()
     coordinator.backup_finished.emit(_info("/tmp/new.owbackup"), "")
     assert calendar.grid.latest == QDate(2026, 10, 4)
+
+
+def test_calendar_title_jumps_by_month_and_year():
+    calendar = BackupCalendar()
+    calendar.grid.setCurrentPage(2026, 10)
+
+    def page():
+        return calendar.grid.yearShown(), calendar.grid.monthShown()
+
+    calendar.title_button.click()
+    assert calendar.views.currentWidget() is calendar.picker
+    assert calendar.title_button.accessibleName() == "2026"
+    assert calendar.period_buttons[9].property("current")
+    calendar.next_button.click()
+    calendar.next_button.click()
+    assert calendar.title_button.accessibleName() == "2028"
+    assert not calendar.period_buttons[9].property("current")
+    assert page() == (2026, 10)
+    calendar.period_buttons[2].click()
+    assert calendar.views.currentWidget() is calendar.grid
+    assert page() == (2028, 3)
+
+    calendar.title_button.click()
+    calendar.title_button.click()
+    assert calendar.title_button.text() == "2020 – 2029"
+    assert not calendar.title_button.isEnabled()
+    assert calendar.period_buttons[9].property("current")
+    assert calendar.period_buttons[0].property("outside")
+    calendar.previous_button.click()
+    assert calendar.title_button.text() == "2010 – 2019"
+    calendar.period_buttons[6].click()
+    assert calendar.title_button.accessibleName() == "2015"
+    assert calendar.previous_button.accessibleName() == "Previous year"
+    calendar.period_buttons[0].click()
+    assert page() == (2015, 1)
+    assert calendar.previous_button.accessibleName() == "Previous month"
+
+    calendar.title_button.click()
+    calendar.next_button.click()
+    QTest.keyClick(calendar.period_buttons[4], Qt.Key.Key_Escape)
+    assert calendar.views.currentWidget() is calendar.grid
+    assert page() == (2015, 1)
+
+    calendar.title_button.click()
+    calendar.today_button.click()
+    today = QDate.currentDate()
+    assert calendar.views.currentWidget() is calendar.grid
+    assert page() == (today.year(), today.month())
 
 
 @pytest.mark.parametrize("theme", ["dark", "light"])

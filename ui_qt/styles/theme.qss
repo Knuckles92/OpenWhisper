@@ -1275,6 +1275,8 @@ QWidget#backupScheduleFields,
 QWidget#backupFieldGroup,
 QWidget#backupDestinationRow,
 QWidget#backupCalendar,
+QStackedWidget#backupCalendarViews,
+QWidget#backupCalendarPicker,
 QWidget#backupSettingsPage QLabel,
 QWidget#backupSettingsPage QCheckBox {
     background-color: transparent;
@@ -1398,9 +1400,55 @@ QCalendarWidget#backupCalendarGrid QAbstractItemView {
     font-size: 12px;
 }
 
-QWidget#backupSettingsPage QLabel#backupCalendarMonth {
+QWidget#backupSettingsPage QToolButton#backupCalendarTitle {
+    background-color: transparent;
     color: @slate-text;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 4px 8px;
+    min-height: 20px;
     font-size: 13px;
+    font-weight: 600;
+}
+
+QWidget#backupSettingsPage QToolButton#backupCalendarTitle:hover,
+QWidget#backupSettingsPage QToolButton#backupCalendarTitle:focus {
+    background-color: @slate-raised;
+    border-color: @accent-border;
+}
+
+/* The decade title has nothing further to zoom out to, so it is disabled
+   but must still read as the page heading. */
+QWidget#backupSettingsPage QToolButton#backupCalendarTitle:disabled {
+    color: @slate-text;
+}
+
+QWidget#backupSettingsPage QToolButton#backupCalendarPeriod {
+    background-color: transparent;
+    color: @slate-text;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 9px 0;
+    font-size: 13px;
+}
+
+QWidget#backupSettingsPage QToolButton#backupCalendarPeriod[outside="true"] {
+    color: @slate-text-4;
+}
+
+QWidget#backupSettingsPage QToolButton#backupCalendarPeriod:hover,
+QWidget#backupSettingsPage QToolButton#backupCalendarPeriod:focus {
+    background-color: @slate-raised;
+    border-color: @slate-border-hover;
+}
+
+QWidget#backupSettingsPage QToolButton#backupCalendarPeriod[today="true"] {
+    border-color: @accent-border;
+    font-weight: 600;
+}
+
+QWidget#backupSettingsPage QToolButton#backupCalendarPeriod[current="true"] {
+    background-color: @accent-tint;
     font-weight: 600;
 }
 

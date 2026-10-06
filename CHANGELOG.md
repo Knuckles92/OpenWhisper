@@ -8,6 +8,9 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+### Added
+- **Jump to any month in the backup calendar** — clicking the month title on **Settings → Backup & restore** opens a month picker, and clicking the year opens a decade of years, so dates months or years away are a click or two instead of one month at a time. **Esc** returns to the days without changing the month, and **Today** comes back to the current date.
+
 ### Changed
 - **Optional hardware testing** — manual hardware checks remain useful guidance, but release uploads no longer require a hardware report. Automated source, installer, provenance, and checksum checks remain required.
 
