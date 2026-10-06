@@ -763,6 +763,13 @@ class MeetingRuntime:
 
         """
         try:
+            from services.audio_player import stop_playback
+
+            # Before capture opens: the meeting would record History playback.
+            stop_playback()
+        except Exception:
+            logger.debug("Could not stop playback before a meeting", exc_info=True)
+        try:
             settings_manager.save_setting(
                 SettingsKey.MEETING_CLOUD_LAST_ENABLED, cloud
             )

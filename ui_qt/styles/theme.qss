@@ -5208,4 +5208,108 @@ QSizeGrip#scratchpadGrip {
 /* personalize:S8 end */
 
 /* personalize:S9 begin (history, stats & playback) */
+/* Stats window: the Settings slate family, with a tinted glyph per number. */
+QDialog#statsDialog {
+    background-color: @slate-bg;
+}
+
+QScrollArea#statsScroll,
+QScrollArea#statsScroll > QWidget,
+QWidget#statsBody,
+QStackedWidget#statsPages,
+QWidget#statsContent,
+QFrame#statsEmpty,
+QWidget#statsFooter,
+QWidget#statsDailyBars {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#statsTitle {
+    color: @slate-text;
+    background-color: transparent;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+QLabel#statsIntro,
+QLabel#statsMuted {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QFrame#statsCard,
+QFrame#statsSection {
+    background-color: @slate-surface;
+    border: 1px solid @slate-border;
+    border-radius: 12px;
+}
+
+QLabel#statsCardIcon {
+    background-color: rgba(@accent-rgb, 0.14);
+    border: none;
+    border-radius: 8px;
+}
+
+QLabel#statsCardIcon[tone="purple"] {
+    background-color: rgba(@purple-rgb, 0.16);
+}
+
+QLabel#statsCardIcon[tone="green"] {
+    background-color: rgba(@success-rgb, 0.16);
+}
+
+QLabel#statsCardCaption {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#statsCardValue {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    font-size: 22px;
+    font-weight: 700;
+}
+
+QLabel#statsCardDetail,
+QLabel#statsAxis {
+    color: @slate-text-4;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+}
+
+QLabel#statsSectionTitle,
+QLabel#statsEmptyTitle {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+QLabel#statsEmptyTitle {
+    font-size: 15px;
+}
+
+QLabel#statsAppName {
+    color: @slate-text-2;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QLabel#statsAppWords {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+}
 /* personalize:S9 end */

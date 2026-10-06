@@ -496,6 +496,7 @@ class DatabaseManager:
                     TranscriptionHistory.source_name.ilike(pattern, escape="\\"),
                     TranscriptionHistory.title.ilike(pattern, escape="\\"),
                     TranscriptionHistory.origin_device_name.ilike(pattern, escape="\\"),
+                    TranscriptionHistory.app_name.ilike(pattern, escape="\\"),
                 )
             ).order_by(TranscriptionHistory.timestamp.desc())
             if limit:
@@ -513,6 +514,29 @@ class DatabaseManager:
                 session.delete(entry)
                 return True
             return False
+
+    #: What an edit may change on a saved entry: which version of the text it
+    #: shows. Everything else describes how the entry was made.
+    EDITABLE_HISTORY_FIELDS = ("text", "cleaned_text")
+
+    def update_history_entry(self, entry_id: str, **fields) -> Optional[TranscriptionHistory]:
+        """Change EDITABLE_HISTORY_FIELDS on one entry; the updated entry, or None.
+
+        Raises:
+            TypeError: For a field that isn't editable.
+        """
+        unknown = set(fields) - set(self.EDITABLE_HISTORY_FIELDS)
+        if unknown:
+            raise TypeError(f"Not editable history fields: {', '.join(sorted(unknown))}")
+        if fields.get("text", "") is None:
+            raise TypeError("text can't be cleared")
+        with self.get_session() as session:
+            entry = session.get(TranscriptionHistory, entry_id)
+            if entry is None:
+                return None
+            for name, value in fields.items():
+                setattr(entry, name, value)
+            return entry
 
     def put_history_entry(self, entry: TranscriptionHistory) -> None:
         """Insert or replace an entry by id (a record a paired computer stored)."""

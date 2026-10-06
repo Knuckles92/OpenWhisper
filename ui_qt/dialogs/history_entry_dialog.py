@@ -23,12 +23,24 @@ from PyQt6.QtWidgets import (
 )
 
 from services.format_utils import format_audio_duration, format_file_size
-from services.history_manager import HistoryEntry, history_manager
+from services.history_manager import (
+    AI_VERSION,
+    ORIGINAL_VERSION,
+    HistoryEntry,
+    ai_text,
+    entry_version,
+    history_manager,
+    is_local_entry,
+)
 from ui_qt.widgets import Button, DangerButton, PrimaryButton
+from ui_qt.widgets.buttons import neutral_button
+from ui_qt.widgets.history_playback import PlaybackControl
 from ui_qt.widgets.history_sidebar import (
+    _cleanup_tooltip,
     _entry_was_cleaned,
     _format_cleanup_info,
     _format_model_name,
+    _kind_label,
     _location_chip,
 )
 
@@ -64,6 +76,30 @@ _DIALOG_STYLE = """
         font-size: 10px;
         font-weight: 600;
     }
+    QLabel#historyEntryQuietChip {
+        color: @text-secondary-strong;
+        background-color: rgba(@overlay-rgb, 0.06);
+        border: 1px solid rgba(@overlay-rgb, 0.10);
+        border-radius: 6px;
+        padding: 3px 8px;
+        font-size: 10px;
+        font-weight: 600;
+    }
+    QLabel#historyEntryKindChip {
+        color: @warning-text;
+        background-color: rgba(@warning-rgb, 0.12);
+        border: 1px solid rgba(@warning-rgb, 0.28);
+        border-radius: 6px;
+        padding: 3px 8px;
+        font-size: 10px;
+        font-weight: 600;
+    }
+    QLabel#historyPlayTime {
+        color: @text-tertiary;
+        background-color: transparent;
+        border: none;
+        font-size: 11px;
+    }
     QLabel#historyEntrySectionTitle {
         color: @text;
         background-color: transparent;
@@ -93,6 +129,8 @@ class HistoryEntryDialog(QDialog):
     copied = pyqtSignal()
     retranscribe_requested = pyqtSignal(str)
     delete_requested = pyqtSignal(str)
+    #: The entry now shows another version of its text; History refreshes.
+    version_changed = pyqtSignal(str)
 
     def __init__(self, entry: HistoryEntry, parent=None):
         """Initialize the history entry viewer.
@@ -103,13 +141,8 @@ class HistoryEntryDialog(QDialog):
         """
         super().__init__(parent)
         self.entry = entry
-        self._fixed_text = entry.text or ""
-        self._raw_text: Optional[str] = (
-            entry.raw_text
-            if entry.raw_text and entry.raw_text != entry.text
-            else None
-        )
-        self._showing_raw = False
+        self._read_versions(entry)
+        self._showing_raw = self._version == ORIGINAL_VERSION
         self._audio_path: Optional[str] = None
         if entry.audio_file and not getattr(entry, "stored_on", None):
             path = history_manager.get_recording_path(entry.audio_file)
@@ -145,19 +178,17 @@ class HistoryEntryDialog(QDialog):
         model_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header.addWidget(model_chip)
 
-        if _entry_was_cleaned(self.entry):
-            cleanup_chip = QLabel(f"✦ {_format_cleanup_info(self.entry)}")
-            cleanup_chip.setObjectName("historyEntryCleanupChip")
-            cleanup_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            if self.entry.cleanup_model:
-                cleanup_chip.setToolTip(
-                    f"Transcript cleaned with {_format_cleanup_info(self.entry)}"
-                )
-            else:
-                cleanup_chip.setToolTip(
-                    "Transcript was cleaned (model not recorded)"
-                )
-            header.addWidget(cleanup_chip)
+        kind_text = _kind_label(self.entry)
+        if kind_text:
+            kind_chip = QLabel(kind_text)
+            kind_chip.setObjectName("historyEntryKindChip")
+            kind_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            header.addWidget(kind_chip)
+
+        self.cleanup_chip = QLabel()
+        self.cleanup_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header.addWidget(self.cleanup_chip)
+        self._refresh_cleanup_chip()
 
         location_text, location_tip = _location_chip(self.entry)
         if location_text:
@@ -192,19 +223,30 @@ class HistoryEntryDialog(QDialog):
         version_row.setContentsMargins(0, 0, 0, 0)
         version_row.setSpacing(6)
         self._version_group = QButtonGroup(self)
-        self.fixed_btn = QPushButton("Fixed")
-        self.raw_btn = QPushButton("Raw")
-        for btn in (self.fixed_btn, self.raw_btn):
+        # raw_btn/fixed_btn keep their names from when these read Raw/Fixed.
+        self.raw_btn = QPushButton("Original")
+        self.raw_btn.setToolTip("What you said, before AI cleanup")
+        self.fixed_btn = QPushButton("AI")
+        self.fixed_btn.setToolTip("The text after AI cleanup")
+        for btn in (self.raw_btn, self.fixed_btn):
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setObjectName("transcriptVersionBtn")
             btn.setMinimumHeight(28)
             self._version_group.addButton(btn)
             version_row.addWidget(btn)
-        self.fixed_btn.setChecked(True)
+        (self.raw_btn if self._showing_raw else self.fixed_btn).setChecked(True)
         self.fixed_btn.toggled.connect(self._on_version_toggled)
         self.raw_btn.toggled.connect(self._on_version_toggled)
         self.version_toggle.setVisible(self._raw_text is not None)
+
+        self.use_version_button = neutral_button(Button("Use this version"))
+        self.use_version_button.set_base_minimum_size(0, 28)
+        self.use_version_button.setToolTip(
+            "Show this version in History, search and exports"
+        )
+        self.use_version_button.clicked.connect(self._use_shown_version)
+        body_header.addWidget(self.use_version_button)
         body_header.addWidget(self.version_toggle)
         body_layout.addLayout(body_header)
 
@@ -212,10 +254,23 @@ class HistoryEntryDialog(QDialog):
         self.transcript_text.setObjectName("historyEntryTranscript")
         self.transcript_text.setReadOnly(True)
         self.transcript_text.setFont(QFont("Segoe UI", 13))
-        self.transcript_text.setText(self._fixed_text)
+        self.transcript_text.setText(self._shown_text())
         self.transcript_text.setMinimumHeight(240)
         body_layout.addWidget(self.transcript_text, stretch=1)
+
+        self.play_button = neutral_button(Button("Play"))
+        self.playback = PlaybackControl(self.entry, self.play_button, self)
+        playback_row = QHBoxLayout()
+        playback_row.setContentsMargins(0, 2, 0, 0)
+        playback_row.setSpacing(10)
+        playback_row.addWidget(self.play_button)
+        playback_row.addWidget(self.playback.progress, 1, Qt.AlignmentFlag.AlignVCenter)
+        playback_row.addWidget(self.playback.time_label)
+        playback_row.addStretch(0)
+        self.play_button.setVisible(self._had_recording())
+        body_layout.addLayout(playback_row)
         outer.addWidget(body, stretch=1)
+        self._refresh_use_version()
 
         # Two rows so long labels never collide at the default dialog width.
         # Visual roles: Copy = primary, Retranscribe = warning, Delete = danger,
@@ -230,7 +285,7 @@ class HistoryEntryDialog(QDialog):
         primary_actions.addWidget(self.copy_button)
 
         self.copy_raw_button = Button("Copy Raw")
-        self.copy_raw_button.setToolTip("Copy the unprocessed ASR transcript")
+        self.copy_raw_button.setToolTip("Copy what you said, before AI cleanup")
         self.copy_raw_button.set_base_minimum_size(96, 40)
         self.copy_raw_button.clicked.connect(self._copy_raw_text)
         self.copy_raw_button.setVisible(self._raw_text is not None)
@@ -285,6 +340,9 @@ class HistoryEntryDialog(QDialog):
             facts.append(("File size", format_file_size(self.entry.file_size)))
         if self.entry.model:
             facts.append(("Model", self.entry.model))
+        app_name = (getattr(self.entry, "app_name", None) or "").strip()
+        if app_name:
+            facts.append(("App", app_name))
 
         if not facts:
             return None
@@ -322,8 +380,49 @@ class HistoryEntryDialog(QDialog):
         layout.addLayout(grid)
         return frame
 
+    def _read_versions(self, entry: HistoryEntry) -> None:
+        self._version = entry_version(entry)
+        if self._version:
+            self._fixed_text = ai_text(entry) or ""
+            self._raw_text: Optional[str] = entry.raw_text
+        else:
+            self._fixed_text = entry.text or ""
+            self._raw_text = None
+
+    def _had_recording(self) -> bool:
+        if getattr(self.entry, "stored_on", None):
+            return bool(getattr(self.entry, "remote_audio", False))
+        return bool(self.entry.audio_file)
+
+    def _refresh_cleanup_chip(self) -> None:
+        chip = self.cleanup_chip
+        if _entry_was_cleaned(self.entry):
+            chip.setObjectName("historyEntryCleanupChip")
+            chip.setText(f"✦ {_format_cleanup_info(self.entry)}")
+            chip.setToolTip(_cleanup_tooltip(self.entry))
+            chip.show()
+        elif self._version == ORIGINAL_VERSION:
+            chip.setObjectName("historyEntryQuietChip")
+            chip.setText("Original")
+            chip.setToolTip("AI edit undone: this is what you said")
+            chip.show()
+        else:
+            chip.hide()
+        chip.style().unpolish(chip)
+        chip.style().polish(chip)
+
+    def _shown_version(self) -> str:
+        return ORIGINAL_VERSION if self._showing_raw else AI_VERSION
+
+    def _refresh_use_version(self) -> None:
+        self.use_version_button.setVisible(
+            bool(self._version)
+            and is_local_entry(self.entry)
+            and self._shown_version() != self._version
+        )
+
     def _on_version_toggled(self, checked: bool) -> None:
-        """Swap Fixed/Raw transcript content when the segmented control changes."""
+        """Show the original or the AI version when the toggle changes."""
         if not checked:
             return
         show_raw = self.raw_btn.isChecked()
@@ -332,6 +431,19 @@ class HistoryEntryDialog(QDialog):
             self.transcript_text.setText(self._raw_text)
         else:
             self.transcript_text.setText(self._fixed_text)
+        self._refresh_use_version()
+
+    def _use_shown_version(self) -> None:
+        """Make the version on screen the one History shows everywhere."""
+        updated = history_manager.use_version(self.entry.id, self._shown_version())
+        if updated is None:
+            self.use_version_button.hide()
+            return
+        self.entry = updated
+        self._read_versions(updated)
+        self._refresh_cleanup_chip()
+        self._refresh_use_version()
+        self.version_changed.emit(updated.id)
 
     def _shown_text(self) -> str:
         """Return the currently displayed transcript version."""
@@ -359,6 +471,15 @@ class HistoryEntryDialog(QDialog):
             logger.info("Copied raw history entry transcript from dialog")
         except Exception as exc:
             logger.error("Failed to copy raw transcript from dialog: %s", exc)
+
+    def done(self, result: int) -> None:
+        self.playback.stop()
+        super().done(result)
+
+    def hideEvent(self, event) -> None:
+        if not event.spontaneous():
+            self.playback.stop()
+        super().hideEvent(event)
 
     def _on_retranscribe(self) -> None:
         """Request re-transcription using the current cleanup setting."""

@@ -376,7 +376,10 @@ class UIController(QObject):
             self.main_window.refresh_history()
             from services.remote_records.sync import record_sync
 
-            record_sync.record_saved("dictation" if kind == "transcription" else "meeting", changes["id"])
+            record_kind = "dictation" if kind == "transcription" else "meeting"
+            record_sync.record_saved(record_kind, changes["id"])
+            # A copy the host keeps follows the edit even while new records stay here.
+            record_sync.record_edited(record_kind, changes["id"])
             return
         # A user may have changed a preference while this signal was queued.
         # Refresh from the latest values instead of replaying a stale write.

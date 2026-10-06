@@ -13,12 +13,21 @@ from PyQt6.QtWidgets import (
     QScrollArea, QFrame, QApplication, QLineEdit, QSizePolicy,
     QMessageBox, QCheckBox, QComboBox, QGridLayout,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, pyqtProperty, QTimer, QUrl
+from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, pyqtProperty, QSize, QTimer, QUrl
 from PyQt6.QtGui import QFont, QDesktopServices
 
 from config import config
 from services.format_utils import format_file_size
-from services.history_manager import HistoryEntry, history_manager
+from services import audio_player
+from services.history_manager import (
+    AI_VERSION,
+    ORIGINAL_VERSION,
+    HistoryEntry,
+    entry_version,
+    history_manager,
+    is_local_entry,
+)
+from services.remote_records.kinds import ENTRY_EXT_FIELDS
 from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
 from services.text_llm import profile_display_name
 from ui_qt.utils.collapse_animation import (
@@ -28,6 +37,8 @@ from ui_qt.utils.collapse_animation import (
 from ui_qt.utils.file_reveal import reveal_in_file_manager
 from ui_qt.utils.list_reconcile import HistoryDelivery, reconcile_cards
 from ui_qt.widgets.context_menu import context_menu
+from ui_qt.widgets.eliding_label import ElidingLabel
+from ui_qt.widgets.history_playback import PlaybackControl
 from ui_qt.widgets.past_meetings_panel import PastMeetingsPanel
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
@@ -60,14 +71,21 @@ def _format_model_name(model: str) -> str:
     return f"{name} · {detail}" if detail else name
 
 
-def _format_cleanup_info(entry: HistoryEntry, settings=None) -> str:
-    """Format an entry's cleanup provider/model for display.
+_CLEANUP_LEVEL_LABELS = {
+    'light': 'Light',
+    'medium': 'Medium',
+    'high': 'High',
+    'custom': 'Custom',
+    'profile': 'Profile',
+}
 
-    Entries written before the cleanup columns existed may carry raw_text
-    without provider/model — report those as plain "Cleaned".
-    """
-    if not entry.cleanup_model:
-        return "Cleaned"
+
+def _cleanup_level_label(entry: HistoryEntry) -> str:
+    level = getattr(entry, "cleanup_level", None) or ""
+    return _CLEANUP_LEVEL_LABELS.get(level.lower(), "") if isinstance(level, str) else ""
+
+
+def _cleanup_provider(entry: HistoryEntry, settings=None) -> str:
     provider_id = entry.cleanup_provider or ""
     provider = _CLEANUP_PROVIDER_DISPLAY_NAMES.get(provider_id)
     if not provider and provider_id:
@@ -77,12 +95,54 @@ def _format_cleanup_info(entry: HistoryEntry, settings=None) -> str:
             ) or provider_id
         except Exception:
             provider = provider_id
+    return provider or ""
+
+
+def _format_cleanup_info(entry: HistoryEntry, settings=None) -> str:
+    """An entry's cleanup level and model for display: "Medium · gpt-4o-mini".
+
+    Entries from before levels show the provider in the level's place, and
+    entries written before the cleanup columns existed may carry raw_text
+    without provider/model — report those as plain "Cleaned".
+    """
+    level = _cleanup_level_label(entry)
+    if not entry.cleanup_model:
+        return level or "Cleaned"
+    if level:
+        return f"{level} · {entry.cleanup_model}"
+    provider = _cleanup_provider(entry, settings)
     return f"{provider} · {entry.cleanup_model}" if provider else entry.cleanup_model
 
 
+def _cleanup_tooltip(entry: HistoryEntry, settings=None) -> str:
+    if not entry.cleanup_model:
+        return "Transcript was cleaned (model not recorded)"
+    provider = _cleanup_provider(entry, settings)
+    model = f"{provider} · {entry.cleanup_model}" if provider else entry.cleanup_model
+    level = _cleanup_level_label(entry)
+    return f"Transcript cleaned with {model}" + (f" ({level})" if level else "")
+
+
 def _entry_was_cleaned(entry: HistoryEntry) -> bool:
-    """Whether post-ASR cleanup ran on this entry (incl. legacy entries)."""
-    return bool(entry.cleanup_model or entry.raw_text)
+    """Whether the text shown is AI cleanup's (incl. legacy entries).
+
+    False once the user chose the original back; the chip says so instead.
+    """
+    return (
+        bool(entry.cleanup_model or entry.raw_text)
+        and entry_version(entry) != ORIGINAL_VERSION
+    )
+
+
+def _kind_label(entry: HistoryEntry) -> str:
+    """"Command", "Transform · Polish", or "" for a dictation or a file."""
+    kind = getattr(entry, "entry_kind", None)
+    if kind == "command":
+        return "Command"
+    if kind == "transform":
+        name = (getattr(entry, "source_name", None) or "").strip()
+        return f"Transform · {name}" if name else "Transform"
+    return ""
 
 
 def _record_sync():
@@ -101,6 +161,10 @@ def remote_history_entry(item: dict) -> HistoryEntry:
         "id", "text", "raw_text", "timestamp", "model", "transcription_time",
         "audio_duration", "file_size", "cleanup_provider", "cleanup_model", "source_name", "title",
     )}
+    for name in ENTRY_EXT_FIELDS:
+        # From a newer or older host alike: only text is shown.
+        value = item.get(name)
+        fields[name] = value if isinstance(value, str) else None
     entry = HistoryEntry(**fields)
     entry.stored_on = str(item.get("stored_on") or "the host")
     entry.remote_audio = bool(item.get("has_audio"))
@@ -121,19 +185,79 @@ def _location_chip(entry) -> tuple[str, str]:
     return "", ""
 
 
+class _ChipFlow(QWidget):
+    """Chips in a line that wraps to another when they don't all fit.
+
+    Eliding them all to share one line cut short chips down to "…" at
+    large fonts; wrapping keeps each readable, and only a chip wider than a
+    whole line is elided.
+    """
+
+    SPACING = 6
+
+    def __init__(self, chips, parent=None):
+        super().__init__(parent)
+        self._chips = list(chips)
+        for chip in self._chips:
+            chip.setParent(self)
+        policy = QSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+
+    def _line_height(self) -> int:
+        return max((chip.sizeHint().height() for chip in self._chips), default=0)
+
+    def _arrange(self, width: int, apply: bool) -> int:
+        for chip in self._chips:
+            # The stylesheet sets the font their width is measured in.
+            chip.ensurePolished()
+        line = self._line_height()
+        x = y = 0
+        for chip in self._chips:
+            chip_width = min(chip.sizeHint().width(), max(1, width))
+            if x and x + chip_width > width:
+                x, y = 0, y + line + self.SPACING
+            if apply:
+                chip.setGeometry(x, y, chip_width, line)
+            x += chip_width + self.SPACING
+        return y + line
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        return self._arrange(width, apply=False)
+
+    def sizeHint(self) -> QSize:
+        width = sum(chip.sizeHint().width() for chip in self._chips)
+        width += self.SPACING * max(0, len(self._chips) - 1)
+        return QSize(width, self.heightForWidth(self.width() or width))
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, self._line_height())
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._arrange(self.width(), apply=True)
+
+
 class HistoryItemWidget(QFrame):
     clicked = pyqtSignal(str)
     copy_requested = pyqtSignal(str)
     copy_raw_requested = pyqtSignal(str)
     delete_requested = pyqtSignal(str)
     retranscribe_requested = pyqtSignal(str)
+    #: ``(entry_id, version)``: show the original or the AI's version.
+    version_requested = pyqtSignal(str, str)
     _remote_audio_ready = pyqtSignal(str, str)
 
     def __init__(self, entry: HistoryEntry, parent=None, *, settings=None):
         super().__init__(parent)
         self.entry = entry
+        self._settings = settings
         self._cleanup_info = _format_cleanup_info(entry, settings) if _entry_was_cleaned(entry) else ""
         self._audio_path = None
+        self.playback = None
         self._stored_on = getattr(entry, "stored_on", None)
         self._remote_audio_ready.connect(self._on_remote_audio_ready)
         if self.entry.audio_file and not self._stored_on:
@@ -181,7 +305,7 @@ class HistoryItemWidget(QFrame):
             audio_chip.setObjectName("historyAudioChip")
             audio_chip.setFont(QFont("Segoe UI", 9))
             audio_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            audio_chip.setToolTip("Recording available — can be transcribed again")
+            audio_chip.setToolTip("Recording available — play it or transcribe it again")
             audio_chip.setFixedHeight(20)
             top_row.addWidget(audio_chip, 0, Qt.AlignmentFlag.AlignVCenter)
 
@@ -205,54 +329,42 @@ class HistoryItemWidget(QFrame):
 
         layout.addLayout(top_row)
 
-        # Cleanup and location chips share their own row: the top row is
-        # already full, and the provider/model string is too long to share it.
-        location_text, location_tip = _location_chip(self.entry)
+        # What kind of entry, how AI cleanup changed it, the app it went into
+        # and where it is kept share their own row (the top row is already
+        # full), wrapping to another when they don't fit.
         chips = []
-        if location_text:
-            self.location_chip = QLabel()
-            self.location_chip.setObjectName("historyLocationChip")
-            self.location_chip.setFont(QFont("Segoe UI", 9))
-            self.location_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.location_chip.setToolTip(location_tip)
-            self.location_chip.setFixedHeight(20)
-            self.location_chip.setText(
-                self.location_chip.fontMetrics().elidedText(
-                    location_text, Qt.TextElideMode.ElideRight, 110
-                )
-            )
-            chips.append(self.location_chip)
+        kind_text = _kind_label(self.entry)
+        if kind_text:
+            self.kind_chip = self._chip("historyKindChip", kind_text)
+            chips.append(self.kind_chip)
         if _entry_was_cleaned(self.entry):
-            cleanup_chip = QLabel()
-            cleanup_chip.setObjectName("historyCleanupChip")
-            cleanup_chip.setFont(QFont("Segoe UI", 9))
-            cleanup_chip.setFixedHeight(20)
-            chip_text = f"✦ {self._cleanup_info}"
-            cleanup_chip.setText(
-                cleanup_chip.fontMetrics().elidedText(
-                    chip_text, Qt.TextElideMode.ElideRight, 150 if chips else 280
-                )
-            )
-            if self.entry.cleanup_model:
-                cleanup_chip.setToolTip(
-                    f"Transcript cleaned with {self._cleanup_info}"
-                )
-            else:
-                cleanup_chip.setToolTip(
-                    "Transcript was cleaned (model not recorded)"
-                )
-            chips.insert(0, cleanup_chip)
+            self.cleanup_chip = self._chip("historyCleanupChip", f"✦ {self._cleanup_info}")
+            self.cleanup_chip.setToolTip(_cleanup_tooltip(self.entry, settings=self._settings))
+            chips.append(self.cleanup_chip)
+        elif entry_version(self.entry) == ORIGINAL_VERSION:
+            self.cleanup_chip = self._chip("historyOriginalChip", "Original")
+            self.cleanup_chip.setToolTip("AI edit undone: this is what you said")
+            chips.append(self.cleanup_chip)
+        app_name = (getattr(self.entry, "app_name", None) or "").strip()
+        if app_name:
+            self.app_chip = self._chip("historyAppChip", app_name)
+            self.app_chip.setToolTip(f"Dictated into {app_name}")
+            chips.append(self.app_chip)
+        location_text, location_tip = _location_chip(self.entry)
+        if location_text:
+            self.location_chip = self._chip("historyLocationChip", location_text)
+            self.location_chip.setToolTip(location_tip)
+            chips.append(self.location_chip)
         if chips:
-            chips_row = QHBoxLayout()
-            chips_row.setContentsMargins(0, 0, 0, 0)
-            chips_row.setSpacing(8)
-            for chip in chips:
-                chips_row.addWidget(chip, 0, Qt.AlignmentFlag.AlignVCenter)
-            chips_row.addStretch()
-            layout.addLayout(chips_row)
+            self.chips = _ChipFlow(chips)
+            layout.addWidget(self.chips)
 
         source_name = (getattr(self.entry, "source_name", None) or "").strip()
-        title = (getattr(self.entry, "title", None) or "").strip() or source_name
+        title = (getattr(self.entry, "title", None) or "").strip()
+        if not kind_text:
+            # A rewrite's source is its transform or "Quick Record": the
+            # kind chip says it better.
+            title = title or source_name
         if title:
             self.title_label = WrappedLabel(title)
             self.title_label.setObjectName("historyTitle")
@@ -280,6 +392,14 @@ class HistoryItemWidget(QFrame):
             footer = QHBoxLayout()
             footer.setContentsMargins(0, 2, 0, 0)
             footer.setSpacing(8)
+
+            play_button = QPushButton("Play")
+            play_button.setObjectName("historyPlayBtn")
+            play_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            play_button.setFixedHeight(28)
+            self.playback = PlaybackControl(self.entry, play_button, self)
+            footer.addWidget(play_button)
+            footer.addWidget(self.playback.time_label)
             footer.addStretch()
 
             self.retranscribe_btn = QPushButton("Transcribe again")
@@ -293,6 +413,14 @@ class HistoryItemWidget(QFrame):
             self.retranscribe_btn.clicked.connect(self._request_retranscribe)
             footer.addWidget(self.retranscribe_btn)
             layout.addLayout(footer)
+            layout.addWidget(self.playback.progress)
+
+    def _chip(self, name: str, text: str) -> ElidingLabel:
+        chip = ElidingLabel(text)
+        chip.setObjectName(name)
+        chip.setFont(QFont("Segoe UI", 9))
+        chip.setFixedHeight(20)
+        return chip
 
     def _request_retranscribe(self) -> None:
         """Transcribe the recording again, fetching it first when the host keeps it."""
@@ -378,6 +506,46 @@ class HistoryItemWidget(QFrame):
                 font-size: 10px;
                 font-weight: 600;
             }
+            QLabel#historyOriginalChip,
+            QLabel#historyAppChip {
+                background-color: rgba(@overlay-rgb, 0.06);
+                color: @text-secondary-strong;
+                border: 1px solid rgba(@overlay-rgb, 0.10);
+                border-radius: 6px;
+                padding: 0px 8px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+            QLabel#historyKindChip {
+                background-color: rgba(@warning-rgb, 0.12);
+                color: @warning-text;
+                border: 1px solid rgba(@warning-rgb, 0.28);
+                border-radius: 6px;
+                padding: 0px 8px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+            QPushButton#historyPlayBtn {
+                background-color: rgba(@overlay-rgb, 0.06);
+                color: @text-body;
+                border: 1px solid rgba(@overlay-rgb, 0.10);
+                border-radius: 7px;
+                padding: 4px 12px 4px 8px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton#historyPlayBtn:hover {
+                background-color: rgba(@accent-rgb, 0.14);
+                border: 1px solid rgba(@accent-rgb, 0.35);
+            }
+            QPushButton#historyPlayBtn:disabled {
+                color: @text-muted;
+            }
+            QLabel#historyPlayTime {
+                color: @text-tertiary;
+                background-color: transparent;
+                font-size: 10px;
+            }
             QLabel#historyTitle {
                 color: @text;
                 background-color: transparent;
@@ -408,8 +576,8 @@ class HistoryItemWidget(QFrame):
         menu = context_menu(self)
 
         if self.entry.raw_text:
-            copy_fixed = menu.addAction("Copy Fixed")
-            copy_fixed.triggered.connect(
+            copy_shown = menu.addAction("Copy")
+            copy_shown.triggered.connect(
                 lambda: self.copy_requested.emit(self.entry.id)
             )
             copy_raw = menu.addAction("Copy Raw")
@@ -420,6 +588,18 @@ class HistoryItemWidget(QFrame):
             copy_action = menu.addAction("Copy Text")
             copy_action.triggered.connect(
                 lambda: self.copy_requested.emit(self.entry.id)
+            )
+
+        version = entry_version(self.entry)
+        if version and is_local_entry(self.entry):
+            if version == AI_VERSION:
+                switch = menu.addAction("Undo AI edit")
+                target = ORIGINAL_VERSION
+            else:
+                switch = menu.addAction("Use AI version")
+                target = AI_VERSION
+            switch.triggered.connect(
+                lambda: self.version_requested.emit(self.entry.id, target)
             )
 
         if self._has_audio:
@@ -745,6 +925,8 @@ class HistorySidebar(QWidget):
             return
 
         self._is_expanded = False
+        # The cards' Stop buttons are about to go out of reach.
+        audio_player.stop_playback()
 
         self.animation.stop()
         self.animation.setStartValue(self._current_width)
@@ -764,6 +946,8 @@ class HistorySidebar(QWidget):
         if enabled == self._meeting_mode:
             return
         self._meeting_mode = enabled
+        if enabled:
+            audio_player.stop_playback()
         self.content_widget.setVisible(not enabled)
         self.meetings_content_widget.setVisible(enabled)
         self._refresh_pending = True
@@ -960,6 +1144,7 @@ class HistorySidebar(QWidget):
             item.copy_raw_requested.connect(self._on_copy_raw_requested)
             item.delete_requested.connect(self._on_delete_requested)
             item.retranscribe_requested.connect(self.retranscribe_requested.emit)
+            item.version_requested.connect(self._on_version_requested)
             return item
 
         def fingerprint(entry):
@@ -1019,6 +1204,10 @@ class HistorySidebar(QWidget):
                 logger.info(f"Copied raw entry to clipboard: {entry_id[:8]}...")
             except Exception as e:
                 logger.error(f"Failed to copy raw text to clipboard: {e}")
+
+    def _on_version_requested(self, entry_id: str, version: str) -> None:
+        if history_manager.use_version(entry_id, version) is not None:
+            self.refresh()
 
     def _on_delete_requested(self, entry_id: str):
         delete_audio_file = False

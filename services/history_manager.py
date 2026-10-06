@@ -24,6 +24,57 @@ logger = logging.getLogger(__name__)
 # Sentinel so callers can pass ``max_recordings=None`` for keep-all.
 _UNSET = object()
 
+#: The two versions of an entry AI cleanup changed (see entry_version).
+ORIGINAL_VERSION = "original"
+AI_VERSION = "ai"
+
+#: Quick Record names every live dictation, with a profile after " · ".
+_DICTATION_SOURCE = "Quick Record"
+
+
+def kind_of(entry) -> str:
+    """dictation, file, command or transform, also for entries saved before kinds."""
+    kind = getattr(entry, "entry_kind", None)
+    if kind:
+        return kind
+    source = getattr(entry, "source_name", None) or ""
+    return "dictation" if source.startswith(_DICTATION_SOURCE) else "file"
+
+
+def entry_version(entry) -> str:
+    """Which version ``entry.text`` is: ORIGINAL_VERSION, AI_VERSION, or "".
+
+    "" means AI cleanup didn't change the entry, so there is nothing to
+    choose between. An entry saved before cleaned_text existed shows the AI
+    version until the first choice fills it in.
+    """
+    raw = getattr(entry, "raw_text", None)
+    if not raw:
+        return ""
+    text = getattr(entry, "text", None) or ""
+    if text != raw:
+        return AI_VERSION
+    cleaned = getattr(entry, "cleaned_text", None)
+    return ORIGINAL_VERSION if cleaned is not None and cleaned != raw else ""
+
+
+def ai_text(entry) -> Optional[str]:
+    """The AI's version of an entry AI cleanup changed, whichever is shown."""
+    version = entry_version(entry)
+    if version == AI_VERSION:
+        return entry.text
+    if version == ORIGINAL_VERSION:
+        return entry.cleaned_text
+    return None
+
+
+def is_local_entry(entry) -> bool:
+    """Whether the entry is this computer's own, kept here: only those can change."""
+    return (
+        getattr(entry, "origin_device_id", None) is None
+        and not getattr(entry, "stored_on", None)
+    )
+
 
 def _describe_retention(
     max_recordings: Optional[int], max_bytes: Optional[int]
@@ -126,6 +177,9 @@ class HistoryManager:
         ignored = sorted(set(columns) - set(HISTORY_CONTEXT_COLUMNS))
         if ignored:
             logger.debug("Ignored unknown history fields: %s", ", ".join(ignored))
+        if raw_text is not None and raw_text != text:
+            # Kept beside raw_text so choosing the original never loses the AI's version.
+            context.setdefault("cleaned_text", text)
         saved_audio_path = None
 
         if source_audio_path and os.path.exists(source_audio_path):
@@ -344,6 +398,57 @@ class HistoryManager:
     def get_entry_by_id(self, entry_id: str) -> Optional[HistoryEntry]:
         """Return a history entry by ID, or None."""
         return db.get_history_entry_by_id(entry_id)
+
+    #: How far back last_dictation looks past uploads and rewrites.
+    _LAST_DICTATION_SCAN = 50
+
+    def last_dictation(self) -> Optional[HistoryEntry]:
+        """This computer's newest live dictation, or None."""
+        for entry in db.get_history_entries(self._LAST_DICTATION_SCAN, origin=None):
+            if kind_of(entry) == "dictation":
+                return entry
+        return None
+
+    def use_version(self, entry_id: str, version: str) -> Optional[HistoryEntry]:
+        """Make an entry show its original text or the AI's version of it.
+
+        Never swaps fields: raw_text and cleaned_text keep both versions and
+        ``text`` becomes the chosen one, so everything that reads ``text``
+        (History, search, export, agents) follows the choice. A copy on the
+        paired host is sent again.
+
+        Args:
+            version: ORIGINAL_VERSION or AI_VERSION.
+
+        Returns:
+            The entry as saved now, or None when it isn't this computer's
+            own or AI cleanup didn't change it.
+
+        Raises:
+            ValueError: For an unknown version.
+        """
+        if version not in (ORIGINAL_VERSION, AI_VERSION):
+            raise ValueError(f"Unknown history entry version: {version!r}")
+        entry = db.get_history_entry_by_id(entry_id)
+        if entry is None or not is_local_entry(entry):
+            return None
+        current = entry_version(entry)
+        if not current:
+            return None
+        if current == version:
+            return entry
+        if version == ORIGINAL_VERSION:
+            changes = {"text": entry.raw_text}
+            if entry.cleaned_text is None:
+                changes["cleaned_text"] = entry.text
+        else:
+            changes = {"text": entry.cleaned_text}
+        updated = db.update_history_entry(entry_id, **changes)
+        if updated is None:
+            return None
+        logger.info("History entry %s... now shows its %s text", entry_id[:8], version)
+        _record_sync().record_edited("dictation", entry_id)
+        return updated
 
     def delete_entry(
         self,

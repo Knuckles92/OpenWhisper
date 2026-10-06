@@ -96,14 +96,21 @@ def _coerce(column, value, what: str):
     raise ValueError(f"{what}.{column.name} can't be imported.")
 
 
-def _row_from_json(model, data, what: str, *, drop=(), fixed=None) -> dict:
-    """Column values for ``model`` from untrusted ``data``."""
+def _row_from_json(model, data, what: str, *, drop=(), fixed=None, ignore_unknown=False) -> dict:
+    """Column values for ``model`` from untrusted ``data``.
+
+    ``ignore_unknown`` leaves out fields this version has no column for (a
+    newer computer's) instead of refusing the record; the fields it knows
+    are checked as strictly either way.
+    """
     if not isinstance(data, dict):
         raise ValueError(f"{what} must be an object.")
     columns = {column.name: column for column in model.__table__.columns}
     unknown = set(data) - set(columns)
-    if unknown:
+    if unknown and not ignore_unknown:
         raise ValueError(f"{what} has unknown fields: {', '.join(sorted(unknown)[:5])}.")
+    if unknown:
+        logger.debug("Ignored %d %s field(s) this version doesn't know", len(unknown), what)
     values = {}
     for name, column in columns.items():
         if name in drop:
@@ -125,6 +132,40 @@ _ENTRY_FIELDS = (
     "id", "text", "raw_text", "timestamp", "model", "transcription_time",
     "audio_duration", "file_size", "cleanup_provider", "cleanup_model", "source_name", "title",
 )
+
+#: Columns newer than _ENTRY_FIELDS. They travel in record["entry_ext"],
+#: which computers from before them ignore; "entry" itself stays as they
+#: expect it, or they would refuse the record. Which app an entry was
+#: dictated into stays on this computer.
+ENTRY_EXT_FIELDS = ("entry_kind", "cleanup_level", "cleaned_text", "language")
+
+
+def _entry_ext(entry) -> dict:
+    return {name: getattr(entry, name, None) for name in ENTRY_EXT_FIELDS}
+
+
+def _entry_ext_values(model, data) -> dict:
+    """The known, well-formed fields of an untrusted ``entry_ext``.
+
+    Anything else is left out rather than refusing the entry: these fields
+    only describe it, and a newer computer may send more of them.
+    """
+    if not isinstance(data, dict):
+        if data is not None:
+            logger.debug("Ignored an entry_ext that isn't an object")
+        return {}
+    columns = {column.name: column for column in model.__table__.columns}
+    values = {}
+    for name, value in data.items():
+        column = columns.get(name) if name in ENTRY_EXT_FIELDS else None
+        if column is None:
+            logger.debug("Ignored an unknown entry_ext field")
+            continue
+        try:
+            values[name] = _coerce(column, value, "entry_ext")
+        except ValueError:
+            logger.debug("Ignored a malformed entry_ext field: %s", name)
+    return values
 
 
 class DictationRecords:
@@ -209,9 +250,11 @@ class DictationRecords:
         return False
 
     def digest(self, record_id: str) -> str:
-        """Entries don't change once saved; only the audio can go."""
-        entry = self._entry(None, record_id)
-        return "audio" if self._audio_path(entry) else "text"
+        """Changes with what the host would store: the text shown, the title, the audio."""
+        record = self.bundle(None, record_id).record
+        return hashlib.sha256(
+            json.dumps(record, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
 
     def delete_local(self, record_id: str) -> None:
         from services.history_manager import history_manager
@@ -226,6 +269,7 @@ class DictationRecords:
             "kind": self.kind,
             "format": FORMAT,
             "entry": {name: getattr(entry, name) for name in _ENTRY_FIELDS},
+            "entry_ext": _entry_ext(entry),
             "audio": None,
         }
         if retention is not None:
@@ -255,7 +299,9 @@ class DictationRecords:
         values = _row_from_json(
             TranscriptionHistory, record.get("entry"), "entry",
             drop=("audio_file", "origin_device_id", "origin_device_name"),
+            ignore_unknown=True,
         )
+        values.update(_entry_ext_values(TranscriptionHistory, record.get("entry_ext")))
         if values.get("id") != record_id:
             raise ValueError("The entry's id doesn't match the record.")
         for name in ("text", "timestamp", "model"):
@@ -329,6 +375,7 @@ class DictationRecords:
         result = []
         for entry in entries:
             item = {name: getattr(entry, name) for name in _ENTRY_FIELDS}
+            item.update(_entry_ext(entry))
             audio = self._audio_path(entry)
             item["has_audio"] = audio is not None
             item["audio_bytes"] = os.path.getsize(audio) if audio else 0

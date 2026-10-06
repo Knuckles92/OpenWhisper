@@ -445,6 +445,7 @@ class ApplicationController(QObject):
         self.ui_controller.on_update_cancel = self.cancel_update_download
         self.ui_controller.on_update_abandon = self.discard_update_handoff
         self.ui_controller.get_transcribing = self.is_transcribing
+        self.ui_controller.on_paste_text_now = self.transcription_runtime.paste_text_now
         self.ui_controller.get_component_installing = (
             lambda: component_coordinator.is_any_installing()
         )

@@ -269,6 +269,24 @@ class RecordSync:
         self._notify()
         self.wake()
 
+    def record_edited(self, kind: str, record_id: str) -> None:
+        """A record the host also keeps changed here; send it again.
+
+        Only a copy kept on both computers is re-queued. A record still
+        waiting to go sends its latest version anyway, and a viewing copy
+        goes back when its digest changed.
+        """
+        try:
+            row = self._row(kind, record_id)
+            if row is None or row.action != "copy" or row.state != "done":
+                return
+            self._put(kind, record_id, state="pending", attempts=0, last_error=None)
+        except Exception:
+            logger.warning("Could not queue an edited %s record for the host", kind, exc_info=True)
+            return
+        self._notify()
+        self.wake()
+
     def record_deleted(self, kind: str, record_id: str) -> None:
         """A record was deleted here; delete the host's copy of it too."""
         with self._lock:

@@ -1652,6 +1652,7 @@ class MainWindow(QMainWindow):
         dialog.copied.connect(self._on_history_entry_copied_from_dialog)
         dialog.retranscribe_requested.connect(self._on_retranscribe_requested)
         dialog.delete_requested.connect(self._on_history_entry_delete_requested)
+        dialog.version_changed.connect(self.history_sidebar.refresh)
         dialog.exec()
         logger.info(f"Opened history entry dialog: {entry_id[:8]}...")
 

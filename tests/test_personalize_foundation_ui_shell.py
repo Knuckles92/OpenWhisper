@@ -181,13 +181,12 @@ class TestLanguageCycle:
 
 
 class TestStubModules:
-    def test_stubs_leave_the_app_as_it_was(self, ui):
+    def test_entry_points_do_nothing_without_their_target(self, ui):
         assert scratchpad.insert(types.SimpleNamespace(), "note") is False
-        for action in (history_actions.paste_last_original, stats_dialog.show_stats):
+        for action in (history_actions.paste_last_original,):
             action(ui)
         assert [call.args[0] for call in ui.set_status.call_args_list] == [
             "Nothing to paste yet",
-            "Stats aren't available yet",
         ]
 
     def test_language_menu_replaces_old_entries(self, ui):
