@@ -157,19 +157,17 @@ class TestPersonalizeRail:
                 assert settings_metadata.CONTROL_DESTINATIONS[name] == key
 
     @pytest.mark.parametrize("key", NEW_PAGES)
-    def test_each_page_builds_one_tile_its_search_copy_mirrors(self, make_dialog, key):
+    def test_each_page_builds_the_tiles_its_search_copy_mirrors(self, make_dialog, key):
         dialog, _store = make_dialog()
         module = dict(_modules())[key]
         dialog.select_destination(key)
         assert key in dialog._built_pages
         assert dialog.page_title.text() == module.TITLE
         tiles = dialog._pages[key].findChildren(TileBase)
-        attr, title, description = module.SEARCH_FIELDS[0]
-        assert [(tile.title_label.text(), tile.description_label.text()) for tile in tiles] == [
-            (title, description)
-        ]
-        assert title == module.TITLE
-        assert dialog.__dict__[attr] is tiles[0]
+        for attr, title, description in module.SEARCH_FIELDS:
+            tile = dialog.__dict__[attr]
+            assert tile in tiles
+            assert (tile.title_label.text(), tile.description_label.text()) == (title, description)
         assert set(module.CONTROL_ATTRS) <= set(dialog.__dict__)
 
     def test_pages_are_searchable_before_they_are_built(self, make_dialog):

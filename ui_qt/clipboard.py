@@ -98,6 +98,29 @@ def system_text_renderer() -> Callable[[], None] | None:
     user32 = _windows_clipboard_user32()
     if user32 is None:
         return None
+    return _clipboard_renderer(user32, _CF_UNICODETEXT)
+
+
+def system_html_renderer() -> Callable[[], None] | None:
+    """Like ``system_text_renderer``, for the rich text Qt offers as CF_HTML.
+
+    Apps that take rich text (Office, browsers, mail) ask for "HTML Format"
+    before plain text, so staged rich text is rendered too.
+    """
+    user32 = _windows_clipboard_user32()
+    if user32 is None:
+        return None
+    register = user32.RegisterClipboardFormatW
+    register.argtypes = [ctypes.c_wchar_p]
+    register.restype = ctypes.c_uint
+    # The name Qt registers for text/html; the same name gives the same id.
+    html_format = register("HTML Format")
+    if not html_format:
+        return None
+    return _clipboard_renderer(user32, html_format)
+
+
+def _clipboard_renderer(user32, clipboard_format: int) -> Callable[[], None]:
     open_clipboard = user32.OpenClipboard
     open_clipboard.argtypes = [ctypes.c_void_p]
     open_clipboard.restype = ctypes.c_int
@@ -114,11 +137,35 @@ def system_text_renderer() -> Callable[[], None] | None:
         if not open_clipboard(None):
             return
         try:
-            get_data(_CF_UNICODETEXT)
+            get_data(clipboard_format)
         finally:
             close_clipboard()
 
     return render
+
+
+def _html_document(html: str) -> str:
+    """``html`` as a document that declares UTF-8 and marks its fragment.
+
+    CF_HTML is UTF-8, but some readers (older Office) guess the ANSI code
+    page for markup without a charset and garble accents and curly quotes,
+    so the tag is written the way browsers write it. The fragment markers
+    keep Qt from adding its own around the whole document.
+    """
+    if html.lstrip()[:5].lower() == "<html":
+        return html
+    return (
+        '<html><head><meta charset="utf-8"></head><body>'
+        f"<!--StartFragment-->{html}<!--EndFragment--></body></html>"
+    )
+
+
+def _text_mime_data(text: str, html: str = "") -> QMimeData:
+    mime_data = QMimeData()
+    mime_data.setText(text or "")
+    if html:
+        mime_data.setHtml(_html_document(html))
+    return mime_data
 
 
 @dataclass(frozen=True)
@@ -195,6 +242,8 @@ class ClipboardSnapshot:
 class ClipboardLease:
     snapshot: ClipboardSnapshot
     token: bytes
+    #: Rich text staged with the transcript, kept when the paste fails.
+    html: str = ""
 
 
 @dataclass(frozen=True)
@@ -279,6 +328,7 @@ class TemporaryClipboard(QObject):
             else system_clipboard_sequence()
         )
         self._render_text = system_text_renderer()
+        self._render_html = system_html_renderer()
         self._prefetched: _PrefetchedSnapshot | None = None
         self._prefetch_timer = QTimer(self)
         self._prefetch_timer.setSingleShot(True)
@@ -348,7 +398,7 @@ class TemporaryClipboard(QObject):
 
     def write_text(self, text: str) -> bool:
         self._abort_selection_capture()
-        written = self._write_plain_text(text)
+        written = self._write_text(text)
         if written:
             self._discard_pending()
         return written
@@ -356,9 +406,10 @@ class TemporaryClipboard(QObject):
     def stage_text(self, text: str, html: str | None = None) -> ClipboardStageResult:
         """Put ``text`` on the clipboard for a paste, keeping the user's to restore.
 
-        ``html`` is a rich-text alternative to ``text``; accepted but not yet
-        staged.
+        ``html`` is a rich-text alternative staged with ``text``: apps that
+        take rich text paste it, the rest paste ``text``.
         """
+        html = html or ""
         self._abort_selection_capture()
         self._resolve_pending_before_stage()
         if self._clipboard is None:
@@ -379,15 +430,16 @@ class TemporaryClipboard(QObject):
                     "Could not snapshot clipboard before auto-paste: %s", exc
                 )
                 return ClipboardStageResult(
-                    self._stage_plain_text(text), restore_unavailable=True
+                    self._stage_without_lease(text, html), restore_unavailable=True
                 )
 
         if snapshot.is_blank:
-            return ClipboardStageResult(self._stage_plain_text(text))
+            return ClipboardStageResult(self._stage_without_lease(text, html))
 
-        lease = ClipboardLease(snapshot=snapshot, token=secrets.token_bytes(16))
-        mime_data = QMimeData()
-        mime_data.setText(text or "")
+        lease = ClipboardLease(
+            snapshot=snapshot, token=secrets.token_bytes(16), html=html
+        )
+        mime_data = _text_mime_data(text, html)
         mime_data.setData(AUTO_PASTE_MARKER_FORMAT, QByteArray(lease.token))
         try:
             self._clipboard.setMimeData(mime_data)
@@ -400,7 +452,7 @@ class TemporaryClipboard(QObject):
             return ClipboardStageResult(False)
 
         self._pending = lease
-        self._render_staged_text()
+        self._render_staged_text(rich=bool(html))
         return ClipboardStageResult(True, lease=lease)
 
     def schedule_restore(self, lease: ClipboardLease, delay_ms: int) -> bool:
@@ -412,10 +464,11 @@ class TemporaryClipboard(QObject):
         return True
 
     def commit_text(self, lease: ClipboardLease, text: str) -> bool:
+        """Leave ``text``, with any rich text staged alongside, on the clipboard."""
         if self._pending is not lease or not self._owns(lease):
             self._discard_pending()
             return False
-        written = self._write_plain_text(text)
+        written = self._write_text(text, lease.html)
         if written:
             self._discard_pending()
         return written
@@ -636,34 +689,41 @@ class TemporaryClipboard(QObject):
         except Exception:
             return False
 
-    def _write_plain_text(self, text: str) -> bool:
+    def _write_text(self, text: str, html: str = "") -> bool:
         if self._clipboard is None:
             logger.error("No Qt clipboard available")
             return False
         try:
-            self._clipboard.setText(text or "")
+            if html:
+                self._clipboard.setMimeData(_text_mime_data(text, html))
+            else:
+                self._clipboard.setText(text or "")
             return True
         except Exception as exc:
             logger.error("Failed to copy to clipboard: %s", exc)
             return False
 
-    def _stage_plain_text(self, text: str) -> bool:
-        written = self._write_plain_text(text)
+    def _stage_without_lease(self, text: str, html: str) -> bool:
+        written = self._write_text(text, html)
         if written:
-            self._render_staged_text()
+            self._render_staged_text(rich=bool(html))
         return written
 
-    def _render_staged_text(self) -> None:
-        """Hand the staged text to Windows before the paste keystroke goes out.
+    def _render_staged_text(self, *, rich: bool = False) -> None:
+        """Hand the staged text, and rich text, to Windows before the paste keystroke.
 
         See ``system_text_renderer``; a no-op elsewhere.
         """
-        if self._render_text is None:
-            return
-        try:
-            self._render_text()
-        except Exception as exc:
-            logger.debug("Could not pre-render the staged clipboard text: %s", exc)
+        renderers = [("text", self._render_text)]
+        if rich:
+            renderers.append(("rich text", self._render_html))
+        for name, render in renderers:
+            if render is None:
+                continue
+            try:
+                render()
+            except Exception as exc:
+                logger.debug("Could not pre-render the staged clipboard %s: %s", name, exc)
 
     def _discard_pending(self) -> None:
         self._restore_timer.stop()

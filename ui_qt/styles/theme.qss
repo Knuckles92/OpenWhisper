@@ -4643,6 +4643,103 @@ QPlainTextEdit#cleanupPromptEditor:disabled {
 /* personalize:S4 end */
 
 /* personalize:S5 begin (snippets) */
+QWidget#snippetsPanel,
+QWidget#snippetsLibrary,
+QWidget#snippetsEditor,
+QWidget#snippetsFormatRow {
+    background-color: transparent;
+}
+
+QLabel#snippetsCount {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.12);
+    border: 1px solid rgba(@accent-rgb, 0.25);
+    border-radius: 10px;
+    padding: 3px 9px;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+QListWidget#snippetsList {
+    color: @slate-text;
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 10px;
+    padding: 5px;
+    font-size: 13px;
+    outline: none;
+}
+
+QListWidget#snippetsList::item {
+    padding: 8px 9px;
+    border-radius: 7px;
+}
+
+QListWidget#snippetsList::item:hover {
+    background-color: @slate-raised;
+}
+
+QListWidget#snippetsList::item:selected {
+    color: @text-heading;
+    background-color: @accent-tint-strong;
+}
+
+QFrame#snippetsEmpty {
+    background-color: @slate-disabled;
+    border: 1px dashed @slate-border-strong;
+    border-radius: 10px;
+}
+
+QLabel#snippetsEmptyTitle,
+QLabel#snippetsFormatTitle {
+    color: @slate-text;
+    background-color: transparent;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLineEdit#snippetTriggerInput,
+QPlainTextEdit#snippetTextInput {
+    color: @slate-text;
+    background-color: @slate-field;
+    border: 1px solid @slate-border-strong;
+    border-radius: 9px;
+    padding: 8px 12px;
+    font-size: 13px;
+    selection-background-color: @accent;
+}
+
+QPlainTextEdit#snippetTextInput {
+    padding: 6px 8px;
+}
+
+QLineEdit#snippetTriggerInput:hover,
+QPlainTextEdit#snippetTextInput:hover {
+    border-color: @slate-border-hover;
+}
+
+QLineEdit#snippetTriggerInput:focus,
+QPlainTextEdit#snippetTextInput:focus {
+    border-color: @accent;
+}
+
+QLabel#snippetTriggerNote,
+QLabel#snippetPreview {
+    color: @slate-text-3;
+    background-color: transparent;
+    font-size: 12px;
+}
+
+QLabel#snippetMessage {
+    color: @success-text;
+    background-color: transparent;
+    font-size: 12px;
+}
+
+QLabel#snippetTriggerNote[tone="error"],
+QLabel#snippetMessage[tone="error"] {
+    color: @danger-text;
+}
 /* personalize:S5 end */
 
 /* personalize:S6 begin (hotkeys) */
