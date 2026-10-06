@@ -72,6 +72,8 @@ CAPTURE_RETRY_INTERVAL_S = 3.0
 #: Worst-case budget from a failed source until a successful restart attempt
 #: must begin (poll jitter + retry spacing + start wait must stay under 12s).
 CAPTURE_RECOVERY_BUDGET_S = 12.0
+#: Microphones one open tries before waiting for the next watchdog pass.
+MIC_OPEN_ATTEMPTS = 4
 
 #: Engine listener: ``cb(kind, payload)`` with kinds ``status``, ``segments``,
 #: ``server_started``, ``error``, ``ended``, ``intelligence``.
@@ -87,6 +89,9 @@ class MeetingEngineOptions:
     #: ``MeetingState.intent``; the host can still edit it from the dashboard.
     intent: str = ''
     cloud_enabled: bool = False
+    #: The ranked ``{name, hostapi}`` microphones from Settings; empty means
+    #: the system default. ``mic_device_id`` is the older index form.
+    mic_priority: Tuple[Dict[str, str], ...] = ()
     mic_device_id: Optional[int] = None
     asr_model: str = 'auto'
     asr_remote: Optional[Dict[str, Any]] = None
@@ -177,6 +182,11 @@ class MeetingEngine:
         self._capture_last_attempt: Dict[str, float] = {}
         self._capture_monitors: Dict[str, Any] = {}
         self._capture_stall_channels: set[str] = set()
+        # Keys of microphones that failed during this meeting. PortAudio's
+        # device list is a snapshot, so an unplugged microphone keeps being
+        # found until it is excluded here.
+        self._mic_excluded: List[Dict[str, str]] = []
+        self._mic_device: Optional[Dict[str, Any]] = None
         self._system_audio_disabled = False
         self._loopback_was_available = False
         self._explicit_capture_message: Optional[str] = None
@@ -1661,7 +1671,7 @@ class MeetingEngine:
         through to the ``soundcard`` fallback.
         """
         try:
-            from meeting.capture.devices import find_loopback_device, find_mic_device
+            from meeting.capture.devices import find_loopback_device
             from meeting.capture.sd_stream import SdCaptureSource
             from meeting.capture.spool import SpoolWriter  # noqa: F401
         except Exception as exc:
@@ -1679,21 +1689,10 @@ class MeetingEngine:
         self._loopback_was_available = False
         self._explicit_capture_message = None
         self._capture_integrity_error = None
-        mic_dev = None
-        try:
-            mic_dev = find_mic_device(self.options.mic_device_id)
-        except Exception:
-            logger.exception("Microphone probe failed")
-        if mic_dev is not None:
-            try:
-                self._start_source(SdCaptureSource(
-                    CHANNEL_MIC, mic_dev["index"],
-                    mic_dev["samplerate"], mic_dev["channels"],
-                ))
-            except Exception:
-                logger.exception("Failed to open microphone stream")
-        else:
-            logger.warning("No microphone device found; mic channel disabled")
+        self._mic_excluded = []
+        self._mic_device = None
+        if not self._open_mic():
+            logger.warning("No microphone could be opened; mic channel disabled")
 
         loop_ok = False
         if self._system_audio_disabled:
@@ -1997,8 +1996,11 @@ class MeetingEngine:
                         source_id = getattr(source, "device_id", None)
                         desired_id = desired.get("index") if desired else None
                         if channel == CHANNEL_MIC and desired is not None:
+                            # Only "System default" follows the default; a
+                            # ranked microphone stays until it fails.
                             changed = (
                                 self.options.mic_device_id is None
+                                and not self.options.mic_priority
                                 and isinstance(source_id, int)
                                 and source_id != desired_id
                             )
@@ -2028,11 +2030,78 @@ class MeetingEngine:
             self._update_capture_status()
 
     def _probe_capture_device(self, channel: str) -> Optional[Dict[str, Any]]:
-        from meeting.capture.devices import find_loopback_device, find_mic_device
+        from meeting.capture.devices import find_loopback_device
 
         if channel == CHANNEL_LOOPBACK:
             return find_loopback_device()
-        return find_mic_device(self.options.mic_device_id)
+        return self._find_mic()
+
+    def _find_mic(self) -> Optional[Dict[str, Any]]:
+        from meeting.capture.devices import find_mic_device
+
+        choice = (list(self.options.mic_priority) if self.options.mic_priority
+                  else self.options.mic_device_id)
+        if self._mic_excluded:
+            return find_mic_device(choice, exclude=tuple(self._mic_excluded))
+        return find_mic_device(choice)
+
+    @staticmethod
+    def _mic_key(device: Optional[Dict[str, Any]]) -> Optional[Dict[str, str]]:
+        if not device or "name" not in device or "hostapi" not in device:
+            return None
+        return {"name": str(device["name"]), "hostapi": str(device["hostapi"])}
+
+    def _exclude_mic(self, device: Optional[Dict[str, Any]]) -> bool:
+        """Skip ``device`` for the rest of the meeting; False when it can't be named."""
+        key = self._mic_key(device)
+        if key is None or key in self._mic_excluded:
+            return False
+        self._mic_excluded.append(key)
+        return True
+
+    def _open_mic(
+        self,
+        desired: Optional[Dict[str, Any]] = None,
+        *,
+        reuse_spool: bool = False,
+    ) -> bool:
+        """Open the best microphone left, moving past ones that won't open."""
+        from meeting.capture.sd_stream import SdCaptureSource
+
+        retried_all = False
+        for _attempt in range(MIC_OPEN_ATTEMPTS):
+            device, desired = desired, None
+            if device is None:
+                try:
+                    device = self._find_mic()
+                except Exception:
+                    logger.exception("Microphone probe failed")
+                    return False
+            if device is None and self._mic_excluded and not retried_all:
+                # Every microphone failed once. One may only have hiccuped,
+                # and trying it again beats leaving the channel dead.
+                retried_all = True
+                self._mic_excluded = []
+                continue
+            if device is None:
+                return False
+            try:
+                opened = self._start_source(
+                    SdCaptureSource(
+                        CHANNEL_MIC, device["index"], device["samplerate"],
+                        device["channels"],
+                    ),
+                    reuse_spool=reuse_spool,
+                )
+            except Exception:
+                logger.exception("Failed to open microphone stream")
+                opened = False
+            if opened:
+                self._mic_device = device
+                return True
+            if not self._exclude_mic(device):
+                return False
+        return False
 
     def _capture_source(self, channel: str) -> Optional[Any]:
         with self._capture_lock:
@@ -2051,18 +2120,24 @@ class MeetingEngine:
         """
         if channel == CHANNEL_LOOPBACK and self._system_audio_disabled:
             return False
+        source = self._capture_source(channel)
+        lost = (source is None or not bool(source.is_active())
+                or channel in self._capture_stall_channels)
         self._stop_capture_source(channel)
         try:
-            from meeting.capture.devices import find_loopback_device, find_mic_device
+            from meeting.capture.devices import find_loopback_device
             from meeting.capture.sd_stream import SdCaptureSource
 
+            if channel == CHANNEL_MIC:
+                if lost and self._exclude_mic(self._mic_device):
+                    # The watchdog probed before it knew this source was
+                    # dead and may have named the same device again.
+                    desired = None
+                return self._open_mic(desired, reuse_spool=True)
             # Reuse the watchdog probe when provided so recovery does not pay
             # for a second device enumeration inside the 12s budget.
             if desired is None:
-                if channel == CHANNEL_MIC:
-                    desired = find_mic_device(self.options.mic_device_id)
-                else:
-                    desired = find_loopback_device()
+                desired = find_loopback_device()
             if desired is not None:
                 if self._start_source(
                     SdCaptureSource(

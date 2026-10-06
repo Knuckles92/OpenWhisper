@@ -79,12 +79,19 @@ def test_settings_first_show_and_search_do_not_build_hidden_destinations(monkeyp
 
 
 def test_recording_driver_result_preserves_selection_and_gui_progress(monkeypatch):
+    from services.audio_devices import InputDevice
+    from services.settings import SettingsKey, settings_manager
+    from ui_qt.dialogs.settings_microphones import entry_token
+
     entered = threading.Event()
     release = threading.Event()
+    usb = InputDevice(index=7, name="USB microphone", hostapi="MME", default_api=True)
+    desk, lapel = ({"name": name, "hostapi": "MME"} for name in ("Desk microphone", "Lapel microphone"))
+    settings_manager.save_setting(SettingsKey.AUDIO_INPUT_PRIORITY, [desk, lapel])
     def slow_devices():
         entered.set()
         assert release.wait(2)
-        return [(7, "USB microphone")]
+        return [usb]
     monkeypatch.setattr("ui_qt.dialogs.settings_dialog.AudioRecorder.get_input_devices", slow_devices)
     monkeypatch.setattr("ui_qt.dialogs.settings_models.scan_cached_models", lambda **_kwargs: {})
     monkeypatch.setattr("ui_qt.dialogs.settings_downloads.scan_cached_models", lambda **_kwargs: {})
@@ -93,16 +100,16 @@ def test_recording_driver_result_preserves_selection_and_gui_progress(monkeypatc
     try:
         dialog.select_destination(RECORDING)
         assert entered.wait(1)
-        dialog.audio_device_combo.addItem("Chosen while loading", 42)
-        dialog.audio_device_combo.setCurrentIndex(dialog.audio_device_combo.findData(42))
+        combo = dialog.audio_device_combo
+        combo.setCurrentIndex(combo.findData(entry_token(lapel)))
         ticks = []
         QTimer.singleShot(0, lambda: ticks.append(True))
         QApplication.instance().processEvents()
         assert ticks == [True]
         assert not release.is_set()
         release.set()
-        _pump_until(lambda: dialog.audio_device_combo.findData(7) >= 0)
-        assert dialog.audio_device_combo.currentData() == 42
+        _pump_until(lambda: combo.findData(entry_token(usb.key)) >= 0)
+        assert combo.currentData() == entry_token(lapel)
     finally:
         release.set()
 

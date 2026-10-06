@@ -939,6 +939,7 @@ class MeetingRuntime:
         system_audio_policy: str = "auto",
     ):
         from meeting.engine import MeetingEngineOptions
+        from services.audio_devices import load_priority
 
         settings = settings_manager.load_all_settings()
         remote = None
@@ -962,7 +963,7 @@ class MeetingRuntime:
             title="Demo Planning Sync" if demo else "",
             intent=self._pending_intent,
             cloud_enabled=cloud,
-            mic_device_id=settings_manager.load_audio_input_device(),
+            mic_priority=tuple(load_priority(settings, manager=settings_manager)),
             asr_model=resolve_meeting_whisper_model(settings),
             asr_remote=remote,
             asr_language=resolve_meeting_language(settings),

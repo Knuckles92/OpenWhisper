@@ -364,17 +364,24 @@ class TestBasicSettings:
         assert not page.controls[SettingsKey.STREAMING_ENABLED].isChecked()
 
     def test_microphone_uses_the_shared_inventory_and_live_callback(self, make_dialog):
+        from services.audio_devices import InputDevice
+        from ui_qt.dialogs.settings_microphones import SYSTEM_DEFAULT, entry_token
+
         dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
         dialog.on_audio_device_changed = MagicMock()
-        dialog._apply_audio_devices(dialog._audio_device_generation, "", [(11, "Desk microphone")], "")
-        combo = dialog._basic_pages[BASIC_DICTATION].controls[SettingsKey.AUDIO_INPUT_DEVICE]
-        combo.setCurrentIndex(combo.findData(11))
+        desk = InputDevice(index=11, name="Desk microphone", hostapi="MME", default_api=True)
+        dialog._apply_audio_devices(dialog._audio_device_generation, "", [desk], "")
+        combo = dialog._basic_pages[BASIC_DICTATION].controls[SettingsKey.AUDIO_INPUT_PRIORITY]
+        combo.setCurrentIndex(combo.findData(entry_token(desk.key)))
+        assert store.get(SettingsKey.AUDIO_INPUT_PRIORITY) == [desk.key]
+        # The pre-ranking index follows along for a downgrade.
         assert store.get(SettingsKey.AUDIO_INPUT_DEVICE) == 11
-        dialog.on_audio_device_changed.assert_called_once_with(11)
+        dialog.on_audio_device_changed.assert_called_once_with([desk.key])
         dialog.basic_tabs.setCurrentIndex(1)
-        other = dialog._basic_pages[BASIC_MEETINGS].controls[SettingsKey.AUDIO_INPUT_DEVICE]
-        assert other.currentData() == 11
-        other.setCurrentIndex(other.findData(None))
+        other = dialog._basic_pages[BASIC_MEETINGS].controls[SettingsKey.AUDIO_INPUT_PRIORITY]
+        assert other.currentData() == entry_token(desk.key)
+        other.setCurrentIndex(other.findData(SYSTEM_DEFAULT))
+        assert store.get(SettingsKey.AUDIO_INPUT_PRIORITY) == []
         assert SettingsKey.AUDIO_INPUT_DEVICE not in store.load_all_settings()
 
     def test_voice_choice_uses_the_canonical_controller_label_without_model_setup(self, make_dialog):

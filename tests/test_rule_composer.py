@@ -51,10 +51,13 @@ class _FakeRecorder:
 
     @staticmethod
     def get_input_devices():
-        return [(3, "USB microphone")]
+        from services.audio_devices import InputDevice
 
-    def __init__(self, device_id=None, output_file=None):
+        return [InputDevice(index=3, name="USB microphone", hostapi="MME", default_api=True)]
+
+    def __init__(self, device_id=None, output_file=None, *, device_priority=None):
         self.device_id = device_id
+        self.device_priority = device_priority
         self.output_file = output_file
         self.level_callback = None
         self.canceled = 0

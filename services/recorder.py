@@ -10,8 +10,10 @@ import numpy as np
 import time
 from datetime import datetime
 
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Iterator, List, Optional
 from config import config
+from services import audio_devices
+from services.audio_devices import InputDevice
 from services.recording_journal import RecordingJournal
 from services.wav_metadata import stamp_wav_origination
 
@@ -20,6 +22,21 @@ logger = logging.getLogger(__name__)
 AudioLevelCallback = Callable[[float], None]
 
 COPY_BLOCK_BYTES = 1024 * 1024
+
+# A stream may take a while to deliver its first block: a Bluetooth headset
+# switching to its hands-free profile takes seconds.
+FIRST_BLOCK_GRACE_S = 3.0
+# Once blocks flow (one every 23 ms at 1024 frames and 44.1 kHz), a second
+# without any means the microphone is gone. Waiting longer loses more speech.
+STALL_AFTER_BLOCKS_S = 1.0
+# Silence written where one microphone's audio ends and the next one's
+# starts, so a speech model hears a pause instead of two words run together.
+SWITCH_GAP_MS = 250
+# Closing a stream on an unplugged device can hang in the driver.
+LOST_STREAM_CLOSE_TIMEOUT_S = 1.0
+NO_MICROPHONE_LEFT = (
+    "The microphone stopped and no other microphone could be opened; recording stopped."
+)
 
 # Adaptive post-roll keeps each callback block's level in a histogram of
 # whole-dB bins over this range, so a percentile of an hours-long recording
@@ -150,32 +167,40 @@ class AudioRecorder:
     """Handles audio recording using SoundDevice."""
 
     @staticmethod
-    def get_input_devices() -> List[Tuple[int, str]]:
-        """Return ``(device_id, name)`` pairs for audio input devices."""
-        devices = []
+    def get_input_devices() -> List[InputDevice]:
+        """Every audio input PortAudio lists, loopback devices excepted."""
         try:
-            all_devices = sd.query_devices()
-            for i, device in enumerate(all_devices):
-                if device['max_input_channels'] > 0:
-                    devices.append((i, device['name']))
+            return audio_devices.list_input_devices(sd)
         except Exception as e:
             logger.error(f"Failed to enumerate audio devices: {e}")
-        return devices
+            return []
 
     @classmethod
     def from_settings(cls) -> "AudioRecorder":
-        """The dictation recorder for the saved microphone choice."""
+        """The dictation recorder for the saved microphone order."""
         from services.settings import settings_manager
 
-        return cls(device_id=settings_manager.load_audio_input_device())
+        return cls(device_priority=audio_devices.load_priority(manager=settings_manager, sd=sd))
 
     def __init__(
         self,
         device_id: Optional[int] = None,
         output_file: Optional[str] = None,
+        *,
+        device_priority: Optional[List[dict]] = None,
     ):
-        """Use a private output path for secondary recorders to avoid clobbering."""
+        """Use a private output path for secondary recorders to avoid clobbering.
+
+        Args:
+            device_id: A raw PortAudio index tried before anything else.
+            device_priority: Ranked ``{name, hostapi}`` microphones; each
+                recording starts on the first that opens and moves down the
+                list if that one is lost, ending at the system default.
+        """
         self.device_id = device_id
+        self.device_priority = audio_devices.normalize_priority(device_priority)
+        # The microphone this recording is on; None is PortAudio's default.
+        self.active_device: Optional[InputDevice] = None
         self.output_file = output_file or config.RECORDED_AUDIO_FILE
         self.is_recording = False
         self._audio_spool: Optional[RecordingJournal] = None
@@ -203,9 +228,17 @@ class AudioRecorder:
         self.dropped_frames = 0
         self._error_lock = threading.Lock()
         self._last_callback_at = 0.0
-        self._capture_started_at = 0.0
         self._session_token = object()
         self._retiring_writers = []
+        # Bumped for every stream this recorder opens or closes itself, so a
+        # dead stream's late blocks and finished callback are ignored.
+        self._stream_generation = 0
+        self._stream_started_at = 0.0
+        self._stream_lost = threading.Event()
+        self._failed_keys: List[dict] = []
+        self._failed_indexes: set = set()
+        self._default_failed = False
+        self._device_switches = 0
 
         self.chunk = config.CHUNK_SIZE
         self.dtype = config.AUDIO_FORMAT
@@ -247,9 +280,16 @@ class AudioRecorder:
             self._post_roll_end_reason = ""
 
             self.clear_recording_data()
+            self._failed_keys = []
+            self._failed_indexes = set()
+            self._default_failed = False
+            self._device_switches = 0
+            self._stream_lost = threading.Event()
             with self._callback_lock:
                 self._post_roll_gate = PostRollGate(self.rate)
                 self._capture_canceled = False
+                self._stream_generation += 1
+                generation = self._stream_generation
             self.last_capture_error = None
             self.dropped_frames = 0
             self._last_callback_at = 0.0
@@ -260,16 +300,8 @@ class AudioRecorder:
                 lambda message: self._fail_capture(message) if token is self._session_token else None,
             )
 
-            self.stream = sd.InputStream(
-                device=self.device_id,
-                samplerate=self.rate,
-                channels=self.channels,
-                dtype=self.dtype,
-                blocksize=self.chunk,
-                callback=self._audio_callback,
-            )
-            self.stream.start()
-            self._capture_started_at = time.monotonic()
+            self.stream, self.active_device = self._open_first(generation)
+            self._stream_started_at = time.monotonic()
 
             self.is_recording = True
             self._stop_requested = False
@@ -317,6 +349,114 @@ class AudioRecorder:
             return "No audio device available"
         return message or "Could not open the audio stream"
 
+    def _candidates(self) -> Iterator[Optional[InputDevice]]:
+        """Microphones to try, best first; None is PortAudio's default input.
+
+        Without a ranked microphone the first try is the one recording has
+        always made, so the common start pays for no device query. Read
+        lazily: a failure marked between two tries is skipped by the next.
+        """
+        if self.device_id is not None:
+            yield InputDevice(index=self.device_id, name="", hostapi="")
+        if not self.device_priority and not self._default_failed:
+            yield None
+        try:
+            ranked = audio_devices.ranked_candidates(
+                self.device_priority,
+                exclude=self._failed_keys,
+                sd=sd,
+                samplerate=self.rate,
+                channels=self.channels,
+                dtype=np.dtype(self.dtype).name,
+            )
+        except Exception:
+            logger.warning("Couldn't list audio inputs", exc_info=True)
+            ranked = [None] if not self._default_failed else []
+        for device in ranked:
+            if device is None or device.index not in self._failed_indexes:
+                yield device
+
+    def _mark_failed(self, device: Optional[InputDevice]) -> None:
+        if device is None:
+            self._default_failed = True
+            try:
+                device = audio_devices.default_input(sd)
+            except Exception:
+                device = None
+            if device is None:
+                return
+        self._failed_indexes.add(device.index)
+        if device.name:
+            self._failed_keys.append(device.key)
+
+    def _open_first(self, generation: int):
+        """Open the first candidate that works; raise the last error if none does."""
+        last_error: Optional[Exception] = None
+        for device in self._candidates():
+            try:
+                return self._open_stream(device, generation), device
+            except Exception as exc:
+                last_error = exc
+                logger.warning("Couldn't open %s: %s", self._describe(device), exc)
+                self._mark_failed(device)
+        raise last_error or RuntimeError("No audio device available")
+
+    def _open_stream(self, device: Optional[InputDevice], generation: int):
+        lost = self._stream_lost
+
+        def callback(indata, frames, time_info, status):
+            self._audio_callback(indata, frames, time_info, status, generation)
+
+        def finished():
+            # PortAudio's thread: no logging and no PortAudio calls here.
+            if generation == self._stream_generation:
+                lost.set()
+
+        with audio_devices.portaudio_lock:
+            stream = sd.InputStream(
+                device=None if device is None else device.index,
+                samplerate=self.rate,
+                channels=self.channels,
+                dtype=self.dtype,
+                blocksize=self.chunk,
+                callback=callback,
+                finished_callback=finished,
+                extra_settings=audio_devices.extra_settings(device, sd),
+            )
+            audio_devices.register_stream(stream)
+        try:
+            stream.start()
+        except Exception:
+            self._close_stream(stream)
+            raise
+        return stream
+
+    @staticmethod
+    def _close_stream(stream) -> None:
+        try:
+            stream.abort()
+        except Exception:
+            pass
+        try:
+            stream.close()
+        except Exception:
+            pass
+        finally:
+            audio_devices.unregister_stream(stream)
+
+    @staticmethod
+    def _describe(device: Optional[InputDevice]) -> str:
+        if device is None:
+            return "the default input"
+        return device.display or f"input device {device.index}"
+
+    @staticmethod
+    def _switch_name(device: Optional[InputDevice]) -> str:
+        """The microphone's name for the overlay; "" means the system default."""
+        if device is None or not device.name or device.role == audio_devices.ROLE_MAPPER:
+            return ""
+        return audio_devices.short_name(device.label or device.name)
+
     def _unwind_failed_stream(self) -> None:
         """Close a stream that failed during start and drop the reference."""
         if not self.stream:
@@ -329,6 +469,7 @@ class AudioRecorder:
             self.stream.close()
         except Exception:
             pass
+        audio_devices.unregister_stream(self.stream)
         self.stream = None
 
     def stop_recording(self) -> bool:
@@ -381,12 +522,18 @@ class AudioRecorder:
             logger.warning("Recording thread did not finish during post-roll wait; proceeding with available audio")
         return finished
 
-    def _audio_callback(self, indata: np.ndarray, frames: int, time_info, status):
+    def _audio_callback(self, indata: np.ndarray, frames: int, time_info, status,
+                        generation: Optional[int] = None):
         try:
             with self._callback_lock:
+                if generation is not None and generation != self._stream_generation:
+                    return  # a stream this recording already left behind
                 if self._capture_canceled or self.last_capture_error or self._audio_spool is None:
                     return  # the stream is only closing; keep nothing more
                 self._last_callback_at = time.monotonic()
+                # Overflow is a lost-audio integrity failure, not a lost
+                # device: switching microphones on CPU starvation would only
+                # hide it. Device loss shows up as a stall or a dead stream.
                 if status:
                     self.dropped_frames += frames
                     self._audio_spool.error = 'Audio input overflow or device error; recording stopped.'
@@ -453,10 +600,8 @@ class AudioRecorder:
                 if self._audio_spool and self._audio_spool.error:
                     self._fail_capture(self._audio_spool.error)
                     break
-                stream_active = getattr(self.stream, 'active', None)
-                last_block = self._last_callback_at or self._capture_started_at
-                if stream_active is False or (last_block and time.monotonic() - last_block > 3.0):
-                    self._fail_capture('Audio device stopped delivering audio; recording stopped.')
+                if self._capture_lost() and not self._switch_device(stop_event):
+                    self._fail_capture(NO_MICROPHONE_LEFT)
                     break
             if self._audio_spool and self._audio_spool.error:
                 self._fail_capture(self._audio_spool.error)
@@ -466,17 +611,22 @@ class AudioRecorder:
         except Exception as e:
             self._fail_capture(f'Audio capture stopped unexpectedly: {e}')
         finally:
-            if self.stream:
+            stream = self.stream
+            if stream:
+                with self._callback_lock:
+                    self._stream_generation += 1
                 try:
                     # abort() drops what PortAudio still buffers instead of
                     # draining it: 7 ms median against stop()'s 33 ms (56 ms
                     # max) on MME, September 2026, and neither delivered one
                     # more callback. That audio is post-roll either way.
-                    self.stream.abort()
-                    self.stream.close()
+                    stream.abort()
+                    stream.close()
                     logger.info("Audio stream stopped and closed")
                 except Exception as e:
                     logger.error(f"Error closing audio stream: {e}")
+                finally:
+                    audio_devices.unregister_stream(stream)
                 self.stream = None
             journal = self._audio_spool
             if journal:
@@ -487,13 +637,108 @@ class AudioRecorder:
             self._log_post_roll(reason)
             from services.diagnostics import record_metrics
             record_metrics(captured_frames=self._recorded_sample_frames,
-                           dropped_frames=self.dropped_frames)
+                           dropped_frames=self.dropped_frames,
+                           device_switches=self._device_switches)
             self._stop_requested = False
             self._stop_requested_at = 0.0
             self._post_roll_deadline = 0.0
             self.recording_thread = None
             self.is_recording = False
             complete_event.set()
+
+    def _capture_lost(self) -> bool:
+        """The microphone is gone: its stream finished or went inactive, or blocks stopped."""
+        if self._stream_lost.is_set() or getattr(self.stream, "active", None) is False:
+            return True
+        now = time.monotonic()
+        # Zero until the current stream delivers its first block.
+        if self._last_callback_at:
+            return now - self._last_callback_at > STALL_AFTER_BLOCKS_S
+        return now - self._stream_started_at > FIRST_BLOCK_GRACE_S
+
+    def _switch_device(self, stop_event: threading.Event) -> bool:
+        """Carry the recording on to the next microphone after losing this one.
+
+        Runs on the watcher thread. The replacement opens at the same format
+        before the dead stream is closed and appends to the same journal, so
+        everything captured so far stays in this recording. Returns False
+        only when no microphone is left to open.
+        """
+        old_stream, old_device = self.stream, self.active_device
+        with self._callback_lock:
+            self._stream_generation += 1
+            # The replacement's blocks wait until it is installed below, so
+            # none can reach the journal ahead of the gap.
+            generation = self._stream_generation + 1
+        self._stream_lost.clear()
+        self._mark_failed(old_device)
+        new_stream = new_device = None
+        for device in self._candidates():
+            if stop_event.is_set() or self._capture_canceled:
+                break
+            try:
+                new_stream = self._open_stream(device, generation)
+                new_device = device
+                break
+            except Exception as exc:
+                logger.warning("Couldn't switch to %s: %s", self._describe(device), exc)
+                self._mark_failed(device)
+        if stop_event.is_set() or self._capture_canceled:
+            # Ended while switching: keep what was captured, record no more.
+            if new_stream is not None:
+                self._close_stream(new_stream)
+            self._end_post_roll("microphone lost")
+            return True
+        if new_stream is None:
+            return False
+        with self._callback_lock:
+            self._stream_generation = generation
+            self.stream = new_stream
+            self.active_device = new_device
+            if not self._stop_requested:
+                # Two microphones' noise floors would make a meaningless
+                # quiet threshold for the post-roll.
+                self._post_roll_gate = PostRollGate(self.rate)
+            self._append_switch_gap()
+            self._last_callback_at = 0.0
+            self._stream_started_at = time.monotonic()
+        self._device_switches += 1
+        self._retire_stream(old_stream)
+        old_name, new_name = self._switch_name(old_device), self._switch_name(new_device)
+        logger.info(
+            "%s stopped delivering audio; recording continues on %s",
+            self._describe(old_device), self._describe(new_device),
+        )
+        callback = self.device_switch_callback
+        if callback:
+            try:
+                callback(old_name, new_name)
+            except Exception:
+                logger.exception("Microphone switch notification failed")
+        return True
+
+    def _append_switch_gap(self) -> None:
+        """Hold ``_callback_lock``. Real silence, so it is never dropped frames."""
+        journal = self._audio_spool
+        frames = int(self.rate * SWITCH_GAP_MS / 1000)
+        if journal is None or frames <= 0:
+            return
+        shape = (frames, self.channels) if self.channels > 1 else (frames,)
+        payload = np.zeros(shape, dtype=self.dtype).tobytes()
+        if journal.append(payload):
+            self._recorded_bytes += len(payload)
+            self._recorded_sample_frames += frames
+
+    def _retire_stream(self, stream) -> None:
+        if stream is None:
+            return
+        closer = threading.Thread(
+            target=self._close_stream, args=(stream,), name="dictation-close-lost-mic", daemon=True,
+        )
+        closer.start()
+        closer.join(LOST_STREAM_CLOSE_TIMEOUT_S)
+        if closer.is_alive():
+            logger.warning("The lost microphone's stream is still closing")
 
     def _log_post_roll(self, reason: str) -> None:
         """One INFO line per stop, so log audits can measure the post-roll."""
@@ -722,6 +967,7 @@ class AudioRecorder:
                     self.stream.close()
                 except Exception:
                     pass
+                audio_devices.unregister_stream(self.stream)
                 self.stream = None
 
             self.clear_recording_data()

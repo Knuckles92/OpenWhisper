@@ -4978,6 +4978,72 @@ QPushButton#hotkeyClearButton:disabled {
 /* personalize:S6 end */
 
 /* personalize:S7 begin (microphones) */
+QWidget#micPreferredRow,
+QWidget#micBackupList,
+QWidget#micBackupText {
+    background-color: transparent;
+}
+
+QFrame#micBackupRow {
+    background-color: rgba(@overlay-rgb, 0.03);
+    border: 1px solid @slate-border;
+    border-radius: 8px;
+}
+
+QFrame#micBackupRow[state="fixed"] {
+    background-color: transparent;
+    border-color: @slate-border-subtle;
+}
+
+QLabel#micBackupName {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+}
+
+QFrame#micBackupRow[state="missing"] QLabel#micBackupName,
+QFrame#micBackupRow[state="fixed"] QLabel#micBackupName {
+    color: @slate-text-3;
+}
+
+QLabel#micBackupNote {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QPushButton#micBackupButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 0;
+}
+
+QPushButton#micBackupButton:hover {
+    background-color: rgba(@overlay-rgb, 0.08);
+}
+
+QPushButton#micBackupButton[kind="remove"]:hover {
+    background-color: rgba(@danger-rgb, 0.16);
+}
+
+QPushButton#micBackupButton:disabled {
+    background-color: transparent;
+}
+
+QPushButton#micBackupButton[kind="up"] {
+    qproperty-icon: url(ui_qt/assets/tabler/chevron-up-gray@icon-suffix.svg);
+}
+
+QPushButton#micBackupButton[kind="down"] {
+    qproperty-icon: url(ui_qt/assets/tabler/chevron-down-gray@icon-suffix.svg);
+}
+
+QPushButton#micBackupButton[kind="remove"] {
+    qproperty-icon: url(ui_qt/assets/tabler/x-gray.svg);
+}
 /* personalize:S7 end */
 
 /* personalize:S8 begin (overlay, languages & scratchpad) */

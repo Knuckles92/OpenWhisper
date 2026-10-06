@@ -113,6 +113,7 @@ from ui_qt.dialogs import cleanup_levels
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
 from ui_qt.dialogs.settings_binder import SettingsBinder
+from ui_qt.dialogs import settings_microphones
 from ui_qt.dialogs.settings_metadata import (
     CONTROL_DESTINATIONS,
     PAGE_HELP_TEXT,
@@ -420,6 +421,7 @@ class SettingsDialog(QDialog):
         self._refresh_snapshot = None
         self._recording_query_generation = 0
         self._audio_device_generation = 0
+        self._microphones: Optional[settings_microphones.MicrophoneSection] = None
         self._rail_batch_depth = 0
         self._rail_refresh_pending = False
         self._search_flash: Optional[QWidget] = None
@@ -446,7 +448,7 @@ class SettingsDialog(QDialog):
         self._rule_polish_dictated = False
         self._rule_dictation_state = "idle"
         self._rule_recorder: Optional[AudioRecorder] = None
-        self._rule_recorder_device: Optional[int] = None
+        self._rule_recorder_device: tuple = ()
         self._api_key_testing = False
         self._typesafe_route_testing = False
         self._api_key_source = CredentialSource.NONE
@@ -1382,20 +1384,14 @@ class SettingsDialog(QDialog):
         super().hideEvent(event)
 
     def _build_recording_page(self, layout: QVBoxLayout) -> None:
-        self.audio_device_combo = ElidingComboBox()
-        self.audio_device_combo.setObjectName("settingsAudioDeviceCombo")
-        self.audio_device_combo.setMinimumHeight(40)
-        self._populate_audio_devices()
+        # Looked up when called, so a replaced AudioRecorder is what lists.
+        self._microphones = settings_microphones.MicrophoneSection(
+            self, lambda: AudioRecorder.get_input_devices()
+        )
+        self._microphones.build(layout)
         self.audio_device_combo.currentIndexChanged.connect(
             self._on_audio_device_changed
         )
-        self.audio_device_tile = FieldTile(
-            "Input device",
-            "The microphone used for dictation and meetings.",
-            self.audio_device_combo,
-            design_icon("microphone-blue.svg"),
-        )
-        self._tile_group(layout, "Microphone", [self.audio_device_tile])
 
         self.recording_retention_combo = ElidingComboBox()
         self.recording_retention_combo.addItem(
@@ -3256,8 +3252,7 @@ class SettingsDialog(QDialog):
         general = ("Auto-paste on" if setting_value(SettingsKey.AUTO_PASTE, settings)
                    else "Clipboard" if setting_value(SettingsKey.COPY_CLIPBOARD, settings) else "Manual")
         self.rail.set_value(GENERAL, general)
-        device_combo = self.__dict__.get("audio_device_combo")
-        self.rail.set_value(RECORDING, device_combo.currentText() if device_combo is not None else "System Default")
+        self.rail.set_value(RECORDING, settings_microphones.rail_value(settings))
         model = resolve_transcript_cleanup_model(settings)
         cleanup = cleanup_prompts.level_label(settings)
         if cleanup_prompts.resolve_level(settings) != CleanupLevel.NONE and model:
@@ -3413,19 +3408,9 @@ class SettingsDialog(QDialog):
         self._persist(SettingsKey.UPDATE_CHECK_ENABLED, bool(checked))
 
     def _on_audio_device_changed(self, _index: int = 0) -> None:
-        if self._loading:
+        if self._loading or self._microphones is None:
             return
-        device_id = self.audio_device_combo.currentData()
-        updates = {}
-        drops = ()
-        if device_id is None:
-            drops = (SettingsKey.AUDIO_INPUT_DEVICE,)
-        else:
-            updates[SettingsKey.AUDIO_INPUT_DEVICE] = device_id
-        if not self._persist_many(updates, drops=drops):
-            return
-        if self.on_audio_device_changed:
-            self.on_audio_device_changed(device_id)
+        self._microphones.choose_preferred(self.audio_device_combo.currentData())
 
     def _on_retention_mode_changed(self, _index: int = 0) -> None:
         self._update_recording_retention_ui()
@@ -4194,17 +4179,19 @@ class SettingsDialog(QDialog):
             )
             return
 
-        device_id = self._settings_snapshot().get(SettingsKey.AUDIO_INPUT_DEVICE)
-        if self._rule_recorder is None or self._rule_recorder_device != device_id:
+        settings = self._settings_snapshot()
+        priority = settings_microphones.saved_priority(settings)
+        order = tuple((entry["hostapi"], entry["name"]) for entry in priority)
+        if self._rule_recorder is None or self._rule_recorder_device != order:
             if self._rule_recorder is not None:
                 self._rule_recorder.cleanup()
             self._rule_recorder = AudioRecorder(
-                device_id=device_id, output_file=self._rule_dictation_path
+                device_priority=priority, output_file=self._rule_dictation_path
             )
             self._rule_recorder.set_audio_level_callback(
                 self._emit_rule_dictation_level
             )
-            self._rule_recorder_device = device_id
+            self._rule_recorder_device = order
 
         if not self._rule_recorder.start_recording():
             reason = self._rule_recorder.last_start_error
@@ -4217,7 +4204,7 @@ class SettingsDialog(QDialog):
         self._set_rule_notice("")
         self._set_rule_mic_recording(True)
         self.cleanup_rule_activity.show_listening(
-            self.rail.value(RECORDING) or "Default microphone"
+            settings_microphones.preferred_name(settings)
         )
         self._rule_dictation_timer.start()
         self._update_cleanup_rule_controls()
@@ -4415,38 +4402,11 @@ class SettingsDialog(QDialog):
         if self._page_is_loading(MEETING_INTELLIGENCE):
             self.meeting_context_folder_path.setText(resolve_meeting_context_folder_path(settings))
 
-    def _populate_audio_devices(self) -> None:
-        self.audio_device_combo.addItem("System Default", None)
-        saved = self._settings_snapshot().get(SettingsKey.AUDIO_INPUT_DEVICE)
-        if saved is not None:
-            self.audio_device_combo.addItem(f"Input device {saved}", saved)
-            self.audio_device_combo.setCurrentIndex(1)
-        self._audio_device_generation += 1
-        generation = self._audio_device_generation
-        delivery = HistoryDelivery()
-        delivery.loaded.connect(self._apply_audio_devices)
-        def load():
-            try:
-                devices = AudioRecorder.get_input_devices()
-            except Exception:
-                logger.warning("Couldn't discover audio inputs", exc_info=True)
-                devices = []
-            delivery.loaded.emit(generation, "", devices, "")
-        threading.Thread(target=load, name="settings-audio-devices", daemon=True).start()
-
-    def _apply_audio_devices(self, generation, _query, devices, _error):
-        if generation != self._audio_device_generation:
+    def _apply_audio_devices(self, generation, outcome, devices, _error):
+        """Take a device list from the enumeration worker; stale lists are dropped."""
+        if generation != self._audio_device_generation or self._microphones is None:
             return
-        selected = self.audio_device_combo.currentData()
-        blocker = self.audio_device_combo.blockSignals(True)
-        self.audio_device_combo.clear()
-        self.audio_device_combo.addItem("System Default", None)
-        for device_id, device_name in devices:
-            self.audio_device_combo.addItem(device_name, device_id)
-        if selected is not None and self.audio_device_combo.findData(selected) < 0:
-            self.audio_device_combo.addItem(f"Input device {selected}", selected)
-        self.audio_device_combo.setCurrentIndex(max(0, self.audio_device_combo.findData(selected)))
-        self.audio_device_combo.blockSignals(blocker)
+        self._microphones.apply_devices(devices, outcome)
         self._refresh_rail_values()
 
     def _start_hotkey_capture(
@@ -4669,10 +4629,7 @@ class SettingsDialog(QDialog):
             self.streaming_enabled_check.setChecked(setting_value(SettingsKey.STREAMING_ENABLED, settings))
             self.streaming_font_size_spinbox.setValue(resolve_streaming_overlay_font_size(settings))
             self._update_streaming_font_ui()
-            saved_device_id = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
-            index = self.audio_device_combo.findData(saved_device_id)
-            if index >= 0:
-                self.audio_device_combo.setCurrentIndex(index)
+            self._microphones.load(settings)
         self._load_meeting_settings(settings)
         if self._page_is_loading(API_KEYS):
             self._load_api_key_settings(settings)

@@ -51,6 +51,7 @@ from ui_qt.dialogs.settings_destinations import (
     RECORDING,
     VOICE_MODEL,
 )
+from ui_qt.dialogs import settings_microphones
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
 from ui_qt.widgets.no_wheel import ElidingComboBox
@@ -220,7 +221,8 @@ class BasicSettingsPage(QWidget):
 
     def _microphone(self, group):
         # Audio discovery already runs on a worker and keeps unavailable saved
-        # devices selectable. Share its inventory between all three views.
+        # devices selectable. Share its inventory between all three views;
+        # a choice here becomes the first microphone in the Recording order.
         self.dialog.ensure_page(RECORDING)
         combo = self._combo(expanding=True)
         self._row(group, "Microphone", "Used for dictation and meetings.", combo)
@@ -228,8 +230,8 @@ class BasicSettingsPage(QWidget):
             combo,
             RECORDING,
             "audio_device_combo",
-            SettingsKey.AUDIO_INPUT_DEVICE,
-            lambda settings: settings.get(SettingsKey.AUDIO_INPUT_DEVICE),
+            SettingsKey.AUDIO_INPUT_PRIORITY,
+            settings_microphones.preferred_token,
         )
 
     def _cleanup_level(self, group):
@@ -472,7 +474,7 @@ class BasicSettingsPage(QWidget):
 
     def refresh(self):
         settings = self.dialog._settings_snapshot()
-        microphone = self.controls.get(SettingsKey.AUDIO_INPUT_DEVICE)
+        microphone = self.controls.get(SettingsKey.AUDIO_INPUT_PRIORITY)
         if microphone is not None:
             source = self.dialog.audio_device_combo
             with QSignalBlocker(microphone):

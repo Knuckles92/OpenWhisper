@@ -134,10 +134,14 @@ def test_explicit_cancel_removes_journal(tmp_path):
     assert list(recovery_directory(output).iterdir()) == []
 
 
-def test_device_disconnect_is_reported_without_a_stop_press(tmp_path, monkeypatch):
+def test_device_disconnect_without_another_microphone_is_reported_without_a_stop_press(tmp_path, monkeypatch):
     stream = MagicMock()
     stream.active = True
     monkeypatch.setattr('services.recorder.sd.InputStream', lambda **kwargs: stream)
+    # The only microphone: nothing to switch to (tests/test_personalize_s7_recorder.py
+    # covers the switch).
+    monkeypatch.setattr('services.recorder.audio_devices.ranked_candidates', lambda *args, **kwargs: [])
+    monkeypatch.setattr('services.recorder.audio_devices.default_input', lambda *args, **kwargs: None)
     recorder = AudioRecorder(output_file=str(tmp_path / 'capture.wav'))
     error = threading.Event()
     recorder.error_callback = lambda message: error.set()

@@ -2296,9 +2296,8 @@ class ApplicationController(QObject):
                 )
             self.batch_download_finished.emit(succeeded, len(model_names))
 
-    def change_audio_device(self, device_id: Optional[int]) -> None:
-        logger.info(f"Changing audio device to: {device_id}")
-
+    def change_audio_device(self, _choice=None) -> None:
+        """Rebuild the recorder after Settings saved a new microphone order."""
         if self.recorder.is_recording or self.transcription_runtime.has_active_job:
             logger.warning("Cannot change audio device while recording")
             self.ui_controller.set_status("Wait for the recording to finish before changing device")
@@ -2312,8 +2311,7 @@ class ApplicationController(QObject):
         self.recorder.device_switch_callback = self.recording_device_switched.emit
         self.streaming_runtime.setup_audio_level_callback()
 
-        device_name = "System Default" if device_id is None else f"Device {device_id}"
-        logger.info(f"Audio device changed to: {device_name}")
+        logger.info("Microphone order changed; recorder rebuilt")
         self.ui_controller.set_status("Audio device changed")
 
     def update_hotkeys(self, hotkeys: Dict[str, str]) -> None:
