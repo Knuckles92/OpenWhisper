@@ -21,6 +21,7 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 - **Local backup and restore** — a dedicated page in Settings saves settings, history, meetings, and optional recordings to a verified `.owbackup` archive. Restore previews the archive, applies it during a clean restart, and retains the previous data for recovery. Optional daily or weekly backups run while the app is open and idle, with configurable retention.
 
 ### Fixed
+- **Busy remote hosts** — a host that refuses and closes a connection before the client sends its greeting still supplies a retryable busy response and its retry delay.
 - **Model profile cut off in Downloads** — at larger font scales the Hugging Face, Original, and License buttons in a model's profile were squeezed into one row and painted over each other; they now wrap, with the main link on top. A long value such as a version hash or a custom model's folder path made every line of the profile wrap too wide and be cut off at the scroll bar; long values now wrap inside the visible width, and copying one still gives the original text.
 - **Incomplete recordings** — capture drops, storage failures, and unfinished audio writes now remain visible as failures. Quick Record keeps recoverable audio without sending a partial result as a successful transcription; meetings retain an incomplete-audio warning.
 - **Recovery scans** — a failed meeting recovery scan shows an error with a Retry action instead of appearing to find no interrupted meetings.

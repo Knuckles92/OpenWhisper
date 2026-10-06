@@ -1,5 +1,6 @@
 """Bounded and retryable admission for a paired remote speech host."""
 
+import json
 import threading
 import time
 from types import SimpleNamespace
@@ -111,6 +112,36 @@ def test_connection_cap_is_retryable_and_releases_after_disconnect(tmp_path):
             second.close()
         engine.release.set()
         host.stop()
+
+
+def test_connection_refusal_before_hello_preserves_retry_delay(monkeypatch):
+    from websockets.exceptions import ConnectionClosedError
+    from websockets.frames import Close
+    from services.remote_asr import client, protocol
+
+    closed = []
+    refusal = Close(protocol.CLOSE_BUSY, "host busy")
+
+    def closed_before_hello(_message):
+        raise ConnectionClosedError(refusal, refusal, True)
+
+    ws = SimpleNamespace(
+        socket=object(),
+        send=closed_before_hello,
+        recv=lambda **_: json.dumps({
+            "type": "error", "code": "busy", "message": "Host at capacity",
+            "retry_after_ms": 2500,
+        }),
+        close=lambda: closed.append(True),
+    )
+    fingerprint = "AB" * 32
+    monkeypatch.setattr(client, "_open", lambda *_: ws)
+    monkeypatch.setattr(client, "peer_fingerprint", lambda _: fingerprint)
+    connection = RemoteConnection("127.0.0.1", 47821, "token", fingerprint)
+    with pytest.raises(RemoteHostBusy, match="Host at capacity") as refused:
+        connection.connect()
+    assert refused.value.retry_after_s == 2.5
+    assert closed == [True]
 
 
 def test_fifo_job_queue_rejects_overload_before_audio_decode_and_recovers(tmp_path,

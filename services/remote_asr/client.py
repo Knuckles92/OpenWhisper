@@ -566,6 +566,8 @@ class RemoteConnection:
             logger.debug("Could not save the remote engine's addresses", exc_info=True)
 
     def _connect_to(self, host: str, timeout: float) -> dict:
+        from websockets.exceptions import ConnectionClosed
+
         try:
             ws = _open(host, self.port, timeout)
         except RemoteEngineError as exc:
@@ -586,7 +588,12 @@ class RemoteConnection:
             }
             if self._history_enabled is not None:
                 hello.update(purpose="history", history_enabled=self._history_enabled is True)
-            ws.send(json.dumps(hello))
+            try:
+                ws.send(json.dumps(hello))
+            except ConnectionClosed:
+                # A full host can send its refusal and close before hello.
+                # Read the queued reply so its retry delay still reaches callers.
+                pass
             reply = _read_json(ws, HANDSHAKE_TIMEOUT_S)
             if reply.get("type") == "error":
                 if reply.get("code") == "busy":
