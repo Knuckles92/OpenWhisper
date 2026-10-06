@@ -3,6 +3,7 @@ import logging
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QLabel
 from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSignal
 
+from ui_qt.dialogs.settings_destinations import COMMANDS
 from ui_qt.utils.icons import tabler_icon
 from ui_qt.widgets.cards import ControlPanel
 from ui_qt.widgets.buttons import SuccessButton, DangerButton, WarningButton
@@ -21,6 +22,7 @@ class QuickRecordTab(TranscriptionTabBase):
     record_canceled = pyqtSignal()
     copy_requested = pyqtSignal(str)
     profiles_requested = pyqtSignal()
+    settings_requested = pyqtSignal(str)
 
     CONTENT_OBJECT_NAME = "quickRecordContent"
     INITIAL_STATUS = "Ready to record"
@@ -123,6 +125,16 @@ class QuickRecordTab(TranscriptionTabBase):
         self.profile_hint.setTextFormat(Qt.TextFormat.PlainText)
         self.profile_hint.setObjectName("infoLabel")
         body.addWidget(self.profile_hint)
+        self.command_hint = WrappedLabel()
+        self.command_hint.setTextFormat(Qt.TextFormat.PlainText)
+        self.command_hint.setObjectName("infoLabel")
+        body.addWidget(self.command_hint)
+        self.command_link = QPushButton("Set a Command Mode shortcut  →")
+        self.command_link.setObjectName("commandModeHintLink")
+        self.command_link.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.command_link.setToolTip("Rewrite selected text by voice")
+        self.command_link.clicked.connect(lambda: self.settings_requested.emit(COMMANDS))
+        body.addWidget(self.command_link, alignment=Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self.profile_card)
         self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
         self.refresh_cleanup_profiles()
@@ -171,6 +183,15 @@ class QuickRecordTab(TranscriptionTabBase):
             self.profile_combo.setToolTip("Standard dictation")
         if getattr(self, "is_recording", False):
             self.profile_hint.setText(f"Recording with {profile.name if profile else 'Standard dictation'}")
+        hotkeys = settings_manager.load_all_settings().get(SettingsKey.HOTKEYS)
+        command_key = format_hotkey_display(
+            hotkeys.get("command_mode", "") if isinstance(hotkeys, dict) else ""
+        )
+        self.command_hint.setText(
+            f"Command Mode · {command_key} · Select text, then say how to change it."
+        )
+        self.command_hint.setVisible(bool(command_key))
+        self.command_link.setVisible(not command_key)
         self.load_cleanup_setting()
         if hasattr(self, "record_button"):
             shortcut = format_hotkey_display(profile.hotkey) if profile else getattr(self, "_standard_record_key", "")

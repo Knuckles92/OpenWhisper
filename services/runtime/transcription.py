@@ -413,8 +413,10 @@ class TranscriptionRuntime:
                 self.controller.recorder.get_recording_duration()
             )
             self.controller._pending_file_size = file_size
+            job = self._active_job
             self.controller._pending_source_name = (
-                f"Quick Record · {self._recording_profile.name}"
+                "Command Mode" if job is not None and job.mode == JobMode.COMMAND
+                else f"Quick Record · {self._recording_profile.name}"
                 if self._recording_profile else "Quick Record"
             )
 

@@ -4670,6 +4670,69 @@ QPlainTextEdit#cleanupPromptEditor:disabled {
 /* personalize:S2 end */
 
 /* personalize:S3 begin (commands) */
+QWidget#transformsPanel,
+QWidget#transformLibrary,
+QWidget#transformsPanel QLabel,
+QWidget[tileId="transformStarters"],
+QWidget[tileId="commandShortcutField"] {
+    background: transparent;
+}
+
+/* The transform editor is a card, like the profile editor beside it in the rail. */
+QWidget#transformEditor {
+    background-color: @slate-surface;
+    border: 1px solid @slate-border;
+    border-radius: 12px;
+}
+
+/* Outlined like the Name field above it: the light card and the text field
+   share a fill, so without a border the instruction has no edge. */
+QWidget#transformEditor QTextEdit {
+    border: 1px solid @border;
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+QWidget#transformEditor QTextEdit:focus {
+    border-color: @accent;
+}
+
+QListWidget#transformsList {
+    background: @slate-surface;
+    color: @slate-text;
+    border: 1px solid @slate-border;
+    border-radius: 10px;
+    padding: 5px;
+    font-size: 13px;
+    outline: none;
+}
+
+QListWidget#transformsList::item {
+    padding: 10px 8px;
+    border-radius: 6px;
+}
+
+QListWidget#transformsList::item:selected {
+    background: @accent-tint-strong;
+    color: @accent-soft;
+}
+
+/* Quick Record: the link to set a Command Mode shortcut, under the profile hint. */
+QPushButton#commandModeHintLink {
+    color: @accent;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 0;
+    min-height: 0;
+}
+
+QPushButton#commandModeHintLink:hover,
+QPushButton#commandModeHintLink:focus {
+    color: @accent-soft;
+    text-decoration: underline;
+}
 /* personalize:S3 end */
 
 /* personalize:S4 begin (dictionary) */

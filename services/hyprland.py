@@ -8,6 +8,17 @@ import re
 import shutil
 import subprocess
 
+_OWN_CLASSES = ("openwhisper", "openwhisper-ui-qa")
+# Terminals use Ctrl+Shift for the clipboard: Ctrl+C would interrupt the
+# running program and Ctrl+V reaches it as a control character.
+TERMINAL_CLASSES = (
+    "foot",
+    "kitty",
+    "alacritty",
+    "com.mitchellh.ghostty",
+    "org.wezfurlong.wezterm",
+)
+
 
 def available() -> bool:
     return bool(
@@ -29,30 +40,40 @@ def evaluate(code: str) -> None:
         raise RuntimeError(result.stdout.strip() or result.stderr.strip())
 
 
-def send_paste() -> None:
-    """Ask the compositor to paste into the currently focused application."""
+def _send_shortcut(key: str, *, no_window: str, own_window: str) -> None:
+    """Send Ctrl+``key`` (Ctrl+Shift in terminals) to the focused window."""
     client = query("activewindow")
     address = client.get("address", "")
     if not re.fullmatch(r"0x[0-9a-fA-F]+", address):
-        raise RuntimeError("No focused window to paste into")
-    if client.get("class", "").lower() in ("openwhisper", "openwhisper-ui-qa"):
-        raise RuntimeError(
-            "Focus the destination application before stopping dictation"
-        )
-    # Terminals use a different paste shortcut. This mirrors their conventional
-    # clipboard action, while editors/browsers use Ctrl+V.
-    terminal = client.get("class", "").lower() in (
-        "foot",
-        "kitty",
-        "alacritty",
-        "com.mitchellh.ghostty",
-        "org.wezfurlong.wezterm",
-    )
-    mods = "CTRL SHIFT" if terminal else "CTRL"
+        raise RuntimeError(no_window)
+    window_class = client.get("class", "").lower()
+    if window_class in _OWN_CLASSES:
+        raise RuntimeError(own_window)
+    mods = "CTRL SHIFT" if window_class in TERMINAL_CLASSES else "CTRL"
     evaluate(
         "hl.dispatch(hl.dsp.send_shortcut({mods="
         + json.dumps(mods)
-        + ', key="v", window='
+        + ", key="
+        + json.dumps(key)
+        + ", window="
         + json.dumps("address:" + address)
         + "}))"
+    )
+
+
+def send_paste() -> None:
+    """Ask the compositor to paste into the currently focused application."""
+    _send_shortcut(
+        "v",
+        no_window="No focused window to paste into",
+        own_window="Focus the destination application before stopping dictation",
+    )
+
+
+def send_copy() -> None:
+    """Ask the compositor to copy the focused application's selection."""
+    _send_shortcut(
+        "c",
+        no_window="No focused window to copy from",
+        own_window="Focus the app with the text to change first",
     )

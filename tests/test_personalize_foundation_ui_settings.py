@@ -163,10 +163,12 @@ class TestPersonalizeRail:
         dialog.select_destination(key)
         assert key in dialog._built_pages
         assert dialog.page_title.text() == module.TITLE
-        tiles = dialog._pages[key].findChildren(TileBase)
+        page = dialog._pages[key]
         for attr, title, _keywords in module.SEARCH_FIELDS:
-            assert dialog.__dict__[attr] in tiles
-            assert dialog.__dict__[attr].title_label.text() == title
+            widget = dialog.__dict__[attr]
+            assert page.isAncestorOf(widget)
+            if isinstance(widget, TileBase):
+                assert widget.title_label.text() == title
         assert set(module.CONTROL_ATTRS) <= set(dialog.__dict__)
 
     def test_pages_are_searchable_before_they_are_built(self, make_dialog):

@@ -246,6 +246,7 @@ class UIController(QObject):
     def _setup_connections(self):
         self.main_window.record_toggled.connect(self._on_record_toggled)
         self.main_window.quick_record_tab.profiles_requested.connect(self.open_cleanup_profiles)
+        self.main_window.quick_record_tab.settings_requested.connect(self.open_settings_destination)
         self.main_window.record_canceled.connect(self.cancel_recording)
         self.main_window.model_changed.connect(self._on_model_changed)
         self.main_window.whisper_engine_changed.connect(self._on_whisper_engine_changed)

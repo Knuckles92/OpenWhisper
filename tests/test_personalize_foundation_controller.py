@@ -78,13 +78,19 @@ def test_command_keys_and_transforms_reach_the_command_runtime(controller):
     command.key_released.assert_called_once_with(2.0)
 
 
-def test_the_inert_command_runtime_says_it_is_not_available(controller):
+def test_commands_and_transforms_without_a_provider_say_how_to_start(controller, monkeypatch):
+    command_module = sys.modules[type(controller.command_runtime).__module__]
+    monkeypatch.setattr(command_module.text_rewrite, "provider_ready", lambda _settings: False)
+
     controller.transform_requested.emit("polish")
     controller.command_key_pressed(1.0)
 
-    assert controller.ui_controller.statuses[-2:] == ["Command Mode isn't available yet"] * 2
-    with pytest.raises(RuntimeError, match="isn't available"):
-        controller.command_runtime.complete_recording("make it shorter", None)
+    assert controller.ui_controller.statuses[-2:] == [
+        "Set up AI cleanup to use transforms", "Set up AI cleanup to use Command Mode",
+    ]
+    assert not controller.recorder.is_recording
+    with pytest.raises(RuntimeError, match="Didn't catch an instruction"):
+        controller.command_runtime.complete_recording("  ", None)
 
 
 def test_settings_changes_refresh_shortcuts_for_transforms_and_hotkeys(controller):
