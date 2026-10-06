@@ -179,6 +179,8 @@ class RemoteSpeechBackend(LocalSpeechBackend):
         self._unpaired: Optional[bool] = None
         #: requests, round trip, host time, requests the host timed.
         self._timing = (0, 0.0, 0.0, 0)
+        #: The connected host's engine uses vocabulary hints.
+        self._recognition_hints = False
 
     # ---- the link, for the engine card ----
 
@@ -572,6 +574,14 @@ class RemoteSpeechBackend(LocalSpeechBackend):
         self.runtime = ({**runtime, "can_configure": isinstance(capabilities, dict)
                          and capabilities.get("engine_controls") is True}
                         if isinstance(runtime, dict) and runtime else None)
+        self._recognition_hints = (
+            isinstance(capabilities, dict) and capabilities.get("recognition_hints") is True
+        )
+
+    def _phrases_reach_model(self) -> bool:
+        # Only a host that says its engine uses them gets the phrases; an
+        # older host would ignore them anyway.
+        return self._recognition_hints and self.is_available()
 
     def host_renamed(self, pairing) -> None:
         """This computer's owner renamed the paired host; call it that from now on."""

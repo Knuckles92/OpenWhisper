@@ -27,7 +27,14 @@ _WARMUP_SAMPLES = 16000
 _WARMUP_LEVEL = 0.01
 
 
+def _phrase_options(phrases) -> dict:
+    # A decode without a vocabulary is called exactly as before there was one.
+    return {"phrases": tuple(phrases)} if phrases else {}
+
+
 class LocalSpeechBackend(TranscriptionBackend):
+    supports_recognition = True
+
     def __init__(self, backend: str, model_name: str | None = None, device: str | None = None):
         super().__init__()
         self.backend_id = backend
@@ -220,23 +227,59 @@ class LocalSpeechBackend(TranscriptionBackend):
             if self._process:
                 self._process.request("cancel_stream", session=session, timeout=10)
 
-    def _recognize(self, audio: np.ndarray, language=None) -> dict:
-        return self._request_audio("transcribe", audio, language)
+    def _recognize(self, audio: np.ndarray, language=None, phrases=()) -> dict:
+        options = {"phrases": list(phrases)} if phrases else {}
+        return self._request_audio("transcribe", audio, language, **options)
 
-    def recognize(self, audio: np.ndarray, language=None) -> dict:
+    def recognize(self, audio: np.ndarray, language=None, phrases=()) -> dict:
         """One window's raw worker result, ``{text, segments}``.
 
         What a remote engine host serves for a client's window decode. It
         queues on the decode lock with this computer's own dictation and
         preview, so the worker only ever sees one request at a time.
+        ``phrases`` are dropped unless this engine boosts them.
         """
+        phrases = tuple(phrases) if self._phrases_reach_model() else ()
         with self._decode_lock:
-            return self._recognize(np.asarray(audio, dtype=np.float32), language)
+            return self._recognize(
+                np.asarray(audio, dtype=np.float32), language, **_phrase_options(phrases)
+            )
 
     def request_language(self) -> str:
         """The language a request made without one asks the worker for."""
         from services.local_asr.languages import selected_language
         return selected_language(self.backend_id, self._settings().get("local_asr_language", "en"))
+
+    def _phrases_reach_model(self) -> bool:
+        from services.recognition_context import SUPPORT_MODEL, engine_support
+
+        return engine_support(self.backend_id) == SUPPORT_MODEL
+
+    @property
+    def recognition_support(self) -> str:
+        from services.recognition_context import SUPPORT_AFTER, SUPPORT_MODEL
+
+        return SUPPORT_MODEL if self._phrases_reach_model() else SUPPORT_AFTER
+
+    def recognition_inputs(self, recognition) -> tuple[str, tuple[str, ...]]:
+        """The language and phrases a decode for ``recognition`` sends.
+
+        Without a language of its own the context leaves the engine's
+        setting in charge; a language the engine doesn't list becomes auto.
+        Phrases go only to an engine that boosts them.
+        """
+        code = recognition.language if recognition else ""
+        if not code:
+            language = self.request_language()
+        else:
+            from services.local_asr.languages import language_choices, selected_language
+
+            language = (
+                selected_language(self.backend_id, code)
+                if language_choices(self.backend_id) else code
+            )
+        phrases = tuple(recognition.phrases) if recognition and self._phrases_reach_model() else ()
+        return language, phrases
 
     def _request_audio(self, op, audio, language=None, **options) -> dict:
         if self.should_cancel:
@@ -254,11 +297,16 @@ class LocalSpeechBackend(TranscriptionBackend):
             raise RuntimeError("Transcription canceled")
         return result
 
-    def transcribe(self, audio_path: str) -> str:
+    def transcribe(self, audio_path: str, recognition=None) -> str:
         from services.local_asr.audio import windows
-        return self.join_texts(self.transcribe_windows(windows(audio_path)))
+        if not recognition:
+            return self.join_texts(self.transcribe_windows(windows(audio_path)))
+        language, phrases = self.recognition_inputs(recognition)
+        return self.join_texts(self.transcribe_windows(
+            windows(audio_path), language, **_phrase_options(phrases)
+        ))
 
-    def transcribe_windows(self, windows, language=None) -> list[str]:
+    def transcribe_windows(self, windows, language=None, *, phrases=()) -> list[str]:
         """Decode ``(offset, audio)`` windows as one durable transcription.
 
         ``transcribe`` passes a file's ``windows()``; incremental dictation
@@ -273,12 +321,12 @@ class LocalSpeechBackend(TranscriptionBackend):
                     raise RuntimeError("Transcription canceled")
                 if not self.is_available():
                     raise RuntimeError(self.device_info)
-                return [self._transcribe_audio(audio, language)["text"]
+                return [self._transcribe_audio(audio, language, phrases)["text"]
                         for _offset, audio in windows]
             finally:
                 self.is_transcribing = False
 
-    def decode_window(self, audio: np.ndarray, language=None) -> str:
+    def decode_window(self, audio: np.ndarray, language=None, *, phrases=()) -> str:
         """One window's text, decoded exactly as ``transcribe_windows`` would.
 
         For windows decoded while a dictation is still being recorded. It
@@ -287,14 +335,14 @@ class LocalSpeechBackend(TranscriptionBackend):
         press must not tear the engine down over it.
         """
         with self._decode_lock:
-            return self._transcribe_audio(audio, language)["text"]
+            return self._transcribe_audio(audio, language, phrases)["text"]
 
     @staticmethod
     def join_texts(texts) -> str:
         """A transcript from its windows' texts; both decode paths join here."""
         return " ".join(texts).strip()
 
-    def _transcribe_audio(self, audio, language=None):
+    def _transcribe_audio(self, audio, language=None, phrases=()):
         texts, segments = [], []
         start = 0
         # Bound attention memory and output lengths. Prefer a quiet boundary
@@ -306,7 +354,7 @@ class LocalSpeechBackend(TranscriptionBackend):
             end = start + split_point(audio[start:])
             window = audio[start:end]
             if window.size and np.max(np.abs(window)) > .00025:
-                result = self._recognize(window, language)
+                result = self._recognize(window, language, **_phrase_options(phrases))
                 texts.append(result["text"])
                 for segment in result.get("segments", []):
                     segments.append(dict(segment, start=segment["start"]+start/16000,

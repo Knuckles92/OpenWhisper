@@ -15,6 +15,7 @@ import re
 from typing import Any, Callable, Dict, Iterable, List
 
 from meeting.state.schema import parse_state_json
+from services.vocabulary import replace_terms
 
 logger = logging.getLogger(__name__)
 
@@ -193,13 +194,7 @@ def correct_text(text: str, rules: Dict[str, str]) -> str:
     ``a -> b`` and ``b -> c`` cannot chain. Longer terms are tried first so a
     phrase wins over one of its words.
     """
-    if not rules or not text:
-        return text
-    pattern = r"(?<!\w)(?:" + "|".join(
-        re.escape(term) for term in sorted(rules, key=len, reverse=True)
-    ) + r")(?!\w)"
-    return re.sub(pattern, lambda match: rules.get(match[0].lower(), match[0]),
-                  text, flags=re.IGNORECASE)
+    return replace_terms(text, rules)
 
 
 def vocabulary_terms(rules: Dict[str, str],

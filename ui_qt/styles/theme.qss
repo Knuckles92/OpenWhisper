@@ -4673,6 +4673,119 @@ QPlainTextEdit#cleanupPromptEditor:disabled {
 /* personalize:S3 end */
 
 /* personalize:S4 begin (dictionary) */
+QWidget#dictionaryLibrary,
+QWidget#dictionaryRows,
+QWidget#dictionaryRowText,
+QWidget#dictionaryReflow,
+QWidget#dictionaryActions {
+    background-color: transparent;
+}
+
+QLineEdit#dictionaryTermInput,
+QLineEdit#dictionaryHeardInput,
+QLineEdit#dictionarySearchInput {
+    background-color: @slate-field;
+    border: 1px solid @slate-border-strong;
+    border-radius: 9px;
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+QLineEdit#dictionaryTermInput:hover,
+QLineEdit#dictionaryHeardInput:hover,
+QLineEdit#dictionarySearchInput:hover {
+    border-color: @slate-border-hover;
+}
+
+QLineEdit#dictionaryTermInput:focus,
+QLineEdit#dictionaryHeardInput:focus,
+QLineEdit#dictionarySearchInput:focus {
+    border: 1px solid @accent;
+}
+
+QLabel#dictionaryMessage {
+    color: @success-text;
+    background-color: transparent;
+    font-size: 12px;
+}
+
+QLabel#dictionaryMessage[tone="error"] {
+    color: @danger-text-soft;
+}
+
+QLabel#dictionaryCount {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.12);
+    border: 1px solid rgba(@accent-rgb, 0.25);
+    border-radius: 10px;
+    padding: 3px 9px;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+QFrame#dictionaryRow {
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 9px;
+}
+
+QFrame#dictionaryRow:hover {
+    border-color: @slate-border-strong;
+}
+
+QLabel#dictionaryTerm {
+    color: @slate-text;
+    background-color: transparent;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#dictionaryDetail {
+    color: @slate-text-3;
+    background-color: transparent;
+    font-size: 12px;
+}
+
+QLabel#dictionaryBadge {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.12);
+    border: 1px solid rgba(@accent-rgb, 0.28);
+    border-radius: 8px;
+    padding: 1px 7px;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+QLabel#dictionaryBadge[tone="new"] {
+    color: @success-text;
+    background-color: rgba(@success-rgb, 0.12);
+    border: 1px solid rgba(@success-rgb, 0.30);
+}
+
+QPushButton#dictionaryStar {
+    background-color: transparent;
+    border: none;
+    border-radius: 8px;
+    padding: 0px;
+    qproperty-icon: url(ui_qt/assets/tabler/star-gray@icon-suffix.svg);
+}
+
+QPushButton#dictionaryStar:hover {
+    background-color: @slate-raised;
+}
+
+QPushButton#dictionaryStar[starred="true"] {
+    qproperty-icon: url(ui_qt/assets/tabler/star-filled-amber@icon-suffix.svg);
+}
+
+QLabel#dictionaryEmpty {
+    color: @slate-text-4;
+    background-color: @slate-disabled;
+    border: 1px dashed @slate-border-strong;
+    border-radius: 10px;
+    padding: 18px;
+    font-size: 12px;
+}
 /* personalize:S4 end */
 
 /* personalize:S5 begin (snippets) */

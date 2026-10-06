@@ -13,9 +13,13 @@ The saved file stays the source of truth. At stop the session checks that the
 audio it followed is exactly the start of the saved WAV, takes the rest
 (post-roll and end padding) from the file itself, and checks the resampled
 length against the file's. Any doubt (an engine reload or switch, a cancel, a
-meeting, a language change, an error, a mismatch) discards the early text and
-the caller decodes the whole file as before, so the transcript is always the
-one that path would produce.
+meeting, a language or vocabulary change, an error, a mismatch) discards the
+early text and the caller decodes the whole file as before, so the transcript
+is always the one that path would produce.
+
+Early windows decode with the dictation's RecognitionContext from its start.
+The final pass reads the context again; a different one (the language was
+switched, the dictionary edited) means the early text cannot be reused.
 """
 from __future__ import annotations
 
@@ -60,16 +64,19 @@ class DictationSession:
     only raises flags and never waits for a window in flight.
     """
 
-    def __init__(self, controller, backend, recorder, *, poll_sec: Optional[float] = None):
+    def __init__(self, controller, backend, recorder, *, poll_sec: Optional[float] = None,
+                 recognition=None):
         self._controller = controller
         self.backend = backend
         self.recorder = recorder
+        self.recognition = recognition
         self._poll_sec = (
             config.INCREMENTAL_DICTATION_POLL_SEC if poll_sec is None else poll_sec
         )
         self._generation = backend.generation
-        # Both set when the first window's worth of audio has been captured.
+        # Set when the first window's worth of audio has been captured.
         self._language: Optional[str] = None
+        self._phrases: tuple[str, ...] = ()
         self._resampler = None
         self._splitter = WindowSplitter()
         # Recorder bytes already fed to the resampler, and their CRC-32.
@@ -86,7 +93,7 @@ class DictationSession:
         )
 
     @classmethod
-    def create(cls, controller) -> Optional["DictationSession"]:
+    def create(cls, controller, recognition=None) -> Optional["DictationSession"]:
         """A session for the recording just started, or None where it cannot help."""
         from transcriber.optional_backend import LocalSpeechBackend
 
@@ -114,7 +121,7 @@ class DictationSession:
             return None
         if np.dtype(getattr(recorder, "dtype", None)) != np.int16:
             return None
-        return cls(controller, backend, recorder)
+        return cls(controller, backend, recorder, recognition=recognition)
 
     @property
     def early_windows(self) -> int:
@@ -157,7 +164,7 @@ class DictationSession:
             if self.recorder.get_recording_duration() < MAX_SAMPLES / SAMPLE_RATE:
                 return recording
             self._resampler = resampler()
-            self._language = self.backend.request_language()
+            self._language, self._phrases = self._inputs()
         # Also how the thread ends promptly at shutdown, when every engine is
         # cleaned up.
         reason = self._stale()
@@ -200,7 +207,7 @@ class DictationSession:
             offset, audio = self._ready[0]
             started = time.perf_counter()
             try:
-                text = self.backend.decode_window(audio, self._language)
+                text = self.backend.decode_window(audio, self._language, **self._phrase_options())
             except Exception as exc:
                 self._invalidate(f"early decode failed: {exc}")
                 return
@@ -234,9 +241,22 @@ class DictationSession:
         is_meeting_active = getattr(self._controller, "is_meeting_active", None)
         if callable(is_meeting_active) and is_meeting_active():
             return "a meeting started"
-        if self._language is not None and backend.request_language() != self._language:
-            return "the language setting changed"
+        if self._language is not None and self._inputs() != (self._language, self._phrases):
+            return "the language or vocabulary changed"
         return None
+
+    def _inputs(self) -> tuple[str, tuple[str, ...]]:
+        """The language and phrases a decode for this dictation sends now."""
+        return self.backend.recognition_inputs(self.recognition)
+
+    def _phrase_options(self) -> dict:
+        # Only a vocabulary adds an argument, so a decode without one is
+        # called exactly as before recognition contexts.
+        return {"phrases": self._phrases} if self._phrases else {}
+
+    def matches(self, recognition) -> bool:
+        """Whether a final pass with ``recognition`` decodes like these windows."""
+        return _context_key(recognition) == _context_key(self.recognition)
 
     def finish(self, audio_path: str) -> Optional[str]:
         """The saved recording's transcript, or None to decode the file instead.
@@ -262,7 +282,8 @@ class DictationSession:
         started = time.perf_counter()
         try:
             texts = self.backend.transcribe_windows(
-                self._verified_final_windows(audio_path), self._language
+                self._verified_final_windows(audio_path), self._language,
+                **self._phrase_options(),
             )
             reason = self._stale()
             if reason:
@@ -341,6 +362,12 @@ class DictationSession:
         yield from ready
 
 
+def _context_key(recognition) -> tuple[str, tuple[str, ...]]:
+    if not recognition:
+        return "", ()
+    return recognition.language, tuple(recognition.phrases)
+
+
 class IncrementalDictation:
     """The transcription runtime's slot for the dictation being recorded."""
 
@@ -351,11 +378,11 @@ class IncrementalDictation:
     def start(self, controller, *, recognition=None) -> None:
         """Follow the recording that just started, where its engine allows.
 
-        ``recognition`` is the job's RecognitionContext; windows decode
-        without it for now.
+        ``recognition`` is the job's RecognitionContext; early windows
+        decode with it.
         """
         try:
-            session = DictationSession.create(controller)
+            session = DictationSession.create(controller, recognition)
         except Exception:
             logger.exception("Incremental dictation could not start")
             session = None
@@ -373,23 +400,28 @@ class IncrementalDictation:
         if session is not None:
             session.discard("the recording was canceled")
 
-    def transcribe(self, backend, audio_path: str) -> str:
+    def transcribe(self, backend, audio_path: str, *, recognition=None) -> str:
         """``backend.transcribe(audio_path)``, reusing this dictation's early windows.
 
-        Only the dictation's own recording can use them; an upload or a
-        retranscribe takes the plain path and drops any stale session.
+        Only the dictation's own recording can use them, and only when the
+        final pass's ``recognition`` is the one they decoded with; an upload
+        or a retranscribe takes the plain path and drops any stale session.
         """
         with self._lock:
             session, self._session = self._session, None
         if session is not None:
-            if (
+            if not (
                 session.backend is backend
                 and _same_file(audio_path, config.RECORDED_AUDIO_FILE)
                 and _same_file(audio_path, session.recorder.output_file)
             ):
+                session.discard("the job is not this recording's")
+            elif not session.matches(recognition):
+                session.discard("the dictation's language or vocabulary changed")
+            else:
                 text = session.finish(audio_path)
                 if text is not None:
                     return text
-            else:
-                session.discard("the job is not this recording's")
+        if recognition:
+            return backend.transcribe(audio_path, recognition=recognition)
         return backend.transcribe(audio_path)

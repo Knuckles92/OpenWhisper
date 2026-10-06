@@ -30,6 +30,13 @@ def use_runtime_packages(runtime):
         sys.path.insert(0, str(packages))
 
 
+def boost_phrases(family, phrases) -> list[str]:
+    """The request's phrases for an engine that boosts them; Nemotron only."""
+    if family != "nemotron" or not isinstance(phrases, list):
+        return []
+    return [phrase for phrase in phrases if isinstance(phrase, str) and phrase.strip()][:50]
+
+
 def main():
     protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1)
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
@@ -99,8 +106,18 @@ def main():
                 language = request.get("language")
                 if family in ("parakeet", "nemotron", "moonshine", "parakeet_mlx"):
                     language = native_language_code(family, language)
+                    phrases = boost_phrases(family, request.get("phrases"))
                     if op == "stream":
-                        result = {"events": engine.stream(request["session"], samples, language, request.get("finish", False))}
+                        result = {"events": engine.stream(request["session"], samples, language, request.get("finish", False),
+                                                          **({"phrases": phrases} if phrases else {}))}
+                    elif phrases:
+                        try:
+                            result = engine.transcribe(samples, language, phrases=phrases)
+                        except Exception:
+                            # Boosting must never cost the dictation, and its
+                            # error may quote a phrase, which is never logged.
+                            print("Word boosting failed; decoding without it", file=sys.stderr)
+                            result = engine.transcribe(samples, language)
                     else:
                         result = engine.transcribe(samples, language)
                 else:

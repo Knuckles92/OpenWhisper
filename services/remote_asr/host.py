@@ -931,7 +931,8 @@ class SpeechHost:
             "runtime": self._runtime(),
             "capabilities": {"model_management": self._can_manage_models(),
                              "runtime_installation": self._can_manage_models(),
-                             "engine_controls": self._configure_runtime is not None},
+                             "engine_controls": self._configure_runtime is not None,
+                             "recognition_hints": getattr(engine, "accepts_phrases", False) is True},
         }
         if self._mcp is not None:
             ready["capabilities"]["mcp_control"] = self._controls_mcp()
@@ -1062,7 +1063,15 @@ class SpeechHost:
         started = time.perf_counter()
         try:
             if op == "transcribe":
-                result = current.transcribe(audio, language)
+                phrases = (
+                    protocol.header_phrases(header)
+                    if getattr(current, "accepts_phrases", False) is True else ()
+                )
+                # Engines without hints keep their two-argument call.
+                if phrases:
+                    result = current.transcribe(audio, language, phrases=phrases)
+                else:
+                    result = current.transcribe(audio, language)
             elif op in ("stream", "cancel_stream"):
                 session = header.get("session")
                 if not isinstance(session, str) or not session:

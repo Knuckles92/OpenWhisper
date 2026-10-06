@@ -21,12 +21,16 @@ class HostEngine:
     """The interface ``SpeechHost`` calls. Methods run on connection threads."""
 
     #: Changes when the host switches engine or model; clients reconnect.
+    #: A request's vocabulary never enters it.
     identity: tuple = ()
+    #: Whether ``transcribe``'s ``phrases`` reach a speech model that uses
+    #: them; advertised to clients as ``capabilities.recognition_hints``.
+    accepts_phrases: bool = False
 
     def describe(self) -> dict:
         raise NotImplementedError
 
-    def transcribe(self, audio: np.ndarray, language: Optional[str]) -> dict:
+    def transcribe(self, audio: np.ndarray, language: Optional[str], *, phrases=()) -> dict:
         raise NotImplementedError
 
     def stream(self, session: str, audio: np.ndarray, language: Optional[str], finish: bool) -> dict:
@@ -45,7 +49,7 @@ class UnavailableEngine(HostEngine):
         return {"family": "", "model": "", "label": "", "device": "",
                 "streaming": False, "available": False, "status": self.reason}
 
-    def transcribe(self, audio, language):
+    def transcribe(self, audio, language, *, phrases=()):
         raise RuntimeError(self.reason)
 
 
@@ -84,7 +88,13 @@ class SpeechWorkerEngine(HostEngine):
             "status": backend.device_info,
         }
 
-    def transcribe(self, audio, language):
+    @property
+    def accepts_phrases(self) -> bool:
+        return getattr(self.backend, "recognition_support", "after") == "model"
+
+    def transcribe(self, audio, language, *, phrases=()):
+        if phrases:
+            return self.backend.recognize(audio, language, phrases=tuple(phrases))
         return self.backend.recognize(audio, language)
 
     def stream(self, session, audio, language, finish):
@@ -96,6 +106,8 @@ class SpeechWorkerEngine(HostEngine):
 
 class WhisperEngine(HostEngine):
     """Local Whisper's loaded model, decoding one window per request."""
+
+    accepts_phrases = True
 
     def __init__(self, backend):
         self.backend = backend
@@ -130,7 +142,9 @@ class WhisperEngine(HostEngine):
             "status": backend.device_info,
         }
 
-    def transcribe(self, audio, language):
+    def transcribe(self, audio, language, *, phrases=()):
+        from services.recognition_context import hotwords
+
         model = self.backend.model
         if model is None:
             raise RuntimeError("Whisper is not loaded on the host")
@@ -139,6 +153,9 @@ class WhisperEngine(HostEngine):
             options["vad_parameters"] = dict(
                 min_silence_duration_ms=config.FASTER_WHISPER_VAD_MIN_SILENCE_MS
             )
+        words = hotwords(phrases)
+        if words:
+            options["hotwords"] = words
         with self._lock:
             segments, _info = model.transcribe(
                 np.asarray(audio, dtype=np.float32),

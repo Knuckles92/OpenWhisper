@@ -13,6 +13,26 @@ import sys
 import threading
 
 
+#: Optional transcription fields, sent only when the request carries them.
+_OPENAI_HINTS = ("prompt", "language", "languages", "keywords")
+
+
+def openai_transcribe(request: dict) -> dict:
+    import httpx
+    from openai import OpenAI
+
+    hints = {name: request[name] for name in _OPENAI_HINTS if request.get(name)}
+    # The parent enforces an absolute deadline as well. Disabling
+    # automatic retries avoids duplicate paid requests on cancel.
+    with OpenAI(api_key=request["api_key"], max_retries=0,
+                timeout=httpx.Timeout(120., connect=10.)) as client:
+        with open(request["audio_path"], "rb") as audio:
+            response = client.audio.transcriptions.create(
+                file=audio, model=request["model"], response_format=request["response_format"],
+                **hints)
+    return {"text": response if isinstance(response, str) else response.text}
+
+
 def main():
     port = int(os.environ.pop("OPENWHISPER_WORKER_PORT"))
     token = os.environ.pop("OPENWHISPER_WORKER_TOKEN")
@@ -86,16 +106,7 @@ def main():
                 from services.hf_access import _download_model_files_in_process
                 result = {"path": _download_model_files_in_process(request["model"], progress)}
             elif op == "openai_transcribe":
-                import httpx
-                from openai import OpenAI
-                # The parent enforces an absolute deadline as well. Disabling
-                # automatic retries avoids duplicate paid requests on cancel.
-                with OpenAI(api_key=request["api_key"], max_retries=0,
-                            timeout=httpx.Timeout(120., connect=10.)) as client:
-                    with open(request["audio_path"], "rb") as audio:
-                        response = client.audio.transcriptions.create(
-                            file=audio, model=request["model"], response_format=request["response_format"])
-                result = {"text": response if isinstance(response, str) else response.text}
+                result = openai_transcribe(request)
             elif op == "ping":
                 result = {"ready": True}
             else:

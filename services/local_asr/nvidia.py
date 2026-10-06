@@ -33,6 +33,47 @@ class Options(c.Structure):
     ]
 
 
+class SpeechContext(c.Structure):
+    """``nemo_speech_asr_speech_context``: phrases to boost and their score."""
+
+    _fields_ = [
+        ("size", c.c_size_t), ("phrases", c.POINTER(c.c_char_p)),
+        ("phrase_count", c.c_size_t), ("boost", c.c_float),
+    ]
+
+
+#: Whether the app sends dictionary phrases to Nemotron for word boosting.
+#: NeMo boosts on cache-aware RNNT models only when the GGUF embeds its
+#: SentencePiece tokenizer. The pinned nemotron-3.5 q8_0 GGUF does not: on
+#: 2026-10-06 NeMo-Speech v0.1.0 took the speech context, logged that no
+#: phrase could be tokenized, and decoded unchanged at scores 2 to 20. Turn
+#: this on only with a model whose boosted decode changes the transcript.
+WORD_BOOSTING = False
+#: The NeMo docs give 2-3 as the typical cache-aware RNNT score (capped by
+#: the decoder's max_boost); higher scores make words repeat spuriously.
+BOOST_SCORE = 2.0
+MAX_BOOST_PHRASES = 50
+
+
+def speech_context(phrases, boost: float = BOOST_SCORE):
+    """A speech context for ``phrases``, and what must outlive the native call.
+
+    ``Options.speech_contexts`` is a raw address, which keeps nothing alive:
+    the struct, the pointer array and every encoded phrase stay referenced
+    by the returned keepalive for as long as the request or stream lasts.
+    Returns ``(None, None)`` when there is nothing to boost.
+    """
+    encoded = [
+        phrase.encode("utf-8") for phrase in phrases[:MAX_BOOST_PHRASES]
+        if isinstance(phrase, str) and phrase.strip()
+    ]
+    if not encoded:
+        return None, None
+    array = (c.c_char_p * len(encoded))(*encoded)
+    context = SpeechContext(c.sizeof(SpeechContext), array, len(encoded), boost)
+    return context, (context, array, encoded)
+
+
 def _load_linux(runtime: str, device: str):
     # RUNPATH=$ORIGIN finds the rest of the release (ggml, and for CUDA its
     # own cudart and cuBLAS) beside this library. The release also bundles
@@ -133,6 +174,9 @@ class NvidiaRecognizer:
         self.handle = c.c_void_p()
         self._check(self.lib.nemo_speech_asr_create(c.byref(config), c.byref(self.handle)))
         self.streams = {}
+        #: Each open stream's speech-context keepalive: its options bound
+        #: when it opened and may be read until it closes.
+        self._stream_contexts = {}
 
     def _bind(self):
         specs = {
@@ -164,13 +208,18 @@ class NvidiaRecognizer:
             message = self.lib.nemo_speech_asr_last_error()
             raise RuntimeError(message.decode("utf-8", "replace") if message else f"Speech runtime error {status}")
 
-    def _options(self, language):
+    def _options(self, language, phrases=()):
+        """Request options, and the keepalive their speech context needs."""
         options = self.lib.nemo_speech_asr_recognition_options_default()
         options.language_code = language.encode() if language and language != "auto" else None
         options.enable_word_time_offsets = True
         options.enable_automatic_punctuation = True
         options.interim_results = True
-        return options
+        context, keepalive = speech_context(list(phrases or ()))
+        if context is not None:
+            options.speech_contexts = c.addressof(context)
+            options.speech_context_count = 1
+        return options, keepalive
 
     def _result(self, result):
         try:
@@ -187,20 +236,25 @@ class NvidiaRecognizer:
         finally:
             self.lib.nemo_speech_asr_result_destroy(result)
 
-    def transcribe(self, samples: array.array, language=None):
-        options = self._options(language)
+    def transcribe(self, samples: array.array, language=None, phrases=()):
+        options, keepalive = self._options(language, phrases)
         result = c.c_void_p()
         buf = (c.c_float * len(samples)).from_buffer(samples)
-        self._check(self.lib.nemo_speech_asr_recognize_f32(self.handle, c.byref(options), buf, len(samples), 16000, c.byref(result)))
+        try:
+            self._check(self.lib.nemo_speech_asr_recognize_f32(self.handle, c.byref(options), buf, len(samples), 16000, c.byref(result)))
+        finally:
+            del keepalive
         data = self._result(result)
         return dict(text=data["text"], segments=segments_from_words(data, len(samples)/16000))
 
-    def stream(self, key, samples, language=None, finish=False):
+    def stream(self, key, samples, language=None, finish=False, phrases=()):
         if key not in self.streams:
-            options = self._options(language)
+            options, keepalive = self._options(language, phrases)
             handle = c.c_void_p()
             self._check(self.lib.nemo_speech_asr_streaming_recognize(self.handle, c.byref(options), c.byref(handle)))
             self.streams[key] = handle
+            if keepalive is not None:
+                self._stream_contexts[key] = keepalive
         handle = self.streams[key]
         if samples:
             buf = (c.c_float * len(samples)).from_buffer(samples)
@@ -217,17 +271,20 @@ class NvidiaRecognizer:
         if finish:
             self.lib.nemo_speech_asr_stream_close(handle)
             del self.streams[key]
+            self._stream_contexts.pop(key, None)
         return results
 
     def cancel_stream(self, key):
         handle = self.streams.pop(key, None)
         if handle is not None:
             self.lib.nemo_speech_asr_stream_close(handle)
+        self._stream_contexts.pop(key, None)
 
     def close(self):
         for handle in self.streams.values():
             self.lib.nemo_speech_asr_stream_close(handle)
         self.streams.clear()
+        self._stream_contexts.clear()
         if self.handle:
             self.lib.nemo_speech_asr_destroy(self.handle)
             self.handle = None

@@ -57,8 +57,29 @@ class GpuFallbackCause:
     UNKNOWN = "unknown"
 
 
+def whisper_hints(recognition) -> dict:
+    """faster-whisper options for a RecognitionContext; empty adds none.
+
+    Only JSON values, since they cross into the isolated worker.
+    """
+    from services.recognition_context import hotwords, language_code
+
+    if not recognition:
+        return {}
+    options = {}
+    words = hotwords(recognition.phrases)
+    if words:
+        options["hotwords"] = words
+    language = language_code(recognition.language)
+    if language:
+        options["language"] = language
+    return options
+
+
 class LocalWhisperBackend(TranscriptionBackend):
     """Local Whisper model transcription backend using faster-whisper."""
+
+    supports_recognition = True
 
     def __init__(
         self,
@@ -425,8 +446,12 @@ class LocalWhisperBackend(TranscriptionBackend):
                 f"Model '{self.model_name}' failed to load after download"
             )
 
-    def transcribe(self, audio_path: str) -> str:
-        """Transcribe an audio file with the loaded faster-whisper model."""
+    def transcribe(self, audio_path: str, recognition=None) -> str:
+        """Transcribe an audio file with the loaded faster-whisper model.
+
+        ``recognition``'s phrases become ``hotwords``, which faster-whisper
+        puts in every window's prompt, and its language replaces detection.
+        """
         if not self.is_available():
             raise Exception("Faster-whisper model is not available.")
 
@@ -455,6 +480,7 @@ class LocalWhisperBackend(TranscriptionBackend):
                 beam_size=config.FASTER_WHISPER_BEAM_SIZE,
                 vad_filter=config.FASTER_WHISPER_VAD_ENABLED,
                 vad_parameters=vad_params,
+                **whisper_hints(recognition),
                 **cancel_options,
             )
 
@@ -488,6 +514,10 @@ class LocalWhisperBackend(TranscriptionBackend):
     def is_available(self) -> bool:
         """Return whether a model is loaded."""
         return self.model is not None
+
+    @property
+    def recognition_support(self) -> str:
+        return "model"
 
     def reload_model(self, model_name: str = None):
         """Reload an explicit model or the model currently stored in settings."""

@@ -426,6 +426,8 @@ def test_new_pages_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatch, u
                     assert control.mapTo(page, control.rect().topLeft()).x() >= 0, key
                     assert control.mapTo(page, control.rect().bottomRight()).x() < page.width(), key
             for tile in page.findChildren(TileBase):
+                if tile.isHidden():
+                    continue  # a tile shown only in some states
                 for label in (tile.title_label, tile.description_label):
                     assert label.height() >= label.heightForWidth(label.width()), key
                     assert tile.rect().contains(label.mapTo(tile, label.rect().bottomRight())), key

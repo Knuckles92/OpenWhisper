@@ -23,6 +23,38 @@ logger = logging.getLogger(__name__)
 #: rejection that would fail the whole transcription.
 CHUNK_UPLOAD_CONCURRENCY = 3
 
+#: Statuses that blame the request itself. A request carrying hints is sent
+#: once more without them; an auth, quota or rate-limit error would only
+#: fail again.
+_HINT_REJECTIONS = frozenset({400, 422})
+
+
+def transcription_hints(api_model: str, recognition) -> dict:
+    """The hint fields ``api_model`` takes for a RecognitionContext.
+
+    gpt-transcribe takes ``keywords`` and ``languages``; the older models
+    take a ``prompt``, read as preceding text, and one ``language``.
+    """
+    from services.recognition_context import keywords, language_code, vocabulary_prompt
+
+    if not recognition:
+        return {}
+    hints = {}
+    language = language_code(recognition.language)
+    if api_model == "gpt-transcribe":
+        words = keywords(recognition.phrases)
+        if words:
+            hints["keywords"] = words
+        if language:
+            hints["languages"] = [language]
+    else:
+        prompt = vocabulary_prompt(recognition.phrases)
+        if prompt:
+            hints["prompt"] = prompt
+        if language:
+            hints["language"] = language
+    return hints
+
 
 class OpenAIBackend(TranscriptionBackend):
     """OpenAI API transcription backend."""
@@ -32,6 +64,7 @@ class OpenAIBackend(TranscriptionBackend):
     #: openai SDK takes most of a second to import, so the client waits for
     #: the first request or for ``prepare_client`` on a worker.
     _client_pending = False
+    supports_recognition = True
 
     def __init__(self, model_type: str = "api", api_key: str = None):
         super().__init__()
@@ -74,9 +107,9 @@ class OpenAIBackend(TranscriptionBackend):
             return serving_api_model(self.model_type)
         raise ValueError(f"Unknown API transcription model: {self.model_type}")
 
-    def _transcribe_file(self, audio_path: str, api_model: str) -> str:
+    def _transcribe_file(self, audio_path: str, api_model: str, recognition=None) -> str:
         try:
-            return self._request_transcript(audio_path, api_model)
+            return self._request_hinted(audio_path, api_model, recognition)
         except Exception as exc:
             if (
                 api_model not in openai_retirement.RETIRING_TRANSCRIPTION_MODELS
@@ -84,14 +117,38 @@ class OpenAIBackend(TranscriptionBackend):
             ):
                 raise
             # OpenAI switched the model off before this computer's clock
-            # reached the shutdown date.
+            # reached the shutdown date. The fallback model takes other
+            # hint fields, so they are chosen again for it.
             logger.warning(
                 "OpenAI no longer serves %s; retrying with %s",
                 api_model, config.DEFAULT_API_MODEL,
             )
-            return self._request_transcript(audio_path, config.DEFAULT_API_MODEL)
+            return self._request_hinted(audio_path, config.DEFAULT_API_MODEL, recognition)
 
-    def _request_transcript(self, audio_path: str, api_model: str) -> str:
+    def _request_hinted(self, audio_path: str, api_model: str, recognition) -> str:
+        """One request with ``recognition``'s hints, then once more without them.
+
+        Hints must never cost a dictation, and OpenAI documents no limits
+        for them.
+        """
+        hints = transcription_hints(api_model, recognition)
+        if not hints:
+            return self._request_transcript(audio_path, api_model)
+        try:
+            return self._request_transcript(audio_path, api_model, **hints)
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if status not in _HINT_REJECTIONS or openai_retirement.is_model_gone_error(exc):
+                raise
+            logger.warning(
+                "OpenAI rejected a request with hints (HTTP %s: %d keywords, "
+                "%d prompt characters, language %s); retrying without them",
+                status, len(hints.get("keywords", ())), len(hints.get("prompt", "")),
+                "set" if "language" in hints or "languages" in hints else "unset",
+            )
+            return self._request_transcript(audio_path, api_model)
+
+    def _request_transcript(self, audio_path: str, api_model: str, **hints) -> str:
         if self.should_cancel:
             raise RuntimeError("Transcription canceled")
         with open(audio_path, "rb") as audio_file:
@@ -99,6 +156,7 @@ class OpenAIBackend(TranscriptionBackend):
                 model=api_model,
                 file=audio_file,
                 response_format="json" if api_model == "gpt-transcribe" else "text",
+                **hints,
             )
         return (response if isinstance(response, str) else response.text).strip()
 
@@ -109,8 +167,12 @@ class OpenAIBackend(TranscriptionBackend):
         needs_splitting, file_size_mb = audio_processor.check_file_size(audio_path)
         return file_size_mb if needs_splitting else None
 
-    def transcribe(self, audio_path: str) -> str:
-        """Transcribe a file, uploading one over the size limit in chunks."""
+    def transcribe(self, audio_path: str, recognition=None) -> str:
+        """Transcribe a file, uploading one over the size limit in chunks.
+
+        ``recognition``'s language and vocabulary go with every request, in
+        the fields the model takes (``transcription_hints``).
+        """
         try:
             self.is_transcribing = True
             self.reset_cancel_flag()
@@ -122,11 +184,13 @@ class OpenAIBackend(TranscriptionBackend):
 
             api_model = self._get_api_model_name()
             logger.info(f"Using OpenAI API model: {api_model}")
+            # Without a context the helpers are called exactly as before.
+            extra = {"recognition": recognition} if recognition else {}
             if self.large_file_size_mb(audio_path) is not None:
-                transcript = self._transcribe_split(audio_path, api_model)
+                transcript = self._transcribe_split(audio_path, api_model, **extra)
             else:
                 logger.info("Sending audio file to OpenAI API...")
-                transcript = self._transcribe_file(audio_path, api_model)
+                transcript = self._transcribe_file(audio_path, api_model, **extra)
 
             if self.should_cancel:
                 logger.info("Transcription canceled by user")
@@ -141,6 +205,10 @@ class OpenAIBackend(TranscriptionBackend):
             raise
         finally:
             self.is_transcribing = False
+
+    @property
+    def recognition_support(self) -> str:
+        return "model"
 
     def is_available(self) -> bool:
         """Return whether there is a key and a client, built or still pending.
@@ -161,14 +229,14 @@ class OpenAIBackend(TranscriptionBackend):
             self.api_key = api_key
             self._client_pending = True
 
-    def _transcribe_one_chunk(self, chunk_file: str, api_model: str) -> str:
+    def _transcribe_one_chunk(self, chunk_file: str, api_model: str, **extra) -> str:
         """Upload one chunk. Raises if the job was canceled before it started."""
         if self.should_cancel:
             raise Exception("Transcription canceled")
 
-        return self._transcribe_file(chunk_file, api_model)
+        return self._transcribe_file(chunk_file, api_model, **extra)
 
-    def _transcribe_split(self, audio_path: str, api_model: str) -> str:
+    def _transcribe_split(self, audio_path: str, api_model: str, **extra) -> str:
         """Split a file over the upload limit and upload the chunks.
 
         The chunks are temp files shared through ``audio_processor``, so they
@@ -187,14 +255,14 @@ class OpenAIBackend(TranscriptionBackend):
             self._report_progress(
                 f"Transcribing {len(chunk_files)} chunks...", transcribing=True
             )
-            return self._transcribe_chunks(chunk_files, api_model)
+            return self._transcribe_chunks(chunk_files, api_model, **extra)
         finally:
             try:
                 audio_processor.cleanup_temp_files()
             except Exception as cleanup_error:
                 logger.warning(f"Failed to cleanup temp files: {cleanup_error}")
 
-    def _transcribe_chunks(self, chunk_files: List[str], api_model: str) -> str:
+    def _transcribe_chunks(self, chunk_files: List[str], api_model: str, **extra) -> str:
         """Upload chunks concurrently and combine their text in order.
 
         Each chunk is an independent upload with no shared state, and the wall
@@ -217,7 +285,7 @@ class OpenAIBackend(TranscriptionBackend):
 
         if total <= 1:
             transcriptions = [
-                self._transcribe_one_chunk(chunk, api_model)
+                self._transcribe_one_chunk(chunk, api_model, **extra)
                 for chunk in chunk_files
             ]
         else:
@@ -225,7 +293,7 @@ class OpenAIBackend(TranscriptionBackend):
             with ThreadPoolExecutor(
                 max_workers=workers, thread_name_prefix="chunk-upload"
             ) as pool:
-                futures = [pool.submit(self._transcribe_one_chunk, chunk, api_model)
+                futures = [pool.submit(self._transcribe_one_chunk, chunk, api_model, **extra)
                            for chunk in chunk_files]
                 done, _ = wait(futures, return_when=FIRST_EXCEPTION)
                 failed = next((future for future in futures

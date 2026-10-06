@@ -69,6 +69,16 @@ resumable and verified:
   base64 in the JSON reply; ``records_delete`` removes one, ``records_clear``
   every one of a kind, and ``records_abort`` drops an unfinished upload.
 
+Vocabulary hints are advertised as ``ready.capabilities.recognition_hints``:
+true when the host's engine uses them (Whisper's hotwords, or word boosting
+where it is verified), false or missing otherwise. A client may then add
+``phrases`` to a ``transcribe`` header: at most ``MAX_HINT_PHRASES`` strings
+of at most ``MAX_HINT_CHARS`` characters, the client's own dictionary words
+with its starred ones first. The host drops entries that break those limits,
+ignores the field when its engine takes no hints, and never puts phrases in
+its engine identity, so they never disconnect anyone. Older hosts ignore the
+unknown field. Text read from other apps is never sent.
+
 MCP control is advertised as ``ready.capabilities.mcp_control``: true when the
 host's owner allows paired computers to manage its MCP server (off by
 default), false when they haven't, and missing on older hosts. The permission
@@ -143,6 +153,10 @@ CLOSE_BUSY = 4429
 #: Longest name one computer keeps for another, given or chosen.
 MAX_NAME = 60
 
+#: Bounds on a ``transcribe`` header's ``phrases``.
+MAX_HINT_PHRASES = 50
+MAX_HINT_CHARS = 64
+
 _HEADER = struct.Struct(">I")
 
 
@@ -174,6 +188,23 @@ def pack_request(header: dict, audio=None, *, payload: Optional[bytes] = None) -
     else:
         data = b"" if audio is None else encode_audio(audio)
     return _HEADER.pack(len(body)) + body + data
+
+
+def header_phrases(header: dict) -> tuple:
+    """A request's valid vocabulary hints; anything malformed is left out."""
+    raw = header.get("phrases")
+    if not isinstance(raw, list):
+        return ()
+    phrases = []
+    for value in raw:
+        if not isinstance(value, str):
+            continue
+        phrase = " ".join(value.split())
+        if phrase and len(phrase) <= MAX_HINT_CHARS:
+            phrases.append(phrase)
+        if len(phrases) >= MAX_HINT_PHRASES:
+            break
+    return tuple(phrases)
 
 
 def unpack_request(frame: bytes) -> Tuple[dict, np.ndarray]:

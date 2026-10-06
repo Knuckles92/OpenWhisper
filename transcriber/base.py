@@ -12,9 +12,24 @@ class TranscriptionBackend(ABC):
     #: starts the transcription proper. Set by the application controller.
     on_progress: Optional[Callable[[str, bool], None]] = None
 
+    #: Whether ``transcribe`` also takes ``recognition=``, a
+    #: services.recognition_context.RecognitionContext with the dictation's
+    #: language and vocabulary. Callers pass it only when this is True and
+    #: the context is not empty.
+    supports_recognition: bool = False
+
     def __init__(self):
         self.is_transcribing = False
         self.should_cancel = False
+
+    @property
+    def recognition_support(self) -> str:
+        """"model" when dictionary phrases reach the speech model, else "after".
+
+        Cheap: the Dictionary page reads it to say what the dictionary does
+        with this engine.
+        """
+        return "after"
 
     @abstractmethod
     def transcribe(self, audio_path: str) -> str:

@@ -164,7 +164,12 @@ class IsolatedOpenAIClient:
         self._workers = set()
         self.audio = SimpleNamespace(transcriptions=self)
 
-    def create(self, *, model, file, response_format):
+    def create(self, *, model, file, response_format, prompt=None, language=None,
+               languages=None, keywords=None):
+        hints = {name: value for name, value in (
+            ("prompt", prompt), ("language", language),
+            ("languages", languages), ("keywords", keywords),
+        ) if value}
         with self._lock:
             if self._closed:
                 raise RuntimeError("Transcription canceled")
@@ -173,7 +178,8 @@ class IsolatedOpenAIClient:
         try:
             return worker.request("openai_transcribe", api_key=self._api_key,
                                   audio_path=os.path.abspath(file.name), model=model,
-                                  response_format=response_format, timeout=180.)["text"]
+                                  response_format=response_format, timeout=180.,
+                                  **hints)["text"]
         finally:
             worker.close()
             with self._lock:
