@@ -21,6 +21,8 @@ _GENERIC_ENGINE_LINE = (
 _STEER_OFF_LINE = (
     "Off. Your dictionary still fixes spellings after recognition and in AI cleanup."
 )
+_STEER_OFF_NO_CLEANUP_LINE = "Off. Only Sounds like spellings are fixed while AI cleanup is off."
+_NOT_FIXED_HINT = "Without a Sounds like spelling it won't be fixed while AI cleanup is off."
 _LEARN_LINE = (
     "When you fix a dictated word the same way twice, it's added here. Only "
     "the words you just dictated are compared."
@@ -57,6 +59,7 @@ CONTROL_ATTRS = (
     "dictionary_learn_tile",
     "dictionary_learn_switch",
     "dictionary_learn_gate_tile",
+    "dictionary_cleanup_gate_tile",
 )
 
 _ENGINE_NAMES = {"local_whisper": "Whisper", "api": "OpenAI"}
@@ -92,10 +95,14 @@ def _current_backend():
         return None
 
 
-def engine_line(settings: dict, backend=None) -> str:
-    """What the dictionary does with the dictation engine in use."""
+def _engine_support(settings: dict, backend=None) -> tuple[str, str, str]:
+    """``(support, name, destination)`` for the dictation engine in use.
+
+    ``support`` is "" (and the name may be) when only a paired host that
+    isn't connected could say whether it takes hints.
+    """
     from services.local_asr.catalog import BACKENDS
-    from services.recognition_context import SUPPORT_MODEL, engine_support
+    from services.recognition_context import engine_support
     from services.settings import SettingsKey, setting_value
 
     engine = setting_value(SettingsKey.SELECTED_MODEL, settings)
@@ -106,10 +113,51 @@ def engine_line(settings: dict, backend=None) -> str:
         support = backend.recognition_support
         name = backend.name
         destination = backend.host_name
-    if not support or not name:
+    return (support, name, destination) if name else ("", "", "")
+
+
+def _cleanup_on(settings: dict) -> bool:
+    from services import cleanup_prompts
+    from services.cleanup_prompts import CleanupLevel
+
+    return cleanup_prompts.resolve_level(settings) != CleanupLevel.NONE
+
+
+def cannot_steer(settings: dict, backend=None) -> bool:
+    """Whether the engine in use is known to ignore dictionary hints."""
+    from services.recognition_context import SUPPORT_AFTER
+
+    return _engine_support(settings, backend)[0] == SUPPORT_AFTER
+
+
+def sounds_like_only(settings: dict, backend=None) -> bool:
+    """Whether only Sounds like spellings fix words now.
+
+    True when AI cleanup is off and the words don't reach the speech model,
+    because the engine can't take them or steering is off.
+    """
+    from services.recognition_context import SUPPORT_MODEL
+    from services.settings import resolve_dictionary_steer_recognition
+
+    support = _engine_support(settings, backend)[0]
+    if not support or _cleanup_on(settings):
+        return False
+    return support != SUPPORT_MODEL or not resolve_dictionary_steer_recognition(settings)
+
+
+def engine_line(settings: dict, backend=None) -> str:
+    """What the dictionary does with the dictation engine in use."""
+    from services.recognition_context import SUPPORT_MODEL
+
+    support, name, destination = _engine_support(settings, backend)
+    if not support:
         return _GENERIC_ENGINE_LINE
     if support != SUPPORT_MODEL:
-        return f"Your engine ({name}) uses your dictionary after recognition."
+        if _cleanup_on(settings):
+            return (f"Your engine ({name}) can't be steered. AI cleanup and Sounds "
+                    "like spellings fix your words after recognition.")
+        return (f"Your engine ({name}) can't be steered, and AI cleanup is off, so "
+                "only Sounds like spellings are fixed.")
     line = f"Your engine ({name}) also steers the speech model toward your words."
     if destination:
         line += f" They're sent to {destination} with your audio."
@@ -138,8 +186,20 @@ def refresh(dialog) -> None:
         page.show_settings(dialog._settings_snapshot())
 
 
-def basic_rows(page, group) -> None:
+def basic_detail(settings: dict) -> str:
+    """The Basic Dictionary row's line: the count, and what fixes words now."""
     from services.dictionary import load_dictionary, summary
+
+    limited = sounds_like_only(settings, _current_backend())
+    if load_dictionary(settings):
+        count = summary(settings)
+        return f"{count} · Only Sounds like spellings are fixed while AI cleanup is off." if limited else count
+    if limited:
+        return "Names and terms to get right. With AI cleanup off, each needs a Sounds like spelling."
+    return "Names and terms dictation should always get right."
+
+
+def basic_rows(page, group) -> None:
     from ui_qt.widgets.buttons import Button, fit_compact_button, neutral_button
 
     button = neutral_button(Button("Add word"))
@@ -148,10 +208,7 @@ def basic_rows(page, group) -> None:
     detail = page._row(group, "Dictionary", "", button)
     button.setAccessibleName("Add word to dictionary")
     button.clicked.connect(lambda: open_composer(page.dialog))
-    page.add_refresh_hook(lambda settings: detail.setText(
-        summary(settings) if load_dictionary(settings)
-        else "Names and terms dictation should always get right."
-    ))
+    page.add_refresh_hook(lambda settings: detail.setText(basic_detail(settings)))
 
 
 def open_composer(dialog) -> None:
@@ -197,6 +254,19 @@ class _DictionaryPage(QObject):
         self._editing = ""
         self._settings = {}
         self._showing = False
+
+        # Shown only while AI cleanup is off on an engine that can't take
+        # your words, when Sounds like spellings are all that's fixed.
+        self.cleanup_gate = dialog.cleanup_gate_tile(
+            "Only Sounds like spellings get fixed. AI cleanup uses your words too.",
+            needed=lambda: cannot_steer(dialog._settings_snapshot(), _current_backend()),
+        )
+        self.cleanup_gate.setProperty("tileId", "dictionaryCleanupGate")
+        # After the dialog's own handler has turned cleanup on.
+        dialog._cleanup_gates[-1][1].clicked.connect(
+            lambda: self.show_settings(dialog._settings_snapshot())
+        )
+        layout.addWidget(self.cleanup_gate)
 
         (attr, title, description) = SEARCH_FIELDS[0]
         composer = InfoTile(title, description, design_icon("plus-blue.svg"))
@@ -314,6 +384,7 @@ class _DictionaryPage(QObject):
             ("dictionary_learn_tile", self.learn_tile),
             ("dictionary_learn_switch", self.learn_switch),
             ("dictionary_learn_gate_tile", self.learn_gate_tile),
+            ("dictionary_cleanup_gate_tile", self.cleanup_gate),
         ):
             setattr(dialog, name, widget)
         layout.parentWidget().installEventFilter(self)
@@ -334,7 +405,8 @@ class _DictionaryPage(QObject):
 
     def _show(self, settings: dict) -> None:
         from config import config
-        from services.dictionary import load_dictionary, spelling_rules
+        from services.dictionary import load_dictionary, spelling_rule, spelling_rules
+        from services.recognition_context import SUPPORT_AFTER, SUPPORT_MODEL
         from services.settings import (
             resolve_app_context_read_text,
             resolve_dictionary_learn_enabled,
@@ -342,6 +414,15 @@ class _DictionaryPage(QObject):
         )
 
         self._settings = settings
+        backend = _current_backend()
+        support, name, _destination = _engine_support(settings, backend)
+        steering = resolve_dictionary_steer_recognition(settings)
+        if name:
+            self.cleanup_gate.set_description(
+                f"{name} can't listen for your words, so only Sounds like spellings "
+                "get fixed. AI cleanup uses your words too."
+            )
+        self.dialog.refresh_cleanup_gates()
         terms = load_dictionary(settings)
         self.library.set_terms(terms)
         self.count.setText(f"{len(terms)} / {config.MAX_DICTIONARY_TERMS}")
@@ -351,21 +432,32 @@ class _DictionaryPage(QObject):
             f"{fresh} new word{'' if fresh == 1 else 's'}. Undo any you don't want."
         )
         self.new_tile.setVisible(bool(fresh))
-        rules = len(spelling_rules(settings))
+        moving = spelling_rules(settings)
+        rules = len(moving)
+        # A moved word works without AI cleanup only through the speech
+        # model or its Sounds like spelling.
+        if (support == SUPPORT_MODEL and steering) or all(spelling_rule(rule)[1] for rule in moving):
+            reason = ("As dictionary words they also work when AI cleanup is off." if rules != 1
+                      else "As a dictionary word it also works when AI cleanup is off.")
+        else:
+            reason = ("They can live here with your other words." if rules != 1
+                      else "It can live here with your other words.")
         self.rules_tile.set_description(
-            f"{rules} of your Learned rules only spell a word. As dictionary "
-            "words they also work when AI cleanup is off."
-            if rules != 1 else
-            "One of your Learned rules only spells a word. As a dictionary "
-            "word it also works when AI cleanup is off."
+            f"{rules} of your Learned rules only spell a word. {reason}" if rules != 1
+            else f"One of your Learned rules only spells a word. {reason}"
         )
         self.move_button.setText("Move them here" if rules != 1 else "Move it here")
         self.rules_tile.setVisible(bool(rules))
-        steering = resolve_dictionary_steer_recognition(settings)
         self.steer_switch.setChecked(steering)
-        self.steer_tile.set_description(
-            engine_line(settings, _current_backend()) if steering else _STEER_OFF_LINE
-        )
+        # The saved choice stays for engines that take hints.
+        blocked = support == SUPPORT_AFTER
+        self.steer_tile.setEnabled(not blocked)
+        if steering or blocked:
+            self.steer_tile.set_description(engine_line(settings, backend))
+        else:
+            self.steer_tile.set_description(
+                _STEER_OFF_LINE if _cleanup_on(settings) else _STEER_OFF_NO_CLEANUP_LINE
+            )
         reading = resolve_app_context_read_text(settings)
         self.learn_switch.setChecked(resolve_dictionary_learn_enabled(settings))
         self.learn_tile.setVisible(reading)
@@ -423,7 +515,10 @@ class _DictionaryPage(QObject):
         self.heard_edit.clear()
         self.term_edit.setFocus()
         self.reload()
-        self.say(f"Saved “{saved.term}”." if editing else f"Added “{saved.term}”.")
+        message = f"Saved “{saved.term}”." if editing else f"Added “{saved.term}”."
+        if not saved.heard and sounds_like_only(self._settings, _current_backend()):
+            message += f" {_NOT_FIXED_HINT}"
+        self.say(message)
 
     def begin_edit(self, term_id: str) -> None:
         from services.dictionary import load_dictionary

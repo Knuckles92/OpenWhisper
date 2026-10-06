@@ -214,15 +214,13 @@ class CommandRuntime:
     def _start(self, at: float) -> None:
         settings = settings_manager.load_all_settings()
         if not text_rewrite.provider_ready(settings):
-            self.controller.status_update.emit(NO_PROVIDER_MESSAGE)
+            self._refuse(NO_PROVIDER_MESSAGE)
             return
         runtime = self.controller.transcription_runtime
         # A stop's post-roll also keeps the recorder running; the start
         # below reports that job as busy itself.
         if self.controller.recorder.is_recording and not getattr(runtime, "has_active_job", False):
-            self.controller.status_update.emit(
-                "Finish the current recording before using Command Mode"
-            )
+            self._refuse("Finish the current recording before using Command Mode")
             return
         probe = None
         if not resolve_app_context_enabled(settings):
@@ -243,6 +241,17 @@ class CommandRuntime:
             press_at=at,
             trigger_mode=resolve_recording_trigger_mode(settings),
         )
+
+    def _refuse(self, message: str) -> None:
+        """Say why a shortcut did nothing, in the status line and near the pointer.
+
+        Any thread: the notice is shown from the Qt thread.
+        """
+        self.controller.status_update.emit(message)
+        ui = self.controller.ui_controller
+        show = getattr(ui, "show_notice", None)
+        if callable(show):
+            self._qt.requested.emit(lambda: show(message))
 
     def _stop(self, recording: _Recording) -> None:
         self._recording = None
@@ -326,10 +335,10 @@ class CommandRuntime:
         settings = settings_manager.load_all_settings()
         transform = find_transform(settings, transform_id)
         if transform is None:
-            self.controller.status_update.emit("That transform no longer exists")
+            self._refuse("That transform no longer exists")
             return
         if not text_rewrite.provider_ready(settings):
-            self.controller.status_update.emit("Set up AI cleanup to use transforms")
+            self._refuse("Set up AI cleanup to use transforms")
             return
         focus = self._request_focus()
         selection: Future = Future()

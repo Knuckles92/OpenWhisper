@@ -17,7 +17,7 @@ def _app(app_id, name="", window="", platform="windows"):
 
 @pytest.mark.parametrize("identity", [
     _app("WindowsTerminal.exe", "Windows Terminal"),
-    _app(r"C:\Windows\System32\conhost.exe", "Console Window Host"),
+    _app("conhost.exe", "Console"),
     _app("OpenConsole.exe"),
     _app("powershell.exe", "Windows PowerShell"),
     _app("pwsh.exe"),

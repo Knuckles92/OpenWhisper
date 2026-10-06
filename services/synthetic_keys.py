@@ -29,20 +29,9 @@ _WINDOWS_VIRTUAL_KEYS = {
     "ctrl": (0x11,), "alt": (0x12,), "shift": (0x10,), "windows": (0x5B, 0x5C),
 }
 
-# Matched against an app's id and name, lowercased, with any path, ".exe" or
-# ".app" removed. The app catalogue, which is_terminal also reads, is where a
-# terminal's window class or bundle id belongs.
-_TERMINALS = frozenset({
-    "windowsterminal", "windows terminal",
-    "conhost", "openconsole", "console window host",
-    "powershell", "windows powershell", "pwsh", "cmd", "command prompt",
-    "mintty", "wezterm", "wezterm-gui", "org.wezfurlong.wezterm",
-    "alacritty", "kitty", "net.kovidgoyal.kitty", "foot", "ghostty",
-    "com.mitchellh.ghostty", "iterm", "iterm2", "com.googlecode.iterm2",
-    "terminal", "com.apple.terminal", "gnome-terminal", "konsole", "xterm",
-    "tabby", "hyper", "warp", "dev.warp.warp-stable",
-})
-# Editors whose Ctrl+C with nothing selected copies the caret's whole line.
+# Editors whose Ctrl+C with nothing selected copies the caret's whole line,
+# matched against an app's id and name, lowercased, with any path, ".exe" or
+# ".app" removed.
 _COPY_LINE_EDITORS = frozenset({
     "code", "code - insiders", "code-oss", "visual studio code",
     "com.microsoft.vscode", "cursor", "com.todesktop.230313mzl4w4u92",
@@ -89,12 +78,14 @@ def _catalog_surface(identity) -> str:
 
 
 def is_terminal(identity) -> bool:
-    """Whether ``identity`` (an AppIdentity or None) is a terminal."""
+    """Whether ``identity`` (an AppIdentity or None) is a terminal.
+
+    The app catalogue is the one list of terminals; Hyprland's paste and copy
+    keys read this same check.
+    """
     if identity is None:
         return False
     try:
-        if _names(identity) & _TERMINALS:
-            return True
         from services.app_styles import Surface
 
         return _catalog_surface(identity) == Surface.TERMINAL

@@ -43,8 +43,8 @@ def _flush():
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
 
 
-def _page(make_dialog, words):
-    dialog, store = make_dialog({KEY: words})
+def _page(make_dialog, words, **values):
+    dialog, store = make_dialog({KEY: words, **values})
     dialog.select_destination(DICTIONARY)
     _flush()
     return dialog, store, dialog._dictionary_page
@@ -78,7 +78,8 @@ def _saved(store):
 
 
 def test_tab_reaches_the_words_in_order_before_the_switches_below(make_dialog):
-    dialog, _store, page = _page(make_dialog, WORDS)
+    # An engine that takes hints, so its steering switch can take focus.
+    dialog, _store, page = _page(make_dialog, WORDS, **{SettingsKey.SELECTED_MODEL: "local_whisper"})
     _focus(page.add_button)
 
     assert _tab_walk(7) == [

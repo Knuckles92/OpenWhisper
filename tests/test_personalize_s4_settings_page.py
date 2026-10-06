@@ -217,7 +217,8 @@ class TestLibrary:
 
 class TestRecognitionAndLearning:
     @pytest.mark.parametrize("engine,expected", [
-        ("parakeet", "Your engine (Parakeet) uses your dictionary after recognition."),
+        ("parakeet", "Your engine (Parakeet) can't be steered, and AI cleanup is off, so only "
+                     "Sounds like spellings are fixed."),
         ("local_whisper", "Your engine (Whisper) also steers the speech model toward your words."),
         ("api", "Your engine (OpenAI) also steers the speech model toward your words. "
                 "They're sent to OpenAI with your audio."),
@@ -233,7 +234,7 @@ class TestRecognitionAndLearning:
         assert line == ("Your engine (Whisper turbo on devbox) also steers the speech model "
                         "toward your words. They're sent to devbox with your audio.")
         host.recognition_support = "after"
-        assert "after recognition" in page_module.engine_line({SettingsKey.SELECTED_MODEL: "remote"}, host)
+        assert "can't be steered" in page_module.engine_line({SettingsKey.SELECTED_MODEL: "remote"}, host)
 
     def test_the_page_reads_the_live_backend(self, make_dialog):
         host = SimpleNamespace(is_remote=True, is_available=lambda: True, recognition_support="model",
@@ -244,7 +245,9 @@ class TestRecognitionAndLearning:
         assert "sent to devbox" in dialog.dictionary_steer_tile.description_label.text()
 
     def test_steering_switch(self, make_dialog):
-        dialog, store = make_dialog()
+        # An engine that takes hints; cleanup on, so the Off line still names it.
+        dialog, store = make_dialog({SettingsKey.SELECTED_MODEL: "local_whisper",
+                                     SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True})
         open_page(dialog)
         assert dialog.dictionary_steer_switch.isChecked()
         dialog.dictionary_steer_switch.click()
@@ -311,7 +314,7 @@ class TestBasicRow:
             button = page.findChild(QPushButton, "basicDictionaryAddButton")
             assert button.text() == "Add word"
             labels = [label.text() for label in page.findChildren(type(page.cleanup_status))]
-            assert "4 words · 1 new" in labels
+            assert "4 words · 1 new · Only Sounds like spellings are fixed while AI cleanup is off." in labels
             assert DICTIONARY not in dialog._built_pages
             button.click()
             for _ in range(5):
@@ -322,7 +325,8 @@ class TestBasicRow:
             dialog.close()
 
     def test_basic_row_without_words(self, make_dialog):
-        dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+        dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC,
+                                      SettingsKey.SELECTED_MODEL: "local_whisper"})
         page = dialog._basic_pages[BASIC_DICTATION]
         labels = [label.text() for label in page.findChildren(type(page.cleanup_status))]
         assert "Names and terms dictation should always get right." in labels

@@ -178,6 +178,23 @@ def set_chosen(settings: dict, codes: Iterable[str]) -> None:
         settings[SettingsKey.DICTATION_ACTIVE_LANGUAGE] = choices[0] if choices else ""
 
 
+def add_chosen(settings: dict, code: str) -> None:
+    """Add ``code`` to the languages a user dictates in; a mutator.
+
+    Adding never changes what the next dictation uses. While the engine's own
+    language is in effect, it joins the list (unless it is "auto") and stays
+    active, so adding Spanish to an English engine means English and Spanish.
+    """
+    chosen = chosen_languages(settings)
+    own = "" if job_language(settings) else engine_language(settings)
+    keep = own if own in accepted_languages(settings) else ""
+    if keep and keep not in chosen and keep != code:
+        chosen.append(keep)
+    set_chosen(settings, [*chosen, code])
+    if keep:
+        set_active(settings, keep)
+
+
 def cycle(settings: dict) -> None:
     """Make the next choice active; a ``mutate_settings`` mutator."""
     choices = language_choices(settings)

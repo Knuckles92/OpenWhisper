@@ -753,6 +753,15 @@ class UIController(QObject):
     def show_copied_animation(self):
         self.overlay.show_at_cursor(self.overlay.STATE_COPIED)
 
+    def show_notice(self, text: str, *, done: bool = False) -> None:
+        """Show a shortcut or tray action's outcome near the pointer.
+
+        Skipped while the main window is in front, where the status line
+        already says it.
+        """
+        if not self.main_window.isActiveWindow():
+            self.overlay.show_notice(text, done=done)
+
     def copy_to_clipboard(self, text: str, html: str = "") -> bool:
         """Copy text, and rich text when given, to the Qt clipboard.
 
@@ -855,6 +864,10 @@ class UIController(QObject):
         language_menu.populate(menu, self)
 
     def _on_settings_page_changed(self, kind: str) -> None:
+        if kind == "languages":
+            # Quick Record's Language field shows only while no dictation
+            # language is in charge.
+            self.refresh_local_engine_controls()
         # Read at call time: the application controller assigns its handler
         # after Settings may already exist.
         self.on_settings_changed(kind)

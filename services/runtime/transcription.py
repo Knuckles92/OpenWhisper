@@ -94,6 +94,9 @@ class TranscriptionRuntime:
         # The same transcript before snippets expanded, set alongside: what
         # Stats count as words said.
         self._spoken_text = ""
+        # The last status _apply_clipboard_and_paste showed; a rewrite that
+        # was not pasted repeats it near the pointer.
+        self._delivery_status = ""
         # A rewrite claimed the slot and has not been submitted yet.
         self._rewrite_pending = False
         # The failure being reported is a CommandRefused; set by the worker
@@ -163,10 +166,11 @@ class TranscriptionRuntime:
             self._job_active = False
             self._deliver_to_clipboard = True
 
-    def _report_busy(self, action: str) -> None:
+    def _report_busy(self, action: str) -> str:
         message = f"A transcription is already in progress — wait before {action}"
         self.controller.status_update.emit(message)
         logger.info(message)
+        return message
 
     def recover_recordings(self) -> None:
         """Startup worker: make interrupted dictation audio available in Recordings."""
@@ -1299,23 +1303,42 @@ class TranscriptionRuntime:
         if forced and target != dictation_pipeline.PasteTarget.SAME:
             ui.discard_clipboard_prefetch()
             if ui.copy_to_clipboard(transcript):
-                ui.set_status(
+                status = (
                     "Rewrite copied — the app changed; paste it where you want"
                     if target == dictation_pipeline.PasteTarget.CHANGED else
                     "Rewrite copied — couldn't confirm the app; paste it where you want"
                 )
             else:
-                ui.set_status("Transcription complete (copy failed)")
+                status = "Transcription complete (copy failed)"
+            ui.set_status(status)
+            self._notify(status)
             return
 
         text = dictation_pipeline.text_for_paste(transcript, job)
-        if self._apply_clipboard_and_paste(
+        pasted = self._apply_clipboard_and_paste(
             text,
             status_suffix=status_suffix,
             html=dictation_pipeline.html_for_paste(self._delivery_html, transcript, job),
             force_paste=forced,
-        ):
+        )
+        if pasted:
             dictation_pipeline.after_paste(job, text)
+        if forced:
+            if not pasted:
+                self._notify(self._delivery_status)
+            elif job.selection_text().strip():
+                self._notify("Rewritten", done=True)
+            else:
+                self._notify("Inserted", done=True)
+
+    def _notify(self, text: str, *, done: bool = False) -> None:
+        """Show a command or transform's outcome near the pointer; Qt thread.
+
+        They are run from other apps, where the status line is out of sight.
+        """
+        show = getattr(self.controller.ui_controller, "show_notice", None)
+        if callable(show) and text:
+            show(text, done=done)
 
     def _history_context(self, job, cleanup_info, *, live: bool) -> dict:
         """The context columns for this job's history entry; never raises."""
@@ -1424,7 +1447,8 @@ class TranscriptionRuntime:
         auto_paste = force_paste or setting_value(SettingsKey.AUTO_PASTE, settings)
 
         def _status(text: str) -> None:
-            self.controller.ui_controller.set_status(text + status_suffix)
+            self._delivery_status = text + status_suffix
+            self.controller.ui_controller.set_status(self._delivery_status)
 
         # Synthetic paste posts a key event, which needs macOS Accessibility
         # permission. Without it, degrade to clipboard so the text isn't lost and
@@ -1516,11 +1540,12 @@ class TranscriptionRuntime:
             job: A command or transform DictationJob carrying the selection.
             source_name: How the history entry names where the text came from.
         """
+        # Rewrites run from other apps, so a refusal also shows by the pointer.
         if self.controller.recorder.is_recording:
-            self._report_busy("rewriting text")
+            self._notify(self._report_busy("rewriting text"))
             return False
         if not self._claim_job(job):
-            self._report_busy("rewriting text")
+            self._notify(self._report_busy("rewriting text"))
             return False
         self._forget_recording()
         with self._job_lock:
@@ -1566,8 +1591,10 @@ class TranscriptionRuntime:
                 return
             self._rewrite_pending = False
         self.controller.overlay_state_update.emit(OverlayState.NONE)
-        if status:
+        # A cancel during the selection read already said "Canceled".
+        if status and not self._cancel_requested.is_set():
             self.controller.status_update.emit(status)
+            self._notify(status)
         self._clear_pending_audio_metadata()
         self._finish_job()
 
@@ -1578,14 +1605,18 @@ class TranscriptionRuntime:
         Refused while recording or while a job is delivering its own text.
         """
         if self.controller.recorder.is_recording or self.has_active_job:
-            self._report_busy("pasting")
+            self._notify(self._report_busy("pasting"))
             return False
         if not text:
             return False
-        return self._apply_clipboard_and_paste(text, force_paste=True)
+        pasted = self._apply_clipboard_and_paste(text, force_paste=True)
+        if not pasted:
+            self._notify(self._delivery_status)
+        return pasted
 
     def on_transcription_error(self, error_message: str) -> None:
         self._stop_started_at = 0.0
+        job = self._active_job
         with self._job_lock:
             refused, self._refused = self._refused, False
         pending_audio = self.controller._pending_audio_path
@@ -1593,6 +1624,9 @@ class TranscriptionRuntime:
         self.controller.ui_controller.set_status(status)
         self.controller.ui_controller.set_transcript(status)
         self.controller.overlay_state_update.emit(OverlayState.NONE)
+        rewrite = refused or (job is not None and job.mode != JobMode.DICTATION)
+        if rewrite and not self._cancel_requested.is_set():
+            self._notify(status)
         self.controller._transcription_start_time = None
         self.controller._transcription_elapsed = None
         self.controller._remote_timing = None

@@ -33,6 +33,12 @@ def populate(menu, ui) -> None:
             action.setCheckable(True)
             action.setChecked(code == current)
             action.triggered.connect(lambda _checked=False, code=code: select(ui, code))
+    elif current and not reason:
+        # Nothing to switch to, but still the language the next dictation uses.
+        action = menu.addAction(languages.label(current))
+        action.setCheckable(True)
+        action.setChecked(True)
+        action.setEnabled(False)
     else:
         menu.addAction(reason or "No other languages").setEnabled(False)
     menu.addSeparator()

@@ -311,7 +311,7 @@ class ModelAssignments(QObject):
         card.addWidget(self.ondemand_whisper_field)
 
         from ui_qt.widgets.local_engine_controls import LocalEngineControls
-        self.speech_controls = LocalEngineControls()
+        self.speech_controls = LocalEngineControls(dictation=True)
         self.speech_controls.engine_settings_changed.connect(
             self._on_speech_settings_changed
         )
@@ -738,6 +738,7 @@ class ModelAssignments(QObject):
         self._refresh_rail_values()
 
     def _on_dictation_languages_changed(self) -> None:
+        self.speech_controls.sync_language_field()
         notify = getattr(self._host, "notify_changed", None)
         if callable(notify):
             notify("languages")

@@ -449,6 +449,7 @@ class SettingsDialog(QDialog):
         self._saved_cleanup_prompt = ""
         # (tile, button) per "AI cleanup is off" notice; see cleanup_gate_tile.
         self._cleanup_gates: list = []
+        self._cleanup_gate_needed: dict = {}
         self._rule_polishing = False
         # Whether the words being polished came (at least partly) from
         # dictation, so the review dialog can say "said" instead of "typed".
@@ -1621,11 +1622,13 @@ class SettingsDialog(QDialog):
         self._cleanup_level_resync.setInterval(0)
         self._cleanup_level_resync.timeout.connect(self._update_cleanup_level_ui)
 
-    def cleanup_gate_tile(self, description: str) -> InfoTile:
+    def cleanup_gate_tile(self, description: str, *, needed: Optional[Callable[[], bool]] = None) -> InfoTile:
         """An "AI cleanup is off" notice whose button turns cleanup on.
 
         It is hidden while cleanup is on. Pages whose settings only matter
         when cleanup runs (Learned rules, Apps & styles) put one above them.
+        ``needed``, when given, must also return True for it to show; call
+        :meth:`refresh_cleanup_gates` when its answer may have changed.
         """
         tile = InfoTile(
             "AI cleanup is off", description, design_icon("info-warning.svg")
@@ -1640,9 +1643,15 @@ class SettingsDialog(QDialog):
         row.addStretch(1)
         tile.add_body_layout(row)
         self._cleanup_gates.append((tile, button))
+        if needed is not None:
+            self._cleanup_gate_needed[tile] = needed
+        self.refresh_cleanup_gates()
+        return tile
+
+    def refresh_cleanup_gates(self) -> None:
+        """Show or hide every "AI cleanup is off" notice for the saved settings."""
         level = cleanup_prompts.resolve_level(self._settings_snapshot())
         self._update_cleanup_gates(level != CleanupLevel.NONE)
-        return tile
 
     def turn_on_cleanup(self) -> None:
         """Turn AI cleanup on at its saved level, as its switch does."""
@@ -1660,7 +1669,8 @@ class SettingsDialog(QDialog):
             name = CleanupLevel.LABELS[resolve_transcript_cleanup_level(settings)]
         for tile, button in self._cleanup_gates:
             button.setText(f"Turn on ({name})")
-            if enabled:
+            needed = self._cleanup_gate_needed.get(tile)
+            if enabled or (needed is not None and not needed()):
                 tile.hide()
             elif tile.parentWidget() is not None:
                 # Showing a tile before its page adopts it would open it

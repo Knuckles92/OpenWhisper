@@ -11,16 +11,16 @@ import subprocess
 _OWN_CLASSES = ("openwhisper", "openwhisper-ui-qa")
 
 
-def _is_terminal(window_class: str) -> bool:
-    """Whether the app catalogue lists ``window_class`` as a terminal.
+def _is_terminal(client: dict) -> bool:
+    """Whether the window is a terminal, by the check Command Mode uses too.
 
     Terminals use Ctrl+Shift for the clipboard: Ctrl+C would interrupt the
     running program and Ctrl+V reaches it as a control character.
     """
-    from services.focus_context import catalog
+    from services import synthetic_keys
+    from services.focus_context import _linux
 
-    app = catalog.lookup(window_class)
-    return app is not None and app.surface == catalog.TERMINAL
+    return synthetic_keys.is_terminal(_linux._hyprland_identity(client))
 
 
 def available() -> bool:
@@ -52,7 +52,7 @@ def _send_shortcut(key: str, *, no_window: str, own_window: str) -> None:
     window_class = client.get("class", "").lower()
     if window_class in _OWN_CLASSES:
         raise RuntimeError(own_window)
-    mods = "CTRL SHIFT" if _is_terminal(window_class) else "CTRL"
+    mods = "CTRL SHIFT" if _is_terminal(client) else "CTRL"
     evaluate(
         "hl.dispatch(hl.dsp.send_shortcut({mods="
         + json.dumps(mods)

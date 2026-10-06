@@ -126,6 +126,7 @@ class RecordSync:
         self._retry_failed = False
         self._progress_at = 0.0
         self._remote_items: Dict[tuple, dict] = {}
+        self._audio_locks: Dict[str, threading.Lock] = {}
 
     # ---- listeners ----
 
@@ -886,18 +887,37 @@ class RecordSync:
         shutil.rmtree(self._cache_root(), ignore_errors=True)
 
     def audio_for(self, record_id: str) -> str:
-        """A local path to a host-kept history entry's recording (cached until restart)."""
-        folder = os.path.join(self._cache_root(), safe_name(record_id))
+        """A local path to a host-kept history entry's recording (cached until restart).
+
+        Safe to call from several threads: a second caller for the same
+        record waits for the running download and gets its finished file.
+        """
+        with self._lock:
+            lock = self._audio_locks.setdefault(record_id, threading.Lock())
+        with lock:
+            return self._audio_for(record_id)
+
+    def _audio_for(self, record_id: str) -> str:
+        root = self._cache_root()
+        folder = os.path.join(root, safe_name(record_id))
         cached = os.path.join(folder, "audio")
         if os.path.isdir(cached) and os.listdir(cached):
             return os.path.join(cached, sorted(os.listdir(cached))[0])
-        connection = self._open()
+        os.makedirs(root, exist_ok=True)
+        # Downloaded beside the cache and moved in whole, so the check above
+        # never takes a partial or failed download for a finished one.
+        staging = tempfile.mkdtemp(dir=root, prefix=".download-")
         try:
+            connection = self._open()
+            try:
+                record = self._fetch(connection, "dictation", record_id, staging)
+            finally:
+                connection.close()
             shutil.rmtree(folder, ignore_errors=True)
-            os.makedirs(folder, exist_ok=True)
-            record = self._fetch(connection, "dictation", record_id, folder)
-        finally:
-            connection.close()
+            os.replace(staging, folder)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
         audio = record.get("audio")
         if not isinstance(audio, str):
             raise RecordsUnavailable("That entry has no recording on the host.")

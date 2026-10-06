@@ -147,9 +147,9 @@ class HotkeyManager:
         self._dynamic_debouncers: Dict[Tuple[str, str], Debouncer] = {}
         self._dynamic_held: Dict[Tuple[str, str], str] = {}
         # The physical key each keyboard hold was pressed on, by hold
-        # ("record_toggle", "command_mode", a press action or a family key),
-        # and the key that went down last (with its time), the only one
-        # Windows auto-repeats.
+        # ("record_toggle", "command_mode", "enable_disable", a press action
+        # or a family key), and the key that went down last (with its time),
+        # the only one Windows auto-repeats.
         self._hold_keys: Dict[object, tuple] = {}
         self._last_down: Optional[Tuple[tuple, float]] = None
         self.capture_suspended = False
@@ -270,7 +270,10 @@ class HotkeyManager:
         callbacks that must only enqueue; other actions run on their own thread.
         """
         with self._dispatch_lock:
-            if matches(self.hotkeys.get('enable_disable')):
+            enable_disable = self.hotkeys.get('enable_disable')
+            if matches(enable_disable):
+                self._press_held['enable_disable'] = enable_disable
+                self._hold_on('enable_disable', key)
                 self._toggle_program_enabled()
                 return True
             if not self.program_enabled:

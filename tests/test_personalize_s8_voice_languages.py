@@ -53,7 +53,7 @@ class TestField:
         dialog, field = make_dialog({SettingsKey.SELECTED_MODEL: "local_whisper"})
         dialog.notify_changed = MagicMock()
         assert field.chips == []
-        assert field.caption.text().startswith("Add two or more")
+        assert field.caption.text().startswith("Dictation detects the language. Add languages")
 
         field.add("en")
         assert settings_manager.get(SettingsKey.DICTATION_LANGUAGES) == ["en"]

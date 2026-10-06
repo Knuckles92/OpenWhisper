@@ -127,6 +127,9 @@ class TranscriptionTabBase(QWidget):
     #: Show the Live preview checkbox in the engine footer. The preview only
     #: runs while dictating, so tabs without a microphone flow turn it off.
     LIVE_PREVIEW_CONTROL = True
+    #: Dictation here uses "Languages I dictate in" once they're set, so the
+    #: engine's Language field steps aside; files keep the engine's language.
+    DICTATION_LANGUAGES = True
 
     #: Render the transcript as Markdown. Off for dictation, whose cleanup
     #: returns prose; on where the transcript carries structure of its own.
@@ -235,7 +238,7 @@ class TranscriptionTabBase(QWidget):
         )
         self._apply_backend_status(EngineStatus.UNKNOWN)
 
-        self.local_engine = LocalEngineControls()
+        self.local_engine = LocalEngineControls(dictation=self.DICTATION_LANGUAGES)
         self.api_model_combo = engine_combo(())
         for model in api_model_choices():
             self.api_model_combo.addItem(api_model_label(model), model)

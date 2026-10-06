@@ -135,12 +135,17 @@ def _entry_was_cleaned(entry: HistoryEntry) -> bool:
 
 
 def _kind_label(entry: HistoryEntry) -> str:
-    """"Command", "Transform · Polish", or "" for a dictation or a file."""
+    """"Command", "Transform · Polish", or "" for a dictation or a file.
+
+    The runtime saves a transform's source name already prefixed
+    ("Transform · Polish"); older or synced rows may hold the bare name.
+    """
     kind = getattr(entry, "entry_kind", None)
     if kind == "command":
         return "Command"
     if kind == "transform":
         name = (getattr(entry, "source_name", None) or "").strip()
+        name = name.removeprefix("Transform · ").strip()
         return f"Transform · {name}" if name else "Transform"
     return ""
 
@@ -1173,6 +1178,10 @@ class HistorySidebar(QWidget):
         settings = settings_manager.load_all_settings()
         def create(entry):
             item = HistoryItemWidget(entry, settings=settings)
+            replaced = self._history_cards.get(entry.id)
+            old_playback = replaced[1].playback if replaced is not None else None
+            if item.playback is not None and old_playback is not None:
+                item.playback.take_over(old_playback)
             item.clicked.connect(self._on_entry_clicked)
             item.copy_requested.connect(self._on_copy_requested)
             item.copy_raw_requested.connect(self._on_copy_raw_requested)

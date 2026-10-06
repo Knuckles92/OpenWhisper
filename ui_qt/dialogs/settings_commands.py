@@ -224,6 +224,7 @@ def cancel_capture(dialog) -> None:
 
 
 def basic_rows(page, group) -> None:
+    from services import text_rewrite
     from ui_qt.widgets.command_settings import CommandShortcutField, command_mode_hint
 
     dialog = page.dialog
@@ -234,6 +235,9 @@ def basic_rows(page, group) -> None:
 
     def refresh_row(settings: dict) -> None:
         field.sync()
+        if not text_rewrite.provider_ready(settings):
+            detail.setText("Needs an AI cleanup model, even while cleanup is off.")
+            return
         detail.setText(
             "Select text, then say how to change it. " + command_mode_hint(settings)
         )

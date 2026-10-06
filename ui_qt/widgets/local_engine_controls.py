@@ -40,6 +40,11 @@ class LocalEngineControls(QWidget):
 
     Optional speech families show their own models and devices; quantization
     belongs to their pinned runtime and is not an editable Whisper setting.
+
+    With ``dictation`` (Voice model, Quick Record), the Language field steps
+    aside while "Languages I dictate in" sets the dictation language, so the
+    page shows one language control. Upload File keeps it: files always use
+    the engine's language.
     """
 
     #: Emitted after a *user-initiated* change has been persisted to settings.
@@ -48,8 +53,9 @@ class LocalEngineControls(QWidget):
 
     COMPUTE_CHOICES = ["auto", "float16", "float32", "int8"]
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, dictation: bool = False):
         super().__init__(parent)
+        self._dictation = dictation
         self._setup_ui()
         self.load_from_settings()
         self._connect_signals()
@@ -115,7 +121,7 @@ class LocalEngineControls(QWidget):
                                       *custom_models(settings_manager.load_all_settings())])
         self.model_combo.blockSignals(False)
         self.compute_combo.parentWidget().setVisible(backend not in BACKENDS)
-        self.language_field.setVisible(backend in BACKENDS)
+        self.sync_language_field()
         self.language_combo.blockSignals(True)
         stored_lang = settings_manager.get(SettingsKey.LOCAL_ASR_LANGUAGE, SETTING_DEFAULTS[SettingsKey.LOCAL_ASR_LANGUAGE])
         self.language_combo.clear()
@@ -127,6 +133,20 @@ class LocalEngineControls(QWidget):
         self.device_combo.setEnabled(backend != "moonshine")
         if backend not in BACKENDS:
             self.load_from_settings()
+
+    def sync_language_field(self) -> None:
+        """Show the Language field unless the dictation languages decide instead."""
+        from services.local_asr.catalog import BACKENDS
+
+        backend = getattr(self, "_backend", "local_whisper")
+        shown = backend in BACKENDS
+        if shown and self._dictation:
+            settings = settings_manager.load_all_settings()
+            settings[SettingsKey.SELECTED_MODEL] = backend
+            # A one-language engine hides the chips and keeps its own field.
+            shown = (not dictation_language.job_language(settings)
+                     or bool(dictation_language.single_language_reason(settings)))
+        self.language_field.setVisible(shown)
 
     def _on_changed(self, _value: str):
         from services.local_asr.catalog import BACKENDS
@@ -376,7 +396,8 @@ class DictationLanguagesField(QWidget):
         choices = dictation_language.language_choices(settings)
         reason = dictation_language.single_language_reason(settings)
         active = dictation_language.job_language(settings)
-        unavailable = f"{backend_display_name(dictation_language.engine(settings))} can't use this language."
+        engine_name = backend_display_name(dictation_language.engine(settings))
+        unavailable = f"{engine_name} can't use this language."
         self._flow.removeWidget(self.add_button)
         for chip in self.chips:
             self._flow.removeWidget(chip)
@@ -396,19 +417,27 @@ class DictationLanguagesField(QWidget):
         self.chip_area.setVisible(not reason)
         self._remaining = [code for code in accepted if code not in chosen]
         self.add_button.setEnabled(bool(self._remaining))
-        self.caption.setText(reason or self._caption(chosen, choices, active))
+        current = dictation_language.current_language(settings)
+        self.caption.setText(reason or self._caption(chosen, choices, current, engine_name))
         self.chip_area.updateGeometry()
 
     @staticmethod
-    def _caption(chosen, choices, active) -> str:
+    def _caption(chosen, choices, current, engine_name) -> str:
+        """Which language the next dictation uses, and what adding more does."""
+        if current == dictation_language.AUTO:
+            uses = "detects the language"
+        else:
+            uses = f"uses {dictation_language.label(current)}"
         if not chosen:
-            return "Add two or more to switch between them from the overlay, the tray or a shortcut."
+            return (f"Dictation {uses}. Add languages to switch between them "
+                    "from the overlay, the tray or a shortcut.")
         if not choices:
-            return "This engine can't use these, so dictation uses the engine's own language."
+            return f"{engine_name} can't use these, so dictation {uses}."
         if len(choices) == 1:
-            return (f"Dictation uses {dictation_language.label(choices[0])}. "
-                    "Add another to switch between them.")
-        return (f"Now dictating in {dictation_language.label(active or choices[0])}. "
+            return f"Dictation {uses}. Add another to switch between them."
+        if current == dictation_language.AUTO:
+            return f"Dictation {uses}. Switch from the overlay, the tray or a shortcut."
+        return (f"Now dictating in {dictation_language.label(current)}. "
                 "Switch from the overlay, the tray or a shortcut.")
 
     def _open_add_menu(self) -> None:
@@ -419,14 +448,15 @@ class DictationLanguagesField(QWidget):
         self.add_menu.popup(self.add_button.mapToGlobal(QPoint(0, self.add_button.height())))
 
     def add(self, code: str) -> None:
-        self._save([*dictation_language.chosen_languages(self._settings()), code])
+        self._save(lambda settings: dictation_language.add_chosen(settings, code))
 
     def _remove(self, code: str) -> None:
-        self._save([other for other in dictation_language.chosen_languages(self._settings()) if other != code])
+        codes = [other for other in dictation_language.chosen_languages(self._settings()) if other != code]
+        self._save(lambda settings: dictation_language.set_chosen(settings, codes))
 
-    def _save(self, codes) -> None:
+    def _save(self, change) -> None:
         try:
-            settings_manager.mutate_settings(lambda settings: dictation_language.set_chosen(settings, codes))
+            settings_manager.mutate_settings(change)
         except Exception:
             logger.exception("Couldn't save the dictation languages")
             self.caption.setText("Couldn't save your languages. Try again.")

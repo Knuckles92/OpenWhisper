@@ -12,11 +12,17 @@ NOTHING_TO_COPY = "Nothing to copy yet"
 NOT_EDITED = "AI cleanup didn't change your last dictation"
 PASTED = "Pasted the original of your last dictation"
 UNAVAILABLE = "Pasting isn't available right now"
-COPIED = (
-    "Copied the original of your last dictation — paste it with "
-    + ("Cmd+V" if sys.platform == "darwin" else "Ctrl+V")
-)
+_PASTE_KEY = "Cmd+V" if sys.platform == "darwin" else "Ctrl+V"
+COPIED = f"Copied the original of your last dictation — paste it with {_PASTE_KEY}"
 COPY_FAILED = "Couldn't copy the original of your last dictation"
+
+
+def _report(ui, status: str, notice: str = "", *, done: bool = False) -> None:
+    """Status line, plus a notice near the pointer: these run from other apps."""
+    ui.set_status(status)
+    show = getattr(ui, "show_notice", None)
+    if callable(show):
+        show(notice or status, done=done)
 
 
 def _last_edited_dictation(ui, nothing_yet: str):
@@ -25,13 +31,13 @@ def _last_edited_dictation(ui, nothing_yet: str):
         entry = history_manager.last_dictation()
     except Exception:
         logger.exception("Could not read the last dictation")
-        ui.set_status("Couldn't read your last dictation")
+        _report(ui, "Couldn't read your last dictation")
         return None
     if entry is None:
-        ui.set_status(nothing_yet)
+        _report(ui, nothing_yet)
         return None
     if not entry_version(entry):
-        ui.set_status(NOT_EDITED)
+        _report(ui, NOT_EDITED)
         return None
     return entry
 
@@ -49,7 +55,7 @@ def paste_last_original(ui) -> None:
         return
     paste = getattr(ui, "on_paste_text_now", None)
     if not callable(paste):
-        ui.set_status(UNAVAILABLE)
+        _report(ui, UNAVAILABLE)
         return
     if not paste(entry.raw_text):
         return  # The runtime said why: busy, or the paste itself failed.
@@ -59,7 +65,7 @@ def paste_last_original(ui) -> None:
         logger.exception("Could not mark the last dictation as original")
     else:
         ui.refresh_history()
-    ui.set_status(PASTED)
+    _report(ui, PASTED, "Original pasted", done=True)
 
 
 def copy_last_original(ui) -> None:
@@ -73,6 +79,6 @@ def copy_last_original(ui) -> None:
     if entry is None:
         return
     if not ui.copy_to_clipboard(entry.raw_text):
-        ui.set_status(COPY_FAILED)
+        _report(ui, COPY_FAILED)
         return
-    ui.set_status(COPIED)
+    _report(ui, COPIED, f"Copied — paste with {_PASTE_KEY}", done=True)

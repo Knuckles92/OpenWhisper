@@ -99,7 +99,12 @@ _STYLES_COPY = (
     "for chat. A cleanup profile you pick still comes first."
 )
 _OVERRIDES_COPY = "Put an app or website in a different style, like Notion in Work messages."
-_BASIC_COPY = "Formal for email, relaxed for chat."
+_PLACES = {
+    AppCategory.EMAIL: "email",
+    AppCategory.WORK: "work messages",
+    AppCategory.PERSONAL: "personal messages",
+    AppCategory.OTHER: "other apps",
+}
 
 SEARCH_FIELDS = [
     ("app_context_tile", "Know which app I'm dictating into", _APP_CONTEXT_COPY),
@@ -156,6 +161,27 @@ def rail_value(settings: dict) -> str:
 
 def _join(names: list[str]) -> str:
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def basic_copy(settings: dict) -> str:
+    """The tone each kind of app gets, in one line for Basic, which has no tone controls."""
+    tones = app_styles.resolve_tones(settings)
+    chat = (AppCategory.WORK, AppCategory.PERSONAL)
+    parts = []
+    for tone, label in TONES:
+        categories = [category for category in AppCategory.ALL if tones[category] == tone]
+        if len(categories) == len(AppCategory.ALL):
+            if tone == Tone.FORMAL:
+                return "Formal in every app. Change tones in Styles."
+            return f"{label} in every app."
+        places = [_PLACES[category] for category in categories]
+        if all(category in categories for category in chat):
+            places = [_PLACES[c] for c in categories if c not in chat]
+            places.insert(1 if AppCategory.EMAIL in categories else 0, "chat")
+        if places:
+            parts.append(f"{label.lower()} for {_join(places)}")
+    sentence = ", ".join(parts)
+    return sentence[0].upper() + sentence[1:] + "."
 
 
 def apps_summary(category: str, overrides) -> str:
@@ -232,7 +258,7 @@ def refresh(dialog) -> None:
 
 def basic_rows(page, group) -> None:
     switch = SettingsSwitch()
-    detail = page._row(group, _STYLES_TITLE, _BASIC_COPY, switch)
+    detail = page._row(group, _STYLES_TITLE, "", switch)
     page._bind(switch, STYLES, "app_styles_check", SettingsKey.APP_STYLES_ENABLED,
                resolve_app_styles_enabled)
 
@@ -240,7 +266,7 @@ def basic_rows(page, group) -> None:
         reason = styles_blocker(settings)
         switch.setEnabled(not reason)
         switch.setToolTip(reason)
-        detail.setText(reason or _BASIC_COPY)
+        detail.setText(reason or basic_copy(settings))
 
     page.add_refresh_hook(update)
 

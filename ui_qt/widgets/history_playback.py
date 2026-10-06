@@ -222,6 +222,16 @@ class PlaybackControl(QObject):
             return
         self._play(self._path)
 
+    def take_over(self, old: "PlaybackControl") -> None:
+        """Become the control a pending click on ``old`` plays in.
+
+        For a card rebuilt in place: ``old`` is still alive until its
+        deleteLater runs, so the deleted-control handoff in ``__init__``
+        can't see it.
+        """
+        if old is not self and _in_flight.get(self._entry_id) is old:
+            _in_flight[self._entry_id] = self
+
     def stop(self) -> None:
         """Stop this entry's playback, if it is the one playing or about to."""
         if _in_flight.get(self._entry_id) is self:

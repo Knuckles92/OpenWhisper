@@ -22,6 +22,8 @@ from ui_qt.waveform_styles import Particle, ParticleStyle, round_pen
 logger = logging.getLogger(__name__)
 
 CAPTION_MS = 2500
+#: Extra reading time per character of a notice, on top of CAPTION_MS.
+_NOTICE_MS_PER_CHAR = 25
 _LANGUAGE_FLASH_S = 0.6
 _BADGE_HEIGHT = 18
 _BADGE_MARGIN = 9
@@ -55,11 +57,14 @@ class WaveformOverlay(QWidget):
     STATE_STT_DISABLE = "stt_disable"
     STATE_COPIED = "copied"
     STATE_LANGUAGE = "language"
+    STATE_NOTICE = "notice"
     STATE_LARGE_FILE_SPLITTING = "large_file_splitting"
 
     LISTENING_STATES = frozenset((STATE_RECORDING, STATE_STREAMING, STATE_COMMAND_LISTENING))
     _PREVIEW_STATES = frozenset((STATE_STREAMING, STATE_COMMAND_LISTENING))
-    _TRANSIENT_STATES = frozenset((STATE_STT_ENABLE, STATE_STT_DISABLE, STATE_COPIED, STATE_LANGUAGE))
+    _TRANSIENT_STATES = frozenset((
+        STATE_STT_ENABLE, STATE_STT_DISABLE, STATE_COPIED, STATE_LANGUAGE, STATE_NOTICE,
+    ))
     # ParticleStyle simulates only its own states; the command and rewrite
     # looks borrow theirs.
     _STYLE_STATES = {STATE_COMMAND_LISTENING: STATE_RECORDING, STATE_REWRITING: STATE_CLEANING}
@@ -135,6 +140,8 @@ class WaveformOverlay(QWidget):
         self._chip_hover = False
         self._caption = ""
         self._caption_started = 0.0
+        self._notice = ""
+        self._notice_done = False
         self._caption_timer = QTimer(self)
         self._caption_timer.setSingleShot(True)
         self._caption_timer.timeout.connect(self._clear_caption)
@@ -174,6 +181,8 @@ class WaveformOverlay(QWidget):
                 self._draw_copied_state(painter)
             elif self.current_state == self.STATE_LANGUAGE:
                 self._draw_language_state(painter)
+            elif self.current_state == self.STATE_NOTICE:
+                self._draw_notice_state(painter)
             elif self.current_state == self.STATE_LARGE_FILE_SPLITTING:
                 self._draw_large_file_splitting_state(painter)
             self._draw_listening_extras(painter)
@@ -786,7 +795,9 @@ class WaveformOverlay(QWidget):
             logger.debug(f"Overlay state changed to: {state}")
 
             if state in self._TRANSIENT_STATES:
-                self.hidden_timer.start(config.OVERLAY_HIDE_DELAY_MS)
+                self.hidden_timer.start(
+                    self._notice_ms() if state == self.STATE_NOTICE else config.OVERLAY_HIDE_DELAY_MS
+                )
             else:
                 # A recording that starts during a short notice (a language
                 # switch just before dictating) must not be hidden by it.
@@ -919,6 +930,80 @@ class WaveformOverlay(QWidget):
         self._language_changed_at = None
         self.set_language(code, choices)
 
+    def show_notice(self, text: str, *, done: bool = False) -> None:
+        """Briefly show an action's outcome near the pointer, even while hidden.
+
+        A recording in progress keeps its overlay and gets the text as a
+        caption; a transcription or rewrite in progress is left alone.
+
+        Args:
+            text: The outcome, such as "Select the text to change first".
+            done: Whether it reports success (a check) rather than a problem.
+        """
+        if not text:
+            return
+        if self.isVisible() and self.current_state not in self._TRANSIENT_STATES | {self.STATE_IDLE}:
+            if self.current_state in self.LISTENING_STATES:
+                self.show_caption(text)
+            return
+        self._notice, self._notice_done = text, done
+        if self.current_state == self.STATE_NOTICE and self.isVisible():
+            self.animation_time = 0.0
+            self.hidden_timer.start(self._notice_ms())
+            self.update()
+            return
+        self.show_at_cursor(self.STATE_NOTICE)
+
+    def _notice_ms(self) -> int:
+        return CAPTION_MS + _NOTICE_MS_PER_CHAR * len(self._notice)
+
+    def _draw_notice_state(self, painter: QPainter) -> None:
+        """A check or an exclamation mark beside the wrapped outcome text."""
+        grow = min(1.0, self.animation_time / 0.18)
+        tone = "success" if self._notice_done else "warning"
+        diameter = 22.0
+        left = 16.0
+        cx, cy = left + diameter / 2, self.height() / 2
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(token_color(tone, int(46 * grow)))
+        painter.drawEllipse(QPointF(cx, cy), diameter / 2, diameter / 2)
+        painter.setPen(round_pen(token_color(tone, int(255 * grow)), 2))
+        if self._notice_done:
+            path = QPainterPath()
+            path.moveTo(cx - 4.5, cy + 0.5)
+            path.lineTo(cx - 1.2, cy + 3.8)
+            path.lineTo(cx + 5.0, cy - 3.6)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(path)
+        else:
+            painter.drawLine(QPointF(cx, cy - 5.0), QPointF(cx, cy + 1.2))
+            painter.drawPoint(QPointF(cx, cy + 5.0))
+        text_left = int(left + diameter + 10)
+        rect = QRect(text_left, 8, self.width() - text_left - 14, self.height() - 16)
+        font = QFont("Segoe UI", 10, QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.setPen(QPen(token_color("overlay-text")))
+        painter.drawText(
+            rect,
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap),
+            self._fit_notice(font, rect),
+        )
+
+    def _fit_notice(self, font: QFont, rect: QRect) -> str:
+        """The notice, cut with an ellipsis if it would wrap past ``rect``."""
+        metrics = QFontMetrics(font)
+        flags = int(Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap)
+        text = self._notice
+        if metrics.boundingRect(rect, flags, text).height() <= rect.height():
+            return text
+        words = text.split()
+        while len(words) > 1:
+            words.pop()
+            shorter = " ".join(words).rstrip(",;:—-") + "…"
+            if metrics.boundingRect(rect, flags, shorter).height() <= rect.height():
+                return shorter
+        return metrics.elidedText(text, Qt.TextElideMode.ElideRight, rect.width())
+
     def show_caption(self, text: str) -> None:
         """Show a short notice, such as a microphone switch, with the waveform.
 
@@ -955,6 +1040,7 @@ class WaveformOverlay(QWidget):
         self._streaming_preview_text = ""
         self._anchor_pos = None
         self._end_listening_extras()
+        self._notice = ""
         self._language = ""
         self._language_choices = ()
         if self.overlay_height != self._base_height:

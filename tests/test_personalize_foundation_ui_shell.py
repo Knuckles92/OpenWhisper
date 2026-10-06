@@ -47,6 +47,15 @@ def app_ui():
     controller.cleanup()
 
 
+def _language_in_effect():
+    # With nothing to switch to, the menu still names the language in use.
+    from services import dictation_language
+
+    return dictation_language.label(
+        dictation_language.current_language(settings_manager.load_all_settings())
+    )
+
+
 def _menu_texts(menu):
     return [action.text() for action in menu.actions() if not action.isSeparator()]
 
@@ -187,7 +196,7 @@ class TestEmptyStates:
         menu.addAction("Stale")
         language_menu.populate(menu, ui)
         language_menu.populate(menu, ui)
-        assert _menu_texts(menu) == ["No other languages", "Choose languages…"]
+        assert _menu_texts(menu) == [_language_in_effect(), "Choose languages…"]
         assert not menu.actions()[0].isEnabled()
 
 
@@ -208,7 +217,7 @@ class TestAppWiring:
             assert text in texts
         assert texts.index("Start Recording") < texts.index("Copy original of last dictation")
         assert texts.index("Scratchpad") < texts.index("Settings")
-        assert _menu_texts(tray.language_menu) == ["No other languages", "Choose languages…"]
+        assert _menu_texts(tray.language_menu) == [_language_in_effect(), "Choose languages…"]
 
         calls = []
         monkeypatch.setattr(scratchpad, "toggle", lambda ui: calls.append(("scratchpad", ui)))
