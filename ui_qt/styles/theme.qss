@@ -4596,6 +4596,39 @@ QFrame#settingsTile[kind="intro"]:hover {
 }
 
 /* personalize:S1 begin (context & styles) */
+QWidget#appStylesRows,
+QWidget#appStylesRow,
+QWidget#appStylesAddRow,
+QWidget#appStyleCardBody {
+    background-color: transparent;
+}
+
+QWidget#appStylesAddRow QComboBox:disabled {
+    color: @slate-text-disabled;
+    border-color: @slate-border-subtle;
+}
+
+QLabel#appStylesRowLabel {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+}
+
+/* Each tone's example reads like a message written in that tone. */
+QLabel#appStyleExample {
+    color: @slate-text-2;
+    background-color: @slate-field;
+    border: 1px solid @slate-border-subtle;
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+QLabel#appStylesRowLabel:disabled,
+QLabel#appStyleExample:disabled {
+    color: @slate-text-disabled;
+}
 /* personalize:S1 end */
 
 /* personalize:S2 begin (cleanup levels) */

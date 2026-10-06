@@ -397,12 +397,10 @@ def history_fields(
         fields["app_id"] = identity.app_id
         fields["app_name"] = identity.name
         try:
-            style = app_styles.style_for(snapshot, settings or {})
+            # Not style_for: stats keep the category with styles turned off.
+            fields["app_category"] = app_styles.category_for(snapshot, settings or {})
         except Exception:
             logger.debug("App category unavailable", exc_info=True)
-            style = None
-        if style is not None:
-            fields["app_category"] = style.category
     fields["cleanup_level"] = getattr(info, "level", "") if info is not None else ""
     recognition = job.recognition if job is not None else None
     fields["language"] = recognition.language if recognition is not None else ""

@@ -115,7 +115,7 @@ class FakeService(ContextCaptureService):
         {SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True},
         {SettingsKey.TRANSCRIPT_CLEANUP_PROMPT: "  Fix my words.  "},
         {SettingsKey.TRANSCRIPT_CLEANUP_PROMPT: "   "},
-        {SettingsKey.APP_CONTEXT_READ_TEXT: True, SettingsKey.TRANSCRIPT_CLEANUP_LEVEL: "high"},
+        {SettingsKey.TRANSCRIPT_CLEANUP_LEVEL: "high"},
     ],
 )
 @pytest.mark.parametrize("rules", [[], RULES])

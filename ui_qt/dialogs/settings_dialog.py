@@ -3220,6 +3220,13 @@ class SettingsDialog(QDialog):
             cloud_items.append("Speaker labels (system audio after End)")
         cleanup_item = f"AI cleanup ({'on' if cleanup_on else 'off'})"
         (cloud_items if cleanup_remote else local_items).append(cleanup_item)
+        from ui_qt.dialogs.settings_styles import reads_text_near_cursor
+        if not reads_text_near_cursor(settings):
+            local_items.append("Text near the cursor (off)")
+        elif cleanup_remote:
+            cloud_items.append("Text near the cursor (with AI cleanup)")
+        else:
+            local_items.append("Text near the cursor")
         (cloud_items if meeting_remote else local_items).append(
             "Meeting intelligence (transcript text, when enabled)"
             if meeting_remote else "Meeting intelligence"
