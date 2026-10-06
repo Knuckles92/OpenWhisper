@@ -286,12 +286,12 @@ class SettingsDialog(QDialog):
     stacking copies.
     """
 
-    #: Client area; with the title bar it opens at about 1317x846 on a
+    #: Client area; with the title bar it opens at about 1317x882 on a
     #: 1080p screen, and leaves the Downloads catalog room beside its profile.
-    DEFAULT_SIZE = QSize(1315, 814)
+    DEFAULT_SIZE = QSize(1315, 850)
     #: The Downloads filter row is the widest fixed content in the window.
     MINIMUM_SIZE = QSize(940, 520)
-    BASIC_DEFAULT_SIZE = QSize(1040, 814)
+    BASIC_DEFAULT_SIZE = QSize(1040, 850)
     BASIC_MINIMUM_SIZE = QSize(720, 520)
 
     _cleanup_rule_polished = pyqtSignal(str, str, str)
@@ -1147,7 +1147,7 @@ class SettingsDialog(QDialog):
     def _fit_to_screen(self) -> None:
         """Shrink the window to fit the screen it opens on, when it doesn't.
 
-        DEFAULT_SIZE is 1315x814, but a 1920x1080 laptop panel at 150% is
+        DEFAULT_SIZE is 1315x850, but a 1920x1080 laptop panel at 150% is
         1280x720 with a bar across the top: the window was cut off on the
         right, and Hyprland, which places windows itself, centred it above
         the top edge (y=-34). QDialog centres a dialog over its parent and

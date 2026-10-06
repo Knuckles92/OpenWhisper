@@ -122,6 +122,12 @@ class NavRail(QListWidget):
         self._items: Dict[str, QListWidgetItem] = {}
         self.currentItemChanged.connect(self._on_current_changed)
 
+    def updateGeometries(self) -> None:
+        super().updateGeometries()
+        # QListView places item widgets before it narrows its contents to the
+        # viewport, so a shrinking rail would leave rows under the scroll bar.
+        self.updateEditorGeometries()
+
     def add_group(self, title: str) -> None:
         item = QListWidgetItem(self)
         item.setFlags(Qt.ItemFlag.NoItemFlags)

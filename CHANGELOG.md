@@ -14,6 +14,10 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 ### Changed
 - **Optional hardware testing** — manual hardware checks remain useful guidance, but release uploads no longer require a hardware report. Automated source, installer, provenance, and checksum checks remain required.
 
+### Fixed
+- **Settings opens without a stray scroll bar** — the window opens slightly taller, so Overview and General fit without scrolling at 115% text size.
+- **Sidebar selection outline no longer hidden by its scroll bar** — sidebar rows were sized for a wider sidebar when Settings opened, and after the sidebar was narrowed, so the scroll bar covered the right edge of the selected page's outline until the sidebar was widened.
+
 ## [2.6.15] - 2026-10-05
 
 ### Added
