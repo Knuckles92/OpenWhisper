@@ -940,7 +940,6 @@ class SpeechHost:
             # Counted even while storage is off, so a client can still find
             # (and bring back) what it stored before the owner turned it off.
             ready["records"] = self._stored_summary(device["id"])
-        self._send(ws, ready)
         connection_id = uuid.uuid4().hex[:8]
         with self._lock:
             if self._server is None:
@@ -955,6 +954,12 @@ class SpeechHost:
         self._emit("clients", {})
         streams: set = set()
         try:
+            # Register before ready so an immediate engine change can find
+            # this client, and recheck changes made while preparing the reply.
+            if self._engine().identity != identity:
+                ws.close(protocol.CLOSE_ENGINE_CHANGED, "engine changed")
+                return
+            self._send(ws, ready)
             for frame in ws:
                 self._set_in_request(connection_id, True)
                 try:

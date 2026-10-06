@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from services.remote_asr import tailscale
-from services.remote_asr.client import RemoteConnection, pair_with_host
+from services.remote_asr.client import RemoteConnection, RemoteEngineError, pair_with_host
 from services.remote_asr.engines import HostEngine, SpeechWorkerEngine, WhisperEngine
 from services.remote_asr.host import DeviceRegistry, SpeechHost
 from services.remote_asr.tls import ensure_host_identity
@@ -111,6 +111,44 @@ def test_an_idle_client_is_told_the_engine_changed(host, engine):
 
         assert _wait_for(lambda: not connection.alive)
         assert connection.closed_for_engine_change
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("phase", ["before_registration", "before_ready"])
+def test_engine_change_during_handshake_never_leaves_a_stale_client(
+    host, engine, monkeypatch, phase
+):
+    paired = pair_with_host("127.0.0.1", host.port, host.open_pairing(), "laptop")
+    changed = []
+    if phase == "before_registration":
+        original = host._model_list
+
+        def change_before_registration():
+            engine.model = "turbo"
+            changed.append(host.engine_changed())
+            return original()
+
+        monkeypatch.setattr(host, "_model_list", change_before_registration)
+    else:
+        original_send = host._send
+
+        def change_before_ready(ws, message):
+            if message.get("type") == "ready":
+                engine.model = "turbo"
+                changed.append(host.engine_changed())
+            original_send(ws, message)
+
+        monkeypatch.setattr(host, "_send", change_before_ready)
+    connection = RemoteConnection(
+        "127.0.0.1", host.port, paired.token, paired.fingerprint
+    )
+    try:
+        with pytest.raises(RemoteEngineError, match="closed"):
+            connection.connect()
+        expected = 0 if phase == "before_registration" else 1
+        assert _wait_for(lambda: changed == [expected])
+        assert _wait_for(lambda: not host.connected_clients())
     finally:
         connection.close()
 
