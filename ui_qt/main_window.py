@@ -296,6 +296,8 @@ class MainWindow(QMainWindow):
     upload_copy_requested = pyqtSignal(str)
     quick_record_copy_requested = pyqtSignal(str)
     meeting_dashboard_requested = pyqtSignal()
+    scratchpad_requested = pyqtSignal()
+    stats_requested = pyqtSignal()
     # Host Mode's engine picker chose one of this computer's ready models:
     # (family, model).
     host_model_selected = pyqtSignal(str, str)
@@ -800,6 +802,11 @@ class MainWindow(QMainWindow):
             "Show what this computer serves to paired computers instead of "
             "the recording tabs"
         )
+        view_menu.addSeparator()
+        self.scratchpad_action = view_menu.addAction(
+            "Scratchpad", self.scratchpad_requested.emit
+        )
+        self.stats_action = view_menu.addAction("Stats", self.stats_requested.emit)
         view_menu.addSeparator()
         view_menu.addAction(
             "Open Meeting Dashboard", self.meeting_dashboard_requested.emit

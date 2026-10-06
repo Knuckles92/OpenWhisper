@@ -39,6 +39,7 @@ from ui_qt.dialogs.settings_destinations import (
     BASIC_APP,
     BASIC_DICTATION,
     CLEANUP,
+    DICTIONARY,
     GENERAL,
     MEETING_AFTER,
     MEETING_INTELLIGENCE,
@@ -66,6 +67,7 @@ class BasicSettingsPage(QWidget):
         self.controls = {}
         self._bindings = []
         self._rows = []
+        self._refresh_hooks = []
         self.shortcut = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -258,7 +260,21 @@ class BasicSettingsPage(QWidget):
         link.clicked.connect(lambda: self.dialog.select_destination(destination))
         layout.addWidget(link, alignment=Qt.AlignmentFlag.AlignLeft)
 
+    def add_refresh_hook(self, hook):
+        """Call ``hook(settings)`` whenever this tab refreshes its rows."""
+        self._refresh_hooks.append(hook)
+
+    def _build_personalize(self, layout):
+        # Page modules own their Basic rows; each adds them only if it has any.
+        group = self._group(layout, "Personalize", "wand-purple.svg")
+        for module in self.dialog.page_modules():
+            basic_rows = getattr(module, "basic_rows", None)
+            if basic_rows is not None:
+                basic_rows(self, group)
+        self._advanced_link(group, "Dictionary, snippets, styles, and commands", DICTIONARY)
+
     def _build_dictation(self, layout):
+        self.dialog.add_flow_intro(layout)
         record = self._group(layout, "Record", "microphone-blue.svg")
         self._microphone(record)
         self._shortcut(record)
@@ -280,6 +296,7 @@ class BasicSettingsPage(QWidget):
         self.cleanup_status.setObjectName("basicSettingsStatus")
         transcribe.addWidget(self.cleanup_status)
         self._advanced_link(transcribe, "Set up AI cleanup", CLEANUP)
+        self._build_personalize(layout)
         output = self._group(layout, "Output", "bolt-green.svg")
         paste = SettingsSwitch()
         self.paste_description = self._row(
@@ -432,6 +449,8 @@ class BasicSettingsPage(QWidget):
                     control.setChecked(bool(value))
                 else:
                     control.setCurrentIndex(max(0, control.findData(value)))
+        for hook in self._refresh_hooks:
+            hook(settings)
         if self.destination == BASIC_DICTATION:
             with QSignalBlocker(self.voice_combo):
                 self.voice_combo.setCurrentIndex(

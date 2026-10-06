@@ -332,3 +332,14 @@ PAGE_HELP_TEXT = {'voice_model': ['For dictation previews, Nemotron uses native 
                  'provide native live previews in Meeting Mode.'],
  'runtime': ['Parakeet, Nemotron, Moonshine, and Qwen3-ASR set their device on Dictation → Voice '
              'model. Downloaded models and optional components are managed in Downloads.']}
+
+
+def merge_page_module(key: str, module) -> None:
+    """Route a page module's controls and search copy like a built-in page's.
+
+    Settings hands each page module over when it imports it, so this file
+    never imports page code itself.
+    """
+    for name in getattr(module, "CONTROL_ATTRS", ()):
+        CONTROL_DESTINATIONS[name] = key
+    PAGE_SEARCH_FIELDS[key] = list(getattr(module, "SEARCH_FIELDS", ()))

@@ -154,12 +154,15 @@ class TestRouting:
             app.processEvents()
             rail = dialog.rail
             point = rail.viewport().rect().center()
-            QApplication.sendEvent(rail.viewport(), QWheelEvent(
-                QPointF(point), QPointF(rail.viewport().mapToGlobal(point)),
-                QPoint(), QPoint(0, -2400), Qt.MouseButton.NoButton,
-                Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False,
-            ))
-            app.processEvents()
+            # One wheel event scrolls at most a page, and at large fonts the
+            # rail is more than one page taller than its viewport.
+            for _ in range(3):
+                QApplication.sendEvent(rail.viewport(), QWheelEvent(
+                    QPointF(point), QPointF(rail.viewport().mapToGlobal(point)),
+                    QPoint(), QPoint(0, -2400), Qt.MouseButton.NoButton,
+                    Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False,
+                ))
+                app.processEvents()
             for key in ("hotkeys", "api_keys", "advanced"):
                 row = rail._rows[key]
                 label = row if target == "row" else getattr(row, target)

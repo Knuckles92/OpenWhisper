@@ -162,6 +162,13 @@ class AudioRecorder:
             logger.error(f"Failed to enumerate audio devices: {e}")
         return devices
 
+    @classmethod
+    def from_settings(cls) -> "AudioRecorder":
+        """The dictation recorder for the saved microphone choice."""
+        from services.settings import settings_manager
+
+        return cls(device_id=settings_manager.load_audio_input_device())
+
     def __init__(
         self,
         device_id: Optional[int] = None,
@@ -190,6 +197,9 @@ class AudioRecorder:
         self.last_start_error: Optional[str] = None
         self.last_capture_error: Optional[str] = None
         self.error_callback: Optional[Callable[[str], None]] = None
+        # (old device name, new device name) after a mid-recording switch to
+        # the next microphone; called from the capture thread.
+        self.device_switch_callback: Optional[Callable[[str, str], None]] = None
         self.dropped_frames = 0
         self._error_lock = threading.Lock()
         self._last_callback_at = 0.0

@@ -9,6 +9,8 @@ import time
 from typing import TYPE_CHECKING, Optional
 
 from config import config
+from services import audio_player, dictation_pipeline, recognition_context
+from services.dictation_pipeline import JobMode
 from services.hotkey_manager import is_accessibility_trusted, send_paste
 from services.history_manager import history_manager
 from services.transcript_cleanup import (
@@ -16,23 +18,20 @@ from services.transcript_cleanup import (
     CleanupInfo,
     TranscriptCleanup,
 )
-from services.cleanup_profiles import find_cleanup_profile, compose_profile_prompt
+from services.cleanup_profiles import find_cleanup_profile
 from services.incremental_dictation import IncrementalDictation
 from services.batch_upload import (
     BatchItemResult,
     BatchResult,
     BatchUploadRequest,
     batch_source_name,
-    compose_batch_cleanup_prompt,
     format_batch_transcript,
     join_raw_parts,
 )
 from services.settings import (
     SETTING_DEFAULTS,
     SettingsKey,
-    compose_transcript_cleanup_prompt,
     resolve_transcript_cleanup_model,
-    resolve_transcript_cleanup_prompt,
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
     resolve_transcript_cleanup_rules,
@@ -81,6 +80,17 @@ class TranscriptionRuntime:
         self._deliver_to_clipboard = True
         self._recording_profile = None
         self._profile_settings = None
+        # The recording's DictationJob from its start until its stop claims
+        # the slot; uploads never inherit one.
+        self._job: Optional[dictation_pipeline.DictationJob] = None
+        # The job the claimed slot is working on. The worker, delivery and
+        # history read only this, copied to a local first.
+        self._active_job: Optional[dictation_pipeline.DictationJob] = None
+        # Rich-text alternative for the transcript being delivered, set by
+        # the worker before it emits transcription_completed.
+        self._delivery_html = ""
+        # A rewrite claimed the slot and has not been submitted yet.
+        self._rewrite_pending = False
         # Decodes a long dictation's completed windows while it is recorded.
         self._incremental = IncrementalDictation()
         self._stop_started_at = 0.0
@@ -96,16 +106,24 @@ class TranscriptionRuntime:
         self._cancel_requested.set()
         self._incremental.discard()
 
-    def _claim_job(self) -> bool:
-        """Atomically reserve the single transcription workflow slot."""
+    def _claim_job(self, job: Optional[dictation_pipeline.DictationJob] = None) -> bool:
+        """Atomically reserve the single transcription workflow slot for ``job``."""
         with self._job_lock:
             if (self._job_active or getattr(self.controller, '_shutting_down', False) is True
                     or getattr(self.controller, '_backup_in_progress', False) is True):
                 return False
             self._job_active = True
+            self._active_job = job
             self._cancel_requested.clear()
         self._rearm_remote_engine()
         return True
+
+    def _forget_recording(self) -> None:
+        """Drop the recording's job and profile so no later job inherits them."""
+        with self._job_lock:
+            self._job = None
+            self._recording_profile = None
+            self._profile_settings = None
 
     def _rearm_remote_engine(self) -> None:
         """Clear a remote engine's cancel once no job it was meant for is left.
@@ -128,6 +146,10 @@ class TranscriptionRuntime:
         with self._job_lock:
             self._recording_profile = None
             self._profile_settings = None
+            self._job = None
+            self._active_job = None
+            self._delivery_html = ""
+            self._rewrite_pending = False
             self._job_active = False
             self._deliver_to_clipboard = True
 
@@ -159,14 +181,39 @@ class TranscriptionRuntime:
         self._incremental.discard()
         if self.has_active_job:
             return  # finish_recording_job observes last_capture_error after the save
-        if self._claim_job():
+        if self._claim_job(self._job):
             self.controller.executor.submit(self.finish_recording_job)
 
-    def start_recording(self, profile_id: str = "") -> bool:
-        with self._capture_lock:
-            return self._start_recording(profile_id)
+    def start_recording(
+        self,
+        profile_id: str = "",
+        mode: str = JobMode.DICTATION,
+        *,
+        selection=None,
+    ) -> bool:
+        """Start a recording; False when it was refused or could not start.
 
-    def _start_recording(self, profile_id: str) -> bool:
+        Args:
+            profile_id: Cleanup profile to format this dictation with.
+            mode: A JobMode; Command Mode records an instruction.
+            selection: For Command Mode, the selected text to rewrite, as a
+                str or a Future[str].
+        """
+        with self._capture_lock:
+            return self._start_recording(profile_id, mode, selection)
+
+    def _begin_job(self, mode: str, settings, selection) -> dictation_pipeline.DictationJob:
+        """The job for a recording that just started; never raises."""
+        try:
+            if settings is None:
+                settings = settings_manager.load_all_settings()
+            return dictation_pipeline.begin_job(mode, settings, selection=selection)
+        except Exception:
+            logger.debug("Dictation job context unavailable", exc_info=True)
+            return dictation_pipeline.DictationJob(mode=mode)
+
+    def _start_recording(self, profile_id: str, mode: str = JobMode.DICTATION,
+                         selection=None) -> bool:
         if getattr(self.controller, "_backup_in_progress", False) is True:
             self.controller.status_update.emit("Wait for backup or restore preparation to finish")
             return False
@@ -192,28 +239,46 @@ class TranscriptionRuntime:
         if profile_id and profile is None:
             self.controller.status_update.emit("Cleanup profile no longer exists")
             return False
+        try:
+            # The output device and a recording would fight over audio.
+            audio_player.stop_playback()
+        except Exception:
+            logger.debug("Could not stop playback before recording", exc_info=True)
         if self.controller.recorder.start_recording():
             # Snapshot before publishing Recording: edits and other shortcuts
             # cannot replace the format of a recording already in progress.
             self._recording_profile = profile
             self._profile_settings = settings
+            # Before the preview and early decoding, which read its
+            # recognition context, and so the focus capture runs while the
+            # user speaks.
+            self._job = self._begin_job(mode, settings, selection)
             logger.info("Recording started")
             self.controller.ui_controller.clear_transcription_stats()
             self.controller.ui_controller.main_window.clear_partial_transcription()
             self.controller.streaming_runtime.start_streaming_session()
-            self._incremental.start(self.controller)
+            self._incremental.start(self.controller, recognition=self._job.recognition)
             self.controller.recording_state_changed.emit(True)
-            self.controller.overlay_state_update.emit(OverlayState.RECORDING)
-            self.controller.status_update.emit(
-                f"Recording · {profile.name}..." if profile else "Recording..."
-            )
+            if mode == JobMode.COMMAND:
+                self.controller.overlay_state_update.emit(OverlayState.COMMAND_LISTENING)
+                self.controller.status_update.emit("Command Mode · Listening...")
+            else:
+                self.controller.overlay_state_update.emit(OverlayState.RECORDING)
+                self.controller.status_update.emit(
+                    f"Recording · {profile.name}..." if profile else "Recording..."
+                )
             # Auto-paste copies the user's clipboard so it can put it back.
             # Take that copy while the user speaks instead of in front of the
             # paste; it is queued to the Qt thread and never delays this start.
-            if settings_manager.get(SettingsKey.AUTO_PASTE, SETTING_DEFAULTS[SettingsKey.AUTO_PASTE]):
+            # Command Mode reads the selection through the clipboard first,
+            # so its snapshot would no longer be the user's.
+            if mode == JobMode.DICTATION and settings_manager.get(
+                SettingsKey.AUTO_PASTE, SETTING_DEFAULTS[SettingsKey.AUTO_PASTE]
+            ):
                 self.controller.ui_controller.prefetch_clipboard_snapshot()
             return True
         else:
+            self._job = None
             reason = getattr(
                 self.controller.recorder, "last_start_error", None
             ) or "Could not open the audio stream"
@@ -245,6 +310,7 @@ class TranscriptionRuntime:
         self.controller.streaming_runtime.begin_stop_streaming_session()
 
         if not self.controller.recorder.stop_recording():
+            self._forget_recording()
             self.controller.overlay_state_update.emit(OverlayState.NONE)
             self.controller.status_update.emit("Failed to stop recording")
             return
@@ -258,7 +324,8 @@ class TranscriptionRuntime:
         # flips to inactive, an upload can arrive from another UI thread; a
         # late claim would let it take the slot and could make this path clear
         # or overwrite that upload's metadata on an error.
-        if not self._claim_job():
+        if not self._claim_job(self._job):
+            self._forget_recording()
             self._report_busy("processing this recording")
             self.controller.overlay_state_update.emit(OverlayState.NONE)
             return
@@ -422,8 +489,7 @@ class TranscriptionRuntime:
         self.controller.recording_state_changed.emit(False)
         self.controller.recorder.cancel_recording()
         self.controller.ui_controller.discard_clipboard_prefetch()
-        self._recording_profile = None
-        self._profile_settings = None
+        self._forget_recording()
         self.controller.overlay_state_update.emit(OverlayState.CANCELING)
         self.controller.status_update.emit("Recording canceled")
         logger.info("Recording canceled")
@@ -458,6 +524,7 @@ class TranscriptionRuntime:
         if not self._claim_job():
             self._report_busy("re-transcribing audio")
             return
+        self._forget_recording()
 
         logger.info("Re-transcribing audio file: %s", audio_path)
         self.controller._pending_audio_path = None
@@ -493,6 +560,7 @@ class TranscriptionRuntime:
         if not self._claim_job():
             self._report_busy("uploading audio")
             return
+        self._forget_recording()
 
         logger.info(f"Processing uploaded audio file: {audio_path}")
         self._deliver_to_clipboard = False
@@ -543,6 +611,7 @@ class TranscriptionRuntime:
         if not self._claim_job():
             self._report_busy("uploading audio")
             return
+        self._forget_recording()
 
         logger.info("Processing %d uploaded audio files", len(request.items))
         self._deliver_to_clipboard = False
@@ -824,6 +893,9 @@ class TranscriptionRuntime:
                     cleanup_model=r.cleanup_model,
                     source_name=r.item.source_name,
                 ))
+        context = self._history_context(None, None, live=False)
+        for entry in entries:
+            entry.update(context)
 
         if result.canceled:
             ui.set_status(
@@ -858,11 +930,18 @@ class TranscriptionRuntime:
                 a dictation.
         """
         self._last_cleanup_failure = None
+        self._delivery_html = ""
+        job = self._active_job
         profile = self._recording_profile
         settings = self._profile_settings if profile else settings_manager.load_all_settings()
-        enabled = profile is not None or setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings)
-        if not enabled or not raw or not raw.strip():
+        if not raw or not raw.strip():
             return raw, None, None
+        # Before the switch below: the dictionary applies with cleanup off,
+        # and to uploads and batches too.
+        prepared = dictation_pipeline.prepare_text(raw, job, settings)
+        enabled = profile is not None or setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings)
+        if not enabled or prepared.skip_cleanup:
+            return self._finish_without_cleanup(prepared)
 
         # Re-apply provider/model each run so Settings model changes take effect
         # without restarting (a provider switch rebuilds the client).
@@ -876,59 +955,81 @@ class TranscriptionRuntime:
                 "Transcript cleanup enabled but unavailable; using raw text"
             )
             self._last_cleanup_failure = "cleanup unavailable"
-            return raw, None, None
+            return self._finish_without_cleanup(prepared)
 
         self.controller.overlay_state_update.emit(OverlayState.CLEANING)
         self.controller.status_update.emit(
             f"Formatting · {profile.name}..." if profile else "Cleaning up..."
         )
         rules = resolve_transcript_cleanup_rules(settings)
-        prompt = (
-            compose_profile_prompt(profile, rules) if profile else
-            compose_transcript_cleanup_prompt(resolve_transcript_cleanup_prompt(settings), rules)
+        prompt = dictation_pipeline.compose_cleanup_prompt(
+            job=job,
+            settings=settings,
+            profile=profile,
+            rules=rules,
+            prepared=prepared,
+            batch_context=batch_context,
         )
-        if batch_context:
-            prompt = compose_batch_cleanup_prompt(prompt, batch_context)
+        cleanup_input = prepared.cleanup_input
         # The dictation path passes no timeout so the call stays identical to
         # the one existing stubs of cleanup() accept.
         extra = {} if timeout_s is None else {"timeout_s": timeout_s}
         cleanup_start = time.time()
         fixed = self._transcript_cleanup.cleanup(
-            raw, system_prompt=prompt, **extra
+            cleanup_input, system_prompt=prompt, **extra
         )
         cleanup_elapsed = time.time() - cleanup_start
         # A changed transcript also proves cleanup ran, covering stubs that
         # bypass the real cleanup() and never touch last_error.
-        cleaned = self._transcript_cleanup.last_error is None or fixed != raw
+        cleaned = self._transcript_cleanup.last_error is None or fixed != cleanup_input
         if not cleaned:
             self._last_cleanup_failure = (
                 self._transcript_cleanup.last_error or "cleanup failed"
             )
+        finished = dictation_pipeline.finish_text(fixed, prepared)
+        self._delivery_html = finished.html
+        if not finished.ok:
+            # The cleanup dropped a snippet, so its output is not used.
+            self._last_cleanup_failure = "snippet placeholder lost"
+            return finished.text, None, None
         info = (
             CleanupInfo(
                 provider=self._transcript_cleanup.provider,
                 model=self._transcript_cleanup.model,
                 elapsed_s=cleanup_elapsed,
+                level=dictation_pipeline.cleanup_level(settings, profile),
             )
             if cleaned
             else None
         )
-        if fixed != raw:
-            return fixed, raw, info
-        return fixed, None, info
+        if finished.text != finished.raw_text:
+            return finished.text, finished.raw_text, info
+        return finished.text, None, info
+
+    def _finish_without_cleanup(
+        self, prepared: dictation_pipeline.PreparedText,
+    ) -> tuple[str, None, None]:
+        """The prepared text with its snippets expanded, as no AI ran."""
+        finished = dictation_pipeline.finish_text(prepared.cleanup_input, prepared)
+        self._delivery_html = finished.html
+        return finished.text, None, None
 
     def transcribe_audio_file(self, audio_path: str) -> None:
+        job = self._active_job
         try:
             self._raise_if_canceled()
             if self.controller._pending_file_size is None:
                 self.controller._pending_file_size = os.path.getsize(audio_path)
             backend = self.controller.current_backend
             self._announce_transcription(backend, audio_path)
+            recognition = self._final_pass_recognition(job)
             self.controller._transcription_start_time = time.time()
             # Windows decoded while recording aren't this pass's time, so
             # only the requests from here on count toward the stats line.
             mark = backend.timing_mark() if getattr(backend, "is_remote", False) else None
-            raw = self._incremental.transcribe(backend, audio_path)
+            raw = recognition_context.transcribe(
+                self._incremental, backend, audio_path, recognition
+            )
             self.controller._transcription_elapsed = (
                 time.time() - self.controller._transcription_start_time
             )
@@ -937,12 +1038,39 @@ class TranscriptionRuntime:
                 self.controller._remote_timing = backend.timing_since(mark)
             self._complete_preview_fallback(audio_path, raw)
             self._raise_if_canceled()
-            fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(raw)
+            if job is not None and job.mode != JobMode.DICTATION:
+                fixed, raw_text, cleanup_info = self._complete_command(raw, job)
+            else:
+                fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(raw)
             self._raise_if_canceled()
             self.controller.transcription_completed.emit(fixed, raw_text, cleanup_info)
         except Exception as exc:
             logger.error(f"Transcription failed: {exc}")
             self.controller.transcription_failed.emit(str(exc))
+
+    def _final_pass_recognition(self, job):
+        """The language and vocabulary for ``job``'s final pass, read now.
+
+        None for uploads and other jobs without one, which keep the engine's
+        own settings.
+        """
+        if job is None:
+            return None
+        try:
+            return dictation_pipeline.recognition_for(
+                job, settings_manager.load_all_settings()
+            )
+        except Exception:
+            logger.debug("Recognition context unavailable", exc_info=True)
+            return None
+
+    def _complete_command(self, raw: str, job):
+        """Hand a Command Mode recording's transcript to the command runtime."""
+        command_runtime = getattr(self.controller, "command_runtime", None)
+        complete = getattr(command_runtime, "complete_recording", None)
+        if complete is None:
+            raise RuntimeError("Command Mode isn't available")
+        return complete(raw, job)
 
     def _abandon_canceled_job(self, stage: str) -> None:
         """Release a dictation job canceled before any transcript existed.
@@ -994,6 +1122,7 @@ class TranscriptionRuntime:
         raw_text: Optional[str] = None,
         cleanup_info: Optional[CleanupInfo] = None,
     ) -> None:
+        job = self._active_job
         if self._stop_started_at:
             from services.diagnostics import record_metrics
             record_metrics(stop_to_result_s=time.monotonic() - self._stop_started_at)
@@ -1074,6 +1203,9 @@ class TranscriptionRuntime:
                     cleanup_model=cleanup_info.model if cleanup_info else None,
                     source_name=source_name,
         )
+        # Only a recording's own WAV is dictated live; a re-transcription is
+        # delivered like one but read from a file.
+        live = bool(self._deliver_to_clipboard and self.controller._pending_audio_path)
 
         cleanup_notice = (
             f" — {self._recording_profile.name} formatting failed "
@@ -1082,15 +1214,65 @@ class TranscriptionRuntime:
         )
         if not self._deliver_to_clipboard:
             self.controller.ui_controller.set_status("Ready" + cleanup_notice)
+            entry.update(self._history_context(job, cleanup_info, live=live))
             self._queue_history([entry])
             return
 
         # Deliver immediately; copying retained audio, fsync, and SQLite writes
         # run on a worker while Qt and the target application remain responsive.
         try:
-            self._apply_clipboard_and_paste(transcript, status_suffix=cleanup_notice)
+            self._deliver(transcript, job, status_suffix=cleanup_notice)
         finally:
+            entry.update(self._history_context(job, cleanup_info, live=live))
             self._queue_history([entry])
+
+    def _deliver(self, transcript: str, job, status_suffix: str = "") -> None:
+        """Put a finished transcript where the user is working."""
+        ui = self.controller.ui_controller
+        insert = getattr(ui, "insert_into_scratchpad", None)
+        if callable(insert):
+            try:
+                inserted = insert(transcript) is True
+            except Exception:
+                logger.exception("Could not add the transcript to the Scratchpad")
+                inserted = False
+            if inserted:
+                ui.discard_clipboard_prefetch()
+                ui.set_status("Ready (Added to Scratchpad)" + status_suffix)
+                return
+
+        # A command or transform exists to replace text, so it pastes even
+        # with auto-paste off, but never into an app that took focus since.
+        forced = job is not None and job.mode != JobMode.DICTATION
+        if forced and not dictation_pipeline.paste_target_ok(job):
+            ui.discard_clipboard_prefetch()
+            if ui.copy_to_clipboard(transcript):
+                ui.set_status(
+                    "Rewrite copied — the app changed; paste it where you want"
+                )
+            else:
+                ui.set_status("Transcription complete (copy failed)")
+            return
+
+        text = dictation_pipeline.text_for_paste(transcript, job)
+        if self._apply_clipboard_and_paste(
+            text,
+            status_suffix=status_suffix,
+            html=self._delivery_html,
+            force_paste=forced,
+        ):
+            dictation_pipeline.after_paste(job, text)
+
+    def _history_context(self, job, cleanup_info, *, live: bool) -> dict:
+        """The context columns for this job's history entry; never raises."""
+        try:
+            settings = self._profile_settings or settings_manager.load_all_settings()
+            return dictation_pipeline.history_fields(
+                job, cleanup_info, live=live, settings=settings
+            )
+        except Exception:
+            logger.debug("History context unavailable", exc_info=True)
+            return {}
 
     def _queue_history(self, entries: list[dict]) -> None:
         """Snapshot metadata before queuing; keep the slot until persistence ends.
@@ -1108,6 +1290,12 @@ class TranscriptionRuntime:
         try:
             for fields in entries:
                 entry = history_manager.add_entry(**fields)
+                try:
+                    # Stats are a side table: their failure never touches the
+                    # saved entry or the status.
+                    dictation_pipeline.record_stats(fields, entry)
+                except Exception:
+                    logger.debug("Could not record dictation stats", exc_info=True)
                 source = fields.get('source_audio_path')
                 if source and os.path.isfile(source):
                     if not getattr(entry, 'audio_file', None):
@@ -1154,8 +1342,13 @@ class TranscriptionRuntime:
         return model_info
 
     def _apply_clipboard_and_paste(
-        self, transcript: str, status_suffix: str = ""
-    ) -> None:
+        self,
+        transcript: str,
+        status_suffix: str = "",
+        *,
+        html: str = "",
+        force_paste: bool = False,
+    ) -> bool:
         """Copy and optionally paste only after a successful clipboard write.
 
         Args:
@@ -1163,10 +1356,15 @@ class TranscriptionRuntime:
             status_suffix: Appended to whichever outcome status is shown, so a
                 batch can report a cleanup fallback without hiding whether the
                 paste itself succeeded.
+            html: Rich-text alternative pasted with ``transcript``, or "".
+            force_paste: Paste even with auto-paste turned off.
+
+        Returns:
+            True when the paste keystroke was sent.
         """
         settings = settings_manager.load_all_settings()
         copy_clipboard = setting_value(SettingsKey.COPY_CLIPBOARD, settings)
-        auto_paste = setting_value(SettingsKey.AUTO_PASTE, settings)
+        auto_paste = force_paste or setting_value(SettingsKey.AUTO_PASTE, settings)
 
         def _status(text: str) -> None:
             self.controller.ui_controller.set_status(text + status_suffix)
@@ -1177,13 +1375,16 @@ class TranscriptionRuntime:
         paste_blocked = auto_paste and not is_accessibility_trusted()
 
         if auto_paste and not paste_blocked:
-            stage = self.controller.ui_controller.stage_transcript_for_paste(
-                transcript
+            ui = self.controller.ui_controller
+            # Without rich text the call stays the one every UI stand-in takes.
+            stage = (
+                ui.stage_transcript_for_paste(transcript, html=html)
+                if html else ui.stage_transcript_for_paste(transcript)
             )
             if not stage.written:
                 logger.error("Failed to copy transcription for auto-paste")
                 _status("Transcription complete (copy failed)")
-                return
+                return False
 
             logger.info("Transcription copied to clipboard for auto-paste")
             try:
@@ -1198,19 +1399,19 @@ class TranscriptionRuntime:
                         "Could not leave transcription in clipboard after paste failure"
                     )
                 _status("Transcription complete (paste failed)")
-                return
+                return False
 
             if stage.restore_unavailable:
                 logger.warning(
                     "Transcription pasted, but the previous clipboard could not be captured"
                 )
                 _status("Ready (Pasted; clipboard restore unavailable)")
-                return
+                return True
 
             _status("Ready (Pasted)")
             if stage.lease is not None:
                 self.controller.ui_controller.schedule_clipboard_restore(stage)
-            return
+            return True
 
         # Only a paste consumes the clipboard snapshot prefetched when the
         # recording started (auto-paste may have been turned off since).
@@ -1237,13 +1438,90 @@ class TranscriptionRuntime:
                 )
             else:
                 _status("Transcription complete (copy failed)")
-            return
+            return False
 
         if copy_clipboard and not copy_ok:
             _status("Transcription complete (copy failed)")
-            return
+            return False
 
         _status("Ready")
+        return False
+
+    def begin_rewrite_job(self, job: dictation_pipeline.DictationJob, *, source_name: str) -> bool:
+        """Claim the slot for a rewrite of selected text; Qt thread.
+
+        Refused while recording or while another job runs. The caller then
+        either submits the rewrite or abandons it, which frees the slot.
+
+        Args:
+            job: A command or transform DictationJob carrying the selection.
+            source_name: How the history entry names where the text came from.
+        """
+        if self.controller.recorder.is_recording:
+            self._report_busy("rewriting text")
+            return False
+        if not self._claim_job(job):
+            self._report_busy("rewriting text")
+            return False
+        self._forget_recording()
+        with self._job_lock:
+            self._rewrite_pending = True
+            self._deliver_to_clipboard = True
+        self._clear_pending_audio_metadata()
+        self.controller._pending_source_name = source_name
+        self.controller.overlay_state_update.emit(OverlayState.REWRITING)
+        self.controller.status_update.emit("Rewriting...")
+        return True
+
+    def submit_rewrite(self, work) -> None:
+        """Run ``work() -> (text, raw_text, info)`` on the executor; Qt thread.
+
+        The result takes the path a dictation's does: transcription_completed
+        pastes and saves it, transcription_failed reports a RuntimeError's
+        message and frees the slot.
+        """
+        with self._job_lock:
+            self._rewrite_pending = False
+        try:
+            self.controller.executor.submit(self._run_rewrite, work)
+        except Exception as exc:
+            logger.error("Could not start the rewrite: %s", exc)
+            self.on_transcription_error(f"Could not start the rewrite: {exc}")
+
+    def _run_rewrite(self, work) -> None:
+        try:
+            self._raise_if_canceled()
+            text, raw_text, info = work()
+            self._raise_if_canceled()
+            self.controller.transcription_completed.emit(text, raw_text, info)
+        except Exception as exc:
+            logger.error("Rewrite failed: %s", exc)
+            self.controller.transcription_failed.emit(str(exc))
+
+    def abandon_rewrite_job(self, status: str) -> None:
+        """Free a slot claimed by begin_rewrite_job that was never submitted."""
+        with self._job_lock:
+            if not self._rewrite_pending:
+                return
+            self._rewrite_pending = False
+        self.controller.overlay_state_update.emit(OverlayState.NONE)
+        if status:
+            self.controller.status_update.emit(status)
+        self._clear_pending_audio_metadata()
+        self._finish_job()
+
+    def paste_text_now(self, text: str) -> bool:
+        """Paste ``text`` at the caret without saving it anywhere; Qt thread.
+
+        Pastes even with auto-paste off, as the user asked for exactly this.
+        Refused while recording or while a job is delivering its own text.
+        """
+        if self.controller.recorder.is_recording or self.has_active_job:
+            self._report_busy("pasting")
+            return False
+        if not text:
+            return False
+        return self._apply_clipboard_and_paste(text, force_paste=True)
 
     def on_transcription_error(self, error_message: str) -> None:
         self._stop_started_at = 0.0

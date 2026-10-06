@@ -23,6 +23,33 @@ class SchemaVersion(Base):
 
     version: Mapped[int] = mapped_column(Integer, primary_key=True)
 
+#: Optional per-entry columns a caller may set when saving a history entry.
+#: A new one is added here and as a column below (plus its migration);
+#: HistoryManager.add_entry and DatabaseManager.add_history_entry pass them
+#: through without listing them.
+HISTORY_CONTEXT_COLUMNS = (
+    "app_id",
+    "app_name",
+    "app_category",
+    "cleanup_level",
+    "entry_kind",
+    "cleaned_text",
+    "language",
+)
+
+
+def history_context(values: dict) -> dict:
+    """``values`` restricted to HISTORY_CONTEXT_COLUMNS, without Nones.
+
+    Raises:
+        TypeError: For a key that is not a context column.
+    """
+    unknown = set(values) - set(HISTORY_CONTEXT_COLUMNS)
+    if unknown:
+        raise TypeError(f"Not history context columns: {', '.join(sorted(unknown))}")
+    return {key: value for key, value in values.items() if value is not None}
+
+
 class TranscriptionHistory(Base):
     """A single transcription history entry (replaces HistoryEntry dataclass)."""
     __tablename__ = 'transcription_history'
@@ -46,6 +73,19 @@ class TranscriptionHistory(Base):
     # services/remote_records); NULL for this computer's own entries.
     origin_device_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     origin_device_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Schema v17 context (see HISTORY_CONTEXT_COLUMNS). The app fields stay
+    # on this computer; window titles, sites and captured text are never
+    # stored.
+    app_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    app_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    app_category: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    cleanup_level: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # dictation | file | command | transform; NULL on rows from before v17,
+    # whose kind follows from source_name.
+    entry_kind: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # The AI output, kept beside raw_text so "Undo AI edit" never loses it.
+    cleaned_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    language: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         Index('idx_history_timestamp', 'timestamp'),
@@ -64,8 +104,12 @@ class TranscriptionHistory(Base):
         cleanup_provider: Optional[str] = None,
         cleanup_model: Optional[str] = None,
         source_name: Optional[str] = None,
+        **context: Optional[str],
     ) -> 'TranscriptionHistory':
-        """Create a new entry with auto-generated id and UTC timestamp."""
+        """Create a new entry with auto-generated id and UTC timestamp.
+
+        ``context`` sets any of HISTORY_CONTEXT_COLUMNS.
+        """
         return cls(
             id=str(uuid.uuid4()),
             text=text,
@@ -79,6 +123,7 @@ class TranscriptionHistory(Base):
             cleanup_provider=cleanup_provider,
             cleanup_model=cleanup_model,
             source_name=source_name,
+            **history_context(context),
         )
 
     @property
@@ -94,6 +139,34 @@ class TranscriptionHistory(Base):
         if len(body) <= max_len:
             return body
         return body[:max_len].rsplit(' ', 1)[0] + "..."
+
+
+class DictationStat(Base):
+    """One saved dictation's word counts for the Stats window.
+
+    Local only, and deliberately not linked to transcription_history by a
+    foreign key: stats survive Clear history and moving history to a host.
+    """
+    __tablename__ = 'dictation_stats'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # The history entry it came from, while that entry exists.
+    entry_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # ISO 8601 UTC, like TranscriptionHistory.timestamp.
+    timestamp: Mapped[str] = mapped_column(String, nullable=False)
+    entry_kind: Mapped[str] = mapped_column(String, nullable=False)
+    app_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    app_category: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    cleanup_level: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    spoken_words: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    final_words: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    words_edited: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    audio_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    language: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    __table_args__ = (
+        Index('idx_dictation_stats_timestamp', 'timestamp'),
+    )
 
 
 # Meeting Mode

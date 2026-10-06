@@ -4587,3 +4587,37 @@ QLabel#remoteHostSummary {
     border-radius: 8px;
     padding: 12px;
 }
+
+/* Settings: the dismissible "New in OpenWhisper" note on Overview and Basic. */
+QFrame#settingsTile[kind="intro"],
+QFrame#settingsTile[kind="intro"]:hover {
+    background-color: @accent-tint;
+    border-color: @accent-tint-border;
+}
+
+/* personalize:S1 begin (context & styles) */
+/* personalize:S1 end */
+
+/* personalize:S2 begin (cleanup levels) */
+/* personalize:S2 end */
+
+/* personalize:S3 begin (commands) */
+/* personalize:S3 end */
+
+/* personalize:S4 begin (dictionary) */
+/* personalize:S4 end */
+
+/* personalize:S5 begin (snippets) */
+/* personalize:S5 end */
+
+/* personalize:S6 begin (hotkeys) */
+/* personalize:S6 end */
+
+/* personalize:S7 begin (microphones) */
+/* personalize:S7 end */
+
+/* personalize:S8 begin (overlay, languages & scratchpad) */
+/* personalize:S8 end */
+
+/* personalize:S9 begin (history, stats & playback) */
+/* personalize:S9 end */

@@ -45,10 +45,12 @@ from services.runtime import (
     StreamingRuntime,
     TranscriptionRuntime,
 )
+from services.runtime.command import CommandRuntime
 from services.settings import (
     SETTING_DEFAULTS,
     HuggingFaceAccessPolicy,
     SettingsKey,
+    seed_new_install_settings,
     setting_value,
     settings_manager,
 )
@@ -203,14 +205,29 @@ class ApplicationController(QObject):
     # A paired computer chose one of this computer's models (emitted from its
     # connection thread with a _ClientModelSwitch the slot answers).
     client_model_switch_requested = pyqtSignal(object)
+    # Shortcut actions, emitted from the hotkey dispatcher thread and handled
+    # on the Qt thread. A transform shortcut carries the transform's id.
+    transform_requested = pyqtSignal(str)
+    scratchpad_toggle_requested = pyqtSignal()
+    cycle_language_requested = pyqtSignal()
+    paste_last_original_requested = pyqtSignal()
+    # A push-and-hold recording latched into, or left, hands-free.
+    hands_free_changed = pyqtSignal(bool)
+    # (old, new) microphone names after a recording moved to the next one.
+    recording_device_switched = pyqtSignal(str, str)
+    # A correction the user made after a paste became a dictionary term.
+    dictionary_term_learned = pyqtSignal(str)
 
     def __init__(self, ui_controller, local_backend: Optional[LocalWhisperBackend] = None):
         super().__init__()
         self.ui_controller = ui_controller
+        # First, so nothing this launch writes the settings file before a
+        # brand-new install is told apart.
+        seed_new_install_settings(settings_manager)
 
-        saved_device_id = settings_manager.load_audio_input_device()
-        self.recorder = AudioRecorder(device_id=saved_device_id)
+        self.recorder = AudioRecorder.from_settings()
         self.recorder.error_callback = self.recording_capture_failed.emit
+        self.recorder.device_switch_callback = self.recording_device_switched.emit
         self._shutdown_cancel = threading.Event()
         self._shutting_down = False
         self._backup_in_progress = False
@@ -319,6 +336,7 @@ class ApplicationController(QObject):
         self.hotkey_runtime = HotkeyRuntime(self)
         self.streaming_runtime = StreamingRuntime(self)
         self.transcription_runtime = TranscriptionRuntime(self)
+        self.command_runtime = CommandRuntime(self)
         self.meeting_runtime = MeetingRuntime(self)
 
         self._setup_transcription_backends(local_backend=local_backend)
@@ -477,6 +495,21 @@ class ApplicationController(QObject):
         self.ui_controller.on_meeting_start_new = (
             self.meeting_runtime.start_new_meeting
         )
+        self.ui_controller.on_settings_changed = self.on_settings_changed
+
+    def command_key_pressed(self, at: float) -> None:
+        """The Command Mode shortcut went down; hotkey dispatcher thread."""
+        self.command_runtime.key_pressed(at)
+
+    def command_key_released(self, at: float) -> None:
+        """The Command Mode shortcut came up; hotkey dispatcher thread."""
+        self.command_runtime.key_released(at)
+
+    def on_settings_changed(self, kind: str) -> None:
+        """A Settings page saved something of ``kind`` (see notify_changed)."""
+        if kind in ("transforms", "hotkeys"):
+            # Transforms and the new actions register as global shortcuts.
+            self.hotkey_runtime.refresh_profile_hotkeys()
 
     def reload_whisper_model(self) -> None:
         """Schedule a debounced, background reload of the local whisper model.
@@ -2272,8 +2305,11 @@ class ApplicationController(QObject):
             return
 
         self.recorder.cleanup()
-        self.recorder = AudioRecorder(device_id=device_id)
+        # Settings saved the choice before calling here, and the saved
+        # microphone list is what the recorder opens from.
+        self.recorder = AudioRecorder.from_settings()
         self.recorder.error_callback = self.recording_capture_failed.emit
+        self.recorder.device_switch_callback = self.recording_device_switched.emit
         self.streaming_runtime.setup_audio_level_callback()
 
         device_name = "System Default" if device_id is None else f"Device {device_id}"
@@ -2527,6 +2563,26 @@ class ApplicationController(QObject):
         self.remote_host_renamed.connect(self._on_remote_host_renamed)
         self.records_changed.connect(self._on_records_changed)
         self.client_model_switch_requested.connect(self._on_client_model_switch)
+        self.transform_requested.connect(self.command_runtime.run_transform)
+        # Late-bound, so a UI without one of these fails only when it fires.
+        self.scratchpad_toggle_requested.connect(
+            lambda: self.ui_controller.toggle_scratchpad()
+        )
+        self.cycle_language_requested.connect(
+            lambda: self.ui_controller.cycle_dictation_language()
+        )
+        self.paste_last_original_requested.connect(
+            lambda: self.ui_controller.paste_last_original()
+        )
+        self.hands_free_changed.connect(
+            lambda on: self.ui_controller.set_hands_free(on)
+        )
+        self.recording_device_switched.connect(
+            lambda old, new: self.ui_controller.on_recording_device_switched(old, new)
+        )
+        self.dictionary_term_learned.connect(
+            lambda term: self.ui_controller.on_dictionary_term_learned(term)
+        )
         self.remote_link_poke.connect(self._publish_remote_link)
         self.remote_catalog_received.connect(self._on_remote_catalog)
         self.remote_settled.connect(self._on_remote_settled)
@@ -2649,6 +2705,20 @@ class ApplicationController(QObject):
             self._shutdown_cancel.set()
         self._batch_stop_requested = True
         self.transcription_runtime.begin_shutdown()
+
+        try:
+            self.command_runtime.cleanup()
+        except Exception as exc:
+            logger.debug(f"Error during command runtime cleanup: {exc}")
+        try:
+            from services import audio_player, focus_context
+
+            audio_player.stop_playback()
+            # Its capture threads hold accessibility (COM) objects that must
+            # be released before the interpreter shuts down.
+            focus_context.shutdown_service()
+        except Exception as exc:
+            logger.debug(f"Error stopping playback or focus capture: {exc}")
 
         try:
             if self.current_backend and self.current_backend.is_transcribing:

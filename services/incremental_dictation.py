@@ -348,8 +348,12 @@ class IncrementalDictation:
         self._lock = threading.Lock()
         self._session: Optional[DictationSession] = None
 
-    def start(self, controller) -> None:
-        """Follow the recording that just started, where its engine allows."""
+    def start(self, controller, *, recognition=None) -> None:
+        """Follow the recording that just started, where its engine allows.
+
+        ``recognition`` is the job's RecognitionContext; windows decode
+        without it for now.
+        """
         try:
             session = DictationSession.create(controller)
         except Exception:

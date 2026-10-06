@@ -228,6 +228,51 @@ class SettingsKey:
     UPDATE_NOTIFY_ENABLED: Final[str] = "update_notify_enabled"
     UPDATE_LAST_CHECK_AT: Final[str] = "update_last_check_at"
     UPDATE_SKIPPED_VERSION: Final[str] = "update_skipped_version"
+    # Personalization (docs/design/personalize/design.md).
+    # Knowing which app has focus is native, local and on by default.
+    APP_CONTEXT_ENABLED: Final[str] = "app_context_enabled"
+    # Reading text near the caret leaves this computer for AI cleanup, so it
+    # is opt-in.
+    APP_CONTEXT_READ_TEXT: Final[str] = "app_context_read_text"
+    # App ids whose text is never read.
+    APP_CONTEXT_EXCLUDED_APPS: Final[str] = "app_context_excluded_apps"
+    APP_STYLES_ENABLED: Final[str] = "app_styles_enabled"
+    # {category: tone}. Absent means every category is Formal, which is the
+    # output existing installs had; new installs are seeded once.
+    APP_STYLE_TONES: Final[str] = "app_style_tones"
+    # [{match, category}] user corrections to the built-in app catalogue.
+    APP_STYLE_OVERRIDES: Final[str] = "app_style_overrides"
+    # Preset used while AI cleanup is on; the cleanup switch stays the
+    # master on/off, so there is no stored "none".
+    TRANSCRIPT_CLEANUP_LEVEL: Final[str] = "transcript_cleanup_level"
+    # Saved rewrite instructions. Absent means the starters, so deleting
+    # every transform leaves an empty list rather than bringing them back.
+    TEXT_TRANSFORMS: Final[str] = "text_transforms"
+    # Command Mode with nothing selected writes new text at the cursor.
+    COMMAND_MODE_INSERT_WITHOUT_SELECTION: Final[str] = (
+        "command_mode_insert_without_selection"
+    )
+    # [{id, term, starred, heard, learned, new}]
+    DICTATION_DICTIONARY: Final[str] = "dictation_dictionary"
+    DICTIONARY_LEARN_ENABLED: Final[str] = "dictionary_learn_enabled"
+    # Send dictionary terms to speech engines that accept hints.
+    DICTIONARY_STEER_RECOGNITION: Final[str] = "dictionary_steer_recognition"
+    # [{id, trigger, text, formatted}]; exempt from the backup URL scrub
+    # because the expansion text is the user's own content.
+    DICTATION_SNIPPETS: Final[str] = "dictation_snippets"
+    SNIPPETS_ENABLED: Final[str] = "snippets_enabled"
+    # Push-and-hold: a quick second press keeps recording hands-free.
+    RECORDING_HANDS_FREE_LATCH: Final[str] = "recording_hands_free_latch"
+    # Ordered [{name, hostapi}] microphones; the single source of truth once
+    # migrated from the legacy AUDIO_INPUT_DEVICE index (kept for downgrades).
+    AUDIO_INPUT_PRIORITY: Final[str] = "audio_input_priority"
+    # Language codes the user dictates in, and the one currently active ("" =
+    # the engine's own setting). Never written into LOCAL_ASR_LANGUAGE.
+    DICTATION_LANGUAGES: Final[str] = "dictation_languages"
+    DICTATION_ACTIVE_LANGUAGE: Final[str] = "dictation_active_language"
+    SCRATCHPAD_ALWAYS_ON_TOP: Final[str] = "scratchpad_always_on_top"
+    # The dismissible "New in OpenWhisper" tile.
+    FLOW_FEATURES_INTRO_SEEN: Final[str] = "flow_features_intro_seen"
 
 
 #: Keys the single live-preview toggle replaced. Dropped whenever that toggle
@@ -316,6 +361,15 @@ class TranscriptCleanupProvider:
     OPENCODE_ZEN: Final[str] = "opencode_zen"
 
     ALL: Final[Tuple[str, ...]] = (OPENAI, OPENROUTER, OLLAMA, GROQ, OPENCODE_GO, OPENCODE_ZEN)
+
+
+class TranscriptCleanupLevel:
+    """Values for ``SettingsKey.TRANSCRIPT_CLEANUP_LEVEL``."""
+    LIGHT: Final[str] = "light"
+    MEDIUM: Final[str] = "medium"
+    HIGH: Final[str] = "high"
+
+    ALL: Final[Tuple[str, ...]] = (LIGHT, MEDIUM, HIGH)
 
 
 class TranscriptCleanupModelSort:
@@ -551,6 +605,26 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.UPDATE_CHECK_ENABLED: config.UPDATE_CHECK_ENABLED,
     SettingsKey.UPDATE_NOTIFY_ENABLED: config.UPDATE_NOTIFY_ENABLED,
     SettingsKey.UPDATE_SKIPPED_VERSION: "",
+    # Personalization. APP_STYLE_TONES and TEXT_TRANSFORMS have no
+    # entry: their absence has its own meaning (all Formal, the starters).
+    SettingsKey.APP_CONTEXT_ENABLED: True,
+    SettingsKey.APP_CONTEXT_READ_TEXT: False,
+    SettingsKey.APP_CONTEXT_EXCLUDED_APPS: [],
+    SettingsKey.APP_STYLES_ENABLED: True,
+    SettingsKey.APP_STYLE_OVERRIDES: [],
+    SettingsKey.TRANSCRIPT_CLEANUP_LEVEL: config.TRANSCRIPT_CLEANUP_LEVEL,
+    SettingsKey.COMMAND_MODE_INSERT_WITHOUT_SELECTION: True,
+    SettingsKey.DICTATION_DICTIONARY: [],
+    SettingsKey.DICTIONARY_LEARN_ENABLED: True,
+    SettingsKey.DICTIONARY_STEER_RECOGNITION: True,
+    SettingsKey.DICTATION_SNIPPETS: [],
+    SettingsKey.SNIPPETS_ENABLED: True,
+    SettingsKey.RECORDING_HANDS_FREE_LATCH: True,
+    SettingsKey.AUDIO_INPUT_PRIORITY: [],
+    SettingsKey.DICTATION_LANGUAGES: [],
+    SettingsKey.DICTATION_ACTIVE_LANGUAGE: "",
+    SettingsKey.SCRATCHPAD_ALWAYS_ON_TOP: True,
+    SettingsKey.FLOW_FEATURES_INTRO_SEEN: False,
 })
 
 
@@ -569,6 +643,22 @@ class SettingsManager:
         self._lock = threading.RLock()
         self._cached_signature = None
         self._cached_settings = None
+        # The module singleton is built when settings are first imported,
+        # after any pending backup restore and before anything this launch
+        # can write the file, so this tells a brand-new install apart.
+        self._launch_check = (
+            os.path.abspath(self.settings_file),
+            os.path.exists(self.settings_file),
+        )
+
+    def is_new_install(self) -> bool:
+        """Whether this launch started without a settings file.
+
+        Only for the file checked when the manager was built: one pointed at
+        another file since (tests, a data-root change) is never new.
+        """
+        path, existed = self._launch_check
+        return not existed and os.path.abspath(self.settings_file) == path
 
     def _file_signature(self):
         """Detect changed paths, in-place edits, and atomic external replaces."""
@@ -837,6 +927,32 @@ def is_hf_hub_offline_env_set() -> bool:
 settings_manager = SettingsManager()
 
 
+def seed_new_install_settings(manager=None) -> bool:
+    """Write the defaults a brand-new install starts with; True when written.
+
+    Existing installs keep today's output (no app_style_tones key means
+    every category is Formal); only a launch that found no settings file
+    gets the casual chat tones, and only once.
+    """
+    manager = settings_manager if manager is None else manager
+    is_new = getattr(manager, "is_new_install", None)
+    if not callable(is_new) or not is_new():
+        return False
+    from services.app_styles import NEW_INSTALL_TONES
+
+    def seed(settings: Dict[str, Any]) -> bool:
+        if SettingsKey.APP_STYLE_TONES in settings:
+            return False
+        settings[SettingsKey.APP_STYLE_TONES] = dict(NEW_INSTALL_TONES)
+        return True
+
+    try:
+        return bool(manager.mutate_settings(seed))
+    except Exception as exc:
+        logger.warning("Could not seed new-install settings: %s", exc)
+        return False
+
+
 def setting_value(key: str, settings: Optional[Mapping[str, Any]] = None) -> Any:
     """Return the stored value of ``key``, or its default when unset.
 
@@ -919,6 +1035,8 @@ resolve_meeting_agent_core = _choice_resolver(
     SettingsKey.MEETING_AGENT_CORE, MeetingAgentCore.ALL)
 resolve_meeting_server_bind = _choice_resolver(
     SettingsKey.MEETING_SERVER_BIND, MeetingServerBind.ALL)
+resolve_transcript_cleanup_level = _choice_resolver(
+    SettingsKey.TRANSCRIPT_CLEANUP_LEVEL, TranscriptCleanupLevel.ALL)
 
 # On/off settings: the stored bool, else the default.
 resolve_transcript_batch_custom_combine = _bool_resolver(
@@ -960,6 +1078,20 @@ resolve_meeting_report_signal = _bool_resolver(SettingsKey.MEETING_REPORT_SIGNAL
 resolve_typesafe_enabled = _bool_resolver(SettingsKey.TYPESAFE_ENABLED)
 resolve_typesafe_provider = _choice_resolver(
     SettingsKey.TYPESAFE_PROVIDER, TypeSafeProvider.ALL)
+# Personalization switches.
+resolve_app_context_enabled = _bool_resolver(SettingsKey.APP_CONTEXT_ENABLED)
+resolve_app_context_read_text = _bool_resolver(SettingsKey.APP_CONTEXT_READ_TEXT)
+resolve_app_styles_enabled = _bool_resolver(SettingsKey.APP_STYLES_ENABLED)
+resolve_command_mode_insert_without_selection = _bool_resolver(
+    SettingsKey.COMMAND_MODE_INSERT_WITHOUT_SELECTION)
+resolve_dictionary_learn_enabled = _bool_resolver(SettingsKey.DICTIONARY_LEARN_ENABLED)
+resolve_dictionary_steer_recognition = _bool_resolver(
+    SettingsKey.DICTIONARY_STEER_RECOGNITION)
+resolve_snippets_enabled = _bool_resolver(SettingsKey.SNIPPETS_ENABLED)
+resolve_recording_hands_free_latch = _bool_resolver(
+    SettingsKey.RECORDING_HANDS_FREE_LATCH)
+resolve_scratchpad_always_on_top = _bool_resolver(SettingsKey.SCRATCHPAD_ALWAYS_ON_TOP)
+resolve_flow_features_intro_seen = _bool_resolver(SettingsKey.FLOW_FEATURES_INTRO_SEEN)
 
 
 def resolve_max_saved_recordings(

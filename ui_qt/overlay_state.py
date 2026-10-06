@@ -13,3 +13,5 @@ class OverlayState(Enum):
     CANCELING = "canceling"
     STT_ENABLED = "stt_enabled"
     STT_DISABLED = "stt_disabled"
+    COMMAND_LISTENING = "command_listening"
+    REWRITING = "rewriting"

@@ -25,6 +25,12 @@ class SystemTrayManager(QSystemTrayIcon):
     toggle_recording = pyqtSignal()
     meeting_toggle_requested = pyqtSignal()
     meeting_dashboard_requested = pyqtSignal()
+    paste_last_original_requested = pyqtSignal()
+    scratchpad_requested = pyqtSignal()
+    stats_requested = pyqtSignal()
+    # Emitted as the Language submenu opens, so a connected slot can refill
+    # it with the current choices before it is drawn.
+    language_menu_requested = pyqtSignal(object)
 
     def __init__(self, main_window=None):
         super().__init__()
@@ -60,6 +66,14 @@ class SystemTrayManager(QSystemTrayIcon):
         self.menu.addSeparator()
         self.toggle_action = self.menu.addAction("Start Recording")
         self.toggle_action.triggered.connect(self._on_toggle)
+        self.paste_original_action = self.menu.addAction(
+            "Paste original of last dictation"
+        )
+        self.paste_original_action.triggered.connect(
+            self.paste_last_original_requested
+        )
+        self.language_menu = self.menu.addMenu("Language")
+        self.language_menu.aboutToShow.connect(self._on_language_menu_about_to_show)
 
         self.menu.addSeparator()
         self.meeting_toggle_action = self.menu.addAction("Start Meeting")
@@ -69,6 +83,10 @@ class SystemTrayManager(QSystemTrayIcon):
         self.meeting_dashboard_action.setEnabled(False)
 
         self.menu.addSeparator()
+        self.scratchpad_action = self.menu.addAction("Scratchpad")
+        self.scratchpad_action.triggered.connect(self.scratchpad_requested)
+        self.stats_action = self.menu.addAction("Stats")
+        self.stats_action.triggered.connect(self.stats_requested)
         settings_action = self.menu.addAction("Settings")
         settings_action.setMenuRole(QAction.MenuRole.NoRole)
         settings_action.triggered.connect(self._on_settings)
@@ -129,6 +147,9 @@ class SystemTrayManager(QSystemTrayIcon):
 
     def _on_meeting_dashboard(self):
         self.meeting_dashboard_requested.emit()
+
+    def _on_language_menu_about_to_show(self):
+        self.language_menu_requested.emit(self.language_menu)
 
     def _on_settings(self):
         if self.main_window:

@@ -123,10 +123,17 @@ class FakeRecorder:
         self.is_recording = False
         self.audio_level_callback = None
         self.streaming_callback = None
+        self.device_switch_callback = None
         self.cleaned_up = False
         self.last_start_error = None
         self.start_should_fail = False
         self.capture_canceled = False
+
+    @classmethod
+    def from_settings(cls):
+        # The controller's settings module is the stub holding the fake store.
+        settings_manager = sys.modules["services.settings"].settings_manager
+        return cls(device_id=settings_manager.load_audio_input_device())
 
     def set_audio_level_callback(self, callback):
         self.audio_level_callback = callback
@@ -376,12 +383,24 @@ class DummyOverlay:
     def __init__(self):
         self.large_file_info = None
         self.shown_states = []
+        self.hands_free = False
+        self.language = ""
+        self.captions = []
 
     def set_large_file_info(self, file_size_mb):
         self.large_file_info = file_size_mb
 
     def show_at_cursor(self, state):
         self.shown_states.append(state)
+
+    def set_hands_free(self, on):
+        self.hands_free = on
+
+    def set_language(self, code):
+        self.language = code
+
+    def show_caption(self, text):
+        self.captions.append(text)
 
 
 class DummyTabbedContent:
@@ -475,6 +494,7 @@ class DummyUIController:
         self.batch_progress_events = []
         self.batch_item_events = []
         self.batch_item_transcripts = []
+        self.flow_calls = []
 
     def set_batch_progress(self, position, total, source_name):
         self.batch_progress_events.append((position, total, source_name))
@@ -678,6 +698,45 @@ class DummyUIController:
         self.refreshed_history = True
 
     def hide_overlay(self):
+        pass
+
+    # Personalization hooks; each records what it was asked so a test can check
+    # the controller's wiring without the real widgets.
+    def toggle_scratchpad(self):
+        self.flow_calls.append(("toggle_scratchpad",))
+
+    def insert_into_scratchpad(self, text):
+        self.flow_calls.append(("insert_into_scratchpad", text))
+        return False
+
+    def cycle_dictation_language(self):
+        self.flow_calls.append(("cycle_dictation_language",))
+
+    def paste_last_original(self):
+        self.flow_calls.append(("paste_last_original",))
+
+    def set_hands_free(self, on):
+        self.flow_calls.append(("set_hands_free", on))
+        self.overlay.set_hands_free(on)
+
+    def on_recording_device_switched(self, old, new):
+        self.flow_calls.append(("on_recording_device_switched", old, new))
+
+    def on_dictionary_term_learned(self, term):
+        self.flow_calls.append(("on_dictionary_term_learned", term))
+
+    def show_stats(self):
+        self.flow_calls.append(("show_stats",))
+
+    def populate_language_menu(self, menu):
+        self.flow_calls.append(("populate_language_menu", menu))
+
+    def capture_selection(self, callback, *, timeout_ms=None):
+        self.flow_calls.append(("capture_selection", timeout_ms))
+        callback("")
+
+    def on_settings_changed(self, kind):
+        # Replaced by the controller's handler in _setup_ui_callbacks.
         pass
 
     def cleanup(self):

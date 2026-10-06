@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from config import config
 from services.database import db
 from services.format_utils import format_file_size, format_timestamp
+from services.models import HISTORY_CONTEXT_COLUMNS
 from services.models import TranscriptionHistory as HistoryEntry
 from services.settings import (
     resolve_max_saved_recordings,
@@ -111,8 +112,20 @@ class HistoryManager:
         cleanup_provider: Optional[str] = None,
         cleanup_model: Optional[str] = None,
         source_name: Optional[str] = None,
+        **columns,
     ) -> HistoryEntry:
-        """Persist a transcription and optionally retain its source audio."""
+        """Persist a transcription and optionally retain its source audio.
+
+        ``columns`` may carry any of HISTORY_CONTEXT_COLUMNS; other keys are
+        dropped, so callers can pass a job's fields without vetting them.
+        """
+        context = {
+            key: value for key, value in columns.items()
+            if key in HISTORY_CONTEXT_COLUMNS and value is not None
+        }
+        ignored = sorted(set(columns) - set(HISTORY_CONTEXT_COLUMNS))
+        if ignored:
+            logger.debug("Ignored unknown history fields: %s", ", ".join(ignored))
         saved_audio_path = None
 
         if source_audio_path and os.path.exists(source_audio_path):
@@ -129,6 +142,7 @@ class HistoryManager:
             cleanup_provider=cleanup_provider,
             cleanup_model=cleanup_model,
             source_name=source_name,
+            **context,
         )
 
         db.add_history_entry(
@@ -144,6 +158,7 @@ class HistoryManager:
             cleanup_provider=entry.cleanup_provider,
             cleanup_model=entry.cleanup_model,
             source_name=entry.source_name,
+            **context,
         )
 
         logger.info(f"Added history entry: {entry.id[:8]}...")

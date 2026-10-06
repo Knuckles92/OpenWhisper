@@ -41,6 +41,13 @@ _JSON_FIELDS = (
     "title",
     "origin_device_id",
     "origin_device_name",
+    "app_id",
+    "app_name",
+    "app_category",
+    "cleanup_level",
+    "entry_kind",
+    "cleaned_text",
+    "language",
 )
 
 
@@ -66,6 +73,13 @@ def serialize_history_entry(entry: Any) -> Dict[str, Any]:
         # Set on a host for the entries a paired computer keeps there.
         "origin_device_id": getattr(entry, "origin_device_id", None),
         "origin_device_name": getattr(entry, "origin_device_name", None),
+        "app_id": getattr(entry, "app_id", None),
+        "app_name": getattr(entry, "app_name", None),
+        "app_category": getattr(entry, "app_category", None),
+        "cleanup_level": getattr(entry, "cleanup_level", None),
+        "entry_kind": getattr(entry, "entry_kind", None),
+        "cleaned_text": getattr(entry, "cleaned_text", None),
+        "language": getattr(entry, "language", None),
         "formatted_timestamp": format_timestamp(timestamp) if timestamp else "",
         "preview_text": _preview_text(text),
         "has_audio": bool(audio_file),

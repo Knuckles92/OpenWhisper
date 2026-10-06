@@ -630,6 +630,15 @@ class WaveformOverlay(QWidget):
         self.audio_levels = levels[:20]
         self.style.update_audio_levels(self.audio_levels)
 
+    def set_hands_free(self, on: bool) -> None:
+        """Mark a push-and-hold recording latched on until the next press."""
+
+    def set_language(self, code: str, choices) -> None:
+        """Show the active dictation language when there is more than one."""
+
+    def show_caption(self, text: str) -> None:
+        """Show a short notice, such as a microphone switch, with the waveform."""
+
     def hide(self):
         """Hide the overlay and stop animations."""
         self.timer.stop()

@@ -16,6 +16,7 @@ from PyQt6.QtCore import (
     QMimeData,
     QObject,
     Qt,
+    QThread,
     QTimer,
     QUrl,
     pyqtSignal,
@@ -216,6 +217,25 @@ class _PrefetchedSnapshot:
     sequence: int
 
 
+#: How often a selection capture looks for the copy to land.
+SELECTION_POLL_MS = 10
+
+
+@dataclass
+class _SelectionCapture:
+    """One synthetic copy in flight; see TemporaryClipboard.capture_selection."""
+
+    original: ClipboardSnapshot
+    callback: Callable[[str], None]
+    deadline: float
+    #: Sequence number before the copy, or None without a sequence source.
+    sequence: int | None
+    #: Last sequence number seen after a change, to wait until it settles.
+    settling: int | None = None
+    #: The clipboard changed since the copy was sent.
+    changed: bool = False
+
+
 class TemporaryClipboard(QObject):
     """Stages transcript text and restores a clipboard snapshot if still owned.
 
@@ -231,6 +251,7 @@ class TemporaryClipboard(QObject):
     # caller that is busy starting the recorder and overlay.
     _prefetch_requested = pyqtSignal(int)
     _prefetch_discard_requested = pyqtSignal()
+    _selection_requested = pyqtSignal(object, object, int)
 
     def __init__(
         self,
@@ -268,6 +289,18 @@ class TemporaryClipboard(QObject):
         self._prefetch_discard_requested.connect(
             self._discard_prefetch, Qt.ConnectionType.QueuedConnection
         )
+        self._selection: _SelectionCapture | None = None
+        self._selection_timer = QTimer(self)
+        self._selection_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._selection_timer.setInterval(SELECTION_POLL_MS)
+        self._selection_timer.timeout.connect(self._poll_selection)
+        self._selection_requested.connect(
+            self._start_selection_capture, Qt.ConnectionType.QueuedConnection
+        )
+        data_changed = getattr(clipboard, "dataChanged", None)
+        if data_changed is not None:
+            # Only consulted without a sequence number (macOS, Linux).
+            data_changed.connect(self._on_clipboard_data_changed)
 
     def request_prefetch(self, delay_ms: int = CLIPBOARD_PREFETCH_DELAY_MS) -> None:
         """Snapshot the clipboard ``delay_ms`` from now for the next stage.
@@ -285,13 +318,48 @@ class TemporaryClipboard(QObject):
         """
         self._prefetch_discard_requested.emit()
 
+    def capture_selection(
+        self,
+        send_copy: Callable[[], None],
+        callback: Callable[[str], None],
+        timeout_ms: int,
+    ) -> None:
+        """Read the focused app's selection through a copy, then put the
+        user's clipboard back.
+
+        Order: a pending restore is resolved; the user's clipboard is kept
+        (the prefetch while it is provably current, else a fresh capture);
+        ``send_copy()`` runs; the clipboard is watched for the copy to land;
+        its text is read and the original written straight back and kept as
+        the next stage's snapshot; only then ``callback(text)`` runs. Safe to
+        call from any thread; the work and the callback run on the Qt thread.
+
+        Args:
+            send_copy: Sends the copy shortcut to the focused app.
+            callback: Receives the selected text, or "" when the clipboard
+                did not change within ``timeout_ms``, nothing could be read,
+                or the copy could not be sent.
+            timeout_ms: How long to wait for the copy to land.
+        """
+        if QThread.currentThread() != self.thread():
+            self._selection_requested.emit(send_copy, callback, int(timeout_ms))
+            return
+        self._start_selection_capture(send_copy, callback, int(timeout_ms))
+
     def write_text(self, text: str) -> bool:
+        self._abort_selection_capture()
         written = self._write_plain_text(text)
         if written:
             self._discard_pending()
         return written
 
-    def stage_text(self, text: str) -> ClipboardStageResult:
+    def stage_text(self, text: str, html: str | None = None) -> ClipboardStageResult:
+        """Put ``text`` on the clipboard for a paste, keeping the user's to restore.
+
+        ``html`` is a rich-text alternative to ``text``; accepted but not yet
+        staged.
+        """
+        self._abort_selection_capture()
         self._resolve_pending_before_stage()
         if self._clipboard is None:
             logger.error("No Qt clipboard available")
@@ -359,6 +427,7 @@ class TemporaryClipboard(QObject):
         return self._restore(lease)
 
     def cleanup(self) -> None:
+        self._abort_selection_capture()
         self._discard_prefetch()
         lease = self._pending
         self._restore_timer.stop()
@@ -379,6 +448,9 @@ class TemporaryClipboard(QObject):
             # The previous transcript is staged until its restore runs, so
             # the clipboard is not the user's yet; stage_text will capture.
             logger.debug("Skipped clipboard prefetch while a restore is pending")
+            return
+        if self._selection is not None:
+            # The clipboard holds the copied selection until it is restored.
             return
         sequence = self._sequence()
         if sequence is None:
@@ -410,6 +482,120 @@ class TemporaryClipboard(QObject):
             logger.debug("Clipboard changed since the prefetch; capturing it again")
             return None
         return prefetched.snapshot
+
+    @pyqtSlot(object, object, int)
+    def _start_selection_capture(self, send_copy, callback, timeout_ms: int) -> None:
+        if self._selection is not None:
+            # A second copy now would read the first one's text.
+            logger.info("Selection capture already running; ignoring another")
+            self._call_back(callback, "")
+            return
+        if self._clipboard is None:
+            self._call_back(callback, "")
+            return
+        self._resolve_pending_before_stage()
+        original = self._take_prefetched_snapshot()
+        if original is None:
+            try:
+                original = ClipboardSnapshot.capture(self._clipboard.mimeData())
+            except Exception as exc:
+                # Without a copy of the user's clipboard it could not be put
+                # back, so no copy is sent at all.
+                logger.warning("Could not snapshot clipboard before copying the selection: %s", exc)
+                self._call_back(callback, "")
+                return
+        sequence = self._sequence() if self._sequence is not None else None
+        self._selection = _SelectionCapture(
+            original=original,
+            callback=callback,
+            deadline=time.monotonic() + max(0, timeout_ms) / 1000,
+            sequence=sequence,
+        )
+        try:
+            send_copy()
+        except Exception as exc:
+            logger.warning("Could not send the copy shortcut: %s", exc)
+            self._finish_selection("")
+            return
+        self._selection_timer.start()
+
+    def _poll_selection(self) -> None:
+        capture = self._selection
+        if capture is None:
+            self._selection_timer.stop()
+            return
+        expired = time.monotonic() >= capture.deadline
+        if capture.sequence is not None:
+            current = self._sequence()
+            if current is not None and current != capture.sequence:
+                capture.changed = True
+                # Apps empty the clipboard and then fill it, each a change;
+                # read once the number has held still for one poll.
+                settled = current == capture.settling
+                capture.settling = current
+                if not settled and not expired:
+                    return
+        if capture.changed:
+            text = self._clipboard_text()
+            if text or expired:
+                self._finish_selection(text)
+            return
+        if expired:
+            self._finish_selection("")
+
+    def _on_clipboard_data_changed(self) -> None:
+        capture = self._selection
+        if capture is not None and capture.sequence is None:
+            capture.changed = True
+
+    def _abort_selection_capture(self) -> None:
+        """End a capture in flight with no text, putting the user's clipboard back."""
+        if self._selection is not None:
+            self._finish_selection("")
+
+    def _finish_selection(self, text: str) -> None:
+        capture = self._selection
+        self._selection = None
+        self._selection_timer.stop()
+        if capture is None:
+            return
+        changed = capture.changed
+        if not changed and capture.sequence is not None:
+            current = self._sequence()
+            changed = current is not None and current != capture.sequence
+        holds_original = True
+        if changed:
+            try:
+                self._clipboard.setMimeData(capture.original.to_mime_data())
+            except Exception as exc:
+                holds_original = False
+                message = str(exc) or "unknown clipboard error"
+                logger.error("Failed to restore clipboard after copying the selection: %s", message)
+                self.restore_failed.emit(message)
+        if holds_original and self._sequence is not None:
+            # The clipboard holds exactly this snapshot again, so the next
+            # paste can reuse it instead of capturing the clipboard twice.
+            sequence = self._sequence()
+            if sequence is not None:
+                self._prefetched = _PrefetchedSnapshot(capture.original, sequence)
+        self._call_back(capture.callback, text)
+
+    def _clipboard_text(self) -> str:
+        try:
+            mime_data = self._clipboard.mimeData()
+            if mime_data is None or not mime_data.hasText():
+                return ""
+            return str(mime_data.text())
+        except Exception as exc:
+            logger.debug("Could not read the copied selection: %s", exc)
+            return ""
+
+    @staticmethod
+    def _call_back(callback, text: str) -> None:
+        try:
+            callback(text)
+        except Exception:
+            logger.exception("Selection callback failed")
 
     def _restore_pending(self) -> None:
         lease = self._pending

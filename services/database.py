@@ -11,12 +11,13 @@ from sqlalchemy.orm import scoped_session, sessionmaker
 
 from config import config
 from services.models import (
-    Base, SchemaVersion, TranscriptionHistory,
+    HISTORY_CONTEXT_COLUMNS, Base, SchemaVersion, TranscriptionHistory,
+    history_context,
 )
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 
 class DatabaseManager:
@@ -370,6 +371,17 @@ class DatabaseManager:
             if columns and "title" not in columns:
                 conn.execute(text("ALTER TABLE transcription_history ADD COLUMN title TEXT"))
 
+        if from_version < 17:
+            # Per-entry context; dictation_stats is new and made by create_all.
+            columns = {row[1] for row in conn.execute(
+                text("PRAGMA table_info(transcription_history)")
+            ).fetchall()}
+            for column in HISTORY_CONTEXT_COLUMNS:
+                if columns and column not in columns:
+                    conn.execute(text(
+                        f"ALTER TABLE transcription_history ADD COLUMN {column} TEXT"
+                    ))
+
         conn.execute(text("UPDATE schema_version SET version = :v"), {"v": SCHEMA_VERSION})
         logger.info(f"Database migrated to schema version {SCHEMA_VERSION}")
 
@@ -425,7 +437,9 @@ class DatabaseManager:
         cleanup_provider: Optional[str] = None,
         cleanup_model: Optional[str] = None,
         source_name: Optional[str] = None,
+        **context: Optional[str],
     ) -> None:
+        """Insert an entry; ``context`` sets any of HISTORY_CONTEXT_COLUMNS."""
         with self.get_session() as session:
             session.add(TranscriptionHistory(
                 id=entry_id, text=text, raw_text=raw_text,
@@ -434,6 +448,7 @@ class DatabaseManager:
                 audio_duration=audio_duration, file_size=file_size,
                 cleanup_provider=cleanup_provider, cleanup_model=cleanup_model,
                 source_name=source_name,
+                **history_context(context),
             ))
 
     @staticmethod

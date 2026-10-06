@@ -16,8 +16,14 @@ VOICE_MODEL: Final[str] = "voice_model"
 REMOTE_ENGINE: Final[str] = "remote_engine"
 RECORDING: Final[str] = "recording"
 CLEANUP: Final[str] = "cleanup"
+
+# Personalize
+DICTIONARY: Final[str] = "dictionary"
+SNIPPETS: Final[str] = "snippets"
+STYLES: Final[str] = "styles"
 CLEANUP_RULES: Final[str] = "cleanup_rules"
 CLEANUP_PROFILES: Final[str] = "cleanup_profiles"
+COMMANDS: Final[str] = "commands"
 
 # Meeting Mode
 MEETING_VOICE: Final[str] = "meeting_voice"

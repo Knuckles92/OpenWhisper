@@ -2,7 +2,6 @@
 
 from dataclasses import asdict, dataclass
 
-from config import config
 from services.hotkey_manager import format_hotkey, parse_hotkey
 from services.settings import (
     SettingsKey,
@@ -105,21 +104,16 @@ def profile_hotkey_conflict(
     exclude_id: str = "",
     standard_hotkeys: dict | None = None,
 ) -> str:
-    """Return the action/profile already using this shortcut, if any."""
-    if not hotkey:
-        return ""
-    signature = parse_hotkey(normalize_hotkey(hotkey))
-    standard = {**config.DEFAULT_HOTKEYS, **settings.get(SettingsKey.HOTKEYS, {})}
-    if standard_hotkeys is not None:
-        standard = {**config.DEFAULT_HOTKEYS, **standard_hotkeys}
-    for action, value in standard.items():
-        if value and parse_hotkey(normalize_hotkey(value)) == signature:
-            return action.replace("_", " ")
-    for profile in load_cleanup_profiles(settings):
-        if profile.id != exclude_id and profile.hotkey:
-            if parse_hotkey(profile.hotkey) == signature:
-                return profile.name
-    return ""
+    """Return the action, profile or transform already using this shortcut."""
+    # hotkey_conflicts imports this module.
+    from services.hotkey_conflicts import PROFILE, hotkey_conflict
+
+    return hotkey_conflict(
+        hotkey,
+        settings,
+        exclude=(PROFILE, exclude_id),
+        standard_hotkeys=standard_hotkeys,
+    )
 
 
 def validate_profile(profile: CleanupProfile, settings: dict) -> None:

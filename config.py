@@ -205,6 +205,10 @@ class AppConfig:
     DATABASE_FILE: str = field(
         default_factory=lambda: user_data_path("openwhisper.db")
     )
+    # The floating Scratchpad's text, autosaved and included in backups.
+    SCRATCHPAD_FILE: str = field(
+        default_factory=lambda: user_data_path("scratchpad.txt")
+    )
 
     # Audio settings
     CHUNK_SIZE: int = 1024
@@ -293,6 +297,9 @@ class AppConfig:
     AUTO_PASTE_CLIPBOARD_RESTORE_DELAY_MS: int = 250
     # Shortest push-and-hold that counts as a recording; shorter holds cancel.
     RECORD_MIN_HOLD_MS: int = 250
+    # Hands-free latch: a second press this soon after a short tap keeps a
+    # push-and-hold recording going instead of canceling it.
+    RECORD_LATCH_WINDOW_MS: int = 400
     OVERLAY_HIDE_DELAY_MS: int = 1500
     CANCELLATION_ANIMATION_DURATION_MS: int = 800
     CANCELLATION_GRACE_MS: int = 200
@@ -451,8 +458,28 @@ class AppConfig:
         "and preserve meaning, tone, and proper nouns. "
         "Return only the cleaned transcript text with no preamble or quotes."
     )
+    # Cleanup preset when AI cleanup is on: "light", "medium" or "high".
+    TRANSCRIPT_CLEANUP_LEVEL: str = "medium"
     # Learned cleanup rules (user-taught behaviors appended to the base prompt)
     MAX_TRANSCRIPT_CLEANUP_RULES: int = 50
+
+    # Personal dictionary, snippets and saved rewrites. Speech engines take a
+    # bounded hint list, so only MAX_RECOGNITION_PHRASES terms (starred
+    # first) reach the speech model; the prompt and replacements use all.
+    MAX_DICTIONARY_TERMS: int = 500
+    MAX_RECOGNITION_PHRASES: int = 50
+    MAX_SNIPPETS: int = 200
+    MAX_TEXT_TRANSFORMS: int = 50
+
+    # Text read around the caret of the focused app (opt-in), and how long
+    # a recording start waits for the focused app and that text at most.
+    # Past the deadline the job has no context rather than a late one.
+    CONTEXT_BEFORE_CHARS: int = 1000
+    CONTEXT_AFTER_CHARS: int = 200
+    CONTEXT_CAPTURE_DEADLINE_S: float = 0.4
+    # How long Command Mode and transforms wait for a synthetic copy to
+    # change the clipboard before treating the selection as empty.
+    COMMAND_SELECTION_TIMEOUT_MS: int = 700
     TRANSCRIPT_CLEANUP_RULE_POLISH_PROMPT: str = (
         "You convert a user's instruction into one short rule for an AI that "
         "cleans up speech-to-text transcripts. Rewrite the instruction as a "
@@ -541,6 +568,14 @@ class AppConfig:
 
     def __post_init__(self):
         if self.DEFAULT_HOTKEYS is None:
+            # Command Mode, the Scratchpad, language cycling and pasting the
+            # last original have no default shortcut on any platform.
+            unbound = {
+                'command_mode': '',
+                'scratchpad_toggle': '',
+                'cycle_language': '',
+                'paste_last_original': '',
+            }
             if sys.platform == "darwin":
                 # Control+Option combos avoid macOS system shortcuts (Spotlight,
                 # input sources, emoji picker) and common app defaults such as
@@ -552,6 +587,7 @@ class AppConfig:
                     'enable_disable': 'ctrl+alt+shift+r',
                     'minimize_tray': 'ctrl+alt+m',
                     'meeting_toggle': '',
+                    **unbound,
                 }
             else:
                 self.DEFAULT_HOTKEYS = {
@@ -560,6 +596,7 @@ class AppConfig:
                     'enable_disable': 'ctrl+alt+kp *',
                     'minimize_tray': 'ctrl+alt+m',
                     'meeting_toggle': '',
+                    **unbound,
                 }
 
         if self.MODEL_VALUE_MAP is None:

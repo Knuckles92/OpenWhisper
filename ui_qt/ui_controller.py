@@ -36,6 +36,7 @@ from ui_qt.system_tray import SystemTrayManager
 from ui_qt.dialogs.app_update_dialog import AppUpdateDialog
 from ui_qt.dialogs.settings_dialog import (
     CLEANUP_PROFILES,
+    DICTIONARY,
     DOWNLOADS,
     HOTKEYS,
     MEETING_INTELLIGENCE,
@@ -81,6 +82,10 @@ def arm_handoff_watchdog(grace_s: float = HANDOFF_EXIT_GRACE_S) -> threading.Tim
     timer.daemon = True
     timer.start()
     return timer
+
+
+def _ignore_settings_change(_kind: str) -> None:
+    pass
 
 
 def _start_detached(program: str, arguments: list) -> bool:
@@ -148,6 +153,9 @@ class UIController(QObject):
         self.on_streaming_settings_changed: Optional[Callable] = None
         self.on_hf_policy_changed: Optional[Callable] = None
         self.on_api_keys_changed: Optional[Callable] = None
+        # A Settings page module changed something the app caches, by kind
+        # ("transforms", "hotkeys", "dictionary", ...). Always callable.
+        self.on_settings_changed: Callable[[str], None] = _ignore_settings_change
         # RemoteEngineService, set by the application controller.
         self._remote_engine = None
         self.on_model_download_requested: Optional[Callable] = None
@@ -277,6 +285,8 @@ class UIController(QObject):
         self.main_window.past_meetings_clear_requested.connect(
             self._on_past_meetings_clear_requested
         )
+        self.main_window.scratchpad_requested.connect(self.toggle_scratchpad)
+        self.main_window.stats_requested.connect(self.show_stats)
 
         self.main_window.screen_created.connect(self._on_screen_created)
         meeting_tab = self.main_window._screen_widgets.get("meeting")
@@ -295,6 +305,12 @@ class UIController(QObject):
         self.tray_manager.meeting_dashboard_requested.connect(
             self._on_meeting_open_dashboard
         )
+        self.tray_manager.paste_last_original_requested.connect(self.paste_last_original)
+        self.tray_manager.scratchpad_requested.connect(self.toggle_scratchpad)
+        self.tray_manager.stats_requested.connect(self.show_stats)
+        self.tray_manager.language_menu_requested.connect(self.populate_language_menu)
+        # Filled once now as well: some platforms won't open an empty submenu.
+        self.populate_language_menu(self.tray_manager.language_menu)
 
         self.overlay.state_changed.connect(self._on_overlay_state_changed)
 
@@ -631,7 +647,9 @@ class UIController(QObject):
             self.streaming_flow_active = False
             return
 
-        if state is OverlayState.RECORDING:
+        # Listening for a Command Mode instruction is a recording to the tray
+        # and the live preview, and a rewrite is a cleanup pass.
+        if state in (OverlayState.RECORDING, OverlayState.COMMAND_LISTENING):
             self.tray_manager.set_recording(True)
             if self.streaming_flow_active:
                 if not self.overlay.isVisible():
@@ -646,7 +664,7 @@ class UIController(QObject):
         elif state is OverlayState.TRANSCRIBING:
             self.tray_manager.set_recording(False)
             self._dismiss_streaming_preview_for_waveform(self.overlay.STATE_TRANSCRIBING)
-        elif state is OverlayState.CLEANING:
+        elif state in (OverlayState.CLEANING, OverlayState.REWRITING):
             self.tray_manager.set_recording(False)
             self._dismiss_streaming_preview_for_waveform(self.overlay.STATE_CLEANING)
         elif state is OverlayState.STT_ENABLED:
@@ -725,8 +743,23 @@ class UIController(QObject):
         """Drop the snapshot a recording prefetched without pasting. Any thread."""
         self._temporary_clipboard.discard_prefetch()
 
-    def stage_transcript_for_paste(self, text: str) -> ClipboardStageResult:
+    def stage_transcript_for_paste(self, text: str, html: Optional[str] = None) -> ClipboardStageResult:
+        if html:
+            return self._temporary_clipboard.stage_text(text, html=html)
         return self._temporary_clipboard.stage_text(text)
+
+    def capture_selection(self, callback: Callable[[str], None], *, timeout_ms: Optional[int] = None) -> None:
+        """Read the selected text through a copy that leaves the clipboard as it was.
+
+        ``callback`` receives the text, or "" when nothing was selected.
+        """
+        from services import synthetic_keys
+
+        self._temporary_clipboard.capture_selection(
+            send_copy=synthetic_keys.send_copy,
+            callback=callback,
+            timeout_ms=timeout_ms or config.COMMAND_SELECTION_TIMEOUT_MS,
+        )
 
     def schedule_clipboard_restore(self, stage: ClipboardStageResult) -> bool:
         if stage.lease is None:
@@ -744,6 +777,68 @@ class UIController(QObject):
 
     def _on_clipboard_restore_failed(self, _message: str) -> None:
         self.set_status("Ready (Pasted; clipboard restore failed)")
+
+    def toggle_scratchpad(self) -> None:
+        from ui_qt.widgets import scratchpad
+
+        scratchpad.toggle(self)
+
+    def insert_into_scratchpad(self, text: str) -> bool:
+        """Whether the focused Scratchpad took a finished dictation instead of a paste."""
+        from ui_qt.widgets import scratchpad
+
+        return scratchpad.insert(self, text) is True
+
+    def cycle_dictation_language(self) -> None:
+        try:
+            from services import dictation_language
+        except ImportError:
+            return
+        try:
+            settings_manager.mutate_settings(dictation_language.cycle)
+            settings = settings_manager.load_all_settings()
+            code = dictation_language.job_language(settings)
+            choices = dictation_language.language_choices(settings)
+            label = dictation_language.label(code) if code else ""
+        except Exception:
+            logger.exception("Couldn't switch the dictation language")
+            self.set_status("Couldn't switch the dictation language")
+            return
+        self.overlay.set_language(code, choices)
+        self.set_status(f"Dictating in {label}" if label else "Dictating in the voice model's language")
+
+    def paste_last_original(self) -> None:
+        from ui_qt.history_actions import paste_last_original
+
+        paste_last_original(self)
+
+    def set_hands_free(self, on: bool) -> None:
+        self.overlay.set_hands_free(bool(on))
+
+    def on_recording_device_switched(self, old: str, new: str) -> None:
+        name = new or "the system default microphone"
+        self.set_status(f"Microphone disconnected — continuing on {name}")
+        self.overlay.show_caption(f"Switched to {name}")
+
+    def on_dictionary_term_learned(self, term: str) -> None:
+        self.set_status(f'Added "{term}" to your dictionary')
+        if self._settings_dialog is not None:
+            self._settings_dialog.refresh_page(DICTIONARY)
+
+    def show_stats(self) -> None:
+        from ui_qt.dialogs.stats_dialog import show_stats
+
+        show_stats(self)
+
+    def populate_language_menu(self, menu) -> None:
+        from ui_qt.widgets import language_menu
+
+        language_menu.populate(menu, self)
+
+    def _on_settings_page_changed(self, kind: str) -> None:
+        # Read at call time: the application controller assigns its handler
+        # after Settings may already exist.
+        self.on_settings_changed(kind)
 
     def show_streaming_overlay(self):
         self.streaming_flow_active = True
@@ -870,6 +965,7 @@ class UIController(QObject):
         dialog.on_recording_trigger_mode_changed = (
             self._on_settings_recording_trigger_mode_changed
         )
+        dialog.on_settings_changed = self._on_settings_page_changed
         dialog.remote_section.bind(self.remote_engine, self.select_transcription_backend)
         dialog.bind_remote_service(self.remote_engine)
         models = dialog.models

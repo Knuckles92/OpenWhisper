@@ -56,6 +56,7 @@ _OVERLAY_TO_STAGE: Final[dict[OverlayState, ProgressStage]] = {
     OverlayState.PROCESSING: ProgressStage.PREPARING,
     OverlayState.TRANSCRIBING: ProgressStage.TRANSCRIBING,
     OverlayState.CLEANING: ProgressStage.CLEANING,
+    OverlayState.REWRITING: ProgressStage.CLEANING,
     OverlayState.CANCELING: ProgressStage.CANCELED,
 }
 

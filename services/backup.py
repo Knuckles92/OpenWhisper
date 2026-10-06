@@ -55,6 +55,7 @@ OWNED_NAMES = (
     "recordings",
     "meetings",
     "remote_records",
+    "scratchpad.txt",
 )
 SQLITE_SIDECARS = ("openwhisper.db-wal", "openwhisper.db-shm",
                    "openwhisper.db-journal")
@@ -231,6 +232,11 @@ def _read_settings(path: Path) -> dict[str, Any]:
     return settings
 
 
+#: Settings whose text is the user's own content, where a URL is something
+#: they typed to paste later rather than an endpoint that may hold a secret.
+_URL_SCRUB_EXEMPT = frozenset({"dictation_snippets"})
+
+
 def _sanitize_settings(settings: dict[str, Any]) -> dict[str, Any]:
     # Keyring values are not in this JSON. Clear metadata that would point to
     # missing tokens/certificates, and disable services on the restored host.
@@ -253,17 +259,18 @@ def _sanitize_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "meeting_context_folder_path": "",
     })
     # Defense in depth for older/extension settings that may store a secret.
-    def scrub(value: Any) -> Any:
+    def scrub(value: Any, keep_urls: bool = False) -> Any:
         if isinstance(value, dict):
-            return {key: scrub(item) for key, item in value.items()
+            return {key: scrub(item, keep_urls or key in _URL_SCRUB_EXEMPT)
+                    for key, item in value.items()
                     if isinstance(key, str) and not any(
                         word in key.lower() for word in
                         ("password", "secret", "private_key", "api_key", "credential",
                          "token", "authorization", "header", "cookie")
                     )}
         if isinstance(value, list):
-            return [scrub(item) for item in value]
-        if isinstance(value, str):
+            return [scrub(item, keep_urls) for item in value]
+        if isinstance(value, str) and not keep_urls:
             try:
                 parts = urlsplit(value)
             except ValueError:

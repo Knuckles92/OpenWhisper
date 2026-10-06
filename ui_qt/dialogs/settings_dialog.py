@@ -1,3 +1,4 @@
+import importlib
 import logging
 import os
 import sys
@@ -109,7 +110,12 @@ from services.text_llm import (
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
 from ui_qt.dialogs.settings_binder import SettingsBinder
-from ui_qt.dialogs.settings_metadata import CONTROL_DESTINATIONS, PAGE_SEARCH_FIELDS, PAGE_HELP_TEXT
+from ui_qt.dialogs.settings_metadata import (
+    CONTROL_DESTINATIONS,
+    PAGE_HELP_TEXT,
+    PAGE_SEARCH_FIELDS,
+    merge_page_module,
+)
 from ui_qt.utils.list_reconcile import HistoryDelivery
 from ui_qt.dialogs.settings_destinations import (
     ADVANCED,
@@ -121,6 +127,8 @@ from ui_qt.dialogs.settings_destinations import (
     CLEANUP,
     CLEANUP_PROFILES,
     CLEANUP_RULES,
+    COMMANDS,
+    DICTIONARY,
     DOWNLOADS,
     GENERAL,
     HOTKEYS,
@@ -134,6 +142,8 @@ from ui_qt.dialogs.settings_destinations import (
     RECORDING,
     REMOTE_ENGINE,
     RUNTIME,
+    SNIPPETS,
+    STYLES,
     VOICE_MODEL,
     resolve_destination,
 )
@@ -239,6 +249,36 @@ _SEARCH_ALIASES = {
 }
 
 
+#: Pages whose content lives in its own module: (destination, module, rail
+#: icon). Settings imports each one while registering its pages, for the
+#: heading, search copy, and rail value, so a page module keeps its
+#: module-level imports light and imports widgets inside ``build``. See
+#: docs/design/personalize/design.md for the module protocol.
+_PAGE_MODULES = (
+    (DICTIONARY, "ui_qt.dialogs.settings_dictionary", "book-blue.svg"),
+    (SNIPPETS, "ui_qt.dialogs.settings_snippets", "text-plus-green.svg"),
+    (STYLES, "ui_qt.dialogs.settings_styles", "palette-purple.svg"),
+    (COMMANDS, "ui_qt.dialogs.settings_commands", "wand-purple.svg"),
+)
+_PAGE_MODULE_ICONS = {key: icon for key, _path, icon in _PAGE_MODULES}
+
+#: Set once the "New in OpenWhisper" tile is dismissed on Overview or Basic.
+_FLOW_INTRO_SEEN = "flow_features_intro_seen"
+
+#: How a hotkey message names each standard action.
+_HOTKEY_LABELS = {
+    "record_toggle": "Recording",
+    "cancel": "Cancel",
+    "meeting_toggle": "Meeting Mode",
+    "enable_disable": "Enable/disable",
+    "minimize_tray": "Minimize to tray",
+    "command_mode": "Command Mode",
+    "scratchpad_toggle": "Scratchpad",
+    "cycle_language": "Switch language",
+    "paste_last_original": "Paste original",
+}
+
+
 class _SettingsPage(QWidget):
     def __init__(self):
         super().__init__()
@@ -319,6 +359,7 @@ class SettingsDialog(QDialog):
     on_hotkeys_changed: Optional[Callable[[Dict[str, str]], None]] = None
     on_recording_trigger_mode_changed: Optional[Callable[[str], None]] = None
     on_dictation_transcribe: Optional[Callable[[str], str]] = None
+    on_settings_changed: Optional[Callable[[str], None]] = None
     get_meeting_active: Optional[Callable[[], bool]] = None
 
     def __init__(
@@ -373,6 +414,8 @@ class SettingsDialog(QDialog):
         self.current_hotkey_input: Optional[HotkeyCaptureInput] = None
         self.hotkey_inputs: Dict[str, HotkeyCaptureInput] = {}
         self.hotkey_row_descriptions: Dict[str, WrappedLabel] = {}
+        self._page_modules: Dict[str, object] = {}
+        self._flow_intro_tiles: list = []
         self._saved_cleanup_prompt = ""
         self._rule_polishing = False
         # Whether the words being polished came (at least partly) from
@@ -569,8 +612,14 @@ class SettingsDialog(QDialog):
                 (REMOTE_ENGINE, "Remote engine", "server-blue.svg"),
                 (RECORDING, "Recording", "microphone-blue.svg"),
                 (CLEANUP, "AI cleanup", "stack-purple.svg"),
+            )),
+            ("Personalize", (
+                (DICTIONARY, "Dictionary", _PAGE_MODULE_ICONS[DICTIONARY]),
+                (SNIPPETS, "Snippets", _PAGE_MODULE_ICONS[SNIPPETS]),
+                (STYLES, "Styles", _PAGE_MODULE_ICONS[STYLES]),
                 (CLEANUP_RULES, "Learned rules", "stack-slate.svg"),
                 (CLEANUP_PROFILES, "Profiles", "typography-blue.svg"),
+                (COMMANDS, "Commands", _PAGE_MODULE_ICONS[COMMANDS]),
             )),
             ("Meeting Mode", (
                 (MEETING_VOICE, "Voice & speakers", "microphone-blue.svg"),
@@ -656,7 +705,7 @@ class SettingsDialog(QDialog):
             OVERVIEW,
             "Overview",
             "What OpenWhisper is running right now. Click any card to change it.",
-            lambda layout: layout.addWidget(self.overview),
+            self._build_overview_page,
         )
         self._add_page(
             VOICE_MODEL,
@@ -698,6 +747,14 @@ class SettingsDialog(QDialog):
             "Turn a recording into a support ticket, email, or your own format.",
             self._build_cleanup_profiles_page,
         )
+        for key, path, _icon in _PAGE_MODULES:
+            module = importlib.import_module(path)
+            merge_page_module(key, module)
+            self._page_modules[key] = module
+            self._add_page(
+                key, module.TITLE, module.SUBTITLE,
+                lambda layout, module=module: module.build(self, layout),
+            )
         self._add_page(
             MEETING_VOICE,
             "Meeting voice & speakers",
@@ -812,6 +869,104 @@ class SettingsDialog(QDialog):
         page = BasicSettingsPage(self, key)
         self._basic_pages[key] = page
         layout.addWidget(page)
+
+    def _build_overview_page(self, layout) -> None:
+        self.add_flow_intro(layout)
+        layout.addWidget(self.overview)
+
+    def add_flow_intro(self, layout) -> None:
+        """Add the dismissible "New in OpenWhisper" tile, unless it was dismissed."""
+        if self._settings_snapshot().get(_FLOW_INTRO_SEEN, False):
+            return
+        tile = InfoTile(
+            "New in OpenWhisper",
+            "Your own dictionary and snippets, styles that match each app, "
+            "Command Mode for editing by voice, hands-free dictation, Stats, "
+            "and a Scratchpad.",
+            design_icon("wand-purple.svg"),
+        )
+        tile.setProperty("kind", "intro")
+        tile.setProperty("tileId", "flowIntro")
+        dismiss = neutral_button(Button("Got it"))
+        dismiss.setToolTip("Hide this note")
+        fit_compact_button(dismiss, 88)
+        dismiss.clicked.connect(self._dismiss_flow_intro)
+        tile.add_trailing(dismiss)
+        self._flow_intro_tiles.append(tile)
+        layout.addWidget(tile)
+
+    def _dismiss_flow_intro(self) -> None:
+        if not self._persist(_FLOW_INTRO_SEEN, True):
+            return
+        for tile in self._flow_intro_tiles:
+            tile.hide()
+
+    def page_modules(self) -> tuple:
+        """The Personalize page modules, in rail order."""
+        return tuple(self._page_modules.values())
+
+    def refresh_page(self, key: str) -> None:
+        """Re-read one page module's state, if its page has been built."""
+        module = self._page_modules.get(key)
+        if module is not None and key in self._built_pages:
+            self._refresh_page_module(key, module)
+        self._refresh_rail_values()
+
+    def _refresh_page_module(self, key: str, module) -> None:
+        try:
+            module.refresh(self)
+        except Exception:
+            logger.exception("Couldn't refresh the %s settings page", key)
+
+    def _cancel_page_captures(self, keep: str = "") -> None:
+        for key, module in self._page_modules.items():
+            cancel = getattr(module, "cancel_capture", None)
+            if key == keep or key not in self._built_pages or cancel is None:
+                continue
+            # Runs while closing and switching pages, which must still finish.
+            try:
+                cancel(self)
+            except Exception:
+                logger.exception("Couldn't stop the %s page's shortcut capture", key)
+
+    def set_standard_hotkey(self, action: str, hotkey: str) -> str:
+        """Save one standard shortcut through the Hotkeys page's save path.
+
+        Starts from the shortcuts this window holds, so a later edit on the
+        Hotkeys page keeps it, and the app re-registers it like any other.
+
+        Returns:
+            "" once saved, otherwise the reason it was not.
+        """
+        if not self.current_hotkeys:
+            self._load_hotkey_settings()
+        updated = self.current_hotkeys.copy()
+        updated[action] = hotkey
+        # Blank the action itself so its own default never reads as a conflict.
+        conflict = profile_hotkey_conflict(
+            hotkey, self._settings_snapshot(), standard_hotkeys={**updated, action: ""},
+        )
+        if conflict:
+            names = {other.replace("_", " "): label for other, label in _HOTKEY_LABELS.items()}
+            error = f"That shortcut is already used by {names.get(conflict, conflict)}."
+            self.message_label.setText(error)
+            return error
+        return self._save_hotkeys(updated, f"{_HOTKEY_LABELS.get(action, 'Shortcut')} hotkey updated.")
+
+    def set_hotkey_capture_suspended(self, suspended: bool) -> None:
+        """Pause global hotkeys while a page captures a shortcut, and resume them."""
+        self._on_profile_capture(bool(suspended))
+
+    def notify_changed(self, kind: str) -> None:
+        """Tell the app a page changed something it caches or registers.
+
+        Args:
+            kind: "transforms", "hotkeys", "dictionary", "snippets",
+                "styles", "languages", or "microphones".
+        """
+        self._refresh_rail_values()
+        if self.on_settings_changed:
+            self.on_settings_changed(kind)
 
     def _add_page(
         self,
@@ -2568,6 +2723,7 @@ class SettingsDialog(QDialog):
                 return
         for page in self._basic_pages.values():
             page.cancel_capture()
+        self._cancel_page_captures()
         self._cancel_hotkey_capture()
         previous = self._settings_view
         if previous == SettingsView.ADVANCED and view == SettingsView.BASIC and self.isVisible():
@@ -2663,6 +2819,7 @@ class SettingsDialog(QDialog):
             return
         if key != HOTKEYS:
             self._cancel_hotkey_capture()
+        self._cancel_page_captures(keep=key)
         page = self._pages.get(key)
         if page is None:
             return
@@ -2829,6 +2986,9 @@ class SettingsDialog(QDialog):
                 self.downloads.refresh(scan=visible)
                 if BACKUP in self._built_pages:
                     self.backup_page.refresh()
+                for key, module in self._page_modules.items():
+                    if key in self._built_pages:
+                        self._refresh_page_module(key, module)
                 self._refresh_rail_values()
             finally:
                 self._loading = False
@@ -2869,6 +3029,7 @@ class SettingsDialog(QDialog):
             page.cancel_capture()
         if CLEANUP_PROFILES in self._built_pages:
             self.cleanup_profiles_panel.hotkey_input.cancel_capture()
+        self._cancel_page_captures()
         self._cancel_hotkey_capture()
         if CLEANUP in self._built_pages:
             self._persist_cleanup_prompt()
@@ -2942,6 +3103,15 @@ class SettingsDialog(QDialog):
         else:
             self.rail.set_value(BACKUP, "Local backups")
         self.rail.set_value(ADVANCED, "Developer mode on" if resolve_developer_mode(settings) else "Developer mode off")
+        for key, module in self._page_modules.items():
+            # Every save redraws the rail, so one page's bad value must not
+            # turn into a failed save on another page.
+            try:
+                value = module.rail_value(settings)
+            except Exception:
+                logger.exception("Couldn't read the %s rail value", key)
+                value = ""
+            self.rail.set_value(key, value)
         for page in self._basic_pages.values():
             page.refresh()
         if self.rail.current_key() == OVERVIEW:
@@ -4025,13 +4195,7 @@ class SettingsDialog(QDialog):
         self._finish_hotkey_capture(thread)
         updated = self.current_hotkeys.copy()
         updated[key] = hotkey
-        label = {
-            "record_toggle": "Recording",
-            "cancel": "Cancel",
-            "meeting_toggle": "Meeting Mode",
-            "enable_disable": "Enable/disable",
-            "minimize_tray": "Minimize to tray",
-        }.get(key, "Shortcut")
+        label = _HOTKEY_LABELS.get(key, "Shortcut")
         self._apply_hotkey_settings(updated, f"{label} hotkey updated.")
 
     def _on_hotkey_capture_failed(
@@ -4074,6 +4238,10 @@ class SettingsDialog(QDialog):
     def _apply_hotkey_settings(
         self, hotkeys: Dict[str, str], message: str
     ) -> bool:
+        return not self._save_hotkeys(hotkeys, message)
+
+    def _save_hotkeys(self, hotkeys: Dict[str, str], message: str) -> str:
+        """Save the standard shortcuts; "" on success, else the shown error."""
         updated = config.DEFAULT_HOTKEYS.copy()
         updated.update(hotkeys)
         try:
@@ -4091,14 +4259,15 @@ class SettingsDialog(QDialog):
                 settings_manager.save_hotkey_settings(updated)
         except Exception as exc:
             logger.error("Couldn't save hotkeys: %s", exc)
-            self.message_label.setText(f"Couldn't save hotkeys: {exc}")
+            error = f"Couldn't save hotkeys: {exc}"
+            self.message_label.setText(error)
             self._update_hotkey_displays()
-            return False
+            return error
         self.current_hotkeys = updated
         self._update_hotkey_displays()
         self.message_label.setText(message)
         self._refresh_rail_values()
-        return True
+        return ""
 
     def _clear_meeting_hotkey(self) -> None:
         self._cancel_hotkey_capture()
@@ -4181,3 +4350,11 @@ class SettingsDialog(QDialog):
             trigger_mode = resolve_recording_trigger_mode(settings)
             self.record_mode_combo.setCurrentIndex(max(0, self.record_mode_combo.findData(trigger_mode)))
             self._update_record_row_description(trigger_mode)
+        for key, module in self._page_modules.items():
+            if not self._page_is_loading(key):
+                continue
+            # One page module's bad state must not stop Settings from opening.
+            try:
+                module.load(self, settings)
+            except Exception:
+                logger.exception("Couldn't load the %s settings page", key)

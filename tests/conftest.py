@@ -159,6 +159,8 @@ def _session_settings_store(tmp_path_factory):
     database_folder = tmp_path_factory.mktemp("database-session")
     config.DATABASE_FILE = str(database_folder / "openwhisper.db")
     config.HISTORY_FILE = str(database_folder / "transcription_history.json")
+    # The Scratchpad autosaves into the data root, the checkout from source.
+    config.SCRATCHPAD_FILE = str(tmp_path_factory.mktemp("scratchpad-session") / "scratchpad.txt")
     # Diagnostic handlers retain their paths after a controller shuts down.
     # Keep that session fallback away from the checkout and the user's logs.
     config.LOG_FILE = str(tmp_path_factory.mktemp("diagnostics-session") / "openwhisper.log")
@@ -217,6 +219,7 @@ def _isolated_settings_store(_session_settings_store, tmp_path):
         patcher.setattr(config, "RECORDINGS_FOLDER", str(tmp_path / "recordings"))
         patcher.setattr(config, "DATABASE_FILE", str(tmp_path / "openwhisper.db"))
         patcher.setattr(config, "HISTORY_FILE", str(tmp_path / "transcription_history.json"))
+        patcher.setattr(config, "SCRATCHPAD_FILE", str(tmp_path / "scratchpad.txt"))
         patcher.setattr(config, "LOG_FILE", str(tmp_path / "openwhisper.log"))
         # Bind the real module now: some tests swap services.database in
         # sys.modules, and teardown must still reach this manager.
@@ -248,6 +251,24 @@ def _isolated_credential_store():
         yield
     finally:
         credentials.set_store(previous)
+
+
+@pytest.fixture(autouse=True)
+def _null_focus_capture():
+    """Keep every test away from the real focused app and its text.
+
+    The platform capture service reads the foreground window and, when
+    allowed, the text around its caret through accessibility APIs. Here
+    every capture comes back empty unless a test installs its own service.
+    """
+    from services import focus_context
+
+    previous = focus_context._service
+    focus_context.set_service(focus_context.NullCaptureService())
+    try:
+        yield
+    finally:
+        focus_context.set_service(previous)
 
 
 @pytest.fixture(autouse=True)

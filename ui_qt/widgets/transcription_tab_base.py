@@ -673,9 +673,11 @@ class TranscriptionTabBase(QWidget):
         """Drive activity feedback from the same explicit state as the overlay."""
         messages = {
             OverlayState.RECORDING: "Recording...",
+            OverlayState.COMMAND_LISTENING: "Listening for an edit…",
             OverlayState.PROCESSING: "Processing...",
             OverlayState.TRANSCRIBING: "Transcribing...",
             OverlayState.CLEANING: "Cleaning up...",
+            OverlayState.REWRITING: "Rewriting…",
             OverlayState.CANCELING: "Canceling...",
         }
         host = self._connected_host()
@@ -701,7 +703,7 @@ class TranscriptionTabBase(QWidget):
     def _refresh_engine_status(self) -> None:
         busy = self.engine_loading or self._activity_state in (
             OverlayState.PROCESSING, OverlayState.TRANSCRIBING,
-            OverlayState.CLEANING, OverlayState.CANCELING,
+            OverlayState.CLEANING, OverlayState.REWRITING, OverlayState.CANCELING,
         )
         idle_message = self._device_info
         link_text = self._link_text() if self._remote_shown else ""

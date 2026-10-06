@@ -116,6 +116,10 @@ class FakeUI:
         self.events.append("commit")
         return True
 
+    def insert_into_scratchpad(self, text):
+        # The Scratchpad never has focus here, so delivery always pastes.
+        return False
+
 
 class TemporaryClipboardUI(FakeUI):
     """FakeUI whose clipboard calls reach a real TemporaryClipboard."""
@@ -130,9 +134,9 @@ class TemporaryClipboardUI(FakeUI):
     def discard_clipboard_prefetch(self):
         self.temporary.discard_prefetch()
 
-    def stage_transcript_for_paste(self, text):
+    def stage_transcript_for_paste(self, text, html=None):
         self.events.append("stage")
-        return self.temporary.stage_text(text)
+        return self.temporary.stage_text(text, html=html)
 
     def schedule_clipboard_restore(self, stage):
         return self.temporary.schedule_restore(stage.lease, 0)
