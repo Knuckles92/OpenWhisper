@@ -539,3 +539,20 @@ def test_removing_a_device_can_delete_what_it_stored(host, client, tmp_path):
     assert host.store.delete_device(client.device_id) == 2
     assert host.repository.get_meeting("m_0123456789ab") is None
     assert host.db.get_history_entry_by_id(entry.id) is None
+
+
+def test_renaming_a_device_rebadges_what_it_stored(host, client, tmp_path):
+    client.set_location("host")
+    _meeting(client)
+    client.record_saved("meeting", "m_0123456789ab")
+    entry = _dictate(tmp_path)
+    client.run_once()
+    assert host.store.rename_device(client.device_id, "Kitchen laptop") == 2
+    assert host.db.get_history_entry_by_id(entry.id).origin_device_name == "Kitchen laptop"
+    assert host.repository.get_meeting("m_0123456789ab")["origin_device_name"] == "Kitchen laptop"
+    assert host.store.rename_device("someone-else", "Studio") == 0
+    # What it stores from now on carries the new name too.
+    host.server.rename_device(client.device_id, "Kitchen laptop")
+    later = _dictate(tmp_path, "after the rename")
+    client.run_once()
+    assert host.db.get_history_entry_by_id(later.id).origin_device_name == "Kitchen laptop"

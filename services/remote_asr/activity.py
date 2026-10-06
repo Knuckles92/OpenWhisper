@@ -138,6 +138,13 @@ class HostActivity:
         with self._lock:
             self._event("switched", name, label=label)
 
+    def renamed(self, device_id: str, name: str) -> None:
+        """Its counts go by the new name; events already listed keep the old one."""
+        with self._lock:
+            device = self._devices.get(device_id)
+            if device is not None:
+                device.name = name
+
     # ---- reading ----
 
     def snapshot(self, events: Optional[int] = None) -> dict:

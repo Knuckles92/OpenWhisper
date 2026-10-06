@@ -933,6 +933,7 @@ class McpSettingsView(QWidget):
         super().__init__(parent)
         self.setObjectName("mcpSettingsView")
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.settings = settings
         self.local = McpSettingsPage(settings)
         self.host_page = None
         self.tabs = None
@@ -943,6 +944,16 @@ class McpSettingsView(QWidget):
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(14)
+        self.share_history_tile = SettingTile(
+            "Share this computer's history through the paired host's MCP",
+            "",
+            design_icon("server-blue.svg"),
+        )
+        self.share_history_tile.setProperty("tileId", "mcpShareHistoryTile")
+        self.share_history_tile.checkbox.toggled.connect(self._toggle_history_sharing)
+        # This permission belongs to this computer, even when the host's MCP
+        # tab is selected or the host has denied remote MCP administration.
+        self._layout.addWidget(self.share_history_tile)
         self._layout.addWidget(self.local)
         self.host_area = QWidget()
         self.host_area.setObjectName("mcpHostArea")
@@ -957,6 +968,7 @@ class McpSettingsView(QWidget):
         self._timer.setInterval(500)
         self._timer.timeout.connect(self._sync)
         self._service_event.connect(self._on_service_event)
+        self._refresh_history_sharing()
 
     # ---- the service ----
 
@@ -977,12 +989,14 @@ class McpSettingsView(QWidget):
         self._service_event.emit(kind)
 
     def _on_service_event(self, kind):
-        if kind == "client":
+        if kind in ("client", "host_renamed"):
             self._refresh_pairing()
 
     def _refresh_pairing(self):
         pairing = self._service.client_pairing() if self._service is not None else None
-        if pairing == self._pairing and (pairing is None) == (self._link is None):
+        self._refresh_history_sharing(pairing)
+        renamed = getattr(pairing, "host_name", "") != getattr(self._pairing, "host_name", "")
+        if pairing == self._pairing and not renamed and (pairing is None) == (self._link is None):
             return
         self._pairing = pairing
         if self.host_page is not None:
@@ -1011,6 +1025,29 @@ class McpSettingsView(QWidget):
         self._show_tab(0)
         self._link.poll()
         self._sync()
+
+    def _refresh_history_sharing(self, pairing=None):
+        description = (
+            "Assistants connected to the paired host's MCP can search this computer's "
+            "saved dictations and meetings and read their transcripts and insights "
+            "while OpenWhisper is running. Copies already stored on the host remain "
+            "readable there when this is off."
+        )
+        if pairing is None:
+            description += " Pair a host in Remote engine to enable this setting."
+        tile = self.share_history_tile
+        tile.set_description(description)
+        tile.checkbox.setAccessibleDescription(description)
+        tile.setEnabled(self._service is not None and pairing is not None)
+        blocked = tile.checkbox.blockSignals(True)
+        tile.checkbox.setChecked(
+            self.settings.get(SettingsKey.REMOTE_CLIENT_HISTORY, False) is True
+        )
+        tile.checkbox.blockSignals(blocked)
+
+    def _toggle_history_sharing(self, checked):
+        if self._service is not None and self._service.client_pairing() is not None:
+            self._service.set_share_history(checked)
 
     def _host_name(self):
         return getattr(self._pairing, "host_name", "") or "Host"

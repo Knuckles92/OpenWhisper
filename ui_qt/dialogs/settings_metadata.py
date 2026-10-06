@@ -5,6 +5,7 @@ build its owning page. Search metadata mirrors the page's tile/field copy.
 """
 CONTROL_DESTINATIONS = {'mcp_page': 'mcp',
  'mcp_view': 'mcp',
+ 'mcp_history_tile': 'mcp',
  'backup_page': 'backup',
  'backup_create_tile': 'backup',
  'backup_restore_tile': 'backup',
@@ -155,7 +156,11 @@ MODEL_CONTROL_DESTINATIONS = {'engine_combo': 'voice_model',
  'device_combo': 'runtime',
  'compute_combo': 'runtime'}
 
-PAGE_SEARCH_FIELDS = {'general': [('auto_paste_tile', 'Paste into the active window', ''),
+PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
+                             "Share this computer's history through the paired host's MCP",
+                             'Allow assistants to search saved dictations and meetings and read '
+                             'transcripts and insights on this computer while OpenWhisper is running.')],
+ 'general': [('auto_paste_tile', 'Paste into the active window', ''),
              ('copy_clipboard_tile',
               'Copy to the clipboard',
               'Keeps the transcript on the clipboard when auto-paste is off or unavailable. A '

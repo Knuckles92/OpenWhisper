@@ -140,6 +140,9 @@ CLOSE_TIMEOUT = 4408
 CLOSE_ENGINE_CHANGED = 4409
 CLOSE_BUSY = 4429
 
+#: Longest name one computer keeps for another, given or chosen.
+MAX_NAME = 60
+
 _HEADER = struct.Struct(">I")
 
 
@@ -222,6 +225,12 @@ def short_fingerprint(fingerprint: str, groups: int = 5) -> str:
 def token_digest(token: str) -> str:
     """What the host stores for a device token. The token itself never is."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def clean_name(name) -> str:
+    """A computer's name with only printable characters, trimmed; "" if none are left."""
+    text = "".join(ch for ch in str(name or "") if ch.isprintable()).strip()
+    return text[:MAX_NAME]
 
 
 #: Bytes in each side's pairing nonce.

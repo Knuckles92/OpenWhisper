@@ -902,6 +902,7 @@ class SettingsDialog(QDialog):
         self.mcp_view = McpSettingsView(settings_manager)
         # This computer's own controls; the view adds the paired host's.
         self.mcp_page = self.mcp_view.local
+        self.mcp_history_tile = self.mcp_view.share_history_tile
         if self._remote_service is not None:
             self.mcp_view.bind(self._remote_service)
         layout.addWidget(self.mcp_view)

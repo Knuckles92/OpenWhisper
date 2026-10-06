@@ -513,8 +513,7 @@ class RemoteSpeechBackend(LocalSpeechBackend):
         from services.remote_asr.client import RemoteEngineError
 
         info = connection.ready.get("host")
-        host = str(info.get("name") or "") if isinstance(info, dict) else ""
-        host = host or pairing.host_name
+        host = pairing.name_for(info.get("name") if isinstance(info, dict) else "")
         logger.info("Asking %s to switch to %s", host, requested.label)
         try:
             if runtime is not None and (connection.ready.get("capabilities") or {}).get("engine_controls") is not True:
@@ -574,6 +573,12 @@ class RemoteSpeechBackend(LocalSpeechBackend):
                          and capabilities.get("engine_controls") is True}
                         if isinstance(runtime, dict) and runtime else None)
 
+    def host_renamed(self, pairing) -> None:
+        """This computer's owner renamed the paired host; call it that from now on."""
+        with self._state_lock:
+            self.host_name = pairing.host_name
+        self._notify_link()
+
     def refresh_host_catalog(self, pairing, ready: dict, catalog: dict) -> bool:
         """Refresh setup choices from the management connection without touching audio."""
         engine = catalog.get("engine") or {}
@@ -597,7 +602,7 @@ class RemoteSpeechBackend(LocalSpeechBackend):
         self.engine = engine
         self._adopt_runtime(ready)
         self.host_models = parse_host_models(ready.get("models"))
-        self.host_name = str(host.get("name") or pairing.host_name)
+        self.host_name = pairing.name_for(host.get("name"))
         self.backend_id = str(engine.get("family") or REMOTE_BACKEND)
         self.model_name = str(engine.get("model") or "")
         self.device = str(engine.get("device") or "")

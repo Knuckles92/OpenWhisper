@@ -107,9 +107,11 @@ client can opt into remote records already saved in this database.
 
 ## Query paired clients directly
 
-On each client, enable **Settings → Remote engine → Allow the paired host to
-query this computer's history**. It is off by default and is independent of
-the storage choice. Both the host and client need a version with this feature.
+On each client, enable **Settings → MCP → Share this computer's history through
+the paired host's MCP**. This control stays available on either MCP tab, including
+when remote MCP administration is disabled. It is off by default and is independent
+of the storage choice and **Allow paired computers to manage MCP**. Existing history
+sharing preferences are preserved. Both the host and client need a version with this feature.
 The client opens a separate, authenticated connection to its paired host, so
 history queries can run alongside dictation and meetings without opening an
 inbound port on the client.

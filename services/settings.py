@@ -205,6 +205,8 @@ class SettingsKey:
     # Client: where this computer's records are kept while paired:
     # "local" (default), "host" (moved there), or "both" (copied there).
     REMOTE_RECORDS_LOCATION: Final[str] = "remote_records_location"
+    # Client opt-in: the paired host's MCP may query local history while online.
+    # Independent of record storage and permission to manage the host's MCP.
     REMOTE_CLIENT_HISTORY: Final[str] = "remote_client_history"
     # TypeSafe fast judgments. The master switch gates every remote judgment;
     # each feature has its own switch so one can be trialled at a time.

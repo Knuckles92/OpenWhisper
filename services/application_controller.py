@@ -196,6 +196,8 @@ class ApplicationController(QObject):
     update_download_finished = pyqtSignal(object, object, str)
     # The Remote engine's pairing changed (emitted from the pairing worker).
     remote_pairing_changed = pyqtSignal()
+    # This computer's owner renamed the paired host; same pairing, new name.
+    remote_host_renamed = pyqtSignal()
     # Records moved between this computer and its paired host, either way.
     records_changed = pyqtSignal()
     # A paired computer chose one of this computer's models (emitted from its
@@ -1264,6 +1266,19 @@ class ApplicationController(QObject):
         if remote is not None:
             remote.cleanup()
 
+    def _on_remote_host_renamed(self) -> None:
+        """Call the paired host its new name everywhere, without reconnecting."""
+        remote = self.transcription_backends.get("remote")
+        pairing = self.remote_engine.client_pairing()
+        if remote is not None and pairing is not None:
+            remote.host_renamed(pairing)
+        selected = self._selected_remote()
+        if selected is not None:
+            self._remote_reported = selected.device_info
+            self.device_info_update.emit(selected.device_info, selected.is_available())
+        self.ui_controller.refresh_remote_models()
+        self.records_changed.emit()
+
     def _on_local_engine_settings_changed(self) -> None:
         """A local engine's model, device or quantization changed in Settings."""
         if self._selected_remote() is not None:
@@ -1402,6 +1417,8 @@ class ApplicationController(QObject):
         if kind == "records":
             # A paired computer stored or removed a record here.
             self.records_changed.emit()
+        if kind == "host_renamed":
+            self.remote_host_renamed.emit()
 
     def _on_record_sync_event(self, kind: str) -> None:
         """Client: a record moved to, or came back from, the paired host (any thread)."""
@@ -2507,6 +2524,7 @@ class ApplicationController(QObject):
         self.hf_consent_requested.connect(self._on_hf_consent_requested)
         self.runtime_consent_requested.connect(self._prompt_for_model_runtime)
         self.remote_pairing_changed.connect(self._on_remote_pairing_changed)
+        self.remote_host_renamed.connect(self._on_remote_host_renamed)
         self.records_changed.connect(self._on_records_changed)
         self.client_model_switch_requested.connect(self._on_client_model_switch)
         self.remote_link_poke.connect(self._publish_remote_link)

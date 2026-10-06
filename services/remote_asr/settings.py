@@ -36,19 +36,33 @@ class ClientPairing:
 
     The addresses aren't compared: they follow the host as it moves (see
     ``remember_host_addresses``), and an open window holding the pairing
-    from before must still find it the same one.
+    from before must still find it the same one. Nor is the name, which
+    this computer's owner may change (see ``rename_client_host``).
     """
 
     host: str = field(compare=False)
     port: int = field(compare=False)
     fingerprint: str = ""
-    host_name: str = ""
+    #: What this computer calls the host: the name it gave when pairing, or
+    #: the one it was renamed to here.
+    host_name: str = field(default="", compare=False)
     device_id: str = ""
     paired_at: str = ""
     #: The host's other addresses (LAN, Tailscale), tried when ``host`` isn't.
     alternates: tuple = field(default=(), compare=False)
     #: One of PAIRING_ROUTES: how this computer paired.
     via: str = "code"
+    #: The name the host gave when pairing, kept while it goes by another
+    #: here; empty when it hasn't been renamed.
+    paired_name: str = field(default="", compare=False)
+
+    @property
+    def renamed(self) -> bool:
+        return bool(self.paired_name)
+
+    def name_for(self, reported) -> str:
+        """What to call the host, given the name it reported just now."""
+        return self.host_name if self.renamed else str(reported or "") or self.host_name
 
     @property
     def address(self) -> str:
@@ -104,6 +118,7 @@ def load_client_pairing(settings: Optional[Dict[str, Any]] = None) -> Optional[C
         paired_at=str(raw.get("paired_at") or ""),
         alternates=tuple(a for a in alternates if isinstance(a, str) and a and a != host),
         via=raw.get("via") if raw.get("via") in PAIRING_ROUTES else "code",
+        paired_name=str(raw.get("paired_name") or ""),
     )
 
 
@@ -135,7 +150,7 @@ def save_client_pairing(host: str, port: int, result) -> ClientPairing:
 def _write_pairing(pairing: ClientPairing) -> None:
     from services.settings import SettingsKey, settings_manager
 
-    settings_manager.save_setting(SettingsKey.REMOTE_ENGINE_CLIENT, {
+    saved = {
         "host": pairing.host,
         "port": pairing.port,
         "fingerprint": pairing.fingerprint,
@@ -144,7 +159,10 @@ def _write_pairing(pairing: ClientPairing) -> None:
         "paired_at": pairing.paired_at,
         "alternates": list(pairing.alternates),
         "via": pairing.via,
-    })
+    }
+    if pairing.paired_name:
+        saved["paired_name"] = pairing.paired_name
+    settings_manager.save_setting(SettingsKey.REMOTE_ENGINE_CLIENT, saved)
 
 
 def _is_ip(text: str) -> bool:
@@ -169,36 +187,55 @@ def remember_host_addresses(fingerprint: str, reached: str, port: int,
     """
     from services.remote_asr.tailscale import is_tailscale_address
 
-    pairing = load_client_pairing()
-    if pairing is None or pairing.fingerprint.upper() != (fingerprint or "").upper():
-        return None
-    listed = list(dict.fromkeys(a for a in addresses if isinstance(a, str) and a))
-    host, host_port = pairing.host, pairing.port
-    if reached == host:
-        host_port = port
-    elif _is_ip(host) and host not in listed:
-        host = next((a for a in listed if not is_tailscale_address(a)), "") or reached
-        host_port = port
-    known_tailnet = [a for a in pairing.alternates if is_tailscale_address(a)]
-    if any(is_tailscale_address(a) for a in listed):
-        known_tailnet = []
-    alternates = tuple(dict.fromkeys(
-        a for a in (*listed, reached, *known_tailnet) if a and a != host
-    ))
-    if (host, host_port, alternates) == (pairing.host, pairing.port, pairing.alternates):
-        return None
-    moved = replace(pairing, host=host, port=host_port, alternates=alternates)
-    _write_pairing(moved)
+    with _PAIRING_LOCK:
+        pairing = load_client_pairing()
+        if pairing is None or pairing.fingerprint.upper() != (fingerprint or "").upper():
+            return None
+        listed = list(dict.fromkeys(a for a in addresses if isinstance(a, str) and a))
+        host, host_port = pairing.host, pairing.port
+        if reached == host:
+            host_port = port
+        elif _is_ip(host) and host not in listed:
+            host = next((a for a in listed if not is_tailscale_address(a)), "") or reached
+            host_port = port
+        known_tailnet = [a for a in pairing.alternates if is_tailscale_address(a)]
+        if any(is_tailscale_address(a) for a in listed):
+            known_tailnet = []
+        alternates = tuple(dict.fromkeys(
+            a for a in (*listed, reached, *known_tailnet) if a and a != host
+        ))
+        if (host, host_port, alternates) == (pairing.host, pairing.port, pairing.alternates):
+            return None
+        moved = replace(pairing, host=host, port=host_port, alternates=alternates)
+        _write_pairing(moved)
     if host != pairing.host:
         logger.info("The paired host %s moved from %s to %s", pairing.host_name, pairing.host, host)
     return moved
+
+
+def rename_client_host(name) -> Optional[ClientPairing]:
+    """Call the paired host ``name`` here; an empty name goes back to the one it gave.
+
+    The renamed pairing, or None when this computer isn't paired.
+    """
+    with _PAIRING_LOCK:
+        pairing = load_client_pairing()
+        if pairing is None:
+            return None
+        own = pairing.paired_name or pairing.host_name
+        chosen = protocol.clean_name(name) or own
+        renamed = replace(pairing, host_name=chosen, paired_name=own if chosen != own else "")
+        if (renamed.host_name, renamed.paired_name) != (pairing.host_name, pairing.paired_name):
+            _write_pairing(renamed)
+        return renamed
 
 
 def forget_client_pairing() -> None:
     from services.credentials import store
     from services.settings import SettingsKey, settings_manager
 
-    settings_manager.update_settings({}, remove=(SettingsKey.REMOTE_ENGINE_CLIENT,))
+    with _PAIRING_LOCK:
+        settings_manager.update_settings({}, remove=(SettingsKey.REMOTE_ENGINE_CLIENT,))
     try:
         store().delete(TOKEN_CREDENTIAL)
     except Exception as exc:

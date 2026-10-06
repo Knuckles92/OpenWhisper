@@ -789,6 +789,27 @@ class RemoteEngineService:
             self._notify("devices")
         return removed
 
+    def rename_device(self, device_id: str, name: str) -> Optional[dict]:
+        """Call a paired computer ``name`` on this one, on what it keeps here too.
+
+        An empty name goes back to the one it paired with. Returns its entry
+        as ``host_state()["devices"]`` lists it, or None when it isn't paired.
+        """
+        with self._lock:
+            host = self._host
+        if host is not None:
+            device = host.rename_device(device_id, name)
+        else:
+            device = self._registry.rename(device_id, name)
+            if device is not None:
+                self._notify("devices")
+        if device is None:
+            return None
+        store = self.record_store()
+        if sum(store.rename_device(owner, device["name"]) for owner in self._record_owners(device_id)):
+            self._notify("records")
+        return device
+
     def engine_changed(self) -> None:
         """This computer's engine may have changed (it just finished loading).
 
@@ -1020,6 +1041,14 @@ class RemoteEngineService:
             return connection.request(op, timeout=30, **fields)
         finally:
             connection.close()
+
+    def rename_host(self, name: str) -> Optional[remote_settings.ClientPairing]:
+        """Call the paired host ``name`` on this computer; "" goes back to its own name."""
+        pairing = remote_settings.rename_client_host(name)
+        if pairing is not None:
+            logger.info("Renamed the paired host to %s", pairing.host_name)
+            self._notify("host_renamed")
+        return pairing
 
     def forget_host(self) -> None:
         remote_settings.forget_client_pairing()

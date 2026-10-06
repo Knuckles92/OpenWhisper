@@ -44,9 +44,10 @@ def tick(view):
     pump(view)
 
 
-def make_view(tmp_path, service=None, *, local_running=False):
-    settings = SettingsManager(str(tmp_path / "settings.json"))
-    settings.save_all_settings({})
+def make_view(tmp_path, service=None, *, local_running=False, settings=None):
+    if settings is None:
+        settings = SettingsManager(str(tmp_path / "settings.json"))
+        settings.save_all_settings({})
     view = McpSettingsView(settings)
     # Replace the process-wide listener with a fake one.
     view.local.server = FakeServer()
@@ -60,6 +61,84 @@ def make_view(tmp_path, service=None, *, local_running=False):
 def close(view):
     view.close()
     view.deleteLater()
+
+
+class HistoryService(FakeRemoteService):
+    def __init__(self, settings, pairing=PAIRING):
+        super().__init__(pairing)
+        self.settings = settings
+        self.history_changes = []
+
+    def set_share_history(self, enabled):
+        self.history_changes.append(enabled)
+        self.settings.save_setting(SettingsKey.REMOTE_CLIENT_HISTORY, enabled)
+        for listener in self.listeners:
+            listener("client")
+
+
+@pytest.mark.parametrize("mode", ["classic", "omarchy"])
+def test_mcp_history_sharing_is_local_and_available_above_both_tabs(
+    tmp_path, monkeypatch, mode
+):
+    monkeypatch.setenv("OPENWHISPER_UI", mode)
+    settings = SettingsManager(str(tmp_path / "settings.json"))
+    preferences = {
+        SettingsKey.REMOTE_RECORDS_LOCATION: "local",
+        SettingsKey.REMOTE_HOST_KEEP_RECORDS: False,
+        SettingsKey.REMOTE_HOST_MANAGE_MCP: False,
+        SettingsKey.MCP_ENABLED: False,
+    }
+    settings.save_all_settings(preferences)
+    service = HistoryService(settings)
+    service.error = RemoteRequestError("Not allowed", code="forbidden")
+    view = make_view(tmp_path, service, settings=settings)
+    try:
+        view.resize(520, 740)
+        view.show()
+        pump(view)
+        tile = view.share_history_tile
+        assert tile.isVisible() and tile.isEnabled()
+        assert not tile.checkbox.isChecked()
+        assert tile.minimumSizeHint().width() <= 520
+        tile.checkbox.click()
+        assert settings.get(SettingsKey.REMOTE_CLIENT_HISTORY) is True
+        view.tabs.buttons[1].click()
+        tick(view)
+        assert view.gate.isVisible()
+        assert tile.isVisible() and tile.isEnabled() and tile.checkbox.isChecked()
+        tile.checkbox.click()
+        assert settings.get(SettingsKey.REMOTE_CLIENT_HISTORY) is False
+        assert service.history_changes == [True, False]
+        for key, value in preferences.items():
+            assert settings.get(key) == value
+        assert all(op != "mcp_configure" for op, _ in service.calls)
+        assert not view.local.server.starts
+    finally:
+        close(view)
+
+
+def test_history_sharing_preserves_existing_consent_and_refreshes_without_repairing(tmp_path):
+    settings = SettingsManager(str(tmp_path / "settings.json"))
+    settings.save_all_settings({SettingsKey.REMOTE_CLIENT_HISTORY: True})
+    service = HistoryService(settings)
+    view = make_view(tmp_path, service, settings=settings)
+    try:
+        assert view.share_history_tile.checkbox.isChecked()
+        assert service.history_changes == []
+        settings.save_setting(SettingsKey.REMOTE_CLIENT_HISTORY, False)
+        view._on_service_event("client")
+        assert not view.share_history_tile.checkbox.isChecked()
+        assert service.history_changes == []
+        service.pairing = None
+        view._on_service_event("client")
+        assert not view.share_history_tile.isEnabled()
+        assert "Pair a host in Remote engine" in view.share_history_tile.description_label.text()
+        service.pairing = PAIRING
+        view._on_service_event("client")
+        assert view.share_history_tile.isEnabled()
+        assert settings.get(SettingsKey.REMOTE_CLIENT_HISTORY) is False
+    finally:
+        close(view)
 
 
 def test_a_computer_with_no_host_gets_no_tabs(tmp_path):

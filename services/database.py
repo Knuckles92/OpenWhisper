@@ -514,6 +514,13 @@ class DatabaseManager:
             ).all()
         return {device: count for device, count in rows}
 
+    def rename_history_origin(self, device_id: str, name: str) -> int:
+        """Badge the entries a paired computer stored here with its new name."""
+        with self.get_session() as session:
+            return session.query(TranscriptionHistory).filter(
+                TranscriptionHistory.origin_device_id == device_id
+            ).update({TranscriptionHistory.origin_device_name: name}, synchronize_session=False)
+
     def clear_history(self) -> None:
         """Clear this computer's own entries.
 

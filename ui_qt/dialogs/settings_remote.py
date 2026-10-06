@@ -82,6 +82,36 @@ def _stored_phrase(stored: dict) -> str:
     return f"{' and '.join(parts)} ({_size(total)})" if total else " and ".join(parts)
 
 
+def _ask_name(parent, title: str, text: str, current: str, own: str) -> Optional[str]:
+    """The name typed in ("" goes back to ``own``), or None when canceled."""
+    dialog = QDialog(parent)
+    dialog.setObjectName("remoteRenameDialog")
+    dialog.setWindowTitle(title)
+    dialog.setMinimumWidth(360)
+    layout = QVBoxLayout(dialog)
+    layout.setContentsMargins(18, 18, 18, 18)
+    layout.setSpacing(12)
+    layout.addWidget(WrappedLabel(text))
+    edit = QLineEdit(current)
+    edit.setObjectName("remoteRenameEdit")
+    edit.setAccessibleName("Name")
+    edit.setPlaceholderText(own)
+    edit.setMaxLength(protocol.MAX_NAME)
+    edit.setMinimumHeight(36)
+    edit.selectAll()
+    layout.addWidget(edit)
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+    rename = buttons.addButton("Rename", QDialogButtonBox.ButtonRole.AcceptRole)
+    rename.setObjectName("primaryButton")
+    rename.setDefault(True)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addWidget(buttons)
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return None
+    return edit.text()
+
+
 #: The storage choices, in the order the switch shows them.
 RECORD_LOCATIONS = ("local", "host", "both")
 
@@ -288,6 +318,10 @@ class RemoteEngineSection(QObject):
         self.manage_button = Button("Manage host models")
         self.manage_button.setObjectName("remoteManageModelsButton")
         self.manage_button.clicked.connect(self._manage_models)
+        self.rename_host_button = Button("Rename host")
+        self.rename_host_button.setObjectName("remoteRenameHostButton")
+        self.rename_host_button.setToolTip("Change the name this computer shows for the host")
+        self.rename_host_button.clicked.connect(self._rename_host)
         self.forget_button = Button("Forget host")
         self.forget_button.setObjectName("remoteForgetButton")
         self.forget_button.clicked.connect(self._forget)
@@ -306,6 +340,7 @@ class RemoteEngineSection(QObject):
         paired_layout.addLayout(use_row)
         manage_row = QHBoxLayout()
         manage_row.addWidget(self.manage_button)
+        manage_row.addWidget(self.rename_host_button)
         manage_row.addWidget(self.forget_button)
         manage_row.addStretch(1)
         paired_layout.addLayout(manage_row)
@@ -321,16 +356,6 @@ class RemoteEngineSection(QObject):
         self.tailscale_hint.setOpenExternalLinks(True)
         self.tailscale_hint.hide()
         self.client_tile.add_body(self.tailscale_hint)
-
-        self.share_history_tile = SettingTile(
-            "Allow the paired host to query this computer's history",
-            "Agents connected to the paired host can search this computer's saved dictations "
-            "and meetings and read their transcripts and insights while this app is running. "
-            "Choose Both below to keep a copy available when this computer is offline.",
-            icon("server-blue.svg"),
-        )
-        self.share_history_tile.setProperty("tileId", "remoteShareHistoryTile")  # not setObjectName: the theme styles tiles by "settingsTile"
-        self.share_history_tile.checkbox.toggled.connect(self._on_share_history_toggled)
 
         # Client: where this computer's history, recordings and meetings go.
         self.storage_tile = InfoTile(
@@ -384,7 +409,7 @@ class RemoteEngineSection(QObject):
         dialog._tile_group(
             self.client_container.column,
             "",
-            [self.find_tile, self.client_tile, self.share_history_tile, self.storage_tile],
+            [self.find_tile, self.client_tile, self.storage_tile],
             columns=1,
             intro=(
                 "Dictate or record meetings here while a faster computer does the transcription. "
@@ -549,7 +574,7 @@ class RemoteEngineSection(QObject):
         for button in (self.pair_button, self.use_button, self.pair_device_button):
             compact_primary_button(button)
         for button in (
-            self.manage_button, self.forget_button, self.meeting_use_button,
+            self.manage_button, self.rename_host_button, self.forget_button, self.meeting_use_button,
             self.send_existing_button, self.bring_back_button, self.retry_records_button,
             self.search_button, self.sweep_button, self.manual_button, self.wait_cancel_button,
             self.cancel_pairing_button, self.recover_records_button,
@@ -558,7 +583,7 @@ class RemoteEngineSection(QObject):
         self._built = True
         self.refresh()
 
-    _UI_ATTRIBUTES = frozenset({'_set_rail_value', 'storage_status', 'find_list', 'cancel_pairing_button', 'manage_button', 'meeting_use_button', 'client_tile', 'paired_row', 'pair_row', 'share_tile', 'code_edit', 'devices_list', 'search_button', 'sweep_button', 'manual_button', 'find_message', 'wait_box', 'wait_code_label', 'wait_label', 'wait_cancel_button', 'tailscale_hint', 'host_notes', '_host_notes_layout', '_host_notes_shown', 'send_existing_button', 'pairing_code_label', 'client_message', 'tailscale_tile', 'pairing_expiry_label', 'retry_records_button', 'use_button', '_find_layout', 'devices_tile', 'forget_button', 'pair_device_button', 'bring_back_button', 'storage_tile', 'host_status', 'share_history_tile', 'keep_records_tile', 'manage_mcp_tile', 'tabs', 'client_container', 'host_container', 'find_tile', 'host_identity', 'management_tile', 'address_edit', '_built', '_location_group', '_devices_layout', 'pairing_box', 'pair_button', 'port_tile', 'location_buttons', 'port_spin'})
+    _UI_ATTRIBUTES = frozenset({'_set_rail_value', 'storage_status', 'find_list', 'cancel_pairing_button', 'manage_button', 'meeting_use_button', 'client_tile', 'paired_row', 'pair_row', 'share_tile', 'code_edit', 'devices_list', 'search_button', 'sweep_button', 'manual_button', 'find_message', 'wait_box', 'wait_code_label', 'wait_label', 'wait_cancel_button', 'tailscale_hint', 'host_notes', '_host_notes_layout', '_host_notes_shown', 'send_existing_button', 'pairing_code_label', 'client_message', 'tailscale_tile', 'pairing_expiry_label', 'retry_records_button', 'use_button', '_find_layout', 'devices_tile', 'forget_button', 'rename_host_button', 'pair_device_button', 'bring_back_button', 'storage_tile', 'host_status', 'keep_records_tile', 'manage_mcp_tile', 'tabs', 'client_container', 'host_container', 'find_tile', 'host_identity', 'management_tile', 'address_edit', '_built', '_location_group', '_devices_layout', 'pairing_box', 'pair_button', 'port_tile', 'location_buttons', 'port_spin'})
 
     def __getattr__(self, name):
         if name in self._UI_ATTRIBUTES and not self.__dict__.get("_built", False):
@@ -616,16 +641,8 @@ class RemoteEngineSection(QObject):
             self.find_tile.hide()
             self.tailscale_tile.hide()
             self.storage_tile.hide()
-            self.share_history_tile.hide()
             return
         self._refresh_client(service)
-        from services.remote_asr.settings import client_shares_history
-
-        self.share_history_tile.setVisible(service.client_pairing() is not None)
-        checkbox = self.share_history_tile.checkbox
-        blocked = checkbox.blockSignals(True)
-        checkbox.setChecked(client_shares_history())
-        checkbox.blockSignals(blocked)
         self._refresh_records()
         self._refresh_find(service)
         self._refresh_host(service)
@@ -715,8 +732,9 @@ class RemoteEngineSection(QObject):
                 where = f"at {pairing.address}"
                 if pairing.tailscale_fallback:
                     where += f", or over Tailscale at {pairing.tailscale_fallback} when away"
+            name = f"{pairing.host_name} ({pairing.paired_name})" if pairing.renamed else pairing.host_name
             self.client_tile.set_description(
-                f"Paired with {pairing.host_name} {where}. Its identity is {identity}."
+                f"Paired with {name} {where}. Its identity is {identity}."
             )
             self.paired_row.show()
             # Paired on this network only. Away from home is Tailscale's job;
@@ -1064,18 +1082,24 @@ class RemoteEngineSection(QObject):
                 details.append("connected now")
             paired = _paired_on(device.get("paired_at", ""))
             if paired:
+                as_name = f" as {device['paired_name']}" if device.get("paired_name") else ""
                 via = " over Tailscale" if device.get("via") == "tailscale" else ""
-                details.append(f"paired {paired}{via}")
+                details.append(f"paired {paired}{as_name}{via}")
             stored = _stored_phrase(self._device_records(device.get("id")))
             if stored:
                 details.append(f"keeps {stored} here")
             label = WrappedLabel(" · ".join(details))
             label.setObjectName("remoteDeviceLabel")
+            rename = neutral_button(Button("Rename"))
+            rename.setObjectName("remoteRenameDeviceButton")
+            rename.setToolTip("Change the name this computer shows for it")
+            rename.clicked.connect(lambda _checked=False, d=device: self._rename_device(d))
             remove = DangerButton("Remove")
             remove.setObjectName("remoteRemoveDeviceButton")
             device_id = device.get("id")
             remove.clicked.connect(lambda _checked=False, d=device_id: self._remove_device(d))
             row_layout.addWidget(label, stretch=1)
+            row_layout.addWidget(rename)
             row_layout.addWidget(remove)
             self._devices_layout.addWidget(row)
 
@@ -1249,6 +1273,28 @@ class RemoteEngineSection(QObject):
         dialog.show()
         self._models_dialog = dialog
 
+    def _rename_host(self) -> None:
+        pairing = self._service.client_pairing() if self._service is not None else None
+        if pairing is None:
+            return
+        own = pairing.paired_name or pairing.host_name
+        name = _ask_name(
+            self.client_tile.window(), "Rename host",
+            f"The name this computer shows for its host. Leave it empty to go back to "
+            f"{own}, the name it gave when pairing.",
+            pairing.host_name, own,
+        )
+        if name is None:
+            return
+        try:
+            renamed = self._service.rename_host(name)
+        except Exception as exc:
+            QMessageBox.warning(self.client_tile.window(), "Could not rename host", str(exc))
+            return
+        if renamed is not None:
+            self._say(f"This computer now calls the host {renamed.host_name}.")
+        self.refresh()
+
     def _forget(self) -> None:
         if self._service is not None:
             status = self._records.status()
@@ -1290,10 +1336,6 @@ class RemoteEngineSection(QObject):
     def _on_manage_mcp_toggled(self, checked: bool) -> None:
         if self._service is not None:
             self._service.set_manage_mcp(checked)
-
-    def _on_share_history_toggled(self, checked: bool) -> None:
-        if self._service is not None:
-            self._service.set_share_history(checked)
 
     # ---- where records are kept ----
 
@@ -1402,6 +1444,26 @@ class RemoteEngineSection(QObject):
         except Exception:
             logger.debug("Could not count a paired computer's records", exc_info=True)
             return {}
+
+    def _rename_device(self, device: dict) -> None:
+        device_id = device.get("id")
+        if self._service is None or not device_id:
+            return
+        current = str(device.get("name") or "")
+        own = str(device.get("paired_name") or current)
+        name = _ask_name(
+            self.devices_tile.window(), "Rename paired computer",
+            f"The name this computer shows for it here, on the host dashboard and in "
+            f"History. Leave it empty to go back to {own}, the name it paired with.",
+            current, own,
+        )
+        if name is None:
+            return
+        try:
+            self._service.rename_device(device_id, name)
+        except Exception as exc:
+            QMessageBox.warning(self.devices_tile.window(), "Could not rename computer", str(exc))
+        self.refresh()
 
     def _remove_device(self, device_id: str) -> None:
         if self._service is None or not device_id:

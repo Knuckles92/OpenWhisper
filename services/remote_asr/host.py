@@ -37,7 +37,6 @@ PAIRING_TTL_S = 300.0
 #: Wrong codes allowed before the host closes pairing.
 MAX_PAIRING_FAILURES = 5
 PAIRING_CODE_DIGITS = 6
-MAX_DEVICE_NAME = 60
 #: A connection owns a server thread and may hold a history or speech stream.
 MAX_CLIENT_CONNECTIONS = 12
 #: Engine/model/record operations share a small fair work pool. Waiting work
@@ -64,8 +63,7 @@ def _now_iso() -> str:
 
 
 def clean_device_name(name) -> str:
-    text = "".join(ch for ch in str(name or "") if ch.isprintable()).strip()
-    return text[:MAX_DEVICE_NAME] or "Unnamed computer"
+    return protocol.clean_name(name) or "Unnamed computer"
 
 
 class DeviceRegistry:
@@ -123,6 +121,24 @@ class DeviceRegistry:
             entries.append(entry)
             self._save(entries)
         return {k: v for k, v in entry.items() if k != "token_sha256"}, token
+
+    def rename(self, device_id: str, name: str) -> Optional[dict]:
+        """Call a device ``name`` here; an empty name goes back to the one it paired with.
+
+        ``paired_name`` keeps that name while the device goes by another.
+        The entry as ``list`` shows it, or None when the device isn't paired.
+        """
+        with self._lock:
+            entries = self._entries()
+            entry = next((entry for entry in entries if entry["id"] == device_id), None)
+            if entry is None:
+                return None
+            paired_name = clean_device_name(entry.pop("paired_name", None) or entry.get("name"))
+            entry["name"] = protocol.clean_name(name) or paired_name
+            if entry["name"] != paired_name:
+                entry["paired_name"] = paired_name
+            self._save(entries)
+        return {k: v for k, v in entry.items() if k != "token_sha256"}
 
     def remove(self, device_id: str) -> bool:
         with self._lock:
@@ -535,6 +551,20 @@ class SpeechHost:
             self._emit("devices", {})
         return removed
 
+    def rename_device(self, device_id: str, name: str) -> Optional[dict]:
+        """Call a device ``name`` here, its open connections included (see DeviceRegistry.rename)."""
+        device = self.registry.rename(device_id, name)
+        if device is None:
+            return None
+        with self._lock:
+            for client in self._clients.values():
+                if client.device_id == device_id:
+                    client.name = device["name"]
+        self.activity.renamed(device_id, device["name"])
+        self._emit("devices", {})
+        self._emit("clients", {})
+        return device
+
     # ---- connection handling ----
 
     def _emit(self, kind: str, detail: dict) -> None:
@@ -930,11 +960,12 @@ class SpeechHost:
                 try:
                     # Recheck revocation before accepting more work, including
                     # requests already buffered when the device was removed.
-                    if self.registry.authenticate(message.get("token")) is None:
+                    current = self.registry.authenticate(message.get("token"))
+                    if current is None:
                         ws.close(protocol.CLOSE_UNAUTHORIZED, "device removed")
                         break
                     reply = self._dispatch(frame, engine, identity, connection_id, streams,
-                                           device["name"], device["id"], ws)
+                                           current["name"], device["id"], ws)
                     self._send(ws, reply)
                 finally:
                     self._set_in_request(connection_id, False)
@@ -950,8 +981,8 @@ class SpeechHost:
                 except Exception:
                     logger.debug("Could not cancel remote stream %s", session, exc_info=True)
             with self._lock:
-                self._clients.pop(connection_id, None)
-            self.activity.disconnected(device["id"], device["name"])
+                client = self._clients.pop(connection_id, None)
+            self.activity.disconnected(device["id"], client.name if client else device["name"])
             self._emit("clients", {})
 
     def _dispatch(self, frame, engine: HostEngine, identity: tuple,

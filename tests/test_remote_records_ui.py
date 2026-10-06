@@ -256,30 +256,23 @@ def test_host_record_recovery_requires_explicit_assignment(mode, accepted, monke
 
 
 @pytest.mark.parametrize("mode", ["classic", "omarchy"])
-def test_client_history_sharing_is_separate_from_storage(mode, monkeypatch):
+def test_record_storage_controls_do_not_grant_mcp_history_sharing(mode, monkeypatch):
     from services.settings import SettingsKey, settings_manager
 
     monkeypatch.setenv("OPENWHISPER_UI", mode)
 
-    class HistoryService(_Service):
-        def set_share_history(self, enabled):
-            settings_manager.save_setting(SettingsKey.REMOTE_CLIENT_HISTORY, enabled)
-
+    settings_manager.save_setting(SettingsKey.REMOTE_CLIENT_HISTORY, False)
     records = FakeRecords()
-    dialog, section = _section(records, HistoryService())
-    dialog.resize(520, 740)
-    QApplication.processEvents()
-    assert section.share_history_tile.isVisibleTo(dialog)
-    assert not section.share_history_tile.checkbox.isChecked()
-    assert section.share_history_tile.minimumSizeHint().width() <= 520
-    section.share_history_tile.checkbox.setChecked(True)
-    assert settings_manager.get(SettingsKey.REMOTE_CLIENT_HISTORY) is True
-    assert records.location() == "local" and records.locations == []
-    section.refresh()
-    assert section.share_history_tile.checkbox.isChecked()
-    section.share_history_tile.checkbox.setChecked(False)
-    assert settings_manager.get(SettingsKey.REMOTE_CLIENT_HISTORY) is False
-    dialog.close()
+    service = _Service()
+    dialog, section = _section(records, service)
+    try:
+        section.keep_records_tile.checkbox.setChecked(True)
+        section.location_buttons["both"].click()
+        assert service.keep == [True]
+        assert records.location() == "both"
+        assert settings_manager.get(SettingsKey.REMOTE_CLIENT_HISTORY) is False
+    finally:
+        dialog.close()
 
 
 def _remote_entry(entry_id, text, when="2026-09-27T10:00:00+00:00", audio=True):

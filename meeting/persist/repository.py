@@ -432,6 +432,13 @@ class SqlMeetingRepository:
         return [{"id": owner, "name": name or "Unnamed computer", "count": count}
                 for owner, name, count in rows]
 
+    def rename_origin(self, origin: str, name: str) -> int:
+        """Badge the meetings a paired computer stored here with its new name."""
+        with self._db.get_session() as session:
+            return session.query(MeetingSession).filter(
+                MeetingSession.origin_device_id == origin
+            ).update({MeetingSession.origin_device_name: name}, synchronize_session=False)
+
     def origin_spools(self, origin: str) -> List[Tuple[str, str]]:
         """``(meeting_id, spool_dir)`` of the meetings a paired computer stored here."""
         with self._db.get_session() as session:

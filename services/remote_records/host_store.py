@@ -72,6 +72,8 @@ class RecordKind(Protocol):
 
     def delete_all(self, device_id: str) -> int: ...
 
+    def rename_owner(self, device_id: str, name: str) -> int: ...
+
     def summary(self, device_id: str) -> dict: ...
 
     def owners(self) -> list: ...
@@ -210,6 +212,16 @@ class HostRecordStore:
         for area in ("staging", "exports"):
             shutil.rmtree(self._device_dir(area, device_id), ignore_errors=True)
         return removed
+
+    def rename_device(self, device_id: str, name: str) -> int:
+        """Badge what a device stored here with its new name; how many records changed."""
+        renamed = 0
+        for kind, handler in self.kinds.items():
+            try:
+                renamed += handler.rename_owner(device_id, name)
+            except Exception:
+                logger.warning("Could not rename a device's %s records", kind, exc_info=True)
+        return renamed
 
     def summary(self, device_id: str) -> dict:
         """What ``device_id`` has stored here, per kind: count and bytes."""

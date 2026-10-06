@@ -40,6 +40,7 @@ from ui_qt.dialogs.settings_destinations import (
     GENERAL,
     MEETING_INTELLIGENCE,
     MEETING_VOICE,
+    MCP,
     OVERVIEW,
     RECORDING,
     RUNTIME,
@@ -561,6 +562,24 @@ class TestSearchMatching:
 
 
 class TestSearchPalette:
+    def test_history_sharing_search_opens_and_marks_its_mcp_control(self, make_dialog):
+        dialog, _store = make_dialog()
+        try:
+            dialog.show()
+            assert MCP not in dialog._built_pages
+            dialog.open_search("share history")
+            entries = dialog.search_palette.current_entries()
+            assert len(entries) == 1 and entries[0].destination == MCP
+            QTest.keyClick(dialog.search_palette.input, Qt.Key.Key_Return)
+            QApplication.processEvents()
+            assert dialog.rail.current_key() == MCP
+            assert dialog.mcp_history_tile.isVisible()
+            assert dialog.mcp_history_tile.property("searchHit") is True
+            matches = match_entries(dialog._search_index(), "share history")
+            assert len(matches) == 1 and matches[0].target is dialog.mcp_history_tile
+        finally:
+            dialog.close()
+
     def test_index_covers_tiles_fields_help_models_and_components(self, make_dialog):
         dialog, _store = make_dialog()
         index = dialog._search_index()

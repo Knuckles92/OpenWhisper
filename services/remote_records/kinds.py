@@ -356,6 +356,9 @@ class DictationRecords:
         shutil.rmtree(self._device_folder(device_id), ignore_errors=True)
         return removed
 
+    def rename_owner(self, device_id: str, name: str) -> int:
+        return self.db.rename_history_origin(device_id, name[:120])
+
     def summary(self, device_id: str) -> dict:
         count = self.db.history_origin_counts().get(device_id, 0)
         folder = self._device_folder(device_id)
@@ -731,6 +734,9 @@ class MeetingRecords:
         for meeting_id, _spool in self.repository.origin_spools(device_id):
             removed += bool(self.delete(device_id, meeting_id))
         return removed
+
+    def rename_owner(self, device_id: str, name: str) -> int:
+        return self.repository.rename_origin(device_id, name[:120])
 
     def summary(self, device_id: str) -> dict:
         spools = self.repository.origin_spools(device_id)
