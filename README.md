@@ -25,9 +25,11 @@ Use a [packaged release](#install) with bundled Python and dependencies, or [run
 - **Dictation:** Record from any app with a global hotkey, see a live preview on supported engines, and paste the result into the active window.
 - **Audio files:** Transcribe one file or a queue, keep results separate or combine them, and copy the output when ready.
 - **Meetings:** Capture microphone and system audio, follow a live dashboard, review searchable transcripts and AI insights, play recordings, and export. Available on Windows and macOS 13+; Linux system audio is a [preview](docs/linux-system-audio.md).
-- **AI cleanup:** Apply spelling and style rules or reusable [cleanup profiles](docs/cleanup-profiles.md), with separate text-model choices for dictation and meetings.
+- **AI cleanup:** Choose Light, Medium, or High cleanup, which handles spoken corrections and lists, then apply spelling and style rules or reusable [cleanup profiles](docs/cleanup-profiles.md), with separate text-model choices for dictation and meetings.
+- **Personalize:** A [dictionary](docs/personalize.md#dictionary) that steers recognition and learns from your corrections, spoken [snippets](docs/personalize.md#snippets), a tone for each kind of app, and [Command Mode](docs/personalize.md#command-mode-and-transforms) to rewrite selected text by voice or with saved transforms.
+- **Extras:** Hands-free recording by double-tapping the record key, mouse side buttons as shortcuts, ranked microphones with automatic fallback, an overlay language switcher, a floating Scratchpad, and dictation Stats.
 - **Settings:** Use Basic for everyday Dictation, Meetings, and App controls; switch to Advanced for full model configuration, downloads, and Ctrl+K search. Both views edit the same settings and remember your last selected view.
-- **History:** Search, retranscribe, and export transcripts as Markdown, plain text, or JSON. See [export format support](docs/export-support.md) for what each format includes.
+- **History:** Search, play back, retranscribe, and export transcripts as Markdown, plain text, or JSON, and switch an entry between its original and AI-cleaned versions. See [export format support](docs/export-support.md) for what each format includes.
 - **Agent history API (preview):** Search saved transcripts and meeting notes through an opt-in, authenticated local API. See [API setup](docs/agent-api.md).
 - **MCP:** Enable **Settings → MCP** to connect an agent to history, transcripts, and meeting insights. Optionally allow retitling and choose which settings agents may change. See [MCP setup](docs/mcp.md).
 
@@ -160,6 +162,8 @@ Change shortcuts and choose **Toggle** or **Push and hold** in **Settings → Ho
 | Enable/disable program | `Ctrl+Alt+Numpad *` | `Control+Option+Shift+R` |
 | Minimize to tray | `Ctrl+Alt+M` | `Control+Option+M` |
 
+In push-and-hold mode, double-tap the record shortcut to keep recording hands-free, then press it again to stop. Command Mode, the Scratchpad, switching dictation language, and pasting the original of your last dictation have optional shortcuts with no default. On Windows and X11, mouse side buttons (Mouse 4 and Mouse 5) can be shortcuts too.
+
 On X11 Linux, hotkeys also reach the focused app. Omarchy supports desktop shortcuts and auto-paste; other native Wayland desktops use focused-window shortcuts and manual paste. macOS auto-paste requires Accessibility permission; global hotkeys do not.
 
 ### Omarchy / Hyprland
@@ -218,7 +222,7 @@ The host's selected engine handles transcription. Traffic is encrypted and limit
 
 Use AI cleanup to polish dictation and meeting intelligence to generate notes and insights. Each has its own text-model settings.
 
-- **Dictation:** Enable **Settings → AI cleanup** and choose a text model. Teach spelling and style in **Learned rules**, or use [Profiles](docs/cleanup-profiles.md) for reusable formats.
+- **Dictation:** Enable **Settings → AI cleanup**, choose a cleanup level, and choose a text model. Add words to the **Dictionary**, pick a tone per kind of app in **Styles**, teach other behaviour in **Learned rules**, or use [Profiles](docs/cleanup-profiles.md) for reusable formats. See [Personalize dictation](docs/personalize.md).
 - **Providers:** OpenAI, OpenRouter, Ollama, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. Add keys in **Settings → API keys**; Ollama needs a separately managed server.
 - **Meetings:** Choose an engine in **Settings → Meeting Mode → Intelligence** using the options below.
 

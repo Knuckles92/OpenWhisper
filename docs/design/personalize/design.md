@@ -1,7 +1,9 @@
 # Personalization features: design and work split
 
-Status: in progress (2026-10-06), revision 2 after a four-lens design review.
-This is the shared contract for the parallel work streams that add
+Status: implemented (2026-10-06), revision 3. Revision 2 followed a four-lens
+design review; revision 3 records the contract changes made while fixing the
+verified findings of the post-merge review (see "Changes after review" at the
+end). This is the shared contract for the parallel work streams that add
 personalization features to OpenWhisper. Every stream reads this first.
 
 The coordinator owns this file, CHANGELOG.md, README.md, docs/*.md user
@@ -92,7 +94,7 @@ with the pinned model; any hint failure retries once without hints; (b)
 deterministically ("sounds like" → term) to every transcript; (c) in the
 cleanup prompt. The page says per engine whether the dictionary reaches the
 speech model, from a capability flag. Learning (default on, but shown as
-"Off · needs Read text near the cursor [Turn on]" until that is on): after a
+"Off · needs Read text near the cursor [Open Apps & styles]" until that is on): after a
 paste the field is re-read once a few seconds later on the capture service
 thread; a single-word correction of a pasted word, seen twice and not on a
 common-word list, becomes a Learned term (no "sounds like" variant, so it only
@@ -124,9 +126,11 @@ text; `cleaned_text` is the AI output, stored at the same time (legacy rows:
 filled on the first undo); `text` is whichever version the user chose. The
 entry dialog's toggle becomes "Original / AI" with "Use this version"; the
 card menu gets "Undo AI edit" / "Use AI version". Local entries only; edits
-re-sync to the host. Tray "Paste original of last dictation" and an optional
-`paste_last_original` shortcut paste the last dictation's original at the
-caret and mark the entry as original.
+re-sync to the host. An optional `paste_last_original` shortcut pastes the
+last dictation's original at the caret once its modifiers are released and
+marks the entry as original; the tray's "Copy original of last dictation"
+copies it instead (a tray click takes focus from the target app) and leaves
+the entry's version alone.
 
 **8 Hands-free.** `recording_hands_free_latch` (default on), push-and-hold
 only: a second press within 400 ms of a short tap keeps recording; the next
@@ -546,3 +550,33 @@ S2, S5, S1, S4, S6, S3, S7, S8, S9.
   font for UI you add.
 - Commit in small, well-described commits. Do not edit CHANGELOG, README or
   this file; put user-visible changes in your report.
+
+## Changes after review
+
+A post-merge review (eight lenses, every finding verified twice) found 34
+issues; these contract changes came out of their fixes:
+
+- `TextContext.blocked` marks a deliberate refusal (an app on "Never read
+  from", a password field) as distinct from "unknown". Command Mode and
+  transforms refuse in such apps instead of falling back to a synthetic copy.
+  The exclusion list stays editable whenever app awareness is on.
+- `ContextCaptureService.identity_now(timeout_s)` gives the focused app for
+  the paste check (Linux waits up to 0.5 s off the Qt thread).
+- `DictationJob.target` records the app at the start even with app awareness
+  off; only the paste check reads it. `dictation_pipeline.paste_target(job)`
+  returns a `PasteTarget` (same, changed, unknown), and `paste_target_ok` is
+  False when the app is unknown, so a rewrite is copied rather than pasted
+  blind.
+- `dictation_pipeline.html_for_paste(html, text, job)` and
+  `focus_context.join_html_with_context` give rich text the same caret join as
+  plain text.
+- `services.runtime.command.CommandRefused` (a RuntimeError) marks Command
+  Mode refusals such as "Select the text to change first"; they keep no audio
+  and show a plain message.
+- Page modules may define `save_drafts(dialog, *, ask=False) -> bool`; Settings
+  calls it when a page is left, the window closes or is rejected, and on quit.
+- The join lowercases a continuing first word only when it is a common word
+  that is never a name; anything else keeps its capital.
+- The frozen build collects every `ui_qt.dialogs` module, and
+  `services/package_checks.py` lists the modules the app loads by name for the
+  packaging self-test.
