@@ -186,12 +186,20 @@ class FakeHotkeyManager:
         self.rehook_called = False
         self.cleaned_up = False
         self.record_mode = None
+        self.dynamic_hotkeys = {}
+        self.dynamic_callbacks = {}
 
     def set_callbacks(self, **callbacks):
         self.callbacks = callbacks
 
     def set_record_mode(self, mode):
         self.record_mode = mode
+
+    def set_dynamic_hotkeys(self, namespace, hotkeys, callback):
+        self.dynamic_hotkeys[namespace] = hotkeys
+        self.dynamic_callbacks[namespace] = callback
+        if namespace == "profile":
+            self.set_profile_hotkeys(hotkeys, callback)
 
     def set_profile_hotkeys(self, hotkeys, callback):
         self.profile_hotkeys = hotkeys

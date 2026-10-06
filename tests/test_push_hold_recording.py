@@ -287,14 +287,21 @@ class TestPynputBackendPushHold(unittest.TestCase):
             manager.handle_hotkey_release(frozenset(), "r", source="qt")
         )
 
-        # Flag re-set by a second hold, but within the 0.2s cross-source
-        # dedupe window the duplicate release is swallowed.
+        # Flag re-set as if the global listener saw the same release: within
+        # the 0.2s cross-source window it is swallowed.
+        manager._record_key_held = True
+        self.assertTrue(
+            manager.handle_hotkey_release(frozenset(), "r", source="global")
+        )
+        time.sleep(SETTLE_SECONDS)
+        self.assertEqual(releases.count(), 1)
+
+        # A repeat from the same source is a real second release.
         manager._record_key_held = True
         self.assertTrue(
             manager.handle_hotkey_release(frozenset(), "r", source="qt")
         )
-        time.sleep(SETTLE_SECONDS)
-        self.assertEqual(releases.count(), 1)
+        self.assertEqual(releases.count(), 2)
 
     def test_carbon_released_event_routes_to_record_release(self):
         manager = self._manager()
@@ -388,11 +395,14 @@ class TestPushHoldRuntimeHandlers(unittest.TestCase):
 
         self.assertEqual(controller.calls, ["start", "stop"])
 
-    def test_short_tap_cancels(self):
+    def test_short_tap_cancels_without_the_hands_free_latch(self):
         controller = _FakeController(_FakeRecorder())
         runtime = self.HotkeyRuntime(controller)
 
-        with patch.object(time, "monotonic", side_effect=[100.0, 100.1, 100.1]):
+        with patch.object(time, "monotonic", side_effect=[100.0, 100.1, 100.1]), patch(
+            "services.runtime.hotkeys.resolve_recording_hands_free_latch",
+            return_value=False,
+        ):
             runtime.record_key_pressed()
             runtime.record_key_released()
 

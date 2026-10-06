@@ -111,7 +111,10 @@ def test_native_control_preserves_push_hold_and_profile_release(monkeypatch):
     manager = _hotkey_pynput.HotkeyManager({"record_toggle": "kp *"})
     manager.set_record_mode(RecordingTriggerMode.PUSH_HOLD)
     started, stopped = threading.Event(), threading.Event()
-    manager.set_callbacks(on_record_press=started.set, on_record_release=stopped.set)
+    manager.set_callbacks(
+        on_record_press=lambda _at: started.set(),
+        on_record_release=lambda _at: stopped.set(),
+    )
     native = OmarchyControls(SimpleNamespace(hotkey_manager=manager))
     assert native.Trigger("record_toggle", False)
     assert started.wait(1)
@@ -119,9 +122,9 @@ def test_native_control_preserves_push_hold_and_profile_release(monkeypatch):
     assert stopped.wait(1)
     manager.set_profile_hotkeys({"sample": "ctrl+alt+r"}, lambda _: None)
     native.Trigger("profile:sample", False)
-    assert "sample" in manager._profile_held
+    assert "sample" in manager._dynamic_held["profile"]
     native.Trigger("profile:sample", True)
-    assert not manager._profile_held
+    assert not manager._dynamic_held["profile"]
     manager.cleanup()
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import logging
 import sys
 import time
@@ -10,12 +11,16 @@ from typing import TYPE_CHECKING, Dict, Optional
 from PyQt6.QtCore import QTimer, Qt
 
 from config import config
+from services import text_transforms
+from services._hotkey_common import OrderedDispatcher
 from services.hotkey_manager import HotkeyManager, USE_PYNPUT_BACKEND
-from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
+from services.cleanup_profiles import load_cleanup_profiles
+from services.hotkey_conflicts import PROFILE, TRANSFORM, hotkey_conflict
 from services.settings import (
     SETTING_DEFAULTS,
     RecordingTriggerMode,
     SettingsKey,
+    resolve_recording_hands_free_latch,
     resolve_recording_trigger_mode,
     settings_manager,
 )
@@ -25,6 +30,25 @@ if TYPE_CHECKING:
     from services.application_controller import ApplicationController
 
 logger = logging.getLogger(__name__)
+
+#: Set to True on a top-level window (the Scratchpad) to give it the same
+#: focused-window shortcuts as the main window.
+HOTKEY_WINDOW_PROPERTY = "openwhisperHotkeyWindow"
+
+
+def is_hotkey_window(window, main_window) -> bool:
+    return window is not None and (
+        window is main_window or window.property(HOTKEY_WINDOW_PROPERTY) is True
+    )
+
+
+# Push-and-hold states. HOLDING: our press started a recording. TAP_PENDING: a
+# short tap ended and a second press within RECORD_LATCH_WINDOW_MS latches the
+# recording; otherwise it cancels. LATCHED: hands-free until the next press.
+_IDLE = "idle"
+_HOLDING = "holding"
+_TAP_PENDING = "tap_pending"
+_LATCHED = "latched"
 
 
 # The Qt focus-window hotkey fallback is only needed for the pynput backend
@@ -144,7 +168,7 @@ if USE_PYNPUT_BACKEND:
             is_release = event.type() == QEvent.Type.KeyRelease
             if not is_press and not is_release:
                 return False
-            if event.isAutoRepeat() or not self._main_window_is_active():
+            if event.isAutoRepeat() or not self._hotkey_window_is_active():
                 return False
 
             hotkey_manager = self.controller.hotkey_manager
@@ -156,7 +180,6 @@ if USE_PYNPUT_BACKEND:
                 return False
 
             if is_release:
-                # Only the record hotkey has release behavior (push-and-hold).
                 handled = hotkey_manager.handle_hotkey_release(
                     _qt_event_modifiers(event),
                     main_key,
@@ -172,13 +195,13 @@ if USE_PYNPUT_BACKEND:
                 event.accept()
             return handled
 
-        def _main_window_is_active(self) -> bool:
+        def _hotkey_window_is_active(self) -> bool:
             app = QApplication.instance()
             if app is None:
                 return False
-
-            active_window = app.activeWindow()
-            return active_window is self.controller.ui_controller.main_window
+            return is_hotkey_window(
+                app.activeWindow(), self.controller.ui_controller.main_window
+            )
 
 
 class HotkeyRuntime:
@@ -188,9 +211,22 @@ class HotkeyRuntime:
         self.controller = controller
         self._active_window_hotkey_filter: Optional[ActiveWindowHotkeyFilter] = None
         self._omarchy_controls = None
-        # Push-and-hold bookkeeping; read/written from hotkey callback threads.
+        # Record and Command Mode events run here in hook order, so a release
+        # never overtakes its press and the latch sees real timestamps.
+        self._dispatcher = OrderedDispatcher("hotkey-dispatch")
+        # Push-and-hold bookkeeping, owned by the dispatcher thread; a mode
+        # change resets it from the Qt thread.
         self._record_press_monotonic: Optional[float] = None
         self._record_start_accepted = False
+        self._hold_state = _IDLE
+        self._latch_generation = 0
+        self._latch_deadline = 0.0
+        # Counts recordings that ended for any reason (stop, cancel, tray,
+        # error). A latch belongs to the recording its hold started, so a
+        # changed count means that recording is gone.
+        self._recording_end_counter = itertools.count(1)
+        self._recordings_ended = 0
+        self._hold_epoch = 0
 
     def setup_hotkeys(self) -> None:
         logger.info("Setting up hotkeys...")
@@ -199,21 +235,26 @@ class HotkeyRuntime:
         # load_hotkey_settings deliberately returns saved data unmerged, so the
         # merge happens here at the point of use.
         hotkeys = {**config.DEFAULT_HOTKEYS, **settings_manager.load_hotkey_settings()}
-        self.controller.hotkey_manager = HotkeyManager(hotkeys)
-        self.controller.hotkey_manager.set_record_mode(
-            resolve_recording_trigger_mode()
+        controller = self.controller
+        controller.hotkey_manager = HotkeyManager(hotkeys)
+        controller.hotkey_manager.set_record_mode(resolve_recording_trigger_mode())
+        controller.hotkey_manager.set_callbacks(
+            on_record_toggle=controller.toggle_recording,
+            on_record_press=self._queue_record_press,
+            on_record_release=self._queue_record_release,
+            on_command_press=self._queue_command_press,
+            on_command_release=self._queue_command_release,
+            on_cancel=controller.cancel,
+            on_minimize_tray=controller.minimize_to_tray,
+            on_meeting_toggle=controller.toggle_meeting_mode,
+            on_scratchpad_toggle=controller.scratchpad_toggle_requested.emit,
+            on_cycle_language=controller.cycle_language_requested.emit,
+            on_paste_last_original=controller.paste_last_original_requested.emit,
+            on_status_update=controller.update_status_with_auto_hide,
+            on_status_update_auto_hide=controller.update_status_with_auto_hide,
         )
-        self.controller.hotkey_manager.set_callbacks(
-            on_record_toggle=self.controller.toggle_recording,
-            on_record_press=self.record_key_pressed,
-            on_record_release=self.record_key_released,
-            on_cancel=self.controller.cancel,
-            on_minimize_tray=self.controller.minimize_to_tray,
-            on_meeting_toggle=self.controller.toggle_meeting_mode,
-            on_status_update=self.controller.update_status_with_auto_hide,
-            on_status_update_auto_hide=self.controller.update_status_with_auto_hide,
-        )
-        self.controller.ui_controller.update_hotkey_display(hotkeys)
+        controller.recording_state_changed.connect(self._on_recording_state_changed)
+        controller.ui_controller.update_hotkey_display(hotkeys)
         self.refresh_profile_hotkeys()
         self._install_active_window_hotkey_filter()
         self._check_autopaste_permission()
@@ -222,7 +263,7 @@ class HotkeyRuntime:
         if is_wayland_session() and use_omarchy_ui():
             from services.omarchy_controls import OmarchyControls
 
-            controls = OmarchyControls(self.controller)
+            controls = OmarchyControls(controller)
             if controls.start():
                 self._omarchy_controls = controls
 
@@ -231,8 +272,7 @@ class HotkeyRuntime:
         if mode not in RecordingTriggerMode.ALL:
             mode = config.RECORDING_TRIGGER_MODE
         logger.info("Recording trigger mode set to %s", mode)
-        self._record_press_monotonic = None
-        self._record_start_accepted = False
+        self._reset_hold()
         if self.controller.hotkey_manager:
             self.controller.hotkey_manager.set_record_mode(mode)
         if mode == RecordingTriggerMode.PUSH_HOLD:
@@ -240,25 +280,67 @@ class HotkeyRuntime:
         else:
             self.controller.status_update.emit("Toggle recording enabled")
 
-    def record_key_pressed(self) -> None:
-        """Push-and-hold: the record hotkey was pressed; start recording."""
-        self._record_press_monotonic = None
-        self._record_start_accepted = False
+    def _queue_record_press(self, at: float) -> None:
+        self._dispatcher.submit(self.record_key_pressed, at)
+
+    def _queue_record_release(self, at: float) -> None:
+        self._dispatcher.submit(self.record_key_released, at)
+
+    def _queue_command_press(self, at: float) -> None:
+        self._dispatcher.submit(self.controller.command_key_pressed, at)
+
+    def _queue_command_release(self, at: float) -> None:
+        self._dispatcher.submit(self.controller.command_key_released, at)
+
+    def _on_recording_state_changed(self, recording: bool) -> None:
+        if recording:
+            return
+        self._recordings_ended = next(self._recording_end_counter)
+        if self._hold_state in (_TAP_PENDING, _LATCHED):
+            self._dispatcher.submit(self._drop_stale_latch)
+
+    def record_key_pressed(self, at: Optional[float] = None) -> None:
+        """Push-and-hold: the record hotkey went down at ``at`` (monotonic).
+
+        Runs on the dispatcher thread; ``at`` defaults to now.
+        """
+        at = time.monotonic() if at is None else at
+        self._expire_tap(at)
+        self._drop_stale_latch()
+        if self._hold_state == _TAP_PENDING:
+            self._latch()
+            return
+        if self._hold_state == _LATCHED:
+            self._reset_hold()
+            self.controller.stop_recording()
+            return
+        self._reset_hold()
         if self.controller.recorder.is_recording:
             # A previous stop's post-roll still owns the recorder; ignore the
             # press rather than surfacing a failed-start status.
             return
-        self._record_press_monotonic = time.monotonic()
+        self._record_press_monotonic = at
+        self._hold_epoch = self._recordings_ended
         self._record_start_accepted = bool(self.controller.start_recording())
+        if self._record_start_accepted:
+            self._hold_state = _HOLDING
 
-    def record_key_released(self) -> None:
-        """Push-and-hold: the record hotkey was released; stop or cancel."""
+    def record_key_released(self, at: Optional[float] = None) -> None:
+        """Push-and-hold: the record hotkey came up at ``at``; stop, cancel or wait.
+
+        Runs on the dispatcher thread; ``at`` defaults to now.
+        """
+        at = time.monotonic() if at is None else at
+        self._expire_tap(at)
+        if self._hold_state in (_TAP_PENDING, _LATCHED):
+            return  # the latching press's own release
         press_time = self._record_press_monotonic
         self._record_press_monotonic = None
+        self._hold_state = _IDLE
         if not self._record_start_accepted:
             return  # start was refused; its status message already surfaced
         self._record_start_accepted = False
-        # The release thread can beat the stream open, so wait briefly for
+        # The start can return before the stream opens, so wait briefly for
         # is_recording before deciding between stop and cancel.
         deadline = time.monotonic() + 0.5
         while not self.controller.recorder.is_recording and time.monotonic() < deadline:
@@ -269,11 +351,67 @@ class HotkeyRuntime:
             # The cancel hotkey already claimed this hold (cancel clears the
             # captured frames), or the stream never delivered audio.
             return
-        held_ms = (time.monotonic() - press_time) * 1000 if press_time else 0
-        if held_ms < config.RECORD_MIN_HOLD_MS:
-            self.controller.cancel()
-        else:
+        held_ms = (at - press_time) * 1000 if press_time else 0
+        if held_ms >= config.RECORD_MIN_HOLD_MS:
             self.controller.stop_recording()
+        elif not resolve_recording_hands_free_latch():
+            self.controller.cancel()
+        elif self._recordings_ended == self._hold_epoch:
+            self._await_second_tap(at)
+
+    def _await_second_tap(self, released_at: float) -> None:
+        self._hold_state = _TAP_PENDING
+        self._latch_generation += 1
+        self._latch_deadline = released_at + config.RECORD_LATCH_WINDOW_MS / 1000
+        self._dispatcher.call_at(
+            self._latch_deadline, self._on_tap_deadline, self._latch_generation
+        )
+
+    def _on_tap_deadline(self, generation: int) -> None:
+        if generation == self._latch_generation and self._hold_state == _TAP_PENDING:
+            self._cancel_tap()
+
+    def _expire_tap(self, at: float) -> None:
+        """Settle a pending tap whose window closed before an event at ``at``."""
+        if self._hold_state == _TAP_PENDING and at > self._latch_deadline:
+            self._cancel_tap()
+
+    def _cancel_tap(self) -> None:
+        self._reset_hold()
+        if self._recordings_ended != self._hold_epoch:
+            return  # it already ended another way, maybe into transcription
+        recorder = self.controller.recorder
+        if recorder.is_recording and recorder.has_recording_data():
+            self.controller.cancel()
+
+    def _latch(self) -> None:
+        from services.hotkey_manager import format_hotkey_display
+
+        self._hold_state = _LATCHED
+        self._latch_generation += 1
+        self._dispatcher.cancel_deadline()
+        manager = self.controller.hotkey_manager
+        hotkey = manager.hotkeys.get("record_toggle", "") if manager else ""
+        self.controller.status_update.emit(
+            f"Hands-free · press {format_hotkey_display(hotkey)} to stop"
+        )
+        self.controller.hands_free_changed.emit(True)
+
+    def _drop_stale_latch(self) -> None:
+        if (
+            self._hold_state in (_TAP_PENDING, _LATCHED)
+            and self._recordings_ended != self._hold_epoch
+        ):
+            self._reset_hold()
+
+    def _reset_hold(self) -> None:
+        was_latched = self._hold_state == _LATCHED
+        self._hold_state = _IDLE
+        self._latch_generation += 1
+        self._record_press_monotonic = None
+        self._record_start_accepted = False
+        if was_latched:
+            self.controller.hands_free_changed.emit(False)
 
     @staticmethod
     def _auto_paste_enabled() -> bool:
@@ -317,17 +455,39 @@ class HotkeyRuntime:
             self.refresh_profile_hotkeys()
 
     def refresh_profile_hotkeys(self) -> None:
+        """Register profile and transform shortcuts.
+
+        A shortcut that collides with any other binding is skipped rather than
+        letting whichever matches first win.
+        """
         manager = self.controller.hotkey_manager
         if manager is None:
             return
         settings = settings_manager.load_all_settings()
-        shortcuts = {
-            p.id: p.hotkey for p in load_cleanup_profiles(settings)
-            if p.hotkey and not profile_hotkey_conflict(
-                p.hotkey, settings, exclude_id=p.id, standard_hotkeys=manager.hotkeys
+
+        def free(hotkey: str, kind: str, item_id: str) -> bool:
+            return bool(hotkey) and not hotkey_conflict(
+                hotkey, settings, exclude=(kind, item_id), standard_hotkeys=manager.hotkeys
             )
+
+        profiles = {
+            p.id: p.hotkey for p in load_cleanup_profiles(settings)
+            if free(p.hotkey, PROFILE, p.id)
         }
-        manager.set_profile_hotkeys(shortcuts, self.controller.profile_record_requested.emit)
+        try:
+            transforms = {
+                t.id: t.hotkey for t in text_transforms.load_transforms(settings)
+                if free(t.hotkey, TRANSFORM, t.id)
+            }
+        except Exception:
+            logger.exception("Could not load transform shortcuts")
+            transforms = {}
+        manager.set_dynamic_hotkeys(
+            PROFILE, profiles, self.controller.profile_record_requested.emit
+        )
+        manager.set_dynamic_hotkeys(
+            TRANSFORM, transforms, self.controller.transform_requested.emit
+        )
         if self._omarchy_controls:
             self._omarchy_controls.refresh()
 
@@ -392,6 +552,7 @@ class HotkeyRuntime:
             logger.info("Active-window hotkey filter installed")
 
     def cleanup(self) -> None:
+        self._dispatcher.stop()
         if self._omarchy_controls:
             self._omarchy_controls.close()
             self._omarchy_controls = None

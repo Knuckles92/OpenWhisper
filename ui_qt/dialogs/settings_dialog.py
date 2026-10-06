@@ -193,12 +193,20 @@ from ui_qt.widgets.buttons import (
     fit_compact_button,
     neutral_button,
 )
-from ui_qt.widgets.segmented_bar import SegmentedBar
-from ui_qt.widgets.hotkey_capture import HotkeyCaptureInput, HotkeyCaptureThread
+from ui_qt.widgets.hotkey_capture import (
+    HotkeyCaptureInput,
+    HotkeyCaptureThread,
+    mouse_shortcut_note,
+)
+from ui_qt.widgets.hotkey_row import ReflowCard
+from ui_qt.widgets.settings_switch import SettingsSwitch
+from services.hotkey_conflicts import STANDARD, hotkey_conflict
+from services.settings import resolve_recording_hands_free_latch
 from ui_qt.widgets.cleanup_profiles_panel import CleanupProfilesPanel
 from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
 from ui_qt.widgets.nav_rail import NavRail
 from ui_qt.widgets.rule_activity import ItemGlow, RuleActivityStrip
+from ui_qt.widgets.segmented_bar import SegmentedBar
 
 logger = logging.getLogger(__name__)
 
@@ -424,6 +432,9 @@ class SettingsDialog(QDialog):
         self.current_hotkey_input: Optional[HotkeyCaptureInput] = None
         self.hotkey_inputs: Dict[str, HotkeyCaptureInput] = {}
         self.hotkey_row_descriptions: Dict[str, WrappedLabel] = {}
+        self.hotkey_row_notes: Dict[str, WrappedLabel] = {}
+        self.hotkey_clear_buttons: Dict[str, QPushButton] = {}
+        self._hotkeys_suspended_for_capture = False
         self._page_modules: Dict[str, object] = {}
         self._flow_intro_tiles: list = []
         self._saved_cleanup_prompt = ""
@@ -830,8 +841,8 @@ class SettingsDialog(QDialog):
         self._add_page(
             HOTKEYS,
             "Hotkeys",
-            "Global shortcuts for record, cancel, enable/disable, and "
-            "minimize.",
+            "Global shortcuts for recording, Command Mode, and dictation "
+            "tools.",
             self._build_hotkeys_page,
         )
         self._add_page(
@@ -2560,12 +2571,14 @@ class SettingsDialog(QDialog):
         elif USE_PYNPUT_BACKEND:
             instruction_text = (
                 "Click a shortcut, hold Ctrl, Alt, Shift, or Super, then press "
-                "the desired key."
+                "the desired key. A side mouse button works too: click it on "
+                "the shortcut."
             )
         else:
             instruction_text = (
-                "Click a shortcut, then press the desired key combination. "
-                "Numpad keys are distinct from the matching regular keys."
+                "Click a shortcut, then press the desired key combination, or "
+                "click a side mouse button on it. Numpad keys are distinct from "
+                "the matching regular keys."
             )
         instruction = WrappedLabel(instruction_text)
         self._hotkey_instruction = instruction
@@ -2585,6 +2598,15 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._build_recording_trigger_mode_row())
         layout.addWidget(
             self._hotkey_shortcut_row(
+                "command_mode",
+                "Command Mode",
+                "Say how to rewrite the selected text, or what to write at the "
+                "cursor. Works like the record hotkey.",
+                optional=True,
+            )
+        )
+        layout.addWidget(
+            self._hotkey_shortcut_row(
                 "cancel",
                 "Cancel",
                 "Discard an active recording or interrupt transcription.",
@@ -2595,6 +2617,32 @@ class SettingsDialog(QDialog):
                 "meeting_toggle",
                 "Meeting Mode",
                 "Start or end Meeting Mode. Leave empty to disable this shortcut.",
+                optional=True,
+            )
+        )
+
+        layout.addWidget(self._hotkey_group_title("Dictation tools"))
+        layout.addWidget(
+            self._hotkey_shortcut_row(
+                "scratchpad_toggle",
+                "Scratchpad",
+                "Show or hide the floating Scratchpad.",
+                optional=True,
+            )
+        )
+        layout.addWidget(
+            self._hotkey_shortcut_row(
+                "cycle_language",
+                "Switch language",
+                "Move to the next language you dictate in.",
+                optional=True,
+            )
+        )
+        layout.addWidget(
+            self._hotkey_shortcut_row(
+                "paste_last_original",
+                "Paste original of last dictation",
+                "Paste your last dictation as you said it, before AI cleanup.",
                 optional=True,
             )
         )
@@ -2643,39 +2691,80 @@ class SettingsDialog(QDialog):
         self.record_mode_combo.currentIndexChanged.connect(
             self._on_recording_trigger_mode_changed
         )
-        card = QFrame()
+        card = ReflowCard()
         card.setObjectName("hotkeyModeCard")
-        row = QHBoxLayout(card)
-        row.setContentsMargins(14, 8, 12, 8)
-        row.setSpacing(16)
-        copy = QVBoxLayout()
-        copy.setSpacing(2)
-        name = QLabel("How the record hotkey activates")
+        name = WrappedLabel("How the record hotkey activates")
         name.setObjectName("hotkeyShortcutName")
-        copy.addWidget(name)
+        card.copy.addWidget(name)
         detail = WrappedLabel(
             "Toggle starts and stops with each press. Push and hold records while "
             "the key is down."
         )
         detail.setObjectName("hotkeyShortcutDescription")
-        copy.addWidget(detail)
-        row.addLayout(copy, stretch=1)
-        row.addWidget(self.record_mode_combo, alignment=Qt.AlignmentFlag.AlignVCenter)
+        card.copy.addWidget(detail)
+        card.add_control(self.record_mode_combo)
+
+        self.hands_free_latch_row = QWidget()
+        self.hands_free_latch_row.setObjectName("hotkeyLatchRow")
+        latch = QHBoxLayout(self.hands_free_latch_row)
+        latch.setContentsMargins(0, 8, 0, 0)
+        latch.setSpacing(16)
+        latch_copy = QVBoxLayout()
+        latch_copy.setSpacing(2)
+        latch_name = WrappedLabel("Double-tap to keep recording")
+        latch_name.setObjectName("hotkeyShortcutName")
+        latch_copy.addWidget(latch_name)
+        latch_detail = WrappedLabel(
+            "Tap the record hotkey twice quickly to record hands-free, then "
+            "press it once more to stop."
+        )
+        latch_detail.setObjectName("hotkeyShortcutDescription")
+        latch_copy.addWidget(latch_detail)
+        latch.addLayout(latch_copy, stretch=1)
+        self.hands_free_latch_switch = SettingsSwitch()
+        self.hands_free_latch_switch.setAccessibleName("Double-tap to keep recording")
+        self.hands_free_latch_switch.toggled.connect(self._on_hands_free_latch_toggled)
+        latch.addWidget(
+            self.hands_free_latch_switch, alignment=Qt.AlignmentFlag.AlignVCenter
+        )
+        self.hands_free_latch_row.setVisible(False)
+        card.add_footer(self.hands_free_latch_row)
         return card
 
     def _on_recording_trigger_mode_changed(self, _index: int = 0) -> None:
         mode = self.record_mode_combo.currentData()
         if mode is None:
             return
+        self.hands_free_latch_row.setVisible(mode == RecordingTriggerMode.PUSH_HOLD)
         if not self._persist(SettingsKey.RECORDING_TRIGGER_MODE, mode):
             return
         self._update_record_row_description(mode)
         if self.on_recording_trigger_mode_changed:
             self.on_recording_trigger_mode_changed(mode)
 
+    def _on_hands_free_latch_toggled(self, checked: bool) -> None:
+        # The hotkey runtime reads this at each short tap, so saving is enough.
+        if self._persist(SettingsKey.RECORDING_HANDS_FREE_LATCH, bool(checked)):
+            self._update_record_row_description(self.record_mode_combo.currentData())
+            for page in self._basic_pages.values():
+                page.refresh_shortcut()
+
+    def _load_hands_free_latch(self, settings: dict) -> None:
+        mode = resolve_recording_trigger_mode(settings)
+        blocker = self.hands_free_latch_switch.blockSignals(True)
+        self.hands_free_latch_switch.setChecked(resolve_recording_hands_free_latch(settings))
+        self.hands_free_latch_switch.blockSignals(blocker)
+        self.hands_free_latch_row.setVisible(mode == RecordingTriggerMode.PUSH_HOLD)
+        self._update_record_row_description(mode)
+
     @staticmethod
-    def _record_hotkey_description(mode: str) -> str:
+    def _record_hotkey_description(mode: str, hands_free: bool = False) -> str:
         if mode == RecordingTriggerMode.PUSH_HOLD:
+            if hands_free:
+                return (
+                    "Hold to record; release to stop and transcribe. "
+                    "Double-tap to record hands-free."
+                )
             return (
                 "Hold to record; release to stop and transcribe. "
                 "Quick taps are canceled."
@@ -2685,7 +2774,11 @@ class SettingsDialog(QDialog):
     def _update_record_row_description(self, mode: str) -> None:
         label = self.hotkey_row_descriptions.get("record_toggle")
         if label is not None:
-            label.setText(self._record_hotkey_description(mode))
+            label.setText(
+                self._record_hotkey_description(
+                    mode, self.hands_free_latch_switch.isChecked()
+                )
+            )
 
     @staticmethod
     def _hotkey_group_title(text: str) -> QLabel:
@@ -2701,22 +2794,20 @@ class SettingsDialog(QDialog):
         *,
         optional: bool = False,
     ) -> QFrame:
-        card = QFrame()
+        card = ReflowCard()
         card.setObjectName("hotkeyShortcutCard")
-        row = QHBoxLayout(card)
-        row.setContentsMargins(14, 8, 12, 8)
-        row.setSpacing(16)
-
-        copy = QVBoxLayout()
-        copy.setSpacing(2)
-        name = QLabel(title)
+        name = WrappedLabel(title)
         name.setObjectName("hotkeyShortcutName")
-        copy.addWidget(name)
+        card.copy.addWidget(name)
         detail = WrappedLabel(description)
         detail.setObjectName("hotkeyShortcutDescription")
-        copy.addWidget(detail)
+        card.copy.addWidget(detail)
         self.hotkey_row_descriptions[key] = detail
-        row.addLayout(copy, stretch=1)
+        note = WrappedLabel("")
+        note.setObjectName("hotkeyShortcutNote")
+        note.setVisible(False)
+        card.copy.addWidget(note)
+        self.hotkey_row_notes[key] = note
 
         if self._native_wayland:
             from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
@@ -2728,23 +2819,39 @@ class SettingsDialog(QDialog):
             field.captured.connect(lambda hotkey, key=key: self._on_local_hotkey_captured(key, hotkey))
         else:
             field = HotkeyCaptureInput()
+            field.setAccessibleName(f"{title} shortcut")
             field.capture_requested.connect(
                 lambda key=key, field=field: self._start_hotkey_capture(key, field)
             )
+            field.mouse_captured.connect(
+                lambda hotkey, key=key: self._on_mouse_hotkey_captured(key, hotkey)
+            )
+        field.notice.connect(
+            lambda text, key=key: self._show_hotkey_note(key, text, warning=True)
+        )
         field.setProperty("optional", optional)
         field.setMinimumWidth(190)
         field.setMaximumWidth(220)
         self.hotkey_inputs[key] = field
-        row.addWidget(field, alignment=Qt.AlignmentFlag.AlignVCenter)
+        card.add_control(field)
 
         if optional:
             clear_button = Button("Clear")
             clear_button.setObjectName("hotkeyClearButton")
+            clear_button.setAccessibleName(f"Clear {title} shortcut")
             fit_compact_button(clear_button, 68)
-            clear_button.clicked.connect(self._clear_meeting_hotkey)
-            self.clear_meeting_hotkey_button = clear_button
-            row.addWidget(clear_button, alignment=Qt.AlignmentFlag.AlignVCenter)
+            clear_button.clicked.connect(lambda _checked=False, key=key: self._clear_hotkey(key))
+            self.hotkey_clear_buttons[key] = clear_button
+            card.add_control(clear_button)
         return card
+
+    def _show_hotkey_note(self, key: str, text: str, *, warning: bool = False) -> None:
+        note = self.hotkey_row_notes.get(key)
+        if note is None:
+            return
+        note.setText(text)
+        set_style_property(note, "tone", "warning" if warning else "info")
+        note.setVisible(bool(text))
 
     def _build_advanced_page(self, layout: QVBoxLayout) -> None:
         self.meeting_redecode_coverage_guard_tile = SettingTile(
@@ -4350,6 +4457,9 @@ class SettingsDialog(QDialog):
         self.current_hotkey_input = input_field
         input_field.setText("Press keys…")
         input_field.set_capturing(True)
+        # A key or side button that is already bound would fire its action
+        # (or be swallowed by the hook) instead of reaching the capture.
+        self._suspend_hotkeys_for_capture(True)
 
         thread = HotkeyCaptureThread(self)
         self.capture_thread = thread
@@ -4367,10 +4477,14 @@ class SettingsDialog(QDialog):
         logger.info("Capturing hotkey for %s", key)
         thread.start()
 
+    def _suspend_hotkeys_for_capture(self, suspended: bool) -> None:
+        if suspended == self._hotkeys_suspended_for_capture:
+            return
+        self._hotkeys_suspended_for_capture = suspended
+        self.set_hotkey_capture_suspended(suspended)
+
     def _on_local_hotkey_captured(self, key: str, hotkey: str) -> None:
-        updated = self.current_hotkeys.copy()
-        updated[key] = hotkey
-        self._apply_hotkey_settings(updated, "Shortcut updated.")
+        self._apply_captured_hotkey(key, hotkey)
 
     def _on_hotkey_captured(
         self, thread: HotkeyCaptureThread, hotkey: str
@@ -4379,10 +4493,38 @@ class SettingsDialog(QDialog):
             return
         key = self.capturing
         self._finish_hotkey_capture(thread)
+        self._apply_captured_hotkey(key, hotkey)
+
+    def _on_mouse_hotkey_captured(self, key: str, hotkey: str) -> None:
+        if self.capturing != key:
+            return
+        self._cancel_hotkey_capture()
+        self._apply_captured_hotkey(key, hotkey)
+
+    def _apply_captured_hotkey(self, key: str, hotkey: str) -> bool:
+        conflict = self._standard_hotkey_conflict(key, hotkey)
+        if conflict:
+            self.message_label.setText(conflict)
+            self._update_hotkey_displays()
+            self._show_hotkey_note(key, conflict, warning=True)
+            return False
         updated = self.current_hotkeys.copy()
         updated[key] = hotkey
         label = _HOTKEY_LABELS.get(key, "Shortcut")
-        self._apply_hotkey_settings(updated, f"{label} hotkey updated.")
+        return self._apply_hotkey_settings(updated, f"{label} hotkey updated.")
+
+    def _standard_hotkey_conflict(self, key: str, hotkey: str) -> str:
+        """Why ``hotkey`` cannot be ``key``'s shortcut, or "" when it is free."""
+        conflict = hotkey_conflict(
+            hotkey,
+            self._settings_snapshot(),
+            exclude=(STANDARD, key),
+            standard_hotkeys=self.current_hotkeys,
+        )
+        if not conflict:
+            return ""
+        names = {action.replace("_", " "): label for action, label in _HOTKEY_LABELS.items()}
+        return f"That shortcut is already used by {names.get(conflict, conflict)}."
 
     def _on_hotkey_capture_failed(
         self, thread: HotkeyCaptureThread, message: str
@@ -4401,6 +4543,7 @@ class SettingsDialog(QDialog):
         self.current_hotkey_input = None
         if thread is self.capture_thread:
             self.capture_thread = None
+        self._suspend_hotkeys_for_capture(False)
 
     def _cancel_hotkey_capture(self) -> None:
         thread = self.capture_thread
@@ -4418,6 +4561,7 @@ class SettingsDialog(QDialog):
         self.capture_thread = None
         self.capturing = None
         self.current_hotkey_input = None
+        self._suspend_hotkeys_for_capture(False)
         if self.hotkey_inputs:
             self._update_hotkey_displays()
 
@@ -4455,11 +4599,12 @@ class SettingsDialog(QDialog):
         self._refresh_rail_values()
         return ""
 
-    def _clear_meeting_hotkey(self) -> None:
+    def _clear_hotkey(self, key: str) -> None:
         self._cancel_hotkey_capture()
         updated = self.current_hotkeys.copy()
-        updated["meeting_toggle"] = ""
-        self._apply_hotkey_settings(updated, "Meeting Mode hotkey cleared.")
+        updated[key] = ""
+        label = _HOTKEY_LABELS.get(key, "Shortcut")
+        self._apply_hotkey_settings(updated, f"{label} hotkey cleared.")
 
     def _confirm_reset_hotkeys(self) -> None:
         self._cancel_hotkey_capture()
@@ -4489,12 +4634,14 @@ class SettingsDialog(QDialog):
         for page in self._basic_pages.values():
             page.refresh_shortcut()
         for key, input_field in self.hotkey_inputs.items():
+            hotkey = self.current_hotkeys.get(key, "")
             if self._native_wayland:
-                input_field.set_hotkey(self.current_hotkeys.get(key, ""))
-                continue
-            input_field.setText(
-                format_hotkey_display(self.current_hotkeys.get(key, ""))
-            )
+                input_field.set_hotkey(hotkey)
+            else:
+                input_field.setText(format_hotkey_display(hotkey))
+            self._show_hotkey_note(key, mouse_shortcut_note(hotkey))
+        for key, button in self.hotkey_clear_buttons.items():
+            button.setEnabled(bool(self.current_hotkeys.get(key)))
 
     def _load_settings(self) -> None:
         settings = self._settings_snapshot()
@@ -4537,7 +4684,7 @@ class SettingsDialog(QDialog):
         if self._page_is_loading(HOTKEYS):
             trigger_mode = resolve_recording_trigger_mode(settings)
             self.record_mode_combo.setCurrentIndex(max(0, self.record_mode_combo.findData(trigger_mode)))
-            self._update_record_row_description(trigger_mode)
+            self._load_hands_free_latch(settings)
         for key, module in self._page_modules.items():
             if not self._page_is_loading(key):
                 continue

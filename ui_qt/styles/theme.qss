@@ -4889,6 +4889,29 @@ QLabel#snippetMessage[tone="error"] {
 /* personalize:S5 end */
 
 /* personalize:S6 begin (hotkeys) */
+/* The hands-free switch shares the trigger-mode card, under a hairline. */
+QWidget#hotkeyLatchRow {
+    background-color: transparent;
+    border: none;
+    border-top: 1px solid @slate-border-subtle;
+}
+
+QLabel#hotkeyShortcutNote {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QLabel#hotkeyShortcutNote[tone="warning"] {
+    color: @warning-text;
+}
+
+QPushButton#hotkeyClearButton:disabled {
+    color: @slate-text-disabled;
+    background-color: transparent;
+    border-color: @slate-border-subtle;
+}
 /* personalize:S6 end */
 
 /* personalize:S7 begin (microphones) */

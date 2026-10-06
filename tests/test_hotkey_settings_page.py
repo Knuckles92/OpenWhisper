@@ -128,7 +128,7 @@ class TestHotkeySettingsPage(unittest.TestCase):
                     hotkeys.copy()
                 )
 
-                dialog._clear_meeting_hotkey()
+                dialog._clear_hotkey("meeting_toggle")
                 self.assertEqual(applied[-1]["meeting_toggle"], "")
 
                 with patch.object(

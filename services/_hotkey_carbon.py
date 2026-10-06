@@ -29,6 +29,7 @@ from typing import Callable, Dict, List, Optional
 
 from pynput import keyboard as pynput_keyboard
 
+from services._hotkey_common import is_mouse_key
 from services._hotkey_pynput import parse_hotkey
 
 logger = logging.getLogger(__name__)
@@ -268,6 +269,11 @@ class CarbonHotkeyRegistrar:
 
         for action, hotkey_string in hotkeys.items():
             modifiers, main_key = parse_hotkey(hotkey_string)
+            if main_key is None:
+                continue
+            if is_mouse_key(main_key):
+                logger.info(f"Mouse button shortcuts are not available on macOS ({action})")
+                continue
             keycode = keycode_for(main_key)
             if keycode is None:
                 logger.warning(

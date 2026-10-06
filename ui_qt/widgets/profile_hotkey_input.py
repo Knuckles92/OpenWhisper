@@ -5,7 +5,7 @@ import sys
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
 
 from services.hotkey_manager import format_hotkey, format_hotkey_display
-from ui_qt.widgets.hotkey_capture import HotkeyCaptureInput
+from ui_qt.widgets.hotkey_capture import HotkeyCaptureInput, qt_modifier_names
 
 
 class ProfileHotkeyInput(HotkeyCaptureInput):
@@ -86,26 +86,8 @@ class ProfileHotkeyInput(HotkeyCaptureInput):
         if key == Qt.Key.Key_Escape:
             self.cancel_capture()
             return
-        modifiers = set()
         flags = event.modifiers()
-        for flag, name in (
-            (
-                Qt.KeyboardModifier.ControlModifier,
-                "cmd" if sys.platform == "darwin" else "ctrl",
-            ),
-            (
-                Qt.KeyboardModifier.MetaModifier,
-                "ctrl"
-                if sys.platform == "darwin"
-                else "win"
-                if sys.platform == "win32"
-                else "cmd",
-            ),
-            (Qt.KeyboardModifier.AltModifier, "alt"),
-            (Qt.KeyboardModifier.ShiftModifier, "shift"),
-        ):
-            if flags & flag:
-                modifiers.add(name)
+        modifiers = qt_modifier_names(flags)
         names = {
             Qt.Key.Key_Space: "space",
             Qt.Key.Key_Return: "enter",
@@ -136,6 +118,11 @@ class ProfileHotkeyInput(HotkeyCaptureInput):
         if sys.platform != "darwin" and flags & Qt.KeyboardModifier.KeypadModifier:
             name = f"kp {name}"
         self._pending = (key, format_hotkey(modifiers, name))
+
+    def _side_button_captured(self, hotkey: str) -> None:
+        self.set_hotkey(hotkey)
+        self.cancel_capture()
+        self.captured.emit(hotkey)
 
     def keyReleaseEvent(self, event):
         if self._capturing and self._pending and not event.isAutoRepeat():

@@ -54,7 +54,9 @@ from ui_qt.dialogs.settings_destinations import (
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
 from ui_qt.widgets.no_wheel import ElidingComboBox
+from ui_qt.widgets.hotkey_capture import mouse_shortcut_note
 from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
+from services.settings import resolve_recording_hands_free_latch
 from ui_qt.widgets.settings_switch import SettingsSwitch  # noqa: F401  (re-exported)
 from ui_qt.widgets.speech_backend_picker import populate_backend_combo
 from ui_qt.widgets.wrapped_label import WrappedLabel
@@ -546,18 +548,18 @@ class BasicSettingsPage(QWidget):
     def refresh_shortcut(self, settings=None):
         if self.shortcut is None:
             return
+        hotkey = self.dialog.current_hotkeys.get("record_toggle", "")
         if not self.shortcut._capturing:
-            self.shortcut.set_hotkey(
-                self.dialog.current_hotkeys.get("record_toggle", "")
-            )
-        mode = resolve_recording_trigger_mode(
-            settings or self.dialog._settings_snapshot()
-        )
-        self.shortcut_description.setText(
-            "Hold to record; release to stop and transcribe."
-            if mode == "push_hold"
-            else "Press to start or stop dictation."
-        )
+            self.shortcut.set_hotkey(hotkey)
+        settings = settings or self.dialog._settings_snapshot()
+        if resolve_recording_trigger_mode(settings) != "push_hold":
+            description = "Press to start or stop dictation."
+        elif resolve_recording_hands_free_latch(settings):
+            description = "Hold to record, or double-tap to keep recording hands-free."
+        else:
+            description = "Hold to record; release to stop and transcribe."
+        note = mouse_shortcut_note(hotkey)
+        self.shortcut_description.setText(f"{description} {note}" if note else description)
 
     def cancel_capture(self):
         if self.shortcut is not None:

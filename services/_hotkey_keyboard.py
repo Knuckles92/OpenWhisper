@@ -2,14 +2,20 @@
 import keyboard
 import logging
 import threading
+import time
 from typing import Dict, Callable, Optional, Tuple
 from config import config
 from services._hotkey_common import (
+    DYNAMIC_NAMESPACES,
+    MOUSE_KEYS,
+    PRESS_ACTIONS,
     Debouncer,
     format_hotkey_string,
+    is_mouse_key,
     notify_stt_toggle,
     parse_hotkey_string,
 )
+from services._mouse_hook_win import MouseButtonHook
 from services.settings import RecordingTriggerMode
 
 logger = logging.getLogger(__name__)
@@ -21,6 +27,8 @@ _MODIFIER_ALIASES: Dict[str, str] = {
     "alt": "alt",
     "shift": "shift",
     "win": "win",
+    # keyboard.get_hotkey_name spells the Windows key this way.
+    "windows": "win",
     "super": "win",
     "cmd": "win",
     "meta": "win",
@@ -60,12 +68,18 @@ def format_hotkey_display(hotkey_string: str) -> str:
     # Numpad keys are stored as "kp *" / "kp -"; show just the symbol.
     if main_key.startswith("kp "):
         main_display = main_key[3:]
+    elif main_key in MOUSE_KEYS:
+        main_display = MOUSE_KEYS[main_key]
     elif len(main_key) == 1:
         main_display = main_key.upper()
     else:
         main_display = main_key.title()
     parts.append(main_display)
     return "+".join(parts)
+
+
+def mouse_shortcuts_supported() -> bool:
+    return True
 
 
 def send_paste() -> None:
@@ -93,6 +107,10 @@ def accessibility_permission_diagnostics() -> str:
     return ""
 
 
+def _spawn(callback: Callable, *args) -> None:
+    threading.Thread(target=callback, args=args, daemon=True).start()
+
+
 class HotkeyManager:
     """Manages global hotkeys and keyboard event handling."""
 
@@ -101,21 +119,32 @@ class HotkeyManager:
         self.program_enabled = True
         self.record_mode = RecordingTriggerMode.TOGGLE
         self._debouncer = Debouncer(config.HOTKEY_DEBOUNCE_MS)
-        # Guards auto-repeat KEY_DOWNs while the record key is held.
+        # Guard auto-repeat presses while a hold key is down, and pair each
+        # suppressed press with its release.
         self._record_key_held = False
-        self._profile_hotkeys = {}
-        self._profile_held = {}
-        self._profile_debouncers = {}
-        self.on_profile_toggle = None
+        self._command_key_held = False
+        self._dynamic_hotkeys: Dict[str, Dict[str, str]] = {}
+        self._dynamic_callbacks: Dict[str, Callable] = {}
+        self._dynamic_debouncers: Dict[Tuple[str, str], Debouncer] = {}
+        self._dynamic_held: Dict[Tuple[str, str], str] = {}
         self.capture_suspended = False
+        # The keyboard hook thread and the mouse dispatch thread share the
+        # held flags above.
+        self._dispatch_lock = threading.RLock()
+        self._mouse_hook = MouseButtonHook(self._claims_mouse_button, self._on_mouse_button)
 
         self.on_record_toggle: Optional[Callable] = None
         self.on_record_press: Optional[Callable] = None
         self.on_record_release: Optional[Callable] = None
+        self.on_command_press: Optional[Callable] = None
+        self.on_command_release: Optional[Callable] = None
         self.on_cancel: Optional[Callable] = None
         self.on_enable_toggle: Optional[Callable] = None
         self.on_minimize_tray: Optional[Callable] = None
         self.on_meeting_toggle: Optional[Callable] = None
+        self.on_scratchpad_toggle: Optional[Callable] = None
+        self.on_cycle_language: Optional[Callable] = None
+        self.on_paste_last_original: Optional[Callable] = None
         self.on_status_update: Optional[Callable] = None
         self.on_status_update_auto_hide: Optional[Callable] = None
         self.is_transcribing_fn: Optional[Callable[[], bool]] = None
@@ -124,106 +153,186 @@ class HotkeyManager:
 
     def _setup_keyboard_hook(self):
         # A rehook may miss the KEY_UP while unhooked, so forget held state.
-        self._record_key_held = False
-        self._profile_held.clear()
+        self._forget_held_keys()
         keyboard.hook(self._handle_keyboard_event, suppress=True)
+        self._sync_mouse_hook()
+
+    def _forget_held_keys(self) -> None:
+        self._record_key_held = False
+        self._command_key_held = False
+        self._dynamic_held.clear()
 
     def _handle_keyboard_event(self, event):
         if self.capture_suspended:
             return True
+        at = time.monotonic()
         if event.event_type == keyboard.KEY_DOWN:
-            if self._matches_hotkey(event, self.hotkeys['enable_disable']):
+            return not self._press(
+                lambda hotkey: self._matches_hotkey(event, hotkey), at
+            )
+        if event.event_type == keyboard.KEY_UP:
+            return not self._release(
+                lambda hotkey: self._matches_main_key(event, hotkey), at
+            )
+        return True
+
+    def _press(self, matches: Callable[[Optional[str]], bool], at: float) -> bool:
+        """Dispatch a press; True when a shortcut claimed it (and suppresses it).
+
+        Record and Command Mode presses carry the hook's timestamp to callbacks
+        that must only enqueue; other actions run on their own thread.
+        """
+        with self._dispatch_lock:
+            if matches(self.hotkeys.get('enable_disable')):
                 self._toggle_program_enabled()
+                return True
+            if not self.program_enabled:
                 return False
 
-            if not self.program_enabled:
-                if not self._matches_hotkey(event, self.hotkeys['enable_disable']):
-                    return True
-
-            elif self._matches_hotkey(event, self.hotkeys['record_toggle']):
+            if matches(self.hotkeys.get('record_toggle')):
                 if not self._record_key_held:
                     self._record_key_held = True
                     if self.record_mode == RecordingTriggerMode.PUSH_HOLD:
                         if self.on_record_press:
-                            threading.Thread(
-                                target=self.on_record_press, daemon=True
-                            ).start()
-                    elif self._should_trigger_record_toggle():
-                        if self.on_record_toggle:
-                            threading.Thread(
-                                target=self.on_record_toggle, daemon=True
-                            ).start()
-                return False
+                            self.on_record_press(at)
+                    elif self._should_trigger_record_toggle() and self.on_record_toggle:
+                        _spawn(self.on_record_toggle)
+                return True
 
-            elif (self.hotkeys.get('meeting_toggle')
-                  and self._matches_hotkey(
-                      event, self.hotkeys.get('meeting_toggle')
-                  )):
-                if self.on_meeting_toggle:
-                    threading.Thread(
-                        target=self.on_meeting_toggle, daemon=True
-                    ).start()
-                return False
+            if matches(self.hotkeys.get('command_mode')):
+                if not self._command_key_held:
+                    self._command_key_held = True
+                    if self.on_command_press:
+                        self.on_command_press(at)
+                return True
 
-            elif self._matches_hotkey(event, self.hotkeys['cancel']):
-                if self.on_cancel:
-                    threading.Thread(target=self.on_cancel, daemon=True).start()
-                return False
+            for action, attribute in PRESS_ACTIONS:
+                if matches(self.hotkeys.get(action)):
+                    callback = getattr(self, attribute)
+                    if callback:
+                        _spawn(callback)
+                    return True
 
-            elif self._matches_hotkey(event, self.hotkeys.get('minimize_tray')):
-                if self.on_minimize_tray:
-                    threading.Thread(target=self.on_minimize_tray, daemon=True).start()
-                return False
-
-            for profile_id, hotkey in self._profile_hotkeys.items():
-                if self._matches_hotkey(event, hotkey):
-                    if profile_id not in self._profile_held:
-                        self._profile_held[profile_id] = hotkey
-                        debouncer = self._profile_debouncers.get(profile_id)
-                        if (debouncer and debouncer.should_trigger()
-                                and self.on_profile_toggle):
-                            threading.Thread(
-                                target=self.on_profile_toggle, args=(profile_id,), daemon=True
-                            ).start()
-                    return False
-
-        elif (event.event_type == keyboard.KEY_UP
-              and self._record_key_held
-              and self._matches_record_main_key(event)):
-            self._record_key_held = False
-            # The press was suppressed, so swallow its release too. Release
-            # dispatch skips the program_enabled gate on purpose: disabling
-            # hotkeys mid-hold must not strand an in-progress recording.
-            if (self.record_mode == RecordingTriggerMode.PUSH_HOLD
-                    and self.on_record_release):
-                threading.Thread(
-                    target=self.on_record_release, daemon=True
-                ).start()
+            for namespace, hotkeys in self._dynamic_hotkeys.items():
+                for item_id, hotkey in hotkeys.items():
+                    if not matches(hotkey):
+                        continue
+                    key = (namespace, item_id)
+                    if key not in self._dynamic_held:
+                        self._dynamic_held[key] = hotkey
+                        debouncer = self._dynamic_debouncers.get(key)
+                        callback = self._dynamic_callbacks.get(namespace)
+                        if debouncer and debouncer.should_trigger() and callback:
+                            _spawn(callback, item_id)
+                    return True
             return False
 
-        if event.event_type == keyboard.KEY_UP:
-            released = [
-                profile_id for profile_id, hotkey in tuple(self._profile_held.items())
-                if self._matches_main_key(event, hotkey)
-            ]
-            for profile_id in released:
-                self._profile_held.pop(profile_id, None)
-            if released:
-                return False
+    def _release(self, matches_main_key: Callable[[Optional[str]], bool], at: float) -> bool:
+        """Dispatch a release; True when it belongs to a claimed press.
 
-        return True
+        Matching uses only the main key, since users often let go of the
+        modifiers first. Releases skip the program_enabled gate on purpose:
+        disabling hotkeys mid-hold must not strand a recording.
+        """
+        with self._dispatch_lock:
+            if self._record_key_held and matches_main_key(self.hotkeys.get('record_toggle')):
+                self._record_key_held = False
+                if (self.record_mode == RecordingTriggerMode.PUSH_HOLD
+                        and self.on_record_release):
+                    self.on_record_release(at)
+                return True
+
+            if self._command_key_held and matches_main_key(self.hotkeys.get('command_mode')):
+                self._command_key_held = False
+                if self.on_command_release:
+                    self.on_command_release(at)
+                return True
+
+            released = [
+                key for key, hotkey in tuple(self._dynamic_held.items())
+                if matches_main_key(hotkey)
+            ]
+            for key in released:
+                self._dynamic_held.pop(key, None)
+            return bool(released)
+
+    def _all_hotkeys(self) -> dict:
+        # Snapshots: the mouse hook reads this while a refresh may replace a family.
+        return {
+            **dict(self.hotkeys),
+            **{
+                f"{namespace}:{item_id}": hotkey
+                for namespace, hotkeys in tuple(self._dynamic_hotkeys.items())
+                for item_id, hotkey in hotkeys.items()
+            },
+        }
+
+    def _claims_mouse_button(self, button: str, modifiers: frozenset) -> bool:
+        """Whether a side-button press belongs to a shortcut; asked inside the hook."""
+        if self.capture_suspended:
+            return False
+        signature = (modifiers, button)
+        if parse_hotkey(self.hotkeys.get('enable_disable') or "") == signature:
+            return True
+        if not self.program_enabled:
+            return False
+        return any(
+            parse_hotkey(hotkey) == signature
+            for hotkey in self._all_hotkeys().values() if hotkey
+        )
+
+    def _on_mouse_button(self, button: str, pressed: bool, modifiers: frozenset, at: float) -> None:
+        if pressed:
+            if self.capture_suspended:
+                return
+            self._press(lambda hotkey: parse_hotkey(hotkey or "") == (modifiers, button), at)
+        else:
+            self._release(lambda hotkey: parse_hotkey(hotkey or "")[1] == button, at)
+
+    def _sync_mouse_hook(self) -> None:
+        """Run the mouse hook only while a side button is bound and capture is live."""
+        wanted = not self.capture_suspended and any(
+            is_mouse_key(parse_hotkey(hotkey)[1])
+            for hotkey in self._all_hotkeys().values() if hotkey
+        )
+        try:
+            if wanted:
+                self._mouse_hook.start()
+            else:
+                self._mouse_hook.stop()
+        except Exception as exc:
+            logger.warning("Mouse button shortcuts unavailable: %s", exc)
+
+    def set_dynamic_hotkeys(
+        self, namespace: str, hotkeys: Dict[str, str], callback: Callable[[str], None]
+    ) -> None:
+        """Replace one runtime family of shortcuts; ``callback(id)`` fires per press.
+
+        Args:
+            namespace: One of DYNAMIC_NAMESPACES ("profile", "transform").
+        """
+        if namespace not in DYNAMIC_NAMESPACES:
+            raise ValueError(f"Unknown shortcut family: {namespace}")
+        with self._dispatch_lock:
+            self._dynamic_callbacks[namespace] = callback
+            self._dynamic_hotkeys[namespace] = dict(hotkeys)
+            self._dynamic_debouncers = {
+                key: debouncer for key, debouncer in self._dynamic_debouncers.items()
+                if key[0] != namespace
+            }
+            for item_id in hotkeys:
+                self._dynamic_debouncers[(namespace, item_id)] = Debouncer(
+                    config.HOTKEY_DEBOUNCE_MS
+                )
+        self._sync_mouse_hook()
 
     def set_profile_hotkeys(self, hotkeys: Dict[str, str], callback: Callable) -> None:
-        self.on_profile_toggle = callback
-        self._profile_debouncers = {
-            key: Debouncer(config.HOTKEY_DEBOUNCE_MS) for key in hotkeys
-        }
-        self._profile_hotkeys = dict(hotkeys)
+        self.set_dynamic_hotkeys("profile", hotkeys, callback)
 
     def set_capture_suspended(self, suspended: bool) -> None:
         self.capture_suspended = suspended
-        self._record_key_held = False
-        self._profile_held.clear()
+        self._forget_held_keys()
+        self._sync_mouse_hook()
 
     def set_record_mode(self, mode: str) -> None:
         """Switch the record hotkey between toggle and push-and-hold."""
@@ -270,42 +379,13 @@ class HotkeyManager:
         return True
 
     def _matches_hotkey(self, event, hotkey_string: str) -> bool:
-        if not hotkey_string:
+        if not self._matches_main_key(event, hotkey_string):
             return False
-
-        parts = hotkey_string.lower().split('+')
-        main_key = parts[-1]
-        modifiers = parts[:-1]
-
-        is_numpad_hotkey = main_key.startswith('kp ')
-        expected_key_name = main_key[3:] if is_numpad_hotkey else main_key
-
-        if not event.name or event.name.lower() != expected_key_name:
-            return False
-
-        if (is_numpad_hotkey and not event.is_keypad) or (not is_numpad_hotkey and event.is_keypad):
-            return False
-
-        for modifier in modifiers:
-            if modifier == 'ctrl' and not keyboard.is_pressed('ctrl'):
-                return False
-            elif modifier == 'alt' and not keyboard.is_pressed('alt'):
-                return False
-            elif modifier == 'shift' and not keyboard.is_pressed('shift'):
-                return False
-            elif modifier == 'win' and not keyboard.is_pressed('win'):
-                return False
-
-        if 'ctrl' not in modifiers and keyboard.is_pressed('ctrl'):
-            return False
-        if 'alt' not in modifiers and keyboard.is_pressed('alt'):
-            return False
-        if 'shift' not in modifiers and keyboard.is_pressed('shift'):
-            return False
-        if 'win' not in modifiers and keyboard.is_pressed('win'):
-            return False
-
-        return True
+        required, _ = parse_hotkey(hotkey_string)
+        return all(
+            keyboard.is_pressed(modifier) == (modifier in required)
+            for modifier in _ALL_MODIFIERS
+        )
 
     def rehook(self):
         """Re-register the keyboard hook after sleep/resume or degradation.
@@ -332,7 +412,11 @@ class HotkeyManager:
         logger.info("Hotkeys updated successfully")
 
     def cleanup(self):
-        """Clean up keyboard hooks."""
+        """Remove the keyboard and mouse hooks."""
+        try:
+            self._mouse_hook.stop()
+        except Exception as e:
+            logger.error(f"Error removing the mouse hook: {e}")
         try:
             # Use a timeout to avoid blocking if cleanup is called from wrong thread
             if threading.current_thread() is threading.main_thread():
@@ -357,15 +441,30 @@ class HotkeyManager:
                      on_meeting_toggle: Callable = None,
                      on_status_update: Callable = None,
                      on_status_update_auto_hide: Callable = None,
-                     is_transcribing_fn: Callable[[], bool] = None):
-        """Set callbacks invoked by hotkey events."""
+                     is_transcribing_fn: Callable[[], bool] = None,
+                     on_command_press: Callable = None,
+                     on_command_release: Callable = None,
+                     on_scratchpad_toggle: Callable = None,
+                     on_cycle_language: Callable = None,
+                     on_paste_last_original: Callable = None):
+        """Set callbacks invoked by hotkey events.
+
+        ``on_record_press``/``on_record_release`` and the command pair get the
+        hook's ``time.monotonic()`` and run inside the hook, so they must only
+        hand the event on. The rest run on a new thread per press.
+        """
         self.on_record_toggle = on_record_toggle
         self.on_record_press = on_record_press
         self.on_record_release = on_record_release
+        self.on_command_press = on_command_press
+        self.on_command_release = on_command_release
         self.on_cancel = on_cancel
         self.on_enable_toggle = on_enable_toggle
         self.on_minimize_tray = on_minimize_tray
         self.on_meeting_toggle = on_meeting_toggle
+        self.on_scratchpad_toggle = on_scratchpad_toggle
+        self.on_cycle_language = on_cycle_language
+        self.on_paste_last_original = on_paste_last_original
         self.on_status_update = on_status_update
         self.on_status_update_auto_hide = on_status_update_auto_hide
         self.is_transcribing_fn = is_transcribing_fn

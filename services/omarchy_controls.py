@@ -20,6 +20,7 @@ from PyQt6.QtDBus import QDBusConnection
 from PyQt6.QtWidgets import QApplication
 
 from services import hyprland
+from services._hotkey_common import is_mouse_key
 from services._hotkey_pynput import format_hotkey_display, parse_hotkey
 
 log = logging.getLogger(__name__)
@@ -86,7 +87,8 @@ _KEYPAD = {
 
 def binding_key(hotkey: str) -> tuple[str, str, int]:
     modifiers, key = parse_hotkey(hotkey)
-    if not key or not modifiers.issubset(_MODS):
+    # Hyprland mouse binds (mouse:275/276) are unverified with release binds.
+    if not key or is_mouse_key(key) or not modifiers.issubset(_MODS):
         raise ValueError(f"Unsupported shortcut: {hotkey}")
     if key.startswith("kp "):
         symbol = _KEYPAD.get(key[3:])
