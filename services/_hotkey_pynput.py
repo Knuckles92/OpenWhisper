@@ -544,18 +544,28 @@ class HotkeyManager:
 
         self._setup_keyboard_hook()
 
-    def _forget_held_keys(self) -> None:
-        self._record_key_held = False
-        self._command_key_held = False
+    def _forget_held_keys(self, keep_mouse: bool = False) -> None:
+        def forget(hotkey: Optional[str]) -> bool:
+            return not (keep_mouse and is_mouse_key(parse_hotkey(hotkey or "")[1]))
+
+        if forget(self.hotkeys.get("record_toggle")):
+            self._record_key_held = False
+        if forget(self.hotkeys.get("command_mode")):
+            self._command_key_held = False
         for held in self._dynamic_held.values():
-            held.clear()
+            for item_id, hotkey in tuple(held.items()):
+                if forget(hotkey):
+                    held.pop(item_id, None)
 
     def _setup_keyboard_hook(self):
         """Start global hotkey detection (Carbon on macOS, pynput on Linux)."""
         self._pressed_modifiers.clear()
         self._pressed_main_keys.clear()
-        # A rehook may miss the release while stopped, so forget held state.
-        self._forget_held_keys()
+        # A rehook may miss a key release while stopped, so forget keyboard
+        # holds. The restarted mouse listener still sees a side button come
+        # up, so those holds carry over; one released in the gap ends with
+        # the next press and release.
+        self._forget_held_keys(keep_mouse=True)
         if is_wayland_session():
             # DISPLAY on Wayland points to XWayland. Its blocking Xlib hook
             # cannot observe native clients; use ActiveWindowHotkeyFilter.

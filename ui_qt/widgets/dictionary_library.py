@@ -3,6 +3,7 @@ from typing import Optional, Sequence
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QApplication,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -196,7 +197,9 @@ class DictionaryLibrary(QWidget):
     """Every saved word, newest first, with a search box once the list grows.
 
     Builds at most ``MAX_ROWS`` rows, reusing them between updates, so a full
-    dictionary stays quick to show; the search reaches the rest.
+    dictionary stays quick to show; the search reaches the rest. Removing a
+    word by keyboard leaves focus on the word that takes its place, or on
+    ``focus_when_empty`` once no word is left to show.
     """
 
     MAX_ROWS = 100
@@ -207,9 +210,10 @@ class DictionaryLibrary(QWidget):
     edit_requested = pyqtSignal(str)
     remove_requested = pyqtSignal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, focus_when_empty: Optional[QWidget] = None):
         super().__init__(parent)
         self.setObjectName("dictionaryLibrary")
+        self._focus_when_empty = focus_when_empty
         self._terms: list[DictionaryTerm] = []
         self._rows: dict[str, DictionaryRow] = {}
         layout = QVBoxLayout(self)
@@ -271,11 +275,14 @@ class DictionaryLibrary(QWidget):
         matching = self._matching()
         shown = matching[: self.MAX_ROWS]
         keep = {term.id for term in shown}
-        for term_id in [term_id for term_id in self._rows if term_id not in keep]:
-            row = self._rows.pop(term_id)
+        focused = QApplication.focusWidget()
+        held = next((
+            index for index, term_id in enumerate(self.visible_ids)
+            if term_id not in keep and focused is not None and self._rows[term_id].isAncestorOf(focused)
+        ), None)
+        stale = [self._rows.pop(term_id) for term_id in list(self._rows) if term_id not in keep]
+        for row in stale:
             self._list_layout.removeWidget(row)
-            row.hide()
-            row.deleteLater()
         for index, term in enumerate(shown):
             row = self._rows.get(term.id)
             if row is None:
@@ -290,6 +297,26 @@ class DictionaryLibrary(QWidget):
                 self._list_layout.removeWidget(row)
                 self._list_layout.insertWidget(index, row)
             row.show()
+        # New rows join the end of the window's Tab order, after the tiles
+        # below the list; the search box sits where the list starts.
+        previous = self.search
+        for term in shown:
+            row = self._rows[term.id]
+            for widget in (row.star, row.edit, row.remove):
+                QWidget.setTabOrder(previous, widget)
+                previous = widget
+        if held is not None:
+            # Before the removed row hides, which would pass its focus to
+            # whatever follows the list.
+            if shown:
+                target = self._rows[shown[min(held, len(shown) - 1)].id].remove
+            else:
+                target = self.search if self.search.isVisible() else self._focus_when_empty
+            if target is not None:
+                target.setFocus(Qt.FocusReason.OtherFocusReason)
+        for row in stale:
+            row.hide()
+            row.deleteLater()
         self._list.setVisible(bool(shown))
         if not self._terms:
             self.empty.setText(

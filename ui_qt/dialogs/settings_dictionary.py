@@ -146,6 +146,7 @@ def basic_rows(page, group) -> None:
     button.setObjectName("basicDictionaryAddButton")
     fit_compact_button(button)
     detail = page._row(group, "Dictionary", "", button)
+    button.setAccessibleName("Add word to dictionary")
     button.clicked.connect(lambda: open_composer(page.dialog))
     page.add_refresh_hook(lambda settings: detail.setText(
         summary(settings) if load_dictionary(settings)
@@ -268,7 +269,7 @@ class _DictionaryPage(QObject):
         self.count = QLabel("")
         self.count.setObjectName("dictionaryCount")
         self.library_tile.add_trailing(self.count)
-        self.library = DictionaryLibrary()
+        self.library = DictionaryLibrary(focus_when_empty=self.term_edit)
         self.library.star_toggled.connect(self.star)
         self.library.edit_requested.connect(self.begin_edit)
         self.library.remove_requested.connect(self.remove)

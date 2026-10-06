@@ -80,7 +80,7 @@ def test_prompts_are_the_shipped_ones(cases):
     assert bench.compose_prompt(by_id["light-keeps-retraction"]) == PRESETS["light"]
     assert bench.compose_prompt(by_id["list-numbers"]) == PRESETS["medium"]
     assert bench.compose_prompt(by_id["list-unknown-app-inline"]) == (
-        f"{PRESETS['medium']}\n\n{config.TRANSCRIPT_CLEANUP_INLINE_LISTS}"
+        f"{PRESETS['medium']}\n\n{config.TRANSCRIPT_CLEANUP_UNKNOWN_APP_LINES}"
     )
     profile = bench.compose_prompt(by_id["profile-email-correction"])
     assert config.TRANSCRIPT_CLEANUP_SPOKEN_CORRECTIONS in profile

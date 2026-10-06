@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import os
 import secrets
 import sys
 import time
@@ -21,6 +22,7 @@ from PyQt6.QtCore import (
     QUrl,
     pyqtSignal,
     pyqtSlot,
+    qVersion,
 )
 from PyQt6.QtGui import QColor, QGuiApplication, QImage, QPixmap
 
@@ -110,6 +112,46 @@ def _mac_change_count() -> ClipboardSequenceSource | None:
             return None
 
     return sequence
+
+
+_DATA_CONTROL_ENV = "QT_WAYLAND_USE_DATA_CONTROL"
+#: Earlier Qt releases lack wlr-data-control or its change signal.
+_DATA_CONTROL_QT = (6, 10)
+
+
+def prefer_wayland_data_control() -> None:
+    """Ask Qt to use wlr-data-control for the clipboard; call before the QApplication exists.
+
+    A Wayland compositor sends the clipboard only to the focused window,
+    while Command Mode, transforms and auto-paste read and restore it with
+    another app focused. Through data-control, which Qt uses only when this
+    variable asks for it, Qt sees every copy and writes without focus on
+    compositors that offer it, such as Hyprland. A value the user set is kept.
+    """
+    if sys.platform.startswith("linux"):
+        os.environ.setdefault(_DATA_CONTROL_ENV, "1")
+
+
+def foreign_copies_visible() -> bool:
+    """Whether Qt's clipboard sees other apps' copies while OpenWhisper is in the background.
+
+    False on Wayland when Qt was not asked for data-control or is too old
+    for it. Qt then keeps a dead offer that reads back empty, so a copy sent
+    to read the selection would land unseen, replacing a clipboard that
+    could not be put back.
+
+    Limitation: a compositor without data-control (GNOME) leaves Qt blind
+    even when asked, and Qt gives no way to tell. OpenWhisper sends a copy
+    on Wayland only through Hyprland, which has it.
+    """
+    if not QGuiApplication.platformName().startswith("wayland"):
+        return True
+    try:
+        requested = int(os.environ.get(_DATA_CONTROL_ENV, "").strip() or "0", 0) > 0
+        version = tuple(int(part) for part in qVersion().split(".")[:2])
+    except ValueError:
+        return False
+    return requested and version >= _DATA_CONTROL_QT
 
 
 def system_text_renderer() -> Callable[[], None] | None:
@@ -343,6 +385,7 @@ class TemporaryClipboard(QObject):
         clipboard,
         parent: QObject | None = None,
         sequence_source: ClipboardSequenceSource | None = None,
+        sees_foreign_copies: bool | None = None,
     ):
         """
         Args:
@@ -351,9 +394,15 @@ class TemporaryClipboard(QObject):
             sequence_source: Clipboard change counter used to validate a
                 prefetched snapshot; defaults to the OS counter, and without
                 one prefetching is disabled.
+            sees_foreign_copies: Whether ``clipboard`` shows other apps'
+                copies while OpenWhisper is unfocused; defaults to
+                ``foreign_copies_visible()``.
         """
         super().__init__(parent)
         self._clipboard = clipboard
+        self._sees_foreign_copies = (
+            foreign_copies_visible() if sees_foreign_copies is None else sees_foreign_copies
+        )
         self._pending: ClipboardLease | None = None
         self._restore_timer = QTimer(self)
         self._restore_timer.setSingleShot(True)
@@ -407,7 +456,7 @@ class TemporaryClipboard(QObject):
     def capture_selection(
         self,
         send_copy: Callable[[], None],
-        callback: Callable[[str], None],
+        callback: Callable[[str | None], None],
         timeout_ms: int,
     ) -> None:
         """Read the focused app's selection through a copy, then put the
@@ -424,7 +473,9 @@ class TemporaryClipboard(QObject):
             send_copy: Sends the copy shortcut to the focused app.
             callback: Receives the selected text, or "" when the clipboard
                 did not change within ``timeout_ms``, nothing could be read,
-                or the copy could not be sent.
+                or the copy could not be sent. None when this clipboard
+                can't see other apps' copies; nothing is copied or written
+                then.
             timeout_ms: How long to wait for the copy to land.
         """
         if QThread.currentThread() != self.thread():
@@ -582,6 +633,10 @@ class TemporaryClipboard(QObject):
         if self._clipboard is None:
             self._call_back(callback, "")
             return
+        if not self._sees_foreign_copies:
+            logger.info("This clipboard can't see other apps' copies; not copying the selection")
+            self._call_back(callback, None)
+            return
         self._resolve_pending_before_stage()
         original = self._take_prefetched_snapshot()
         if original is None:
@@ -634,7 +689,11 @@ class TemporaryClipboard(QObject):
                     return
         if capture.changed:
             text = self._clipboard_text()
-            if text or expired:
+            # Without a counter the change may be the user's own clipboard
+            # handed over again (a clipboard manager taking ownership), so
+            # only different text ends the wait early.
+            new = capture.sequence is not None or text != (capture.original.text or "")
+            if (text and new) or expired:
                 self._finish_selection(text)
             return
         if expired:
@@ -661,8 +720,9 @@ class TemporaryClipboard(QObject):
             current = self._sequence()
             changed = current is not None and current != capture.sequence
         elif capture.sequence is None and capture.sent:
-            # Only a counter proves the copy never landed, and Qt may not see
-            # one that did (Wayland), so the original always goes back.
+            # Only a counter proves the copy never landed, and the text
+            # compare misses one of the original's own text, so the original
+            # always goes back.
             changed = True
         holds_original = True
         if changed:
@@ -692,7 +752,7 @@ class TemporaryClipboard(QObject):
             return ""
 
     @staticmethod
-    def _call_back(callback, text: str) -> None:
+    def _call_back(callback, text: str | None) -> None:
         try:
             callback(text)
         except Exception:

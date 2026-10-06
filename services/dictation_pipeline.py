@@ -408,10 +408,9 @@ def paste_target(job: Optional[DictationJob]) -> str:
         return PasteTarget.UNKNOWN
     if current is None:
         return PasteTarget.UNKNOWN
-    same = (expected.app_id, expected.pid, expected.window) == (
-        current.app_id, current.pid, current.window
-    )
-    return PasteTarget.SAME if same else PasteTarget.CHANGED
+    if focus_context.same_target(current, expected):
+        return PasteTarget.SAME
+    return PasteTarget.CHANGED
 
 
 def paste_target_ok(job: Optional[DictationJob]) -> bool:

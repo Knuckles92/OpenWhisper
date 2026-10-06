@@ -4280,6 +4280,14 @@ class SettingsDialog(QDialog):
             self._cancel_rule_dictation()
             event.accept()
             return
+        # Settings saves as you go and has no default action, but QDialog
+        # makes the first auto-default button in the focus chain (the
+        # header's Basic view button) its default and clicks it for every
+        # Enter a field ignores. A focused button still takes Enter itself
+        # before it gets here.
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            event.accept()
+            return
         super().keyPressEvent(event)
 
     def _stop_rule_dictation(self) -> None:

@@ -38,6 +38,7 @@ from services.focus_context import (
     NullCaptureService,
     TextContext,
     catalog,
+    same_target,
 )
 
 logger = logging.getLogger(__name__)
@@ -128,14 +129,6 @@ def _settle(future: Future, snapshot: FocusSnapshot) -> bool:
         return True
     except Exception:
         return False
-
-
-def _same_target(current: Optional[AppIdentity], expected: AppIdentity) -> bool:
-    # A browser's tabs share its window and pid; only the site tells them
-    # apart, and site exclusions match on it.
-    return current is not None and (
-        current.app_id, current.pid, current.window, current.title_hint
-    ) == (expected.app_id, expected.pid, expected.window, expected.title_hint)
 
 
 @dataclass
@@ -455,7 +448,8 @@ class CaptureService(ContextCaptureService):
         if isinstance(task, _Reread):
             context = None
             current = self._identity()
-            if _same_target(current, task.identity):
+            # The site matters too: site exclusions match on it.
+            if same_target(current, task.identity):
                 context = self._read(reader, current, include_text=True,
                                      include_selection=True)
             self._deliver(task.callback, context)

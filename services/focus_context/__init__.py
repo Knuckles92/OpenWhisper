@@ -65,6 +65,19 @@ class FocusSnapshot:
     text: TextContext | None = None
 
 
+def same_target(current: AppIdentity | None, expected: AppIdentity | None) -> bool:
+    """Whether ``current`` is still the app, window and site ``expected`` was.
+
+    A browser's tabs share its window and pid; only the site tells them
+    apart. Two sites the catalogue doesn't know both read as "".
+    """
+    if current is None or expected is None:
+        return False
+    return (current.app_id, current.pid, current.window, current.title_hint) == (
+        expected.app_id, expected.pid, expected.window, expected.title_hint
+    )
+
+
 class ContextCaptureService:
     """Captures focus context off the caller's thread.
 

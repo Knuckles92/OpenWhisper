@@ -422,8 +422,10 @@ class ScratchpadWindow(QWidget):
         self.flush()
 
     def closeEvent(self, event):
-        event.ignore()
-        self.hide()
+        # Accept: QApplication::quit stops closing windows at the first refusal
+        # and then cancels the quit. Without WA_DeleteOnClose an accepted close
+        # only hides, and hideEvent saves the notes.
+        event.accept()
 
     def set_always_on_top(self, on: bool) -> None:
         """Keep the classic window above others; the compositor decides elsewhere."""

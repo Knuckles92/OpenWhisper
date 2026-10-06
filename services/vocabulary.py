@@ -2,35 +2,42 @@
 from __future__ import annotations
 
 import re
-from typing import Mapping
+from itertools import chain, repeat
+from typing import Mapping, Sequence
 
-_COMBINING_DOT = "̇"
+_COMBINING_DOT = "\u0307"
+_DOTS_AFTER_I = re.compile("(?<=i)" + _COMBINING_DOT + "+")
 
 
-def _fold(text: str) -> str:
-    """``text`` for caseless matching.
+def _fold_with_origin(text: str) -> tuple[str, Sequence[int]]:
+    """``text`` for caseless matching, and the index in ``text`` of each folded character.
 
     Casefolding turns "İ" into "i" plus a combining dot, which no typed or
-    heard "i" has, so that dot is dropped after an "i".
+    heard "i" has, so dots after an "i" are dropped. A letter's folded form
+    can also be longer ("ß" → "ss"), so matches found in the folded text map
+    back through the index. Meeting Mode runs this on every segment of every
+    transcript read, so it works on the whole string rather than per
+    character.
     """
-    return text.casefold().replace("i" + _COMBINING_DOT, "i")
-
-
-def _fold_with_origin(text: str) -> tuple[str, list[int]]:
-    """``text`` folded like ``_fold``, and the index in ``text`` of each folded character.
-
-    A letter's folded form can be longer ("ß" → "ss") or, for a dropped
-    dot, empty, so matches found in the folded text map back through this.
-    """
-    pieces: list[str] = []
-    origin: list[int] = []
-    previous = ""
-    for index, char in enumerate(text):
-        piece = "" if char == _COMBINING_DOT and previous == "i" else _fold(char)
-        pieces.append(piece)
-        origin.extend([index] * len(piece))
-        previous = piece[-1:] or previous
-    return "".join(pieces), origin
+    # "İ" is the only character whose folded form has the dot, and "I"
+    # folds to the plain "i" it should match.
+    plain = text.replace("İ", "I")
+    folded = plain.casefold()
+    origin: Sequence[int]
+    if len(folded) == len(text):
+        # No character folds to nothing, so each one folded to exactly one.
+        origin = range(len(text))
+    else:
+        widths = map(len, map(str.casefold, plain))
+        origin = list(chain.from_iterable(map(repeat, range(len(text)), widths)))
+    if _COMBINING_DOT in folded:
+        dropped = [match.span() for match in _DOTS_AFTER_I.finditer(folded)]
+        if dropped:
+            origin = list(origin)
+            for start, end in reversed(dropped):
+                del origin[start:end]
+            folded = _DOTS_AFTER_I.sub("", folded)
+    return folded, origin
 
 
 def replace_terms(text: str, rules: Mapping[str, str]) -> str:
@@ -46,7 +53,7 @@ def replace_terms(text: str, rules: Mapping[str, str]) -> str:
         return text
     replacements: dict[str, str] = {}
     for term, replacement in rules.items():
-        key = _fold(term)
+        key = _fold_with_origin(term)[0]
         if key:
             replacements.setdefault(key, replacement)
     if not replacements:

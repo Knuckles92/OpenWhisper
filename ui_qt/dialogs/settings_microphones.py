@@ -14,7 +14,16 @@ import threading
 from typing import Callable, List, Optional
 
 from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtWidgets import QBoxLayout, QFrame, QHBoxLayout, QPushButton, QSizePolicy, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QBoxLayout,
+    QFrame,
+    QHBoxLayout,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from services import audio_devices
 from services.audio_devices import InputDevice, display_name, hostapi_label, match_entry, short_name
@@ -99,6 +108,10 @@ class _PreferredRow(QWidget):
             self._layout.setAlignment(
                 self._button, Qt.AlignmentFlag.AlignLeft if narrow else Qt.AlignmentFlag.AlignVCenter,
             )
+
+
+def _row_button(row: QWidget, kind: str) -> Optional[QPushButton]:
+    return next((button for button in row.findChildren(QPushButton) if button.property("kind") == kind), None)
 
 
 def _listed(device: InputDevice) -> bool:
@@ -279,14 +292,58 @@ class MicrophoneSection:
         return label, True
 
     def _render(self) -> None:
+        held = self._held_focus()
         self.dialog.audio_device_tile.set_description(
             "Used for dictation and meetings."
             if self.priority else
             "Used for dictation and meetings. Choose one to set backups for when it's unplugged."
         )
         self._fill_preferred()
-        self._fill_rows()
+        old_rows = self._fill_rows()
         self._fill_add_combo()
+        # Focus moves to the new rows before the old ones hide: hiding the
+        # focused row would hand focus down the chain to the window header.
+        target = self._focus_target(held) if held is not None else None
+        if target is not None:
+            target.setFocus(Qt.FocusReason.OtherFocusReason)
+        for row in old_rows:
+            row.hide()
+            row.deleteLater()
+
+    def _held_focus(self) -> Optional[tuple]:
+        """``(kind, entry token, row)`` of the list control with focus, if any."""
+        focused = QApplication.focusWidget()
+        if focused is self.add_combo:
+            return ("add", "", -1)
+        if focused is None or not self.rows.isAncestorOf(focused) or not focused.property("kind"):
+            return None
+        return (
+            focused.property("kind"),
+            focused.property("entry"),
+            self.rows_layout.indexOf(focused.parentWidget()),
+        )
+
+    def _focus_target(self, held: tuple) -> Optional[QWidget]:
+        """Where focus goes after a rebuild: the same microphone, else its neighbour."""
+        kind, token, index = held
+        rows = [self.rows_layout.itemAt(i).widget() for i in range(self.rows_layout.count() - 1)]
+        if kind == "add":
+            # Adding the last free microphone disables the picker.
+            return None if self.add_combo.isEnabled() or not rows else _row_button(rows[-1], "remove")
+        same = next((row for row in rows if _row_button(row, "remove").property("entry") == token), None)
+        if same is not None:
+            # Up at the top and Down at the bottom are gone; the other arrow is next to it.
+            for choice in (kind, "down" if kind == "up" else "up", "remove"):
+                button = _row_button(same, choice)
+                if button.isEnabled():
+                    return button
+        if rows:
+            return _row_button(rows[min(index, len(rows) - 1)], "remove")
+        return next(
+            (widget for widget in (self.add_combo, self.refresh_button, self.dialog.audio_device_combo)
+             if widget.isEnabled()),
+            None,
+        )
 
     def _fill_preferred(self) -> None:
         combo = self.dialog.audio_device_combo
@@ -312,26 +369,40 @@ class MicrophoneSection:
         combo.setCurrentIndex(max(0, combo.findData(wanted)))
         combo.blockSignals(blocker)
 
-    def _fill_rows(self) -> None:
+    def _fill_rows(self) -> List[QWidget]:
+        """Lay out fresh rows; returns the old ones, still shown, for the caller to drop."""
+        old_rows = []
         while self.rows_layout.count():
             item = self.rows_layout.takeAt(0)
             if item.widget() is not None:
-                item.widget().hide()
-                item.widget().deleteLater()
+                old_rows.append(item.widget())
         backups = self.priority[1:]
         self.dialog.microphone_backup_tile.setVisible(bool(self.priority))
+        buttons = []
         for offset, entry in enumerate(backups):
             index = offset + 1
             label, connected = self._label(entry)
-            self.rows_layout.addWidget(self._row(
+            row = self._row(
                 label,
                 "" if connected else "Not connected",
                 state="" if connected else "missing",
+                entry=entry_token(entry),
                 up=(lambda _=False, i=index: self._move(i, -1)) if offset > 0 else None,
                 down=(lambda _=False, i=index: self._move(i, 1)) if offset < len(backups) - 1 else None,
                 remove=lambda _=False, i=index: self._remove(i),
-            ))
+            )
+            self.rows_layout.addWidget(row)
+            # Shown now rather than when the layout gets to it: focus given to
+            # a hidden button waits for it and is lost to the next focus change.
+            row.show()
+            buttons += [button for button in row.findChildren(QPushButton) if button.isEnabled()]
         self.rows_layout.addWidget(self._row("System default", "Always last", state="fixed"))
+        # New rows join the end of the window's Tab order, after the sections below.
+        previous = self.refresh_button
+        for widget in (*buttons, self.add_combo):
+            QWidget.setTabOrder(previous, widget)
+            previous = widget
+        return old_rows
 
     def _row(
         self,
@@ -339,6 +410,7 @@ class MicrophoneSection:
         note: str,
         *,
         state: str,
+        entry: str = "",
         up: Optional[Callable] = None,
         down: Optional[Callable] = None,
         remove: Optional[Callable] = None,
@@ -370,6 +442,7 @@ class MicrophoneSection:
                 button = QPushButton()
                 button.setObjectName("micBackupButton")
                 button.setProperty("kind", kind)
+                button.setProperty("entry", entry)
                 button.setFixedSize(28, 28)
                 button.setIconSize(QSize(14, 14))
                 button.setFlat(True)

@@ -11,6 +11,7 @@ import logging
 import threading
 from typing import Callable, Optional
 
+from PyQt6 import sip
 from PyQt6.QtCore import QObject, QPoint, QRectF, QTimer, pyqtSignal
 from PyQt6.QtGui import QPainter, QPainterPath
 from PyQt6.QtWidgets import QLabel, QPushButton, QSizePolicy, QToolTip, QWidget
@@ -33,6 +34,47 @@ CANT_PLAY = "This recording can't be played"
 #: Where each host-kept entry's recording was fetched to this session, so a
 #: card rebuilt by a refresh still knows its playback.
 _fetched: dict[str, str] = {}
+#: Host-kept entries downloading now, each with the control whose click should
+#: play it, or None once that click no longer wants it. Qt thread only.
+_in_flight: dict[str, Optional["PlaybackControl"]] = {}
+
+
+class _FetchRelay(QObject):
+    """Brings finished downloads to the Qt thread for whichever controls exist then.
+
+    It lives for the session, so a download never emits to a control that a
+    History refresh deleted; Qt drops a deleted control's connection.
+    """
+
+    _arrived = pyqtSignal(str, str, str)
+    #: Entry id, path ("" on failure), error, and the control waiting to play it.
+    finished = pyqtSignal(str, str, str, object)
+
+    def __init__(self):
+        super().__init__()
+        self._arrived.connect(self._finish)
+
+    def _finish(self, entry_id: str, path: str, error: str) -> None:
+        if path and not error:
+            _fetched[entry_id] = path
+        self.finished.emit(entry_id, path, error, _in_flight.pop(entry_id, None))
+
+
+_relay: Optional[_FetchRelay] = None
+
+
+def _fetch_relay() -> _FetchRelay:
+    global _relay
+    if _relay is None:
+        _relay = _FetchRelay()
+    return _relay
+
+
+def stop_all() -> None:
+    """Stop any playback, and any click still waiting for a host download."""
+    audio_player.stop_playback()
+    for entry_id in _in_flight:
+        _in_flight[entry_id] = None
 
 
 def _icon(name: str):
@@ -108,7 +150,6 @@ class PlaybackControl(QObject):
     the line and the label only show while this entry plays.
     """
 
-    _remote_ready = pyqtSignal(str, str)
     #: Emitted with True when this entry starts playing, False when it stops.
     playing_changed = pyqtSignal(bool)
     POLL_MS = 50
@@ -139,6 +180,12 @@ class PlaybackControl(QObject):
             self._path = _fetched.get(entry.id)
             self.available = bool(getattr(entry, "remote_audio", False))
             self._unavailable = NOT_ON_HOST
+            if entry.id in _in_flight:
+                self._fetching = True
+                waiting = _in_flight[entry.id]
+                if waiting is not None and sip.isdeleted(waiting):
+                    # A refresh rebuilt the clicked card; this one shows it now.
+                    _in_flight[entry.id] = self
         elif entry.audio_file:
             self._path = history_manager.get_recording_path(entry.audio_file)
             self.available = bool(self._path)
@@ -147,7 +194,8 @@ class PlaybackControl(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(self.POLL_MS)
         self._timer.timeout.connect(self._sync)
-        self._remote_ready.connect(self._on_remote_ready)
+        if self._stored_on:
+            _fetch_relay().finished.connect(self._on_fetched)
         button.clicked.connect(self.toggle)
         self._set_idle()
         current = audio_player.player() if self._path else None
@@ -175,7 +223,9 @@ class PlaybackControl(QObject):
         self._play(self._path)
 
     def stop(self) -> None:
-        """Stop this entry's playback, if it is the one playing."""
+        """Stop this entry's playback, if it is the one playing or about to."""
+        if _in_flight.get(self._entry_id) is self:
+            _in_flight[self._entry_id] = None
         if self.is_playing:
             audio_player.player().stop()
         self._set_idle()
@@ -189,34 +239,43 @@ class PlaybackControl(QObject):
         self._set_playing()
 
     def _fetch(self) -> None:
-        self._fetching = True
-        self.button.setEnabled(False)
-        self.button.setText("Getting it…")
         entry_id = self._entry_id
-        ready = self._remote_ready
+        downloading = entry_id in _in_flight
+        _in_flight[entry_id] = self
+        self._fetching = True
+        self._set_idle()
+        if downloading:
+            # Another control's download is under way; a second one would
+            # write into the same cache folder.
+            return
+        arrived = _fetch_relay()._arrived
 
         def fetch() -> None:
             from services.remote_records.sync import record_sync
 
+            path, error = "", ""
             try:
                 path = record_sync.audio_for(entry_id)
             except Exception as exc:
                 logger.warning("Could not fetch a recording from the host: %s", exc)
-                ready.emit("", str(exc) or type(exc).__name__)
-                return
-            ready.emit(path, "")
+                error = str(exc) or type(exc).__name__
+            arrived.emit(entry_id, path, error)
 
         threading.Thread(target=fetch, name="history-playback-fetch", daemon=True).start()
 
-    def _on_remote_ready(self, path: str, error: str) -> None:
-        self._fetching = False
-        self.button.setEnabled(True)
-        self._set_idle()
+    def _on_fetched(self, entry_id: str, path: str, error: str, waiting) -> None:
+        if entry_id != self._entry_id:
+            return
+        if path and not error:
+            self._path = path
+        if self._fetching:
+            self._fetching = False
+            self._set_idle()
+        if waiting is not self:
+            return
         if error or not path:
             self._say(f"Couldn't get the recording: {error}" if error else CANT_PLAY)
             return
-        _fetched[self._entry_id] = path
-        self._path = path
         reason = self._busy()
         if reason:
             self._say(reason)
@@ -243,8 +302,7 @@ class PlaybackControl(QObject):
         was_playing = self._timer.isActive()
         self._timer.stop()
         self._session = 0
-        if not self._fetching:
-            self.button.setText("Play")
+        self.button.setText("Getting it…" if self._fetching else "Play")
         self.button.setIcon(_icon("player-play-gray"))
         self.button.setEnabled(self.available and not self._fetching)
         self.button.setToolTip("Play the recording" if self.available else self._unavailable)

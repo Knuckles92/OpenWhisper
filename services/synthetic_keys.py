@@ -30,7 +30,8 @@ _WINDOWS_VIRTUAL_KEYS = {
 }
 
 # Matched against an app's id and name, lowercased, with any path, ".exe" or
-# ".app" removed.
+# ".app" removed. The app catalogue, which is_terminal also reads, is where a
+# terminal's window class or bundle id belongs.
 _TERMINALS = frozenset({
     "windowsterminal", "windows terminal",
     "conhost", "openconsole", "console window host",

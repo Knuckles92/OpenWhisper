@@ -46,6 +46,10 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 - **A fast second press of the same shortcut on macOS and Linux** is no longer dropped as a duplicate.
 - **Clicking the dictation overlay** no longer takes focus from the app you're dictating into.
 - **Starting to dictate right after a short overlay notice** no longer hides the overlay mid-recording.
+- **Pressing Enter in a Settings field** (adding a Learned rule, saving an API key) no longer switches Settings to the Basic view.
+- **Push-and-hold on Windows with a Shift+digit or Shift+symbol shortcut** now stops when you let go of Shift first, instead of leaving the recording running.
+- **A push-and-hold recording that spans the five-minute hotkey refresh** now stops when you let go.
+- **Omarchy/Hyprland auto-paste** uses Ctrl+Shift+V in more terminals (GNOME Terminal, Ptyxis, MATE Terminal and others).
 - **Settings opens without a stray scroll bar** — the window opens slightly taller, so Overview and General fit without scrolling at 115% text size.
 - **Sidebar selection outline no longer hidden by its scroll bar** — sidebar rows were sized for a wider sidebar when Settings opened, and after the sidebar was narrowed, so the scroll bar covered the right edge of the selected page's outline until the sidebar was widened.
 

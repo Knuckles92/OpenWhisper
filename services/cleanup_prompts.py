@@ -95,12 +95,13 @@ def base_prompt(settings: Mapping, level: str) -> str:
 
 
 def inline_lists_block(settings: Mapping, snapshot) -> str:
-    """Keeps a live dictation's spoken lists inline where line breaks may not belong.
+    """Keeps a live dictation on one line where line breaks may not belong.
 
-    Medium and High put each spoken list item on its own line. Pasted into a
-    terminal a line break runs the command, and an app the focus capture
-    could not identify may be one. "" when the preset makes no lists (Light,
-    a custom prompt) or the app is known to take them.
+    Medium and High put each spoken list item on its own line and break long
+    dictations into paragraphs. Pasted into a terminal a line break runs the
+    command, and an app the focus capture could not identify may be one. ""
+    when the preset adds no breaks (Light, a custom prompt) or the app is
+    known to take them.
 
     Args:
         settings: Settings loaded for the dictation.
@@ -112,7 +113,7 @@ def inline_lists_block(settings: Mapping, snapshot) -> str:
         return ""
     identity = getattr(snapshot, "identity", None)
     if identity is None:
-        return config.TRANSCRIPT_CLEANUP_INLINE_LISTS
+        return config.TRANSCRIPT_CLEANUP_UNKNOWN_APP_LINES
     if synthetic_keys.is_terminal(identity):
         return config.TRANSCRIPT_CLEANUP_TERMINAL_LINES
     return ""

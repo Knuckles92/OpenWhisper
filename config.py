@@ -497,12 +497,14 @@ class AppConfig:
     TRANSCRIPT_CLEANUP_PARAGRAPHS: str = (
         "Break a long dictation into paragraphs where the topic changes."
     )
-    # Added after a Medium or High preset when a live dictation goes where a
-    # list's line breaks may not belong.
-    TRANSCRIPT_CLEANUP_INLINE_LISTS: str = (
+    # Added after a Medium or High preset when a live dictation goes where
+    # line breaks may not belong. The old default prompt never added breaks,
+    # so an app the capture cannot identify gets neither lists nor paragraphs.
+    TRANSCRIPT_CLEANUP_UNKNOWN_APP_LINES: str = (
         "The app this text goes into is unknown and may not take line "
-        "breaks, so keep any spoken list inline in the sentence, separated "
-        "by commas, instead of one item per line."
+        "breaks, so never add line breaks: keep a long dictation in one "
+        "paragraph and any spoken list inline in the sentence, separated by "
+        "commas."
     )
     TRANSCRIPT_CLEANUP_TERMINAL_LINES: str = (
         "This text goes into a terminal, where a line break runs the "

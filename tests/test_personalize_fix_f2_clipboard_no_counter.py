@@ -125,7 +125,7 @@ def test_without_a_counter_or_a_signal_new_text_is_still_seen_and_undone():
 
 
 def test_without_a_counter_the_original_goes_back_even_when_nothing_was_seen():
-    # Nothing proves the copy never landed where Qt can't see it (Wayland).
+    # Without a counter nothing proves the copy never landed.
     clipboard = CocoaLikeClipboard("user text")
     temporary = _without_counter(clipboard)
 

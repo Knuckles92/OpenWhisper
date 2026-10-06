@@ -236,7 +236,7 @@ def terminals(monkeypatch):
     monkeypatch.setattr(synthetic_keys, "is_terminal", lambda identity: identity == TERMINAL)
 
 
-INLINE = config.TRANSCRIPT_CLEANUP_INLINE_LISTS
+INLINE = config.TRANSCRIPT_CLEANUP_UNKNOWN_APP_LINES
 TERMINAL_LINES = config.TRANSCRIPT_CLEANUP_TERMINAL_LINES
 
 

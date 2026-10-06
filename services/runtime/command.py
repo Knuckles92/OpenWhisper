@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 NO_PROVIDER_MESSAGE = "Set up AI cleanup to use Command Mode"
 KEYS_HELD_MESSAGE = "Release the shortcut keys, then try again"
 PASSWORD_MESSAGE = "OpenWhisper doesn't read password fields"
+CLIPBOARD_HIDDEN_MESSAGE = "OpenWhisper can't read selected text on this desktop"
 #: How long the worker waits for the selection after the transcript is in.
 #: It covers the modifier wait and the copy's own timeout, both started at
 #: the stop, which the post-roll and the final decode usually outlast.
@@ -279,7 +280,8 @@ class CommandRuntime:
         copied once the shortcut's modifiers are up, except in a terminal,
         where a copy shortcut would interrupt the running program. ``done``
         gets an UnreadSelection instead when the app or field must not be
-        read, or the modifiers stayed down; nothing is copied then.
+        read, the modifiers stayed down, or OpenWhisper's clipboard can't
+        see other apps' copies; nothing is copied then.
         """
         try:
             snapshot = _snapshot(focus, config.CONTEXT_CAPTURE_DEADLINE_S)
@@ -304,8 +306,10 @@ class CommandRuntime:
                 done(UnreadSelection(KEYS_HELD_MESSAGE))
                 return
 
-            def copied(text: str) -> None:
-                text = text or ""
+            def copied(text: Optional[str]) -> None:
+                if text is None:
+                    done(UnreadSelection(CLIPBOARD_HIDDEN_MESSAGE))
+                    return
                 done("" if copy_line and _looks_like_copied_line(text) else text)
 
             self._qt.requested.emit(

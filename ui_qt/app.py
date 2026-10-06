@@ -9,6 +9,7 @@ from typing import Optional
 from PyQt6.QtWidgets import QApplication, QMainWindow, QStyleFactory
 
 from services.settings import UiTheme, resolve_ui_font_scale, resolve_ui_theme
+from ui_qt.clipboard import prefer_wayland_data_control
 from ui_qt.utils.app_icon import app_icon
 from ui_qt.utils.font_scale import (
     WidgetStyleFilter,
@@ -86,6 +87,7 @@ class QtApplication:
 
         self.app = QApplication.instance()
         if self.app is None:
+            prefer_wayland_data_control()
             if use_omarchy_ui():
                 # Keep inherited GTK/GDK scaling out of Qt style metrics. Qt
                 # still uses the compositor's native per-output buffer scale.

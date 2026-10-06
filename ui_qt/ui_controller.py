@@ -773,10 +773,12 @@ class UIController(QObject):
             return self._temporary_clipboard.stage_text(text, html=html)
         return self._temporary_clipboard.stage_text(text)
 
-    def capture_selection(self, callback: Callable[[str], None], *, timeout_ms: Optional[int] = None) -> None:
+    def capture_selection(self, callback: Callable[[Optional[str]], None], *, timeout_ms: Optional[int] = None) -> None:
         """Read the selected text through a copy that leaves the clipboard as it was.
 
-        ``callback`` receives the text, or "" when nothing was selected.
+        ``callback`` receives the text, "" when nothing was selected, or None
+        when this desktop hides other apps' copies from OpenWhisper and
+        nothing was copied.
         """
         from services import synthetic_keys
 

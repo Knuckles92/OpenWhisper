@@ -36,6 +36,11 @@ _MODIFIER_ALIASES: Dict[str, str] = {
 
 _ALL_MODIFIERS = ("ctrl", "alt", "shift", "win")
 
+# Windows repeats a held key within its repeat delay (at most 1 s, 2 s with
+# Filter Keys). A later key-down of the same key is a new press whose key-up
+# the hook missed, as happens while an elevated window has focus.
+_REPEAT_WINDOW_S = 2.5
+
 
 def parse_hotkey(hotkey_string: str) -> Tuple[frozenset, Optional[str]]:
     """Parse a hotkey while preserving ``keyboard`` event key names."""
@@ -111,6 +116,19 @@ def _spawn(callback: Callable, *args) -> None:
     threading.Thread(target=callback, args=args, daemon=True).start()
 
 
+def _physical_key(event) -> tuple:
+    """Identify the key behind an event.
+
+    ``keyboard`` names an event from the Shift state at that moment, so
+    Ctrl+Shift+1 can go down as "!" and come up as "1". Repeats and the
+    key-up keep the scan code; the numpad flag separates keys that share one.
+    """
+    scan_code = getattr(event, "scan_code", None)
+    if scan_code is None:
+        return (event.name or "").lower(), bool(event.is_keypad)
+    return scan_code, bool(event.is_keypad)
+
+
 class HotkeyManager:
     """Manages global hotkeys and keyboard event handling."""
 
@@ -128,6 +146,12 @@ class HotkeyManager:
         self._dynamic_callbacks: Dict[str, Callable] = {}
         self._dynamic_debouncers: Dict[Tuple[str, str], Debouncer] = {}
         self._dynamic_held: Dict[Tuple[str, str], str] = {}
+        # The physical key each keyboard hold was pressed on, by hold
+        # ("record_toggle", "command_mode", a press action or a family key),
+        # and the key that went down last (with its time), the only one
+        # Windows auto-repeats.
+        self._hold_keys: Dict[object, tuple] = {}
+        self._last_down: Optional[Tuple[tuple, float]] = None
         self.capture_suspended = False
         # The keyboard hook thread and the mouse dispatch thread share the
         # held flags above.
@@ -153,58 +177,99 @@ class HotkeyManager:
         self._setup_keyboard_hook()
 
     def _setup_keyboard_hook(self):
-        # A rehook may miss the KEY_UP while unhooked, so forget held state.
-        self._forget_held_keys()
+        # A rehook may miss a KEY_UP while unhooked, so forget keyboard holds.
+        # The mouse hook still swallows and reports the release of a button
+        # it swallowed before the restart, so side-button holds carry over.
+        self._forget_held_keys(keep_mouse=True)
         keyboard.hook(self._handle_keyboard_event, suppress=True)
         self._sync_mouse_hook()
 
-    def _forget_held_keys(self) -> None:
-        self._record_key_held = False
-        self._command_key_held = False
-        self._press_held.clear()
-        self._dynamic_held.clear()
+    def _forget_held_keys(self, keep_mouse: bool = False) -> None:
+        def forget(hotkey: Optional[str]) -> bool:
+            return not (keep_mouse and is_mouse_key(parse_hotkey(hotkey or "")[1]))
+
+        if forget(self.hotkeys.get('record_toggle')):
+            self._record_key_held = False
+        if forget(self.hotkeys.get('command_mode')):
+            self._command_key_held = False
+        for held in (self._press_held, self._dynamic_held):
+            for hold, hotkey in tuple(held.items()):
+                if forget(hotkey):
+                    held.pop(hold, None)
+        self._hold_keys.clear()
+        self._last_down = None
 
     def _handle_keyboard_event(self, event):
         if self.capture_suspended:
             return True
         at = time.monotonic()
+        key = _physical_key(event)
+
+        def is_on_key(hold, hotkey: Optional[str]) -> bool:
+            held_key = self._hold_keys.get(hold)
+            if held_key is None:
+                return self._matches_main_key(event, hotkey)
+            return held_key == key
+
         if event.event_type == keyboard.KEY_DOWN:
-            return not self._press(
-                lambda hotkey: self._matches_hotkey(event, hotkey), at,
-                lambda hotkey: self._matches_main_key(event, hotkey),
-            )
+            with self._dispatch_lock:
+                last = self._last_down
+                repeat = last is not None and last[0] == key and at - last[1] <= _REPEAT_WINDOW_S
+                self._last_down = (key, at)
+                # Windows keeps repeating the main key after the user lets go
+                # of a modifier, so a repeat can match a different shortcut
+                # (Ctrl+Num* held, Ctrl released: the repeat matches Num*). A
+                # repeat of a held key is never a new press.
+                if repeat and self._holds(is_on_key):
+                    return False
+                if not repeat:
+                    # Press-only holds exist only to absorb repeats, and a new
+                    # key ends those, even when a key-up was never seen.
+                    self._end_press_holds()
+                return not self._press(
+                    lambda hotkey: self._matches_hotkey(event, hotkey), at, key
+                )
         if event.event_type == keyboard.KEY_UP:
-            return not self._release(
-                lambda hotkey: self._matches_main_key(event, hotkey), at
-            )
+            with self._dispatch_lock:
+                if self._last_down is not None and self._last_down[0] == key:
+                    self._last_down = None
+                return not self._release(is_on_key, at)
         return True
 
-    def _holds_main_key(self, matches_main_key: Callable[[Optional[str]], bool]) -> bool:
+    def _holds(self, is_on_key: Callable[[object, Optional[str]], bool]) -> bool:
         return (
-            (self._record_key_held and matches_main_key(self.hotkeys.get('record_toggle')))
-            or (self._command_key_held and matches_main_key(self.hotkeys.get('command_mode')))
-            or any(matches_main_key(hotkey) for hotkey in self._press_held.values())
-            or any(matches_main_key(hotkey) for hotkey in self._dynamic_held.values())
+            (self._record_key_held and is_on_key('record_toggle', self.hotkeys.get('record_toggle')))
+            or (self._command_key_held and is_on_key('command_mode', self.hotkeys.get('command_mode')))
+            or any(is_on_key(hold, hotkey) for hold, hotkey in self._press_held.items())
+            or any(is_on_key(hold, hotkey) for hold, hotkey in self._dynamic_held.items())
         )
+
+    def _hold_on(self, hold, key: Optional[tuple]) -> None:
+        """Remember the physical key a hold was pressed on (None for a mouse button)."""
+        if key is None:
+            self._hold_keys.pop(hold, None)
+        else:
+            self._hold_keys[hold] = key
+
+    def _end_press_holds(self) -> None:
+        for held in (self._press_held, self._dynamic_held):
+            for hold in tuple(held):
+                self._hold_keys.pop(hold, None)
+            held.clear()
 
     def _press(
         self,
         matches: Callable[[Optional[str]], bool],
         at: float,
-        matches_main_key: Optional[Callable[[Optional[str]], bool]] = None,
+        key: Optional[tuple] = None,
     ) -> bool:
         """Dispatch a press; True when a shortcut claimed it (and suppresses it).
 
-        Record and Command Mode presses carry the hook's timestamp to callbacks
-        that must only enqueue; other actions run on their own thread.
+        ``key`` is the physical key of a keyboard press, None for a mouse
+        button. Record and Command Mode presses carry the hook's timestamp to
+        callbacks that must only enqueue; other actions run on their own thread.
         """
         with self._dispatch_lock:
-            # Windows keeps repeating the main key after the user lets go of a
-            # modifier, so a repeat can match a different shortcut (Ctrl+Num*
-            # held, Ctrl released: the repeat matches Num*). A repeat of a held
-            # key is never a new press.
-            if matches_main_key is not None and self._holds_main_key(matches_main_key):
-                return True
             if matches(self.hotkeys.get('enable_disable')):
                 self._toggle_program_enabled()
                 return True
@@ -214,6 +279,7 @@ class HotkeyManager:
             if matches(self.hotkeys.get('record_toggle')):
                 if not self._record_key_held:
                     self._record_key_held = True
+                    self._hold_on('record_toggle', key)
                     if self.record_mode == RecordingTriggerMode.PUSH_HOLD:
                         if self.on_record_press:
                             self.on_record_press(at)
@@ -224,6 +290,7 @@ class HotkeyManager:
             if matches(self.hotkeys.get('command_mode')):
                 if not self._command_key_held:
                     self._command_key_held = True
+                    self._hold_on('command_mode', key)
                     if self.on_command_press:
                         self.on_command_press(at)
                 return True
@@ -232,6 +299,7 @@ class HotkeyManager:
                 hotkey = self.hotkeys.get(action)
                 if matches(hotkey):
                     self._press_held[action] = hotkey
+                    self._hold_on(action, key)
                     callback = getattr(self, attribute)
                     if callback:
                         _spawn(callback)
@@ -241,43 +309,48 @@ class HotkeyManager:
                 for item_id, hotkey in hotkeys.items():
                     if not matches(hotkey):
                         continue
-                    key = (namespace, item_id)
-                    if key not in self._dynamic_held:
-                        self._dynamic_held[key] = hotkey
-                        debouncer = self._dynamic_debouncers.get(key)
+                    hold = (namespace, item_id)
+                    if hold not in self._dynamic_held:
+                        self._dynamic_held[hold] = hotkey
+                        self._hold_on(hold, key)
+                        debouncer = self._dynamic_debouncers.get(hold)
                         callback = self._dynamic_callbacks.get(namespace)
                         if debouncer and debouncer.should_trigger() and callback:
                             _spawn(callback, item_id)
                     return True
             return False
 
-    def _release(self, matches_main_key: Callable[[Optional[str]], bool], at: float) -> bool:
+    def _release(self, is_on_key: Callable[[object, Optional[str]], bool], at: float) -> bool:
         """Dispatch a release; True when it belongs to a claimed press.
 
-        Matching uses only the main key, since users often let go of the
-        modifiers first, and every hold on that key ends so none is stranded.
-        Releases skip the program_enabled gate on purpose: disabling hotkeys
-        mid-hold must not strand a recording.
+        ``is_on_key(hold, hotkey)`` says whether the released key or button is
+        the one a hold was pressed on. It ignores modifiers, since users often
+        let go of them first, and every hold on that key ends so none is
+        stranded. Releases skip the program_enabled gate on purpose: disabling
+        hotkeys mid-hold must not strand a recording.
         """
         with self._dispatch_lock:
             claimed = False
-            if self._record_key_held and matches_main_key(self.hotkeys.get('record_toggle')):
+            if self._record_key_held and is_on_key('record_toggle', self.hotkeys.get('record_toggle')):
                 self._record_key_held = False
+                self._hold_keys.pop('record_toggle', None)
                 if (self.record_mode == RecordingTriggerMode.PUSH_HOLD
                         and self.on_record_release):
                     self.on_record_release(at)
                 claimed = True
 
-            if self._command_key_held and matches_main_key(self.hotkeys.get('command_mode')):
+            if self._command_key_held and is_on_key('command_mode', self.hotkeys.get('command_mode')):
                 self._command_key_held = False
+                self._hold_keys.pop('command_mode', None)
                 if self.on_command_release:
                     self.on_command_release(at)
                 claimed = True
 
             for held in (self._press_held, self._dynamic_held):
-                released = [key for key, hotkey in tuple(held.items()) if matches_main_key(hotkey)]
-                for key in released:
-                    held.pop(key, None)
+                released = [hold for hold, hotkey in tuple(held.items()) if is_on_key(hold, hotkey)]
+                for hold in released:
+                    held.pop(hold, None)
+                    self._hold_keys.pop(hold, None)
                 claimed = claimed or bool(released)
             return claimed
 
@@ -312,7 +385,7 @@ class HotkeyManager:
                 return
             self._press(lambda hotkey: parse_hotkey(hotkey or "") == (modifiers, button), at)
         else:
-            self._release(lambda hotkey: parse_hotkey(hotkey or "")[1] == button, at)
+            self._release(lambda _hold, hotkey: parse_hotkey(hotkey or "")[1] == button, at)
 
     def _sync_mouse_hook(self) -> None:
         """Run the mouse hook only while a side button is bound and capture is live."""
@@ -363,6 +436,7 @@ class HotkeyManager:
         """Switch the record hotkey between toggle and push-and-hold."""
         self.record_mode = mode
         self._record_key_held = False
+        self._hold_keys.pop('record_toggle', None)
 
     def _toggle_program_enabled(self):
         self.program_enabled = not self.program_enabled

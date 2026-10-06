@@ -328,6 +328,15 @@ class HotkeyRuntime:
             self._reset_hold()
             self.controller.stop_recording()
             return
+        if (
+            self._hold_state == _HOLDING
+            and self._record_start_accepted
+            and self._recordings_ended == self._hold_epoch
+            and self.controller.recorder.is_recording
+        ):
+            # This hold's release was lost (a hook refresh forgot the held
+            # key), so the press continues the hold and its release stops it.
+            return
         self._reset_hold()
         if self.controller.recorder.is_recording:
             # A previous stop's post-roll still owns the recorder; ignore the

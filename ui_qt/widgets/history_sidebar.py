@@ -13,12 +13,11 @@ from PyQt6.QtWidgets import (
     QScrollArea, QFrame, QApplication, QLineEdit, QSizePolicy,
     QMessageBox, QCheckBox, QComboBox, QGridLayout,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, pyqtProperty, QSize, QTimer, QUrl
+from PyQt6.QtCore import QEvent, Qt, pyqtSignal, QPropertyAnimation, pyqtProperty, QSize, QTimer, QUrl
 from PyQt6.QtGui import QFont, QDesktopServices
 
 from config import config
 from services.format_utils import format_file_size
-from services import audio_player
 from services.history_manager import (
     AI_VERSION,
     ORIGINAL_VERSION,
@@ -38,6 +37,7 @@ from ui_qt.utils.file_reveal import reveal_in_file_manager
 from ui_qt.utils.list_reconcile import HistoryDelivery, reconcile_cards
 from ui_qt.widgets.context_menu import context_menu
 from ui_qt.widgets.eliding_label import ElidingLabel
+from ui_qt.widgets import history_playback
 from ui_qt.widgets.history_playback import PlaybackControl
 from ui_qt.widgets.past_meetings_panel import PastMeetingsPanel
 from ui_qt.widgets.wrapped_label import WrappedLabel
@@ -191,30 +191,62 @@ class _ChipFlow(QWidget):
     Eliding them all to share one line cut short chips down to "…" at
     large fonts; wrapping keeps each readable, and only a chip wider than a
     whole line is elided.
+
+    Qt asks a History list's every card for its height many times per
+    relayout, so the chips are measured once and re-measured only after an
+    event that can change their size.
     """
 
     SPACING = 6
+    #: A chip's updateGeometry posts LayoutRequest here only while this is
+    #: visible; Show catches a change made while hidden.
+    _REMEASURE = frozenset((
+        QEvent.Type.LayoutRequest, QEvent.Type.Show,
+        QEvent.Type.FontChange, QEvent.Type.StyleChange,
+    ))
 
     def __init__(self, chips, parent=None):
         super().__init__(parent)
         self._chips = list(chips)
+        self._measured: tuple[list[int], int] | None = None
+        self._heights: dict[int, int] = {}
         for chip in self._chips:
             chip.setParent(self)
         policy = QSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        # Answers hasHeightForWidth in C++; a Python override of it was called
+        # thousands of times per History relayout.
         policy.setHeightForWidth(True)
         self.setSizePolicy(policy)
 
-    def _line_height(self) -> int:
-        return max((chip.sizeHint().height() for chip in self._chips), default=0)
+    def event(self, event) -> bool:
+        if event.type() in self._REMEASURE and self._measured is not None:
+            previous, self._measured = self._measured, None
+            # Only a real change may invalidate the layouts above: Qt sends
+            # these often while a long list is built.
+            if self._measure() != previous:
+                self._heights.clear()
+                self.updateGeometry()
+                self._arrange(self.width(), apply=True)
+        return super().event(event)
+
+    def _measure(self) -> tuple[list[int], int]:
+        """Each chip's width and the shared line height."""
+        if self._measured is None:
+            for chip in self._chips:
+                # The stylesheet sets the font their width is measured in.
+                chip.ensurePolished()
+            hints = [chip.sizeHint() for chip in self._chips]
+            self._measured = (
+                [hint.width() for hint in hints],
+                max((hint.height() for hint in hints), default=0),
+            )
+        return self._measured
 
     def _arrange(self, width: int, apply: bool) -> int:
-        for chip in self._chips:
-            # The stylesheet sets the font their width is measured in.
-            chip.ensurePolished()
-        line = self._line_height()
+        widths, line = self._measure()
         x = y = 0
-        for chip in self._chips:
-            chip_width = min(chip.sizeHint().width(), max(1, width))
+        for chip, natural in zip(self._chips, widths):
+            chip_width = min(natural, max(1, width))
             if x and x + chip_width > width:
                 x, y = 0, y + line + self.SPACING
             if apply:
@@ -222,19 +254,21 @@ class _ChipFlow(QWidget):
             x += chip_width + self.SPACING
         return y + line
 
-    def hasHeightForWidth(self) -> bool:
-        return True
-
     def heightForWidth(self, width: int) -> int:
-        return self._arrange(width, apply=False)
+        height = self._heights.get(width)
+        if height is None:
+            if len(self._heights) >= 8:
+                self._heights.clear()
+            height = self._heights[width] = self._arrange(width, apply=False)
+        return height
 
     def sizeHint(self) -> QSize:
-        width = sum(chip.sizeHint().width() for chip in self._chips)
-        width += self.SPACING * max(0, len(self._chips) - 1)
+        widths, _line = self._measure()
+        width = sum(widths) + self.SPACING * max(0, len(widths) - 1)
         return QSize(width, self.heightForWidth(self.width() or width))
 
     def minimumSizeHint(self) -> QSize:
-        return QSize(0, self._line_height())
+        return QSize(0, self._measure()[1])
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -926,7 +960,7 @@ class HistorySidebar(QWidget):
 
         self._is_expanded = False
         # The cards' Stop buttons are about to go out of reach.
-        audio_player.stop_playback()
+        history_playback.stop_all()
 
         self.animation.stop()
         self.animation.setStartValue(self._current_width)
@@ -947,7 +981,7 @@ class HistorySidebar(QWidget):
             return
         self._meeting_mode = enabled
         if enabled:
-            audio_player.stop_playback()
+            history_playback.stop_all()
         self.content_widget.setVisible(not enabled)
         self.meetings_content_widget.setVisible(enabled)
         self._refresh_pending = True

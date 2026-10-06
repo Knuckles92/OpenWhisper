@@ -121,7 +121,15 @@ class DailyBars(QWidget):
 
     def set_days(self, days) -> None:
         self._days = tuple(days)
+        # Screen readers get every day's count; the bars only show it on hover.
+        self.setAccessibleName(f"Words per day, last {_days(len(self._days))}")
+        self.setAccessibleDescription(
+            "; ".join(f"{self._label(day)}: {_words(words)}" for day, words in self._days)
+        )
         self.update()
+
+    def _label(self, day: date) -> str:
+        return "Today" if day == self._days[-1][0] else f"{day:%a}, {_short_day(day)}"
 
     def _slots(self) -> list[QRectF]:
         count = len(self._days)
@@ -156,8 +164,9 @@ class DailyBars(QWidget):
         position = event.position()
         for slot, (day, words) in zip(self._slots(), self._days):
             if slot.left() <= position.x() <= slot.right():
-                label = "Today" if day == self._days[-1][0] else f"{day:%a}, {_short_day(day)}"
-                QToolTip.showText(event.globalPosition().toPoint(), f"{label} · {_words(words)}", self)
+                QToolTip.showText(
+                    event.globalPosition().toPoint(), f"{self._label(day)} · {_words(words)}", self,
+                )
                 return
         QToolTip.hideText()
 
@@ -257,6 +266,9 @@ class StatsDialog(QDialog):
         close.clicked.connect(self.close)
         row.addWidget(close)
         outer.addWidget(footer)
+        # Without a default, QDialog makes the first button in the focus chain,
+        # Reset, the one that Enter clicks. Set once the button is in the dialog.
+        close.setDefault(True)
 
     def _build_empty(self) -> QWidget:
         page = QFrame()

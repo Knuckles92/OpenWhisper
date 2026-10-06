@@ -6,6 +6,7 @@ built, so it imports only modules Settings has already loaded.
 
 from PyQt6.QtCore import QSignalBlocker, Qt
 from PyQt6.QtWidgets import (
+    QApplication,
     QBoxLayout,
     QComboBox,
     QHBoxLayout,
@@ -308,12 +309,17 @@ class _FitRow(QWidget):
 
 
 class _Rows(QWidget):
-    """App names, each with a Remove button, or an empty-state line."""
+    """App names, each with a Remove button, or an empty-state line.
 
-    def __init__(self, empty_text: str, on_remove):
+    ``picker`` is the control under the list: Tab goes from the last Remove
+    to it, and removing the last app by keyboard leaves focus there.
+    """
+
+    def __init__(self, empty_text: str, on_remove, picker: QWidget):
         super().__init__()
         self.setObjectName("appStylesRows")
         self._on_remove = on_remove
+        self._picker = picker
         self._column = QVBoxLayout(self)
         self._column.setContentsMargins(0, 0, 0, 0)
         self._column.setSpacing(6)
@@ -327,12 +333,16 @@ class _Rows(QWidget):
         """Show ``(value, label)`` rows; Remove reports the value."""
         if entries == self._shown:
             return
-        self._shown = list(entries)
-        for row in self.rows:
+        focused = QApplication.focusWidget()
+        held = next((index for index, row in enumerate(self.rows)
+                     if focused is not None and row.isAncestorOf(focused)), None)
+        held_value = self._shown[held][0] if held is not None else None
+        old_rows, self.rows = self.rows, []
+        for row in old_rows:
             self._column.removeWidget(row)
-            row.deleteLater()
-        self.rows = []
+        self._shown = list(entries)
         self._empty.setVisible(not entries)
+        removes = []
         for value, label in entries:
             row = QWidget()
             row.setObjectName("appStylesRow")
@@ -347,7 +357,36 @@ class _Rows(QWidget):
             remove.clicked.connect(lambda _checked=False, value=value: self._on_remove(value))
             line.addWidget(remove)
             self._column.addWidget(row)
+            # Shown now rather than when the layout gets to it: focus given to
+            # a hidden button waits for it and is lost to the next focus change.
+            row.show()
             self.rows.append(row)
+            removes.append(remove)
+        self._chain_tab_order(removes)
+        if held is not None:
+            values = [value for value, _label in entries]
+            if held_value in values:
+                target = removes[values.index(held_value)]
+            else:
+                target = removes[min(held, len(removes) - 1)] if removes else self._picker
+            # Before the old rows go: deleting or hiding the focused one
+            # drops focus or hands it to the window header.
+            target.setFocus(Qt.FocusReason.OtherFocusReason)
+        for row in old_rows:
+            row.hide()
+            row.deleteLater()
+
+    def _chain_tab_order(self, removes: list) -> None:
+        # New rows join the end of the window's Tab order; put them back
+        # between whatever comes before the list and the picker under it.
+        before = self._picker.previousInFocusChain()
+        while before is not self._picker and (
+            before.focusPolicy() == Qt.FocusPolicy.NoFocus or self.isAncestorOf(before)
+        ):
+            before = before.previousInFocusChain()
+        for widget in (*removes, self._picker):
+            QWidget.setTabOrder(before, widget)
+            before = widget
 
 
 class _StyleCard:
@@ -410,9 +449,9 @@ class _Page:
 
         dialog.excluded_apps_tile = InfoTile(
             "Never read from", _EXCLUDED_COPY, design_icon("info-blue.svg"))
-        self.excluded_rows = _Rows("No apps excluded.", self._remove_excluded)
-        dialog.excluded_apps_tile.add_body(self.excluded_rows)
         self.excluded_picker = _picker("App to skip")
+        self.excluded_rows = _Rows("No apps excluded.", self._remove_excluded, self.excluded_picker)
+        dialog.excluded_apps_tile.add_body(self.excluded_rows)
         self.excluded_add = _small_button("Add")
         self.excluded_add.setToolTip("Never read text from this app")
         self.excluded_add.clicked.connect(self._add_excluded)
@@ -457,9 +496,9 @@ class _Page:
 
         dialog.style_overrides_tile = InfoTile(
             "Choose apps for each style", _OVERRIDES_COPY, design_icon("wand-purple.svg"))
-        self.override_rows = _Rows("No apps moved yet.", self._remove_override)
-        dialog.style_overrides_tile.add_body(self.override_rows)
         self.override_picker = _picker("App or website")
+        self.override_rows = _Rows("No apps moved yet.", self._remove_override, self.override_picker)
+        dialog.style_overrides_tile.add_body(self.override_rows)
         self.override_category = ElidingComboBox()
         self.override_category.setAccessibleName("Style for this app")
         for category in AppCategory.ALL:

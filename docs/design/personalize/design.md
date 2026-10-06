@@ -580,3 +580,23 @@ issues; these contract changes came out of their fixes:
 - The frozen build collects every `ui_qt.dialogs` module, and
   `services/package_checks.py` lists the modules the app loads by name for the
   packaging self-test.
+
+A second review round (performance, upgrade path, accessibility, Linux and
+macOS paths, threading, and the first round's fixes) found 17 more; from
+their fixes:
+
+- `focus_context.same_target(a, b)` compares app, pid, window and site
+  (`title_hint`); the paste check and the learning re-read both use it.
+- The focus_context catalogue is the one list of terminals, including for
+  Hyprland's Ctrl+Shift paste modifier.
+- Windows hotkey holds follow the physical key (scan code), not its
+  Shift-dependent name; only an immediate repeat of the last key counts as
+  auto-repeat, and side-button holds survive a rehook.
+- `capture_selection`'s callback may receive `None`: nothing was copied or
+  written because this desktop cannot see other apps' copies. On Linux the
+  app asks Qt for Wayland data-control (`QT_WAYLAND_USE_DATA_CONTROL=1`)
+  before it starts.
+- In an app OpenWhisper can't identify, Medium and High add no line breaks at
+  all (paragraphs as well as lists).
+- `ui_qt.widgets.history_playback.stop_all()` stops playback and any pending
+  host download; downloads report through a session-long relay.
