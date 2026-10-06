@@ -185,6 +185,8 @@ class OmarchyControls(QObject):
             "record": "_on_tray_toggle_recording",
             "cancel": "cancel_recording",
             "meeting": "_on_tray_meeting_toggle",
+            "scratchpad": "toggle_scratchpad",
+            "cycle_language": "cycle_dictation_language",
         }.get(action)
         if method is None:
             return False
@@ -194,14 +196,18 @@ class OmarchyControls(QObject):
     @pyqtSlot(result=str)
     def Status(self) -> str:
         c = self.controller
+        recording = bool(c.recorder.is_recording)
+        overlay = getattr(c.ui_controller, "overlay", None)
         return json.dumps(
             {
-                "recording": bool(c.recorder.is_recording),
+                "recording": recording,
                 "transcribing": bool(c.is_transcribing()),
                 "meeting": bool(c.is_meeting_active()),
                 "enabled": bool(c.hotkey_manager.program_enabled),
                 "shortcuts": self._status,
                 "window_active": c.ui_controller.main_window.isActiveWindow(),
+                "hands_free": recording and getattr(overlay, "hands_free", False) is True,
+                **_language_status(),
             }
         )
 
@@ -334,3 +340,22 @@ class OmarchyControls(QObject):
         self.bus.unregisterService(SERVICE)
         self._active_hotkeys = []
         self._publish_status("Desktop shortcuts stopped")
+
+
+def _language_status() -> dict:
+    """The bar's language fields: ``language`` is the chip text, "" with one language."""
+    try:
+        from services import dictation_language
+        from services.settings import settings_manager
+
+        settings = settings_manager.load_all_settings()
+        choices = dictation_language.language_choices(settings)
+        code = dictation_language.current_language(settings)
+    except Exception:
+        log.debug("Dictation language unavailable for the bar", exc_info=True)
+        return {"language": "", "language_name": ""}
+    return {
+        "language": dictation_language.short_label(code) if len(choices) > 1 else "",
+        "language_name": dictation_language.label(code),
+    }
+

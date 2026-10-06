@@ -324,6 +324,11 @@ class ModelAssignments(QObject):
         self.api_model_field = self._field("Model", self.api_model_combo)
         card.addWidget(self.api_model_field)
 
+        from ui_qt.widgets.local_engine_controls import DictationLanguagesField
+        self.dictation_languages = DictationLanguagesField()
+        self.dictation_languages.changed.connect(self._on_dictation_languages_changed)
+        card.addWidget(self._field("Languages I dictate in", self.dictation_languages))
+
         self.engine_inventory_title = self._group_title(layout, "On this computer")
         self.engine_inventory_row = QWidget()
         self.engine_inventory_row.setObjectName("engineInventoryRow")
@@ -731,6 +736,11 @@ class ModelAssignments(QObject):
             self._update_ondemand_whisper_enabled()
             self._refresh_engine_inventory()
         self._refresh_rail_values()
+
+    def _on_dictation_languages_changed(self) -> None:
+        notify = getattr(self._host, "notify_changed", None)
+        if callable(notify):
+            notify("languages")
 
     def _on_speech_settings_changed(self):
         self._refresh_meeting_runtime_label()
@@ -1433,6 +1443,7 @@ class ModelAssignments(QObject):
         if is_speech:
             self.speech_controls.set_backend(backend)
         self.api_model_field.setVisible(backend == "api")
+        self.dictation_languages.set_backend(backend)
         # Neither engine keeps anything on this computer.
         on_this_computer = backend not in ("api", "remote")
         self.engine_inventory_title.setVisible(on_this_computer)

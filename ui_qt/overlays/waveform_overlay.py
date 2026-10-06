@@ -11,7 +11,7 @@ from PyQt6.QtGui import (
     QFont, QFontMetrics, QCursor, QTextLayout
 )
 from config import config
-from services.settings import resolve_streaming_overlay_font_size
+from services.settings import resolve_streaming_overlay_font_size, settings_manager
 from ui_qt.utils.overlay_position import (
     max_height_for_anchor,
     preferred_overlay_position,
@@ -21,21 +21,48 @@ from ui_qt.waveform_styles import Particle, ParticleStyle, round_pen
 
 logger = logging.getLogger(__name__)
 
+CAPTION_MS = 2500
+_LANGUAGE_FLASH_S = 0.6
+_BADGE_HEIGHT = 18
+_BADGE_MARGIN = 9
+
+
+def _platform_takes_overlay_clicks() -> bool:
+    """Where a click on a non-activating window leaves the target app focused.
+
+    Windows honours WS_EX_NOACTIVATE and X11 the input hint; on macOS the Tool
+    window behaviour is unverified, so the chip there is display-only.
+    """
+    return QApplication.platformName() in ("windows", "xcb")
+
 
 class WaveformOverlay(QWidget):
     state_changed = pyqtSignal(str)
+    #: The language chip was clicked; only standalone Windows and X11 overlays
+    #: take clicks, so the app being dictated into keeps focus.
+    language_cycle_requested = pyqtSignal()
 
     STATE_IDLE = "idle"
     STATE_RECORDING = "recording"
     STATE_STREAMING = "streaming"
+    STATE_COMMAND_LISTENING = "command_listening"
     STATE_PROCESSING = "processing"
     STATE_TRANSCRIBING = "transcribing"
     STATE_CLEANING = "cleaning"
+    STATE_REWRITING = "rewriting"
     STATE_CANCELING = "canceling"
     STATE_STT_ENABLE = "stt_enable"
     STATE_STT_DISABLE = "stt_disable"
     STATE_COPIED = "copied"
+    STATE_LANGUAGE = "language"
     STATE_LARGE_FILE_SPLITTING = "large_file_splitting"
+
+    LISTENING_STATES = frozenset((STATE_RECORDING, STATE_STREAMING, STATE_COMMAND_LISTENING))
+    _PREVIEW_STATES = frozenset((STATE_STREAMING, STATE_COMMAND_LISTENING))
+    _TRANSIENT_STATES = frozenset((STATE_STT_ENABLE, STATE_STT_DISABLE, STATE_COPIED, STATE_LANGUAGE))
+    # ParticleStyle simulates only its own states; the command and rewrite
+    # looks borrow theirs.
+    _STYLE_STATES = {STATE_COMMAND_LISTENING: STATE_RECORDING, STATE_REWRITING: STATE_CLEANING}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -45,12 +72,19 @@ class WaveformOverlay(QWidget):
             Qt.WindowType.Widget if self._embedded else
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
-            Qt.WindowType.Tool
+            Qt.WindowType.Tool |
+            Qt.WindowType.WindowDoesNotAcceptFocus
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, not self._embedded)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         if self._embedded:
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             parent.installEventFilter(self)
+        else:
+            # The paste goes to whichever app has focus, so neither showing nor
+            # clicking the overlay may take it (WS_EX_NOACTIVATE on Windows).
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+            self.setMouseTracking(True)
         if sys.platform == "darwin":
             # On macOS, Qt Tool windows are hidden whenever the app is not the
             # frontmost application (or when its main window is minimized). During
@@ -92,6 +126,18 @@ class WaveformOverlay(QWidget):
         self.hidden_timer = QTimer()
         self.hidden_timer.setSingleShot(True)
         self.hidden_timer.timeout.connect(self.hide)
+
+        self._hands_free = False
+        self._language = ""
+        self._language_choices: tuple = ()
+        self._language_changed_at: Optional[float] = None
+        self._chip_rect = QRectF()
+        self._chip_hover = False
+        self._caption = ""
+        self._caption_started = 0.0
+        self._caption_timer = QTimer(self)
+        self._caption_timer.setSingleShot(True)
+        self._caption_timer.timeout.connect(self._clear_caption)
         if self._embedded:
             self.hide()
 
@@ -105,15 +151,19 @@ class WaveformOverlay(QWidget):
             rect = self.rect()
 
             if self.current_state == self.STATE_RECORDING:
-                self.style.draw_recording_state(painter, rect, "Recording...")
+                self.style.draw_recording_state(painter, rect, "" if self._caption else "Recording...")
             elif self.current_state == self.STATE_STREAMING:
                 self._draw_streaming_state(painter, rect)
+            elif self.current_state == self.STATE_COMMAND_LISTENING:
+                self._draw_streaming_state(painter, rect, "Listening for an edit...", "accent-soft")
             elif self.current_state == self.STATE_PROCESSING:
                 self.style.draw_processing_state(painter, rect, "Processing...")
             elif self.current_state == self.STATE_TRANSCRIBING:
                 self.style.draw_transcribing_state(painter, rect, "Transcribing...")
             elif self.current_state == self.STATE_CLEANING:
                 self._draw_cleaning_state(painter)
+            elif self.current_state == self.STATE_REWRITING:
+                self._draw_cleaning_state(painter, "Rewriting...")
             elif self.current_state == self.STATE_CANCELING:
                 self.style.draw_canceling_state(painter, rect, "Canceled")
             elif self.current_state == self.STATE_STT_ENABLE:
@@ -122,8 +172,11 @@ class WaveformOverlay(QWidget):
                 self._draw_stt_disable_state(painter)
             elif self.current_state == self.STATE_COPIED:
                 self._draw_copied_state(painter)
+            elif self.current_state == self.STATE_LANGUAGE:
+                self._draw_language_state(painter)
             elif self.current_state == self.STATE_LARGE_FILE_SPLITTING:
                 self._draw_large_file_splitting_state(painter)
+            self._draw_listening_extras(painter)
         except Exception as e:
             logger.error(f"Error drawing waveform frame: {e}", exc_info=True)
             try:
@@ -135,27 +188,41 @@ class WaveformOverlay(QWidget):
             except Exception:
                 pass
 
-    def _draw_streaming_state(self, painter: QPainter, rect: QRect):
+    def _draw_streaming_state(self, painter: QPainter, rect: QRect,
+                              status: str = "Listening...", status_token: str = "overlay-text"):
         """Draw recording particles plus live preview text near the cursor.
 
         Args:
             painter: Active painter for this frame.
             rect: Full overlay bounds.
+            status: Shown in the band until preview text arrives.
+            status_token: Palette role for the status.
         """
         particle_height = min(self._base_height, rect.height())
         particle_rect = QRect(0, 0, rect.width(), particle_height)
-        status = "Listening..." if not self._streaming_preview_text else ""
         # Keep particle physics in the compact recording band even when the
         # overlay grows to fit preview text.
         previous_height = self.style.height
         self.style.height = self._base_height
         try:
-            self.style.draw_recording_state(painter, particle_rect, status)
+            self.style.draw_recording_state(painter, particle_rect, "")
         finally:
             self.style.height = previous_height
+        if not self._streaming_preview_text and not self._caption:
+            self._draw_status(painter, status, token_color(status_token))
 
         if self._streaming_preview_text:
             self._draw_streaming_preview_text(painter, rect)
+
+    def _status_rect(self) -> QRect:
+        return QRect(0, self._base_height - 25, self.width(), 20)
+
+    def _draw_status(self, painter: QPainter, text: str, color: QColor) -> None:
+        painter.setPen(QPen(color))
+        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        rect = self._status_rect().adjusted(12, 0, -12, 0)
+        text = QFontMetrics(painter.font()).elidedText(text, Qt.TextElideMode.ElideRight, rect.width())
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
 
     def _streaming_preview_font(self) -> QFont:
         return QFont("Segoe UI", self._streaming_font_size)
@@ -274,7 +341,7 @@ class WaveformOverlay(QWidget):
 
     def _apply_streaming_height(self):
         """Grow or shrink the overlay to fit preview text while streaming."""
-        if self.current_state != self.STATE_STREAMING and not self._streaming_preview_text:
+        if self.current_state not in self._PREVIEW_STATES and not self._streaming_preview_text:
             if self.height() != self._base_height:
                 self.overlay_height = self._base_height
                 self.setFixedSize(self.overlay_width, self.overlay_height)
@@ -305,9 +372,10 @@ class WaveformOverlay(QWidget):
             self._reposition_near_anchor()
 
     def _draw_background(self, painter: QPainter):
+        command = self.current_state == self.STATE_COMMAND_LISTENING
         if self._embedded:
             painter.fillRect(self.rect(), token_color("bg"))
-            painter.setPen(QPen(token_color("border"), 1))
+            painter.setPen(QPen(token_color("accent") if command else token_color("border"), 1))
             painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
             return
         # Inset by half the pen width so the 1px border isn't clipped.
@@ -318,6 +386,13 @@ class WaveformOverlay(QWidget):
         painter.fillPath(path, token_color("overlay-bg"))
         painter.setPen(QPen(token_color("overlay-border"), 1))
         painter.drawPath(path)
+        if command:
+            # Command Mode is a recording that edits text; the accent ring
+            # tells it apart from dictation at a glance.
+            ring = QPainterPath()
+            ring.addRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 11.5, 11.5)
+            painter.setPen(QPen(token_color("accent", 210), 1.6))
+            painter.drawPath(ring)
 
     def _draw_particle_swarm(self, painter: QPainter):
         painter.setPen(Qt.PenStyle.NoPen)
@@ -403,7 +478,7 @@ class WaveformOverlay(QWidget):
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Copied!")
 
-    def _draw_cleaning_state(self, painter: QPainter):
+    def _draw_cleaning_state(self, painter: QPainter, text: str = "Cleaning up..."):
         rect = self.rect()
         w, h = rect.width(), rect.height()
         purple = token_color("purple")
@@ -434,7 +509,7 @@ class WaveformOverlay(QWidget):
         painter.drawText(
             rect.adjusted(0, h - 25, 0, 0),
             Qt.AlignmentFlag.AlignCenter,
-            "Cleaning up...",
+            text,
         )
 
     @staticmethod
@@ -449,6 +524,166 @@ class WaveformOverlay(QWidget):
         painter.setPen(round_pen(accent, 1.5))
         painter.drawLine(int(cx - diag), int(cy - diag), int(cx + diag), int(cy + diag))
         painter.drawLine(int(cx - diag), int(cy + diag), int(cx + diag), int(cy - diag))
+
+    def _badge_radius(self) -> float:
+        return 2.0 if self._embedded else _BADGE_HEIGHT / 2
+
+    def _draw_listening_extras(self, painter: QPainter) -> None:
+        """The hands-free or Command Mode badge, the language chip and a caption."""
+        if self.current_state not in self.LISTENING_STATES:
+            self._chip_rect = QRectF()
+            return
+        if self._hands_free or self.current_state == self.STATE_COMMAND_LISTENING:
+            self._draw_mode_badge(painter)
+        self._chip_rect = self._draw_language_chip(painter) if self._chip_visible() else QRectF()
+        if self._caption:
+            self._draw_caption(painter)
+
+    def _draw_mode_badge(self, painter: QPainter) -> None:
+        command = self.current_state == self.STATE_COMMAND_LISTENING
+        text = "Command Mode" if command else "Hands-free"
+        font = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
+        lock_width = 8 if self._hands_free else 0
+        width = QFontMetrics(font).horizontalAdvance(text) + 18 + (lock_width + 5 if lock_width else 0)
+        rect = QRectF(_BADGE_MARGIN, _BADGE_MARGIN, width, _BADGE_HEIGHT)
+        radius = self._badge_radius()
+        ink = token_color("accent-soft")
+        painter.setPen(Qt.PenStyle.NoPen)
+        # Opaque first so particles drifting behind never show through the text.
+        painter.setBrush(token_color("overlay-bg"))
+        painter.drawRoundedRect(rect, radius, radius)
+        painter.setBrush(token_color("accent", 46))
+        painter.drawRoundedRect(rect, radius, radius)
+        x = rect.left() + 9
+        if self._hands_free:
+            self._draw_lock(painter, x, rect.center().y(), ink)
+            x += lock_width + 5
+        painter.setPen(QPen(ink))
+        painter.setFont(font)
+        painter.drawText(QRectF(x, rect.top(), rect.right() - x, rect.height()),
+                         int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), text)
+
+    @staticmethod
+    def _draw_lock(painter: QPainter, x: float, cy: float, color: QColor) -> None:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawRoundedRect(QRectF(x, cy - 1.0, 8.0, 6.0), 1.5, 1.5)
+        shackle = QPainterPath()
+        shackle.moveTo(x + 1.9, cy - 1.0)
+        shackle.lineTo(x + 1.9, cy - 3.0)
+        shackle.arcTo(QRectF(x + 1.9, cy - 5.9, 4.2, 5.8), 180, -180)
+        shackle.lineTo(x + 6.1, cy - 1.0)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(round_pen(color, 1.4))
+        painter.drawPath(shackle)
+
+    def _language_text(self) -> str:
+        try:
+            from services.dictation_language import short_label
+        except ImportError:
+            return self._language.upper()
+        return short_label(self._language)
+
+    def _language_name(self) -> str:
+        try:
+            from services.dictation_language import label
+        except ImportError:
+            return self._language
+        return label(self._language)
+
+    def _language_flash(self) -> float:
+        if self._language_changed_at is None:
+            return 0.0
+        return max(0.0, 1.0 - (time.monotonic() - self._language_changed_at) / _LANGUAGE_FLASH_S)
+
+    def _draw_language_chip(self, painter: QPainter) -> QRectF:
+        font = QFont("Segoe UI", 8, QFont.Weight.Bold)
+        text = self._language_text()
+        width = max(30, QFontMetrics(font).horizontalAdvance(text) + 18)
+        rect = QRectF(self.width() - _BADGE_MARGIN - width, _BADGE_MARGIN, width, _BADGE_HEIGHT)
+        radius = self._badge_radius()
+        flash = self._language_flash()
+        hover = self._chip_hover and self._chip_clickable()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(token_color("overlay-bg"))
+        painter.drawRoundedRect(rect, radius, radius)
+        painter.setBrush(token_color("overlay-rgb", 38 if hover else 22))
+        painter.drawRoundedRect(rect, radius, radius)
+        if flash:
+            painter.setBrush(token_color("accent", int(170 * flash)))
+            painter.drawRoundedRect(rect, radius, radius)
+        edge = token_color("accent", 220) if hover or flash else token_color("overlay-border")
+        painter.setPen(QPen(edge, 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+        painter.setPen(QPen(token_color("on-accent") if flash > 0.5 else token_color("overlay-text")))
+        painter.setFont(font)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+        return rect
+
+    def _draw_caption(self, painter: QPainter) -> None:
+        elapsed = time.monotonic() - self._caption_started
+        remaining = CAPTION_MS / 1000 - elapsed
+        fade = max(0.0, min(1.0, elapsed / 0.15, remaining / 0.35))
+        self._draw_status(painter, self._caption, token_color("warning-text", int(255 * fade)))
+
+    def _draw_language_state(self, painter: QPainter) -> None:
+        """The language shortcut's notice: the new language, popping in."""
+        grow = min(1.0, self.animation_time / 0.22)
+        scale = 0.7 + 0.3 * (1.0 - (1.0 - grow) ** 3)
+        font = QFont("Segoe UI", 13, QFont.Weight.Bold)
+        text = self._language_text()
+        width = max(54, QFontMetrics(font).horizontalAdvance(text) + 28) * scale
+        height = 30 * scale
+        rect = QRectF((self.width() - width) / 2, 30 - height / 2, width, height)
+        radius = 3.0 if self._embedded else height / 2
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(token_color("accent", int(235 * grow)))
+        painter.drawRoundedRect(rect, radius, radius)
+        font.setPointSizeF(13 * scale)
+        painter.setFont(font)
+        painter.setPen(QPen(token_color("on-accent", int(255 * grow))))
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+        self._draw_status(painter, self._language_name(), token_color("overlay-text"))
+
+    def _chip_visible(self) -> bool:
+        return bool(self._language) and len(self._language_choices) >= 2
+
+    def _chip_clickable(self) -> bool:
+        return (
+            not self._embedded
+            and _platform_takes_overlay_clicks()
+            and self.current_state in self.LISTENING_STATES
+            and self._chip_visible()
+        )
+
+    def _chip_hit(self, position: QPointF) -> bool:
+        return self._chip_clickable() and self._chip_rect.adjusted(-4, -4, 4, 4).contains(position)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._chip_hit(event.position()):
+            event.accept()
+            self.language_cycle_requested.emit()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        self._set_chip_hover(self._chip_hit(event.position()))
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        self._set_chip_hover(False)
+        super().leaveEvent(event)
+
+    def _set_chip_hover(self, hover: bool) -> None:
+        if hover == self._chip_hover:
+            return
+        self._chip_hover = hover
+        if hover:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.unsetCursor()
+        self.update()
 
     def set_large_file_info(self, file_size_mb: float):
         self.large_file_size_mb = file_size_mb
@@ -489,7 +724,7 @@ class WaveformOverlay(QWidget):
 
         self.animation_time += delta_time
 
-        self.style.advance(self.current_state, delta_time)
+        self.style.advance(self._STYLE_STATES.get(self.current_state, self.current_state), delta_time)
 
         if self.current_state == self.STATE_CANCELING:
             self.cancel_progress = min(1.0, self.animation_time / 0.8)
@@ -503,6 +738,7 @@ class WaveformOverlay(QWidget):
 
     def set_state(self, state: str):
         if self.current_state != state:
+            was_listening = self.current_state in self.LISTENING_STATES
             self.current_state = state
             self.animation_time = 0.0
             self.cancel_progress = 0.0
@@ -537,17 +773,28 @@ class WaveformOverlay(QWidget):
             else:
                 self.timer.start(1000 // self.frame_rate)
 
-            if state != self.STATE_STREAMING:
+            if state not in self._PREVIEW_STATES:
                 self._streaming_preview_text = ""
                 if self.overlay_height != self._base_height:
                     self.overlay_height = self._base_height
                     self.setFixedSize(self.overlay_width, self.overlay_height)
 
+            if state not in self.LISTENING_STATES:
+                self._end_listening_extras()
+            elif not was_listening:
+                # A new recording: no latch yet, and the language as saved now.
+                self._hands_free = False
+                self._refresh_language()
+
             self.state_changed.emit(state)
             logger.debug(f"Overlay state changed to: {state}")
 
-            if state in [self.STATE_STT_ENABLE, self.STATE_STT_DISABLE, self.STATE_COPIED]:
+            if state in self._TRANSIENT_STATES:
                 self.hidden_timer.start(config.OVERLAY_HIDE_DELAY_MS)
+            else:
+                # A recording that starts during a short notice (a language
+                # switch just before dictating) must not be hidden by it.
+                self.hidden_timer.stop()
 
     def _init_particles(
         self,
@@ -630,14 +877,76 @@ class WaveformOverlay(QWidget):
         self.audio_levels = levels[:20]
         self.style.update_audio_levels(self.audio_levels)
 
+    @property
+    def hands_free(self) -> bool:
+        """Whether the current recording is latched on (kept while hidden too)."""
+        return self._hands_free
+
     def set_hands_free(self, on: bool) -> None:
-        """Mark a push-and-hold recording latched on until the next press."""
+        """Mark a push-and-hold recording latched on until the next press.
+
+        Kept even while hidden, for the Omarchy bar; cleared when the
+        recording ends, the next one starts, or the overlay hides.
+        """
+        if bool(on) != self._hands_free:
+            self._hands_free = bool(on)
+            self.update()
 
     def set_language(self, code: str, choices) -> None:
         """Show the active dictation language when there is more than one."""
+        code = code or ""
+        if code != self._language and self._language and self.isVisible():
+            self._language_changed_at = time.monotonic()
+        self._language = code
+        self._language_choices = tuple(choices or ())
+        self.update()
+
+    def show_language_notice(self) -> None:
+        """Briefly show the active language near the pointer; a repeat replays it."""
+        if self.current_state == self.STATE_LANGUAGE and self.isVisible():
+            self.animation_time = 0.0
+            self.hidden_timer.start(config.OVERLAY_HIDE_DELAY_MS)
+            self.update()
+            return
+        self.show_at_cursor(self.STATE_LANGUAGE)
+
+    def _refresh_language(self) -> None:
+        try:
+            from services import dictation_language
+
+            settings = settings_manager.load_all_settings()
+            choices = dictation_language.language_choices(settings)
+            code = dictation_language.current_language(settings) if len(choices) > 1 else ""
+        except Exception:
+            logger.debug("Dictation language unavailable for the overlay", exc_info=True)
+            choices, code = [], ""
+        self._language_changed_at = None
+        self.set_language(code, choices)
 
     def show_caption(self, text: str) -> None:
-        """Show a short notice, such as a microphone switch, with the waveform."""
+        """Show a short notice, such as a microphone switch, with the waveform.
+
+        Ignored while hidden: the status line carries the same news.
+        """
+        if not text or not self.isVisible():
+            return
+        self._caption = text
+        self._caption_started = time.monotonic()
+        self._caption_timer.start(CAPTION_MS)
+        self.update()
+
+    def _clear_caption(self) -> None:
+        self._caption_timer.stop()
+        if self._caption:
+            self._caption = ""
+            self.update()
+
+    def _end_listening_extras(self) -> None:
+        self._hands_free = False
+        self._language_changed_at = None
+        self._chip_rect = QRectF()
+        self._set_chip_hover(False)
+        self._clear_caption()
 
     def hide(self):
         """Hide the overlay and stop animations."""
@@ -649,6 +958,9 @@ class WaveformOverlay(QWidget):
         self.cancel_progress = 0.0
         self._streaming_preview_text = ""
         self._anchor_pos = None
+        self._end_listening_extras()
+        self._language = ""
+        self._language_choices = ()
         if self.overlay_height != self._base_height:
             self.overlay_height = self._base_height
             self.setFixedSize(self.overlay_width, self.overlay_height)
@@ -683,6 +995,7 @@ class WaveformOverlay(QWidget):
     def closeEvent(self, event):
         self.timer.stop()
         self.hidden_timer.stop()
+        self._caption_timer.stop()
         event.accept()
 
     def eventFilter(self, obj, event):

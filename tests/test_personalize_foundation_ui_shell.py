@@ -151,7 +151,9 @@ class TestLanguageCycle:
 
         module.cycle = MagicMock(side_effect=cycle)
         module.job_language = lambda settings: settings.get("test_active_language", "")
+        module.current_language = module.job_language
         module.language_choices = lambda settings: ["en", "de"]
+        module.single_language_reason = lambda settings: ""
         module.label = {"en": "English", "de": "German"}.get
         _install_module(monkeypatch, "dictation_language", module)
         yield module
@@ -162,7 +164,7 @@ class TestLanguageCycle:
         languages.cycle.assert_called_once()
         assert settings_manager.get("test_active_language") == "de"
         ui.overlay.set_language.assert_called_once_with("de", ["en", "de"])
-        ui.set_status.assert_called_once_with("Dictating in German")
+        ui.set_status.assert_called_once_with("Dictation language: German")
 
     def test_cycle_failure_is_reported_and_leaves_the_overlay_alone(self, ui, languages):
         languages.cycle.side_effect = ValueError("bad list")
@@ -180,21 +182,20 @@ class TestLanguageCycle:
 
 class TestStubModules:
     def test_stubs_leave_the_app_as_it_was(self, ui):
-        assert scratchpad.insert(ui, "note") is False
-        for action in (scratchpad.toggle, history_actions.paste_last_original, stats_dialog.show_stats):
+        assert scratchpad.insert(types.SimpleNamespace(), "note") is False
+        for action in (history_actions.paste_last_original, stats_dialog.show_stats):
             action(ui)
         assert [call.args[0] for call in ui.set_status.call_args_list] == [
-            "The Scratchpad isn't available yet",
             "Nothing to paste yet",
             "Stats aren't available yet",
         ]
 
-    def test_language_menu_stub_replaces_old_entries_with_one_disabled_row(self, ui):
+    def test_language_menu_replaces_old_entries(self, ui):
         menu = QMenu()
         menu.addAction("Stale")
         language_menu.populate(menu, ui)
         language_menu.populate(menu, ui)
-        assert _menu_texts(menu) == ["No other languages"]
+        assert _menu_texts(menu) == ["No other languages", "Choose languages…"]
         assert not menu.actions()[0].isEnabled()
 
 
@@ -215,7 +216,7 @@ class TestAppWiring:
             assert text in texts
         assert texts.index("Start Recording") < texts.index("Paste original of last dictation")
         assert texts.index("Scratchpad") < texts.index("Settings")
-        assert _menu_texts(tray.language_menu) == ["No other languages"]
+        assert _menu_texts(tray.language_menu) == ["No other languages", "Choose languages…"]
 
         calls = []
         monkeypatch.setattr(scratchpad, "toggle", lambda ui: calls.append(("scratchpad", ui)))
@@ -250,18 +251,18 @@ class TestAppWiring:
         window.stats_action.trigger()
         assert calls == ["scratchpad", "stats"]
 
-    def test_command_listening_looks_like_recording_and_rewriting_like_cleanup(self, app_ui):
+    def test_command_listening_records_and_rewriting_cleans_up_in_their_own_looks(self, app_ui):
         overlay = app_ui.overlay
         tab = app_ui.main_window.quick_record_tab
         app_ui.set_overlay_state(OverlayState.COMMAND_LISTENING)
         assert app_ui.tray_manager.toggle_action.text() == "Stop Recording"
         assert overlay.isVisible()
-        assert overlay.current_state == overlay.STATE_RECORDING
+        assert overlay.current_state == overlay.STATE_COMMAND_LISTENING
         assert tab.resolved_label.text() == "Listening for an edit…"
 
         app_ui.set_overlay_state(OverlayState.REWRITING)
         assert app_ui.tray_manager.toggle_action.text() == "Start Recording"
-        assert overlay.current_state == overlay.STATE_CLEANING
+        assert overlay.current_state == overlay.STATE_REWRITING
         assert tab.resolved_label.text() == "Rewriting…"
 
         app_ui.set_overlay_state(OverlayState.NONE)

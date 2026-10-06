@@ -271,6 +271,8 @@ class SettingsKey:
     DICTATION_LANGUAGES: Final[str] = "dictation_languages"
     DICTATION_ACTIVE_LANGUAGE: Final[str] = "dictation_active_language"
     SCRATCHPAD_ALWAYS_ON_TOP: Final[str] = "scratchpad_always_on_top"
+    # {x, y, width, height} of the Scratchpad window; no default.
+    SCRATCHPAD_GEOMETRY: Final[str] = "scratchpad_geometry"
     # The dismissible "New in OpenWhisper" tile.
     FLOW_FEATURES_INTRO_SEEN: Final[str] = "flow_features_intro_seen"
 

@@ -5047,6 +5047,164 @@ QPushButton#micBackupButton[kind="remove"] {
 /* personalize:S7 end */
 
 /* personalize:S8 begin (overlay, languages & scratchpad) */
+/* Settings → Voice model: the languages you dictate in, as chips. */
+QWidget#dictationLanguages,
+QWidget#dictationLanguageChips,
+QLabel#dictationLanguageChipLabel {
+    background-color: transparent;
+}
+
+QFrame#dictationLanguageChip {
+    background-color: @slate-raised;
+    border: 1px solid @slate-border-strong;
+    border-radius: 15px;
+}
+
+QFrame#dictationLanguageChip[active="true"] {
+    background-color: rgba(@accent-rgb, 0.16);
+    border-color: @accent-tint-border-strong;
+}
+
+QFrame#dictationLanguageChip[available="false"] {
+    background-color: transparent;
+    border: 1px dashed @slate-border;
+}
+
+QLabel#dictationLanguageChipLabel {
+    color: @slate-text;
+    font-size: 13px;
+}
+
+QFrame#dictationLanguageChip[active="true"] QLabel#dictationLanguageChipLabel {
+    color: @accent-soft;
+    font-weight: 600;
+}
+
+QFrame#dictationLanguageChip[available="false"] QLabel#dictationLanguageChipLabel {
+    color: @slate-text-4;
+}
+
+QToolButton#dictationLanguageChipRemove {
+    background-color: transparent;
+    border: none;
+    border-radius: 11px;
+    padding: 0;
+}
+
+QToolButton#dictationLanguageChipRemove:hover {
+    background-color: rgba(@danger-rgb, 0.16);
+}
+
+/* The floating Scratchpad. Classic desktops draw the rounded surface on a
+   translucent window; compositor-managed ones get a plain window. */
+QFrame#scratchpadSurface {
+    background-color: @surface;
+    border: 1px solid @border-strong;
+    border-radius: 14px;
+}
+
+QFrame#scratchpadSurface[framed="false"] {
+    border: none;
+    border-radius: 0;
+}
+
+QFrame#scratchpadHeader {
+    background-color: transparent;
+    border: none;
+    border-bottom: 1px solid @border;
+}
+
+QFrame#scratchpadFooter {
+    background-color: transparent;
+    border: none;
+    border-top: 1px solid @border;
+}
+
+QLabel#scratchpadIcon,
+QLabel#scratchpadTitle,
+QLabel#scratchpadStatus {
+    background-color: transparent;
+}
+
+QLabel#scratchpadTitle {
+    color: @text;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#scratchpadStatus {
+    color: @text-secondary;
+    font-size: 12px;
+}
+
+QToolButton#scratchpadOnTop {
+    color: @text-secondary;
+    background-color: transparent;
+    border: 1px solid @border-strong;
+    border-radius: 10px;
+    padding: 2px 9px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QToolButton#scratchpadOnTop:hover {
+    background-color: @surface-hover;
+}
+
+QToolButton#scratchpadOnTop:checked {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.14);
+    border-color: @accent-tint-border;
+}
+
+QToolButton#scratchpadClose {
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+QToolButton#scratchpadClose:hover {
+    background-color: @surface-hover;
+}
+
+QPlainTextEdit#scratchpadEditor {
+    color: @text;
+    background-color: transparent;
+    border: none;
+    padding: 8px 10px;
+    font-size: 15px;
+    selection-background-color: rgba(@accent-rgb, 0.35);
+}
+
+QToolButton[scratchpadAction="true"] {
+    color: @text-soft;
+    background-color: transparent;
+    border: none;
+    border-radius: 7px;
+    padding: 5px 9px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QToolButton[scratchpadAction="true"]:hover {
+    color: @text;
+    background-color: @surface-hover;
+}
+
+QToolButton[scratchpadAction="true"]:pressed {
+    background-color: @surface-active;
+}
+
+QToolButton[scratchpadAction="true"]:disabled {
+    color: @text-muted;
+}
+
+QSizeGrip#scratchpadGrip {
+    width: 12px;
+    height: 12px;
+    background-color: transparent;
+}
 /* personalize:S8 end */
 
 /* personalize:S9 begin (history, stats & playback) */

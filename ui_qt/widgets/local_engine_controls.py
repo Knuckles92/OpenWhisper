@@ -1,14 +1,32 @@
-"""Local speech fields that persist settings and request controller reloads."""
+"""Local speech fields that persist settings and request controller reloads.
+
+Also the "Languages I dictate in" field, which only saves the dictation
+language list and never reloads the engine.
+"""
 import logging
 import sys
 
-from PyQt6.QtWidgets import QWidget, QHBoxLayout
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLayout,
+    QMenu,
+    QSizePolicy,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
+from PyQt6.QtCore import QPoint, QRect, QSize, Qt, pyqtSignal
 
 from config import config
+from services import dictation_language
 from services.settings import SETTING_DEFAULTS, SettingsKey, setting_value, settings_manager
 from services.local_asr.languages import LANGUAGE_LABELS, language_choices, selected_language
+from ui_qt.utils.icons import design_icon
+from ui_qt.widgets.buttons import Button, neutral_button
 from ui_qt.widgets.engine_field import engine_combo, engine_field
+from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
 
@@ -178,3 +196,240 @@ class LocalEngineControls(QWidget):
         if getattr(self, "_backend", "") == "moonshine":
             self.device_combo.setEnabled(False)
             self.language_combo.setEnabled(False)
+
+
+class _FlowLayout(QLayout):
+    """Lays items out left to right, wrapping onto new rows that fit the width."""
+
+    def __init__(self, parent=None, spacing: int = 6):
+        super().__init__(parent)
+        self._items = []
+        self.setContentsMargins(0, 0, 0, 0)
+        self.setSpacing(spacing)
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, index):
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index):
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def heightForWidth(self, width):
+        return self._arrange(QRect(0, 0, width, 0), apply=False)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._arrange(rect, apply=True)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for item in self._items:
+            if not item.isEmpty():
+                size = size.expandedTo(item.minimumSize())
+        return size
+
+    def _arrange(self, rect: QRect, *, apply: bool) -> int:
+        space = self.spacing()
+        rows, row, used = [], [], 0
+        for item in self._items:
+            if item.isEmpty():
+                continue
+            hint = item.sizeHint()
+            if row and used + space + hint.width() > rect.width():
+                rows.append(row)
+                row, used = [], 0
+            used += (space if row else 0) + hint.width()
+            row.append((item, hint))
+        if row:
+            rows.append(row)
+        y = rect.y()
+        for row in rows:
+            height = max(hint.height() for _item, hint in row)
+            x = rect.x()
+            for item, hint in row:
+                if apply:
+                    width = min(hint.width(), rect.width())
+                    top = y + (height - hint.height()) // 2
+                    item.setGeometry(QRect(QPoint(x, top), QSize(width, hint.height())))
+                x += hint.width() + space
+            y += height + space
+        return max(0, y - space - rect.y()) if rows else 0
+
+
+class _ChipArea(QWidget):
+    """Holds the flow of chips and reports the height they need at its width.
+
+    Like ``WrappedLabel``: the size hints carry the wrapped height, because
+    Qt's height-for-width path estimates nested cards at the wrong width.
+    """
+
+    def sizeHint(self) -> QSize:
+        flow = self.layout()
+        widest = flow.minimumSize()
+        width = self.width()
+        if width <= 0:
+            return widest
+        return QSize(widest.width(), flow.heightForWidth(width))
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if event.oldSize().width() != event.size().width():
+            self.updateGeometry()
+
+
+class _LanguageChip(QFrame):
+    removed = pyqtSignal(str)
+
+    def __init__(self, code: str, *, available: bool, active: bool, unavailable_reason: str):
+        super().__init__()
+        name = dictation_language.label(code)
+        self.code = code
+        self.setObjectName("dictationLanguageChip")
+        self.setProperty("available", available)
+        self.setProperty("active", active)
+        self.setFixedHeight(30)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        if not available:
+            self.setToolTip(unavailable_reason)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 0, 5, 0)
+        layout.setSpacing(4)
+        label = QLabel(name)
+        label.setObjectName("dictationLanguageChipLabel")
+        layout.addWidget(label)
+        self.remove_button = QToolButton()
+        self.remove_button.setObjectName("dictationLanguageChipRemove")
+        self.remove_button.setIcon(design_icon("x-gray.svg"))
+        self.remove_button.setIconSize(QSize(13, 13))
+        self.remove_button.setFixedSize(22, 22)
+        self.remove_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.remove_button.setToolTip(f"Remove {name}")
+        self.remove_button.setAccessibleName(f"Remove {name}")
+        self.remove_button.clicked.connect(lambda: self.removed.emit(self.code))
+        layout.addWidget(self.remove_button)
+
+
+class DictationLanguagesField(QWidget):
+    """The languages someone dictates in: removable chips and an Add menu.
+
+    Saves ``dictation_languages`` (keeping the active language valid) as soon
+    as a chip is added or removed. Languages the current engine can't use stay
+    saved and show muted, so switching engines back restores them.
+    """
+
+    #: The saved list changed (a person's edit, never a refresh).
+    changed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("dictationLanguages")
+        self._backend = ""
+        self._remaining: list = []
+        self.chips: list = []
+        self.add_menu = QMenu(self)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        self.chip_area = _ChipArea()
+        self.chip_area.setObjectName("dictationLanguageChips")
+        self._flow = _FlowLayout(self.chip_area)
+        self.add_button = neutral_button(Button("Add language"))
+        self.add_button.setIcon(design_icon("plus-blue.svg"))
+        self.add_button.clicked.connect(self._open_add_menu)
+        layout.addWidget(self.chip_area)
+        self.caption = WrappedLabel("")
+        self.caption.setObjectName("infoLabel")
+        layout.addWidget(self.caption)
+        self.refresh()
+
+    def set_backend(self, backend: str) -> None:
+        """Show the choices for ``backend``, which may not be saved yet."""
+        self._backend = backend or ""
+        self.refresh()
+
+    def _settings(self) -> dict:
+        settings = settings_manager.load_all_settings()
+        if self._backend:
+            settings[SettingsKey.SELECTED_MODEL] = self._backend
+        return settings
+
+    def refresh(self) -> None:
+        from ui_qt.widgets.speech_backend_picker import backend_display_name
+
+        settings = self._settings()
+        chosen = dictation_language.chosen_languages(settings)
+        accepted = dictation_language.accepted_languages(settings)
+        choices = dictation_language.language_choices(settings)
+        reason = dictation_language.single_language_reason(settings)
+        active = dictation_language.job_language(settings)
+        unavailable = f"{backend_display_name(dictation_language.engine(settings))} can't use this language."
+        self._flow.removeWidget(self.add_button)
+        for chip in self.chips:
+            self._flow.removeWidget(chip)
+            chip.hide()
+            chip.deleteLater()
+        self.chips = []
+        if not reason:
+            for code in chosen:
+                chip = _LanguageChip(
+                    code, available=code in accepted, active=code == active and len(choices) > 1,
+                    unavailable_reason=unavailable,
+                )
+                chip.removed.connect(self._remove)
+                self._flow.addWidget(chip)
+                self.chips.append(chip)
+            self._flow.addWidget(self.add_button)
+        self.chip_area.setVisible(not reason)
+        self._remaining = [code for code in accepted if code not in chosen]
+        self.add_button.setEnabled(bool(self._remaining))
+        self.caption.setText(reason or self._caption(chosen, choices, active))
+        self.chip_area.updateGeometry()
+
+    @staticmethod
+    def _caption(chosen, choices, active) -> str:
+        if not chosen:
+            return "Add two or more to switch between them from the overlay, the tray or a shortcut."
+        if not choices:
+            return "This engine can't use these, so dictation uses the engine's own language."
+        if len(choices) == 1:
+            return (f"Dictation uses {dictation_language.label(choices[0])}. "
+                    "Add another to switch between them.")
+        return (f"Now dictating in {dictation_language.label(active or choices[0])}. "
+                "Switch from the overlay, the tray or a shortcut.")
+
+    def _open_add_menu(self) -> None:
+        self.add_menu.clear()
+        for code in self._remaining:
+            action = self.add_menu.addAction(dictation_language.label(code))
+            action.triggered.connect(lambda _checked=False, code=code: self.add(code))
+        self.add_menu.popup(self.add_button.mapToGlobal(QPoint(0, self.add_button.height())))
+
+    def add(self, code: str) -> None:
+        self._save([*dictation_language.chosen_languages(self._settings()), code])
+
+    def _remove(self, code: str) -> None:
+        self._save([other for other in dictation_language.chosen_languages(self._settings()) if other != code])
+
+    def _save(self, codes) -> None:
+        try:
+            settings_manager.mutate_settings(lambda settings: dictation_language.set_chosen(settings, codes))
+        except Exception:
+            logger.exception("Couldn't save the dictation languages")
+            self.caption.setText("Couldn't save your languages. Try again.")
+            return
+        self.refresh()
+        self.changed.emit()

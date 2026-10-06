@@ -314,6 +314,7 @@ class UIController(QObject):
         self.populate_language_menu(self.tray_manager.language_menu)
 
         self.overlay.state_changed.connect(self._on_overlay_state_changed)
+        self.overlay.language_cycle_requested.connect(self.cycle_dictation_language)
 
         self.record_started.connect(self._show_recording_overlay)
         self.record_stopped.connect(self._show_processing_overlay)
@@ -553,7 +554,14 @@ class UIController(QObject):
     def refresh_remote_models(self) -> None:
         """Show the paired computer's models, and which one it runs now."""
         if self.get_remote_models is not None:
-            self.main_window.set_remote_models(self.get_remote_models())
+            models = self.get_remote_models()
+            self.main_window.set_remote_models(models)
+            from services import dictation_language
+
+            # Dictation language choices follow what the host's engine takes.
+            dictation_language.note_remote_runtime(
+                getattr(models, "runtime", None), getattr(models, "engine", None)
+            )
 
     def _on_remote_model_selected(self, family: str, model: str) -> None:
         logger.info("Remote model chosen: %s/%s", family, model)
@@ -651,11 +659,14 @@ class UIController(QObject):
             self.streaming_flow_active = False
             return
 
-        # Listening for a Command Mode instruction is a recording to the tray
-        # and the live preview, and a rewrite is a cleanup pass.
+        # Listening for a Command Mode instruction is a recording to the tray,
+        # and a rewrite is a cleanup pass; the overlay draws each its own way
+        # and shows the instruction's live preview itself.
         if state in (OverlayState.RECORDING, OverlayState.COMMAND_LISTENING):
             self.tray_manager.set_recording(True)
-            if self.streaming_flow_active:
+            if state is OverlayState.COMMAND_LISTENING:
+                self._show_or_set_overlay(self.overlay.STATE_COMMAND_LISTENING)
+            elif self.streaming_flow_active:
                 if not self.overlay.isVisible():
                     self.overlay.show_at_cursor(self.overlay.STATE_STREAMING)
                 elif self.overlay.current_state != self.overlay.STATE_STREAMING:
@@ -668,9 +679,12 @@ class UIController(QObject):
         elif state is OverlayState.TRANSCRIBING:
             self.tray_manager.set_recording(False)
             self._dismiss_streaming_preview_for_waveform(self.overlay.STATE_TRANSCRIBING)
-        elif state in (OverlayState.CLEANING, OverlayState.REWRITING):
+        elif state is OverlayState.CLEANING:
             self.tray_manager.set_recording(False)
             self._dismiss_streaming_preview_for_waveform(self.overlay.STATE_CLEANING)
+        elif state is OverlayState.REWRITING:
+            self.tray_manager.set_recording(False)
+            self._dismiss_streaming_preview_for_waveform(self.overlay.STATE_REWRITING)
         elif state is OverlayState.STT_ENABLED:
             self._show_or_set_overlay(self.overlay.STATE_STT_ENABLE)
         elif state is OverlayState.STT_DISABLED:
@@ -794,22 +808,9 @@ class UIController(QObject):
         return scratchpad.insert(self, text) is True
 
     def cycle_dictation_language(self) -> None:
-        try:
-            from services import dictation_language
-        except ImportError:
-            return
-        try:
-            settings_manager.mutate_settings(dictation_language.cycle)
-            settings = settings_manager.load_all_settings()
-            code = dictation_language.job_language(settings)
-            choices = dictation_language.language_choices(settings)
-            label = dictation_language.label(code) if code else ""
-        except Exception:
-            logger.exception("Couldn't switch the dictation language")
-            self.set_status("Couldn't switch the dictation language")
-            return
-        self.overlay.set_language(code, choices)
-        self.set_status(f"Dictating in {label}" if label else "Dictating in the voice model's language")
+        from ui_qt.widgets import language_menu
+
+        language_menu.cycle(self)
 
     def paste_last_original(self) -> None:
         from ui_qt.history_actions import paste_last_original
