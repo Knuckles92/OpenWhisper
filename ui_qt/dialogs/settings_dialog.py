@@ -247,13 +247,20 @@ _SEARCH_ALIASES = {
         "Model assignments",
         "Model Manager's choices now sit on Voice model, AI cleanup, Voice & "
         "speakers, Intelligence, and Runtime",
-        "model manager models assign",
+        "model manager models assign languages i dictate in multilingual language "
+        "switcher",
     ),
     CLEANUP: (
         "Spoken corrections and lists",
         "Dictation › AI cleanup › Cleanup level",
         "self-correction scratch that actually bullet numbered list light medium high "
         "rewrite polish formatting",
+    ),
+    HOTKEYS: (
+        "Command Mode, Scratchpad and hands-free shortcuts",
+        "App › Hotkeys",
+        "command mode scratchpad switch language paste original hands-free double tap "
+        "latch mouse side button back forward mouse 4 mouse 5",
     ),
     DOWNLOADS: (
         "Download models and components",

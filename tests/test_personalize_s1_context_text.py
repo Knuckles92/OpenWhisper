@@ -96,8 +96,11 @@ def test_join_leaves_text_alone_without_a_known_caret(text, context):
 @pytest.mark.parametrize("before,after,text,joined", [
     # Leading space after a word or closing punctuation.
     ("Dear Sam,", "", "Thanks for the notes.", " thanks for the notes."),
-    ("I need", "", "Milk and eggs.", " milk and eggs."),
-    ("It costs 5", "", "Dollars.", " dollars."),
+    ("I need", "", "Milk and eggs.", " Milk and eggs."),
+    ("I need", "", "Some milk.", " some milk."),
+    ("It costs 5", "", "Dollars.", " Dollars."),
+    ("Call (", "", "Sam", "Sam"),
+    ("Lunch with", "", "Siobhan tomorrow.", " Siobhan tomorrow."),
     ("(see notes)", "", "Then we left.", " then we left."),
     ("He said \"hi\"", "", "And left.", " and left."),
     ("Done.", "", "Next item.", " Next item."),
@@ -105,7 +108,7 @@ def test_join_leaves_text_alone_without_a_known_caret(text, context):
     ("Subject:", "", "Quarterly plan", " Quarterly plan"),
     # No extra space where one is already there or none belongs.
     ("Dear Sam, ", "", "Thanks.", "thanks."),
-    ("I need ", "", " Milk.", "milk."),
+    ("I need ", "", " Milk.", "Milk."),
     ("He said \"", "", "Hello.", "Hello."),
     ("(", "", "Maybe.", "maybe."),
     ("e-", "", "Mail.", "mail."),
@@ -113,9 +116,10 @@ def test_join_leaves_text_alone_without_a_known_caret(text, context):
     ("Line one\n", "", "Line two.", "Line two."),
     ("Items:\n- ", "", "Milk.", "Milk."),
     ("Items:\n-", "", "Milk.", "Milk."),
-    # Mid-sentence lowercase, except words that keep their capital.
+    # Mid-sentence, common words lose the capital; anything that may be a
+    # name keeps it.
     ("I met Sam and", "", "Sam said yes.", " Sam said yes."),
-    ("Sam came. Then", "", "Sam left.", " sam left."),
+    ("Sam came. Then", "", "Sam left.", " Sam left."),
     ("So", "", "I think so.", " I think so."),
     ("So", "", "I'm in.", " I'm in."),
     ("So", "", "I’ll go.", " I’ll go."),
@@ -125,14 +129,15 @@ def test_join_leaves_text_alone_without_a_known_caret(text, context):
     ("We need", "", "42 chairs.", " 42 chairs."),
     ("Thanks,", "", "Talk soon.", " talk soon."),
     # Trailing space and dropping the period before a continuation.
-    ("I need", " for the trip.", "Milk and eggs.", " milk and eggs"),
-    ("I need", "for the trip.", "Milk and eggs.", " milk and eggs "),
-    ("Buy", ", then cook.", "Milk.", " milk"),
-    ("Buy", ".", "Milk.", " milk"),
-    ("Buy", ")", "Milk.", " milk"),
-    ("Buy", "\nNext line", "Milk.", " milk."),
-    ("Buy", "Next sentence.", "Milk.", " milk. "),
-    ("Buy", " Next sentence.", "Milk.", " milk."),
+    ("I need", " for the trip.", "Milk and eggs.", " Milk and eggs"),
+    ("I need", "for the trip.", "Milk and eggs.", " Milk and eggs "),
+    ("I need", " for the trip.", "Some eggs.", " some eggs"),
+    ("Buy", ", then cook.", "Milk.", " Milk"),
+    ("Buy", ".", "Milk.", " Milk"),
+    ("Buy", ")", "Milk.", " Milk"),
+    ("Buy", "\nNext line", "Milk.", " Milk."),
+    ("Buy", "Next sentence.", "Milk.", " Milk. "),
+    ("Buy", " Next sentence.", "Milk.", " Milk."),
     ("Wait", " and see", "What...", " what..."),
     ("Is it", " or not", "Done?", " done?"),
 ])

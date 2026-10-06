@@ -396,9 +396,9 @@ class TemporaryClipboard(QObject):
             return
         self._start_selection_capture(send_copy, callback, int(timeout_ms))
 
-    def write_text(self, text: str) -> bool:
+    def write_text(self, text: str, html: str = "") -> bool:
         self._abort_selection_capture()
-        written = self._write_text(text)
+        written = self._write_text(text, html)
         if written:
             self._discard_pending()
         return written

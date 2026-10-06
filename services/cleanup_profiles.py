@@ -86,12 +86,21 @@ def cleanup_may_run(settings: dict) -> bool:
 
     Standard dictation cleans up when cleanup is on; a profile always does,
     and is reached from its shortcut or the Quick Record tab's choice.
+    Command Mode and transforms always use the cleanup model, so their
+    shortcuts count too.
     """
     if setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings):
         return True
     if settings.get(SettingsKey.QUICK_RECORD_PROFILE):
         return True
-    return any(profile.hotkey for profile in load_cleanup_profiles(settings))
+    if any(profile.hotkey for profile in load_cleanup_profiles(settings)):
+        return True
+    hotkeys = settings.get(SettingsKey.HOTKEYS)
+    if isinstance(hotkeys, dict) and hotkeys.get("command_mode"):
+        return True
+    from services.text_transforms import load_transforms
+
+    return any(transform.hotkey for transform in load_transforms(settings))
 
 
 def normalize_hotkey(hotkey: str) -> str:

@@ -274,6 +274,30 @@ _ALWAYS_CAPITAL = frozenset(
 )
 
 
+# Mid-sentence, only these common words lose the capital a speech engine
+# gives a dictation's first word. Anything else may be a name, and a stray
+# capital costs less than a lowercased one.
+_LOWERCASE_STARTS = frozenset("""
+some any all every each more most many much few other another both either
+neither one two three a an the and but or nor so yet for because if then than that this these
+those it its it's we we're we'll we've you you're you'll your he he's his
+she she's her they they're they'll their them me my mine our us there
+there's here what what's when where which who why how is are was were be
+been being am do does did done don't doesn't didn't can can't could
+couldn't would wouldn't should shouldn't will won't have has had haven't
+not no also just maybe perhaps still really to of in on at by with without
+from about into onto over under after before while as until since through
+during per via let's let please thanks thank okay ok yes yeah well actually
+anyway though although otherwise instead plus anything something nothing
+everything need needs want wants like likes get gets got make makes made go
+goes going went come comes came see sees saw say says said tell told ask
+asked use used work works working call called talk talking send sent check
+add remove fix update review meet start stop finish try keep put take give
+find think know feel hope look looks sound sounds seems sure great good
+nice fine right cool perfect
+""".split())
+
+
 def _opens_quote(line: str) -> bool:
     last = line[-1]
     return last in "“«" or (
@@ -305,7 +329,10 @@ def _lowercase_first_word(text: str, before: str) -> str:
     word = match.group(2)
     if not word[0].isupper() or any(char.isupper() for char in word[1:]):
         return text
-    if word.casefold() in _ALWAYS_CAPITAL or _named_in(word, before):
+    # A hyphenated compound ("e-" + "Mail") always continues the word.
+    compound = before[-1:] == "-" and before[-2:-1].isalnum()
+    common = word.casefold().replace("’", "'") in _LOWERCASE_STARTS
+    if not compound and (not common or _named_in(word, before)):
         return text
     start = match.start(2)
     return text[:start] + word[0].lower() + text[start + 1:]

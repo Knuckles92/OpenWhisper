@@ -1421,8 +1421,10 @@ class TranscriptionRuntime:
         should_copy = copy_clipboard or paste_blocked
         copy_ok = False
         if should_copy:
+            # A formatted snippet keeps its formatting when only copied.
             copy_ok = bool(
-                self.controller.ui_controller.copy_to_clipboard(transcript)
+                self.controller.ui_controller.copy_to_clipboard(transcript, html=html)
+                if html else self.controller.ui_controller.copy_to_clipboard(transcript)
             )
             if copy_ok:
                 logger.info("Transcription copied to clipboard")

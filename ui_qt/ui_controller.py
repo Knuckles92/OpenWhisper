@@ -183,6 +183,7 @@ class UIController(QObject):
         self.on_update_cancel: Optional[Callable] = None
         self.on_update_abandon: Optional[Callable] = None
         self.get_transcribing: Optional[Callable[[], bool]] = None
+        self.get_current_backend: Optional[Callable[[], object]] = None
         self.get_component_installing: Optional[Callable[[], bool]] = None
         self._last_update_result: Optional[UpdateCheckResult] = None
         self._update_dialog: Optional[AppUpdateDialog] = None
@@ -752,9 +753,12 @@ class UIController(QObject):
     def show_copied_animation(self):
         self.overlay.show_at_cursor(self.overlay.STATE_COPIED)
 
-    def copy_to_clipboard(self, text: str) -> bool:
-        """Copy text to the Qt clipboard. Returns True if the write succeeded."""
-        return self._temporary_clipboard.write_text(text)
+    def copy_to_clipboard(self, text: str, html: str = "") -> bool:
+        """Copy text, and rich text when given, to the Qt clipboard.
+
+        Returns True if the write succeeded.
+        """
+        return self._temporary_clipboard.write_text(text, html=html)
 
     def prefetch_clipboard_snapshot(self) -> None:
         """Snapshot the user's clipboard now, off the paste path. Any thread."""
@@ -954,6 +958,12 @@ class UIController(QObject):
 
     def _prepare_settings_dialog(self) -> SettingsDialog:
         dialog = self._ensure_settings_dialog()
+        if self.get_current_backend is not None:
+            from ui_qt.dialogs import settings_dictionary
+
+            # The Dictionary page says whether the live engine (a remote host
+            # included) takes the words into the speech model itself.
+            settings_dictionary.set_backend_provider(self.get_current_backend)
         dialog.on_dictation_transcribe = self.on_dictation_transcribe
         dialog.get_meeting_active = self.get_meeting_active
         dialog.on_audio_device_changed = self.on_audio_device_changed

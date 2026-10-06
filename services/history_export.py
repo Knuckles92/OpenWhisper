@@ -269,10 +269,13 @@ def _was_cleaned(entry: Dict[str, Any]) -> bool:
 
 def _cleanup_label(entry: Dict[str, Any]) -> str:
     model = entry.get("cleanup_model") or ""
-    if not model:
-        return "Cleaned"
     provider = entry.get("cleanup_provider") or ""
-    return f"{provider} · {model}" if provider else model
+    label = (f"{provider} · {model}" if provider else model) if model else "Cleaned"
+    raw = entry.get("raw_text")
+    if raw and entry.get("text") == raw:
+        # Undo AI edit chose the original; the AI version stays in cleaned_text.
+        label += " (original kept)"
+    return label
 
 
 def _render_markdown(

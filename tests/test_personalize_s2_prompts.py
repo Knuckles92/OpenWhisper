@@ -245,10 +245,20 @@ TERMINAL_LINES = config.TRANSCRIPT_CLEANUP_TERMINAL_LINES
     ("identity", "note"), [(NOTEPAD, ""), (None, INLINE), (TERMINAL, TERMINAL_LINES)],
 )
 def test_lists_stay_inline_in_terminals_and_unknown_apps(terminals, level, identity, note):
-    prompt = _prompt(_on(TRANSCRIPT_CLEANUP_LEVEL=level), job=_job(identity))
+    # With styles off the list note is the only thing keeping a terminal on
+    # one line; with them on, the style block says it instead (below).
+    settings = _on(TRANSCRIPT_CLEANUP_LEVEL=level, APP_STYLES_ENABLED=False)
+    prompt = _prompt(settings, job=_job(identity))
 
     expected = PRESETS[level] + (f"\n\n{note}" if note else "")
     assert prompt == expected
+
+
+def test_a_terminal_is_told_to_stay_on_one_line_only_once(terminals):
+    prompt = _prompt(_on(TRANSCRIPT_CLEANUP_LEVEL="medium"), job=_job(TERMINAL))
+
+    assert TERMINAL_LINES not in prompt
+    assert prompt.count("terminal") == 1
 
 
 def test_a_dictation_without_focus_capture_counts_as_an_unknown_app(terminals):

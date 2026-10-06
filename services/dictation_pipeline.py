@@ -253,10 +253,17 @@ def compose_cleanup_prompt(
         snapshot = job.snapshot(timeout=config.CONTEXT_CAPTURE_DEADLINE_S)
 
     blocks = []
+    style = None
     if use_style:
-        blocks.append(_block("style", lambda: app_styles.prompt_block(
-            app_styles.style_for(snapshot, settings))))
-    if profile is None and job is not None and job.mode == JobMode.DICTATION:
+        try:
+            style = app_styles.style_for(snapshot, settings)
+        except Exception:
+            logger.debug("App style unavailable", exc_info=True)
+        blocks.append(_block("style", lambda: app_styles.prompt_block(style)))
+    # The style block already tells a terminal to stay on one line.
+    terminal_covered = style is not None and style.surface == app_styles.Surface.TERMINAL
+    if (profile is None and job is not None and job.mode == JobMode.DICTATION
+            and not terminal_covered):
         blocks.append(_block("lists", lambda: cleanup_prompts.inline_lists_block(
             settings, job.snapshot(timeout=config.CONTEXT_CAPTURE_DEADLINE_S))))
     blocks.append(_block("dictionary", lambda: dictionary.prompt_block(

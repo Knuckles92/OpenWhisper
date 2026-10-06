@@ -38,6 +38,7 @@ from services.hf_access import (
     is_model_cached,
     resolve_model_repo,
 )
+from services import dictionary
 from services.recorder import AudioRecorder
 from services.runtime import (
     HotkeyRuntime,
@@ -445,6 +446,7 @@ class ApplicationController(QObject):
         self.ui_controller.on_update_cancel = self.cancel_update_download
         self.ui_controller.on_update_abandon = self.discard_update_handoff
         self.ui_controller.get_transcribing = self.is_transcribing
+        self.ui_controller.get_current_backend = lambda: self.current_backend
         self.ui_controller.on_paste_text_now = self.transcription_runtime.paste_text_now
         self.ui_controller.get_component_installing = (
             lambda: component_coordinator.is_any_installing()
@@ -2582,6 +2584,9 @@ class ApplicationController(QObject):
         self.dictionary_term_learned.connect(
             lambda term: self.ui_controller.on_dictionary_term_learned(term)
         )
+        # Learning saves from a worker thread; the queued signal brings the
+        # notice to the Qt thread.
+        dictionary.set_learned_callback(self.dictionary_term_learned.emit)
         self.remote_link_poke.connect(self._publish_remote_link)
         self.remote_catalog_received.connect(self._on_remote_catalog)
         self.remote_settled.connect(self._on_remote_settled)

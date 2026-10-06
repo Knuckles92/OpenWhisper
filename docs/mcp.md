@@ -28,7 +28,7 @@ available, the copy has `<PASTE_TOKEN>` (or the prompt asks for the token) and
 you paste it from **Access token**.
 - **Permissions**, with separate switches for **Rename dictations**,
   **Rename finished meetings**, and **Read app preferences**. Expand
-  **Choose individual preferences** and its categories for all 20 write permissions.
+  **Choose individual preferences** and its categories for all 21 write permissions.
   Reading preferences does not grant permission to change them. Permissions can
   be configured while MCP is off and apply to every assistant using the token.
 
