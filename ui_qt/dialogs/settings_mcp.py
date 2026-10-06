@@ -395,7 +395,7 @@ class McpSettingsPage(QWidget):
             "permissions you choose. Share only with trusted assistants."
         )
         self.copy_setup.clicked.connect(self._copy_setup)
-        self.preview = _Disclosure("Preview setup prompt", inline=True)
+        self.preview = _Disclosure("Preview prompt", inline=True)
         self.copy_actions = _AdaptiveRow(
             [(self.copy_setup, 0), None, (self.preview.toggle, 0)], spacing=10
         )
@@ -743,8 +743,11 @@ class McpSettingsPage(QWidget):
         kinds = ("setup prompt", "Claude Code command", "Cursor JSON", "ChatGPT config")
         kind = self.setup_kind.currentIndex()
         self.copy_setup.setText(f"Copy {kinds[kind]}")
-        self.preview.toggle.setText(f"Preview {kinds[kind]}")
-        self.preview.toggle.setAccessibleName(self.preview.toggle.text())
+        self.preview.toggle.setText(
+            f"Preview {('prompt', 'command', 'JSON', 'config')[kind]}"
+        )
+        self.preview.toggle.setAccessibleName(f"Preview {kinds[kind]}")
+        self.preview.toggle.setToolTip(f"Preview {kinds[kind]}")
         self.copy_actions.reflow()
         has_token = bool(self.server.token())
         hints = (

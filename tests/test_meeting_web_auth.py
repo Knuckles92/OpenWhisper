@@ -312,6 +312,8 @@ class TestHostOnlyAuthz:
             "mic_available": False,
             "loopback_available": False,
             "message": "",
+            "audio_incomplete": False,
+            "integrity_error": "",
         }
 
     def test_activity_and_token_rotation_are_host_only(self, client):

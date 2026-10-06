@@ -56,6 +56,9 @@ def test_settings_read_cache_isolated_nested_values_and_external_changes(tmp_pat
 
 
 def test_settings_first_show_and_search_do_not_build_hidden_destinations(monkeypatch):
+    from services.settings import SettingsKey, SettingsView, settings_manager
+
+    settings_manager.save_setting(SettingsKey.SETTINGS_VIEW, SettingsView.ADVANCED)
     monkeypatch.setattr("ui_qt.dialogs.settings_models.scan_cached_models", lambda **_kwargs: {})
     monkeypatch.setattr("ui_qt.dialogs.settings_downloads.scan_cached_models", lambda **_kwargs: {})
     monkeypatch.setattr("services.local_asr.cache.inventory", lambda: {})
