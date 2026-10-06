@@ -270,6 +270,8 @@ def test_an_empty_library_offers_starters(make_dialog):
     assert panel.text_edit.hasFocus()
     assert panel.preview.text() == "Say “my calendar link” → add the text it inserts."
     assert panel.has_unsaved_changes()
+    # Closing the visible window would ask about this unfinished draft.
+    dialog.hide()
 
 
 def test_snippet_text_is_never_logged(make_dialog, caplog):

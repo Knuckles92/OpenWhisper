@@ -122,7 +122,8 @@ class SnippetsPanel(QWidget):
     """Pick a snippet on the left, edit it on the right; stacks when narrow.
 
     An unsaved edit is never dropped silently: switching snippets asks to
-    save it first, and ``refresh`` leaves it in place.
+    save it first, ``refresh`` leaves it in place, and Settings calls
+    ``save_draft`` when the page is left.
     """
 
     snippets_changed = pyqtSignal()
@@ -339,6 +340,29 @@ class SnippetsPanel(QWidget):
         if answer == QMessageBox.StandardButton.Save:
             return self.save_snippet()
         return answer == QMessageBox.StandardButton.Discard
+
+    def save_draft(self, *, ask: bool = False) -> bool:
+        """Save an unsaved edit, as Settings saves everything else.
+
+        A draft that can't be saved yet stays in the editor with the reason.
+        With ``ask`` the user discards it or keeps editing instead.
+
+        Returns:
+            False when the user chose to keep editing.
+        """
+        if not self.has_unsaved_changes() or self.save_snippet() or not ask:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Unsaved snippet",
+            f"{self.message.text()} Discard your changes to this snippet?",
+            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Discard:
+            return False
+        self.refresh(self._saved.id)
+        return True
 
     def refresh(self, selected_id: str | None = None) -> None:
         """Re-read the library; keeps an unsaved draft unless told what to select."""

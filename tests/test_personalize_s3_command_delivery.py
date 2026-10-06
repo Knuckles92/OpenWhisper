@@ -201,8 +201,9 @@ def _command_job(selection, snapshot=None):
 def test_a_command_pastes_its_rewrite_and_keeps_the_selection_as_raw_text(h):
     h.runtime._transcript_cleanup = FakeCleaner("Dear Sir or Madam,")
     h.controller._pending_source_name = "Command Mode"
+    focus_context.set_service(FakeService(FocusSnapshot(), current=NOTEPAD))
 
-    assert h.runtime._claim_job(_command_job("hey you"))
+    assert h.runtime._claim_job(_command_job("hey you", FocusSnapshot(NOTEPAD)))
     h.runtime.transcribe_audio_file(h.audio)
 
     assert h.ui.stages == ["Dear Sir or Madam,"]
@@ -236,13 +237,14 @@ def test_a_failed_command_pastes_nothing(h):
 
     h.paste.assert_not_called()
     assert h.history.entries == []
-    assert h.ui.statuses[-1] == "Error: Select the text to change first"
+    assert h.ui.statuses[-1] == "Select the text to change first"
     assert not h.runtime.has_active_job
 
 
 def test_a_transform_runs_through_the_job_slot_to_paste_and_history(h):
     focus_context.set_service(FakeService(
-        FocusSnapshot(NOTEPAD, TextContext(selected="teh draft", selection_known=True))))
+        FocusSnapshot(NOTEPAD, TextContext(selected="teh draft", selection_known=True)),
+        current=NOTEPAD))
     h.runtime._transcript_cleanup = FakeCleaner("The draft.")
 
     h.controller.command_runtime.run_transform("fix-grammar")

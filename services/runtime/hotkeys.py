@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Dict, Optional
 from PyQt6.QtCore import QTimer, Qt
 
 from config import config
-from services import text_transforms
+from services import synthetic_keys, text_transforms
 from services._hotkey_common import OrderedDispatcher
 from services.hotkey_manager import HotkeyManager, USE_PYNPUT_BACKEND
 from services.cleanup_profiles import load_cleanup_profiles
@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 #: Set to True on a top-level window (the Scratchpad) to give it the same
 #: focused-window shortcuts as the main window.
 HOTKEY_WINDOW_PROPERTY = "openwhisperHotkeyWindow"
+
+KEYS_STILL_HELD = "Didn't paste the original: the shortcut keys were still held"
 
 
 def is_hotkey_window(window, main_window) -> bool:
@@ -249,7 +251,7 @@ class HotkeyRuntime:
             on_meeting_toggle=controller.toggle_meeting_mode,
             on_scratchpad_toggle=controller.scratchpad_toggle_requested.emit,
             on_cycle_language=controller.cycle_language_requested.emit,
-            on_paste_last_original=controller.paste_last_original_requested.emit,
+            on_paste_last_original=self._paste_last_original_after_keys_up,
             on_status_update=controller.update_status_with_auto_hide,
             on_status_update_auto_hide=controller.update_status_with_auto_hide,
         )
@@ -279,6 +281,18 @@ class HotkeyRuntime:
             self.controller.status_update.emit("Push-and-hold recording enabled")
         else:
             self.controller.status_update.emit("Toggle recording enabled")
+
+    def _paste_last_original_after_keys_up(self) -> None:
+        """Hand the paste to the Qt thread once the shortcut's modifiers are up.
+
+        Runs on the backend's own thread for this press. The paste keystroke
+        does not release keys the user still holds, so Ctrl+Alt+O would reach
+        the app as Ctrl+Alt+V (Paste Special, or nothing).
+        """
+        if not synthetic_keys.wait_for_modifiers_released():
+            self.controller.status_update.emit(KEYS_STILL_HELD)
+            return
+        self.controller.paste_last_original_requested.emit()
 
     def _queue_record_press(self, at: float) -> None:
         self._dispatcher.submit(self.record_key_pressed, at)
@@ -347,9 +361,9 @@ class HotkeyRuntime:
             time.sleep(0.01)
         if not self.controller.recorder.is_recording:
             return  # start failed internally; its failure path updated status
-        if not self.controller.recorder.has_recording_data():
-            # The cancel hotkey already claimed this hold (cancel clears the
-            # captured frames), or the stream never delivered audio.
+        if getattr(self.controller.recorder, "capture_canceled", False) is True:
+            # The cancel hotkey already claimed this hold. No audio yet is
+            # not a cancel: the first block can arrive after a quick tap.
             return
         held_ms = (at - press_time) * 1000 if press_time else 0
         if held_ms >= config.RECORD_MIN_HOLD_MS:
@@ -381,7 +395,7 @@ class HotkeyRuntime:
         if self._recordings_ended != self._hold_epoch:
             return  # it already ended another way, maybe into transcription
         recorder = self.controller.recorder
-        if recorder.is_recording and recorder.has_recording_data():
+        if recorder.is_recording and getattr(recorder, "capture_canceled", False) is not True:
             self.controller.cancel()
 
     def _latch(self) -> None:

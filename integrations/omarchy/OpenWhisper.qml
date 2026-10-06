@@ -13,10 +13,11 @@ BarWidget {
   readonly property bool connected: status.available === true && now - (status.updated || 0) < 7000
   readonly property bool busy: connected && (status.recording || status.transcribing || status.meeting)
   readonly property string label: !connected ? "OpenWhisper · click to open" :
-    status.meeting ? "Meeting in progress" : status.recording ? "Recording · click to stop" :
+    status.meeting ? "Meeting in progress" :
+    status.hands_free ? "Hands-free · click to stop" : status.recording ? "Recording · click to stop" :
     status.transcribing ? "Transcribing…" : status.enabled ? "OpenWhisper · click to record" : "OpenWhisper shortcuts paused"
-  implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
+  implicitWidth: row.implicitWidth
+  implicitHeight: row.implicitHeight
 
   function trigger(action) {
     if (!connected) {
@@ -42,17 +43,40 @@ BarWidget {
     }
   }
 
-  BarIconButton {
-    id: button
+  RowLayout {
+    id: row
     anchors.fill: parent
-    bar: root.bar
-    text: root.status.transcribing && root.connected ? "󰔟" : "󰍬"
-    active: root.busy
-    tooltipText: root.label + "\nRight-click: cancel · Middle-click: open"
-    onPressed: function(mouseButton) {
-      if (mouseButton === Qt.MiddleButton) root.trigger("show")
-      else if (mouseButton === Qt.RightButton) root.trigger("cancel")
-      else root.trigger(root.status.meeting ? "meeting" : "record")
+    spacing: 0
+
+    BarIconButton {
+      id: button
+      bar: root.bar
+      text: !root.connected ? "󰍬" : root.status.transcribing ? "󰔟" :
+        root.status.hands_free ? "󰌾" : "󰍬"
+      active: root.busy
+      tooltipText: root.label + "\nRight-click: cancel · Middle-click: open"
+      onPressed: function(mouseButton) {
+        if (mouseButton === Qt.MiddleButton) root.trigger("show")
+        else if (mouseButton === Qt.RightButton) root.trigger("cancel")
+        else root.trigger(root.status.meeting ? "meeting" : "record")
+      }
+    }
+
+    // Shown only with two or more dictation languages to switch between.
+    BarIconButton {
+      bar: root.bar
+      visible: root.connected && !!root.status.language
+      text: root.status.language || ""
+      tooltipText: (root.status.language_name || "Language") + " · click to switch language"
+      onPressed: function(mouseButton) { root.trigger("cycle_language") }
+    }
+
+    BarIconButton {
+      bar: root.bar
+      visible: root.connected
+      text: "󰏫"
+      tooltipText: "Scratchpad · click to show or hide"
+      onPressed: function(mouseButton) { root.trigger("scratchpad") }
     }
   }
 

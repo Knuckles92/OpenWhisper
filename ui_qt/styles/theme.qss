@@ -1961,7 +1961,7 @@ QLabel#meetingModelSummary {
 
 QPushButton#cleanupModelManagerLink,
 QPushButton#meetingModelManagerLink,
-QPushButton#cleanupRulesOpenCleanupLink {
+QPushButton#settingsPageLink {
     color: @accent;
     background-color: transparent;
     border: none;
@@ -1973,14 +1973,14 @@ QPushButton#cleanupRulesOpenCleanupLink {
 
 QPushButton#cleanupModelManagerLink:hover,
 QPushButton#meetingModelManagerLink:hover,
-QPushButton#cleanupRulesOpenCleanupLink:hover {
+QPushButton#settingsPageLink:hover {
     color: @accent-soft;
     text-decoration: underline;
 }
 
 QPushButton#cleanupModelManagerLink:pressed,
 QPushButton#meetingModelManagerLink:pressed,
-QPushButton#cleanupRulesOpenCleanupLink:pressed {
+QPushButton#settingsPageLink:pressed {
     color: @accent;
 }
 

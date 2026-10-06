@@ -4,10 +4,11 @@ Command Mode records a spoken instruction like a dictation and hands the
 transcript here instead of to cleanup; a transform rewrites the selection
 with a saved instruction and records nothing. Both read the selection from
 UI Automation when the focus capture knows it, and otherwise copy it once
-the shortcut's keys are up, never in a terminal. Both run on the AI cleanup
-client inside the transcription job slot, so a Cancel ends them and their
-result is pasted and saved like a dictation's. Selections, instructions and
-results are never logged.
+the shortcut's keys are up, never in a terminal, an app the user excluded
+or a password field. Both run on the AI cleanup client inside the
+transcription job slot, so a Cancel ends them and their result is pasted
+and saved like a dictation's. Selections, instructions and results are
+never logged.
 """
 
 from __future__ import annotations
@@ -43,6 +44,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 NO_PROVIDER_MESSAGE = "Set up AI cleanup to use Command Mode"
+KEYS_HELD_MESSAGE = "Release the shortcut keys, then try again"
+PASSWORD_MESSAGE = "OpenWhisper doesn't read password fields"
 #: How long the worker waits for the selection after the transcript is in.
 #: It covers the modifier wait and the copy's own timeout, both started at
 #: the stop, which the post-roll and the final decode usually outlast.
@@ -53,7 +56,27 @@ SELECTION_WAIT_S = (
 )
 
 
-def _resolve(future: Optional[Future], value: str) -> None:
+class CommandRefused(RuntimeError):
+    """Nothing to paste, for a reason the user acts on.
+
+    Not a failed transcription: the runtime shows the message as it is and
+    keeps no instruction audio.
+    """
+
+
+@dataclass(frozen=True)
+class UnreadSelection:
+    """A selection deliberately left unread, and the message that says why.
+
+    Resolves a job's selection Future in place of the text, so
+    ``DictationJob.selection_text`` gives "" and nothing writes over a
+    selection that is still there.
+    """
+
+    message: str
+
+
+def _resolve(future: Optional[Future], value) -> None:
     if future is not None and not future.done():
         try:
             future.set_result(value)
@@ -69,6 +92,18 @@ def _snapshot(future: Optional[Future], timeout: float):
     except Exception:
         return None
     return value if isinstance(value, focus_context.FocusSnapshot) else None
+
+
+def _refusal(snapshot) -> Optional[UnreadSelection]:
+    """Why the capture refused to read this app's selection, or None."""
+    text = snapshot.text if snapshot is not None else None
+    if text is None or not text.blocked:
+        return None
+    if text.source != focus_context.EXCLUDED_SOURCE:
+        return UnreadSelection(PASSWORD_MESSAGE)
+    kind = focus_context.catalog.classify(snapshot.identity)
+    name = kind.name if kind is not None and kind.name else "this app"
+    return UnreadSelection(f"OpenWhisper doesn't read text in {name}")
 
 
 def _known_selection(snapshot) -> Optional[str]:
@@ -237,15 +272,21 @@ class CommandRuntime:
             logger.debug("Focus capture could not start", exc_info=True)
             return None
 
-    def _read_selection(self, focus: Optional[Future], done: Callable[[str], None]) -> None:
+    def _read_selection(self, focus: Optional[Future], done: Callable[[object], None]) -> None:
         """Find the selected text off the Qt thread, then ``done(text)``.
 
         UI Automation's answer wins, even an empty one. Otherwise the text is
         copied once the shortcut's modifiers are up, except in a terminal,
-        where a copy shortcut would interrupt the running program.
+        where a copy shortcut would interrupt the running program. ``done``
+        gets an UnreadSelection instead when the app or field must not be
+        read, or the modifiers stayed down; nothing is copied then.
         """
         try:
             snapshot = _snapshot(focus, config.CONTEXT_CAPTURE_DEADLINE_S)
+            refusal = _refusal(snapshot)
+            if refusal is not None:
+                done(refusal)
+                return
             known = _known_selection(snapshot)
             if known is not None:
                 done(known)
@@ -256,7 +297,12 @@ class CommandRuntime:
                 return
             copy_line = synthetic_keys.copies_line_without_selection(identity)
             if not synthetic_keys.wait_for_modifiers_released():
-                logger.info("Shortcut keys still held; copying the selection anyway")
+                # The app would get Ctrl+C plus the held keys: Ctrl+Alt+C
+                # types a character on AltGr layouts, Ctrl+Shift+C opens
+                # DevTools in browsers.
+                logger.info("Shortcut keys still held; not copying the selection")
+                done(UnreadSelection(KEYS_HELD_MESSAGE))
+                return
 
             def copied(text: str) -> None:
                 text = text or ""
@@ -285,17 +331,19 @@ class CommandRuntime:
         selection: Future = Future()
         job = DictationJob(
             mode=JobMode.TRANSFORM,
-            # Without app context the capture only finds the selection; the
-            # job, and so history, does not learn the app.
+            # Without app context the capture only finds the selection and
+            # where to paste; the job's focus, and so history, does not
+            # learn the app.
             focus=focus if resolve_app_context_enabled(settings) else None,
             selection=selection,
+            target=focus,
         )
         runtime = self.controller.transcription_runtime
         if not runtime.begin_rewrite_job(job, source_name=f"Transform · {transform.name}"):
             return
         self.controller.status_update.emit(f"Rewriting · {transform.name}...")
 
-        def selected(text: str) -> None:
+        def selected(text) -> None:
             self._qt.requested.emit(lambda: self._transform_selected(job, transform, text))
 
         threading.Thread(
@@ -305,9 +353,12 @@ class CommandRuntime:
             daemon=True,
         ).start()
 
-    def _transform_selected(self, job: DictationJob, transform, text: str) -> None:
+    def _transform_selected(self, job: DictationJob, transform, text) -> None:
         runtime = self.controller.transcription_runtime
         _resolve(job.selection, text)
+        if isinstance(text, UnreadSelection):
+            runtime.abandon_rewrite_job(text.message)
+            return
         if not text.strip():
             runtime.abandon_rewrite_job("Select text to transform")
             return
@@ -321,7 +372,7 @@ class CommandRuntime:
         # a dictation's cleanup.
         text_rewrite.configure_cleaner(cleaner, settings)
         if not cleaner.is_available():
-            raise RuntimeError(NO_PROVIDER_MESSAGE)
+            raise CommandRefused(NO_PROVIDER_MESSAGE)
         context_block = ""
         if job is not None and resolve_app_context_read_text(settings):
             try:
@@ -339,7 +390,7 @@ class CommandRuntime:
             context_block=context_block,
         )
         if error:
-            raise RuntimeError(error)
+            raise (CommandRefused if error in text_rewrite.REFUSALS else RuntimeError)(error)
         info = CleanupInfo(
             provider=cleaner.provider,
             model=cleaner.model,
@@ -357,21 +408,26 @@ class CommandRuntime:
         the dictation path, with the original selection as ``raw_text``.
 
         Raises:
-            RuntimeError: With a user-facing message when nothing can be pasted.
+            CommandRefused: When there is nothing to do, with the message to show.
+            RuntimeError: With a user-facing message when the AI model fails.
         """
         settings = settings_manager.load_all_settings()
         instruction = dictation_pipeline.prepare_text(raw, job, settings).text.strip()
         if not instruction:
-            raise RuntimeError("Didn't catch an instruction")
+            raise CommandRefused(text_rewrite.NO_INSTRUCTION_MESSAGE)
         selection = ""
         if job is not None and job.selection is not None:
             self._read_selection_once(job.selection)
             selection = job.selection_text(timeout=SELECTION_WAIT_S)
             if not job.selection.done():
-                raise RuntimeError("Couldn't read the selected text. Try again.")
+                raise CommandRefused("Couldn't read the selected text. Try again.")
+            unread = job.selection.result()
+            if isinstance(unread, UnreadSelection):
+                # Writing at the cursor would replace a selection still there.
+                raise CommandRefused(unread.message)
         writing = not selection.strip()
         if writing and not resolve_command_mode_insert_without_selection(settings):
-            raise RuntimeError("Select text first")
+            raise CommandRefused("Select text first")
         self.controller.overlay_state_update.emit(OverlayState.REWRITING)
         self.controller.status_update.emit("Writing..." if writing else "Rewriting...")
         return self._rewrite(selection, instruction, job=job)

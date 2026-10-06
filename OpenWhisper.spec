@@ -82,10 +82,12 @@ hiddenimports = [
     "openpyxl",
     "lxml",
 ]
-# The public widget exports use import_module(), so freeze analysis cannot
-# discover them from callers such as MainWindow. Keep inactive screens lazy
-# at runtime while including their modules in the packaged app.
+# The public widget and dialog exports and Settings' page registry
+# (settings_dialog._PAGE_MODULES) use import_module(), so freeze analysis
+# cannot discover them from callers such as MainWindow. Keep inactive screens
+# lazy at runtime while including their modules in the packaged app.
 hiddenimports += collect_submodules("ui_qt.widgets")
+hiddenimports += collect_submodules("ui_qt.dialogs")
 
 # services/credentials.py chooses one explicit OS backend at runtime rather
 # than allowing keyring entry-point discovery. Keep the matching backend in

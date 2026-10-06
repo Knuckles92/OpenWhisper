@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from config import config
+from services import text_rewrite
 from services.settings import SettingsKey, resolve_scratchpad_always_on_top, settings_manager
 from ui_qt.utils.desktop import compositor_managed, without_window_buttons
 from ui_qt.utils.font_scale import current_ui_font_scale
@@ -583,21 +584,8 @@ class ScratchpadWindow(QWidget):
             action = self.transform_menu.addAction(transform.name)
             action.triggered.connect(lambda _checked=False, transform=transform: self.apply_transform(transform))
 
-    @staticmethod
-    def _rewriter():
-        try:
-            from services import text_rewrite
-        except ImportError:
-            return None
-        rewrite = getattr(text_rewrite, "rewrite_standalone", None)
-        return rewrite if callable(rewrite) else None
-
     def apply_transform(self, transform) -> None:
         """Rewrite the selection, or everything, with a saved transform."""
-        rewrite = self._rewriter()
-        if rewrite is None:
-            self._notice("Transforms aren't available yet")
-            return
         cursor = QTextCursor(self.editor.textCursor())
         if not cursor.hasSelection():
             cursor.select(QTextCursor.SelectionType.Document)
@@ -618,12 +606,15 @@ class ScratchpadWindow(QWidget):
         logger.info("Scratchpad transform started (%d characters)", len(text))
 
         def work() -> None:
-            result, error = None, ""
+            result, error = "", ""
             try:
-                result = rewrite(text, instruction, settings)
+                result, message = text_rewrite.rewrite_standalone(text, instruction, settings)
+                error = message or ""
             except Exception as exc:
+                # Expected failures come back as the message; this is a bug,
+                # and its text could quote the draft.
                 logger.warning("Scratchpad transform failed (%s)", type(exc).__name__)
-                error = str(exc) if isinstance(exc, RuntimeError) and str(exc) else "Couldn't transform the text"
+                result, error = "", "Couldn't transform the text"
             try:
                 self._transform_finished.emit(generation, result, error)
             except RuntimeError:

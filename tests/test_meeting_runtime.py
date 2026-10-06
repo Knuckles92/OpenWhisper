@@ -101,11 +101,6 @@ def test_off_backend_skips_speaker_model_download(runtime, monkeypatch):
         "load_all_settings",
         lambda: {SettingsKey.MEETING_SPEAKER_ID_BACKEND: MeetingSpeakerIdBackend.OFF},
     )
-    monkeypatch.setattr(
-        _RUNTIME_GLOBALS["settings_manager"],
-        "load_audio_input_device",
-        lambda: None,
-    )
     called = []
     monkeypatch.setitem(
         _RUNTIME_GLOBALS,

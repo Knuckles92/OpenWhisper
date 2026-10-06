@@ -1,9 +1,7 @@
 """The floating Scratchpad: showing it, saving it, dictating into it, transforms."""
 import logging
 import os
-import sys
 import time
-import types
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -13,9 +11,8 @@ from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWidgets import QApplication, QAbstractButton
 
-import services
 from config import config
-from services import focus_context, text_transforms
+from services import focus_context, text_rewrite, text_transforms
 from services.settings import SettingsKey, settings_manager
 from services.text_transforms import Transform
 from ui_qt.widgets import scratchpad
@@ -63,10 +60,8 @@ def _settle(pad, timeout=3.0):
 
 
 def _install_rewriter(monkeypatch, rewrite):
-    module = types.ModuleType("services.text_rewrite")
-    module.rewrite_standalone = rewrite
-    monkeypatch.setitem(sys.modules, "services.text_rewrite", module)
-    monkeypatch.setattr(services, "text_rewrite", module, raising=False)
+    """Stand in for rewrite_standalone, which returns (text, None) or ("", message)."""
+    monkeypatch.setattr(text_rewrite, "rewrite_standalone", rewrite)
 
 
 def _wait_for_transform(pad, timeout=3.0):
@@ -326,15 +321,6 @@ class TestTransforms:
         assert [action.text() for action in actions] == ["No transforms yet"]
         assert not actions[0].isEnabled()
 
-    def test_unavailable_rewrites_say_so(self, pad, monkeypatch):
-        monkeypatch.setitem(sys.modules, "services.text_rewrite", None)
-        monkeypatch.delattr(services, "text_rewrite", raising=False)
-        pad.editor.setPlainText("some words")
-        pad.apply_transform(POLISH)
-        assert pad.status_label.text() == "Transforms aren't available yet"
-        assert pad.text() == "some words"
-        assert not pad.editor.isReadOnly()
-
     def test_transform_rewrites_everything_off_the_qt_thread(self, pad, monkeypatch, caplog):
         import threading
 
@@ -343,7 +329,7 @@ class TestTransforms:
         def rewrite(text, instruction, settings):
             threads.append(threading.current_thread() is threading.main_thread())
             assert instruction == POLISH.instruction
-            return text.upper()
+            return text.upper(), None
 
         _install_rewriter(monkeypatch, rewrite)
         pad.editor.setPlainText("private draft words")
@@ -361,7 +347,7 @@ class TestTransforms:
         assert pad.text() == "private draft words"
 
     def test_transform_rewrites_only_the_selection(self, pad, monkeypatch):
-        _install_rewriter(monkeypatch, lambda text, instruction, settings: f"[{text}]")
+        _install_rewriter(monkeypatch, lambda text, instruction, settings: (f"[{text}]", None))
         pad.editor.setPlainText("keep this but change that")
         cursor = pad.editor.textCursor()
         cursor.setPosition(14)
@@ -373,14 +359,14 @@ class TestTransforms:
 
     def test_a_failed_transform_leaves_the_text(self, pad, monkeypatch):
         def rewrite(text, instruction, settings):
-            raise RuntimeError("Set up AI cleanup to use transforms")
+            return "", "Set up AI cleanup to rewrite text"
 
         _install_rewriter(monkeypatch, rewrite)
         pad.editor.setPlainText("as it was")
         pad.apply_transform(POLISH)
         _wait_for_transform(pad)
         assert pad.text() == "as it was"
-        assert pad.status_label.text() == "Set up AI cleanup to use transforms"
+        assert pad.status_label.text() == "Set up AI cleanup to rewrite text"
 
     def test_nothing_to_transform(self, pad, monkeypatch):
         _install_rewriter(monkeypatch, MagicMock())

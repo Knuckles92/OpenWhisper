@@ -60,14 +60,16 @@ def _windows_clipboard_user32():
 def system_clipboard_sequence() -> ClipboardSequenceSource | None:
     """Return a reader for the OS clipboard change counter, if there is one.
 
-    Windows bumps ``GetClipboardSequenceNumber`` on every write by any
-    process, while reads (even ones that make another app render a delayed
-    format) leave it alone, so an unchanged number proves the clipboard still
-    holds what an earlier snapshot captured. Other platforms return None and
-    always capture at paste time: ``QClipboard.dataChanged`` misses other
-    apps' copies on macOS until OpenWhisper is activated, and trusting a
-    stale snapshot would restore it over the user's newer copy.
+    Windows bumps ``GetClipboardSequenceNumber`` and macOS
+    ``NSPasteboard.changeCount`` on every write by any process, while reads
+    (even ones that make another app render a delayed format) leave them
+    alone, so an unchanged number proves the clipboard still holds what an
+    earlier snapshot captured. X11 and Wayland return None and always
+    capture at paste time: trusting a stale snapshot would restore it over
+    the user's newer copy.
     """
+    if sys.platform == "darwin":
+        return _mac_change_count()
     user32 = _windows_clipboard_user32()
     if user32 is None:
         return None
@@ -78,6 +80,34 @@ def system_clipboard_sequence() -> ClipboardSequenceSource | None:
     def sequence() -> int | None:
         # Zero means this window station has no clipboard access.
         return int(read()) or None
+
+    return sequence
+
+
+def _mac_change_count() -> ClipboardSequenceSource | None:
+    """The general pasteboard's change count, once AppKit is loaded.
+
+    Qt's Cocoa clipboard never signals another app's copy while OpenWhisper
+    is in the background, which it is during Command Mode. AppKit comes with
+    pynput's pyobjc but is slow to import, so the first reads start the
+    import in the background and report no count until it is ready.
+    """
+    if QGuiApplication.platformName() != "cocoa":
+        return None
+
+    def sequence() -> int | None:
+        appkit, objc = sys.modules.get("AppKit"), sys.modules.get("objc")
+        if appkit is None or objc is None:
+            from services.focus_context import _mac
+
+            _mac._appkit()
+            return None
+        try:
+            with objc.autorelease_pool():
+                return int(appkit.NSPasteboard.generalPasteboard().changeCount())
+        except Exception as exc:
+            logger.debug("Could not read the pasteboard change count: %s", exc)
+            return None
 
     return sequence
 
@@ -268,6 +298,9 @@ class _PrefetchedSnapshot:
 
 #: How often a selection capture looks for the copy to land.
 SELECTION_POLL_MS = 10
+#: Without a change counter, every this many polls the clipboard's text is
+#: compared with the original, for copies Qt does not signal.
+SELECTION_TEXT_POLLS = 5
 
 
 @dataclass
@@ -283,6 +316,9 @@ class _SelectionCapture:
     settling: int | None = None
     #: The clipboard changed since the copy was sent.
     changed: bool = False
+    #: The copy shortcut went out, so the clipboard may hold the selection.
+    sent: bool = False
+    polls: int = 0
 
 
 class TemporaryClipboard(QObject):
@@ -570,6 +606,7 @@ class TemporaryClipboard(QObject):
             logger.warning("Could not send the copy shortcut: %s", exc)
             self._finish_selection("")
             return
+        self._selection.sent = True
         self._selection_timer.start()
 
     def _poll_selection(self) -> None:
@@ -578,6 +615,13 @@ class TemporaryClipboard(QObject):
             self._selection_timer.stop()
             return
         expired = time.monotonic() >= capture.deadline
+        capture.polls += 1
+        if capture.sequence is None and not capture.changed and (
+            expired or capture.polls % SELECTION_TEXT_POLLS == 0
+        ):
+            # dataChanged alone misses other apps' copies on macOS without
+            # AppKit; the text is read at a fraction of the poll rate.
+            capture.changed = self._clipboard_text() != (capture.original.text or "")
         if capture.sequence is not None:
             current = self._sequence()
             if current is not None and current != capture.sequence:
@@ -616,6 +660,10 @@ class TemporaryClipboard(QObject):
         if not changed and capture.sequence is not None:
             current = self._sequence()
             changed = current is not None and current != capture.sequence
+        elif capture.sequence is None and capture.sent:
+            # Only a counter proves the copy never landed, and Qt may not see
+            # one that did (Wayland), so the original always goes back.
+            changed = True
         holds_original = True
         if changed:
             try:

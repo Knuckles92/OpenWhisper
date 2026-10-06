@@ -9,7 +9,7 @@
   "entryPoints": {"barWidget": "OpenWhisper.qml"},
   "barWidget": {
     "displayName": "OpenWhisper",
-    "description": "Click to record/stop; right-click to cancel; middle-click to open",
+    "description": "Click to record/stop; right-click to cancel; middle-click to open. Switch language and open the Scratchpad beside it",
     "category": "Audio",
     "allowMultiple": false,
     "defaultSection": "right"

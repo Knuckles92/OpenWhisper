@@ -172,15 +172,8 @@ class TestLanguageCycle:
         ui.overlay.set_language.assert_not_called()
         ui.set_status.assert_called_once_with("Couldn't switch the dictation language")
 
-    def test_cycle_without_the_language_module_does_nothing(self, ui, monkeypatch):
-        monkeypatch.delattr(services, "dictation_language", raising=False)
-        monkeypatch.setitem(sys.modules, "services.dictation_language", None)
-        ui.cycle_dictation_language()
-        ui.overlay.set_language.assert_not_called()
-        ui.set_status.assert_not_called()
 
-
-class TestStubModules:
+class TestEmptyStates:
     def test_entry_points_do_nothing_without_their_target(self, ui):
         assert scratchpad.insert(types.SimpleNamespace(), "note") is False
         for action in (history_actions.paste_last_original,):
@@ -211,9 +204,9 @@ class TestAppWiring:
     def test_tray_offers_the_new_actions_and_routes_them(self, app_ui, monkeypatch):
         tray = app_ui.tray_manager
         texts = _menu_texts(tray.menu)
-        for text in ("Paste original of last dictation", "Language", "Scratchpad", "Stats"):
+        for text in ("Copy original of last dictation", "Language", "Scratchpad", "Stats"):
             assert text in texts
-        assert texts.index("Start Recording") < texts.index("Paste original of last dictation")
+        assert texts.index("Start Recording") < texts.index("Copy original of last dictation")
         assert texts.index("Scratchpad") < texts.index("Settings")
         assert _menu_texts(tray.language_menu) == ["No other languages", "Choose languages…"]
 
@@ -221,14 +214,14 @@ class TestAppWiring:
         monkeypatch.setattr(scratchpad, "toggle", lambda ui: calls.append(("scratchpad", ui)))
         monkeypatch.setattr(stats_dialog, "show_stats", lambda ui: calls.append(("stats", ui)))
         monkeypatch.setattr(
-            history_actions, "paste_last_original", lambda ui: calls.append(("original", ui))
+            history_actions, "copy_last_original", lambda ui: calls.append(("original", ui))
         )
         monkeypatch.setattr(
             language_menu, "populate", lambda menu, ui: calls.append(("language", menu, ui))
         )
         tray.scratchpad_action.trigger()
         tray.stats_action.trigger()
-        tray.paste_original_action.trigger()
+        tray.copy_original_action.trigger()
         tray.language_menu.aboutToShow.emit()
         assert calls == [
             ("scratchpad", app_ui),

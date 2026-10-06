@@ -177,10 +177,33 @@ class AudioRecorder:
 
     @classmethod
     def from_settings(cls) -> "AudioRecorder":
-        """The dictation recorder for the saved microphone order."""
+        """The dictation recorder for the saved microphone order.
+
+        Built on the Qt thread, which never waits for the driver: a legacy
+        microphone index still to be migrated is resolved in the background,
+        and the recorder uses the system default until it is.
+        """
         from services.settings import settings_manager
 
-        return cls(device_priority=audio_devices.load_priority(manager=settings_manager, sd=sd))
+        settings = settings_manager.load_all_settings()
+        if not audio_devices.legacy_migration_pending(settings):
+            return cls(device_priority=audio_devices.load_priority(
+                settings, manager=settings_manager, sd=sd))
+        recorder = cls()
+        threading.Thread(
+            target=recorder._adopt_migrated_priority, args=(settings_manager,),
+            name="dictation-mic-migration", daemon=True,
+        ).start()
+        return recorder
+
+    def _adopt_migrated_priority(self, manager) -> None:
+        try:
+            priority = audio_devices.load_priority(manager=manager, sd=sd)
+        except Exception:
+            logger.warning("Couldn't migrate the saved microphone", exc_info=True)
+            return
+        if priority:
+            self.device_priority = priority
 
     def __init__(
         self,
@@ -683,14 +706,20 @@ class AudioRecorder:
             except Exception as exc:
                 logger.warning("Couldn't switch to %s: %s", self._describe(device), exc)
                 self._mark_failed(device)
-        if stop_event.is_set() or self._capture_canceled:
-            # Ended while switching: keep what was captured, record no more.
+        ended = stop_event.is_set() or self._capture_canceled
+        if ended or new_stream is None:
             if new_stream is not None:
                 self._close_stream(new_stream)
+            # Detached, so the watcher's own close never touches it; its late
+            # blocks already carry a stale generation.
+            with self._callback_lock:
+                self.stream = None
+            self._retire_stream(old_stream)
+            if not ended:
+                return False
+            # Ended while switching: keep what was captured, record no more.
             self._end_post_roll("microphone lost")
             return True
-        if new_stream is None:
-            return False
         with self._callback_lock:
             self._stream_generation = generation
             self.stream = new_stream

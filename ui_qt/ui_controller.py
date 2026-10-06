@@ -307,7 +307,7 @@ class UIController(QObject):
         self.tray_manager.meeting_dashboard_requested.connect(
             self._on_meeting_open_dashboard
         )
-        self.tray_manager.paste_last_original_requested.connect(self.paste_last_original)
+        self.tray_manager.copy_last_original_requested.connect(self.copy_last_original)
         self.tray_manager.scratchpad_requested.connect(self.toggle_scratchpad)
         self.tray_manager.stats_requested.connect(self.show_stats)
         self.tray_manager.language_menu_requested.connect(self.populate_language_menu)
@@ -823,6 +823,11 @@ class UIController(QObject):
         from ui_qt.history_actions import paste_last_original
 
         paste_last_original(self)
+
+    def copy_last_original(self) -> None:
+        from ui_qt.history_actions import copy_last_original
+
+        copy_last_original(self)
 
     def set_hands_free(self, on: bool) -> None:
         self.overlay.set_hands_free(bool(on))

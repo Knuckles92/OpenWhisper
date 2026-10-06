@@ -6,6 +6,7 @@ to a terminal, where Ctrl+C interrupts the running program.
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 import sys
@@ -23,12 +24,16 @@ _POLL_S = 0.01
 _BLIND_WAIT_S = 0.15
 
 _WINDOWS_MODIFIERS = ("ctrl", "alt", "shift", "windows")
+# VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN/VK_RWIN.
+_WINDOWS_VIRTUAL_KEYS = {
+    "ctrl": (0x11,), "alt": (0x12,), "shift": (0x10,), "windows": (0x5B, 0x5C),
+}
 
-# Matched against an app's id, name and window class, lowercased, with any
-# path, ".exe" or ".app" removed.
+# Matched against an app's id and name, lowercased, with any path, ".exe" or
+# ".app" removed.
 _TERMINALS = frozenset({
-    "windowsterminal", "windows terminal", "cascadia_hosting_window_class",
-    "conhost", "openconsole", "consolewindowclass", "console window host",
+    "windowsterminal", "windows terminal",
+    "conhost", "openconsole", "console window host",
     "powershell", "windows powershell", "pwsh", "cmd", "command prompt",
     "mintty", "wezterm", "wezterm-gui", "org.wezfurlong.wezterm",
     "alacritty", "kitty", "net.kovidgoyal.kitty", "foot", "ghostty",
@@ -57,11 +62,7 @@ _pynput_controller = None
 
 def _names(identity) -> set[str]:
     names = set()
-    for value in (
-        getattr(identity, "app_id", ""),
-        getattr(identity, "name", ""),
-        getattr(identity, "window", ""),
-    ):
+    for value in (getattr(identity, "app_id", ""), getattr(identity, "name", "")):
         if not isinstance(value, str) or not value.strip():
             continue
         name = value.strip().lower().replace("\\", "/").rsplit("/", 1)[-1]
@@ -160,10 +161,37 @@ def send_copy() -> None:
         controller.release("c")
 
 
+@functools.lru_cache(maxsize=1)
+def _physical_key_reader() -> Optional[Callable[[int], bool]]:
+    """A check for a virtual key being down in the OS's own key state; None off Windows."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        # Private, so these argtypes never reach other windll.user32 users.
+        state = ctypes.WinDLL("user32").GetAsyncKeyState
+        state.argtypes = [ctypes.c_int]
+        state.restype = ctypes.c_short
+    except Exception:
+        logger.debug("The OS key state is unavailable", exc_info=True)
+        return None
+    return lambda vk: bool(state(vk) & 0x8000)
+
+
 def _windows_modifiers_held() -> bool:
     import keyboard
 
-    return any(keyboard.is_pressed(name) for name in _WINDOWS_MODIFIERS)
+    held = [name for name in _WINDOWS_MODIFIERS if keyboard.is_pressed(name)]
+    if not held:
+        return False
+    # The hook keeps a modifier down when its key-up went to an elevated
+    # window. A copy waits for these keys and is refused while they are
+    # held, so the OS state has the last word.
+    physical = _physical_key_reader()
+    if physical is None:
+        return True
+    return any(physical(vk) for name in held for vk in _WINDOWS_VIRTUAL_KEYS[name])
 
 
 def _mac_modifiers_held() -> bool:

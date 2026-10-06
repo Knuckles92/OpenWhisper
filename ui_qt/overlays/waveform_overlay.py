@@ -578,17 +578,13 @@ class WaveformOverlay(QWidget):
         painter.drawPath(shackle)
 
     def _language_text(self) -> str:
-        try:
-            from services.dictation_language import short_label
-        except ImportError:
-            return self._language.upper()
+        from services.dictation_language import short_label
+
         return short_label(self._language)
 
     def _language_name(self) -> str:
-        try:
-            from services.dictation_language import label
-        except ImportError:
-            return self._language
+        from services.dictation_language import label
+
         return label(self._language)
 
     def _language_flash(self) -> float:

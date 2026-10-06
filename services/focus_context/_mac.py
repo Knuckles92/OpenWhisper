@@ -118,7 +118,7 @@ class AxTextReader:
             roles = {self._attribute(focused, hi.kAXRoleAttribute),
                      self._attribute(focused, hi.kAXSubroleAttribute)}
             if "AXSecureTextField" in roles:
-                return None
+                return TextContext(source=self.source, blocked=True)
             span = self._attribute(focused, hi.kAXSelectedTextRangeAttribute)
             if span is None:
                 return None

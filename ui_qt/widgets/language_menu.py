@@ -54,9 +54,7 @@ def cycle(ui) -> None:
 def _switch(ui, change, *, notice: bool) -> None:
     try:
         from services import dictation_language as languages
-    except ImportError:
-        return
-    try:
+
         settings_manager.mutate_settings(lambda settings: change(languages, settings))
         settings = settings_manager.load_all_settings()
         choices = languages.language_choices(settings)

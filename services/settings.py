@@ -907,16 +907,6 @@ class SettingsManager:
         )
         logger.info(f"HuggingFace access policy saved: {policy}")
 
-    def load_audio_input_device(self) -> Optional[int]:
-        """Load the device ID, or None for the system default."""
-        try:
-            device_id = self.get(SettingsKey.AUDIO_INPUT_DEVICE)
-            if device_id is not None and isinstance(device_id, int):
-                return device_id
-        except Exception as e:
-            logger.warning(f"Failed to load audio input device: {e}")
-        return None
-
 
 def is_hf_hub_offline_env_set() -> bool:
     """Return whether ``HF_HUB_OFFLINE`` is set in the process env.

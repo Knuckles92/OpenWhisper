@@ -343,9 +343,10 @@ class TestPynputBackendPushHold(unittest.TestCase):
 
 
 class _FakeRecorder:
-    def __init__(self, recording=False, has_data=True):
+    def __init__(self, recording=False, has_data=True, capture_canceled=False):
         self.is_recording = recording
         self._has_data = has_data
+        self.capture_canceled = capture_canceled
 
     def has_recording_data(self):
         return self._has_data
@@ -470,9 +471,9 @@ class TestPushHoldRuntimeHandlers(unittest.TestCase):
         self.assertEqual(controller.calls, ["start"])
 
     def test_release_after_cancel_hotkey_is_a_no_op(self):
-        # Cancel clears the captured frames while post-roll keeps
+        # Cancel marks the capture canceled while post-roll keeps
         # is_recording True; the release must not run the stop path.
-        recorder = _FakeRecorder(has_data=False)
+        recorder = _FakeRecorder(has_data=False, capture_canceled=True)
         controller = _FakeController(recorder)
         runtime = self.HotkeyRuntime(controller)
 

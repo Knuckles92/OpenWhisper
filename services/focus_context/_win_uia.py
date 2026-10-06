@@ -158,7 +158,10 @@ class UiaTextReader:
             self._ole32.CoUninitialize()
 
     def read(self, identity, *, include_text: bool, include_selection: bool) -> Optional[TextContext]:
-        """The focused element's text, or None for unknown, a password or another app."""
+        """The focused element's text, or None for unknown or another app.
+
+        A password field gives a blocked, empty context.
+        """
         element = c_void_p()
         try:
             _call(self._automation, _GET_FOCUSED_ELEMENT, byref(element),
@@ -191,7 +194,7 @@ class UiaTextReader:
         password = c_int()
         _call(element, _GET_CURRENT_IS_PASSWORD, byref(password), argtypes=(POINTER(c_int),))
         if password.value:
-            return None
+            return TextContext(source=self.source, blocked=True)
         pattern = self._pattern(element, _TEXT_PATTERN2_ID, _IID_TEXT_PATTERN2)
         has_caret_range = pattern is not None
         if pattern is None:

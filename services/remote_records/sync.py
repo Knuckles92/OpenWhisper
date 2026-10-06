@@ -584,6 +584,9 @@ class RecordSync:
                 "\"Keep records for paired computers\" in its Settings → Remote engine."
             ))
             raise RecordsUnavailable(self._waiting)
+        # Taken before the bundle is built: an edit after this point makes
+        # the record differ from it once sent, at worst sending it again.
+        sent = self._digest(handler, row.record_id)
         try:
             self.upload(connection, row.kind, row.record_id)
         except RecordsUnavailable:
@@ -591,19 +594,35 @@ class RecordSync:
         except Exception as exc:
             self._record_failure(row, exc)
             return
-        self._uploaded(row.kind, row.record_id, row.action)
+        self._uploaded(row.kind, row.record_id, row.action, sent)
         self._set(waiting="", error="")
 
-    def _uploaded(self, kind: str, record_id: str, action: str) -> None:
-        handler = self.kinds[kind]
+    @staticmethod
+    def _digest(handler, record_id: str) -> Optional[str]:
         try:
-            digest = handler.digest(record_id)
+            return handler.digest(record_id)
         except Exception:
-            digest = "sent"
+            return None
+
+    def _uploaded(self, kind: str, record_id: str, action: str,
+                  sent: Optional[str] = None) -> None:
+        """Mark a record sent; ``sent`` is its digest from before the upload."""
+        handler = self.kinds[kind]
+        self._put(kind, record_id, state="done",
+                  content_digest=sent or self._digest(handler, record_id) or "sent",
+                  attempts=0, last_error=None)
+        # record_edited ignores a record while it is pending, so an edit made
+        # during the upload is caught here; once the row is done, a later
+        # edit re-queues it there.
+        current = self._digest(handler, record_id) if sent is not None else None
+        if current is not None and current != sent:
+            # A move keeps its only copy here until the edit is sent too.
+            self._put(kind, record_id, state="pending")
+            self._notify("records")
+            self.wake()
+            return
         # A moved record open here (a meeting's dashboard) stays as a viewing
         # copy until it's closed; edits made meanwhile are sent back then.
-        self._put(kind, record_id, state="done", content_digest=digest,
-                  attempts=0, last_error=None)
         if action == "move" and not handler.in_use(record_id):
             self._delete_quietly(kind, record_id)
             self._drop(kind, record_id)

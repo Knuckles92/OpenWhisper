@@ -20,11 +20,13 @@ from services.dictation_pipeline import (
     DictationJob,
     FinishedText,
     JobMode,
+    PasteTarget,
     after_paste,
     begin_job,
     compose_cleanup_prompt,
     finish_text,
     history_fields,
+    paste_target,
     paste_target_ok,
     prepare_text,
     recognition_for,
@@ -354,19 +356,24 @@ def test_text_joins_the_caret_only_for_dictation_with_a_known_caret(monkeypatch)
     assert text_for_paste("And more.", _job(snapshot=FocusSnapshot(OUTLOOK, CARET))) == "And more."
 
 
-def test_paste_target_is_refused_only_when_the_app_provably_changed():
+def test_a_rewrite_pastes_only_into_the_app_it_provably_started_in():
     job = _job(JobMode.COMMAND, FocusSnapshot(OUTLOOK))
 
     focus_context.set_service(FakeService(current=OUTLOOK))
-    assert paste_target_ok(job)
+    assert paste_target(job) == PasteTarget.SAME and paste_target_ok(job)
     focus_context.set_service(FakeService(current=AppIdentity("slack.exe", "Slack", pid=11)))
-    assert not paste_target_ok(job)
+    assert paste_target(job) == PasteTarget.CHANGED and not paste_target_ok(job)
+    # Not knowing either side never pastes blind.
     focus_context.set_service(FakeService(current=None))
-    assert paste_target_ok(job)
+    assert paste_target(job) == PasteTarget.UNKNOWN and not paste_target_ok(job)
     focus_context.set_service(FakeService(fail=True))
-    assert paste_target_ok(job)
-    assert paste_target_ok(None)
-    assert paste_target_ok(_job(JobMode.COMMAND))
+    assert paste_target(job) == PasteTarget.UNKNOWN
+    assert paste_target(None) == PasteTarget.UNKNOWN
+    assert paste_target(_job(JobMode.COMMAND)) == PasteTarget.UNKNOWN
+    # With app awareness off the job keeps only the target.
+    focus_context.set_service(FakeService(current=OUTLOOK))
+    assert paste_target(_job(JobMode.TRANSFORM, target=_done(FocusSnapshot(OUTLOOK)))) == (
+        PasteTarget.SAME)
 
 
 def test_after_paste_schedules_learning_for_dictation_only(monkeypatch):

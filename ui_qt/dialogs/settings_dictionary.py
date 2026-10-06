@@ -287,7 +287,7 @@ class _DictionaryPage(QObject):
         self.learn_switch.toggled.connect(self.set_learning)
         self.learn_gate_tile = InfoTile(title, _LEARN_GATE_LINE, design_icon("wand-purple.svg"))
         self.learn_gate_tile.setProperty("tileId", "dictionaryLearnGate")
-        turn_on = neutral_button(Button("Turn on"))
+        turn_on = neutral_button(Button("Open Apps && styles"))
         turn_on.setObjectName("dictionaryLearnTurnOnButton")
         turn_on.setToolTip("Open Apps & styles to turn on Read text near the cursor")
         fit_compact_button(turn_on)

@@ -180,7 +180,7 @@ def apply_replacements(text: str, terms: Sequence[DictionaryTerm]) -> str:
         if term.learned:
             continue
         for variant in term.heard:
-            rules.setdefault(variant.lower(), term.term)
+            rules.setdefault(variant, term.term)
     return replace_terms(text, rules)
 
 

@@ -201,12 +201,12 @@ def test_legacy_index_migrates_once_and_keeps_the_old_key(tmp_path):
     assert saved[SettingsKey.AUDIO_INPUT_DEVICE] == 2
 
 
-def test_a_stale_legacy_index_becomes_the_system_default(tmp_path):
+def test_a_stale_legacy_index_uses_the_system_default_without_saving_it(tmp_path):
     store = SettingsManager(str(tmp_path / "settings.json"))
     store.save_all_settings({SettingsKey.AUDIO_INPUT_DEVICE: 6})  # now a loopback device
 
     assert load_priority(manager=store, sd=windows_sd()) == []
-    assert store.get(SettingsKey.AUDIO_INPUT_PRIORITY) == []
+    assert SettingsKey.AUDIO_INPUT_PRIORITY not in store.load_all_settings()
 
 
 def test_migration_waits_when_portaudio_is_unavailable(tmp_path):

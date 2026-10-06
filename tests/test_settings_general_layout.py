@@ -205,7 +205,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             self.assertIs(dialog.cleanup_rules_gate_tile.parentWidget(), rules)
             self.assertIs(
                 dialog.cleanup_rules_turn_on_btn.parentWidget(),
-                dialog.cleanup_rules_gate_tile,
+                dialog.cleanup_rules_gate_tile.body,
             )
             self.assertIs(
                 dialog.cleanup_rule_input.parentWidget(),

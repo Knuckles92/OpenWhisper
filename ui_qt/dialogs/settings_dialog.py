@@ -202,7 +202,10 @@ from ui_qt.widgets.hotkey_capture import (
 from ui_qt.widgets.hotkey_row import ReflowCard
 from ui_qt.widgets.settings_switch import SettingsSwitch
 from services.hotkey_conflicts import STANDARD, hotkey_conflict
-from services.settings import resolve_recording_hands_free_latch
+from services.settings import (
+    resolve_flow_features_intro_seen,
+    resolve_recording_hands_free_latch,
+)
 from ui_qt.widgets.cleanup_profiles_panel import CleanupProfilesPanel
 from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
 from ui_qt.widgets.nav_rail import NavRail
@@ -287,9 +290,6 @@ _PAGE_MODULES = (
     (COMMANDS, "ui_qt.dialogs.settings_commands", "wand-purple.svg"),
 )
 _PAGE_MODULE_ICONS = {key: icon for key, _path, icon in _PAGE_MODULES}
-
-#: Set once the "New in OpenWhisper" tile is dismissed on Overview or Basic.
-_FLOW_INTRO_SEEN = "flow_features_intro_seen"
 
 #: How a hotkey message names each standard action.
 _HOTKEY_LABELS = {
@@ -908,7 +908,7 @@ class SettingsDialog(QDialog):
 
     def add_flow_intro(self, layout) -> None:
         """Add the dismissible "New in OpenWhisper" tile, unless it was dismissed."""
-        if self._settings_snapshot().get(_FLOW_INTRO_SEEN, False):
+        if resolve_flow_features_intro_seen(self._settings_snapshot()):
             return
         tile = InfoTile(
             "New in OpenWhisper",
@@ -928,7 +928,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(tile)
 
     def _dismiss_flow_intro(self) -> None:
-        if not self._persist(_FLOW_INTRO_SEEN, True):
+        if not self._persist(SettingsKey.FLOW_FEATURES_INTRO_SEEN, True):
             return
         for tile in self._flow_intro_tiles:
             tile.hide()
@@ -960,6 +960,26 @@ class SettingsDialog(QDialog):
                 cancel(self)
             except Exception:
                 logger.exception("Couldn't stop the %s page's shortcut capture", key)
+
+    def _save_page_drafts(self, keep: str = "", *, ask: bool = False) -> bool:
+        """Save the editors' unsaved drafts, as the footer promises.
+
+        Returns False, with that page shown, when the user chose to keep
+        editing a draft that can't be saved yet.
+        """
+        for key, module in self._page_modules.items():
+            save = getattr(module, "save_drafts", None)
+            if key == keep or key not in self._built_pages or save is None:
+                continue
+            try:
+                if save(self, ask=ask):
+                    continue
+            except Exception:
+                logger.exception("Couldn't save the %s page's draft", key)
+                continue
+            self.select_destination(key)
+            return False
+        return True
 
     def set_standard_hotkey(self, action: str, hotkey: str) -> str:
         """Save one standard shortcut through the Hotkeys page's save path.
@@ -1605,7 +1625,7 @@ class SettingsDialog(QDialog):
         """An "AI cleanup is off" notice whose button turns cleanup on.
 
         It is hidden while cleanup is on. Pages whose settings only matter
-        when cleanup runs (Learned rules, Apps & styles) put one at the top.
+        when cleanup runs (Learned rules, Apps & styles) put one above them.
         """
         tile = InfoTile(
             "AI cleanup is off", description, design_icon("info-warning.svg")
@@ -1613,7 +1633,12 @@ class SettingsDialog(QDialog):
         tile.setProperty("kind", "notice")
         button = compact_primary_button(Button("Turn on"))
         button.clicked.connect(self.turn_on_cleanup)
-        tile.add_trailing(button)
+        # Under the text rather than beside it, so it fits a narrow window.
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(button)
+        row.addStretch(1)
+        tile.add_body_layout(row)
         self._cleanup_gates.append((tile, button))
         level = cleanup_prompts.resolve_level(self._settings_snapshot())
         self._update_cleanup_gates(level != CleanupLevel.NONE)
@@ -2905,6 +2930,7 @@ class SettingsDialog(QDialog):
         for page in self._basic_pages.values():
             page.cancel_capture()
         self._cancel_page_captures()
+        self._save_page_drafts()
         self._cancel_hotkey_capture()
         previous = self._settings_view
         if previous == SettingsView.ADVANCED and view == SettingsView.BASIC and self.isVisible():
@@ -2973,11 +2999,6 @@ class SettingsDialog(QDialog):
         self.select_destination(DOWNLOADS)
         self.hf_policy_combo.setFocus()
 
-    def focus_cleanup_toggle(self) -> None:
-        """Open AI cleanup with the AI cleanup toggle focused."""
-        self.select_destination(CLEANUP)
-        self.transcript_cleanup_check.setFocus()
-
     def focus_cleanup_model(self) -> None:
         """Open AI cleanup scrolled to its chat model."""
         self.select_destination(CLEANUP)
@@ -3001,6 +3022,7 @@ class SettingsDialog(QDialog):
         if key != HOTKEYS:
             self._cancel_hotkey_capture()
         self._cancel_page_captures(keep=key)
+        self._save_page_drafts(keep=key)
         page = self._pages.get(key)
         if page is None:
             return
@@ -3204,7 +3226,17 @@ class SettingsDialog(QDialog):
             self._persist_cleanup_prompt()
         return super().eventFilter(obj, event)
 
+    def reject(self) -> None:
+        # Escape closes through here without a close event.
+        if self._save_page_drafts(ask=self.isVisible()):
+            super().reject()
+
     def closeEvent(self, event):
+        # Quitting the app closes a visible Settings window this way too. A
+        # hidden one has nobody to ask, so only its valid drafts are saved.
+        if not self._save_page_drafts(ask=self.isVisible()):
+            event.ignore()
+            return
         self.search_palette.close_palette()
         for page in self._basic_pages.values():
             page.cancel_capture()
@@ -3956,6 +3988,9 @@ class SettingsDialog(QDialog):
             if widget is not None:
                 widget.setEnabled(enabled)
         self._update_cleanup_gates(enabled)
+        if STYLES in self._built_pages:
+            # Styles lock while cleanup is off, also when it changes on their page.
+            self._refresh_page_module(STYLES, self._page_modules[STYLES])
         if self.__dict__.get("cleanup_rules_gate_tile") is not None:
             self._update_cleanup_rule_controls()
         self._update_cleanup_level_ui()

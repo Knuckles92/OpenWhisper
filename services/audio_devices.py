@@ -356,13 +356,32 @@ def sound_mapper(devices: Sequence[InputDevice]) -> Optional[InputDevice]:
     )
 
 
+def _legacy_index(settings: Mapping[str, Any]) -> Optional[int]:
+    from services.settings import SettingsKey
+
+    legacy = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
+    if not isinstance(legacy, int) or isinstance(legacy, bool):
+        return None
+    return legacy
+
+
+def legacy_migration_pending(settings: Mapping[str, Any]) -> bool:
+    """Whether ``load_priority`` would list devices to migrate the legacy index."""
+    from services.settings import SettingsKey
+
+    return SettingsKey.AUDIO_INPUT_PRIORITY not in settings and _legacy_index(settings) is not None
+
+
 def load_priority(settings: Optional[Mapping[str, Any]] = None, *, manager=None, sd=None) -> List[dict]:
     """The saved microphone order, migrating the legacy index once.
 
     Before ``audio_input_priority`` existed the choice was a raw PortAudio
-    index under ``audio_input_device``. The first load turns that index into
-    the first entry, best effort (the index may already point elsewhere), and
-    keeps the old key so an older version still finds it after a downgrade.
+    index under ``audio_input_device``. The first load that finds an input at
+    that index turns it into the first entry, best effort (the index may
+    already point elsewhere), and keeps the old key so an older version still
+    finds it after a downgrade. Until then the order is empty (the system
+    default) and nothing is saved. Lists devices while the migration is
+    pending, so Qt-thread callers check ``legacy_migration_pending`` first.
     """
     from services.settings import SettingsKey
 
@@ -372,17 +391,20 @@ def load_priority(settings: Optional[Mapping[str, Any]] = None, *, manager=None,
         settings = manager.load_all_settings()
     if SettingsKey.AUDIO_INPUT_PRIORITY in settings:
         return normalize_priority(settings[SettingsKey.AUDIO_INPUT_PRIORITY])
-    legacy = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
-    if not isinstance(legacy, int) or isinstance(legacy, bool):
+    legacy = _legacy_index(settings)
+    if legacy is None:
         return []
+    # Saving "no microphone" while the microphone is merely unplugged (or
+    # PortAudio is unavailable) would drop the user's choice for good.
     try:
         device = next((d for d in list_input_devices(sd) if d.index == legacy), None)
     except Exception:
-        # PortAudio unavailable right now; migrate on a later load instead
-        # of recording "no microphone" for good.
         logger.warning("Couldn't read audio inputs to migrate the saved microphone", exc_info=True)
         return []
-    migrated = [device.key] if device is not None else []
+    if device is None:
+        logger.info("The saved microphone index matches no input now; trying again on a later load")
+        return []
+    migrated = [device.key]
 
     def migrate(current: dict) -> List[dict]:
         if SettingsKey.AUDIO_INPUT_PRIORITY in current:

@@ -25,7 +25,7 @@ class SystemTrayManager(QSystemTrayIcon):
     toggle_recording = pyqtSignal()
     meeting_toggle_requested = pyqtSignal()
     meeting_dashboard_requested = pyqtSignal()
-    paste_last_original_requested = pyqtSignal()
+    copy_last_original_requested = pyqtSignal()
     scratchpad_requested = pyqtSignal()
     stats_requested = pyqtSignal()
     # Emitted as the Language submenu opens, so a connected slot can refill
@@ -66,11 +66,11 @@ class SystemTrayManager(QSystemTrayIcon):
         self.menu.addSeparator()
         self.toggle_action = self.menu.addAction("Start Recording")
         self.toggle_action.triggered.connect(self._on_toggle)
-        self.paste_original_action = self.menu.addAction(
-            "Paste original of last dictation"
+        self.copy_original_action = self.menu.addAction(
+            "Copy original of last dictation"
         )
-        self.paste_original_action.triggered.connect(
-            self.paste_last_original_requested
+        self.copy_original_action.triggered.connect(
+            self.copy_last_original_requested
         )
         self.language_menu = self.menu.addMenu("Language")
         self.language_menu.aboutToShow.connect(self._on_language_menu_about_to_show)

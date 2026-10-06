@@ -352,7 +352,7 @@ def test_from_settings_migrates_the_legacy_index(fake_sd):
 
     recorder = AudioRecorder.from_settings()
 
-    assert recorder.device_priority == [USB]
+    assert _wait(lambda: recorder.device_priority == [USB])
     assert settings_manager.get(SettingsKey.AUDIO_INPUT_PRIORITY) == [USB]
     recorder.cleanup()
 

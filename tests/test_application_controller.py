@@ -92,9 +92,6 @@ class FakeSettingsManager:
         self.saved_hotkeys = None
         self.audio_input_device = None
 
-    def load_audio_input_device(self):
-        return self.audio_input_device
-
     def load_model_selection(self):
         return "local_whisper"
 
@@ -133,7 +130,7 @@ class FakeRecorder:
     def from_settings(cls):
         # The controller's settings module is the stub holding the fake store.
         settings_manager = sys.modules["services.settings"].settings_manager
-        return cls(device_id=settings_manager.load_audio_input_device())
+        return cls(device_id=settings_manager.audio_input_device)
 
     def set_audio_level_callback(self, callback):
         self.audio_level_callback = callback

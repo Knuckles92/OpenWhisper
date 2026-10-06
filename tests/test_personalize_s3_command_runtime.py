@@ -362,9 +362,10 @@ def test_with_app_context_off_the_selection_is_still_read(h):
 
     h.commands.key_pressed(1.0)
     job = h.runtime._job
-    # Asked for before the recording started, and never handed to the job.
-    assert h.service.requests == [(False, True)]
-    assert job.focus is None
+    # Asked for before the recording started, and never handed to the job;
+    # the job only learns where to paste.
+    assert h.service.requests == [(False, True), (False, False)]
+    assert job.focus is None and job.target is not None
     h.commands.key_released(2.0)
     _settle(job.selection.done)
     assert job.selection.result() == "mine"

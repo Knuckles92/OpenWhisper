@@ -262,7 +262,10 @@ def test_no_text_is_read_for_unknown_self_or_terminal_apps(make_service, identit
 def test_excluded_apps_are_never_read(make_service, excluded):
     service, platform, _metrics = make_service(excluded=excluded)
 
-    assert _snapshot(service.request(include_text=True, include_selection=True)) == FocusSnapshot(OUTLOOK)
+    assert _snapshot(service.request(include_text=True)) == FocusSnapshot(OUTLOOK)
+    # A selection read is told it was refused, so Command Mode won't copy it.
+    assert _snapshot(service.request(include_text=True, include_selection=True)) == FocusSnapshot(
+        OUTLOOK, TextContext(source=focus_context.EXCLUDED_SOURCE, blocked=True))
     assert platform.reads == []
 
 

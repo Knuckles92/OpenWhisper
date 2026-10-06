@@ -20,7 +20,7 @@ from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
 from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs import settings_styles
-from ui_qt.dialogs.settings_destinations import BASIC_DICTATION, CLEANUP, OVERVIEW, STYLES
+from ui_qt.dialogs.settings_destinations import BASIC_DICTATION, OVERVIEW, STYLES
 from ui_qt.widgets.setting_tile import TileBase
 
 CLEANUP_ON = {SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True}
@@ -125,6 +125,14 @@ def test_defaults_show_awareness_on_and_reading_off(make_dialog):
     assert dialog.app_context_tile.property("checked") is True
     assert not dialog.read_text_check.isChecked()
     assert dialog.read_text_tile.isEnabled()
+    # Exclusions also keep Command Mode out, so they stay editable.
+    assert dialog.excluded_apps_tile.isEnabled()
+
+
+def test_exclusions_need_app_awareness(make_dialog):
+    dialog, _store = make_dialog({SettingsKey.APP_CONTEXT_ENABLED: False})
+    _page(dialog)
+
     assert not dialog.excluded_apps_tile.isEnabled()
 
 
@@ -208,17 +216,19 @@ def test_pickers_offer_this_sessions_apps_first(make_dialog, monkeypatch):
 
 
 def test_cleanup_off_shows_the_gate_and_locks_styles(make_dialog):
-    dialog, _store = make_dialog()
+    dialog, store = make_dialog()
     page = _page(dialog)
 
-    assert not dialog.styles_gate_tile.isHidden()
-    assert dialog.styles_gate_tile.title_label.text() == "Styles need AI cleanup"
+    assert not dialog.styles_cleanup_gate_tile.isHidden()
+    assert dialog.styles_cleanup_gate_tile.title_label.text() == "AI cleanup is off"
+    assert dialog.styles_gate_tile.isHidden()
     assert not dialog.app_styles_tile.isEnabled()
     assert not any(card.tile.isEnabled() for card in page.cards.values())
     assert not dialog.style_overrides_tile.isEnabled()
 
-    _click(page.gate_button)
-    assert dialog.rail.current_key() == CLEANUP
+    dialog.turn_on_cleanup()
+    assert store.get(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED) is True
+    assert dialog.rail.current_key() == STYLES
 
 
 def test_awareness_off_gate_turns_it_back_on(make_dialog):

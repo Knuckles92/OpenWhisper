@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import threading
@@ -12,6 +13,7 @@ from config import config
 from services import audio_player, dictation_pipeline, recognition_context
 from services.dictation_pipeline import JobMode
 from services.hotkey_manager import is_accessibility_trusted, send_paste
+from services.runtime.command import CommandRefused
 from services.history_manager import history_manager
 from services.transcript_cleanup import (
     CANCELED_REASON,
@@ -89,8 +91,14 @@ class TranscriptionRuntime:
         # Rich-text alternative for the transcript being delivered, set by
         # the worker before it emits transcription_completed.
         self._delivery_html = ""
+        # The same transcript before snippets expanded, set alongside: what
+        # Stats count as words said.
+        self._spoken_text = ""
         # A rewrite claimed the slot and has not been submitted yet.
         self._rewrite_pending = False
+        # The failure being reported is a CommandRefused; set by the worker
+        # just before transcription_failed, read by on_transcription_error.
+        self._refused = False
         # Decodes a long dictation's completed windows while it is recorded.
         self._incremental = IncrementalDictation()
         self._stop_started_at = 0.0
@@ -149,7 +157,9 @@ class TranscriptionRuntime:
             self._job = None
             self._active_job = None
             self._delivery_html = ""
+            self._spoken_text = ""
             self._rewrite_pending = False
+            self._refused = False
             self._job_active = False
             self._deliver_to_clipboard = True
 
@@ -933,6 +943,7 @@ class TranscriptionRuntime:
         """
         self._last_cleanup_failure = None
         self._delivery_html = ""
+        self._spoken_text = ""
         job = self._active_job
         profile = self._recording_profile
         settings = self._profile_settings if profile else settings_manager.load_all_settings()
@@ -941,6 +952,7 @@ class TranscriptionRuntime:
         # Before the switch below: the dictionary applies with cleanup off,
         # and to uploads and batches too.
         prepared = dictation_pipeline.prepare_text(raw, job, settings)
+        self._spoken_text = prepared.text
         enabled = profile is not None or setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings)
         if not enabled or prepared.skip_cleanup:
             return self._finish_without_cleanup(prepared)
@@ -1025,6 +1037,16 @@ class TranscriptionRuntime:
             backend = self.controller.current_backend
             self._announce_transcription(backend, audio_path)
             recognition = self._final_pass_recognition(job)
+            if job is not None and recognition is not None and recognition != (
+                job.recognition or recognition_context.RecognitionContext()
+            ):
+                # The language may have been switched since the recording
+                # started; history and stats record the one decoded with.
+                with self._job_lock:
+                    if self._active_job is job:
+                        job = self._active_job = dataclasses.replace(
+                            job, recognition=recognition
+                        )
             self.controller._transcription_start_time = time.time()
             # Windows decoded while recording aren't this pass's time, so
             # only the requests from here on count toward the stats line.
@@ -1046,6 +1068,8 @@ class TranscriptionRuntime:
                 fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(raw)
             self._raise_if_canceled()
             self.controller.transcription_completed.emit(fixed, raw_text, cleanup_info)
+        except CommandRefused as exc:
+            self._refuse(str(exc))
         except Exception as exc:
             logger.error(f"Transcription failed: {exc}")
             self.controller.transcription_failed.emit(str(exc))
@@ -1073,6 +1097,29 @@ class TranscriptionRuntime:
         if complete is None:
             raise RuntimeError("Command Mode isn't available")
         return complete(raw, job)
+
+    def _refuse(self, message: str) -> None:
+        """Report a command or transform with nothing to paste; worker thread.
+
+        A refusal is not a failed transcription, so the instruction audio is
+        not kept: copying it into Recordings would push out older dictation
+        audio, and its journal is dropped so the next start does not recover
+        it either.
+        """
+        logger.info("Nothing to paste for this command or transform")
+        pending = self.controller._pending_audio_path
+        if pending and os.path.abspath(pending) == os.path.abspath(config.RECORDED_AUDIO_FILE):
+            acknowledge = getattr(self.controller.recorder, "acknowledge_recording", None)
+            if acknowledge:
+                try:
+                    acknowledge()
+                except Exception:
+                    logger.exception("Could not drop the Command Mode recording")
+        # The held slot keeps other jobs off both until on_transcription_error.
+        self.controller._pending_audio_path = None
+        with self._job_lock:
+            self._refused = True
+        self.controller.transcription_failed.emit(message)
 
     def _abandon_canceled_job(self, stage: str) -> None:
         """Release a dictation job canceled before any transcript existed.
@@ -1204,6 +1251,8 @@ class TranscriptionRuntime:
                     cleanup_provider=cleanup_info.provider if cleanup_info else None,
                     cleanup_model=cleanup_info.model if cleanup_info else None,
                     source_name=source_name,
+                    # Read by Stats only; history drops it.
+                    spoken_text=self._spoken_text or None,
         )
         # Only a recording's own WAV is dictated live; a re-transcription is
         # delivered like one but read from a file.
@@ -1244,13 +1293,16 @@ class TranscriptionRuntime:
                 return
 
         # A command or transform exists to replace text, so it pastes even
-        # with auto-paste off, but never into an app that took focus since.
+        # with auto-paste off, but only into the app it provably started in.
         forced = job is not None and job.mode != JobMode.DICTATION
-        if forced and not dictation_pipeline.paste_target_ok(job):
+        target = dictation_pipeline.paste_target(job) if forced else None
+        if forced and target != dictation_pipeline.PasteTarget.SAME:
             ui.discard_clipboard_prefetch()
             if ui.copy_to_clipboard(transcript):
                 ui.set_status(
                     "Rewrite copied — the app changed; paste it where you want"
+                    if target == dictation_pipeline.PasteTarget.CHANGED else
+                    "Rewrite copied — couldn't confirm the app; paste it where you want"
                 )
             else:
                 ui.set_status("Transcription complete (copy failed)")
@@ -1260,7 +1312,7 @@ class TranscriptionRuntime:
         if self._apply_clipboard_and_paste(
             text,
             status_suffix=status_suffix,
-            html=self._delivery_html,
+            html=dictation_pipeline.html_for_paste(self._delivery_html, transcript, job),
             force_paste=forced,
         ):
             dictation_pipeline.after_paste(job, text)
@@ -1291,7 +1343,10 @@ class TranscriptionRuntime:
         error = ''
         try:
             for fields in entries:
-                entry = history_manager.add_entry(**fields)
+                # spoken_text feeds Stats only; it is not a history column.
+                entry = history_manager.add_entry(
+                    **{key: value for key, value in fields.items() if key != 'spoken_text'}
+                )
                 try:
                     # Stats are a side table: their failure never touches the
                     # saved entry or the status.
@@ -1498,6 +1553,8 @@ class TranscriptionRuntime:
             text, raw_text, info = work()
             self._raise_if_canceled()
             self.controller.transcription_completed.emit(text, raw_text, info)
+        except CommandRefused as exc:
+            self._refuse(str(exc))
         except Exception as exc:
             logger.error("Rewrite failed: %s", exc)
             self.controller.transcription_failed.emit(str(exc))
@@ -1529,10 +1586,12 @@ class TranscriptionRuntime:
 
     def on_transcription_error(self, error_message: str) -> None:
         self._stop_started_at = 0.0
+        with self._job_lock:
+            refused, self._refused = self._refused, False
         pending_audio = self.controller._pending_audio_path
-        status = f"Error: {error_message}"
+        status = error_message if refused else f"Error: {error_message}"
         self.controller.ui_controller.set_status(status)
-        self.controller.ui_controller.set_transcript(f"Error: {error_message}")
+        self.controller.ui_controller.set_transcript(status)
         self.controller.overlay_state_update.emit(OverlayState.NONE)
         self.controller._transcription_start_time = None
         self.controller._transcription_elapsed = None

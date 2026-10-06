@@ -3,7 +3,9 @@
 Rows live in the dictation_stats table, written when history is saved, so
 they survive moving history to a paired host and Clear history.
 
-Words are the words you said: a transcript before AI cleanup. A command or
+Words are the words you said: a transcript before AI cleanup, with a
+snippet counted as its trigger rather than the text it expands to (the
+history-save fields carry that as ``spoken_text``). A command or
 transform rewrites text you selected rather than said, so it adds no words,
 but what the AI changed there still counts toward words cleaned up. Pace is
 those words per minute of recording, over recordings of a second or more.
@@ -126,7 +128,7 @@ def _stat(fields: dict) -> Optional[DictationStat]:
     ai_version = fields.get("cleaned_text") or text
     spoken = audio = None
     if kind == "dictation":
-        spoken = count_words(raw or text)
+        spoken = count_words(fields.get("spoken_text") or raw or text)
         audio = fields.get("audio_duration")
     return DictationStat(
         entry_id=fields.get("id"),

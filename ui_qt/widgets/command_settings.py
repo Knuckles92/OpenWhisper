@@ -30,6 +30,7 @@ from services.text_transforms import (
     save_transform,
     transform_hotkey_conflict,
 )
+from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.widgets.button_row import ButtonRow
 from ui_qt.widgets.buttons import (
     Button,
@@ -43,6 +44,8 @@ from ui_qt.widgets.wrapped_label import WrappedLabel
 COMMAND_ACTION = "command_mode"
 #: The transforms list's width beside the editor, unless its buttons need more.
 LIBRARY_WIDTH = 210
+#: The Command Mode shortcut box's narrowest width beside its buttons, at 100%.
+INPUT_MIN_WIDTH = 140
 _CAPTURE_TIP = "Click, then press a shortcut. Escape cancels."
 
 
@@ -57,7 +60,6 @@ def _shortcut_input(name: str) -> ProfileHotkeyInput:
     field = ProfileHotkeyInput()
     field.setAccessibleName(name)
     field.setToolTip(_CAPTURE_TIP)
-    field.setPlaceholderText("Not set")
     return field
 
 
@@ -87,11 +89,13 @@ class CommandShortcutField(QWidget):
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(6)
-        row = QHBoxLayout()
+        # Settings pages ignore minimum widths, so a narrow tile would draw
+        # the buttons over the box; resizeEvent stacks them instead.
+        row = self._row = QBoxLayout(QBoxLayout.Direction.LeftToRight)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
         self.input = _shortcut_input("Command Mode shortcut")
-        self.input.setMinimumWidth(140)
+        self.input.setMinimumWidth(INPUT_MIN_WIDTH)
         self.input.setMaximumWidth(240)
         self.input.capture_changed.connect(dialog.set_hotkey_capture_suspended)
         self.input.captured.connect(self._save)
@@ -153,6 +157,20 @@ class CommandShortcutField(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self.sync()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        box = round(INPUT_MIN_WIDTH * current_ui_font_scale())
+        buttons = [b for b in (self.change_button, self.clear_button) if b is not None]
+        needed = box + sum(self._row.spacing() + b.sizeHint().width() for b in buttons)
+        stacked = self.width() < needed
+        self.input.setMinimumWidth(min(box, self.width()) if stacked else box)
+        direction = QBoxLayout.Direction.TopToBottom if stacked else QBoxLayout.Direction.LeftToRight
+        if self._row.direction() != direction:
+            self._row.setDirection(direction)
+            for button in buttons:
+                self._row.setAlignment(
+                    button, Qt.AlignmentFlag.AlignLeft if stacked else Qt.AlignmentFlag(0))
 
 
 class TransformsPanel(QWidget):
@@ -333,6 +351,29 @@ class TransformsPanel(QWidget):
         if answer == QMessageBox.StandardButton.Save:
             return self.save_transform()
         return answer == QMessageBox.StandardButton.Discard
+
+    def save_draft(self, *, ask: bool = False) -> bool:
+        """Save an unsaved edit when Settings leaves the page.
+
+        A draft that can't be saved yet stays in the editor with the reason.
+        With ``ask`` the user discards it or keeps editing instead.
+
+        Returns:
+            False when the user chose to keep editing.
+        """
+        if not self.has_unsaved_changes() or self.save_transform() or not ask:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Unsaved transform",
+            f"{self.message.text()} Discard your changes to this transform?",
+            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Discard:
+            return False
+        self.refresh(self._transform_id)
+        return True
 
     def refresh(self, selected_id=None) -> None:
         # Coming back to Settings must not throw away a draft in progress.

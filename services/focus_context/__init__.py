@@ -50,6 +50,13 @@ class TextContext:
     #: "unknown".
     selection_known: bool = False
     source: str = ""
+    #: Reading was refused (an excluded app, or a password field), so the
+    #: text must not be fetched another way either, such as by a copy.
+    blocked: bool = False
+
+
+#: TextContext.source of a selection refused because the app is excluded.
+EXCLUDED_SOURCE: Final[str] = "excluded"
 
 
 @dataclass(frozen=True)
@@ -74,6 +81,10 @@ class ContextCaptureService:
     def current_identity(self) -> AppIdentity | None:
         """The focused app now, or None where it is only known asynchronously."""
         raise NotImplementedError
+
+    def identity_now(self, timeout_s: float) -> AppIdentity | None:
+        """The focused app now, waiting up to ``timeout_s`` where that is asynchronous."""
+        return self.current_identity()
 
     def reread(self, identity: AppIdentity,
                callback: Callable[[Optional[TextContext]], None]) -> None:
@@ -267,11 +278,6 @@ _SENTENCE_ENDS = ".!?:"
 _CONTINUATION_PUNCTUATION = ".,;:!?)]}…"
 _LIST_MARKER = re.compile(r"(?:^|\n)[ \t]*[-*•–][ \t]*$")
 _FIRST_WORD = re.compile(r"(\s*)([^\W\d_][\w'’-]*)")
-_ALWAYS_CAPITAL = frozenset(
-    word.replace("'", quote)
-    for word in ("i", "i'm", "i'll", "i've", "i'd")
-    for quote in ("'", "’")
-)
 
 
 # Mid-sentence, only these common words lose the capital a speech engine
@@ -361,6 +367,48 @@ def _ends_a_word(before: str) -> bool:
     return last in _STRAIGHT_QUOTES and len(before) > 1 and not before[-2].isspace()
 
 
+@dataclass(frozen=True)
+class _JoinEdits:
+    #: The first word that lost its capital, or "".
+    lowered: str = ""
+    dropped_period: bool = False
+    #: "space" when a space was added at that edge, "strip" when spaces were
+    #: removed there, else "".
+    lead: str = ""
+    trail: str = ""
+
+
+def _join(text: str, context: TextContext | None) -> tuple[str, _JoinEdits]:
+    if not text or context is None or not context.caret_known:
+        return text, _JoinEdits()
+    before, after = context.before or "", context.after or ""
+    result = text
+    lowered = ""
+    # Replacing a capitalized selection (a name) keeps the capital, like an
+    # editor's case-preserving replace.
+    selected = context.selected.lstrip() if context.selection_known else ""
+    if _continues_sentence(before) and not selected[:1].isupper():
+        result = _lowercase_first_word(result, before)
+        if result != text:
+            lowered = _FIRST_WORD.match(text).group(2)
+    dropped_period = False
+    if _continues_after(after):
+        shorter = _drop_final_period(result)
+        dropped_period, result = shorter != result, shorter
+    lead = trail = ""
+    if before[-1:] == " ":
+        lead, result = "strip", result.lstrip(" ")
+    elif before and _ends_a_word(before) and result[:1] and (
+        result[0].isalnum() or result[0] in _OPENERS
+    ):
+        lead, result = "space", " " + result
+    if after[:1] == " ":
+        trail, result = "strip", result.rstrip(" ")
+    elif after[:1].isalnum() and result and not result[-1].isspace():
+        trail, result = "space", result + " "
+    return result, _JoinEdits(lowered, dropped_period, lead, trail)
+
+
 def join_with_context(text: str, context: TextContext | None) -> str:
     """``text`` adjusted to continue what is already before the caret.
 
@@ -368,25 +416,46 @@ def join_with_context(text: str, context: TextContext | None) -> str:
     otherwise touch the word before it, a lowercase first word when the
     sentence goes on, and no closing period when more of it follows.
     """
-    if not text or context is None or not context.caret_known:
-        return text
-    before, after = context.before or "", context.after or ""
-    result = text
-    # Replacing a capitalized selection (a name) keeps the capital, like an
-    # editor's case-preserving replace.
-    selected = context.selected.lstrip() if context.selection_known else ""
-    if _continues_sentence(before) and not selected[:1].isupper():
-        result = _lowercase_first_word(result, before)
-    if _continues_after(after):
-        result = _drop_final_period(result)
-    if before[-1:] == " ":
-        result = result.lstrip(" ")
-    elif before and _ends_a_word(before) and result[:1] and (
-        result[0].isalnum() or result[0] in _OPENERS
-    ):
-        result = " " + result
-    if after[:1] == " ":
-        result = result.rstrip(" ")
-    elif after[:1].isalnum() and result and not result[-1].isspace():
-        result += " "
-    return result
+    return _join(text, context)[0]
+
+
+_HTML_TAG = re.compile(r"(<[^>]*>)")
+# Rich-text editors may collapse ordinary whitespace at the edges of a pasted
+# HTML fragment (Qt's text widgets do), so a space the join adds there is a
+# non-breaking one.
+_HTML_EDGE_SPACE = "&nbsp;"
+
+
+def join_html_with_context(html: str, text: str, context: TextContext | None) -> str:
+    """``html``, the rich-text twin of ``text``, given ``text``'s join.
+
+    The edits are decided on the plain ``text`` and replayed on the
+    fragment's first and last text outside its tags, so a rich-text paste
+    reads like the plain one. A first word the markup doesn't start with
+    keeps its capital.
+    """
+    if not html:
+        return html
+    _joined, edits = _join(text, context)
+    if edits == _JoinEdits():
+        return html
+    parts = _HTML_TAG.split(html)
+    texts = [i for i, part in enumerate(parts) if i % 2 == 0 and part.strip()]
+    if edits.lowered and texts:
+        first = parts[texts[0]]
+        match = _FIRST_WORD.match(first)
+        if match is not None and match.group(2) == edits.lowered:
+            start = match.start(2)
+            parts[texts[0]] = first[:start] + first[start].lower() + first[start + 1:]
+    if edits.dropped_period and texts:
+        parts[texts[-1]] = _drop_final_period(parts[texts[-1]])
+    html = "".join(parts)
+    if edits.lead == "strip":
+        html = html.lstrip(" ")
+    elif edits.lead == "space":
+        html = _HTML_EDGE_SPACE + html
+    if edits.trail == "strip":
+        html = html.rstrip(" ")
+    elif edits.trail == "space":
+        html += _HTML_EDGE_SPACE
+    return html

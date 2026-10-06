@@ -119,6 +119,10 @@ class HistoryManager:
         self._usage_cache = None
         self._usage_signature = None
         self._usage_checked_at = 0.0
+        # A copy of the newest dictation saved this session, so it stays the
+        # last dictation after a move to the paired host deletes its row.
+        self._newest_dictation: Optional[HistoryEntry] = None
+        self._newest_lock = threading.Lock()
         if max_recordings is _UNSET and max_bytes is _UNSET:
             settings = settings_manager.load_all_settings()
             self.max_recordings = resolve_max_saved_recordings(settings)
@@ -216,6 +220,13 @@ class HistoryManager:
         )
 
         logger.info(f"Added history entry: {entry.id[:8]}...")
+        if kind_of(entry) == "dictation":
+            # Before record_saved: the move to the host can start right away.
+            snapshot = HistoryEntry(**{
+                column.key: getattr(entry, column.key) for column in HistoryEntry.__table__.columns
+            })
+            with self._newest_lock:
+                self._newest_dictation = snapshot
         _record_sync().record_saved("dictation", entry.id)
         return entry
 
@@ -403,11 +414,34 @@ class HistoryManager:
     _LAST_DICTATION_SCAN = 50
 
     def last_dictation(self) -> Optional[HistoryEntry]:
-        """This computer's newest live dictation, or None."""
+        """This computer's newest live dictation, or None.
+
+        One saved this session counts even after its move to the paired host
+        deleted it here; it comes back marked as kept there (``stored_on``),
+        so it can be pasted but not changed. Otherwise, while new dictations
+        move to the host, what is left here predates the newest ones, so
+        nothing is offered rather than an older dictation.
+        """
+        with self._newest_lock:
+            newest = self._newest_dictation
+        if newest is not None:
+            stored = db.get_history_entry_by_id(newest.id)
+            if stored is not None:
+                return stored
+            newest.stored_on = "the host"
+            return newest
+        if _dictations_move_to_host():
+            return None
         for entry in db.get_history_entries(self._LAST_DICTATION_SCAN, origin=None):
             if kind_of(entry) == "dictation":
                 return entry
         return None
+
+    def forget_dictation(self, entry_id: str) -> None:
+        """Stop offering a deleted dictation as the last one, wherever it was kept."""
+        with self._newest_lock:
+            if self._newest_dictation is not None and self._newest_dictation.id == entry_id:
+                self._newest_dictation = None
 
     def use_version(self, entry_id: str, version: str) -> Optional[HistoryEntry]:
         """Make an entry show its original text or the AI's version of it.
@@ -454,8 +488,17 @@ class HistoryManager:
         self,
         entry_id: str,
         delete_audio_file: bool = False,
+        *,
+        kept_on_host: bool = False,
     ) -> bool:
-        """Delete an entry and optionally its retained audio."""
+        """Delete an entry and optionally its retained audio.
+
+        Args:
+            kept_on_host: The paired host keeps the entry now (a finished
+                move), so it is still this computer's last dictation.
+        """
+        if not kept_on_host:
+            self.forget_dictation(entry_id)
         entry = db.get_history_entry_by_id(entry_id) if delete_audio_file else None
         result = db.delete_history_entry(entry_id)
         if result:
@@ -484,8 +527,13 @@ class HistoryManager:
         logger.info("Deleted saved recording: %s", filename)
         return True
 
+    def _forget_all_dictations(self) -> None:
+        with self._newest_lock:
+            self._newest_dictation = None
+
     def clear_history(self) -> None:
         """Clear all history entries (keeps recordings), here and on the host."""
+        self._forget_all_dictations()
         db.clear_history()
         _record_sync().cleared("dictation")
         logger.info("History cleared")
@@ -497,6 +545,7 @@ class HistoryManager:
                 os.remove(rec.file_path)
             except Exception as e:
                 logger.error(f"Failed to remove recording {rec.filename}: {e}")
+        self._forget_all_dictations()
         db.clear_history()
         _record_sync().cleared("dictation")
         logger.info("History and recordings cleared")
@@ -517,6 +566,20 @@ def _record_sync():
     from services.remote_records.sync import record_sync
 
     return record_sync
+
+
+def _dictations_move_to_host() -> bool:
+    """Whether a dictation saved here now moves to the paired host after saving."""
+    from services.remote_asr import settings as remote_settings
+
+    try:
+        return (
+            remote_settings.records_location() == "host"
+            and remote_settings.load_client_pairing() is not None
+        )
+    except Exception:
+        logger.debug("Could not read where records are kept", exc_info=True)
+        return False
 
 
 class _LazyHistoryManager:

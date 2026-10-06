@@ -31,6 +31,7 @@ from typing import Callable, Optional
 
 from config import config
 from services.focus_context import (
+    EXCLUDED_SOURCE,
     AppIdentity,
     ContextCaptureService,
     FocusSnapshot,
@@ -130,9 +131,11 @@ def _settle(future: Future, snapshot: FocusSnapshot) -> bool:
 
 
 def _same_target(current: Optional[AppIdentity], expected: AppIdentity) -> bool:
-    return current is not None and (current.app_id, current.pid, current.window) == (
-        expected.app_id, expected.pid, expected.window
-    )
+    # A browser's tabs share its window and pid; only the site tells them
+    # apart, and site exclusions match on it.
+    return current is not None and (
+        current.app_id, current.pid, current.window, current.title_hint
+    ) == (expected.app_id, expected.pid, expected.window, expected.title_hint)
 
 
 @dataclass
@@ -241,6 +244,21 @@ class CaptureService(ContextCaptureService):
             return None
         return self._identity()
 
+    def identity_now(self, timeout_s: float) -> Optional[AppIdentity]:
+        if self._closed:
+            return None
+        if self._platform.sync_identity:
+            return self._identity()
+        answer: Future = Future()
+        # A daemon thread, as in request(): a hung hyprctl or X server only
+        # costs the caller ``timeout_s``.
+        threading.Thread(target=lambda: answer.set_result(self._identity()),
+                         name="focus-context-identity", daemon=True).start()
+        try:
+            return answer.result(timeout=max(0.0, timeout_s))
+        except Exception:
+            return None
+
     def reread(self, identity: AppIdentity,
                callback: Callable[[Optional[TextContext]], None]) -> None:
         try:
@@ -288,6 +306,13 @@ class CaptureService(ContextCaptureService):
     def _continue(self, future: Future, identity: Optional[AppIdentity],
                   include_text: bool, include_selection: bool, started: float) -> None:
         self._remember(identity)
+        if include_selection and self._refuses(identity):
+            # Checked before any read, even where text can't be read at all,
+            # so a busy or slow reader can't turn the refusal into "unknown",
+            # which Command Mode would answer with a copy.
+            _settle(future, FocusSnapshot(
+                identity, TextContext(source=EXCLUDED_SOURCE, blocked=True)))
+            return
         if not (include_text or include_selection) or not self._text_allowed(identity):
             _settle(future, FocusSnapshot(identity))
             return
@@ -396,6 +421,12 @@ class CaptureService(ContextCaptureService):
             worker.busy_since = None
             worker.task_app = ""
 
+    def _refuses(self, identity: Optional[AppIdentity]) -> bool:
+        """Whether ``identity`` is an app the user excluded from reading."""
+        if identity is None or identity.is_self or not identity.app_id:
+            return False
+        return self._excluded(identity)
+
     def _excluded(self, identity: AppIdentity) -> bool:
         try:
             values = self._settings().get("app_context_excluded_apps")
@@ -423,8 +454,9 @@ class CaptureService(ContextCaptureService):
     def _execute(self, task, reader) -> None:
         if isinstance(task, _Reread):
             context = None
-            if _same_target(self._identity(), task.identity):
-                context = self._read(reader, task.identity, include_text=True,
+            current = self._identity()
+            if _same_target(current, task.identity):
+                context = self._read(reader, current, include_text=True,
                                      include_selection=True)
             self._deliver(task.callback, context)
             return

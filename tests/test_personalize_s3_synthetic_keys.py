@@ -29,7 +29,6 @@ def _app(app_id, name="", window="", platform="windows"):
     _app("foot", platform="hyprland"),
     _app("com.googlecode.iterm2", "iTerm2", platform="macos"),
     _app("com.apple.Terminal", "Terminal", platform="macos"),
-    _app("unknown", "Unknown", window="CASCADIA_HOSTING_WINDOW_CLASS"),
 ])
 def test_terminals_never_get_a_copy(identity):
     assert synthetic_keys.is_terminal(identity)
@@ -148,6 +147,8 @@ def test_windows_reads_every_modifier_from_the_keyboard_hook(monkeypatch):
     pressed = set()
     keyboard = types.SimpleNamespace(is_pressed=lambda name: name in pressed, send=Mock())
     monkeypatch.setitem(sys.modules, "keyboard", keyboard)
+    # The OS agrees with the hook; never the real keyboard's state.
+    monkeypatch.setattr(synthetic_keys, "_physical_key_reader", lambda: lambda vk: True)
 
     assert synthetic_keys._windows_modifiers_held() is False
     for name in ("ctrl", "alt", "shift", "windows"):

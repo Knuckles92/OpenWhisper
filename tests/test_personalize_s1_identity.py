@@ -34,6 +34,9 @@ class FakeWin32:
     def image_name(self, pid):
         return self.images.get(pid, self.exe)
 
+    def class_name(self, hwnd):
+        return ""
+
     def title(self, hwnd):
         self.titles.append(hwnd)
         return self.title_text
@@ -238,7 +241,8 @@ def test_macos_text_reader_logic_with_a_fake_accessibility_api(monkeypatch):
         "Lunch with ", "Siobhan", " tomorrow", caret_known=True, selection_known=True, source="ax")
     assert fake.timeout == 0.3
     fake.role = "AXSecureTextField"
-    assert reader.read(identity, include_text=True, include_selection=True) is None
+    assert reader.read(identity, include_text=True, include_selection=True) == TextContext(
+        source="ax", blocked=True)
     fake.role, fake.pid = "AXTextArea", 1
     assert reader.read(identity, include_text=True, include_selection=True) is None
     monkeypatch.setattr(_mac, "_secure_input_enabled", lambda: True)

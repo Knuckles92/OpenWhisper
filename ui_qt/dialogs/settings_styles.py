@@ -26,7 +26,7 @@ from services.settings import (
     setting_value,
 )
 from services.text_llm import get_profile, profile_display_name
-from ui_qt.dialogs.settings_destinations import CLEANUP, STYLES
+from ui_qt.dialogs.settings_destinations import STYLES
 from ui_qt.dialogs.settings_fields import settings_caption
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
@@ -89,9 +89,10 @@ _READ_TEXT_COPY = (
     "your sentence and spells names the way they're already written."
 )
 _EXCLUDED_COPY = (
-    "Apps whose text is never read. Password fields, terminals and "
-    "OpenWhisper itself are always skipped."
+    "Apps whose text is never read, not even by Command Mode. Password "
+    "fields, terminals and OpenWhisper itself are always skipped."
 )
+_STYLES_TITLE = "Match tone to each app"
 _STYLES_COPY = (
     "Writes in a tone that fits where you are: polished for email, relaxed "
     "for chat. A cleanup profile you pick still comes first."
@@ -103,7 +104,7 @@ SEARCH_FIELDS = [
     ("app_context_tile", "Know which app I'm dictating into", _APP_CONTEXT_COPY),
     ("read_text_tile", "Read text near the cursor", _READ_TEXT_COPY),
     ("excluded_apps_tile", "Never read from", _EXCLUDED_COPY),
-    ("app_styles_tile", "Match my style to the app", _STYLES_COPY),
+    ("app_styles_tile", _STYLES_TITLE, _STYLES_COPY),
     ("style_email_tile", "Email", "Tone for Outlook, Gmail and other mail: formal, casual, very casual"),
     ("style_work_tile", "Work messages", "Tone for Slack, Teams and other work chat"),
     ("style_personal_tile", "Personal messages", "Tone for WhatsApp, Messages and texts to friends"),
@@ -114,6 +115,7 @@ CONTROL_ATTRS = tuple(attr for attr, _title, _copy in SEARCH_FIELDS) + (
     "app_context_check",
     "read_text_check",
     "app_styles_check",
+    "styles_cleanup_gate_tile",
     "styles_gate_tile",
 )
 
@@ -229,7 +231,7 @@ def refresh(dialog) -> None:
 
 def basic_rows(page, group) -> None:
     switch = SettingsSwitch()
-    detail = page._row(group, "Match tone to each app", _BASIC_COPY, switch)
+    detail = page._row(group, _STYLES_TITLE, _BASIC_COPY, switch)
     page._bind(switch, STYLES, "app_styles_check", SettingsKey.APP_STYLES_ENABLED,
                resolve_app_styles_enabled)
 
@@ -420,11 +422,18 @@ class _Page:
         dialog._tile_group(layout, "App awareness", [dialog.app_context_tile, dialog.read_text_tile])
         dialog._tile_group(layout, "", [dialog.excluded_apps_tile], columns=1)
 
-        dialog.styles_gate_tile = InfoTile("", "", design_icon("info-warning.svg"))
+        # Under the Styles heading rather than atop the page: app awareness
+        # works without AI cleanup.
+        dialog.styles_cleanup_gate_tile = dialog.cleanup_gate_tile(
+            "Styles change how AI cleanup writes, so they only apply while it's on.")
+        dialog.styles_gate_tile = InfoTile(
+            "Styles need app awareness",
+            "Turn on Know which app I'm dictating into so your style can fit each app.",
+            design_icon("info-warning.svg"))
         dialog.styles_gate_tile.setProperty("kind", "notice")
         dialog.styles_gate_tile.setProperty("tileId", "stylesGate")
-        self.gate_button = _small_button("Open AI cleanup")
-        self.gate_button.clicked.connect(self._resolve_gate)
+        self.gate_button = _small_button("Turn on")
+        self.gate_button.clicked.connect(lambda: dialog.app_context_check.setChecked(True))
         # Under the text rather than beside it, so it fits a narrow window.
         gate_row = QHBoxLayout()
         gate_row.setContentsMargins(0, 0, 0, 0)
@@ -433,11 +442,12 @@ class _Page:
         dialog.styles_gate_tile.add_body_layout(gate_row)
 
         dialog.app_styles_tile = SettingTile(
-            "Match my style to the app", _STYLES_COPY, design_icon("palette-purple.svg"))
+            _STYLES_TITLE, _STYLES_COPY, design_icon("palette-purple.svg"))
         dialog.app_styles_check = dialog.app_styles_tile.checkbox
         dialog.app_styles_check.toggled.connect(
             lambda on: self._save_switch(SettingsKey.APP_STYLES_ENABLED, on))
-        dialog._tile_group(layout, "Styles", [dialog.styles_gate_tile], columns=1)
+        dialog._tile_group(
+            layout, "Styles", [dialog.styles_cleanup_gate_tile, dialog.styles_gate_tile], columns=1)
         dialog._tile_group(layout, "", [dialog.app_styles_tile], columns=1)
 
         self.cards = {category: _StyleCard(category, self._save_tone) for category in AppCategory.ALL}
@@ -462,6 +472,12 @@ class _Page:
             _FitRow([self.override_picker, self.override_category, self.override_add]))
         dialog._tile_group(layout, "", [dialog.style_overrides_tile], columns=1)
 
+        from ui_qt.widgets.command_settings import ShowWatcher
+
+        # AI cleanup and its provider change on other pages while this one is hidden.
+        self._show_watcher = ShowWatcher(
+            layout.parentWidget(), lambda: self.sync(dialog._settings_snapshot()))
+
     def sync(self, settings: dict) -> None:
         dialog = self.dialog
         awareness = resolve_app_context_enabled(settings)
@@ -476,24 +492,17 @@ class _Page:
             self._syncing = False
         dialog.read_text_tile.setEnabled(awareness and supported)
         self.privacy.setText(privacy_note(settings))
-        dialog.excluded_apps_tile.setEnabled(awareness and supported and read_text)
+        # The list also keeps Command Mode and transforms out of these apps,
+        # so it stays editable whenever the app can be known.
+        dialog.excluded_apps_tile.setEnabled(awareness)
         self.excluded_rows.set_rows([(name, name) for name in _excluded(settings)])
 
-        gate = "cleanup" if not cleanup_on(settings) else "" if awareness else "awareness"
-        if gate == "cleanup":
-            dialog.styles_gate_tile.title_label.setText("Styles need AI cleanup")
-            dialog.styles_gate_tile.set_description(
-                "Styles change how AI cleanup writes, so they only apply while it's on.")
-            self.gate_button.setText("Open AI cleanup")
-        elif gate == "awareness":
-            dialog.styles_gate_tile.title_label.setText("Styles need app awareness")
-            dialog.styles_gate_tile.set_description(
-                "Turn on Know which app I'm dictating into so your style can fit each app.")
-            self.gate_button.setText("Turn on")
-        fit_compact_button(self.gate_button)
-        dialog.styles_gate_tile.setVisible(bool(gate))
-        dialog.app_styles_tile.setEnabled(not gate)
-        active = not gate and dialog.app_styles_check.isChecked()
+        # The shared cleanup gate shows itself; this one waits behind it.
+        cleanup = cleanup_on(settings)
+        dialog.styles_gate_tile.setVisible(cleanup and not awareness)
+        locked = not cleanup or not awareness
+        dialog.app_styles_tile.setEnabled(not locked)
+        active = not locked and dialog.app_styles_check.isChecked()
         tones = app_styles.resolve_tones(settings)
         overrides = app_styles.resolve_overrides(settings)
         for category, card in self.cards.items():
@@ -552,9 +561,3 @@ class _Page:
         settings = dict(self.dialog._settings_snapshot())
         app_styles.remove_override(settings, match)
         self._saved(SettingsKey.APP_STYLE_OVERRIDES, settings[SettingsKey.APP_STYLE_OVERRIDES])
-
-    def _resolve_gate(self) -> None:
-        if not cleanup_on(self.dialog._settings_snapshot()):
-            self.dialog.select_destination(CLEANUP)
-        else:
-            self.dialog.app_context_check.setChecked(True)

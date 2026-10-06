@@ -86,8 +86,14 @@ class DictationJob:
     #: Future[FocusSnapshot] from the capture service, or None when off.
     focus: Optional[Future] = None
     recognition: Optional[RecognitionContext] = None
-    #: Future[str]: the selected text a command or transform rewrites.
+    #: Future[str]: the selected text a command or transform rewrites, or a
+    #: non-str marker when it was deliberately left unread (an excluded app,
+    #: a password field, the shortcut's keys still down).
     selection: Optional[Future] = None
+    #: Future[FocusSnapshot] of where a command or transform started, for
+    #: the paste check only, also with app awareness off; history, styles
+    #: and prompts read ``focus`` alone.
+    target: Optional[Future] = None
 
     def snapshot(self, timeout: float = 0.0) -> Optional[FocusSnapshot]:
         """The focus capture, or None when it failed or isn't ready; never raises.
@@ -141,13 +147,17 @@ def begin_job(mode: str, settings: Mapping, *, selection=None) -> DictationJob:
             command and transform jobs.
     """
     settings = settings or {}
-    focus = None
+    focus = target = None
     try:
         if resolve_app_context_enabled(settings):
             focus = focus_context.get_service().request(
                 include_text=resolve_app_context_read_text(settings),
                 include_selection=mode == JobMode.COMMAND,
             )
+        elif mode != JobMode.DICTATION:
+            # A rewrite pastes even with auto-paste off, so it still learns
+            # where it started (see DictationJob.target).
+            target = focus_context.get_service().request(include_text=False)
     except Exception:
         logger.debug("Focus capture could not start", exc_info=True)
     return DictationJob(
@@ -155,6 +165,7 @@ def begin_job(mode: str, settings: Mapping, *, selection=None) -> DictationJob:
         focus=focus,
         recognition=recognition_for(None, settings),
         selection=_as_future(selection),
+        target=target,
     )
 
 
@@ -326,16 +337,21 @@ def finish_text(cleaned: str, prepared: PreparedText) -> FinishedText:
     return FinishedText(plain, html, True, raw_plain)
 
 
+def _caret_context(job: Optional[DictationJob]):
+    if job is None or job.mode != JobMode.DICTATION:
+        return None
+    snapshot = job.snapshot(timeout=0)
+    context = snapshot.text if snapshot is not None else None
+    return context if context is not None and context.caret_known else None
+
+
 def text_for_paste(text: str, job: Optional[DictationJob]) -> str:
     """``text`` joined onto what is already before the caret, for dictation.
 
     Qt thread: never waits for the capture.
     """
-    if job is None or job.mode != JobMode.DICTATION:
-        return text
-    snapshot = job.snapshot(timeout=0)
-    context = snapshot.text if snapshot is not None else None
-    if context is None or not context.caret_known:
+    context = _caret_context(job)
+    if context is None:
         return text
     try:
         return focus_context.join_with_context(text, context)
@@ -344,26 +360,67 @@ def text_for_paste(text: str, job: Optional[DictationJob]) -> str:
         return text
 
 
-def paste_target_ok(job: Optional[DictationJob]) -> bool:
-    """Whether the app that had focus at the start still has it.
+def html_for_paste(html: str, text: str, job: Optional[DictationJob]) -> str:
+    """``html``, the rich-text twin of ``text``, given ``text_for_paste``'s join.
 
-    True whenever either side is unknown; a rewrite is only withheld when
-    the focused app provably changed.
+    ``text`` is the transcript before its join. Rich-text apps paste the
+    HTML, so both flavours must agree. Qt thread: never waits.
     """
-    snapshot = job.snapshot(timeout=0) if job is not None else None
-    expected = snapshot.identity if snapshot is not None else None
-    if expected is None:
-        return True
+    context = _caret_context(job) if html else None
+    if context is None:
+        return html
     try:
-        current = focus_context.get_service().current_identity()
+        return focus_context.join_html_with_context(html, text, context)
+    except Exception:
+        logger.debug("Joining rich text with the text before the caret failed", exc_info=True)
+        return html
+
+
+class PasteTarget:
+    SAME: Final[str] = "same"
+    CHANGED: Final[str] = "changed"
+    #: Either side could not be told: nothing proves the app is the same.
+    UNKNOWN: Final[str] = "unknown"
+
+
+#: How long the paste check waits on Linux, where the focused app comes
+#: from hyprctl or an X11 round trip; it runs on the Qt thread.
+PASTE_CHECK_TIMEOUT_S: Final[float] = 0.5
+
+
+def paste_target(job: Optional[DictationJob]) -> str:
+    """Whether the app that had focus at the job's start still has it.
+
+    A PasteTarget value. Qt thread: never waits for the start's capture,
+    and waits at most PASTE_CHECK_TIMEOUT_S for the current app.
+    """
+    future = None
+    if job is not None:
+        future = job.target if job.target is not None else job.focus
+    value = _resolved(future, 0)
+    expected = value.identity if isinstance(value, FocusSnapshot) else None
+    if expected is None:
+        return PasteTarget.UNKNOWN
+    try:
+        current = focus_context.get_service().identity_now(PASTE_CHECK_TIMEOUT_S)
     except Exception:
         logger.debug("Current focus unavailable", exc_info=True)
-        return True
+        return PasteTarget.UNKNOWN
     if current is None:
-        return True
-    return (expected.app_id, expected.pid, expected.window) == (
+        return PasteTarget.UNKNOWN
+    same = (expected.app_id, expected.pid, expected.window) == (
         current.app_id, current.pid, current.window
     )
+    return PasteTarget.SAME if same else PasteTarget.CHANGED
+
+
+def paste_target_ok(job: Optional[DictationJob]) -> bool:
+    """Whether a command or transform may paste: its app provably still has focus.
+
+    A rewrite is pasted even with auto-paste off, so an unknown app counts
+    as changed rather than pasting it blind.
+    """
+    return paste_target(job) == PasteTarget.SAME
 
 
 def after_paste(job: Optional[DictationJob], pasted_text: str) -> None:

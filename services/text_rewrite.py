@@ -25,6 +25,12 @@ LONG_TEXT_TIMEOUT_S = 30.0
 #: A Select All in a long document is refused rather than sent: it would
 #: outgrow small local models' context and hold the job slot for minutes.
 MAX_TEXT_CHARS = 20000
+NO_INSTRUCTION_MESSAGE = "Didn't catch an instruction"
+TOO_LONG_MESSAGE = f"Select less text to rewrite (up to {MAX_TEXT_CHARS:,} characters)"
+#: Messages the user acts on, as opposed to the AI model or provider failing.
+REFUSALS = frozenset({
+    NO_INSTRUCTION_MESSAGE, NEEDS_SELECTION_MESSAGE, TOO_LONG_MESSAGE, NO_PROVIDER_MESSAGE,
+})
 _ERROR_MAX_CHARS = 120
 
 _REWRITE_PROMPT = (
@@ -120,10 +126,10 @@ def rewrite_with(
     """
     instruction = (instruction or "").strip()
     if not instruction:
-        return "", "Didn't catch an instruction"
+        return "", NO_INSTRUCTION_MESSAGE
     has_selection = bool(text and text.strip())
     if has_selection and len(text) > MAX_TEXT_CHARS:
-        return "", f"Select less text to rewrite (up to {MAX_TEXT_CHARS:,} characters)"
+        return "", TOO_LONG_MESSAGE
     prompt = compose_rewrite_prompt(
         instruction,
         has_selection=has_selection,

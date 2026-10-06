@@ -18,6 +18,8 @@ from services.focus_context import AppIdentity, catalog
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _UWP_FRAME_HOST = "applicationframehost.exe"
 _UWP_CORE_WINDOW = "Windows.UI.Core.CoreWindow"
+_CONSOLE_HOST = "conhost.exe"
+_CONSOLE_CLASSES = frozenset({"ConsoleWindowClass", "PseudoConsoleWindow"})
 _TITLE_CHARS = 512
 
 
@@ -132,6 +134,13 @@ def foreground_identity() -> Optional[AppIdentity]:
             child_exe = win.image_name(child_pid)
             if child_exe:
                 pid, exe = child_pid, child_exe
+    if win.class_name(hwnd) in _CONSOLE_CLASSES:
+        # conhost draws classic consoles, but the window reports the console's
+        # first client (wsl.exe, ssh.exe, python.exe...). Naming conhost keeps
+        # every terminal rule on it: no text read, no line breaks, no copy.
+        known = catalog.lookup(exe)
+        if known is None or known.surface != catalog.TERMINAL:
+            exe = _CONSOLE_HOST
     if not exe:
         return None
     hint = catalog.title_hint(exe, win.title(hwnd)) if catalog.is_browser(exe) else ""

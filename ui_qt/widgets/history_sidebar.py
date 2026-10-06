@@ -1313,6 +1313,7 @@ class HistorySidebar(QWidget):
                 logger.warning("Could not delete a host-kept entry: %s", exc)
                 self._remote_deleted.emit(entry_id, str(exc) or type(exc).__name__)
                 return
+            history_manager.forget_dictation(entry_id)
             self._remote_deleted.emit(entry_id, "")
 
         threading.Thread(target=work, name="history-remote-delete", daemon=True).start()

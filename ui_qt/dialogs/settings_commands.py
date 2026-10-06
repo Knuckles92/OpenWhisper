@@ -53,7 +53,7 @@ def _link(text: str, tooltip: str, on_click):
     from PyQt6.QtWidgets import QPushButton
 
     link = QPushButton(text)
-    link.setObjectName("cleanupRulesOpenCleanupLink")
+    link.setObjectName("settingsPageLink")
     link.setFlat(True)
     link.setCursor(Qt.CursorShape.PointingHandCursor)
     link.setToolTip(tooltip)
@@ -206,6 +206,11 @@ def refresh(dialog) -> None:
     panel = dialog.__dict__.get("transforms_panel")
     if panel is not None:
         panel.refresh()
+
+
+def save_drafts(dialog, *, ask: bool = False) -> bool:
+    panel = dialog.__dict__.get("transforms_panel")
+    return panel is None or panel.save_draft(ask=ask)
 
 
 def cancel_capture(dialog) -> None:

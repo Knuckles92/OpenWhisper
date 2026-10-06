@@ -259,7 +259,7 @@ class DictationRecords:
     def delete_local(self, record_id: str) -> None:
         from services.history_manager import history_manager
 
-        history_manager.delete_entry(record_id, delete_audio_file=True)
+        history_manager.delete_entry(record_id, delete_audio_file=True, kept_on_host=True)
 
     # ---- both sides ----
 

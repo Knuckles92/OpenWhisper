@@ -93,6 +93,10 @@ def refresh(dialog) -> None:
     dialog.snippets_panel.refresh()
 
 
+def save_drafts(dialog, *, ask: bool = False) -> bool:
+    return dialog.snippets_panel.save_draft(ask=ask)
+
+
 def basic_rows(page, group) -> None:
     from ui_qt.dialogs.settings_destinations import SNIPPETS
     from ui_qt.widgets.buttons import Button, neutral_button

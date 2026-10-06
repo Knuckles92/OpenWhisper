@@ -402,10 +402,18 @@ def test_html_reaches_the_clipboard_stage(h):
     assert h.ui.stages == [(("Hello.",), {"html": "<p>Hello.</p>"})]
 
 
+def _started_in_outlook():
+    """A target the paste check can confirm: Outlook then, Outlook now."""
+    focus_context.set_service(FakeService(FocusSnapshot(OUTLOOK), current=OUTLOOK))
+    target: Future = Future()
+    target.set_result(FocusSnapshot(OUTLOOK))
+    return target
+
+
 def test_rewrites_paste_even_with_auto_paste_off(h):
     h.settings.values[SettingsKey.AUTO_PASTE] = False
 
-    assert h.runtime._claim_job(DictationJob(mode=JobMode.TRANSFORM))
+    assert h.runtime._claim_job(DictationJob(mode=JobMode.TRANSFORM, target=_started_in_outlook()))
     h.runtime.on_transcription_complete("Shorter.", "A much longer text.")
     assert h.paste.call_count == 1
 
@@ -529,7 +537,7 @@ def test_rewrite_jobs_are_refused_while_recording_or_busy(h):
 
 
 def test_a_submitted_rewrite_is_pasted_and_saved(h):
-    job = DictationJob(mode=JobMode.TRANSFORM, selection=None)
+    job = DictationJob(mode=JobMode.TRANSFORM, selection=None, target=_started_in_outlook())
 
     assert h.runtime.begin_rewrite_job(job, source_name="Polish")
     assert h.runtime.has_active_job and h.runtime._active_job is job
