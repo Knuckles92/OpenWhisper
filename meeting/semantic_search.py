@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from services.settings import resolve_typesafe_feature_enabled
-from services.typesafe import judge_from_settings
+from services.typesafe import judge_from_settings, route_from_settings
 
 logger = logging.getLogger(__name__)
 MAX_CANDIDATES = 48
@@ -26,7 +26,8 @@ def search_history(repository, query, *, semantic=False, exclude_meeting_id=None
         return fallback
     judge = judge or judge_from_settings()
     if judge is None:
-        fallback["message"] = "Keyword results. TypeSafe is unavailable or has no API key."
+        fallback["message"] = (f"Keyword results. Add {route_from_settings().key_phrase} "
+                               "in Settings → API keys for meaning-based ranking.")
         return fallback
     try:
         candidates = repository.search_candidates(query, exclude_meeting_id=exclude_meeting_id, limit=MAX_CANDIDATES)

@@ -303,3 +303,44 @@ def test_highlight_status_does_not_apply_current_settings_to_ended_meetings(runt
     runtime.engine.store.update_runtime_fields(status="ended", live_highlights_status="on")
     runtime.engine._emit_status()
     assert runtime.engine.store.snapshot()["live_highlights_status"] == "on"
+
+
+def test_switching_to_openrouter_mid_meeting_reroutes_the_next_judgment(runtime):
+    """Running workers must not keep sending excerpts to the route they started on."""
+    engine = runtime.engine
+    runtime.values.update(typesafe_enabled=True, typesafe_highlights_enabled=True)
+    runtime.credential["key"] = "synthetic-key"
+    engine._start_fast_features()
+    worker_judge = engine._live_signals.judge
+    assert isinstance(worker_judge, typesafe.FollowingJudge)
+    direct = engine._typesafe_judge()
+    assert direct.route is typesafe.TYPESAFE_ROUTE
+    assert engine._typesafe_judge() is direct
+
+    worker_judge.noul("x", "Is it?")
+    assert runtime.post.call_args.kwargs["endpoint"] == typesafe.ENDPOINT
+    runtime.values["typesafe_provider"] = "openrouter"
+    worker_judge.noul("x", "Is it?")
+    assert runtime.post.call_args.kwargs["endpoint"] == typesafe.OPENROUTER_ROUTE.endpoint
+    assert runtime.post.call_args.args[0]["model"] == typesafe.OPENROUTER_ROUTE.model
+    routed = engine._typesafe_judge()
+    assert routed.route is typesafe.OPENROUTER_ROUTE and routed is not direct
+    assert engine._typesafe_judge() is routed
+
+
+def test_a_replaced_key_is_used_without_restarting_the_meeting(runtime):
+    runtime.values["typesafe_enabled"] = True
+    runtime.credential["key"] = "old-key"
+    first = runtime.engine._typesafe_judge()
+    runtime.credential["key"] = "new-key"
+    second = runtime.engine._typesafe_judge()
+    assert second is not first and second._api_key == "new-key"
+
+
+def test_chosen_route_without_its_key_stops_judgments(runtime, monkeypatch):
+    keys = {"TYPESAFE_API_KEY": "ts-key"}
+    monkeypatch.setattr(typesafe, "resolve_credential", keys.get)
+    runtime.values.update(typesafe_enabled=True, typesafe_provider="openrouter")
+    assert runtime.engine._typesafe_judge() is None
+    keys["OPENROUTER_API_KEY"] = "or-key"
+    assert runtime.engine._typesafe_judge().route is typesafe.OPENROUTER_ROUTE

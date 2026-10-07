@@ -61,6 +61,13 @@ _TOPIC_TRAILERS = re.compile(
 MAX_TOPIC_CHARS = 120
 
 
+def _missing_key_message() -> str:
+    """Name the key the chosen Fast judgments route needs (TypeSafe or OpenRouter)."""
+    from services.typesafe import route_from_settings
+
+    return f"Add {route_from_settings().key_phrase} in Settings to use voice commands."
+
+
 def compile_wake_pattern(names: Sequence[str]) -> Optional[re.Pattern]:
     """Whole-word, case-insensitive pattern for the wake names; spaces match hyphens too."""
     parts = []
@@ -349,7 +356,7 @@ class VoiceCommandListener:
                 return
             judge = self._judge_provider() if self._judge_provider else self._judge
             if judge is None:
-                self._feedback("unavailable", "Add a TypeSafe API key in Settings to use voice commands.")
+                self._feedback("unavailable", _missing_key_message())
                 return
             row = job["row"]
             if self._is_wake_stub(row.get("text", "")):
@@ -396,7 +403,7 @@ class VoiceCommandListener:
         try:
             judge = self._judge_provider() if self._judge_provider else self._judge
             if judge is None:
-                self._feedback("unavailable", "Add a TypeSafe API key in Settings to use voice commands.")
+                self._feedback("unavailable", _missing_key_message())
                 return None
             answer = voice_command_choice(
                 judge, row.get("text") or "",

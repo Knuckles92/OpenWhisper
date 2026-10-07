@@ -471,3 +471,40 @@ def test_master_switch_revocation_prevents_the_next_http_request(monkeypatch):
     with pytest.raises(ReviewUnavailable, match="off"):
         TypeSafeReviewer("synthetic-key").evaluate({}, {}, consent=CONSENT)
     post.assert_not_called()
+
+
+def test_review_runs_over_openrouter_when_that_route_is_chosen(monkeypatch):
+    from services import typesafe
+
+    store, repo = make_store()
+    monkeypatch.setattr("meeting.insight_review.route_from_settings", lambda: typesafe.OPENROUTER_ROUTE)
+    monkeypatch.setattr("services.credentials.resolve_credential",
+                        {"OPENROUTER_API_KEY": "or-key"}.get)
+    post = Mock(return_value=(200, json.dumps({"answers": {
+        key: {"type": "noul", "noul": .99}
+        for key in ("support", "contradiction", "asr_uncertain", "acceptance", "owner")}})))
+    monkeypatch.setattr("services.typesafe._http_post", post)
+    assert store.apply("system", None, [{"op": "review_begin", "run_id": "r"}])[0].ok
+    run_review(store, repo, "r")
+    assert post.call_args.kwargs["api_key"] == "or-key"
+    assert post.call_args.kwargs["endpoint"] == typesafe.OPENROUTER_ROUTE.endpoint
+    assert post.call_args.args[0]["model"] == typesafe.OPENROUTER_ROUTE.model
+    assert store.snapshot()["insight_review"]["status"] == "ready"
+
+
+def test_review_without_the_chosen_routes_key_names_that_key(monkeypatch):
+    from services import typesafe
+
+    store, repo = make_store()
+    monkeypatch.setattr("meeting.insight_review.route_from_settings", lambda: typesafe.OPENROUTER_ROUTE)
+    # A TypeSafe key alone does not run the OpenRouter route.
+    monkeypatch.setattr("services.credentials.resolve_credential",
+                        {"TYPESAFE_API_KEY": "ts-key"}.get)
+    post = Mock()
+    monkeypatch.setattr("services.typesafe._http_post", post)
+    assert store.apply("system", None, [{"op": "review_begin", "run_id": "r"}])[0].ok
+    run_review(store, repo, "r")
+    review = store.snapshot()["insight_review"]
+    assert review["status"] == "unavailable"
+    assert "an OpenRouter API key" in review["message"] and "OPENROUTER_API_KEY" in review["message"]
+    post.assert_not_called()

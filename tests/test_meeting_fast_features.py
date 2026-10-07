@@ -260,6 +260,19 @@ def test_persisted_signals_round_trip():
     assert MeetingState.from_dict(snapshot).to_dict() == snapshot
 
 
+def test_semantic_without_a_key_names_the_chosen_routes_key(monkeypatch):
+    from services import typesafe
+
+    monkeypatch.setattr("meeting.semantic_search.resolve_typesafe_feature_enabled", lambda _: True)
+    monkeypatch.setattr("meeting.semantic_search.judge_from_settings", lambda: None)
+    monkeypatch.setattr("meeting.semantic_search.route_from_settings", lambda: typesafe.OPENROUTER_ROUTE)
+    repo = SimpleNamespace(search_transcripts=lambda *a, **k: [{"text": "keyword"}],
+                           search_candidates=lambda *a, **k: pytest.fail("remote candidates"))
+    result = search_history(repo, "shipping delay", semantic=True)
+    assert result["mode"] == "keyword"
+    assert "an OpenRouter API key" in result["message"]
+
+
 def test_semantic_disabled_never_reads_remote_candidates(monkeypatch):
     monkeypatch.setattr("meeting.semantic_search.resolve_typesafe_feature_enabled", lambda _: False)
     repo = SimpleNamespace(search_transcripts=lambda *a, **k: [], search_candidates=lambda *a, **k: pytest.fail("remote candidates"))

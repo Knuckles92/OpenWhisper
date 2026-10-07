@@ -2,7 +2,7 @@
 
 **Experimental:** semantic topic changes and spoken instructions are available for testing. Their behavior and thresholds may change.
 
-Added September 18, 2026. Optional features share one small client for TypeSafe's System One model (`jev-1.13.0`): a decision service that answers narrow typed questions about short text in about 0.2 s and never generates prose. Everything here is off by default, needs a `TYPESAFE_API_KEY` (Settings → API keys → TypeSafe), and degrades to the previous deterministic behaviour whenever a judgment is disabled, unkeyed, or unanswered.
+Added September 18, 2026. Optional features share one small client for TypeSafe's System One model (`jev-1.13.0`): a decision service that answers narrow typed questions about short text in about 0.2 s and never generates prose. Everything here is off by default, needs a key for the chosen [Jev connection](#jev-connection-typesafe-or-openrouter) (a `TYPESAFE_API_KEY`, or the `OPENROUTER_API_KEY` when connecting through OpenRouter), and degrades to the previous deterministic behaviour whenever a judgment is disabled, unkeyed, or unanswered.
 
 Evidence for the thresholds is in [the human-label benchmark](typesafe-human-label-benchmark.md); the earlier synthetic and LLM-judged work is in [typesafe-experiments.md](typesafe-experiments.md) and [typesafe-api-benchmark.md](typesafe-api-benchmark.md). The live ledger, insight verification and end-of-meeting review described in [typesafe-live-state.md](typesafe-live-state.md) are separate work and can reuse the client below.
 
@@ -16,18 +16,35 @@ Evidence for the thresholds is in [the human-label benchmark](typesafe-human-lab
 
 Meeting-side judgments additionally require the meeting's cloud intelligence to be on; the closures check `state.cloud_enabled` on every call, so turning cloud off mid-meeting stops them immediately.
 
+## Jev connection: TypeSafe or OpenRouter
+
+Added October 6, 2026. OpenRouter serves the same model through a System One API that implements TypeSafe's request and response shapes (`POST https://openrouter.ai/api/v1/systemone`; responses add `id`, `provider` and `usage.cost`). **Meeting Mode → Fast judgments → Jev connection** chooses the route, saved as `typesafe_provider`:
+
+| Route | Endpoint | Key | Model id | Billed to |
+|---|---|---|---|---|
+| TypeSafe (default) | `api.typesafe.ai/v1/systemone` | `TYPESAFE_API_KEY` | `jev-1.13.0` | TypeSafe account |
+| OpenRouter | `openrouter.ai/api/v1/systemone` | `OPENROUTER_API_KEY` | `typesafe/jev-1.13` | OpenRouter credits |
+
+- The OpenRouter id is OpenRouter's name for the same 1.13 release; its responses name the dated snapshot (`typesafe/jev-1.13-20260917`). `typesafe/jev-1.13.0` does not exist there and returns HTTP 400, so the id is spelled out rather than derived from `MODEL`.
+- The route's base URL, key variable and `X-Title` header come from the built-in OpenRouter text profile, so they cannot drift from cleanup and AI insights.
+- The route never changes by itself. Choosing it changes who receives excerpts, so TypeSafe stays selected until the user picks OpenRouter, even when only an OpenRouter key exists. The missing-key notice offers the one-click switch instead.
+- Every caller resolves the route when it asks. Meeting workers that outlive a Settings change (`LiveSignals`, `CitationVerifier`) hold a `FollowingJudge`, and the engine rebuilds its cached judge when the route or key changes, so a switch mid-meeting applies to the next judgment.
+- **Test** on the connection card sends the same one-word verification judgment as API keys → Test, over the chosen route, and reports the latency. OpenRouter's 402 (no credits) and 404 (no allowed provider for the model) get their own messages.
+
+Measured October 6, 2026 from the development machine, three verification judgments per route over a reused connection: 0.08–0.11 s direct to TypeSafe, 0.12–0.16 s through OpenRouter (first request 0.53 s and 0.25 s respectively).
+
 ## When there is no key
 
 Quiet degradation is the right runtime policy — a dead network must not interrupt capture — but it makes "you never set a key" indistinguishable from "nobody said anything checkable." Settings therefore reports the configuration case, which runtime deliberately will not:
 
-- **Meeting Mode → Fast judgments** shows a notice while no key resolves, with a button that opens API keys on the TypeSafe credential. The nav rail reads `No key` instead of a feature count.
+- **Meeting Mode → Fast judgments** shows a notice while the chosen route's key does not resolve, with a button that opens API keys on that credential, and a **Use OpenRouter** / **Use TypeSafe** button when the other route has a key. The nav rail reads `No key` instead of a feature count, and appends `· OpenRouter` to the count on that route.
 - **API keys → Test** verifies a TypeSafe key with one minimal judgment (`services.typesafe.verify_key`) and reports the status class. TypeSafe is not an OpenAI-compatible endpoint, so it cannot use the shared `verify_api_key` probe.
 
-`services.typesafe.key_present()` answers "is a key resolvable" on its own, separate from `is_configured()`, which also requires the master switch — the two cases need different copy and a different next step.
+`services.typesafe.key_present()` answers "is the chosen route's key resolvable" on its own, separate from `is_configured()`, which also requires the master switch — the two cases need different copy and a different next step.
 
 ## Privacy
 
-Each judgment sends a short excerpt to `api.typesafe.ai`: about two minutes of transcript for a topic check, and one segment plus three predecessors for a voice command. The response is a probability or a label, not text. Dictation is never sent to TypeSafe.
+Each judgment sends a short excerpt to `api.typesafe.ai`, or to `openrouter.ai`, which passes it to TypeSafe, on the OpenRouter route: about two minutes of transcript for a topic check, and one segment plus three predecessors for a voice command. The response is a probability or a label, not text. Dictation is never sent to TypeSafe.
 
 ## Semantic topic changes
 
@@ -48,7 +65,7 @@ Judgment and application run on one background thread so a slow answer never del
 
 ## Code map
 
-- `services/typesafe.py`: pinned model, credential, `urllib` transport with the app's verified TLS context, response validation, failure policy, and usage counters.
+- `services/typesafe.py`: pinned model, the `JudgeRoute`s (TypeSafe and OpenRouter), credential, `urllib` transport with the app's verified TLS context, response validation, failure policy, usage counters, and `FollowingJudge`.
 - `meeting/agent/typesafe_signals.py`: meeting-side questions worded exactly as benchmarked, with thresholds.
 - `meeting/agent/scheduler.py`: optional `topic_judge` and `_semantic_topic_shift`.
 - `meeting/voice_commands.py`: wake pattern, referent selection, op construction, background listener.

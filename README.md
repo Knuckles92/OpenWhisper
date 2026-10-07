@@ -147,7 +147,7 @@ Use **Help → Check for Updates**. Configure automatic checks and notifications
 
 For meetings, open **Meeting Mode**. Add an optional brief to guide AI notes and the live copilot; you can edit it during the meeting. After transcription, **Continue in the background** lets you start another meeting while reports finish. Find results in **Past Meetings**.
 
-Optional [insight review](docs/meeting-insight-review.md) helps clarify uncertain decisions and commitments. [Fast judgments](docs/typesafe-fast-judgments.md) add citation checks, meaning-based history search, and live meeting cues; enable them under **Meeting Mode → Fast judgments**.
+Optional [insight review](docs/meeting-insight-review.md) helps clarify uncertain decisions and commitments. [Fast judgments](docs/typesafe-fast-judgments.md) add citation checks, meaning-based history search, and live meeting cues; enable them under **Meeting Mode → Fast judgments**, with a TypeSafe key or the OpenRouter key you already use.
 
 ### Hotkeys
 

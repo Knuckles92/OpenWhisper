@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from meeting.state.schema import new_id, now_iso
 from services.settings import resolve_typesafe_enabled
-from services.typesafe import CREDENTIAL_ENV, MODEL, TypeSafeJudge
+from services.typesafe import MODEL, TYPESAFE_ROUTE, TypeSafeJudge, route_from_settings
 
 CONSENT = "typesafe-text-v1"
 MAX_ITEMS = 40
@@ -27,8 +27,8 @@ def consented(snapshot):
 
 
 class TypeSafeReviewer:
-    def __init__(self, api_key):
-        self._judge = TypeSafeJudge(api_key, timeout_s=12.0)
+    def __init__(self, api_key, route=TYPESAFE_ROUTE):
+        self._judge = TypeSafeJudge(api_key, route=route, timeout_s=12.0)
 
     def evaluate(self, state, questions, *, consent):
         if consent != CONSENT:
@@ -172,10 +172,11 @@ def run_review(store, repository, run_id, reviewer=None):
             if not resolve_typesafe_enabled():
                 raise ReviewUnavailable("TypeSafe fast judgments is off. Enable it under Meeting settings → Fast judgments.")
             from services.credentials import resolve_credential
-            key = resolve_credential(CREDENTIAL_ENV)
+            route = route_from_settings()
+            key = resolve_credential(route.credential_env)
             if not key:
-                raise ReviewUnavailable("Add a TypeSafe key in Settings → API keys or TYPESAFE_API_KEY in your environment, then retry.")
-            reviewer = TypeSafeReviewer(key)
+                raise ReviewUnavailable(f"Add {route.key_phrase} in Settings → API keys or {route.credential_env} in your environment, then retry.")
+            reviewer = TypeSafeReviewer(key, route)
         segments = repository.get_segments(snapshot["meeting_id"])
         fingerprint = _fingerprint(segments)
         participants = list(snapshot["participants"].values())

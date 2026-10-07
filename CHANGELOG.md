@@ -9,6 +9,7 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 ## [Unreleased]
 
 ### Added
+- **Run fast judgments on your OpenRouter key** — **Meeting Mode → Fast judgments** has a new **Jev connection** switch: *TypeSafe* (direct, with a TypeSafe key, as before) or *OpenRouter* (the same Jev 1.13 model through OpenRouter, billed to your OpenRouter credits, no TypeSafe account needed). Every fast-judgment feature follows it: topic changes, spoken instructions, highlight pulses, the questions radar, citation checks, semantic history search and the end-of-meeting insight review. **Test** sends one tiny judgment over the chosen connection and reports the speed, a rejected key, or an OpenRouter account out of credits. When the chosen connection has no key but the other one does, the warning offers to switch in one click. Switching mid-meeting applies to the next judgment. The page and the sidebar say which service receives excerpts, and nothing switches on its own: TypeSafe stays selected until you choose OpenRouter.
 - **Jump to any month in the backup calendar** — clicking the month title on **Settings → Backup & restore** opens a month picker, and clicking the year opens a decade of years, so dates months or years away are a click or two instead of one month at a time. **Esc** returns to the days without changing the month, and **Today** comes back to the current date.
 
 ### Changed

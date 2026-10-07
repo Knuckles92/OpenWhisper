@@ -2964,12 +2964,13 @@ class MeetingEngine:
 
         if self.store is None or not self._fast_features_allowed() or not resolve_typesafe_feature_enabled("highlights"):
             return
-        judge = self._typesafe_judge()
-        if judge is None:
+        if self._typesafe_judge() is None:
             return
         from meeting.live_signals import LiveSignals
+        from services.typesafe import FollowingJudge
 
-        worker = LiveSignals(self.store, self.repository, judge, self._fast_features_allowed)
+        worker = LiveSignals(self.store, self.repository, FollowingJudge(self._typesafe_judge),
+                             self._fast_features_allowed)
         try:
             worker.finalize()
         except Exception:
@@ -2984,11 +2985,14 @@ class MeetingEngine:
                 return
             if not self._fast_features_allowed():
                 return
-            judge = self._typesafe_judge()
-            if judge is None:
+            if self._typesafe_judge() is None:
                 return
             from meeting.live_signals import LiveSignals
             from meeting.citation_verifier import CitationVerifier
+            from services.typesafe import FollowingJudge
+            # The workers outlive this call, so they look the route up per
+            # question: switching TypeSafe/OpenRouter applies mid-meeting.
+            judge = FollowingJudge(self._typesafe_judge)
             self._live_signals = LiveSignals(self.store, self.repository, judge, self._fast_features_allowed)
             self._citation_verifier = CitationVerifier(self.store, self.repository, judge, self._fast_features_allowed)
 
@@ -3045,19 +3049,25 @@ class MeetingEngine:
         return []
 
     def _typesafe_judge(self):
-        """Shared TypeSafe client for this meeting, or None when disabled or unkeyed."""
+        """Shared TypeSafe client for this meeting, or None when disabled or unkeyed.
+
+        Rebuilt when the chosen route or its key changes, so a switch between
+        TypeSafe and OpenRouter in Settings takes effect on the next judgment.
+        """
         with self._fast_features_lock:
             try:
                 from services.settings import resolve_typesafe_enabled
                 from services.typesafe import judge_from_settings
                 if not resolve_typesafe_enabled():
                     return None
-                cached = getattr(self, "_typesafe_judge_cache", None)
-                if cached is not None:
-                    return cached
                 judge = judge_from_settings()
-                if judge is not None:
-                    self._typesafe_judge_cache = judge
+                if judge is None:
+                    return None
+                cached = getattr(self, "_typesafe_judge_cache", None)
+                if cached is not None and cached.same_connection(judge):
+                    # Keep the existing client so its warning throttle holds.
+                    return cached
+                self._typesafe_judge_cache = judge
                 return judge
             except Exception:
                 logger.exception("TypeSafe judge unavailable")

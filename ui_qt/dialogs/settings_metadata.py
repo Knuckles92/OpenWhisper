@@ -80,6 +80,12 @@ CONTROL_DESTINATIONS = {'mcp_page': 'mcp',
  'typesafe_voice_commands_tile': 'meeting_fast',
  'typesafe_voice_commands_check': 'meeting_fast',
  'typesafe_feature_tiles': 'meeting_fast',
+ 'typesafe_switch_route_btn': 'meeting_fast',
+ 'typesafe_route_tile': 'meeting_fast',
+ 'typesafe_route_bar': 'meeting_fast',
+ 'typesafe_route_test_btn': 'meeting_fast',
+ 'typesafe_route_status': 'meeting_fast',
+ 'typesafe_destination_label': 'meeting_fast',
  'meeting_end_redecode_tile': 'meeting_after',
  'meeting_end_redecode_check': 'meeting_after',
  'meeting_end_polish_tile': 'meeting_after',
@@ -235,10 +241,14 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                            'summaries, and the final report with this endpoint and your API key.'),
                           ('meeting_agent_core_combo', 'Agent core', '')],
  'meeting_fast': [('typesafe_key_notice', 'No TypeSafe API key', ''),
+                  ('typesafe_route_tile',
+                   'Jev connection',
+                   'Run fast judgments with a TypeSafe key, or with your OpenRouter key through '
+                   'OpenRouter. Same Jev model either way. Test sends one tiny judgment.'),
                   ('typesafe_enabled_tile',
                    'TypeSafe fast judgments (Experimental)',
                    'Off by default. Answers narrow yes/no questions about a minute of transcript '
-                   'in about 0.2 s; never writes text. Key: API keys → TypeSafe.'),
+                   'in about 0.2 s; never writes text. Key: API keys → TypeSafe or OpenRouter.'),
                   ('typesafe_topic_shift_tile',
                    'Semantic topic changes (Experimental)',
                    'Fire early checkpoints on a judged topic change instead of word overlap. '
@@ -268,7 +278,7 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                     'names, and insights to TypeSafe to identify ambiguities. Start with the three '
                     'highest-priority questions, then choose Review more to see the rest. No audio '
                     'is sent. Requires AI insights, TypeSafe fast judgments on the Fast judgments '
-                    'page, and a TypeSafe API key (Settings → API keys or TYPESAFE_API_KEY).'),
+                    'page, and a TypeSafe or OpenRouter API key (Settings → API keys).'),
                    ('meeting_report_ribbon_tile',
                     'Ribbon',
                     'Timeline walk. Adds timeline beats and polished minutes, which is the main '

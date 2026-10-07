@@ -211,6 +211,9 @@ class SettingsKey:
     # TypeSafe fast judgments. The master switch gates every remote judgment;
     # each feature has its own switch so one can be trialled at a time.
     TYPESAFE_ENABLED: Final[str] = "typesafe_enabled"
+    # Where judgments go: TypeSafe directly, or the same model through
+    # OpenRouter with the OpenRouter key (see TypeSafeProvider).
+    TYPESAFE_PROVIDER: Final[str] = "typesafe_provider"
     TYPESAFE_CITATIONS_ENABLED: Final[str] = "typesafe_citations_enabled"
     TYPESAFE_SEMANTIC_SEARCH_ENABLED: Final[str] = "typesafe_semantic_search_enabled"
     TYPESAFE_QUESTION_RADAR_ENABLED: Final[str] = "typesafe_question_radar_enabled"
@@ -379,6 +382,18 @@ class MeetingAgentCore:
     ALL: Final[Tuple[str, ...]] = (PI, OPENCODE, *INSTALLED)
 
 
+class TypeSafeProvider:
+    """Values for ``SettingsKey.TYPESAFE_PROVIDER``.
+
+    Both run the same pinned Jev model; they differ in which key pays for it
+    and in whether OpenRouter sits between this computer and TypeSafe.
+    """
+    TYPESAFE: Final[str] = "typesafe"      # api.typesafe.ai with TYPESAFE_API_KEY
+    OPENROUTER: Final[str] = "openrouter"  # openrouter.ai with OPENROUTER_API_KEY
+
+    ALL: Final[Tuple[str, ...]] = (TYPESAFE, OPENROUTER)
+
+
 class MeetingSpeakerIdBackend:
     """Values for ``SettingsKey.MEETING_SPEAKER_ID_BACKEND``."""
     OFF: Final[str] = "off"        # Me / Others channel labels only
@@ -524,6 +539,8 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     # TypeSafe: every feature is off until chosen, except topic shifts,
     # which only apply once TypeSafe itself is on.
     SettingsKey.TYPESAFE_ENABLED: False,
+    # Never switched implicitly: changing it changes who receives excerpts.
+    SettingsKey.TYPESAFE_PROVIDER: TypeSafeProvider.TYPESAFE,
     SettingsKey.TYPESAFE_CITATIONS_ENABLED: False,
     SettingsKey.TYPESAFE_SEMANTIC_SEARCH_ENABLED: False,
     SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED: False,
@@ -941,6 +958,8 @@ resolve_meeting_report_signal = _bool_resolver(SettingsKey.MEETING_REPORT_SIGNAL
 # default; every TypeSafe feature also needs it, and meeting features need
 # the meeting's cloud consent too.
 resolve_typesafe_enabled = _bool_resolver(SettingsKey.TYPESAFE_ENABLED)
+resolve_typesafe_provider = _choice_resolver(
+    SettingsKey.TYPESAFE_PROVIDER, TypeSafeProvider.ALL)
 
 
 def resolve_max_saved_recordings(
