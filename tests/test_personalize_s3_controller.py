@@ -55,7 +55,7 @@ class FakeCleaner:
     def is_available(self):
         return True
 
-    def cleanup(self, text, system_prompt=None, timeout_s=None):
+    def cleanup(self, text, system_prompt=None, timeout_s=None, deadline_s=None):
         self.calls.append(text)
         self.last_error = None
         return self.reply

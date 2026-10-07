@@ -32,7 +32,7 @@ class FakeCleaner:
     def is_available(self):
         return True
 
-    def cleanup(self, text, system_prompt=None, timeout_s=None):
+    def cleanup(self, text, system_prompt=None, timeout_s=None, deadline_s=None):
         self.last_error = self.error
         return text if self.error else self.reply
 

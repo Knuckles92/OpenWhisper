@@ -34,7 +34,7 @@ def _qapp():
 
 
 class TimingOutCleaner(FakeCleaner):
-    def cleanup(self, text, system_prompt=None, timeout_s=None):
+    def cleanup(self, text, system_prompt=None, timeout_s=None, deadline_s=None):
         self.last_error = "timed out after 9 s"
         return text
 
@@ -160,7 +160,7 @@ def test_a_failing_ai_model_still_keeps_the_instruction_audio(h):
 
     h.history.preserve_recording.assert_called_once_with(config.RECORDED_AUDIO_FILE)
     assert h.ui.statuses[-1] == (
-        "Error: The AI model didn't answer in time"
+        f"Error: {text_rewrite.TIMED_OUT_MESSAGE}"
         " — audio saved in Recordings as recording_kept.wav"
     )
     assert not h.runtime.has_active_job

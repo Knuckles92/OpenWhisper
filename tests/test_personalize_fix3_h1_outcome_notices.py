@@ -165,12 +165,12 @@ def test_a_failed_paste_of_the_original_is_reported(h, notices):  # noqa: F811
 
 def test_an_ai_failure_in_a_command_is_reported(h, notices):  # noqa: F811
     cleaner = FakeCleaner("")
-    cleaner.cleanup = lambda text, system_prompt=None, timeout_s=None: setattr(
+    cleaner.cleanup = lambda text, system_prompt=None, timeout_s=None, deadline_s=None: setattr(
         cleaner, "last_error", "timed out after 20s") or ""
     h.runtime._transcript_cleanup = cleaner
     assert h.runtime._claim_job(_command_job("hey", FocusSnapshot(NOTEPAD)))
     h.runtime.transcribe_audio_file(h.audio)
-    assert notices == [("Error: The AI model didn't answer in time", False)]
+    assert notices == [(f"Error: {text_rewrite.TIMED_OUT_MESSAGE}", False)]
 
 
 def test_a_transform_with_nothing_selected_says_so(h, notices):  # noqa: F811

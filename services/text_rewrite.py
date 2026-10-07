@@ -19,9 +19,16 @@ NEEDS_SELECTION = "<<NEEDS_SELECTION>>"
 NEEDS_SELECTION_MESSAGE = "Select the text to change first"
 NO_PROVIDER_MESSAGE = "Set up AI cleanup to rewrite text"
 CANCELED_MESSAGE = "Canceled"
-#: Text this long gets the slower per-request timeout uploads use.
+#: How long a rewrite waits for the model, retries included. Longer than a
+#: dictation's cleanup budget: a rewrite writes more, and the user is
+#: watching for it rather than for their own words. A model still working
+#: at the limit is not asked again, which would only double the wait.
+REWRITE_TIMEOUT_S = 30.0
+#: Text this long gets more time.
 LONG_TEXT_CHARS = 2000
-LONG_TEXT_TIMEOUT_S = 30.0
+LONG_TEXT_TIMEOUT_S = 60.0
+#: Sized to fit the pointer notice in full, after its "Error: " prefix.
+TIMED_OUT_MESSAGE = "The AI model took too long. Try a faster one in AI cleanup"
 #: A Select All in a long document is refused rather than sent: it would
 #: outgrow small local models' context and hold the job slot for minutes.
 MAX_TEXT_CHARS = 20000
@@ -97,7 +104,7 @@ def _describe_error(error: str) -> str:
     if error == "empty response":
         return "The AI model sent back nothing"
     if error.startswith("timed out"):
-        return "The AI model didn't answer in time"
+        return TIMED_OUT_MESSAGE
     detail = error.strip().splitlines()[0] if error.strip() else "unknown error"
     if len(detail) > _ERROR_MAX_CHARS:
         detail = detail[: _ERROR_MAX_CHARS - 1].rstrip() + "…"
@@ -137,9 +144,12 @@ def rewrite_with(
         context_block=context_block,
     )
     message = text if has_selection else instruction
-    # Without a timeout the call stays identical to a dictation's cleanup.
-    extra = {"timeout_s": LONG_TEXT_TIMEOUT_S} if len(message) > LONG_TEXT_CHARS else {}
-    result = cleaner.cleanup(message, system_prompt=prompt, **extra)
+    wait_s = LONG_TEXT_TIMEOUT_S if len(message) > LONG_TEXT_CHARS else REWRITE_TIMEOUT_S
+    # Never less than the client's own attempt timeout (two minutes for Ollama).
+    own = getattr(cleaner, "attempt_timeout_s", None)
+    if isinstance(own, (int, float)):
+        wait_s = max(wait_s, float(own))
+    result = cleaner.cleanup(message, system_prompt=prompt, timeout_s=wait_s, deadline_s=wait_s)
     error = getattr(cleaner, "last_error", None)
     if error is not None:
         return "", _describe_error(str(error))

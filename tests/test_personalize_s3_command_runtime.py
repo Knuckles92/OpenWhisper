@@ -87,7 +87,7 @@ class FakeCleaner:
     def is_available(self):
         return self.available
 
-    def cleanup(self, text, system_prompt=None, timeout_s=None):
+    def cleanup(self, text, system_prompt=None, timeout_s=None, deadline_s=None):
         self.calls.append((text, system_prompt))
         self.last_error = self.error
         return text if self.error else self.reply
@@ -427,7 +427,7 @@ def test_an_unavailable_provider_is_reported(h):
 
 
 @pytest.mark.parametrize("cleaner, message", [
-    (FakeCleaner(error="timed out after 9 s"), "didn't answer in time"),
+    (FakeCleaner(error="timed out after 9 s"), "took too long"),
     (FakeCleaner(text_rewrite.NEEDS_SELECTION), "Select the text to change first"),
 ])
 def test_failed_rewrites_raise_instead_of_pasting(h, cleaner, message):

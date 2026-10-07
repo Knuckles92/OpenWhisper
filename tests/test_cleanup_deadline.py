@@ -98,6 +98,21 @@ def test_trickling_response_ends_at_the_attempts_budget(trickling_endpoint, monk
     assert cleaner.last_error.startswith("timed out after")
 
 
+def test_a_deadline_ends_the_call_without_a_second_slow_attempt(trickling_endpoint):
+    """Rewrites pass deadline_s == timeout_s: a slow model is asked once."""
+    cleaner = _cleaner()
+    cleaner.client = OpenAI(api_key="k", base_url=trickling_endpoint,
+                            timeout=0.5, max_retries=1)
+
+    started = time.monotonic()
+    assert cleaner.cleanup("raw text", timeout_s=0.5, deadline_s=0.5) == "raw text"
+    elapsed = time.monotonic() - started
+
+    # Without the deadline, timeout_s alone allows three 0.5 s attempts.
+    assert 0.5 <= elapsed < 1.0
+    assert cleaner.last_error.startswith("timed out after")
+
+
 def test_cancel_ends_the_wait_at_once(monkeypatch):
     cancel = threading.Event()
     cleaner = _cleaner(cancel_event=cancel)

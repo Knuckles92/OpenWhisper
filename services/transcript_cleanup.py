@@ -282,6 +282,11 @@ class TranscriptCleanup:
         if reasoning in TranscriptCleanupReasoning.ALL:
             self.reasoning = reasoning
 
+    @property
+    def attempt_timeout_s(self) -> float:
+        """The per-attempt timeout this client was built with (longer for Ollama)."""
+        return self._timeout_s
+
     def is_available(self) -> bool:
         """Whether cleanup can be attempted."""
         return self.client is not None and self.api_key is not None and bool(self.model)
@@ -308,6 +313,7 @@ class TranscriptCleanup:
         text: str,
         system_prompt: Optional[str] = None,
         timeout_s: Optional[float] = None,
+        deadline_s: Optional[float] = None,
     ) -> str:
         """Clean up transcript text, falling back to the original on failure.
 
@@ -321,6 +327,9 @@ class TranscriptCleanup:
                 is a long job nobody is waiting to paste, so it also gets
                 ``TRANSCRIPT_BATCH_CLEANUP_MAX_RETRIES`` instead of the
                 client's dictation cap.
+            deadline_s: Wall-clock limit for the whole call, retries
+                included. A quick failure is still retried inside it, but a
+                slow model is not asked a second time.
 
         Returns:
             Cleaned text, or the original text if cleanup is skipped or fails.
@@ -361,6 +370,9 @@ class TranscriptCleanup:
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": text},
             ]
+            give_up_s = attempt_timeout_s * (retries + 1) + _RETRY_BACKOFF_ALLOWANCE_S
+            if deadline_s is not None:
+                give_up_s = deadline_s
             response = _call_with_deadline(
                 lambda: generate(
                     client, profile,
@@ -370,7 +382,7 @@ class TranscriptCleanup:
                     messages=messages,
                     **request_kwargs,
                 ),
-                attempt_timeout_s * (retries + 1) + _RETRY_BACKOFF_ALLOWANCE_S,
+                give_up_s,
                 self.cancel_event,
             )
             cleaned = response.text.strip()

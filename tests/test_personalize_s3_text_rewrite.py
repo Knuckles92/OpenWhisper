@@ -23,8 +23,8 @@ class FakeCleaner:
         self.last_error = "not run"
         self.provider, self.model = "openrouter", "some/model"
 
-    def cleanup(self, text, system_prompt=None, timeout_s=None):
-        self.calls.append((text, system_prompt, timeout_s))
+    def cleanup(self, text, system_prompt=None, timeout_s=None, deadline_s=None):
+        self.calls.append((text, system_prompt, timeout_s, deadline_s))
         self.last_error = self.error
         return text if self.error else self.reply
 
@@ -59,10 +59,10 @@ def test_generate_prompt_frames_the_request_and_names_the_sentinel():
 def test_rewrite_sends_the_selection_as_the_message():
     cleaner = FakeCleaner(" Hello there! \n")
     assert rewrite_with(cleaner, "hello there", "add an exclamation mark") == ("Hello there!", None)
-    text, prompt, timeout = cleaner.calls[0]
+    text, prompt, timeout, deadline = cleaner.calls[0]
     assert text == "hello there"
     assert "add an exclamation mark" in prompt
-    assert timeout is None
+    assert timeout == deadline == text_rewrite.REWRITE_TIMEOUT_S
 
 
 def test_generate_sends_the_instruction_as_the_message():
@@ -85,7 +85,7 @@ def test_a_selection_containing_the_sentinel_is_still_rewritten():
     (CANCELED_REASON, "Canceled"),
     ("cleanup unavailable", text_rewrite.NO_PROVIDER_MESSAGE),
     ("empty response", "The AI model sent back nothing"),
-    ("timed out after 9 s", "The AI model didn't answer in time"),
+    ("timed out after 9 s", text_rewrite.TIMED_OUT_MESSAGE),
     ("Error code: 401 - invalid key\nmore detail", "The AI model failed: Error code: 401 - invalid key"),
 ])
 def test_failures_never_hand_back_the_input(error, message):
@@ -116,7 +116,33 @@ def test_huge_selections_are_refused_before_sending():
 def test_long_selections_get_the_longer_timeout():
     cleaner = FakeCleaner()
     rewrite_with(cleaner, "x" * (text_rewrite.LONG_TEXT_CHARS + 1), "shorter")
-    assert cleaner.calls[0][2] == text_rewrite.LONG_TEXT_TIMEOUT_S
+    assert cleaner.calls[0][2:] == (text_rewrite.LONG_TEXT_TIMEOUT_S,) * 2
+
+
+def test_rewrites_wait_longer_than_a_dictation_but_ask_once():
+    """A slow free model timed out at the dictation budget (8 s x 2 + 1 s)."""
+    from config import config
+
+    dictation_budget = config.TRANSCRIPT_CLEANUP_TIMEOUT_S * (
+        config.TRANSCRIPT_CLEANUP_MAX_RETRIES + 1) + 1
+    assert text_rewrite.REWRITE_TIMEOUT_S > dictation_budget
+    cleaner = FakeCleaner()
+    rewrite_with(cleaner, "", "write a thank-you")
+    # The whole call ends at the per-attempt timeout: no second slow attempt.
+    assert cleaner.calls[0][2:] == (text_rewrite.REWRITE_TIMEOUT_S,) * 2
+
+
+def test_a_local_model_keeps_its_own_longer_timeout():
+    cleaner = FakeCleaner()
+    cleaner.attempt_timeout_s = 120.0
+    rewrite_with(cleaner, "hello", "shorter")
+    assert cleaner.calls[0][2:] == (120.0, 120.0)
+
+
+def test_a_timeout_points_at_a_faster_model():
+    _, message = rewrite_with(FakeCleaner(error="timed out after 30 s"), "hi", "shorter")
+    assert message == text_rewrite.TIMED_OUT_MESSAGE
+    assert "faster" in message and "AI cleanup" in message
 
 
 def test_dictionary_block_comes_from_the_dictionary(monkeypatch):
@@ -172,3 +198,21 @@ def test_standalone_rewrite_uses_its_own_client(monkeypatch):
     assert text_rewrite.rewrite_standalone("rough", "polish", {}) == (
         "", text_rewrite.NO_PROVIDER_MESSAGE)
     assert len(built) == 1
+
+
+def test_the_timeout_notice_fits_by_the_pointer(_session_qt_application):
+    """The fix is in its last words, so the notice must not cut them off."""
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtGui import QFont
+
+    from ui_qt.overlays.waveform_overlay import WaveformOverlay
+
+    overlay = WaveformOverlay()
+    try:
+        overlay._notice = f"Error: {text_rewrite.TIMED_OUT_MESSAGE}"
+        # The text box _draw_notice_state uses.
+        rect = QRect(48, 8, overlay.width() - 48 - 14, overlay.height() - 16)
+        font = QFont("Segoe UI", 10, QFont.Weight.DemiBold)
+        assert overlay._fit_notice(font, rect) == overlay._notice
+    finally:
+        overlay.deleteLater()
