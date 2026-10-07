@@ -408,6 +408,44 @@ def test_the_school_heaves_the_swell_with_the_voice(overlay, look):
             assert visual.y_of(layer, p) <= visual.y_of(layer - 1, p) - visual.GAP_MIN + 0.5
 
 
+def test_the_bait_ball_rises_while_talking_and_sinks_in_pauses(overlay):
+    """Real speech is words with gaps; the ball must follow phrases, not average them away."""
+    overlay.set_recording_look(recording_looks.BAIT_BALL)
+    overlay.show_at_cursor(overlay.STATE_RECORDING)
+    fish = overlay._visual.fish
+
+    def height():
+        return overlay._visual.BASE - sum(f["y"] for f in fish) / len(fish)
+
+    _run(overlay, 1.0, SILENCE)
+    talking, resting = [], []
+    for _ in range(2):
+        for word in range(6):  # a phrase: words with short gaps
+            _run(overlay, 0.18, SPEECH)
+            _run(overlay, 0.07, SILENCE)
+            if word >= 2:
+                talking.append(height())
+        for beat in range(9):  # a pause
+            _run(overlay, 0.1, SILENCE)
+            if beat >= 5:
+                resting.append(height())
+    swing = sum(talking) / len(talking) - sum(resting) / len(resting)
+    assert swing > 12, f"talking should lift the ball well above where it rests (swing {swing:.1f} px)"
+
+
+def test_fizz_fills_further_for_a_louder_voice(overlay):
+    fills = []
+    for level in (0.015, 0.06):  # quiet speech, then ordinary speech
+        overlay.set_recording_look(recording_looks.FIZZ)
+        overlay.show_at_cursor(overlay.STATE_RECORDING)
+        _run(overlay, 1.5, level)
+        visual = overlay._visual
+        fills.append(sum(visual.h) / len(visual.h) / visual.MAX_H)
+        overlay.hide()
+    quiet, ordinary = fills
+    assert quiet < 0.45 and ordinary > 0.6, "the level shows how loud, not just that someone spoke"
+
+
 def test_fizz_fills_with_the_voice_and_drains_in_silence(overlay):
     overlay.set_recording_look(recording_looks.FIZZ)
     overlay.show_at_cursor(overlay.STATE_RECORDING)
@@ -503,7 +541,7 @@ def test_the_preview_loops_through_the_looks_finish(preview):
     preview.set_look("bars")
     preview._clock = _FakeClock()
     seen = []
-    for name, start in recording_look_preview.STAGES:
+    for _name, start in recording_look_preview.STAGES:
         preview._clock.ms = int((start + 0.05) * 1000)
         preview._tick()
         seen.append(preview.overlay.current_state)

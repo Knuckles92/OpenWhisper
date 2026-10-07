@@ -48,6 +48,16 @@ class _School(Visual):
     ALIGN = 1.6
     SEPARATE = 260.0
     TRAIL = 0
+    #: The voice as the school feels it: a rise lands at once and a fall
+    #: lingers through the gaps between words, so a phrase reads as one surge
+    #: instead of syllables the flock's inertia averages away.
+    ATTACK_S = 0.04
+    RELEASE_S = 0.35
+    #: Room noise reads about 0.15 on the meter; below this the school rests,
+    #: so speech stands out against a calm sea rather than a restless one.
+    VOICE_FLOOR = 0.15
+    #: How hard a fish swims for the height the voice asks of it.
+    STEER = 15.0
 
     def reset(self):
         self.rng = random.Random(5)
@@ -75,7 +85,7 @@ class _School(Visual):
         """Where a fish heads while recording: an altitude riding a wave, and a current."""
         wave = 0.55 + 0.45 * math.sin(f["x"] * 0.035 - self._t * 2.2 + f["phase"] * 0.3)
         target = self.BASE - 3 - lift * wave
-        return math.sin(self._t * 0.7 + f["y"] * 0.05) * speed * 0.8, (target - f["y"]) * 9.0
+        return math.sin(self._t * 0.7 + f["y"] * 0.05) * speed * 0.8, (target - f["y"]) * self.STEER
 
     def steer_work(self, f, morph):
         """Where a fish heads while the recording is worked on."""
@@ -83,6 +93,10 @@ class _School(Visual):
 
     def morph(self) -> float:
         return smooth(self._work_t / MORPH_S)
+
+    def voice(self) -> float:
+        """How strongly the voice shows, easing out as the work morphs in."""
+        return self.level * (1.0 - self.morph()) if self.working else self.level
 
     def advance(self, dt):
         self._swim(dt)
@@ -102,8 +116,10 @@ class _School(Visual):
             return
         self._t += dt
         if not self.working:
-            self.level += (self.ribbon.shown - self.level) * (1 - math.exp(-dt / 0.08))
-        lift = 4 + 34 * self.level
+            shown = max(0.0, self.ribbon.shown - self.VOICE_FLOOR) / (1.0 - self.VOICE_FLOOR)
+            tau = self.ATTACK_S if shown > self.level else self.RELEASE_S
+            self.level += (shown - self.level) * (1 - math.exp(-dt / tau))
+        lift = 4 + 40 * self.level
         speed = 18 + 70 * self.level
         w = self.width
         morph = self.morph() if self.working else 0.0
@@ -138,7 +154,7 @@ class _School(Visual):
             f["vy"] += (ay + sy) * dt
             f["vx"] *= 0.94 ** (dt * 30)
             f["vy"] *= 0.9 ** (dt * 30)
-            cap = (speed * 1.6 + 20) if not self.working else 140 * self.rate
+            cap = (speed * 1.6 + 50) if not self.working else 140 * self.rate
             sp = math.hypot(f["vx"], f["vy"])
             if sp > cap:
                 f["vx"] *= cap / sp
@@ -162,7 +178,7 @@ class _School(Visual):
     def swell(self, layer, x):
         """The layer's own rolling swell, always moving."""
         t = self._t
-        return (self.SWELL * (1 + 0.6 * self.level)) * (
+        return (self.SWELL * (1 + 1.2 * self.level)) * (
             math.sin(x * 0.045 - t * 1.9 + layer * 0.7) * 0.7
             + math.sin(x * 0.11 + t * 1.3 + layer * 1.9) * 0.3)
 
@@ -252,7 +268,8 @@ class _School(Visual):
                                 Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             painter.drawPath(path)
 
-    def draw_bands(self, painter, grow):
+    def draw_bands(self, painter, grow, light=0.0):
+        """Filled swell bands; ``light`` (0-1, the voice) brightens the water."""
         for layer in range(self.LAYERS - 1, -1, -1):
             path = self.layer_path(layer)
             body = QPainterPath(path)
@@ -260,29 +277,42 @@ class _School(Visual):
             body.lineTo(QPointF(EDGE, self.BASE))
             body.closeSubpath()
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.fillPath(body, self.faded(layer, (34 + 6 * layer) * grow))
+            painter.fillPath(body, self.faded(layer, (34 + 6 * layer + 12 * light) * grow, light=light))
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QPen(self.faded(layer, 210 * grow, light=1.0), 1.3))
+            painter.setPen(QPen(self.faded(layer, (190 + 65 * light) * grow, light=1.0), 1.3 + 0.5 * light))
             painter.drawPath(path)
 
     # -- the fish -----------------------------------------------------------------
+    #: The water's hue mid-stack (see ``ocean``).
+    WATER_HUE = 190.0
+
     def fish_color(self, f, alpha=255) -> QColor:
         hue = (self.hue() + f["hue"]) % 360
+        # Fish the colour of the water would vanish into it, so near its hue
+        # they flash silver (dark theme) or deepen to navy (light theme).
+        near = max(0.0, 1.0 - abs((hue - self.WATER_HUE + 180) % 360 - 180) / 90.0)
         if current_palette().is_dark:
-            color = QColor.fromHsv(int(hue), 200, 240)
+            color = QColor.fromHsv(int(hue), int(200 - 170 * near), int(240 + 15 * near))
         else:
-            color = QColor.fromHsv(int(hue), 235, 205)
+            color = QColor.fromHsv(int(hue), 235, int(205 - 85 * near))
         color.setAlpha(max(0, min(255, int(alpha))))
         return color
 
     def draw_balls(self, painter, grow):
+        # Speaking lights the school up: each ball's halo grows and brightens.
+        voice = self.voice()
         for f in self.fish:
             color = self.fish_color(f, 255 * grow)
             painter.setPen(Qt.PenStyle.NoPen)
+            if voice > 0.05:
+                halo = QColor(color)
+                halo.setAlpha(int(70 * voice * grow))
+                painter.setBrush(halo)
+                painter.drawEllipse(QPointF(f["x"], f["y"]), f["r"] + 2.5 * voice, f["r"] + 2.5 * voice)
             painter.setBrush(color)
             painter.drawEllipse(QPointF(f["x"], f["y"]), f["r"], f["r"])
             glow = QColor(color)
-            glow.setAlpha(int(100 * grow))
+            glow.setAlpha(int((100 + 120 * voice) * grow))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(glow, 1))
             painter.drawEllipse(QPointF(f["x"], f["y"]), f["r"] + 1, f["r"] + 1)
@@ -297,6 +327,14 @@ class BaitBall(_School):
     COHESION = 0.6
 
     SQUASH = 2.6  # the ball is this much wider than tall
+    #: How hard the whole ball swims for the depth the voice sets. The ring's
+    #: own pull is mostly sideways (it is squashed), so on its own the ball
+    #: drifted up and down too slowly to follow speech.
+    DEPTH = 7.0
+
+    def _swim(self, dt):
+        self._depth = sum(f["y"] for f in self.fish) / len(self.fish)
+        super()._swim(dt)
 
     def _ball(self, center_x, center_y, radius, spin, f):
         dx, dy = f["x"] - center_x, (f["y"] - center_y) * self.SQUASH
@@ -305,9 +343,12 @@ class BaitBall(_School):
         return dx / d * pull - dy / d * spin, (dy / d * pull + dx / d * spin) / self.SQUASH
 
     def steer(self, f, lift, speed):
-        # Quiet, the ball lies low and small; speaking swells it and lifts it.
-        return self._ball(self.width / 2 + math.sin(self._t * 0.35) * 70, self.BASE - 4 - lift * 0.6,
-                          6 + 19 * self.level, 60 + 120 * self.level, f)
+        # Quiet, the ball lies low and small; speaking swells it, lifts it and
+        # spins it up. The depth pull moves every fish alike, keeping the shape.
+        depth = self.BASE - 4 - lift * 0.85
+        ax, ay = self._ball(self.width / 2 + math.sin(self._t * 0.35) * 70, depth,
+                            5 + 26 * self.level, 50 + 230 * self.level, f)
+        return ax, ay + (depth - self._depth) * self.DEPTH
 
     def steer_work(self, f, morph):
         # Pulls into the centre, tightens, and spins faster as the work runs.
@@ -339,21 +380,25 @@ class RealFish(_School):
         return dx / d * pull - dy / d * spin, (dy / d * pull + dx / d * spin) / 3.0
 
     def draw_fish(self, painter, grow):
+        # Speaking, the school swims harder: bigger, quicker tails.
+        voice = self.voice()
+        size = 1.0 + 0.3 * voice
         for f in self.fish:
             angle = math.atan2(f["vy"], f["vx"] if abs(f["vx"]) > 0.1 else 0.1)
-            length = 2.4 + f["r"] * 1.6
+            r = f["r"] * size
+            length = 2.4 + r * 1.6
             painter.save()
             painter.translate(f["x"], f["y"])
             painter.rotate(math.degrees(angle))
             body = QPainterPath()
             body.moveTo(length, 0)
-            body.quadTo(0, -f["r"] * 0.9, -length * 0.6, 0)
-            body.quadTo(0, f["r"] * 0.9, length, 0)
-            wag = math.sin(self._t * 14 + f["phase"] * 5) * f["r"] * 0.5
+            body.quadTo(0, -r * 0.9, -length * 0.6, 0)
+            body.quadTo(0, r * 0.9, length, 0)
+            wag = math.sin(self._t * (10 + 14 * voice) + f["phase"] * 5) * r * (0.45 + 0.3 * voice)
             tail = QPainterPath()
             tail.moveTo(-length * 0.5, 0)
-            tail.lineTo(-length * 1.05, -f["r"] * 0.8 + wag)
-            tail.lineTo(-length * 1.05, f["r"] * 0.8 + wag)
+            tail.lineTo(-length * 1.05, -r * 0.8 + wag)
+            tail.lineTo(-length * 1.05, r * 0.8 + wag)
             tail.closeSubpath()
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(self.fish_color(f, 240 * grow))
@@ -363,7 +408,7 @@ class RealFish(_School):
             painter.restore()
 
     def draw(self, painter, grow):
-        self.draw_bands(painter, grow)
+        self.draw_bands(painter, grow, light=self.voice())
         self.draw_fish(painter, grow)
 
     def draw_work(self, painter, morph, clock):
@@ -440,7 +485,7 @@ class Fizz(Visual):
     """Glasses that fill with fizz: every bubble that reaches the surface lifts the level.
 
     The voice sets how many bubbles launch and how fast they race; the level
-    drains back down between words. Finish: the levels roll from glass to
+    drains back down in pauses. Finish: the levels roll from glass to
     glass like a filling wave while the bubbles keep fizzing.
     """
 
@@ -448,8 +493,13 @@ class Fizz(Visual):
     LANES = 9
     BASE = 50.0
     TOP = 8.0
-    KICK = 9.0
-    GRAVITY = 160.0
+    KICK = 15.0
+    GRAVITY = 80.0
+    #: Extra drain per pixel of fizz: quiet speech settles about a quarter
+    #: full, ordinary speech about three quarters, a raised voice at the brim.
+    LEAK = 6.0
+    #: How long a slosh rings on before the level settles.
+    SLOSH_S = 0.35
     MAX_H = 38.0
 
     def reset(self):
@@ -475,7 +525,7 @@ class Fizz(Visual):
             lane = self.rng.randrange(self.LANES)
             self.bubbles.append({
                 "lane": lane, "x": self.lane_x(lane) + self.rng.uniform(-0.3, 0.3) * (self.pitch() - 8),
-                "y": self.BASE, "vy": -speed * self.rng.uniform(0.8, 1.2), "r": self.rng.uniform(1.2, 2.6),
+                "y": self.BASE, "vy": -speed * self.rng.uniform(0.8, 1.2), "r": self.rng.uniform(1.4, 3.0),
             })
 
     def _rise(self, dt, lift=True):
@@ -498,7 +548,10 @@ class Fizz(Visual):
         self._spawn(10 + 230 * level ** 1.5, 110 + 320 * level, dt)
         self._rise(dt)
         for i in range(self.LANES):
-            self.v[i] -= self.GRAVITY * dt
+            # The fuller a glass, the harder it drains, so each loudness has
+            # its own level to slosh around instead of every word filling it.
+            self.v[i] -= (self.GRAVITY + self.LEAK * self.h[i]) * dt
+            self.v[i] *= math.exp(-dt / self.SLOSH_S)
             self.h[i] = max(0.0, min(self.MAX_H, self.h[i] + self.v[i] * dt))
             if self.h[i] in (0.0, self.MAX_H):
                 self.v[i] = 0.0
@@ -520,8 +573,8 @@ class Fizz(Visual):
             glass = QRectF(x - w / 2, self.TOP, w, self.BASE - self.TOP)
             level = self.BASE - h
             fill = QLinearGradient(0, level, 0, self.BASE)
-            fill.setColorAt(0.0, hue_color(hue + i / self.LANES * 60, 140 * grow))
-            fill.setColorAt(1.0, hue_color(hue + i / self.LANES * 60, 40 * grow))
+            fill.setColorAt(0.0, hue_color(hue + i / self.LANES * 60, 190 * grow))
+            fill.setColorAt(1.0, hue_color(hue + i / self.LANES * 60, 70 * grow))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(fill)
             painter.drawRect(QRectF(glass.left() + 1, level, w - 2, self.BASE - level))
