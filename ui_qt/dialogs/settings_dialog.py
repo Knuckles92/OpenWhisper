@@ -62,6 +62,7 @@ from services.settings import (
     LEGACY_STREAMING_KEYS,
     HuggingFaceAccessPolicy,
     MeetingServerBind,
+    RecordingOverlayLook,
     RecordingRetentionMode,
     RecordingTriggerMode,
     SettingsKey,
@@ -86,6 +87,10 @@ from services.settings import (
     resolve_recording_trigger_mode,
     resolve_meeting_server_bind,
     resolve_meeting_server_port,
+    resolve_recording_overlay_clock,
+    resolve_recording_overlay_dot,
+    resolve_recording_overlay_look,
+    resolve_recording_overlay_text,
     resolve_streaming_overlay_font_size,
     resolve_ui_font_scale,
     resolve_ui_theme,
@@ -210,6 +215,7 @@ from ui_qt.widgets.cleanup_profiles_panel import CleanupProfilesPanel
 from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
 from ui_qt.widgets.nav_rail import NavRail
 from ui_qt.widgets.rule_activity import ItemGlow, RuleActivityStrip
+from ui_qt.widgets.recording_look_preview import RecordingLookPreview
 from ui_qt.widgets.segmented_bar import SegmentedBar
 
 logger = logging.getLogger(__name__)
@@ -374,6 +380,7 @@ class SettingsDialog(QDialog):
     on_audio_device_changed: Optional[Callable] = None
     on_streaming_settings_changed: Optional[Callable] = None
     on_streaming_font_changed: Optional[Callable] = None
+    on_recording_look_changed: Optional[Callable] = None
     on_ui_font_scale_changed: Optional[Callable[[int], None]] = None
     on_ui_theme_changed: Optional[Callable[[str], None]] = None
     on_hf_policy_changed: Optional[Callable] = None
@@ -1524,6 +1531,91 @@ class SettingsDialog(QDialog):
             )
         )
         self._tile_group(layout, "Live preview", [self.streaming_enabled_tile])
+
+        self.recording_look_bar = SegmentedBar([
+            (RecordingOverlayLook.LABELS[look], RecordingOverlayLook.DETAILS[look])
+            for look in RecordingOverlayLook.ALL
+        ])
+        self.recording_look_bar.setAccessibleName("Recording overlay look")
+        # activated, not currentIndexChanged: loading the saved look must not
+        # save it back.
+        self.recording_look_bar.activated.connect(self._on_recording_look_activated)
+        self.recording_look_preview = RecordingLookPreview(
+            recorder_factory=self._recording_look_recorder,
+            microphone_name=lambda: settings_microphones.preferred_name(self._settings_snapshot()),
+        )
+        self.recording_look_tile = FieldTile(
+            "Recording overlay",
+            "How the overlay near your pointer looks while you speak. Every look "
+            "but Classic moves with your voice; Classic is the original particles.",
+            self.recording_look_bar,
+            design_icon("palette-purple.svg"),
+        )
+        parts = QWidget()
+        parts_layout = QVBoxLayout(parts)
+        parts_layout.setContentsMargins(0, 4, 0, 0)
+        parts_layout.setSpacing(2)
+        self.recording_dot_switch = self._overlay_part_switch(
+            parts_layout, "Live dot", SettingsKey.RECORDING_OVERLAY_DOT)
+        self.recording_text_switch = self._overlay_part_switch(
+            parts_layout, "\u201cRecording\u201d label", SettingsKey.RECORDING_OVERLAY_TEXT)
+        self.recording_clock_switch = self._overlay_part_switch(
+            parts_layout, "Elapsed time", SettingsKey.RECORDING_OVERLAY_CLOCK)
+        self.recording_parts = parts
+        self.recording_look_tile.add_body(parts)
+        self.recording_look_tile.add_body(self.recording_look_preview)
+        self._tile_group(layout, "Overlay", [self.recording_look_tile], columns=1)
+
+    def _overlay_part_switch(self, layout: QVBoxLayout, text: str, key: str) -> SettingsSwitch:
+        """A labelled switch for one part of the live recording label."""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        label = QLabel(text)
+        row.addWidget(label, 1)
+        switch = SettingsSwitch()
+        switch.setAccessibleName(f"Show the {text}")
+        switch.setChecked(True)
+        switch.toggled.connect(lambda on, key=key: self._on_overlay_part_toggled(key, on))
+        row.addWidget(switch, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addLayout(row)
+        return switch
+
+    def _on_overlay_part_toggled(self, key: str, on: bool) -> None:
+        self._show_overlay_parts()
+        if not self._persist(key, bool(on)):
+            return
+        if self.on_recording_look_changed:
+            self.on_recording_look_changed()
+
+    def _show_overlay_parts(self, look: Optional[str] = None) -> None:
+        """Pass the label switches to the preview; Classic has no live label.
+
+        ``look`` is the one just clicked: the bar's current index changes only
+        after its ``activated`` signal.
+        """
+        self.recording_look_preview.set_label_parts(
+            self.recording_dot_switch.isChecked(),
+            self.recording_text_switch.isChecked(),
+            self.recording_clock_switch.isChecked(),
+        )
+        look = look or RecordingOverlayLook.ALL[self.recording_look_bar.currentIndex()]
+        self.recording_parts.setEnabled(look != RecordingOverlayLook.LEGACY)
+
+    def _recording_look_recorder(self) -> AudioRecorder:
+        """A throwaway recorder on the saved microphone, for the look preview."""
+        return AudioRecorder(
+            device_priority=settings_microphones.saved_priority(self._settings_snapshot()),
+            output_file=RecordingLookPreview.preview_path(),
+        )
+
+    def _on_recording_look_activated(self, index: int) -> None:
+        look = RecordingOverlayLook.ALL[index]
+        self.recording_look_preview.set_look(look)
+        self._show_overlay_parts(look)
+        if not self._persist(SettingsKey.RECORDING_OVERLAY_LOOK, look):
+            return
+        if self.on_recording_look_changed:
+            self.on_recording_look_changed()
 
     @staticmethod
     def _spin_form(label: QLabel, spinbox: QWidget) -> QFormLayout:
@@ -4689,6 +4781,13 @@ class SettingsDialog(QDialog):
             self.streaming_enabled_check.setChecked(setting_value(SettingsKey.STREAMING_ENABLED, settings))
             self.streaming_font_size_spinbox.setValue(resolve_streaming_overlay_font_size(settings))
             self._update_streaming_font_ui()
+            look = resolve_recording_overlay_look(settings)
+            self.recording_look_bar.setCurrentIndex(RecordingOverlayLook.ALL.index(look))
+            self.recording_look_preview.set_look(look)
+            self.recording_dot_switch.setChecked(resolve_recording_overlay_dot(settings))
+            self.recording_text_switch.setChecked(resolve_recording_overlay_text(settings))
+            self.recording_clock_switch.setChecked(resolve_recording_overlay_clock(settings))
+            self._show_overlay_parts()
             self._microphones.load(settings)
         self._load_meeting_settings(settings)
         if self._page_is_loading(API_KEYS):

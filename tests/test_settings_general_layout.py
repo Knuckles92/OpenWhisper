@@ -129,7 +129,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             recording = dialog._pages[RECORDING]
             forms = recording.findChildren(QFormLayout)
             self.assertGreaterEqual(len(forms), 2)
-            self.assertEqual(len(recording.findChildren(FieldTile)), 2)
+            self.assertEqual(len(recording.findChildren(FieldTile)), 3)
             self.assertEqual(len(recording.findChildren(SettingTile)), 1)
             self.assertIs(
                 dialog.streaming_enabled_check,

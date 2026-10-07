@@ -32,6 +32,7 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 - **Personalize section** — Dictionary, Snippets, Styles, Learned rules, Profiles and Commands sit together in Settings, and Basic → Dictation gets a Personalize group. A one-time "New in OpenWhisper" note points to them. See [Personalize dictation](docs/personalize.md).
 - **Remote engine vocabulary** — hosts advertise `recognition_hints`, so a paired client's dictionary steers a Whisper host. Older hosts and clients keep working (protocol version 1).
 - **MCP** — agents can read and set the cleanup level (its own permission).
+- **Recording overlay looks** — **Settings → Recording → Overlay** picks how the dictation overlay draws your voice: Ribbon, Bars, Mirror wave, Aurora, Pulse, Dots, Bait ball, Real fish, Deep-sea glow, Fizz, or Classic (the original particles), with a live preview. Switches hide the pulsing dot, the "Recording" label or the clock. Each look has its own Processing and Transcribing, a finished result fades out instead of vanishing, and toggles, copies, finished commands and cancels play short animations. MCP agents can read and set the look.
 - **Jump to any month in the backup calendar** — clicking the month title on **Settings → Backup & restore** opens a month picker, and clicking the year opens a decade of years, so dates months or years away are a click or two instead of one month at a time. **Esc** returns to the days without changing the month, and **Today** comes back to the current date.
 
 ### Changed

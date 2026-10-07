@@ -22,7 +22,7 @@ from services.dictation_pipeline import DictationJob, JobMode
 from services.focus_context import FocusSnapshot
 from services.runtime import command
 from ui_qt.overlay_state import OverlayState
-from ui_qt.overlays import waveform_overlay
+from ui_qt.overlays import moments, waveform_overlay
 from ui_qt.overlays.waveform_overlay import WaveformOverlay
 from tests.test_personalize_s3_command_delivery import (  # noqa: F401  (fixtures)
     BROWSER, NOTEPAD, FakeCleaner, FakeService, _command_job, _qapp, _run_submitted, h,
@@ -71,6 +71,27 @@ def test_long_notices_stay_up_longer_and_still_paint(overlay):
     overlay.show_notice("Rewritten", done=True)
     assert overlay.hidden_timer.interval() < long_wait
     _paint(overlay)
+
+
+def test_a_finished_command_bursts_after_its_sparkles_gather_and_replays(overlay):
+    overlay.show_notice("Rewritten", done=True)
+    overlay.timer.stop()
+    overlay.animation_time = moments.MOMENTS["done"].pop_at / 2
+    overlay._update_animation()
+    assert overlay.stt_particles == []
+    overlay.animation_time = moments.MOMENTS["done"].pop_at
+    overlay._update_animation()
+    assert overlay.stt_particles
+    for moment in (0.1, 0.3, 0.6, 1.5, overlay._notice_ms() / 1000):
+        overlay.animation_time = moment
+        _paint(overlay)
+
+    overlay.show_notice("Inserted", done=True)
+    assert overlay.animation_time == 0.0 and overlay.stt_particles == []
+    overlay.show_notice("Nothing to paste yet")
+    overlay.animation_time = 1.0
+    overlay._update_animation()
+    assert overlay.stt_particles == []
 
 
 def test_a_notice_too_long_for_the_overlay_ends_in_an_ellipsis(overlay):

@@ -279,10 +279,15 @@ class AppConfig:
     WAVEFORM_OVERLAY_HEIGHT: int = 80
     WAVEFORM_STREAMING_MAX_HEIGHT: int = 400
     WAVEFORM_FRAME_RATE: int = 30
-    WAVEFORM_LEVEL_SMOOTHING: float = 0.7
+    WAVEFORM_LEVEL_SMOOTHING: float = 0.3
 
     # Streaming text overlay settings
     STREAMING_OVERLAY_FONT_SIZE: int = 16
+
+    # The recording overlay's look: "ribbon", "bars", "wave", "orb", "aurora",
+    # "bubbles", or "legacy" (Classic, the original particles).
+    # Settings → Recording → Overlay.
+    RECORDING_OVERLAY_LOOK: str = "ribbon"
 
     # Application UI type size as a percent of the designed 14px theme.
     # Settings → General → Font size. 100 is the shipped default.
@@ -301,7 +306,7 @@ class AppConfig:
     # push-and-hold recording going instead of canceling it.
     RECORD_LATCH_WINDOW_MS: int = 400
     OVERLAY_HIDE_DELAY_MS: int = 1500
-    CANCELLATION_ANIMATION_DURATION_MS: int = 800
+    CANCELLATION_ANIMATION_DURATION_MS: int = 1200
     CANCELLATION_GRACE_MS: int = 200
     # Capture keeps running after the stop press so a last word the press
     # beat is not clipped. POST_ROLL_MS is the cap; waiting all of it was

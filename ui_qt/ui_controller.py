@@ -394,6 +394,13 @@ class UIController(QObject):
             self._on_settings_streaming_changed()
         if SettingsKey.STREAMING_OVERLAY_FONT_SIZE in changes:
             self.overlay.refresh_streaming_font_size()
+        if changes.keys() & {
+            SettingsKey.RECORDING_OVERLAY_LOOK,
+            SettingsKey.RECORDING_OVERLAY_DOT,
+            SettingsKey.RECORDING_OVERLAY_TEXT,
+            SettingsKey.RECORDING_OVERLAY_CLOCK,
+        }:
+            self.overlay.refresh_recording_look()
         if (
             SettingsKey.TRANSCRIPT_CLEANUP_ENABLED in changes
             or SettingsKey.TRANSCRIPT_CLEANUP_LEVEL in changes
@@ -989,6 +996,7 @@ class UIController(QObject):
         dialog.on_audio_device_changed = self.on_audio_device_changed
         dialog.on_streaming_settings_changed = self._on_settings_streaming_changed
         dialog.on_streaming_font_changed = self.overlay.refresh_streaming_font_size
+        dialog.on_recording_look_changed = self.overlay.refresh_recording_look
         dialog.on_ui_font_scale_changed = self._apply_ui_font_scale
         dialog.on_ui_theme_changed = self._apply_ui_theme
         dialog.on_hf_policy_changed = self.on_hf_policy_changed

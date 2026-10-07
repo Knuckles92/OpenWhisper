@@ -106,6 +106,12 @@ class SettingsKey:
     STREAMING_ENABLED: Final[str] = "streaming_enabled"
     STREAMING_CHUNK_DURATION: Final[str] = "streaming_chunk_duration"
     STREAMING_OVERLAY_FONT_SIZE: Final[str] = "streaming_overlay_font_size"
+    # The recording overlay's look; see RecordingOverlayLook. "legacy" is Classic.
+    RECORDING_OVERLAY_LOOK: Final[str] = "recording_overlay_look"
+    # Parts of a live look's label: the pulsing dot, "Recording", the clock.
+    RECORDING_OVERLAY_DOT: Final[str] = "recording_overlay_dot"
+    RECORDING_OVERLAY_TEXT: Final[str] = "recording_overlay_text"
+    RECORDING_OVERLAY_CLOCK: Final[str] = "recording_overlay_clock"
     # Application chrome type size as a percent of the designed theme (90–130).
     UI_FONT_SCALE: Final[str] = "ui_font_scale"
     # Colour theme: "dark", "light", or "system" (follow the OS setting).
@@ -339,6 +345,51 @@ class UiTheme:
     }
 
 
+class RecordingOverlayLook:
+    """Values for ``SettingsKey.RECORDING_OVERLAY_LOOK``; see ui_qt/overlays/recording_looks.py."""
+    RIBBON: Final[str] = "ribbon"
+    BARS: Final[str] = "bars"
+    WAVE: Final[str] = "wave"
+    AURORA: Final[str] = "aurora"
+    PULSE: Final[str] = "pulse"
+    DOTS: Final[str] = "dots"
+    BAIT_BALL: Final[str] = "baitball"
+    FISH: Final[str] = "fish"
+    GLOW: Final[str] = "glow"
+    FIZZ: Final[str] = "fizz"
+    LEGACY: Final[str] = "legacy"
+
+    ALL: Final[Tuple[str, ...]] = (RIBBON, BARS, WAVE, AURORA, PULSE, DOTS, BAIT_BALL, FISH, GLOW, FIZZ, LEGACY)
+    LABELS: Final[Dict[str, str]] = {
+        RIBBON: "Ribbon",
+        BARS: "Bars",
+        WAVE: "Mirror wave",
+        AURORA: "Aurora",
+        PULSE: "Pulse",
+        DOTS: "Dots",
+        BAIT_BALL: "Bait ball",
+        FISH: "Real fish",
+        GLOW: "Deep-sea glow",
+        FIZZ: "Fizz",
+        LEGACY: "Classic",
+    }
+    DETAILS: Final[Dict[str, str]] = {
+        RIBBON: "A glowing trace of your voice",
+        BARS: "A scrolling level meter",
+        WAVE: "Your voice's outline, mirrored",
+        AURORA: "Flowing waves",
+        PULSE: "A ring that swells and ripples",
+        DOTS: "Dots that ripple as you speak",
+        BAIT_BALL: "A spinning school lifts the swell",
+        FISH: "Fish school under the waves",
+        GLOW: "Glowing fish in the deep",
+        FIZZ: "Glasses filling with fizz",
+        LEGACY: "The original particles",
+    }
+    #: Names saved by earlier builds, and what they mean now.
+    ALIASES: Final[Dict[str, str]] = {"live": RIBBON, "orb": PULSE, "bubbles": BAIT_BALL}
+
+
 class SettingsView:
     """Views of the Settings window, independent of developer mode."""
 
@@ -535,6 +586,10 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.STREAMING_ENABLED: config.STREAMING_ENABLED,
     SettingsKey.STREAMING_CHUNK_DURATION: config.STREAMING_CHUNK_DURATION_SEC,
     SettingsKey.STREAMING_OVERLAY_FONT_SIZE: config.STREAMING_OVERLAY_FONT_SIZE,
+    SettingsKey.RECORDING_OVERLAY_LOOK: config.RECORDING_OVERLAY_LOOK,
+    SettingsKey.RECORDING_OVERLAY_DOT: True,
+    SettingsKey.RECORDING_OVERLAY_TEXT: True,
+    SettingsKey.RECORDING_OVERLAY_CLOCK: True,
     SettingsKey.UI_FONT_SCALE: config.UI_FONT_SCALE,
     SettingsKey.UI_THEME: config.UI_THEME,
     SettingsKey.SETTINGS_VIEW: SettingsView.BASIC,
@@ -1010,6 +1065,23 @@ def _choice_resolver(key: str, choices: Tuple[Any, ...]) -> Callable[..., Any]:
 resolve_recording_trigger_mode = _choice_resolver(
     SettingsKey.RECORDING_TRIGGER_MODE, RecordingTriggerMode.ALL)
 resolve_settings_view = _choice_resolver(SettingsKey.SETTINGS_VIEW, SettingsView.ALL)
+_resolve_recording_overlay_look = _choice_resolver(
+    SettingsKey.RECORDING_OVERLAY_LOOK, RecordingOverlayLook.ALL)
+
+
+def resolve_recording_overlay_look(settings: Optional[Mapping[str, Any]] = None) -> str:
+    """The saved recording look; a name from an earlier build maps to its successor."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    alias = RecordingOverlayLook.ALIASES.get(settings.get(SettingsKey.RECORDING_OVERLAY_LOOK))
+    if alias is not None:
+        return alias
+    return _resolve_recording_overlay_look(settings)
+
+
+resolve_recording_overlay_dot = _bool_resolver(SettingsKey.RECORDING_OVERLAY_DOT)
+resolve_recording_overlay_text = _bool_resolver(SettingsKey.RECORDING_OVERLAY_TEXT)
+resolve_recording_overlay_clock = _bool_resolver(SettingsKey.RECORDING_OVERLAY_CLOCK)
 def resolve_ui_theme(settings: Optional[Mapping[str, Any]] = None) -> str:
     from services.desktop_session import use_omarchy_ui
 

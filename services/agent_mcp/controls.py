@@ -20,6 +20,7 @@ from services.settings import (
     TranscriptCleanupLevel,
     TranscriptCleanupReasoning,
     UiFontScale,
+    RecordingOverlayLook,
     UiTheme,
     resolve_ui_theme,
 )
@@ -127,6 +128,24 @@ SETTING_CONTROLS = (
         minimum=10,
         maximum=48,
         effect=LIVE,
+    ),
+    SettingControl(
+        SettingsKey.RECORDING_OVERLAY_LOOK,
+        "Recording overlay look",
+        "Appearance",
+        "string",
+        RecordingOverlayLook.ALL,
+        max_length=10,
+        effect=LIVE,
+    ),
+    SettingControl(
+        SettingsKey.RECORDING_OVERLAY_DOT, "Recording overlay live dot", "Appearance", effect=LIVE
+    ),
+    SettingControl(
+        SettingsKey.RECORDING_OVERLAY_TEXT, "Recording overlay label", "Appearance", effect=LIVE
+    ),
+    SettingControl(
+        SettingsKey.RECORDING_OVERLAY_CLOCK, "Recording overlay clock", "Appearance", effect=LIVE
     ),
     SettingControl(
         SettingsKey.UI_THEME,

@@ -1,8 +1,7 @@
 """Physics-based waveform particles."""
 import math
 import random
-import time
-from typing import Dict, Any, List, Optional
+from typing import Callable, Dict, Any, List, Optional
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont
 from PyQt6.QtCore import QRect, QRectF, Qt
 from ui_qt.utils.palette import current_palette, token_color
@@ -68,6 +67,10 @@ class Particle:
         return QColor.fromHsv(int(self.color_hue) % 360, 235, 205, alpha)
 
 
+#: The processing vortex's arms; 120 particles a second spread over them.
+VORTEX_ARMS = 4
+
+
 class ParticleStyle:
     """Particle waveform driven by audio energy."""
 
@@ -77,7 +80,6 @@ class ParticleStyle:
 
         self.animation_time = 0.0
         self.audio_levels: List[float] = []
-        self._canceling_start_time: Optional[float] = None
 
         self.max_particles = config.get('max_particles', 500)
         self.emission_rate = config.get('emission_rate', 100)
@@ -93,14 +95,13 @@ class ParticleStyle:
         self.color_shift_speed = config.get('color_shift_speed', 50)
 
         self.particles: List[Particle] = []
-        self.cancel_particles: List[Particle] = []
-        self._cancel_initialized = False
-        self._last_cancel_progress = 1.0
-        self._last_cancel_update: Optional[float] = None
+        #: Where a recording particle launches from at x; None keeps the
+        #: flat line 30px above the bottom.
+        self.emitter: Optional[Callable[[float], float]] = None
         self._simulation_remainder = 0.0
         self._emission_remainder = 0.0
         self._simulation_state = "idle"
-        self._cancel_elapsed = 0.0
+        self._vortex_arm = 0
 
     def update_audio_levels(self, levels: List[float]):
         self.audio_levels = levels.copy() if levels else []
@@ -108,16 +109,6 @@ class ParticleStyle:
     def update_animation_time(self, delta_time: float):
         """Advance animation time by ``delta_time`` seconds."""
         self.animation_time += delta_time
-
-    def get_cancellation_progress(self) -> float:
-        from config import config
-        duration = config.CANCELLATION_ANIMATION_DURATION_MS / 1000.0
-        return min(1.0, self._cancel_elapsed / max(duration, 0.001))
-
-    def set_canceling_start_time(self, start_time: float):
-        self._canceling_start_time = start_time
-        self._cancel_elapsed = 0.0
-        self._cancel_initialized = False
 
     def advance(self, state: str, delta_time: float) -> None:
         """Advance physics once per timer tick, independently of repaint count.
@@ -129,8 +120,6 @@ class ParticleStyle:
         if state != self._simulation_state:
             self._simulation_state = state
             self._emission_remainder = 0.0
-            if state == "canceling":
-                self._init_cancel_particles(QRect(0, 0, self.width, self.height))
         self._simulation_remainder += delta_time
         step = 1.0 / 120.0
         while self._simulation_remainder + 1e-12 >= step:
@@ -142,11 +131,6 @@ class ParticleStyle:
                 self._advance_processing(step)
             elif state == "transcribing":
                 self._advance_transcribing(step)
-            elif state == "canceling":
-                self._cancel_elapsed += step
-                self._update_cancel_particles(step)
-                if self.get_cancellation_progress() >= 1.0:
-                    self.cancel_particles.clear()
 
     def _emission_count(self, rate: float, dt: float) -> int:
         self._emission_remainder += rate * dt
@@ -170,9 +154,13 @@ class ParticleStyle:
         center_x = self.width // 2
         center_y = self.height // 2 - 5
 
-        vortex_particles = self._emission_count(120.0, dt)
-        for i in range(vortex_particles):
-            angle = (i / vortex_particles) * 2 * math.pi + self.animation_time * 2
+        for _ in range(self._emission_count(120.0, dt)):
+            # Each particle takes the next of the vortex's arms. At 120 Hz a
+            # step emits about one, so spreading by its index within the step
+            # put every particle on the same arm: one comet, not a vortex.
+            arm = self._vortex_arm
+            self._vortex_arm = (arm + 1) % VORTEX_ARMS
+            angle = arm / VORTEX_ARMS * 2 * math.pi + self.animation_time * 2
             radius = 30 + 10 * math.sin(self.animation_time * 3)
 
             x = center_x + radius * math.cos(angle)
@@ -232,25 +220,10 @@ class ParticleStyle:
         self._draw_particles(painter)
         self._draw_text(painter, rect, message)
 
-    def draw_canceling_state(self, painter: QPainter, rect: QRect, message: str = "Canceled"):
-        progress = self.get_cancellation_progress()
-        self._draw_cancel_particles(painter, progress)
-        center_x = rect.width() // 2
-        center_y = rect.height() // 2 - 5
-        size = int(26 * (1.0 - 0.6 * progress))
-        alpha = max(0, int(255 * (1.0 - progress)))
-        painter.setPen(round_pen(token_color("danger", alpha), 3))
-        painter.drawLine(center_x - size, center_y - size, center_x + size, center_y + size)
-        painter.drawLine(center_x + size, center_y - size, center_x - size, center_y + size)
-        painter.setPen(token_color("overlay-text", alpha))
-        painter.setFont(QFont("Segoe UI", 10))
-        painter.drawText(QRect(0, rect.height() - 25, rect.width(), 20),
-                         Qt.AlignmentFlag.AlignCenter, message)
-
     def _emit_audio_particles(self, count: int, audio_energy: float):
         for _ in range(min(count, self.max_particles - len(self.particles))):
             x = random.uniform(20, self.width - 20)
-            y = self.height - 30
+            y = self.emitter(x) if self.emitter else self.height - 30
 
             vx = random.uniform(-30, 30) * (1 + audio_energy)
             vy = random.uniform(-80, -40) * (1 + audio_energy * 0.5)
@@ -362,67 +335,3 @@ class ParticleStyle:
         painter.setFont(font)
         text_rect = QRect(0, rect.height() - 25, rect.width(), 20)
         painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, message)
-
-    def _init_cancel_particles(self, rect: QRect):
-        self.cancel_particles = []
-        center_x = rect.width() // 2
-        center_y = rect.height() // 2 - 5
-
-        for _ in range(70):
-            angle = random.uniform(0, 2 * math.pi)
-            speed = random.uniform(160, 320)
-            vx = math.cos(angle) * speed
-            vy = math.sin(angle) * speed
-
-            particle = Particle(center_x, center_y, vx, vy)
-            particle.size = random.uniform(2.5, 5.0)
-            particle.color_hue = random.uniform(0, 40)
-            self.cancel_particles.append(particle)
-
-        self._cancel_initialized = True
-        self._last_cancel_progress = 0.0
-        self._last_cancel_update = time.time()
-
-    def _cancel_dt(self) -> float:
-        now = time.time()
-        if self._last_cancel_update is None:
-            self._last_cancel_update = now
-            return 1 / 30
-
-        dt = now - self._last_cancel_update
-        self._last_cancel_update = now
-        return max(0.0, min(0.05, dt))
-
-    def _update_cancel_particles(self, dt: float):
-        alive = []
-        for particle in self.cancel_particles:
-            particle.vx += random.uniform(-25, 25) * dt
-            particle.vy += random.uniform(-25, 25) * dt
-
-            if particle.update(dt, gravity=0, damping=0.92):
-                alive.append(particle)
-
-        self.cancel_particles = alive
-
-    def _draw_cancel_particles(self, painter: QPainter, progress: float):
-        painter.setPen(Qt.PenStyle.NoPen)
-
-        for particle in self.cancel_particles:
-            color = particle.get_qcolor(base_hue=particle.color_hue)
-            alpha = int(255 * particle.life * (1.0 - progress * 0.7))
-            if alpha <= 0:
-                continue
-
-            color.setAlpha(alpha)
-            size = particle.size * (1.0 + 0.8 * (1.0 - progress))
-            painter.setBrush(color)
-            painter.drawEllipse(QRectF(particle.x - size, particle.y - size, size * 2, size * 2))
-
-            if self.glow_effect and alpha > 80:
-                glow_color = QColor(color)
-                glow_color.setAlpha(int(alpha * 0.5))
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.setPen(QPen(glow_color, 1))
-                glow_size = size + 2
-                painter.drawEllipse(QRectF(particle.x - glow_size, particle.y - glow_size, glow_size * 2, glow_size * 2))
-                painter.setPen(Qt.PenStyle.NoPen)

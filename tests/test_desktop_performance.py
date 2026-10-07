@@ -187,16 +187,14 @@ def test_particle_paints_do_not_advance_any_simulation_state():
     image = QImage(320, 100, QImage.Format.Format_ARGB32)
     painter = QPainter(image)
     try:
-        for state in ("recording", "processing", "transcribing", "canceling"):
+        for state in ("recording", "processing", "transcribing"):
             style = ParticleStyle(320, 100, {})
             style.advance(state, 1 / 30)
-            before = ([dict(vars(p)) for p in style.particles],
-                      [dict(vars(p)) for p in style.cancel_particles], style.animation_time)
+            before = ([dict(vars(p)) for p in style.particles], style.animation_time)
             draw = getattr(style, f"draw_{state}_state")
             for _ in range(3):
                 draw(painter, QRect(0, 0, 320, 100))
-            assert before == ([dict(vars(p)) for p in style.particles],
-                              [dict(vars(p)) for p in style.cancel_particles], style.animation_time)
+            assert before == ([dict(vars(p)) for p in style.particles], style.animation_time)
     finally:
         painter.end()
 

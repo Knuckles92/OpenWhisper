@@ -9,7 +9,6 @@ glow marks a rule the moment it is saved.
 """
 from __future__ import annotations
 
-import math
 from collections import deque
 from typing import Deque, Final, List
 
@@ -42,6 +41,7 @@ from ui_qt.utils.collapse_animation import (
     create_max_height_animation,
     run_max_height_animation,
 )
+from ui_qt.utils.loudness import level_to_height
 from ui_qt.utils.palette import token_color
 from ui_qt.utils.restyle import repolish
 from ui_qt.widgets.eliding_label import ElidingLabel
@@ -54,11 +54,6 @@ POLISHING: Final[str] = "polishing"
 _TICK_MS: Final[int] = 16
 #: One bar per step, about sixteen a second: slow enough to read as speech.
 _STEP_MS: Final[float] = 60.0
-#: Levels are RMS fractions of full scale. Speech on a desk microphone sits
-#: around -40 to -15 dBFS, so this window gives it most of the bar height
-#: while room noise stays on the dotted baseline.
-_FLOOR_DB: Final[float] = -60.0
-_CEILING_DB: Final[float] = -12.0
 _BAR_WIDTH: Final[float] = 3.0
 _BAR_PITCH: Final[float] = 5.0
 _EASE: Final[float] = 0.35
@@ -72,18 +67,6 @@ _WORK_REVEAL_DELAY_MS: Final[int] = 150
 #: The clock turns amber this close to the automatic stop.
 _CAP_WARNING_S: Final[int] = 10
 _GLOW_MS: Final[int] = 1600
-
-
-def level_to_height(level: float) -> float:
-    """Map an RMS level (a 0-1 fraction of full scale) to a 0-1 bar height.
-
-    The scale is logarithmic, as loudness is heard, so quiet speech still
-    moves the trace and a shout does not flatten everything else.
-    """
-    if level <= 0.0:
-        return 0.0
-    db = 20.0 * math.log10(level)
-    return max(0.0, min(1.0, (db - _FLOOR_DB) / (_CEILING_DB - _FLOOR_DB)))
 
 
 def _format_clock(seconds: int) -> str:

@@ -1,6 +1,5 @@
 import logging
 import math
-import random
 import sys
 import time
 from typing import Optional, List
@@ -11,11 +10,19 @@ from PyQt6.QtGui import (
     QFont, QFontMetrics, QCursor, QTextLayout
 )
 from config import config
-from services.settings import resolve_streaming_overlay_font_size, settings_manager
+from services.settings import (
+    resolve_recording_overlay_clock,
+    resolve_recording_overlay_dot,
+    resolve_recording_overlay_look,
+    resolve_recording_overlay_text,
+    resolve_streaming_overlay_font_size,
+    settings_manager,
+)
 from ui_qt.utils.overlay_position import (
     max_height_for_anchor,
     preferred_overlay_position,
 )
+from ui_qt.overlays import live_recording, moments, recording_looks
 from ui_qt.utils.palette import token_color
 from ui_qt.waveform_styles import Particle, ParticleStyle, round_pen
 
@@ -27,6 +34,13 @@ _NOTICE_MS_PER_CHAR = 25
 _LANGUAGE_FLASH_S = 0.6
 _BADGE_HEIGHT = 18
 _BADGE_MARGIN = 9
+#: How fast a finish runs in each stage; the step to Transcribing eases up.
+_WORK_RATES = {"processing": 1.0, "transcribing": 1.7}
+_WORK_EASE_S = 0.3
+#: The stage label's crossfade, and the fade out when the text lands.
+_LABEL_CROSSFADE_S = 0.28
+_FADE_OUT_S = 0.25
+_WORK_LABELS = {"processing": "Processing...", "transcribing": "Transcribing..."}
 
 
 def _platform_takes_overlay_clicks() -> bool:
@@ -68,21 +82,40 @@ class WaveformOverlay(QWidget):
     # ParticleStyle simulates only its own states; the command and rewrite
     # looks borrow theirs.
     _STYLE_STATES = {STATE_COMMAND_LISTENING: STATE_RECORDING, STATE_REWRITING: STATE_CLEANING}
+    #: Short-lived states that play a ``moments`` choreography; a finished
+    #: command's notice plays "done".
+    _MOMENT_STATES = {STATE_STT_ENABLE: "enabled", STATE_STT_DISABLE: "disabled", STATE_COPIED: "copied"}
+    #: Each look draws its own Processing and Transcribing.
+    _WORK_STATES = frozenset((STATE_PROCESSING, STATE_TRANSCRIBING))
+    #: States that fade out rather than vanish when the overlay hides.
+    _FADING_STATES = frozenset((STATE_PROCESSING, STATE_TRANSCRIBING, STATE_CLEANING, STATE_REWRITING))
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, preview: bool = False):
+        """Build the overlay.
+
+        Args:
+            parent: A window to draw inside (Wayland), or None for a
+                floating window near the pointer.
+            preview: Draw as an ordinary child widget for a settings
+                preview: the floating pill's look, placed by the parent's
+                layout, never moved or hidden by it.
+        """
         super().__init__(parent)
-        self._embedded = parent is not None
+        self._preview = preview
+        self._embedded = parent is not None and not preview
 
         self.setWindowFlags(
-            Qt.WindowType.Widget if self._embedded else
+            Qt.WindowType.Widget if self._embedded or preview else
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.Tool |
             Qt.WindowType.WindowDoesNotAcceptFocus
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, not self._embedded)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, not (self._embedded or preview))
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        if self._embedded:
+        if preview:
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        elif self._embedded:
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             parent.installEventFilter(self)
         else:
@@ -122,6 +155,21 @@ class WaveformOverlay(QWidget):
             self.overlay_width, self.overlay_height, style_config
         )
 
+        self._legacy_audio_response = self.style.audio_response
+        self._ribbon = live_recording.VoiceRibbon()
+        self._listen_started = time.monotonic()
+        self._default_emission_rate = self.style.emission_rate
+        self._recording_look = recording_looks.LEGACY
+        self._visual: Optional[recording_looks.Visual] = None
+        self._label_parts = (True, True, True)
+        self.refresh_recording_look()
+        self._work_started = 0.0
+        self._work_rate = 1.0
+        self._work_clock = 0.0
+        self._label_from = ""
+        self._label_changed = 0.0
+        self._fading_since: Optional[float] = None
+
         self.timer = QTimer()
         self.timer.timeout.connect(self._update_animation)
         self.frame_rate = config.WAVEFORM_FRAME_RATE
@@ -142,6 +190,8 @@ class WaveformOverlay(QWidget):
         self._caption_started = 0.0
         self._notice = ""
         self._notice_done = False
+        self._burst_fired = False
+        self._collapse_from: list = []
         self._caption_timer = QTimer(self)
         self._caption_timer.setSingleShot(True)
         self._caption_timer.timeout.connect(self._clear_caption)
@@ -152,33 +202,36 @@ class WaveformOverlay(QWidget):
         try:
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            if self._fading_since is not None:
+                painter.setOpacity(max(0.0, 1.0 - (time.monotonic() - self._fading_since) / _FADE_OUT_S))
 
             self._draw_background(painter)
 
             rect = self.rect()
 
             if self.current_state == self.STATE_RECORDING:
-                self.style.draw_recording_state(painter, rect, "" if self._caption else "Recording...")
+                if self._visual is not None:
+                    self._draw_live_listening(painter, "Recording")
+                else:
+                    self.style.draw_recording_state(painter, rect, "" if self._caption else "Recording...")
             elif self.current_state == self.STATE_STREAMING:
                 self._draw_streaming_state(painter, rect)
             elif self.current_state == self.STATE_COMMAND_LISTENING:
                 self._draw_streaming_state(painter, rect, "Listening for an edit...", "accent-soft")
-            elif self.current_state == self.STATE_PROCESSING:
-                self.style.draw_processing_state(painter, rect, "Processing...")
-            elif self.current_state == self.STATE_TRANSCRIBING:
-                self.style.draw_transcribing_state(painter, rect, "Transcribing...")
+            elif self.current_state in self._WORK_STATES:
+                self._draw_work(painter, rect)
             elif self.current_state == self.STATE_CLEANING:
                 self._draw_cleaning_state(painter)
             elif self.current_state == self.STATE_REWRITING:
                 self._draw_cleaning_state(painter, "Rewriting...")
             elif self.current_state == self.STATE_CANCELING:
-                self.style.draw_canceling_state(painter, rect, "Canceled")
+                self._draw_canceled(painter)
             elif self.current_state == self.STATE_STT_ENABLE:
-                self._draw_stt_enable_state(painter)
+                self._draw_moment(painter, "Enabled")
             elif self.current_state == self.STATE_STT_DISABLE:
-                self._draw_stt_disable_state(painter)
+                self._draw_moment(painter, "Disabled")
             elif self.current_state == self.STATE_COPIED:
-                self._draw_copied_state(painter)
+                self._draw_moment(painter, "Copied!")
             elif self.current_state == self.STATE_LANGUAGE:
                 self._draw_language_state(painter)
             elif self.current_state == self.STATE_NOTICE:
@@ -211,17 +264,72 @@ class WaveformOverlay(QWidget):
         particle_rect = QRect(0, 0, rect.width(), particle_height)
         # Keep particle physics in the compact recording band even when the
         # overlay grows to fit preview text.
-        previous_height = self.style.height
-        self.style.height = self._base_height
-        try:
-            self.style.draw_recording_state(painter, particle_rect, "")
-        finally:
-            self.style.height = previous_height
-        if not self._streaming_preview_text and not self._caption:
-            self._draw_status(painter, status, token_color(status_token))
+        if self._visual is not None:
+            self._draw_live_listening(painter, status.rstrip("."), status_token,
+                                      show_label=not self._streaming_preview_text)
+        else:
+            previous_height = self.style.height
+            self.style.height = self._base_height
+            try:
+                self.style.draw_recording_state(painter, particle_rect, "")
+            finally:
+                self.style.height = previous_height
+            if not self._streaming_preview_text and not self._caption:
+                self._draw_status(painter, status, token_color(status_token))
 
         if self._streaming_preview_text:
             self._draw_streaming_preview_text(painter, rect)
+
+    def _draw_live_listening(self, painter: QPainter, label: str, text_tone: str = "overlay-text",
+                             *, show_label: bool = True) -> None:
+        """A live look: its voice drawing, the particles if it has them, the live label."""
+        elapsed = time.monotonic() - self._listen_started
+        command = self.current_state == self.STATE_COMMAND_LISTENING
+        tone = "accent" if command else "danger"
+        if not self._embedded and not command:
+            moments.draw_edge_flash(painter, QRectF(self.rect()), elapsed, 0.0, tone)
+        grow = moments.ease_out_cubic(moments.phase(elapsed, 0.05, 0.4))
+        self._visual.draw(painter, grow)
+        if self._visual.particles:
+            # Particle physics stay in the compact band even when preview
+            # text grows the overlay.
+            previous_height = self.style.height
+            self.style.height = self._base_height
+            try:
+                self.style.draw_recording_state(painter, QRect(0, 0, self.width(), self._base_height), "")
+            finally:
+                self.style.height = previous_height
+        dot, words, clock = self._label_parts
+        if show_label and not self._caption and (dot or words or clock):
+            live_recording.draw_live_label(
+                painter, QRectF(self._status_rect().adjusted(12, 0, -12, 0)), label, elapsed, tone, text_tone,
+                dot=dot, text=words, clock=clock,
+            )
+
+    def _draw_work(self, painter: QPainter, rect: QRect) -> None:
+        """Processing or Transcribing: the look's own finish, or Classic's vortex."""
+        if self._visual is not None:
+            morph = recording_looks.smooth((time.monotonic() - self._work_started) / recording_looks.MORPH_S)
+            self._visual.draw_work(painter, morph, self._work_clock)
+        elif self.current_state == self.STATE_PROCESSING:
+            self.style.draw_processing_state(painter, rect, "")
+        else:
+            self.style.draw_transcribing_state(painter, rect, "")
+        self._draw_work_label(painter)
+
+    def _draw_work_label(self, painter: QPainter) -> None:
+        """The stage's name; a new stage's rises in as the old one lifts away."""
+        shown = 1.0
+        if self._label_from:
+            shown = recording_looks.smooth((time.monotonic() - self._label_changed) / _LABEL_CROSSFADE_S)
+            if shown < 1.0:
+                self._draw_label_at(painter, self._label_from, 1.0 - shown, -6.0 * shown)
+        self._draw_label_at(painter, _WORK_LABELS[self.current_state], shown, 6.0 * (1.0 - shown))
+
+    def _draw_label_at(self, painter: QPainter, text: str, alpha: float, dy: float) -> None:
+        painter.setPen(QPen(token_color("overlay-text", int(255 * alpha))))
+        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        painter.drawText(QRectF(self._status_rect()).translated(0, dy), Qt.AlignmentFlag.AlignCenter, text)
 
     def _status_rect(self) -> QRect:
         return QRect(0, self._base_height - 25, self.width(), 20)
@@ -317,6 +425,8 @@ class WaveformOverlay(QWidget):
 
     def _reposition_near_anchor(self):
         """Move the overlay near its anchor while keeping it fully on-screen."""
+        if self._preview:
+            return
         if self._embedded:
             parent = self.parentWidget()
             self.move(max(0, parent.width() - self.width() - 16), max(0, parent.height() - self.height() - 64))
@@ -403,109 +513,16 @@ class WaveformOverlay(QWidget):
             painter.setPen(QPen(token_color("accent", 210), 1.6))
             painter.drawPath(ring)
 
-    def _draw_particle_swarm(self, painter: QPainter):
-        painter.setPen(Qt.PenStyle.NoPen)
-        for particle in self.stt_particles:
-            color = particle.get_fading_color()
-            painter.setBrush(color)
-            size = particle.size * particle.life
-            painter.drawEllipse(QRectF(
-                particle.x - size, particle.y - size,
-                size * 2, size * 2
-            ))
-
-            if particle.life > 0.3:
-                glow_color = QColor(color)
-                glow_color.setAlpha(100)
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.setPen(QPen(glow_color, 1))
-                glow_size = size + 3
-                painter.drawEllipse(QRectF(
-                    particle.x - glow_size, particle.y - glow_size,
-                    glow_size * 2, glow_size * 2
-                ))
-                painter.setPen(Qt.PenStyle.NoPen)
-
-    def _draw_stt_enable_state(self, painter: QPainter):
-        rect = self.rect()
-        w, h = rect.width(), rect.height()
-
-        if self.animation_time > 0.4:
-            progress = min(1.0, (self.animation_time - 0.4) / 0.3)
-            alpha = int(200 * progress)
-            painter.setPen(round_pen(token_color("success", alpha), 3))
-            painter.drawLine(int(w // 2 - 15), int(h // 2), int(w // 2 - 5), int(h // 2 + 10))
-            painter.drawLine(int(w // 2 - 5), int(h // 2 + 10), int(w // 2 + 15), int(h // 2 - 10))
-
-        self._draw_particle_swarm(painter)
-
-        painter.setPen(QPen(token_color("overlay-text")))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Enabled")
-
-    def _draw_stt_disable_state(self, painter: QPainter):
-        rect = self.rect()
-        w, h = rect.width(), rect.height()
-
-        if self.animation_time > 0.1:
-            progress = min(1.0, (self.animation_time - 0.1) / 0.2)
-            alpha = int(200 * progress)
-            x_size = 15
-            painter.setPen(round_pen(token_color("danger", alpha), 3))
-            painter.drawLine(w // 2 - x_size, h // 2 - x_size, w // 2 + x_size, h // 2 + x_size)
-            painter.drawLine(w // 2 + x_size, h // 2 - x_size, w // 2 - x_size, h // 2 + x_size)
-
-        self._draw_particle_swarm(painter)
-
-        painter.setPen(QPen(token_color("overlay-text")))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Disabled")
-
-    def _draw_copied_state(self, painter: QPainter):
-        rect = self.rect()
-        w, h = rect.width(), rect.height()
-
-        if self.animation_time > 0.3:
-            progress = min(1.0, (self.animation_time - 0.3) / 0.3)
-            alpha = int(220 * progress)
-
-            icon_color = token_color("accent-cyan", alpha)
-            painter.setPen(round_pen(icon_color, 2))
-
-            cx, cy = w // 2, h // 2 - 5
-            painter.drawRoundedRect(cx - 12, cy - 10, 24, 28, 3, 3)
-
-            painter.drawRect(cx - 6, cy - 14, 12, 6)
-
-            painter.setPen(round_pen(icon_color, 1.5))
-            painter.drawLine(cx - 7, cy + 2, cx + 7, cy + 2)
-            painter.drawLine(cx - 7, cy + 8, cx + 5, cy + 8)
-
-        self._draw_particle_swarm(painter)
-
-        painter.setPen(QPen(token_color("overlay-text")))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Copied!")
-
     def _draw_cleaning_state(self, painter: QPainter, text: str = "Cleaning up..."):
         rect = self.rect()
         w, h = rect.width(), rect.height()
         purple = token_color("purple")
 
-        # Sparkle layout: (x_frac, y_frac, base_size, twinkle_phase). Phases are
-        # staggered so the sparkles shimmer in sequence rather than in unison.
-        sparkles = (
-            (0.50, 0.42, 11.0, 0.0),
-            (0.37, 0.28, 6.0, 1.3),
-            (0.64, 0.30, 7.5, 2.6),
-            (0.41, 0.58, 5.0, 3.9),
-            (0.61, 0.55, 6.5, 5.2),
-        )
-        for x_frac, y_frac, base_size, phase in sparkles:
+        for x_frac, y_frac, base_size, phase in moments.SPARKLES:
             twinkle = 0.5 + 0.5 * math.sin(self.animation_time * 3.0 + phase)
             color = QColor(purple)
             color.setAlpha(int(80 + 175 * twinkle))
-            self._draw_sparkle(
+            moments.draw_sparkle(
                 painter,
                 x_frac * w,
                 y_frac * h - 4,
@@ -521,18 +538,74 @@ class WaveformOverlay(QWidget):
             text,
         )
 
-    @staticmethod
-    def _draw_sparkle(painter: QPainter, cx: float, cy: float, size: float, color: QColor):
-        painter.setPen(round_pen(color, 2))
-        painter.drawLine(int(cx), int(cy - size), int(cx), int(cy + size))
-        painter.drawLine(int(cx - size), int(cy), int(cx + size), int(cy))
+    def _moment(self) -> Optional[moments.Moment]:
+        """How the current state plays, if it is a one-shot moment."""
+        if self.current_state == self.STATE_NOTICE:
+            return moments.MOMENTS["done"] if self._notice_done else None
+        name = self._MOMENT_STATES.get(self.current_state)
+        return moments.MOMENTS[name] if name else None
 
-        accent = QColor(color)
-        accent.setAlpha(int(color.alpha() * 0.55))
-        diag = size * 0.45
-        painter.setPen(round_pen(accent, 1.5))
-        painter.drawLine(int(cx - diag), int(cy - diag), int(cx + diag), int(cy + diag))
-        painter.drawLine(int(cx - diag), int(cy + diag), int(cx + diag), int(cy - diag))
+    def _moment_center(self) -> QPointF:
+        return QPointF(self.width() / 2, self._base_height / 2 - 5)
+
+    def _transient_ms(self) -> int:
+        """How long the current short-lived state stays up."""
+        return self._notice_ms() if self.current_state == self.STATE_NOTICE else config.OVERLAY_HIDE_DELAY_MS
+
+    @staticmethod
+    def _cancel_seconds() -> float:
+        return config.CANCELLATION_ANIMATION_DURATION_MS / 1000
+
+    def _draw_canceled(self, painter: QPainter) -> None:
+        """The moment with weight: see ``moments.CANCELED``."""
+        moment = moments.CANCELED
+        t = self.animation_time
+        pop = moment.pop_at
+        home = self._moment_center()
+        center = QPointF(home.x() + moments.shake_offset(t, pop + 0.12, 0.4, 4.0, 3.5), home.y())
+        bounds = QRectF(self.rect())
+        painter.setOpacity(moments.exit_opacity(t, self._cancel_seconds()))
+        if not self._embedded:
+            moments.draw_pill_flash(painter, bounds, t, pop, moment.tone)
+        moments.draw_collapsing(painter, home, t, pop, self._collapse_from)
+        moments.draw_rings(painter, home, t, pop, (moment.partner, moment.tone, moment.tone), reach=34.0)
+        moments.draw_bubbles(painter, self.stt_particles)
+        moments.draw_core_flash(painter, home, t, pop)
+        moments.draw_slam_disc(painter, center, t, pop, moment.tone)
+        moments.draw_glyph(painter, center, t, pop + 0.06, moment.glyph)
+        moments.draw_label(
+            painter, QRectF(self._status_rect().adjusted(12, 0, -12, 0)), "Canceled",
+            t, pop + 0.06, moment.glint,
+        )
+        painter.setOpacity(1.0)
+
+    def _draw_moment(self, painter: QPainter, text: str) -> None:
+        """A toggle, a copy or a finished command: see ``moments``.
+
+        Laid out like Canceled: the glyph centred, the label underneath.
+        """
+        moment = self._moment()
+        t = self.animation_time
+        center = self._moment_center()
+        bounds = QRectF(self.rect())
+        painter.setOpacity(moments.exit_opacity(t, self._transient_ms() / 1000))
+        if moment.lead_in == "sparkles":
+            moments.draw_gathering_sparkles(painter, bounds, center, t, moment.pop_at)
+        elif moment.lead_in == "converge":
+            moments.draw_converging(painter, center, t, moment)
+        moments.draw_rings(painter, center, t, moment.pop_at, (moment.partner, moment.tone))
+        if not self._embedded:
+            moments.draw_edge_flash(painter, bounds, t, moment.pop_at, moment.tone)
+        moments.draw_confetti(painter, self.stt_particles)
+        moments.draw_disc(painter, center, t, moment.pop_at, moment.tone)
+        moments.draw_glyph(painter, center, t, moment.pop_at + moments.GLYPH_DELAY_S, moment.glyph)
+        if moment.afterglow:
+            moments.draw_afterglow(painter, center, t, moment.pop_at + moments.POP_S)
+        moments.draw_label(
+            painter, QRectF(self._status_rect().adjusted(12, 0, -12, 0)), text,
+            t, moment.pop_at + moments.LABEL_DELAY_S, moment.glint,
+        )
+        painter.setOpacity(1.0)
 
     def _badge_radius(self) -> float:
         return 2.0 if self._embedded else _BADGE_HEIGHT / 2
@@ -633,23 +706,49 @@ class WaveformOverlay(QWidget):
         self._draw_status(painter, self._caption, token_color("warning-text", int(255 * fade)))
 
     def _draw_language_state(self, painter: QPainter) -> None:
-        """The language shortcut's notice: the new language, popping in."""
-        grow = min(1.0, self.animation_time / 0.22)
-        scale = 0.7 + 0.3 * (1.0 - (1.0 - grow) ** 3)
+        """The language shortcut's notice: the new language's chip pops in.
+
+        It plays the moments' ring, edge flash, rising label and fade, with
+        the chip in place of the disc.
+        """
+        t = self.animation_time
+        painter.setOpacity(moments.exit_opacity(t, self._transient_ms() / 1000))
+        grow = moments.phase(t, 0.0, moments.POP_S)
+        scale = 0.6 + 0.4 * moments.ease_out_back(grow)
         font = QFont("Segoe UI", 13, QFont.Weight.Bold)
         text = self._language_text()
-        width = max(54, QFontMetrics(font).horizontalAdvance(text) + 28) * scale
-        height = 30 * scale
+        full_width = max(54, QFontMetrics(font).horizontalAdvance(text) + 28)
+        width, height = full_width * scale, 30 * scale
         rect = QRectF((self.width() - width) / 2, 30 - height / 2, width, height)
         radius = 3.0 if self._embedded else height / 2
+
+        ring = moments.phase(t, 0.06, moments.RING_S)
+        if 0.0 < ring < 1.0:
+            # The ring follows the chip's own shape as it rolls out.
+            spread = 12.0 * moments.ease_out_cubic(ring)
+            fade = (1.0 - ring) ** 2
+            outer = QRectF((self.width() - full_width) / 2, 15, full_width, 30).adjusted(
+                -spread, -spread, spread, spread
+            )
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(token_color("accent", int(210 * fade)), 0.6 + 2.4 * fade))
+            corner = 3.0 if self._embedded else outer.height() / 2
+            painter.drawRoundedRect(outer, corner, corner)
+        if not self._embedded:
+            moments.draw_edge_flash(painter, QRectF(self.rect()), t, 0.0, "accent")
+
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(token_color("accent", int(235 * grow)))
+        painter.setBrush(token_color("accent", int(235 * min(1.0, grow * 3))))
         painter.drawRoundedRect(rect, radius, radius)
-        font.setPointSizeF(13 * scale)
+        font.setPointSizeF(13 * max(scale, 0.1))
         painter.setFont(font)
-        painter.setPen(QPen(token_color("on-accent", int(255 * grow))))
+        painter.setPen(QPen(token_color("on-accent", int(255 * min(1.0, grow * 2)))))
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
-        self._draw_status(painter, self._language_name(), token_color("overlay-text"))
+        moments.draw_label(
+            painter, QRectF(self._status_rect().adjusted(12, 0, -12, 0)), self._language_name(),
+            t, moments.LABEL_DELAY_S, "accent-soft",
+        )
+        painter.setOpacity(1.0)
 
     def _chip_visible(self) -> bool:
         return bool(self._language) and len(self._language_choices) >= 2
@@ -694,28 +793,39 @@ class WaveformOverlay(QWidget):
         self.large_file_size_mb = file_size_mb
 
     def _draw_large_file_splitting_state(self, painter: QPainter):
+        """A file bar that a blade sweeps along, snipping it into chunks.
+
+        The sweep says work is under way, like the other working states; it
+        does not track progress, which the splitter does not report.
+        """
         rect = self.rect()
         w, h = rect.width(), rect.height()
+        cy = self._base_height / 2 - 6
+        chunks, chunk_w, gap = 5, 22.0, 4.0
+        track = chunks * chunk_w + (chunks - 1) * gap
+        left = (w - track) / 2
+        cycle = (self.animation_time % 1.4) / 1.4
+        eased = cycle * cycle * (3.0 - 2.0 * cycle)
+        blade = left - 12 + (track + 24) * eased
 
-        progress = (self.animation_time * 2) % 1.0
-        center_x, center_y = w // 2, h // 2 - 10
-
-        blade_angle = 12 + 8 * math.sin(progress * math.pi * 2)
-
+        # Each cut springs open as the blade passes it, then eases shut.
+        cuts = [left + (i + 1) * chunk_w + (i + 0.5) * gap for i in range(chunks - 1)]
+        opened = [max(0.0, 1.0 - (blade - x) / 50.0) if blade >= x else 0.0 for x in cuts]
         amber = token_color("warning")
-        painter.setPen(round_pen(amber, 3))
-
-        painter.drawLine(
-            int(center_x - 18), int(center_y - blade_angle),
-            int(center_x + 12), int(center_y + 2)
-        )
-        painter.drawLine(
-            int(center_x - 18), int(center_y + blade_angle),
-            int(center_x + 12), int(center_y - 2)
-        )
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawEllipse(int(center_x - 24), int(center_y - blade_angle - 5), 10, 10)
-        painter.drawEllipse(int(center_x - 24), int(center_y + blade_angle - 5), 10, 10)
+        painter.setPen(Qt.PenStyle.NoPen)
+        for i in range(chunks):
+            shift = 2.5 * (sum(opened[:i]) - sum(opened[i:]))
+            x = left + i * (chunk_w + gap) + shift
+            passed = blade >= x + chunk_w / 2
+            painter.setBrush(token_color("warning", 235 if passed else 120))
+            painter.drawRoundedRect(QRectF(x, cy - 4, chunk_w, 8), 4, 4)
+        for x, amount in zip(cuts, opened, strict=True):
+            if amount > 0.05:
+                moments.draw_sparkle(painter, x, cy, 3.0 + 4.0 * amount, token_color("warning", int(255 * amount)))
+        if left - 12 < blade < left + track + 12:
+            reach = min(1.0, (blade - left + 12) / 14, (left + track + 12 - blade) / 14)
+            painter.setPen(round_pen(token_color("warning-text-strong", int(230 * reach)), 2))
+            painter.drawLine(QPointF(blade, cy - 11), QPointF(blade, cy + 11))
 
         painter.setPen(QPen(amber))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
@@ -730,48 +840,70 @@ class WaveformOverlay(QWidget):
         self.animation_time += delta_time
 
         self.style.advance(self._STYLE_STATES.get(self.current_state, self.current_state), delta_time)
+        if self.current_state in self.LISTENING_STATES and self._visual is not None:
+            self._ribbon.advance(delta_time)
+            self._visual.advance(delta_time)
+        elif self.current_state in self._WORK_STATES:
+            target = _WORK_RATES[self.current_state]
+            self._work_rate += (target - self._work_rate) * (1.0 - math.exp(-delta_time / _WORK_EASE_S))
+            self._work_clock += delta_time * self._work_rate
+            if self._visual is not None:
+                self._visual.advance_work(delta_time, self._work_rate)
+        if self._fading_since is not None and time.monotonic() - self._fading_since >= _FADE_OUT_S:
+            self._finish_hide()
+            return
 
         if self.current_state == self.STATE_CANCELING:
-            self.cancel_progress = min(1.0, self.animation_time / 0.8)
+            if not self._burst_fired and self.animation_time >= moments.CANCELED.pop_at:
+                self._burst_fired = True
+                center = self._moment_center()
+                self.stt_particles = moments.bubble_burst(moments.CANCELED, center.x(), center.y())
+            self.stt_particles = moments.advance_bubbles(self.stt_particles, delta_time)
+            self.cancel_progress = min(1.0, self.animation_time / self._cancel_seconds())
             if self.cancel_progress >= 1.0:
                 self.set_state(self.STATE_IDLE)
                 self.timer.stop()
-        elif self.current_state in [self.STATE_STT_ENABLE, self.STATE_STT_DISABLE, self.STATE_COPIED]:
-            self._update_stt_particles(delta_time)
+        elif (moment := self._moment()) is not None:
+            # The confetti leaves with the disc, after the lead-in.
+            if not self._burst_fired and self.animation_time >= moment.pop_at:
+                self._burst_fired = True
+                center = self._moment_center()
+                self.stt_particles = moments.burst(moment, center.x(), center.y())
+            self.stt_particles = moments.advance_confetti(self.stt_particles, delta_time, moment.fall)
 
         self.update()
 
     def set_state(self, state: str):
+        if self._fading_since is not None:
+            # Something new arrived while the last result faded: show it.
+            self._fading_since = None
+            self.update()
         if self.current_state != state:
             was_listening = self.current_state in self.LISTENING_STATES
+            was_working = self.current_state in self._WORK_STATES
+            if state in self._WORK_STATES:
+                if was_working:
+                    self._label_from = _WORK_LABELS[self.current_state]
+                    self._label_changed = time.monotonic()
+                else:
+                    self._work_started = time.monotonic()
+                    self._work_rate, self._work_clock, self._label_from = 1.0, 0.0, ""
+                    if self._visual is not None:
+                        self._visual.begin_work()
             self.current_state = state
             self.animation_time = 0.0
             self.cancel_progress = 0.0
             self.last_frame_time = time.monotonic()  # Reset to prevent huge delta on first frame
 
             if state == self.STATE_CANCELING:
-                self.style.set_canceling_start_time(time.time())
+                # What was on screen when the user canceled implodes.
+                self._collapse_from = [
+                    (p.x, p.y, p.get_qcolor(), p.size * p.life)
+                    for p in self.style.particles if p.life > 0.05
+                ]
 
-            if state == self.STATE_STT_ENABLE:
-                self._init_particles(
-                    count=60, hue_range=(120, 180), mode='converge',
-                    speed_range=(60, 100), size_range=(3.0, 6.0),
-                    edge_radius=(50, 90), velocity_jitter=15.0,
-                )
-            elif state == self.STATE_STT_DISABLE:
-                self._init_particles(
-                    count=60, hue_range=(0, 40), mode='explode',
-                    speed_range=(100, 200), size_range=(3.0, 6.0),
-                    center_jitter=8.0,
-                )
-            elif state == self.STATE_COPIED:
-                self._init_particles(
-                    count=50, hue_range=(180, 220), mode='converge',
-                    speed_range=(50, 90), size_range=(2.5, 5.0),
-                    edge_radius=(45, 80), velocity_jitter=10.0,
-                )
-            else:
-                self.stt_particles = []
+            self.stt_particles = []
+            self._burst_fired = False
 
             if state == self.STATE_IDLE:
                 self.timer.stop()
@@ -790,99 +922,63 @@ class WaveformOverlay(QWidget):
                 # A new recording: no latch yet, and the language as saved now.
                 self._hands_free = False
                 self._refresh_language()
+                self._ribbon.reset()
+                if self._visual is not None:
+                    self._visual.reset()
+                self._listen_started = time.monotonic()
 
             self.state_changed.emit(state)
             logger.debug(f"Overlay state changed to: {state}")
 
             if state in self._TRANSIENT_STATES:
-                self.hidden_timer.start(
-                    self._notice_ms() if state == self.STATE_NOTICE else config.OVERLAY_HIDE_DELAY_MS
-                )
+                self.hidden_timer.start(self._transient_ms())
             else:
                 # A recording that starts during a short notice (a language
                 # switch just before dictating) must not be hidden by it.
                 self.hidden_timer.stop()
 
-    def _init_particles(
-        self,
-        count: int,
-        hue_range: tuple,
-        mode: str,
-        speed_range: tuple,
-        size_range: tuple,
-        edge_radius: tuple = (50, 90),
-        velocity_jitter: float = 15.0,
-        center_jitter: float = 8.0,
-    ):
-        """Initialize STT particles in either a converging or exploding pattern.
-
-        Args:
-            count: Number of particles to spawn.
-            hue_range: (min, max) HSV hue for particle color.
-            mode: 'converge' (spawn at edges, fly inward) or 'explode' (spawn near
-                center, fly outward).
-            speed_range: (min, max) particle speed.
-            size_range: (min, max) particle radius.
-            edge_radius: 'converge' only — (min, max) spawn distance from center.
-            velocity_jitter: 'converge' only — random vx/vy noise added per particle.
-            center_jitter: 'explode' only — half-width of the random spawn box around center.
-        """
-        self.stt_particles = []
-        center_x = self.overlay_width // 2
-        center_y = self.overlay_height // 2 - 5
-
-        for i in range(count):
-            angle = (i / count) * 2 * math.pi + random.uniform(-0.3, 0.3)
-            speed = random.uniform(*speed_range)
-            hue = random.uniform(*hue_range)
-
-            if mode == 'converge':
-                radius = random.uniform(*edge_radius)
-                x = center_x + radius * math.cos(angle)
-                y = center_y + radius * math.sin(angle)
-                vx = -math.cos(angle) * speed + random.uniform(-velocity_jitter, velocity_jitter)
-                vy = -math.sin(angle) * speed + random.uniform(-velocity_jitter, velocity_jitter)
-            else:  # 'explode'
-                x = center_x + random.uniform(-center_jitter, center_jitter)
-                y = center_y + random.uniform(-center_jitter, center_jitter)
-                vx = math.cos(angle) * speed
-                vy = math.sin(angle) * speed
-
-            particle = Particle(x, y, vx, vy, hue=hue)
-            particle.size = random.uniform(*size_range)
-            self.stt_particles.append(particle)
-
-    def _update_stt_particles(self, dt: float):
-        center_x = self.overlay_width // 2
-        center_y = self.overlay_height // 2 - 5
-
-        alive_particles = []
-        for particle in self.stt_particles:
-            if self.current_state in [self.STATE_STT_ENABLE, self.STATE_COPIED]:
-                dx = center_x - particle.x
-                dy = center_y - particle.y
-                distance = math.sqrt(dx * dx + dy * dy)
-
-                if distance > 3:
-                    nx = dx / distance
-                    ny = dy / distance
-
-                    attraction = 800 / (distance + 5)
-                    swirl = 200 if self.current_state == self.STATE_STT_ENABLE else 150
-
-                    particle.vx += (nx * attraction - ny * swirl) * dt
-                    particle.vy += (ny * attraction + nx * swirl) * dt
-                else:
-                    particle.life -= dt * 3.0
-
-            if particle.update(dt, damping=0.92):
-                alive_particles.append(particle)
-
-        self.stt_particles = alive_particles
-
     def update_audio_levels(self, levels: List[float]):
         self.audio_levels = levels[:20]
-        self.style.update_audio_levels(self.audio_levels)
+        if self._visual is not None:
+            # Raw RMS barely moves for speech; feed loudness as it is heard.
+            self._ribbon.hear(max(self.audio_levels, default=0.0))
+            self.style.update_audio_levels([self._ribbon.loudness] * len(self.audio_levels))
+        else:
+            self.style.update_audio_levels(self.audio_levels)
+
+    @property
+    def recording_look(self) -> str:
+        return self._recording_look
+
+    def set_recording_look(self, look: str) -> None:
+        """Draw recordings with ``look``; see recording_looks. Classic is "legacy"."""
+        self._recording_look = recording_looks.normalize_look(look)
+        self._visual = recording_looks.make_visual(self._recording_look, self)
+        live = self._visual is not None
+        self.style.emitter = self._visual.emitter() if live else None
+        self.style.audio_response = live_recording.AUDIO_RESPONSE if live else self._legacy_audio_response
+        rate = self._visual.emission_rate if live else None
+        self.style.emission_rate = rate if rate is not None else self._default_emission_rate
+        self.update()
+
+    @property
+    def label_parts(self) -> tuple:
+        """Whether a live look shows its (dot, "Recording" text, clock)."""
+        return self._label_parts
+
+    def set_label_parts(self, dot: bool, text: bool, clock: bool) -> None:
+        self._label_parts = (bool(dot), bool(text), bool(clock))
+        self.update()
+
+    def refresh_recording_look(self) -> None:
+        """Re-read the look and its label from settings after Settings or an agent changed them."""
+        settings = settings_manager.load_all_settings()
+        self.set_recording_look(resolve_recording_overlay_look(settings))
+        self.set_label_parts(
+            resolve_recording_overlay_dot(settings),
+            resolve_recording_overlay_text(settings),
+            resolve_recording_overlay_clock(settings),
+        )
 
     @property
     def hands_free(self) -> bool:
@@ -949,6 +1045,8 @@ class WaveformOverlay(QWidget):
         self._notice, self._notice_done = text, done
         if self.current_state == self.STATE_NOTICE and self.isVisible():
             self.animation_time = 0.0
+            self.stt_particles = []
+            self._burst_fired = False
             self.hidden_timer.start(self._notice_ms())
             self.update()
             return
@@ -958,36 +1056,34 @@ class WaveformOverlay(QWidget):
         return CAPTION_MS + _NOTICE_MS_PER_CHAR * len(self._notice)
 
     def _draw_notice_state(self, painter: QPainter) -> None:
-        """A check or an exclamation mark beside the wrapped outcome text."""
-        grow = min(1.0, self.animation_time / 0.18)
-        tone = "success" if self._notice_done else "warning"
-        diameter = 22.0
-        left = 16.0
-        cx, cy = left + diameter / 2, self.height() / 2
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(token_color(tone, int(46 * grow)))
-        painter.drawEllipse(QPointF(cx, cy), diameter / 2, diameter / 2)
-        painter.setPen(round_pen(token_color(tone, int(255 * grow)), 2))
+        """A finished action's check, or a problem's mark beside its text."""
         if self._notice_done:
-            path = QPainterPath()
-            path.moveTo(cx - 4.5, cy + 0.5)
-            path.lineTo(cx - 1.2, cy + 3.8)
-            path.lineTo(cx + 5.0, cy - 3.6)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawPath(path)
-        else:
-            painter.drawLine(QPointF(cx, cy - 5.0), QPointF(cx, cy + 1.2))
-            painter.drawPoint(QPointF(cx, cy + 5.0))
-        text_left = int(left + diameter + 10)
+            self._draw_moment(painter, self._notice)
+            return
+        # A problem plays the moments' pop, ring and edge flash without the
+        # celebration: the "!" gives a small head-shake instead of confetti.
+        t = self.animation_time
+        radius = 11.0
+        left = 16.0
+        center = QPointF(left + radius + moments.shake_offset(t, 0.2, 0.36, 2.6, 3), self.height() / 2)
+        painter.setOpacity(moments.exit_opacity(t, self._transient_ms() / 1000))
+        moments.draw_rings(painter, center, t, 0.0, ("warning",), reach=12.0, radius=radius)
+        if not self._embedded:
+            moments.draw_edge_flash(painter, QRectF(self.rect()), t, 0.0, "warning")
+        moments.draw_disc(painter, center, t, 0.0, "warning", radius=radius)
+        moments.draw_glyph(painter, center, t, 0.08, "bang")
+        text_left = int(left + 2 * radius + 10)
         rect = QRect(text_left, 8, self.width() - text_left - 14, self.height() - 16)
         font = QFont("Segoe UI", 10, QFont.Weight.DemiBold)
+        enter = moments.phase(t, 0.06, moments.LABEL_S)
         painter.setFont(font)
-        painter.setPen(QPen(token_color("overlay-text")))
+        painter.setPen(QPen(token_color("overlay-text", int(255 * enter))))
         painter.drawText(
-            rect,
+            rect.translated(int(-8 * (1.0 - moments.ease_out_cubic(enter))), 0),
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap),
             self._fit_notice(font, rect),
         )
+        painter.setOpacity(1.0)
 
     def _fit_notice(self, font: QFont, rect: QRect) -> str:
         """The notice, cut with an ellipsis if it would wrap past ``rect``."""
@@ -1030,7 +1126,23 @@ class WaveformOverlay(QWidget):
         self._clear_caption()
 
     def hide(self):
-        """Hide the overlay and stop animations."""
+        """Hide the overlay; a result being worked on fades out first.
+
+        The fade keeps nothing waiting: the text is already delivered, and a
+        new recording or notice cancels it (see ``set_state``).
+        """
+        if self.isVisible() and self.current_state in self._FADING_STATES:
+            if self._fading_since is None:
+                self._fading_since = time.monotonic()
+                self.hidden_timer.stop()
+                if not self.timer.isActive():
+                    self.timer.start(1000 // self.frame_rate)
+            return
+        self._finish_hide()
+
+    def _finish_hide(self):
+        """Hide now and stop animations."""
+        self._fading_since = None
         self.timer.stop()
         self.hidden_timer.stop()
 
@@ -1041,6 +1153,7 @@ class WaveformOverlay(QWidget):
         self._anchor_pos = None
         self._end_listening_extras()
         self._notice = ""
+        self._collapse_from = []
         self._language = ""
         self._language_choices = ()
         if self.overlay_height != self._base_height:

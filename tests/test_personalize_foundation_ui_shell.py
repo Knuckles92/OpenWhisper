@@ -17,6 +17,7 @@ from ui_qt import history_actions
 from ui_qt.dialogs import stats_dialog
 from ui_qt.dialogs.settings_destinations import DICTIONARY
 from ui_qt.overlay_state import OverlayState
+from ui_qt.overlays import waveform_overlay
 from ui_qt.ui_controller import UIController
 from ui_qt.widgets import language_menu, scratchpad
 from ui_qt.widgets.transcription_progress import ProgressStage, stage_for_overlay_state
@@ -268,6 +269,10 @@ class TestAppWiring:
 
         app_ui.set_overlay_state(OverlayState.NONE)
         assert tab.resolved_label.text() != "Rewriting…"
+        # A finished rewrite fades out first (see test_recording_look).
+        assert overlay.isVisible() and overlay._fading_since is not None
+        overlay._fading_since -= waveform_overlay._FADE_OUT_S
+        overlay._update_animation()
         assert not overlay.isVisible()
 
     def test_new_overlay_hooks_change_nothing_yet(self, app_ui):

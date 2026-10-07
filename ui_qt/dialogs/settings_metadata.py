@@ -42,6 +42,13 @@ CONTROL_DESTINATIONS = {'mcp_page': 'mcp',
  'streaming_enabled_check': 'recording',
  'streaming_font_size_label': 'recording',
  'streaming_font_size_spinbox': 'recording',
+ 'recording_look_bar': 'recording',
+ 'recording_look_tile': 'recording',
+ 'recording_look_preview': 'recording',
+ 'recording_parts': 'recording',
+ 'recording_dot_switch': 'recording',
+ 'recording_text_switch': 'recording',
+ 'recording_clock_switch': 'recording',
  'transcript_cleanup_tile': 'cleanup',
  'transcript_cleanup_check': 'cleanup',
  'cleanup_level_tile': 'cleanup',
@@ -207,7 +214,11 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                 'Shows text as you speak on the near-cursor overlay. Nemotron uses native '
                 'streaming; Parakeet transcribes short audio chunks with the loaded model; Local '
                 'Whisper uses a separate tiny.en preview model. The final transcript uses your '
-                'selected model and follows the General paste and clipboard settings.')],
+                'selected model and follows the General paste and clipboard settings.'),
+               ('recording_look_tile',
+                'Recording overlay',
+                'How the overlay near your pointer looks while you speak. Every look but '
+                'Classic moves with your voice; Classic is the original particles.')],
  'cleanup': [('transcript_cleanup_tile',
               'Clean up transcripts with AI',
               'Runs the selected chat model on each dictated transcript after transcription, '
