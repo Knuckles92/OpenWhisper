@@ -54,6 +54,8 @@ APPROVAL_TIMEOUT_S = 120.0
 #: Pairing requests one address may make within APPROVAL_WINDOW_S.
 MAX_APPROVAL_REQUESTS = 4
 APPROVAL_WINDOW_S = 600.0
+#: How long turning sharing off waits for a waiting request to hear why.
+STOP_ANSWER_GRACE_S = 2.0
 
 HostEvent = Callable[[str, dict], None]
 
@@ -215,6 +217,8 @@ class PairRequest:
     #: Sharing stopped while it waited.
     stopped: bool = False
     done: threading.Event = field(default_factory=threading.Event)
+    #: Its handler has sent the answer and closed the connection.
+    finished: threading.Event = field(default_factory=threading.Event)
 
 
 @dataclass
@@ -416,10 +420,14 @@ class SpeechHost:
         if request is not None:
             request.stopped = True
             request.done.set()
+            # shutdown() closes every open connection, so let the request
+            # say "stopped sharing" first instead of just losing its line.
+            request.finished.wait(STOP_ANSWER_GRACE_S)
         if server is None:
             return
         try:
-            # Only closes the listening socket; connections keep running.
+            # Closes the listening socket and every open connection, then
+            # waits for their handlers.
             server.shutdown()
         except Exception:
             logger.debug("Remote engine host shutdown raised", exc_info=True)
@@ -891,6 +899,7 @@ class SpeechHost:
                 if self._request is request:
                     self._request = None
             request.done.set()
+            request.finished.set()
             if shown:
                 self._emit("pair_request", {})
 

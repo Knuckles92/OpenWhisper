@@ -359,6 +359,36 @@ def test_turning_sharing_off_ends_a_waiting_request(lan_host):
     assert "stopped sharing" in str(outcome["error"])
 
 
+def test_a_slow_answer_still_beats_the_shutdown(lan_host, monkeypatch):
+    """The server's shutdown closes every connection; the request says why first."""
+    send = lan_host._send
+
+    def slow_send(ws, message):
+        if message.get("code") == "pair_closed":
+            time.sleep(0.5)  # long enough for an unwaited shutdown to close it
+        send(ws, message)
+
+    monkeypatch.setattr(lan_host, "_send", slow_send)
+    thread, outcome = _request_in_background(lan_host)
+    assert _wait_for(lambda: lan_host.pending_request() is not None, 5)
+    lan_host.stop()
+    thread.join(5)
+    assert "stopped sharing" in str(outcome["error"])
+
+
+def test_a_request_that_never_answers_holds_up_stopping_only_briefly(lan_host, monkeypatch):
+    from services.remote_asr import host as host_module
+
+    monkeypatch.setattr(host_module, "STOP_ANSWER_GRACE_S", 0.3)
+    # Nothing is handling this request, so nothing will ever answer it.
+    request = host_module.PairRequest("r1", "laptop", "127.0.0.1", time.monotonic() + 60, sas="123456")
+    lan_host._request = request
+    started = time.monotonic()
+    lan_host.stop()
+    assert time.monotonic() - started < 2.0
+    assert request.stopped and request.done.is_set()
+
+
 def test_a_host_whose_reveal_breaks_its_commitment_is_not_trusted(tmp_path):
     """Something answering for the host that changed its nonce after seeing ours."""
     import json

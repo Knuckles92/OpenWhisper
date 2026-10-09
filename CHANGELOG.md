@@ -16,6 +16,7 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ### Fixed
 - **A crash at startup on Windows when WMI is unhealthy** — OpenWhisper asked Windows Management Instrumentation (WMI) for the CPU type while loading its settings, and when the WMI service was failing, the app could close before its window appeared. It now gets the CPU type from Windows directly and asks only where the answer matters.
+- **Turning sharing off tells a waiting computer why** — a computer waiting for you to allow its pairing request sometimes heard only "The host closed the connection before answering." Now the host waits up to two seconds for the request to say it stopped sharing before closing connections.
 
 ## [2.7.0] - 2026-10-08
 
