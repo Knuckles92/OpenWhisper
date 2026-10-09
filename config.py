@@ -23,6 +23,54 @@ def is_frozen() -> bool:
     return getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
 
 
+# IMAGE_FILE_MACHINE_* values, named the way ``platform.machine()`` names them.
+_WINDOWS_MACHINE_NAMES = {
+    0x014C: "x86", 0x01C4: "ARM", 0x0200: "ia64", 0x8664: "AMD64", 0xAA64: "ARM64",
+}
+
+
+def _windows_native_machine():
+    """The native CPU architecture from the kernel, or None if unavailable.
+
+    ``IsWow64Process2`` reports the host's machine even for an x64 build
+    emulated on ARM64, matching what WMI reports.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32")
+        query = kernel32.IsWow64Process2
+        query.argtypes = (
+            wintypes.HANDLE, ctypes.POINTER(wintypes.USHORT), ctypes.POINTER(wintypes.USHORT),
+        )
+        query.restype = wintypes.BOOL
+        process_machine, native_machine = wintypes.USHORT(), wintypes.USHORT()
+        # HANDLE(-1) is the GetCurrentProcess() pseudo-handle.
+        if not query(wintypes.HANDLE(-1), ctypes.byref(process_machine), ctypes.byref(native_machine)):
+            return None
+    except (AttributeError, OSError):
+        return None
+    return _WINDOWS_MACHINE_NAMES.get(native_machine.value)
+
+
+def host_machine() -> str:
+    """This host's CPU architecture, as ``platform.machine()`` names it.
+
+    On Windows, Python 3.12's ``platform.machine()`` queries WMI, and an
+    unhealthy WMI service can kill the process (0xC000070A) rather than
+    raise. Startup must never depend on it, so Windows asks the kernel, then
+    falls back to the environment variables CPython itself falls back to.
+    """
+    if not sys.platform.startswith("win"):
+        return platform.machine()
+    return (
+        _windows_native_machine()
+        or os.environ.get("PROCESSOR_ARCHITEW6432")
+        or os.environ.get("PROCESSOR_ARCHITECTURE", "")
+    )
+
+
 def optional_speech_backends_supported(
     platform_name: str = None, machine: str = None
 ) -> bool:
@@ -35,8 +83,10 @@ def optional_speech_backends_supported(
     repeated here.
     """
     host = platform_name or sys.platform
-    arch = (machine if machine is not None else platform.machine()).strip().lower()
-    return host.startswith("win") and arch in {"amd64", "x86_64", "x64"}
+    if not host.startswith("win"):
+        return False
+    arch = (machine if machine is not None else host_machine()).strip().lower()
+    return arch in {"amd64", "x86_64", "x64"}
 
 
 def parakeet_mlx_supported(
@@ -44,8 +94,10 @@ def parakeet_mlx_supported(
 ) -> bool:
     """Whether this host meets the packaged MLX runtime's macOS 14 baseline."""
     host = platform_name or sys.platform
-    arch = (machine if machine is not None else platform.machine()).strip().lower()
-    if host != "darwin" or arch not in {"arm64", "aarch64"}:
+    if host != "darwin":
+        return False
+    arch = (machine if machine is not None else host_machine()).strip().lower()
+    if arch not in {"arm64", "aarch64"}:
         return False
     release = macos_version if macos_version is not None else platform.mac_ver()[0]
     try:

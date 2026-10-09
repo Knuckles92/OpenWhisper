@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Callable, Dict, Final, Mapping, Optional, Set, Tuple
 
-from config import bundle_root, components_root, is_frozen, local_app_dir
+from config import bundle_root, components_root, host_machine, is_frozen, local_app_dir
 from services.component_catalog import get_component_details
 from services.format_utils import format_size_bytes
 from services.verified_download import (
@@ -500,7 +500,7 @@ def current_platform_tag(
 ) -> Optional[str]:
     """Return the normalized component platform tag for this host."""
     host = platform or sys.platform
-    arch = (machine if machine is not None else platform_module.machine()).strip().lower()
+    arch = (machine if machine is not None else host_machine()).strip().lower()
     if host == "darwin" and arch in {"arm64", "aarch64"}:
         return PLATFORM_DARWIN_ARM64
     if host == "darwin" and arch in {"x86_64", "amd64"}:

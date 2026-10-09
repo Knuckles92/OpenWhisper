@@ -10,7 +10,6 @@ if __name__ == "__main__":
 
 import logging
 import os
-import platform
 import site
 import subprocess
 import sys
@@ -266,7 +265,9 @@ def _preload_cuda_libraries() -> None:
 
 
 def _patch_subprocess_for_windows() -> None:
-    if platform.system() != "Windows":
+    # Not platform.system(): on Windows it queries WMI, which can take the
+    # process down when the WMI service is unhealthy.
+    if sys.platform != "win32":
         return
 
     original_popen = subprocess.Popen

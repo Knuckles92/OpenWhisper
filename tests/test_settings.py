@@ -2,6 +2,7 @@ import pytest
 import tempfile
 import os
 import json
+import sys
 import threading
 from unittest.mock import patch
 
@@ -821,6 +822,61 @@ def test_default_backend_prefers_the_supported_platform_runtime():
     assert config.DEFAULT_BACKEND in config.MODEL_VALUE_MAP.values()
 
 
+def _platform_machine_must_not_run():
+    # On Windows it queries WMI, which killed startup with 0xC000070A.
+    raise AssertionError("platform.machine() was called")
+
+
+def test_platform_helpers_skip_the_architecture_query_off_their_platform(monkeypatch):
+    from config import optional_speech_backends_supported, parakeet_mlx_supported
+
+    monkeypatch.setattr("config.platform.machine", _platform_machine_must_not_run)
+    assert not parakeet_mlx_supported(platform_name="win32")
+    assert not parakeet_mlx_supported(platform_name="linux")
+    assert not optional_speech_backends_supported(platform_name="linux")
+    assert not optional_speech_backends_supported(platform_name="darwin")
+
+
+@pytest.mark.parametrize("native,supported", [("AMD64", True), ("ARM64", False)])
+def test_windows_architecture_comes_from_the_kernel_not_wmi(monkeypatch, native, supported):
+    from config import host_machine, optional_speech_backends_supported
+    from services.components import PLATFORM_WIN_AMD64, current_platform_tag
+
+    monkeypatch.setattr("config.sys.platform", "win32")
+    monkeypatch.setattr("config.platform.machine", _platform_machine_must_not_run)
+    monkeypatch.setattr("config._windows_native_machine", lambda: native)
+    monkeypatch.setenv("PROCESSOR_ARCHITECTURE", "AMD64")  # emulated x64 on ARM64 says this
+    assert host_machine() == native
+    assert optional_speech_backends_supported() is supported
+    assert (current_platform_tag() == PLATFORM_WIN_AMD64) is supported
+
+
+@pytest.mark.parametrize("wow64,arch,expected", [
+    ("AMD64", "x86", "AMD64"),
+    (None, "ARM64", "ARM64"),
+    (None, None, ""),
+])
+def test_windows_architecture_falls_back_to_cpython_environment(monkeypatch, wow64, arch, expected):
+    from config import host_machine
+
+    monkeypatch.setattr("config.sys.platform", "win32")
+    monkeypatch.setattr("config.platform.machine", _platform_machine_must_not_run)
+    monkeypatch.setattr("config._windows_native_machine", lambda: None)
+    for name, value in (("PROCESSOR_ARCHITEW6432", wow64), ("PROCESSOR_ARCHITECTURE", arch)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    assert host_machine() == expected
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="asks the Windows kernel")
+def test_windows_kernel_reports_a_known_architecture():
+    from config import _windows_native_machine
+
+    assert _windows_native_machine() in {"AMD64", "ARM64", "x86"}
+
+
 @pytest.mark.parametrize("host,arch,release,backend,meeting_model", [
     ("darwin", "arm64", "14.0", "parakeet_mlx", "parakeet-v3-mlx"),
     ("darwin", "aarch64", "26.0.1", "parakeet_mlx", "parakeet-v3-mlx"),
@@ -839,7 +895,7 @@ def test_speech_defaults_follow_mlx_hardware_and_os_support(
     from config import AppConfig, parakeet_mlx_supported
 
     monkeypatch.setattr("config.sys.platform", host)
-    monkeypatch.setattr("config.platform.machine", lambda: arch)
+    monkeypatch.setattr("config.host_machine", lambda: arch)
     monkeypatch.setattr("config.platform.mac_ver", lambda: (release, (), arch))
     defaults = AppConfig()
     assert parakeet_mlx_supported() == (backend == "parakeet_mlx")

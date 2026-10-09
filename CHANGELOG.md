@@ -14,6 +14,9 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 ### Changed
 - **One place for how OpenWhisper looks** — **Settings → App → Appearance** now holds the theme, the window font size, the recording overlay's look (with its live preview and label switches), and the live preview's text size. They used to be split between General and Recording. In Basic settings, the App tab links to it.
 
+### Fixed
+- **A crash at startup on Windows when WMI is unhealthy** — OpenWhisper asked Windows Management Instrumentation (WMI) for the CPU type while loading its settings, and when the WMI service was failing, the app could close before its window appeared. It now gets the CPU type from Windows directly and asks only where the answer matters.
+
 ## [2.7.0] - 2026-10-08
 
 ### Added
