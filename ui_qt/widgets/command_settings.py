@@ -162,7 +162,11 @@ class CommandShortcutField(QWidget):
         super().resizeEvent(event)
         box = round(INPUT_MIN_WIDTH * current_ui_font_scale())
         buttons = [b for b in (self.change_button, self.clear_button) if b is not None]
-        needed = box + sum(self._row.spacing() + b.sizeHint().width() for b in buttons)
+        # A label-fitted Button holds a floor above its size hint; Qt draws
+        # the box over a button squeezed below it (seen with macOS fonts).
+        needed = box + sum(
+            self._row.spacing() + max(b.sizeHint().width(), b.minimumWidth()) for b in buttons
+        )
         stacked = self.width() < needed
         self.input.setMinimumWidth(min(box, self.width()) if stacked else box)
         direction = QBoxLayout.Direction.TopToBottom if stacked else QBoxLayout.Direction.LeftToRight

@@ -123,3 +123,28 @@ def test_a_wide_field_keeps_its_buttons_beside_the_box(scaled_dialog):
     field = dialog.commands_shortcut
     assert field.clear_button.geometry().top() < field.input.geometry().bottom()
     assert field.clear_button.geometry().left() > field.input.geometry().right()
+
+
+def test_stacks_when_a_button_floor_exceeds_its_hint(scaled_dialog):
+    """Measured with the button's floor: below it, Qt would draw the box over Clear."""
+    from PyQt6.QtWidgets import QWidget
+
+    from ui_qt.utils.font_scale import current_ui_font_scale
+    from ui_qt.widgets.command_settings import INPUT_MIN_WIDTH, CommandShortcutField
+
+    dialog = scaled_dialog("omarchy", 100)
+    host = QWidget()
+    field = CommandShortcutField(dialog, parent=host)
+    clear = field.clear_button
+    clear.setMinimumWidth(clear.sizeHint().width() + 40)
+    box = round(INPUT_MIN_WIDTH * current_ui_font_scale())
+    # Wide enough by the size hint, too narrow by the floor.
+    width = box + field._row.spacing() + clear.sizeHint().width() + 20
+    host.resize(width, 200)
+    field.resize(width, 200)
+    host.show()
+    for _ in range(5):
+        QApplication.processEvents()
+    assert field._row.direction() == field._row.Direction.TopToBottom
+    _assert_apart(field)
+    host.close()
