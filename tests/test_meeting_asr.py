@@ -3,6 +3,7 @@ Tests for live ASR (MeetingAsrEngine: fake backend, retry ×3, timestamped
 segments) and post-meeting offline ASR (silence split, overlap drop).
 """
 import time
+from itertools import pairwise
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -377,29 +378,37 @@ class TestAsrRetry:
         monkeypatch.setattr(asr_module, "REMOTE_BUSY_MIN_RETRY_S", 0.01)
         busy = RemoteRequestError(
             "Host at capacity", code="busy", retry_after_ms=20)
-        call_times = []
-
-        def transcribe(*_args, **_kwargs):
-            call_times.append(time.monotonic())
-            if len(call_times) <= MAX_ATTEMPTS + 1:
-                raise busy
-            return [FakeWhisperSeg(0.0, 0.2, "eventually")], SimpleNamespace()
+        model = MagicMock()
+        model.transcribe.side_effect = [busy] * (MAX_ATTEMPTS + 1) + [
+            ([FakeWhisperSeg(0.0, 0.2, "eventually")], SimpleNamespace()),
+        ]
 
         repo = FakeRepository()
         backend = SimpleNamespace(
             is_remote=True, host_name="peer", ensure_ready=lambda: None,
-            is_available=lambda: True, model=SimpleNamespace(transcribe=transcribe),
+            is_available=lambda: True, model=model,
             cleanup=lambda: None, cancel_transcription=lambda: None,
         )
         engine = _make_engine(repo, backend)
+        # Record the pauses the engine requests rather than timing them:
+        # Windows time.monotonic ticks at ~15.6 ms, too coarse for 20 ms gaps.
+        waits = []
+        real_wait = engine._stop_event.wait
+
+        def recording_wait(timeout=None):
+            waits.append(timeout)
+            return real_wait(timeout)
+
+        monkeypatch.setattr(engine._stop_event, "wait", recording_wait)
         chunk = _chunk(tmp_path)
         repo.pending = [_chunk_row(chunk)]
         engine.start(lambda done, _segments: repo.set_chunk_status(done.chunk_id, "done"))
         try:
             assert engine.enqueue(chunk)
             assert engine.drain(3.0)
-            assert len(call_times) == MAX_ATTEMPTS + 2
-            assert all(b - a >= 0.015 for a, b in zip(call_times, call_times[1:]))
+            assert model.transcribe.call_count == MAX_ATTEMPTS + 2
+            # One wait per busy reply, at the host's suggested delay.
+            assert waits == pytest.approx([0.02] * (MAX_ATTEMPTS + 1))
             assert repo.pending[0]["asr_attempts"] == 1
             assert repo.pending[0]["asr_status"] == "done"
             assert not any(status == "failed" for _, status, _ in repo.statuses)
@@ -527,7 +536,7 @@ class TestOfflineCutRanges:
         assert ranges[0][0] == 0
         assert ranges[-1][1] == total
         # Consecutive windows overlap by about 1s.
-        for prev, nxt in zip(ranges, ranges[1:]):
+        for prev, nxt in pairwise(ranges):
             overlap = prev[1] - nxt[0]
             assert overlap == pytest.approx(TARGET_RATE, abs=2)
 
