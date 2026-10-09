@@ -626,11 +626,15 @@ class ApplicationController(QObject):
                     # A paired computer that kept its model says why.
                     if getattr(selected, "switch_error", ""):
                         self.status_update.emit(selected.switch_error)
+                    # Auto fell back to the CPU; say why after the ready line.
+                    if getattr(selected, "cpu_fallback_note", ""):
+                        self.status_update.emit(selected.cpu_fallback_note)
                     if selected.is_model_missing:
                         self.ensure_local_model_available()
                     elif selected.is_available() and selected.backend_id in config.SPEECH_WARMUP_BACKENDS:
                         warm = selected
                 except Exception as exc:
+                    logger.error("Engine load failed: %s", exc)
                     self.status_update.emit(f"Engine load failed: {exc}")
                     self.device_info_update.emit(str(exc), False)
                 finally:

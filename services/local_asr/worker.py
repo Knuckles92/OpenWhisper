@@ -30,6 +30,46 @@ def use_runtime_packages(runtime):
         sys.path.insert(0, str(packages))
 
 
+class UnsupportedGpu(RuntimeError):
+    """The runtime's PyTorch build has no code for this GPU; the CPU still works."""
+
+    code = "unsupported_gpu"
+
+
+def cuda_arch_supported(capability, arch_list) -> bool:
+    """Whether a PyTorch build compiled for ``arch_list`` runs on a GPU of ``capability``.
+
+    ``arch_list`` is ``torch.cuda.get_arch_list()``. Code built for sm_XY runs
+    on the same major version at an equal or newer minor; PTX (compute_XY) is
+    compiled by the driver for any newer GPU. Anything else fails on the first
+    kernel with "no kernel image is available", after CUDA reported itself
+    available.
+    """
+    major, minor = capability
+    for arch in arch_list:
+        kind, _, number = arch.partition("_")
+        if not number.isdigit() or len(number) < 2:
+            continue
+        built = (int(number[:-1]), int(number[-1]))
+        if kind == "sm" and built[0] == major and built[1] <= minor:
+            return True
+        if kind == "compute" and built <= (major, minor):
+            return True
+    return False
+
+
+def check_qwen_gpu(torch) -> None:
+    capability = torch.cuda.get_device_capability(0)
+    if cuda_arch_supported(capability, torch.cuda.get_arch_list()):
+        return
+    name = torch.cuda.get_device_name(0)
+    raise UnsupportedGpu(
+        f"Qwen's runtime (PyTorch {torch.__version__}) has no code for the {name} "
+        f"(compute capability {capability[0]}.{capability[1]}). Update the runtime "
+        "in Downloads, or use the CPU."
+    )
+
+
 def boost_phrases(family, phrases) -> list[str]:
     """The request's phrases for an engine that boosts them; Nemotron only."""
     if family != "nemotron" or not isinstance(phrases, list):
@@ -69,6 +109,8 @@ def main():
                     from qwen_asr import Qwen3ASRModel
                     if device == "cuda" and not torch.cuda.is_available():
                         raise RuntimeError("CUDA is unavailable for Qwen. Select CPU or install a compatible NVIDIA driver.")
+                    if device == "cuda":
+                        check_qwen_gpu(torch)
                     if device == "mps" and not torch.backends.mps.is_available():
                         device = "cpu"
                     engine = Qwen3ASRModel.from_pretrained(
@@ -138,6 +180,8 @@ def main():
         except Exception as exc:
             traceback.print_exc(file=sys.stderr)
             response = {"id": request.get("id"), "error": str(exc)}
+            if isinstance(exc, UnsupportedGpu):
+                response["code"] = exc.code
         protocol.write(json.dumps(response, ensure_ascii=True) + "\n")
 
 

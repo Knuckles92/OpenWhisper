@@ -46,8 +46,9 @@ RUNTIMES = {
         output="moonshine_macos_runtime.json",
         name="moonshine-voice",
     ),
-    # The versions the Windows runtime ships (qwen_runtime.json); this torch
-    # build runs on the CPU and on the Apple GPU through MPS.
+    # qwen-asr matches the Windows runtime (qwen_runtime.json). torch stays
+    # on 2.6.0, the build the MPS attention workaround in worker.py was
+    # written for; it runs on the CPU and on the Apple GPU through MPS.
     "asr-qwen": dict(
         requirements=["qwen-asr==0.0.6", "torch==2.6.0"],
         platform="macosx_14_0_arm64",

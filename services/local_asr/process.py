@@ -146,6 +146,10 @@ class SpeechProcess:
         except (OSError, ValueError):
             pass
 
+    def recent_errors(self, lines: int = 12) -> str:
+        """The worker's last stderr lines, such as the traceback of a failed request."""
+        return "\n".join(list(self._errors)[-lines:])
+
     def request(self, op: str, *, timeout=180., cancel=None, progress=None, **payload) -> dict:
         with self._lock:
             deadline = time.monotonic() + timeout

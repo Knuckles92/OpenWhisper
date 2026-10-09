@@ -46,6 +46,8 @@ class LocalSpeechBackend(TranscriptionBackend):
         self._decode_lock = threading.Lock()
         self.model = None
         self.last_error = ""
+        # Why an Auto device runs on the CPU although a GPU is present.
+        self.cpu_fallback_note = ""
         self.runtime_component = None
         self.device = "cpu"
         self.model_name = model_name or selected_model(backend, self._settings())
@@ -91,6 +93,7 @@ class LocalSpeechBackend(TranscriptionBackend):
             self.cleanup()
             self.reset_cancel_flag()
             generation = self._generation
+        self.cpu_fallback_note = ""
         settings = self._settings()
         self.model_name = model_name or self._model_override or selected_model(self.backend_id, settings)
         if self.model_name not in MODELS or MODELS[self.model_name].backend != self.backend_id:
@@ -117,38 +120,55 @@ class LocalSpeechBackend(TranscriptionBackend):
             self.last_error = f"Download {MODELS[self.model_name].label} in Downloads."
             return
         from services.local_asr.process import SpeechProcess
-        with self._state_lock:
-            if (generation != self._generation
-                    or (cancel_event is not None and cancel_event.is_set())):
-                return
-            # Windows runtimes carry an embedded Python; the macOS and Linux
-            # ones use the app's interpreter with downloaded native libraries
-            # or, for MLX, a separate wheel tree.
-            python = str(Path(component_dir(component)) / "python.exe") if sys.platform == "win32" else sys.executable
-            process = SpeechProcess(python)
-            self._process = process
-        try:
-            result = process.request("load", backend=self.backend_id, model=self.model_name,
-                                     model_path=cache.load_path(self.model_name),
-                                     runtime=component_dir(component), device=device, timeout=300,
-                                     cancel=cancel_event)
+        # Windows runtimes carry an embedded Python; the macOS and Linux
+        # ones use the app's interpreter with downloaded native libraries
+        # or, for MLX, a separate wheel tree.
+        python = str(Path(component_dir(component)) / "python.exe") if sys.platform == "win32" else sys.executable
+        while True:
             with self._state_lock:
                 if (generation != self._generation
                         or (cancel_event is not None and cancel_event.is_set())):
-                    process.close()
                     return
-                self.device = result["device"]
-                self.model = SpeechDecoder(self)
-                self.last_error = ""
-            if result.get("gpu"):
-                logger.info("%s is running on %s through Vulkan", self.name, result["gpu"])
-        except Exception as exc:
-            process.close()
-            with self._state_lock:
-                if generation == self._generation:
-                    self._process = None
-                    self.last_error = str(exc)
-            raise
+                process = SpeechProcess(python)
+                self._process = process
+            try:
+                result = process.request("load", backend=self.backend_id, model=self.model_name,
+                                         model_path=cache.load_path(self.model_name),
+                                         runtime=component_dir(component), device=device, timeout=300,
+                                         cancel=cancel_event)
+            except Exception as exc:
+                process.close()
+                if (getattr(exc, "code", None) == "unsupported_gpu" and requested == "auto"
+                        and device != "cpu"):
+                    # Auto picked a GPU the runtime has no code for (an older
+                    # PyTorch on a newer card); the CPU still transcribes.
+                    logger.warning("%s cannot use this GPU; loading on the CPU: %s", self.name, exc)
+                    self.cpu_fallback_note = f"{self.name} is using the CPU. {exc}"
+                    device = "cpu"
+                    continue
+                with self._state_lock:
+                    current = generation == self._generation
+                    if current:
+                        self._process = None
+                        self.last_error = str(exc)
+                if current and not (cancel_event is not None and cancel_event.is_set()):
+                    # The worker's traceback (and any PyTorch warning) is the
+                    # only record of why a native runtime failed to load.
+                    output = getattr(process, "recent_errors", lambda: "")()
+                    logger.error("%s failed to load on %s: %s%s", self.name, device, exc,
+                                 f"\nWorker output:\n{output}" if output else "")
+                raise
+            break
+        with self._state_lock:
+            if (generation != self._generation
+                    or (cancel_event is not None and cancel_event.is_set())):
+                process.close()
+                return
+            self.device = result["device"]
+            self.model = SpeechDecoder(self)
+            self.last_error = ""
+        if result.get("gpu"):
+            logger.info("%s is running on %s through Vulkan", self.name, result["gpu"])
 
     def download_and_load(self, progress_callback=None):
         cache.download(self.model_name, progress_callback)

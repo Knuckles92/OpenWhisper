@@ -197,7 +197,7 @@ for _id, _name, _source, _license, _description in (
     ("asr-nvidia-cuda", "NVIDIA Speech GPU", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0; NVIDIA CUDA; Python PSF", "NVIDIA GPU runtime shared by Parakeet and Nemotron."),
     ("asr-nvidia-vulkan", "NVIDIA Speech GPU (Vulkan)", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0", "Vulkan GPU runtime shared by Parakeet and Nemotron, for NVIDIA GPUs older than Turing, such as the GTX 10 series."),
     ("asr-nvidia-metal", "NVIDIA Speech GPU (Metal)", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0", "Apple GPU runtime shared by Parakeet and Nemotron on Apple Silicon Macs. Auto uses it once installed."),
-    ("asr-qwen", "Qwen3-ASR runtime", "https://github.com/QwenLM/Qwen3-ASR", "Apache-2.0 and bundled dependency licenses", "PyTorch and Qwen3-ASR: CUDA 12.4 on Windows, the Apple GPU on Apple Silicon Macs. Also supports CPU."),
+    ("asr-qwen", "Qwen3-ASR runtime", "https://github.com/QwenLM/Qwen3-ASR", "Apache-2.0 and bundled dependency licenses", "PyTorch and Qwen3-ASR: CUDA 12.8 on Windows (GTX 10 series through RTX 50 series), the Apple GPU on Apple Silicon Macs. Also supports CPU."),
     ("asr-moonshine", "Moonshine runtime", "https://github.com/moonshine-ai/moonshine", "MIT and bundled dependency licenses", "Isolated Moonshine Voice runtime for CPU transcription."),
     ("asr-parakeet-mlx", "Parakeet MLX runtime", "https://github.com/senstella/parakeet-mlx", "Apache-2.0; MIT and bundled dependency licenses", "Parakeet MLX on Apple Silicon. Auto uses the Apple GPU; CPU is also available."),
 ):
