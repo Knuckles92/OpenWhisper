@@ -808,16 +808,90 @@ def test_model_selection_falls_back_to_platform_default(tmp_path):
     assert manager.load_model_selection() == "local_whisper"
 
 
-def test_default_backend_prefers_the_supported_platform_runtime():
-    from config import optional_speech_backends_supported, parakeet_mlx_supported
+@pytest.fixture
+def linux_parakeet_default(monkeypatch):
+    """A Linux x86_64 host, whatever this test runs on."""
+    from services import settings as module
 
-    assert optional_speech_backends_supported("win32", "AMD64")
-    assert optional_speech_backends_supported("win32", "x86_64")
-    assert not optional_speech_backends_supported("win32", "ARM64")
-    assert not optional_speech_backends_supported("linux", "x86_64")
-    assert not optional_speech_backends_supported("darwin", "arm64")
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(config, "DEFAULT_BACKEND", "parakeet")
+    defaults = dict(module.SETTING_DEFAULTS, **{SettingsKey.SELECTED_MODEL: "parakeet"})
+    monkeypatch.setattr(module, "SETTING_DEFAULTS", defaults)
+
+
+def test_a_new_install_keeps_the_default_it_started_with(tmp_path, linux_parakeet_default):
+    from services.settings import keep_unchosen_engine
+
+    manager = SettingsManager(str(tmp_path / "openwhisper_settings.json"))
+    assert manager.is_new_install()
+    assert keep_unchosen_engine(manager)
+    assert manager.get(SettingsKey.SELECTED_MODEL) == "parakeet"
+    assert not keep_unchosen_engine(manager)
+
+
+def test_an_existing_linux_install_keeps_local_whisper(tmp_path, linux_parakeet_default):
+    from services.settings import keep_unchosen_engine
+
+    path = tmp_path / "openwhisper_settings.json"
+    path.write_text(json.dumps({"ui_theme": "dark"}), encoding="utf-8")
+    manager = SettingsManager(str(path))
+
+    assert manager.load_model_selection() == "parakeet"
+    assert keep_unchosen_engine(manager)
+    assert manager.load_model_selection() == "local_whisper"
+    assert manager.get("ui_theme") == "dark"
+    assert not keep_unchosen_engine(manager)
+
+
+@pytest.mark.parametrize("saved", ["parakeet", "local_whisper", "api"])
+def test_a_chosen_engine_is_never_replaced(tmp_path, linux_parakeet_default, saved):
+    from services.settings import keep_unchosen_engine
+
+    path = tmp_path / "openwhisper_settings.json"
+    path.write_text(json.dumps({SettingsKey.SELECTED_MODEL: saved}), encoding="utf-8")
+    manager = SettingsManager(str(path))
+    stamp = path.stat().st_mtime_ns
+
+    assert not keep_unchosen_engine(manager)
+    assert manager.load_model_selection() == saved
+    assert path.stat().st_mtime_ns == stamp
+
+
+@pytest.mark.parametrize("host,default", [
+    ("win32", "parakeet"), ("darwin", "parakeet_mlx"), ("linux", "local_whisper"),
+])
+def test_existing_installs_elsewhere_still_follow_the_default(tmp_path, monkeypatch, host, default):
+    from services.settings import keep_unchosen_engine
+
+    monkeypatch.setattr(sys, "platform", host)
+    monkeypatch.setattr(config, "DEFAULT_BACKEND", default)
+    path = tmp_path / "openwhisper_settings.json"
+    path.write_text("{}", encoding="utf-8")
+    manager = SettingsManager(str(path))
+
+    assert not keep_unchosen_engine(manager)
+    assert SettingsKey.SELECTED_MODEL not in manager.load_all_settings()
+
+
+def test_keeping_the_engine_tolerates_stand_in_managers():
+    from services.settings import keep_unchosen_engine
+
+    assert not keep_unchosen_engine(object())
+
+
+def test_default_backend_prefers_the_supported_platform_runtime():
+    from config import parakeet_default_supported, parakeet_mlx_supported
+
+    assert parakeet_default_supported("win32", "AMD64")
+    assert parakeet_default_supported("win32", "x86_64")
+    assert not parakeet_default_supported("win32", "ARM64")
+    assert parakeet_default_supported("linux", "x86_64")
+    assert parakeet_default_supported("linux", "AMD64")
+    assert not parakeet_default_supported("linux", "aarch64")
+    assert not parakeet_default_supported("darwin", "arm64")
+    assert not parakeet_default_supported("darwin", "x86_64")
     expected = ("parakeet_mlx" if parakeet_mlx_supported() else
-                "parakeet" if optional_speech_backends_supported() else "local_whisper")
+                "parakeet" if parakeet_default_supported() else "local_whisper")
     assert config.DEFAULT_BACKEND == expected
     assert config.DEFAULT_BACKEND in config.MODEL_VALUE_MAP.values()
 
@@ -828,18 +902,17 @@ def _platform_machine_must_not_run():
 
 
 def test_platform_helpers_skip_the_architecture_query_off_their_platform(monkeypatch):
-    from config import optional_speech_backends_supported, parakeet_mlx_supported
+    from config import parakeet_default_supported, parakeet_mlx_supported
 
     monkeypatch.setattr("config.platform.machine", _platform_machine_must_not_run)
     assert not parakeet_mlx_supported(platform_name="win32")
     assert not parakeet_mlx_supported(platform_name="linux")
-    assert not optional_speech_backends_supported(platform_name="linux")
-    assert not optional_speech_backends_supported(platform_name="darwin")
+    assert not parakeet_default_supported(platform_name="darwin")
 
 
 @pytest.mark.parametrize("native,supported", [("AMD64", True), ("ARM64", False)])
 def test_windows_architecture_comes_from_the_kernel_not_wmi(monkeypatch, native, supported):
-    from config import host_machine, optional_speech_backends_supported
+    from config import host_machine, parakeet_default_supported
     from services.components import PLATFORM_WIN_AMD64, current_platform_tag
 
     monkeypatch.setattr("config.sys.platform", "win32")
@@ -847,7 +920,7 @@ def test_windows_architecture_comes_from_the_kernel_not_wmi(monkeypatch, native,
     monkeypatch.setattr("config._windows_native_machine", lambda: native)
     monkeypatch.setenv("PROCESSOR_ARCHITECTURE", "AMD64")  # emulated x64 on ARM64 says this
     assert host_machine() == native
-    assert optional_speech_backends_supported() is supported
+    assert parakeet_default_supported() is supported
     assert (current_platform_tag() == PLATFORM_WIN_AMD64) is supported
 
 
@@ -887,7 +960,7 @@ def test_windows_kernel_reports_a_known_architecture():
     ("win32", "AMD64", "", "parakeet", ""),
     ("win32", "ARM64", "", "local_whisper", ""),
     ("linux", "aarch64", "14.0", "local_whisper", ""),
-    ("linux", "x86_64", "", "local_whisper", ""),
+    ("linux", "x86_64", "", "parakeet", ""),
 ])
 def test_speech_defaults_follow_mlx_hardware_and_os_support(
     monkeypatch, host, arch, release, backend, meeting_model,

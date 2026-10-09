@@ -142,7 +142,7 @@ Use **Help → Check for Updates**. Configure automatic checks and notifications
 
 ## Get started
 
-1. Open **Settings → Voice model** and choose a speech backend. New Windows x64 installs default to Parakeet; other platforms default to Local Whisper. Existing choices are preserved.
+1. Open **Settings → Voice model** and choose a speech backend. New Windows x64 and Linux x86_64 installs default to Parakeet, and Apple Silicon Macs on macOS 14 or later to Parakeet MLX; other platforms default to Local Whisper. Existing installs keep the engine they use.
 2. Download the model and runtime through **Settings → Downloads**, or add an OpenAI key in **Settings → API keys** for cloud transcription.
 3. Choose your microphone in **Settings → Recording**. On macOS, grant the [required permissions](#macos-permissions).
 4. Use **Quick Record** or the recording hotkey. Stop recording to transcribe; dictation follows your clipboard and auto-paste settings. **Upload File** results stay in the app and have Copy buttons.

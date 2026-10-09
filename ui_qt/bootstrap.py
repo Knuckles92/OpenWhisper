@@ -291,6 +291,10 @@ def main() -> int:
         loading_screen.update_progress("Setting up windows...")
         process_qt_events()
 
+        # Before the main window shows the engine an existing install uses.
+        from services.settings import keep_unchosen_engine
+
+        keep_unchosen_engine()
         ui_controller = UIController()
         profiler.mark("ui_controller_created")
 

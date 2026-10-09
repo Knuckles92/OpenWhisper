@@ -71,19 +71,21 @@ def host_machine() -> str:
     )
 
 
-def optional_speech_backends_supported(
+def parakeet_default_supported(
     platform_name: str = None, machine: str = None
 ) -> bool:
-    """True where every optional local speech runtime is packaged (Windows x64).
+    """True where native Parakeet is the default engine: Windows x64, Linux x86_64.
 
-    That is where the native Parakeet runtime is the default. Apple Silicon
-    uses Parakeet MLX when supported; Linux keeps Local Whisper as its default.
-    Mirrors ``services.components.current_platform_tag``
+    Both have packaged CPU and NVIDIA GPU runtimes. On Linux, Parakeet made
+    fewer word errors than the Whisper defaults and finished much sooner on
+    GPU (docs/linux-asr-default-2026-10-09.md). Apple Silicon uses Parakeet
+    MLX when supported; Linux ARM, with no Parakeet package, keeps Local
+    Whisper. Mirrors ``services.components.current_platform_tag``
     without importing it: that module imports this one, so the check is
     repeated here.
     """
     host = platform_name or sys.platform
-    if not host.startswith("win"):
+    if not host.startswith(("win", "linux")):
         return False
     arch = (machine if machine is not None else host_machine()).strip().lower()
     return arch in {"amd64", "x86_64", "x64"}
@@ -285,7 +287,8 @@ class AppConfig:
 
     # Backend ID used for a fresh install or an invalid saved selection.
     # Prefer Parakeet MLX on Apple Silicon with macOS 14+, native Parakeet on
-    # Windows x64, and Local Whisper elsewhere. Set in __post_init__.
+    # Windows x64 and Linux x86_64, and Local Whisper elsewhere. Set in
+    # __post_init__.
     DEFAULT_BACKEND: str = None
 
     API_MODEL_CHOICES: tuple[str, ...] = (
@@ -759,7 +762,7 @@ class AppConfig:
         if self.DEFAULT_BACKEND is None:
             self.DEFAULT_BACKEND = (
                 'parakeet_mlx' if parakeet_mlx_supported() else
-                'parakeet' if optional_speech_backends_supported() else 'local_whisper'
+                'parakeet' if parakeet_default_supported() else 'local_whisper'
             )
 
         if self.MEETING_ASR_MODEL is None:

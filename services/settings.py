@@ -3,6 +3,7 @@ import json
 from copy import deepcopy
 import os
 import logging
+import sys
 import tempfile
 import threading
 from datetime import date
@@ -1002,6 +1003,42 @@ def seed_new_install_settings(manager=None) -> bool:
         return bool(manager.mutate_settings(seed))
     except Exception as exc:
         logger.warning("Could not seed new-install settings: %s", exc)
+        return False
+
+
+def keep_unchosen_engine(manager=None) -> bool:
+    """Save the engine of an install that never chose one; True when written.
+
+    Such an install has no saved selection and follows
+    ``config.DEFAULT_BACKEND``, so moving a platform's default would switch
+    it to an engine it hasn't downloaded. A new install saves the default
+    it starts with. An existing Linux x86_64 install keeps Local Whisper,
+    its default until Parakeet replaced it (October 2026). Run before the
+    main window reads the selection.
+    """
+    manager = settings_manager if manager is None else manager
+    is_new = getattr(manager, "is_new_install", None)
+    if not callable(is_new):
+        return False
+    if is_new():
+        engine = config.DEFAULT_BACKEND
+    elif sys.platform.startswith("linux") and config.DEFAULT_BACKEND == "parakeet":
+        engine = "local_whisper"
+    else:
+        return False
+    if SettingsKey.SELECTED_MODEL in manager.load_all_settings():
+        return False
+
+    def keep(settings: Dict[str, Any]) -> bool:
+        if SettingsKey.SELECTED_MODEL in settings:
+            return False
+        settings[SettingsKey.SELECTED_MODEL] = engine
+        return True
+
+    try:
+        return bool(manager.mutate_settings(keep))
+    except Exception as exc:
+        logger.warning("Could not save the install's engine: %s", exc)
         return False
 
 
