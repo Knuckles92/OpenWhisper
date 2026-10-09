@@ -57,6 +57,7 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 - **Settings opens without a stray scroll bar** — the window opens slightly taller, so Overview and General fit without scrolling at 115% text size.
 - **Sidebar selection outline no longer hidden by its scroll bar** — sidebar rows were sized for a wider sidebar when Settings opened, and after the sidebar was narrowed, so the scroll bar covered the right edge of the selected page's outline until the sidebar was widened.
 - **Quieter logs during meetings** — microphone and loopback discovery log an outage when it starts and again when it recovers, not on every one-second probe; an out-of-date Pi meeting agent is reported once per version; and a browser tab or MCP client that drops its connection no longer logs a Windows connection-reset traceback. A meeting engine that hangs at shutdown now logs where it was stuck.
+- **A brief audio hiccup no longer ends a dictation** — when the computer falls behind the microphone for a moment (most often just as recording starts with Live preview on), the recording now carries on past the short gap instead of stopping with "Audio input overflow or device error". Only hiccups that keep coming within a few seconds still stop the recording.
 
 ## [2.6.15] - 2026-10-05
 

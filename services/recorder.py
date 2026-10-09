@@ -8,6 +8,7 @@ import os
 import tempfile
 import numpy as np
 import time
+from collections import deque
 from datetime import datetime
 
 from typing import Callable, Iterator, List, Optional
@@ -34,6 +35,12 @@ STALL_AFTER_BLOCKS_S = 1.0
 SWITCH_GAP_MS = 250
 # Closing a stream on an unplugged device can hang in the driver.
 LOST_STREAM_CLOSE_TIMEOUT_S = 1.0
+# An input overflow means PortAudio discarded audio before a block, usually
+# while the callback waited on a busy interpreter. One is a short gap and the
+# recording carries on; this many within the window means the computer can't
+# keep up, and the recording stops.
+OVERFLOW_LIMIT = 3
+OVERFLOW_WINDOW_S = 5.0
 NO_MICROPHONE_LEFT = (
     "The microphone stopped and no other microphone could be opened; recording stopped."
 )
@@ -249,6 +256,9 @@ class AudioRecorder:
         # the next microphone; called from the capture thread.
         self.device_switch_callback: Optional[Callable[[str, str], None]] = None
         self.dropped_frames = 0
+        self.input_overflows = 0
+        # time.monotonic() of this recording's overflows inside the window.
+        self._overflow_times = deque()
         self._error_lock = threading.Lock()
         self._last_callback_at = 0.0
         self._session_token = object()
@@ -315,6 +325,8 @@ class AudioRecorder:
                 generation = self._stream_generation
             self.last_capture_error = None
             self.dropped_frames = 0
+            self.input_overflows = 0
+            self._overflow_times = deque()
             self._last_callback_at = 0.0
             token = self._session_token
             self._audio_spool = RecordingJournal(
@@ -554,15 +566,17 @@ class AudioRecorder:
                 if self._capture_canceled or self.last_capture_error or self._audio_spool is None:
                     return  # the stream is only closing; keep nothing more
                 self._last_callback_at = time.monotonic()
-                # Overflow is a lost-audio integrity failure, not a lost
-                # device: switching microphones on CPU starvation would only
-                # hide it. Device loss shows up as a stall or a dead stream.
+                # Overflow is lost audio, not a lost device: switching
+                # microphones on CPU starvation would only hide it. Device
+                # loss shows up as a stall or a dead stream.
                 if status:
-                    self.dropped_frames += frames
-                    self._audio_spool.error = 'Audio input overflow or device error; recording stopped.'
-                    self._stop_event.set()
-                    self._end_post_roll('capture error')
-                    return
+                    error = self._status_error(status)
+                    if error:
+                        self.dropped_frames += frames
+                        self._audio_spool.error = error
+                        self._stop_event.set()
+                        self._end_post_roll('capture error')
+                        return
                 audio_copy = indata.copy()
                 payload = audio_copy.tobytes()
                 if not self._audio_spool.append(payload):
@@ -592,6 +606,26 @@ class AudioRecorder:
                 self._audio_spool.error = f'Audio capture failed: {e}'
             self._stop_event.set()
             self._end_post_roll('capture error')
+
+    def _status_error(self, status) -> Optional[str]:
+        """Hold ``_callback_lock``. Why a flagged block ends the recording, or None.
+
+        An input overflow discarded audio before this block, which is itself
+        real audio, so a lone one costs a short gap rather than the dictation.
+        An input stream raises only the two input flags.
+        """
+        if not status.input_overflow or status.input_underflow:
+            return f'Audio input error ({status}); recording stopped.'
+        self.input_overflows += 1
+        now = time.monotonic()
+        recent = self._overflow_times
+        recent.append(now)
+        while now - recent[0] > OVERFLOW_WINDOW_S:
+            recent.popleft()
+        if len(recent) >= OVERFLOW_LIMIT:
+            return ('Audio input kept overflowing because the computer could not keep up; '
+                    'recording stopped.')
+        return None
 
     def _fail_capture(self, message: str) -> None:
         """Run outside PortAudio; deliver one visible failure per recording."""
@@ -658,10 +692,16 @@ class AudioRecorder:
                 elif journal.error:
                     self._fail_capture(journal.error)
             self._log_post_roll(reason)
+            if self.input_overflows and not self.last_capture_error:
+                logger.warning(
+                    "Audio input overflowed %d time(s); the recording carried on "
+                    "past each short gap", self.input_overflows,
+                )
             from services.diagnostics import record_metrics
             record_metrics(captured_frames=self._recorded_sample_frames,
                            dropped_frames=self.dropped_frames,
-                           device_switches=self._device_switches)
+                           device_switches=self._device_switches,
+                           input_overflows=self.input_overflows)
             self._stop_requested = False
             self._stop_requested_at = 0.0
             self._post_roll_deadline = 0.0

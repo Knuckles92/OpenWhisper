@@ -23,7 +23,8 @@ METRICS_NAME = "diagnostic-metrics.json"
 MAX_FAILURES = 50
 MAX_METRIC_SAMPLES = 100
 METRIC_NAMES = frozenset({"startup_to_window_s", "stop_to_result_s", "cancel_s", "shutdown_s",
-                          "captured_frames", "dropped_frames", "device_switches", "peak_rss_mb",
+                          "captured_frames", "dropped_frames", "device_switches",
+                          "input_overflows", "peak_rss_mb",
                           "context_capture_ms", "context_capture_timeouts",
                           "mouse_hook_callback_ms"})
 _metrics = None

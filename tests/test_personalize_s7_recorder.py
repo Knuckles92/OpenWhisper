@@ -11,6 +11,7 @@ import wave
 
 import numpy as np
 import pytest
+from sounddevice import CallbackFlags
 
 from config import config
 from services import audio_devices
@@ -97,6 +98,12 @@ def make_recorder(tmp_path):
 
 def _tone(value, frames=config.CHUNK_SIZE):
     return np.full(frames, value, dtype=np.int16)
+
+
+def _flagged(name):
+    status = CallbackFlags()
+    setattr(status, name, True)
+    return status
 
 
 def _wait(predicate, timeout=3.0):
@@ -254,15 +261,69 @@ def test_blocks_stopping_counts_as_lost(fake_sd, make_recorder, monkeypatch):
     assert [stream.device for stream in fake_sd.InputStream.opened] == [2, 1]
 
 
-def test_an_overflow_fails_the_recording_without_switching(fake_sd, make_recorder):
+def test_a_lone_overflow_keeps_its_block_and_the_recording(fake_sd, make_recorder, monkeypatch):
+    metrics = []
+    monkeypatch.setattr("services.diagnostics.record_metrics", lambda **values: metrics.append(values))
+    recorder = make_recorder()
+    switches, errors, _switched, _failed = _watch(recorder)
+    assert recorder.start_recording()
+    usb = fake_sd.InputStream.opened[0]
+
+    usb.feed(_tone(5), status=_flagged("input_overflow"))
+    usb.feed(_tone(6))
+    recorder.stop_recording()
+    recorder._end_post_roll("test")
+    assert recorder.wait_for_stop_completion(3)
+
+    samples = _saved_samples(recorder)
+    chunk = config.CHUNK_SIZE
+    assert (samples[:chunk] == 5).all()
+    assert (samples[chunk:2 * chunk] == 6).all()
+    assert errors == [] and recorder.dropped_frames == 0 and not recorder.last_capture_error
+    assert metrics[-1]["input_overflows"] == 1
+    assert switches == [] and len(fake_sd.InputStream.opened) == 1
+
+
+def test_overflows_that_keep_coming_fail_the_recording_without_switching(fake_sd, make_recorder):
+    recorder = make_recorder()
+    switches, errors, _switched, failed = _watch(recorder)
+    assert recorder.start_recording()
+    usb = fake_sd.InputStream.opened[0]
+
+    for _ in range(recorder_module.OVERFLOW_LIMIT):
+        usb.feed(_tone(5), status=_flagged("input_overflow"))
+
+    assert failed.wait(3)
+    assert "overflowing" in errors[0]
+    assert switches == [] and len(fake_sd.InputStream.opened) == 1
+
+
+def test_overflows_spread_beyond_the_window_never_fail(fake_sd, make_recorder, monkeypatch):
+    monkeypatch.setattr(recorder_module, "OVERFLOW_WINDOW_S", 0.05)
+    recorder = make_recorder()
+    _switches, errors, _switched, _failed = _watch(recorder)
+    assert recorder.start_recording()
+    usb = fake_sd.InputStream.opened[0]
+
+    for _ in range(recorder_module.OVERFLOW_LIMIT + 1):
+        usb.feed(_tone(5), status=_flagged("input_overflow"))
+        time.sleep(0.2)
+    recorder.stop_recording()
+    recorder._end_post_roll("test")
+    assert recorder.wait_for_stop_completion(3)
+
+    assert errors == [] and recorder.input_overflows == recorder_module.OVERFLOW_LIMIT + 1
+
+
+def test_any_other_status_still_fails_the_recording_at_once(fake_sd, make_recorder):
     recorder = make_recorder()
     switches, errors, _switched, failed = _watch(recorder)
     assert recorder.start_recording()
 
-    fake_sd.InputStream.opened[0].feed(_tone(5), status="input overflow")
+    fake_sd.InputStream.opened[0].feed(_tone(5), status=_flagged("input_underflow"))
 
     assert failed.wait(3)
-    assert "overflow" in errors[0]
+    assert errors == ["Audio input error (input underflow); recording stopped."]
     assert switches == [] and len(fake_sd.InputStream.opened) == 1
 
 
