@@ -49,12 +49,15 @@ def app_ui():
 
 
 def _language_in_effect():
-    # With nothing to switch to, the menu still names the language in use.
+    # With nothing to switch to, the menu still names the language in use,
+    # or why there is none to pick (Parakeet MLX, the Apple Silicon default).
     from services import dictation_language
 
-    return dictation_language.label(
-        dictation_language.current_language(settings_manager.load_all_settings())
-    )
+    settings = settings_manager.load_all_settings()
+    reason = dictation_language.single_language_reason(settings)
+    if reason:
+        return reason
+    return dictation_language.label(dictation_language.current_language(settings))
 
 
 def _menu_texts(menu):

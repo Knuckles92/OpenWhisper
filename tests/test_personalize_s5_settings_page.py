@@ -275,14 +275,15 @@ def test_an_empty_library_offers_starters(make_dialog):
 
 
 def test_snippet_text_is_never_logged(make_dialog, caplog):
-    secret = "https://cal.example.com/private-token-123"
+    # A word no log line has otherwise: macOS temp paths contain "/private/".
+    secret = "https://cal.example.com/zqsnip-token-123"
     _dialog, _store, panel = _open(make_dialog, CAL)
     with caplog.at_level("DEBUG"):
         panel.new_snippet()
-        panel.trigger_edit.setText("my private link")
+        panel.trigger_edit.setText("my zqsnip link")
         panel.text_edit.setPlainText(secret)
         panel.save_snippet()
-    assert "private" not in caplog.text
+    assert "zqsnip" not in caplog.text
 
 
 def test_basic_tab_counts_snippets_and_adds_one(make_dialog):
