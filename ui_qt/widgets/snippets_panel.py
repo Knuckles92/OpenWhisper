@@ -37,7 +37,7 @@ from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.palette import token_color
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.button_row import ButtonRow
-from ui_qt.widgets.buttons import Button, compact_primary_button, neutral_button
+from ui_qt.widgets.buttons import Button, compact_primary_button, fit_compact_button, neutral_button
 from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
@@ -186,6 +186,9 @@ class SnippetsPanel(QWidget):
         self.suggestion_buttons = []
         for trigger in SUGGESTED_TRIGGERS:
             button = neutral_button(Button(trigger))
+            # Full width in the column anyway; only a narrow column needs
+            # them to go down to their label's own width.
+            fit_compact_button(button, 0)
             button.setAccessibleName(f"Start a snippet for “{trigger}”")
             button.clicked.connect(lambda _checked=False, t=trigger: self.new_snippet(t))
             empty.addWidget(button)

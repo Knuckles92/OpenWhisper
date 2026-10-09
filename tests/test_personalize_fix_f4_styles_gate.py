@@ -213,6 +213,6 @@ def test_dictionary_learning_gate_says_where_it_goes(make_dialog):
     _go(dialog, DICTIONARY)
     button = dialog.findChild(QPushButton, "dictionaryLearnTurnOnButton")
     # "&&" draws one "&"; a single one would underline the next letter.
-    assert button.text() == "Open Apps && styles"
+    assert button.text() == "Apps && styles…"
     button.click()
     assert dialog.rail.current_key() == STYLES

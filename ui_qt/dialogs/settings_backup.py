@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QProgressBar,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -62,6 +63,28 @@ def _date_label(value: Any) -> str:
         return str(value) if value else "Unknown date"
     return f"{date.strftime('%b')} {date.day}, {date.year} at {date.strftime('%I:%M %p').lstrip('0')}"
 
+
+
+def _action_row() -> QWidget:
+    """A holder for a row of controls that never holds the page wider.
+
+    Its width comes from the tile, so a narrow window stacks the controls
+    (see ``_fits_side_by_side``) instead of growing a horizontal scroll bar.
+    """
+    row = QWidget()
+    row.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+    return row
+
+
+def _fits_side_by_side(row: QWidget, layout: QBoxLayout) -> bool:
+    """Whether ``row`` is wide enough for its controls in one line."""
+    widgets = [
+        item.widget() for item in (layout.itemAt(i) for i in range(layout.count()))
+        if item.widget() is not None and not item.widget().isHidden()
+    ]
+    needed = sum(max(w.sizeHint().width(), w.minimumWidth()) for w in widgets)
+    needed += layout.spacing() * max(0, len(widgets) - 1)
+    return row.width() >= needed
 
 class BackupSettingsPage(QWidget):
     """Present backup state and forward work to an application coordinator.
@@ -118,12 +141,16 @@ class BackupSettingsPage(QWidget):
         self.create_tile.add_body(self.last_backup_label)
         self.create_tile.add_body(self.last_location_label)
         self.create_tile.add_body(self.last_size_label)
-        create_actions = self.create_actions = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self.create_row = _action_row()
+        create_actions = self.create_actions = QBoxLayout(
+            QBoxLayout.Direction.LeftToRight, self.create_row
+        )
+        create_actions.setContentsMargins(0, 0, 0, 0)
         create_actions.setSpacing(12)
         create_actions.addWidget(self.include_recordings_check)
         create_actions.addStretch()
         create_actions.addWidget(self.create_button)
-        self.create_tile.add_body_layout(create_actions)
+        self.create_tile.add_body(self.create_row)
         self.create_tile.add_body(settings_caption(
             "Speech models, API keys, and paired devices are excluded."
         ))
@@ -139,7 +166,10 @@ class BackupSettingsPage(QWidget):
             "Review a backup before restoring. Your current data is kept for recovery.",
             design_icon("refresh-blue.svg"),
         )
-        restore_actions = self.restore_actions = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self.restore_row = _action_row()
+        restore_actions = self.restore_actions = QBoxLayout(
+            QBoxLayout.Direction.LeftToRight, self.restore_row
+        )
         restore_actions.setContentsMargins(0, 0, 0, 0)
         self.inspect_button = neutral_button(Button("Choose backup…"))
         self.inspect_button.setObjectName("backupInspectButton")
@@ -151,7 +181,7 @@ class BackupSettingsPage(QWidget):
         self.restore_button.clicked.connect(self._confirm_restore)
         restore_actions.addWidget(self.restore_button)
         restore_actions.addStretch()
-        self.restore_tile.add_body_layout(restore_actions)
+        self.restore_tile.add_body(self.restore_row)
         self.inspection_label = settings_caption("No backup selected")
         self.inspection_label.setObjectName("backupInspectionSummary")
         self.inspection_label.setWordWrap(True)
@@ -234,7 +264,7 @@ class BackupSettingsPage(QWidget):
         layout.addWidget(self.restore_tile)
 
         for tile in (self.create_tile, self.schedule_tile, self.restore_tile):
-            tile._body_layout.setContentsMargins(0, 0, 0, 0)
+            tile.set_body_indented(False)
             tile.layout().setContentsMargins(20, 18, 20, 18)
             tile._body_layout.setSpacing(10)
 
@@ -278,15 +308,20 @@ class BackupSettingsPage(QWidget):
         self.schedule_layout.setDirection(
             QBoxLayout.Direction.TopToBottom if narrow else QBoxLayout.Direction.LeftToRight
         )
+        # Both rows stack together once either can't hold its controls side
+        # by side, measured in the current font rather than at a set width.
+        stacked = not (
+            _fits_side_by_side(self.create_row, self.create_actions)
+            and _fits_side_by_side(self.restore_row, self.restore_actions)
+        )
         action_direction = (
-            QBoxLayout.Direction.TopToBottom if self.width() < 520
-            else QBoxLayout.Direction.LeftToRight
+            QBoxLayout.Direction.TopToBottom if stacked else QBoxLayout.Direction.LeftToRight
         )
         self.create_actions.setDirection(action_direction)
         self.restore_actions.setDirection(action_direction)
         self.create_actions.setAlignment(
             self.create_button,
-            Qt.AlignmentFlag.AlignLeft if self.width() < 520 else Qt.AlignmentFlag.AlignRight,
+            Qt.AlignmentFlag.AlignLeft if stacked else Qt.AlignmentFlag.AlignRight,
         )
         for button in (self.inspect_button, self.restore_button):
             self.restore_actions.setAlignment(button, Qt.AlignmentFlag.AlignLeft)

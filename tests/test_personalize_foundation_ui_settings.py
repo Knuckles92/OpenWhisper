@@ -426,7 +426,8 @@ def test_new_pages_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatch, u
             for control in controls:
                 if control.isVisible():
                     assert control.mapTo(page, control.rect().topLeft()).x() >= 0, key
-                    assert control.mapTo(page, control.rect().bottomRight()).x() < page.width(), key
+                    assert control.mapTo(page, control.rect().bottomRight()).x() < page.width(), (
+                        key, control.objectName() or control.text())
             for tile in page.findChildren(TileBase):
                 if tile.isHidden():
                     continue  # a tile shown only in some states

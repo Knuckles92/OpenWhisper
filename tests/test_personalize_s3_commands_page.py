@@ -406,7 +406,8 @@ def test_the_page_fits_a_narrow_window_at_large_fonts(make_dialog, monkeypatch, 
             if not control.isVisible():
                 continue
             assert control.mapTo(page, control.rect().topLeft()).x() >= 0
-            assert control.mapTo(page, control.rect().bottomRight()).x() < page.width()
+            assert control.mapTo(page, control.rect().bottomRight()).x() < page.width(), (
+                control.objectName() or control.text())
             # Every button keeps at least its label's height.
             if isinstance(control, QAbstractButton) and control.text():
                 assert control.height() >= control.fontMetrics().height()

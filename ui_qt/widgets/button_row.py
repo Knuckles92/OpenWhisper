@@ -40,6 +40,9 @@ class ButtonRow(QWidget):
         for button in visible:
             # ``Button.setText`` sets its own floor; compact buttons clear it, so raise it.
             button.setMinimumWidth(max(button.minimumWidth(), button.sizeHint().width()))
+        # Even a row of one needs the widest label, so a column that would
+        # squeeze it narrower (a two-column panel) stacks instead.
+        self.setMinimumWidth(max((button.minimumWidth() for button in visible), default=0))
         sizes = self._row_sizes([button.minimumWidth() for button in visible])
         shape = (tuple(sizes), tuple(id(button) for button in visible))
         if shape == self._shape:

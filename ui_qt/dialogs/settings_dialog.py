@@ -205,6 +205,7 @@ from ui_qt.widgets.hotkey_capture import (
     mouse_shortcut_note,
 )
 from ui_qt.widgets.hotkey_row import ReflowCard
+from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.settings_switch import SettingsSwitch
 from services.hotkey_conflicts import STANDARD, hotkey_conflict
 from services.settings import (
@@ -2793,19 +2794,22 @@ class SettingsDialog(QDialog):
             )
         )
 
-        actions = QHBoxLayout()
         profile_link = neutral_button(Button("Profile recording shortcuts…"))
         profile_link.clicked.connect(lambda: self.select_destination(CLEANUP_PROFILES))
         fit_compact_button(profile_link, 0)
-        actions.addWidget(profile_link)
-        actions.addStretch()
         reset_button = neutral_button(Button("Reset to defaults"))
         reset_button.setObjectName("hotkeyResetButton")
         fit_compact_button(reset_button, 150)
         reset_button.clicked.connect(self._confirm_reset_hotkeys)
-        actions.addWidget(reset_button)
+        # The link keeps its label's width; Reset moves under it when both
+        # don't fit side by side.
+        profile_row = QWidget()
+        profile_row_layout = QHBoxLayout(profile_row)
+        profile_row_layout.setContentsMargins(0, 0, 0, 0)
+        profile_row_layout.addWidget(profile_link)
+        profile_row_layout.addStretch()
         layout.addSpacing(4)
-        layout.addLayout(actions)
+        layout.addWidget(Reflow(profile_row, reset_button))
 
     def _build_recording_trigger_mode_row(self) -> QWidget:
         self.record_mode_combo = ElidingComboBox()

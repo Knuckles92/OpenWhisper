@@ -90,6 +90,14 @@ class TileBase(QFrame):
         self._body_layout.addWidget(widget)
         self.body.show()
 
+    def set_body_indented(self, indented: bool) -> None:
+        """Indent the body under the title (the default), or use the full width.
+
+        A tile whose body is a whole panel needs the room more than the
+        alignment, most of all in a narrow tiled window.
+        """
+        self._body_layout.setContentsMargins(self.ICON_SIZE + 12 if indented else 0, 0, 0, 0)
+
     def add_body_layout(self, layout) -> None:
         self._body_layout.addLayout(layout)
         self.body.show()

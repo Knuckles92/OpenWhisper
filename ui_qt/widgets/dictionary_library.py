@@ -5,7 +5,6 @@ from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -16,68 +15,11 @@ from PyQt6.QtWidgets import (
 )
 
 from services.dictionary import DictionaryTerm
-from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.buttons import Button, fit_compact_button, neutral_button
 from ui_qt.widgets.eliding_label import ElidingLabel
+from ui_qt.widgets.reflow import Reflow  # noqa: F401  (rows and the page use it)
 from ui_qt.widgets.wrapped_label import WrappedLabel
-
-
-class Reflow(QWidget):
-    """A lead widget with actions beside it, or below it once the row is narrow.
-
-    The width comes from the column the row sits in (its own minimum is
-    ignored), so a narrow tiled window or a large font moves the actions to
-    their own line instead of pushing them past the edge.
-
-    Args:
-        lead: Takes the spare width.
-        actions: Kept at their natural width.
-        lead_width: The narrowest the lead may get beside the actions, in
-            pixels at 100% font scale.
-    """
-
-    def __init__(self, lead: QWidget, actions: QWidget, lead_width: int, parent=None):
-        super().__init__(parent)
-        self.setObjectName("dictionaryReflow")
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self._lead = lead
-        self._actions = actions
-        self._lead_width = lead_width
-        self._stacked: Optional[bool] = None
-        self._grid = QGridLayout(self)
-        self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setHorizontalSpacing(8)
-        self._grid.setVerticalSpacing(6)
-        self._grid.addWidget(lead, 0, 0)
-        self._grid.setColumnStretch(0, 1)
-        self._place(False)
-
-    @property
-    def stacked(self) -> bool:
-        return bool(self._stacked)
-
-    def _place(self, stacked: bool) -> None:
-        if stacked == self._stacked:
-            return
-        self._stacked = stacked
-        self._grid.removeWidget(self._actions)
-        if stacked:
-            self._grid.addWidget(self._actions, 1, 0, alignment=Qt.AlignmentFlag.AlignRight)
-        else:
-            self._grid.addWidget(self._actions, 0, 1, alignment=Qt.AlignmentFlag.AlignVCenter)
-
-    def _reflow(self) -> None:
-        needed = (
-            round(self._lead_width * current_ui_font_scale())
-            + self._grid.horizontalSpacing()
-            + self._actions.sizeHint().width()
-        )
-        self._place(self.width() < needed)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._reflow()
 
 
 def action_group(*buttons) -> QWidget:

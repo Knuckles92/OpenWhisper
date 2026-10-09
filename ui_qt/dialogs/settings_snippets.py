@@ -59,6 +59,8 @@ def build(dialog, layout) -> None:
     dialog.snippets_panel = panel
     library.add_trailing(panel.count_label)
     library.add_body(panel)
+    # The two-column panel needs the indent's room at narrow widths.
+    library.set_body_indented(False)
     panel.snippets_changed.connect(lambda: dialog.notify_changed("snippets"))
     dialog._tile_group(layout, "", [library], columns=1)
 

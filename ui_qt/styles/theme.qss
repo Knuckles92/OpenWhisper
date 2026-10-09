@@ -4739,7 +4739,7 @@ QPushButton#commandModeHintLink:focus {
 QWidget#dictionaryLibrary,
 QWidget#dictionaryRows,
 QWidget#dictionaryRowText,
-QWidget#dictionaryReflow,
+QWidget#reflow,
 QWidget#dictionaryActions {
     background-color: transparent;
 }

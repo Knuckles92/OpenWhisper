@@ -167,7 +167,8 @@ def test_chips_wrap_and_fit_narrow_windows_at_large_fonts(make_dialog, monkeypat
         for control in field.findChildren(QAbstractButton):
             if control.isVisible():
                 assert control.mapTo(page, control.rect().topLeft()).x() >= 0
-                assert control.mapTo(page, control.rect().bottomRight()).x() < page.width()
+                assert control.mapTo(page, control.rect().bottomRight()).x() < page.width(), (
+                    control.objectName() or control.text())
         chip_area = field.chip_area
         for chip in field.chips:
             assert chip.geometry().bottom() < chip_area.height()

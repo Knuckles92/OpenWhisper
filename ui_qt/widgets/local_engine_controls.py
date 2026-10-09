@@ -367,8 +367,11 @@ class DictationLanguagesField(QWidget):
         self.chip_area = _ChipArea()
         self.chip_area.setObjectName("dictationLanguageChips")
         self._flow = _FlowLayout(self.chip_area)
-        self.add_button = neutral_button(Button("Add language"))
+        # "Add" beside the plus fits a 460 px tiled window at large fonts.
+        self.add_button = neutral_button(Button("Add"))
         self.add_button.setIcon(design_icon("plus-blue.svg"))
+        self.add_button.setToolTip("Add a language")
+        self.add_button.setAccessibleName("Add a language")
         self.add_button.clicked.connect(self._open_add_menu)
         layout.addWidget(self.chip_area)
         self.caption = WrappedLabel("")

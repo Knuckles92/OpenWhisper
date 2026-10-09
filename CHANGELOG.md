@@ -54,6 +54,7 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 - **Pressing Enter in a Settings field** (adding a Learned rule, saving an API key) no longer switches Settings to the Basic view.
 - **Push-and-hold on Windows with a Shift+digit or Shift+symbol shortcut** now stops when you let go of Shift first, instead of leaving the recording running.
 - **A push-and-hold recording that spans the five-minute hotkey refresh** now stops when you let go: the refresh waits until the held key is up, and a release lost some other way is recovered by pressing and releasing the key again.
+- **Settings in narrow windows with large text on Linux** — the Hotkeys, Backup, Commands, Snippets, Dictionary and Voice model pages keep their buttons inside the window: rows stack once their buttons no longer fit side by side, measured in the font in use rather than at fixed widths.
 - **Qwen3-ASR on a GPU its runtime can't use** — on Auto it now loads on the CPU and says why; with CUDA chosen it names the card and suggests updating the runtime or using the CPU, instead of failing with "no kernel image is available". Optional speech engines that fail to load now write the reason, with the engine's own error output, to the log.
 - **Omarchy/Hyprland auto-paste** uses Ctrl+Shift+V in more terminals (GNOME Terminal, Ptyxis, MATE Terminal, Tabby and others).
 - **Holding the enable/disable shortcut on Windows** (Ctrl+Alt+Num* by default) no longer turns dictation on and off repeatedly, or starts a recording when Ctrl+Alt are let go first.
