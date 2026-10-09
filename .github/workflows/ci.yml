@@ -140,6 +140,17 @@ jobs:
       - name: Install native macOS audio library
         if: runner.os == 'macOS'
         run: brew install portaudio
+      - name: Use a clean virtual environment
+        # The runner image's own tools (pipx) live in this Python and can
+        # require versions the release pins don't, failing pip check.
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "$RUNNER_TEMP/venv/Scripts" >> "$GITHUB_PATH"
+          else
+            echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+          fi
       - name: Install pinned release environment
         if: matrix.dependencies == 'release'
         run: python -m pip install -r requirements.txt -r requirements-build.txt -c requirements-release-constraints.txt
