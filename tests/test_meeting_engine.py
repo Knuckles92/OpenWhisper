@@ -319,6 +319,9 @@ def fakes(monkeypatch):
 
     diarizer = FakeDiarizer()
     clustering = types.ModuleType("meeting.diarize.clustering")
+    # meeting/diarize/__init__.py imports both names; when this fake is the
+    # first thing the package's __init__ sees (class run alone), both must exist.
+    clustering.OnlineDiarizer = FakeDiarizer
     clustering.create_diarizer = (
         lambda model_path, store, repository, meeting_id: diarizer
     )
