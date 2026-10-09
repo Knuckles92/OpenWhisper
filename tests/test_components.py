@@ -583,7 +583,10 @@ def test_outdated_meeting_agent_is_reported_once_per_version(
     _make_installed(
         component_root,
         ComponentId.MEETING_AGENT,
-        {"version": "node22-pi1", "component_api": 1, "platform": "win_amd64"},
+        # This computer's platform, so the install is out of date rather
+        # than built for another system.
+        {"version": "node22-pi1", "component_api": 1,
+         "platform": components.current_platform_tag()},
     )
     caplog.set_level("WARNING", logger=components.logger.name)
     with patch.object(components, "_source_sidecar_payload_dir", return_value=None):

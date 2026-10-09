@@ -206,17 +206,19 @@ def test_side_button_click_on_the_capturing_field_saves_a_mouse_shortcut(make_di
     dialog.on_profile_hotkey_capture.assert_called_with(True)
     thread = dialog.capture_thread
 
-    with patch.object(hotkey_capture, "mouse_shortcuts_supported", return_value=True):
+    # The Windows wording; X11 says nothing about a side button with a modifier.
+    with patch.object(hotkey_capture, "mouse_shortcuts_supported", return_value=True), \
+            patch.object(hotkey_capture, "USE_PYNPUT_BACKEND", False):
         _click_side_button(field, modifiers=Qt.KeyboardModifier.ShiftModifier)
 
-    assert thread.stopped
-    assert dialog.capturing is None
-    dialog.on_profile_hotkey_capture.assert_called_with(False)
-    assert store.load_hotkey_settings()["paste_last_original"] == "shift+mouse4"
-    assert field.text() == "Shift+Mouse 4"
-    assert _note(dialog, "paste_last_original") == (
-        "Mouse 4 won't work as Back in other apps while it's a shortcut."
-    )
+        assert thread.stopped
+        assert dialog.capturing is None
+        dialog.on_profile_hotkey_capture.assert_called_with(False)
+        assert store.load_hotkey_settings()["paste_last_original"] == "shift+mouse4"
+        assert field.text() == "Shift+Mouse 4"
+        assert _note(dialog, "paste_last_original") == (
+            "Mouse 4 won't work as Back in other apps while it's a shortcut."
+        )
     dialog.close()
 
 
@@ -357,6 +359,9 @@ def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch
     from ui_qt.utils.theme_manager import ThemeManager
 
     monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
+    # The Windows backend, whose side-button note is the longest; X11 shows
+    # none for a side button with modifiers.
+    monkeypatch.setattr(hotkey_capture, "USE_PYNPUT_BACKEND", False)
     app = QApplication.instance()
     previous_style, previous_font = app.styleSheet(), app.font()
     previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
@@ -398,7 +403,8 @@ def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch
         if width > 460:
             for control in page.findChildren(QAbstractButton) + page.findChildren(QLineEdit):
                 if control.isVisible():
-                    assert control.mapTo(page, control.rect().bottomRight()).x() < page.width()
+                    assert control.mapTo(page, control.rect().bottomRight()).x() < page.width(), (
+                        control.objectName() or control.text())
         for label in page.findChildren(QLabel):
             if label.isVisible() and label.wordWrap():
                 assert label.height() >= label.heightForWidth(label.width())
