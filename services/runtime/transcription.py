@@ -1276,13 +1276,19 @@ class TranscriptionRuntime:
         # Deliver immediately; copying retained audio, fsync, and SQLite writes
         # run on a worker while Qt and the target application remain responsive.
         try:
-            self._deliver(transcript, job, status_suffix=cleanup_notice)
+            self._deliver(transcript, job, status_suffix=cleanup_notice, before_cleanup=raw_text)
         finally:
             entry.update(self._history_context(job, cleanup_info, live=live))
             self._queue_history([entry])
 
-    def _deliver(self, transcript: str, job, status_suffix: str = "") -> None:
-        """Put a finished transcript where the user is working."""
+    def _deliver(
+        self, transcript: str, job, status_suffix: str = "", before_cleanup: Optional[str] = None
+    ) -> None:
+        """Put a finished transcript where the user is working.
+
+        ``before_cleanup`` is the transcript before AI cleanup changed it, if it
+        did; dictionary learning compares the user's corrections with it.
+        """
         ui = self.controller.ui_controller
         insert = getattr(ui, "insert_into_scratchpad", None)
         if callable(insert):
@@ -1322,7 +1328,7 @@ class TranscriptionRuntime:
             force_paste=forced,
         )
         if pasted:
-            dictation_pipeline.after_paste(job, text)
+            dictation_pipeline.after_paste(job, text, before_cleanup)
         if forced:
             if not pasted:
                 self._notify(self._delivery_status)

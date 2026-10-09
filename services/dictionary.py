@@ -4,8 +4,8 @@ Terms reach the speech model where an engine supports hints, replace their
 "sounds like" variants in every transcript, and go into the cleanup prompt.
 Terms are user content: never log them, or anything read from other apps.
 
-The dictionary is a list of ``{id, term, starred, heard, learned, new}``
-objects under ``SettingsKey.DICTATION_DICTIONARY``, newest first. Loading is
+The dictionary is a list of ``{id, term, starred, heard, learned, new,
+protected}`` objects under ``SettingsKey.DICTATION_DICTIONARY``, newest first. Loading is
 tolerant: malformed entries are skipped, duplicates (ignoring case) keep the
 first, and the list is capped at ``config.MAX_DICTIONARY_TERMS``. The
 mutators here edit a settings mapping in place, for
@@ -49,6 +49,8 @@ PROMPT_MAX_CHARS = 2400
 LEARN_DELAY_S = 4.0
 #: Sightings of the same correction before it is learned.
 LEARN_SIGHTINGS = 2
+#: Words the cleanup prompt tells AI cleanup never to change.
+PROMPT_MAX_PROTECTED = 50
 
 _KEY = SettingsKey.DICTATION_DICTIONARY
 
@@ -67,6 +69,9 @@ class DictionaryTerm:
     learned: bool = False
     #: Learned since the user last reviewed the Dictionary page.
     new: bool = False
+    #: AI cleanup changed this word and the user put it back, so the cleanup
+    #: prompt tells it never to change the word again.
+    protected: bool = False
 
 
 def _clean(value) -> str:
@@ -130,12 +135,13 @@ def _parse(raw) -> list[DictionaryTerm]:
             heard=() if learned else _variants(item.get("heard"), term),
             learned=learned,
             new=learned and item.get("new") is True,
+            protected=item.get("protected") is True,
         ))
     return terms
 
 
 def _as_dict(term: DictionaryTerm) -> dict:
-    return {
+    saved = {
         "id": term.id,
         "term": term.term,
         "starred": term.starred,
@@ -143,6 +149,9 @@ def _as_dict(term: DictionaryTerm) -> dict:
         "learned": term.learned,
         "new": term.new,
     }
+    if term.protected:
+        saved["protected"] = True
+    return saved
 
 
 def _store(settings: dict, terms: Sequence[DictionaryTerm]) -> None:
@@ -196,10 +205,17 @@ def prompt_block(terms: Sequence[DictionaryTerm]) -> str:
         used += cost
     if not names:
         return ""
-    return (
+    block = (
         "Vocabulary — when one of these is what was said, including near-miss "
         "mishearings, spell it exactly: " + ", ".join(names) + "."
     )
+    kept = [term.term for term in _ranked(terms) if term.protected][:PROMPT_MAX_PROTECTED]
+    if kept:
+        block += (
+            " The speaker put these back after an earlier cleanup changed them; "
+            "never replace or respell them: " + ", ".join(kept) + "."
+        )
+    return block
 
 
 def summary(settings: Mapping) -> str:
@@ -342,20 +358,38 @@ def clear_new(settings: dict) -> int:
     return fresh
 
 
-def add_learned(settings: dict, word: str) -> Optional[DictionaryTerm]:
-    """Add a word learned from a correction, unless learning is off or it is known."""
+def add_learned(settings: dict, word: str, *, protected: bool = False) -> Optional[DictionaryTerm]:
+    """Add a word learned from a correction, unless learning is off or it is known.
+
+    ``protected`` marks a word the user put back after AI cleanup changed it;
+    a known word gains that mark (and is returned) once.
+    """
     if not resolve_dictionary_learn_enabled(settings):
         return None
     text = _clean(word)
     if not text or len(text) > MAX_TERM_CHARS:
         return None
     terms = load_dictionary(settings)
-    if _index_of_text(terms, text) >= 0 or len(terms) >= config.MAX_DICTIONARY_TERMS:
+    index = _index_of_text(terms, text)
+    if index >= 0:
+        if not protected or terms[index].protected:
+            return None
+        terms[index] = replace(terms[index], protected=True)
+        _store(settings, terms)
+        return terms[index]
+    if len(terms) >= config.MAX_DICTIONARY_TERMS:
         return None
-    learned = DictionaryTerm(_new_id(), text, learned=True, new=True)
+    learned = DictionaryTerm(_new_id(), text, learned=True, new=True, protected=protected)
     terms.insert(0, learned)
     _store(settings, terms)
     return learned
+
+
+def find_term(settings: Mapping, text: str) -> Optional[DictionaryTerm]:
+    """The saved entry spelled ``text`` (ignoring case), or None."""
+    terms = load_dictionary(settings)
+    index = _index_of_text(terms, _clean(text))
+    return terms[index] if index >= 0 else None
 
 
 # ---- spelling rules taught on the Learned rules page -----------------------
@@ -482,6 +516,22 @@ def learned_correction(pasted: str, field: str) -> Optional[str]:
     for one other word counts, with at least two unchanged words to anchor
     it. Text typed before or after the pasted span is ignored.
     """
+    found = _correction(pasted, field)
+    return found[1] if found else None
+
+
+def reverted_cleanup(before_cleanup: Optional[str], replaced: str, restored: str) -> bool:
+    """Whether a correction put back a word AI cleanup had changed.
+
+    The restored word was in the text before cleanup and the word the user
+    replaced was not, so cleanup brought it in.
+    """
+    spoken = {word.casefold() for word in _tokens(before_cleanup or "")}
+    return restored.casefold() in spoken and replaced.casefold() not in spoken
+
+
+def _correction(pasted: str, field: str) -> Optional[tuple[str, str]]:
+    """``(pasted word, the user's word)``; see ``learned_correction``."""
     said = _tokens(pasted)
     seen = _tokens(field)
     if len(said) < 3 or not seen:
@@ -505,7 +555,7 @@ def learned_correction(pasted: str, field: str) -> Optional[str]:
     if tag != "replace" or i2 - i1 != 1 or j2 - j1 != 1:
         return None
     old, new = said[i1], seen[j1]
-    return new if _learnable(old, new) else None
+    return (old, new) if _learnable(old, new) else None
 
 
 def _run_later(delay: float, function, *args) -> None:
@@ -515,12 +565,14 @@ def _run_later(delay: float, function, *args) -> None:
     timer.start()
 
 
-def schedule_learning(job, pasted_text: str) -> None:
+def schedule_learning(job, pasted_text: str, before_cleanup: Optional[str] = None) -> None:
     """Look for a correction of the pasted text later; Qt thread, never blocks.
 
     Runs only for a dictation whose start captured the text around the
     caret, so the field can be read again. The read happens on the capture
-    service's own thread.
+    service's own thread. ``before_cleanup`` is the transcript before AI
+    cleanup changed it, if it did: a correction that puts back one of its
+    words is learned at once and protected from cleanup.
     """
     if not pasted_text or not pasted_text.strip() or job is None:
         return
@@ -529,29 +581,34 @@ def schedule_learning(job, pasted_text: str) -> None:
     context = snapshot.text if snapshot is not None else None
     if identity is None or identity.is_self or context is None or not context.caret_known:
         return
-    _run_later(LEARN_DELAY_S, _reread, identity, pasted_text)
+    _run_later(LEARN_DELAY_S, _reread, identity, pasted_text, before_cleanup)
 
 
-def _reread(identity, pasted_text: str) -> None:
+def _reread(identity, pasted_text: str, before_cleanup: Optional[str] = None) -> None:
     try:
         settings = settings_manager.load_all_settings()
         if not (resolve_dictionary_learn_enabled(settings) and resolve_app_context_read_text(settings)):
             return
         focus_context.get_service().reread(
-            identity, lambda context: _on_reread(context, pasted_text)
+            identity, lambda context: _on_reread(context, pasted_text, before_cleanup)
         )
     except Exception:
         logger.debug("Dictionary learning could not read the field again", exc_info=True)
 
 
-def _on_reread(context, pasted_text: str) -> None:
+def _on_reread(context, pasted_text: str, before_cleanup: Optional[str] = None) -> None:
     """The capture service's callback; keeps that thread free of file writes."""
     try:
         if context is None or not context.caret_known:
             return
         field = f"{context.before}{context.selected}{context.after}"
-        word = learned_correction(pasted_text, field)
-        if word is None:
+        found = _correction(pasted_text, field)
+        if found is None:
+            return
+        replaced, word = found
+        if reverted_cleanup(before_cleanup, replaced, word):
+            # Undoing an AI edit is deliberate; one sighting is enough.
+            _run_later(0, _learn, word, True)
             return
         key = word.casefold()
         with _sightings_lock:
@@ -565,9 +622,11 @@ def _on_reread(context, pasted_text: str) -> None:
         logger.debug("Dictionary learning failed", exc_info=True)
 
 
-def _learn(word: str) -> None:
+def _learn(word: str, protected: bool = False) -> None:
     try:
-        learned = settings_manager.mutate_settings(lambda settings: add_learned(settings, word))
+        learned = settings_manager.mutate_settings(
+            lambda settings: add_learned(settings, word, protected=protected)
+        )
     except Exception:
         logger.warning("Could not save a learned dictionary word", exc_info=True)
         return

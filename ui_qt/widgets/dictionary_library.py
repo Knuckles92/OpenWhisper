@@ -137,8 +137,13 @@ class DictionaryRow(QFrame):
         self.second_line.setSpacing(6)
         self.learned_badge = self._badge("Learned", "learned")
         self.new_badge = self._badge("New", "new")
+        self.kept_badge = self._badge("Kept as said", "kept")
+        self.kept_badge.setToolTip(
+            "You put this word back after AI cleanup changed it, so cleanup leaves it alone"
+        )
         self.second_line.addWidget(self.learned_badge)
         self.second_line.addWidget(self.new_badge)
+        self.second_line.addWidget(self.kept_badge)
         self.detail = ElidingLabel()
         self.detail.setObjectName("dictionaryDetail")
         self.second_line.addWidget(self.detail, stretch=1)
@@ -175,6 +180,7 @@ class DictionaryRow(QFrame):
         self.star.setAccessibleName(f"{'Unstar' if term.starred else 'Star'} {term.term}")
         self.learned_badge.setVisible(term.learned)
         self.new_badge.setVisible(term.new)
+        self.kept_badge.setVisible(term.protected)
         detail = "Sounds like " + ", ".join(term.heard) if term.heard else ""
         self.learned_badge.setToolTip("Learned from your corrections")
         self.detail.setText(detail)

@@ -378,14 +378,18 @@ def test_a_rewrite_pastes_only_into_the_app_it_provably_started_in():
 
 def test_after_paste_schedules_learning_for_dictation_only(monkeypatch):
     learned = []
-    monkeypatch.setattr(dictionary, "schedule_learning", lambda job, text: learned.append((job.mode, text)))
+    monkeypatch.setattr(
+        dictionary, "schedule_learning",
+        lambda job, text, before_cleanup: learned.append((job.mode, text, before_cleanup)),
+    )
 
     after_paste(_job(), "Hello")
+    after_paste(_job(), "Hello.", "hello")
     after_paste(_job(JobMode.COMMAND), "Rewritten")
     after_paste(None, "Upload")
-    assert learned == [(JobMode.DICTATION, "Hello")]
+    assert learned == [(JobMode.DICTATION, "Hello", None), (JobMode.DICTATION, "Hello.", "hello")]
 
-    monkeypatch.setattr(dictionary, "schedule_learning", lambda job, text: 1 / 0)
+    monkeypatch.setattr(dictionary, "schedule_learning", lambda *args: 1 / 0)
     after_paste(_job(), "Hello")
 
 

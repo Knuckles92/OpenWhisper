@@ -856,7 +856,13 @@ class UIController(QObject):
         self.overlay.show_caption(f"Switched to {name}")
 
     def on_dictionary_term_learned(self, term: str) -> None:
-        self.set_status(f'Added "{term}" to your dictionary')
+        from services.dictionary import find_term
+
+        entry = find_term(settings_manager.load_all_settings(), term)
+        if entry is not None and entry.protected:
+            self.set_status(f'AI cleanup will keep "{term}" as you said it')
+        else:
+            self.set_status(f'Added "{term}" to your dictionary')
         if self._settings_dialog is not None:
             self._settings_dialog.refresh_page(DICTIONARY)
 

@@ -452,15 +452,20 @@ def test_the_focused_scratchpad_takes_the_dictation(h):
 
 def test_after_paste_follows_a_successful_paste(h, monkeypatch):
     pasted = []
-    monkeypatch.setattr(dictation_pipeline, "after_paste", lambda job, text: pasted.append(text))
+    monkeypatch.setattr(
+        dictation_pipeline, "after_paste",
+        lambda job, text, before_cleanup: pasted.append((text, before_cleanup)),
+    )
 
     assert h.runtime._claim_job(DictationJob())
     h.runtime.on_transcription_complete("Hello.")
+    assert h.runtime._claim_job(DictationJob())
+    h.runtime.on_transcription_complete("Hello, Sam.", "hello sam")
     h.settings.values[SettingsKey.AUTO_PASTE] = False
     assert h.runtime._claim_job(DictationJob())
     h.runtime.on_transcription_complete("Not pasted.")
 
-    assert pasted == ["Hello."]
+    assert pasted == [("Hello.", None), ("Hello, Sam.", "hello sam")]
 
 
 # --- history -----------------------------------------------------------------

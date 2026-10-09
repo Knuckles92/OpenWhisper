@@ -24,8 +24,9 @@ _STEER_OFF_LINE = (
 _STEER_OFF_NO_CLEANUP_LINE = "Off. Only Sounds like spellings are fixed while AI cleanup is off."
 _NOT_FIXED_HINT = "Without a Sounds like spelling it won't be fixed while AI cleanup is off."
 _LEARN_LINE = (
-    "When you fix a dictated word the same way twice, it's added here. Only "
-    "the words you just dictated are compared."
+    "When you fix a dictated word the same way twice, it's added here. Put "
+    "back a word AI cleanup changed and it's added at once, and cleanup "
+    "leaves it alone. Only the words you just dictated are compared."
 )
 _LEARN_GATE_LINE = "Off · needs Read text near the cursor"
 

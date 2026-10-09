@@ -21,6 +21,9 @@ limited.
 - **Learning:** with **Read text near the cursor** on (see Styles), correcting
   the same dictated word twice in the app you dictated into adds it as a
   **Learned** word with a **New** badge. Keep it or undo it on the page.
+  Changing a word back after AI cleanup changed it counts the first time: the
+  word is added with a **Kept as said** badge, and AI cleanup is told never to
+  replace or respell it.
 - Learned rules that only fix a spelling can be moved here in one click.
 
 ## Snippets

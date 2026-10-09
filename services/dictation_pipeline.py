@@ -422,12 +422,17 @@ def paste_target_ok(job: Optional[DictationJob]) -> bool:
     return paste_target(job) == PasteTarget.SAME
 
 
-def after_paste(job: Optional[DictationJob], pasted_text: str) -> None:
-    """Follow-up work once a dictation is pasted; Qt thread, never blocks."""
+def after_paste(
+    job: Optional[DictationJob], pasted_text: str, before_cleanup: Optional[str] = None
+) -> None:
+    """Follow-up work once a dictation is pasted; Qt thread, never blocks.
+
+    ``before_cleanup`` is the transcript before AI cleanup, when it changed it.
+    """
     if job is None or job.mode != JobMode.DICTATION:
         return
     try:
-        dictionary.schedule_learning(job, pasted_text)
+        dictionary.schedule_learning(job, pasted_text, before_cleanup)
     except Exception:
         logger.debug("Dictionary learning could not be scheduled", exc_info=True)
 
