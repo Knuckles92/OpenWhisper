@@ -135,7 +135,9 @@ def kill_agent_process(proc, wait_s=3.0):
         for sig in (signal.SIGTERM, signal.SIGKILL):
             try:
                 os.killpg(proc.pid, sig)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
+                # macOS answers EPERM, not ESRCH, once the group holds only
+                # its exited, unreaped leader; the wait below reaps it.
                 break
     elif proc.poll() is None:
         if sys.platform == "win32":
