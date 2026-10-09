@@ -15,7 +15,7 @@ from typing import Callable, Iterator, List, Optional
 from config import config
 from services import audio_devices
 from services.audio_devices import InputDevice
-from services.recording_journal import RecordingJournal
+from services.recording_journal import FINISH_TIMEOUT, RecordingJournal
 from services.wav_metadata import stamp_wav_origination
 
 logger = logging.getLogger(__name__)
@@ -544,17 +544,25 @@ class AudioRecorder:
             self._post_roll_end_event.set()
 
     def wait_for_stop_completion(self, timeout: float = None) -> bool:
-        """Wait for post-roll capture, using the cap plus its grace by default."""
+        """Wait for capture and storage, including each stage's deadline."""
         thread = self.recording_thread
         if not thread or not thread.is_alive():
             return True
 
-        default_timeout = (config.POST_ROLL_MS + config.POST_ROLL_FINALIZE_GRACE_MS) / 1000.0
+        # The writer drains and syncs after the stream closes. Its allowed
+        # finish time must fit inside the caller's overall stop deadline.
+        default_timeout = (
+            (config.POST_ROLL_MS + config.POST_ROLL_FINALIZE_GRACE_MS) / 1000.0
+            + FINISH_TIMEOUT
+        )
         wait_timeout = timeout if timeout is not None else default_timeout
 
         finished = self._recording_complete_event.wait(wait_timeout)
         if not finished:
-            logger.warning("Recording thread did not finish during post-roll wait; proceeding with available audio")
+            logger.warning(
+                "Recording did not finish capture and storage within %.2fs; "
+                "audio kept for recovery", wait_timeout,
+            )
         return finished
 
     def _audio_callback(self, indata: np.ndarray, frames: int, time_info, status,
@@ -685,13 +693,13 @@ class AudioRecorder:
                 finally:
                     audio_devices.unregister_stream(stream)
                 self.stream = None
+            self._log_post_roll(reason)
             journal = self._audio_spool
             if journal:
                 if not journal.finish():
                     self._fail_capture('Recording storage did not finish; audio kept for recovery.')
                 elif journal.error:
                     self._fail_capture(journal.error)
-            self._log_post_roll(reason)
             if self.input_overflows and not self.last_capture_error:
                 logger.warning(
                     "Audio input overflowed %d time(s); the recording carried on "

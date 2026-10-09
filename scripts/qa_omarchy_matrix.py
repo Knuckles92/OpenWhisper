@@ -294,7 +294,7 @@ def exercise_ui(runtime, window, settings, settle, capture, report, keepalive):
         resize(window, 620, 450)
         capture(f"record-font-{scale}")
         settings.show()
-        settings.select_destination("general")
+        settings.select_destination("appearance")
         capture(f"settings-font-{scale}", settings)
         resize(settings, 620, 450)
         settings.open_search("hotkey")

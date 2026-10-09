@@ -332,10 +332,10 @@ def make_dialog():
     temp.cleanup()
 
 
-def _open_recording(dialog):
-    from ui_qt.dialogs.settings_destinations import RECORDING
+def _open_appearance(dialog):
+    from ui_qt.dialogs.settings_destinations import APPEARANCE
 
-    dialog.select_destination(RECORDING)
+    dialog.select_destination(APPEARANCE)
     for _ in range(3):
         QApplication.processEvents()
 
@@ -343,7 +343,7 @@ def _open_recording(dialog):
 def test_settings_loads_saves_and_pushes_the_look(make_dialog):
     dialog, store = make_dialog({SettingsKey.RECORDING_OVERLAY_LOOK: "legacy"})
     dialog.on_recording_look_changed = MagicMock()
-    _open_recording(dialog)
+    _open_appearance(dialog)
     assert dialog.recording_look_bar.currentIndex() == RecordingOverlayLook.ALL.index("legacy")
     assert dialog.recording_look_preview.overlay.recording_look == "legacy"
     dialog.on_recording_look_changed.assert_not_called()
@@ -366,7 +366,7 @@ def test_settings_loads_saves_and_pushes_the_look(make_dialog):
 def test_settings_loads_the_label_switches(make_dialog):
     dialog, _ = make_dialog({SettingsKey.RECORDING_OVERLAY_TEXT: False, SettingsKey.RECORDING_OVERLAY_CLOCK: False})
     dialog.on_recording_look_changed = MagicMock()
-    _open_recording(dialog)
+    _open_appearance(dialog)
     assert dialog.recording_dot_switch.isChecked()
     assert not dialog.recording_text_switch.isChecked()
     assert not dialog.recording_clock_switch.isChecked()
@@ -377,10 +377,10 @@ def test_settings_loads_the_label_switches(make_dialog):
 def test_settings_search_finds_the_overlay_look(make_dialog):
     from ui_qt.dialogs import settings_metadata
 
-    titles = [title for attr, title, _ in settings_metadata.PAGE_SEARCH_FIELDS["recording"]]
+    titles = [title for attr, title, _ in settings_metadata.PAGE_SEARCH_FIELDS["appearance"]]
     assert "Recording overlay" in titles
     dialog, _ = make_dialog()
-    _open_recording(dialog)
+    _open_appearance(dialog)
     assert dialog.recording_look_tile.isVisible()
 
 

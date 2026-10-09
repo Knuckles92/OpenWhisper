@@ -98,6 +98,7 @@ def _feature_check(dialog, feature):
 # (control, key, stored value, checked after load)
 _BOUND_CHECKS = [
     (lambda d: d.auto_paste_check, SettingsKey.AUTO_PASTE, False, False),
+    (lambda d: d.restore_clipboard_check, SettingsKey.RESTORE_CLIPBOARD, False, False),
     (lambda d: d.copy_clipboard_check, SettingsKey.COPY_CLIPBOARD, False, False),
     (lambda d: d.update_notify_check, SettingsKey.UPDATE_NOTIFY_ENABLED, False, False),
     (lambda d: d.meeting_past_recall_check, SettingsKey.MEETING_PAST_RECALL_ENABLED, True, True),

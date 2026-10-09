@@ -40,5 +40,11 @@
     "component": "application",
     "category": "LoggedError",
     "line": 143
+  },
+  {
+    "utc": "2026-10-09T07:01:11.723056+00:00",
+    "component": "recorder",
+    "category": "LoggedError",
+    "line": 636
   }
 ]

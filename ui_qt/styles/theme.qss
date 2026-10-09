@@ -933,6 +933,7 @@ QFrame#settingsTile[kind="notice"]:hover {
 
 QWidget#settingsTileBody,
 QWidget#settingsTileText,
+QWidget#recordingLookParts,
 QWidget#remoteSection,
 QWidget#remotePairRow,
 QWidget#remotePairedRow,
@@ -966,6 +967,11 @@ QLabel#settingsTileFieldLabel {
     background-color: transparent;
     border: none;
     font-size: 13px;
+}
+
+/* The overlay label switches' captions sit on the tile, not the page. */
+QWidget#recordingLookParts QLabel {
+    background-color: transparent;
 }
 
 QFrame#settingsTile QLabel#settingsTileGroupTitle,

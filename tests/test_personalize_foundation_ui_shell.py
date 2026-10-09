@@ -88,6 +88,10 @@ class TestClipboardHooks:
         ui.stage_transcript_for_paste("hello", html="<b>hello</b>")
         ui._temporary_clipboard.stage_text.assert_called_once_with("hello", html="<b>hello</b>")
 
+    def test_staging_without_restore_passes_it_on(self, ui):
+        ui.stage_transcript_for_paste("hello", restore=False)
+        ui._temporary_clipboard.stage_text.assert_called_once_with("hello", restore=False)
+
     def test_capture_selection_hands_over_the_copy_shortcut_and_timeout(self, ui, monkeypatch):
         keys = types.ModuleType("services.synthetic_keys")
         keys.send_copy = MagicMock()

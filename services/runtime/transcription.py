@@ -286,8 +286,9 @@ class TranscriptionRuntime:
             # paste; it is queued to the Qt thread and never delays this start.
             # Command Mode reads the selection through the clipboard first,
             # so its snapshot would no longer be the user's.
-            if mode == JobMode.DICTATION and settings_manager.get(
-                SettingsKey.AUTO_PASTE, SETTING_DEFAULTS[SettingsKey.AUTO_PASTE]
+            if mode == JobMode.DICTATION and all(
+                settings_manager.get(key, SETTING_DEFAULTS[key])
+                for key in (SettingsKey.AUTO_PASTE, SettingsKey.RESTORE_CLIPBOARD)
             ):
                 self.controller.ui_controller.prefetch_clipboard_snapshot()
             return True
@@ -1463,11 +1464,14 @@ class TranscriptionRuntime:
 
         if auto_paste and not paste_blocked:
             ui = self.controller.ui_controller
-            # Without rich text the call stays the one every UI stand-in takes.
-            stage = (
-                ui.stage_transcript_for_paste(transcript, html=html)
-                if html else ui.stage_transcript_for_paste(transcript)
-            )
+            # Only options that differ from the defaults are passed, so a plain
+            # paste stays the one-argument call every UI stand-in takes.
+            options = {}
+            if html:
+                options["html"] = html
+            if not setting_value(SettingsKey.RESTORE_CLIPBOARD, settings):
+                options["restore"] = False
+            stage = ui.stage_transcript_for_paste(transcript, **options)
             if not stage.written:
                 logger.error("Failed to copy transcription for auto-paste")
                 _status("Transcription complete (copy failed)")

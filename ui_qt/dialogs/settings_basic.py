@@ -40,6 +40,7 @@ from services.settings import (
 from services.text_llm import get_profile, profile_display_name
 from ui_qt.dialogs import cleanup_levels
 from ui_qt.dialogs.settings_destinations import (
+    APPEARANCE,
     BASIC_APP,
     BASIC_DICTATION,
     CLEANUP,
@@ -434,7 +435,8 @@ class BasicSettingsPage(QWidget):
             for label, value in choices:
                 combo.addItem(label, value)
             self._row(appearance, title, description, combo)
-            self._bind(combo, GENERAL, attribute, key, resolver)
+            self._bind(combo, APPEARANCE, attribute, key, resolver)
+        self._advanced_link(appearance, "Recording overlay and more", APPEARANCE)
         window = self._group(layout, "Window", "box-blue.svg")
         tray = self._toggle(
             window,

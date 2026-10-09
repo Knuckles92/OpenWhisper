@@ -784,10 +784,17 @@ class UIController(QObject):
         """Drop the snapshot a recording prefetched without pasting. Any thread."""
         self._temporary_clipboard.discard_prefetch()
 
-    def stage_transcript_for_paste(self, text: str, html: Optional[str] = None) -> ClipboardStageResult:
+    def stage_transcript_for_paste(
+        self, text: str, html: Optional[str] = None, *, restore: bool = True
+    ) -> ClipboardStageResult:
+        """Put ``text`` on the clipboard for a paste; ``restore`` keeps the
+        user's clipboard to put back afterward."""
+        options = {}
         if html:
-            return self._temporary_clipboard.stage_text(text, html=html)
-        return self._temporary_clipboard.stage_text(text)
+            options["html"] = html
+        if not restore:
+            options["restore"] = False
+        return self._temporary_clipboard.stage_text(text, **options)
 
     def capture_selection(self, callback: Callable[[Optional[str]], None], *, timeout_ms: Optional[int] = None) -> None:
         """Read the selected text through a copy that leaves the clipboard as it was.

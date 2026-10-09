@@ -170,7 +170,7 @@ On X11 Linux, hotkeys also reach the focused app. Omarchy supports desktop short
 
 OpenWhisper adapts to Omarchy 3 and 4 with a compact interface and desktop colors. Hyprland manages window placement and sizing; Omarchy mode supports desktop shortcuts and auto-paste on Hyprland 0.55+.
 
-Choose **Settings → General → Theme → Omarchy desktop** to follow your desktop palette. An optional [Omarchy 4 bar widget](integrations/omarchy) provides recording controls, status, and live text.
+Choose **Settings → Appearance → Theme → Omarchy desktop** to follow your desktop palette. An optional [Omarchy 4 bar widget](integrations/omarchy) provides recording controls, status, and live text.
 
 ## Speech models
 

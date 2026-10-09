@@ -490,11 +490,15 @@ class TemporaryClipboard(QObject):
             self._discard_pending()
         return written
 
-    def stage_text(self, text: str, html: str | None = None) -> ClipboardStageResult:
+    def stage_text(
+        self, text: str, html: str | None = None, *, restore: bool = True
+    ) -> ClipboardStageResult:
         """Put ``text`` on the clipboard for a paste, keeping the user's to restore.
 
         ``html`` is a rich-text alternative staged with ``text``: apps that
-        take rich text paste it, the rest paste ``text``.
+        take rich text paste it, the rest paste ``text``. With ``restore``
+        off the user's clipboard is not copied, so no lease is returned and
+        the text stays after the paste.
         """
         html = html or ""
         self._abort_selection_capture()
@@ -502,6 +506,9 @@ class TemporaryClipboard(QObject):
         if self._clipboard is None:
             logger.error("No Qt clipboard available")
             return ClipboardStageResult(False)
+        if not restore:
+            self._discard_prefetch()
+            return ClipboardStageResult(self._stage_without_lease(text, html))
 
         # Only after the pending restore above: rewriting the clipboard bumps
         # its sequence number, so a prefetch taken while the previous

@@ -286,15 +286,15 @@ class AppConfig:
 
     # The recording overlay's look: "ribbon", "bars", "wave", "orb", "aurora",
     # "bubbles", or "legacy" (Classic, the original particles).
-    # Settings → Recording → Overlay.
+    # Settings → Appearance → Overlay.
     RECORDING_OVERLAY_LOOK: str = "ribbon"
 
     # Application UI type size as a percent of the designed 14px theme.
-    # Settings → General → Font size. 100 is the shipped default.
+    # Settings → Appearance → Font size. 100 is the shipped default.
     UI_FONT_SCALE: int = 100
 
     # Colour theme for a fresh install: "dark", "light", or "system".
-    # Settings → General → Appearance. Dark is the look the app shipped with.
+    # Settings → Appearance → Theme. Dark is the look the app shipped with.
     UI_THEME: str = "dark"
 
     # Timing settings

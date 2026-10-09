@@ -83,6 +83,9 @@ class SettingsKey:
     AUTO_PASTE: Final[str] = "auto_paste"
     MACOS_ACCESSIBILITY_INTRO_SEEN: Final[str] = "macos_accessibility_intro_seen"
     COPY_CLIPBOARD: Final[str] = "copy_clipboard"
+    # Put back what the clipboard held before an auto-paste borrowed it; off
+    # leaves the pasted text on the clipboard.
+    RESTORE_CLIPBOARD: Final[str] = "restore_clipboard"
     TRANSCRIPT_CLEANUP_ENABLED: Final[str] = "transcript_cleanup_enabled"
     TRANSCRIPT_CLEANUP_PROMPT: Final[str] = "transcript_cleanup_prompt"
     TRANSCRIPT_CLEANUP_PROVIDER: Final[str] = "transcript_cleanup_provider"
@@ -578,6 +581,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.API_TRANSCRIPTION_MODEL: config.DEFAULT_API_MODEL,
     SettingsKey.AUTO_PASTE: True,
     SettingsKey.COPY_CLIPBOARD: True,
+    SettingsKey.RESTORE_CLIPBOARD: True,
     SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN: False,
     SettingsKey.COMPACT_MODE: False,
     SettingsKey.HOST_MODE: False,

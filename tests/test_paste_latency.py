@@ -134,9 +134,9 @@ class TemporaryClipboardUI(FakeUI):
     def discard_clipboard_prefetch(self):
         self.temporary.discard_prefetch()
 
-    def stage_transcript_for_paste(self, text, html=None):
+    def stage_transcript_for_paste(self, text, html=None, **options):
         self.events.append("stage")
-        return self.temporary.stage_text(text, html=html)
+        return self.temporary.stage_text(text, html=html, **options)
 
     def schedule_clipboard_restore(self, stage):
         return self.temporary.schedule_restore(stage.lease, 0)
@@ -427,6 +427,26 @@ def test_dictation_pastes_without_copying_the_clipboard_again(monkeypatch, captu
     assert h.clipboard.text() == "dictated words"
     _pump()
     assert h.clipboard.text() == "user's own clipboard"
+
+
+def test_restore_off_pastes_and_leaves_the_transcript_without_copying_the_clipboard(
+    monkeypatch, captures
+):
+    h = _clipboard_harness(monkeypatch)
+    h.settings.values[SettingsKey.RESTORE_CLIPBOARD] = False
+    _start_from_hotkey_thread(h.runtime)
+    _pump()
+    assert captures == []  # nothing to put back, so nothing prefetched
+
+    h.controller.recorder.is_recording = False
+    assert h.runtime._claim_job()
+    h.runtime.on_transcription_complete("dictated words")
+    _pump()
+
+    assert captures == []
+    assert h.paste.called
+    assert h.clipboard.text() == "dictated words"
+    assert h.ui.statuses[-1] == "Ready (Pasted)"
 
 
 def test_copy_made_during_dictation_is_what_gets_restored(monkeypatch, captures):

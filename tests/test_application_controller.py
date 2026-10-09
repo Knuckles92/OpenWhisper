@@ -667,7 +667,7 @@ class DummyUIController:
     def discard_clipboard_prefetch(self):
         self.clipboard_prefetch_discards += 1
 
-    def stage_transcript_for_paste(self, text):
+    def stage_transcript_for_paste(self, text, restore=True):
         if not self.copy_succeeds:
             return types.SimpleNamespace(
                 written=False,
@@ -677,8 +677,8 @@ class DummyUIController:
         self.copied.append(text)
         stage = types.SimpleNamespace(
             written=True,
-            lease=object() if self.clipboard_stage_needs_restore else None,
-            restore_unavailable=self.clipboard_restore_unavailable,
+            lease=object() if restore and self.clipboard_stage_needs_restore else None,
+            restore_unavailable=restore and self.clipboard_restore_unavailable,
         )
         self.clipboard_stages.append((text, stage))
         return stage
@@ -1591,6 +1591,19 @@ class TestApplicationController:
         assert [text for text, _stage in ui.clipboard_stages] == ["hello world"]
         assert len(ui.clipboard_restores) == 1
         assert ui.clipboard_commits == []
+        assert ui.statuses[-1] == "Ready (Pasted)"
+
+    def test_auto_paste_with_restore_off_leaves_transcript_on_clipboard(self):
+        controller = self._create_controller()
+        self.settings.all_settings["auto_paste"] = True
+        self.settings.all_settings["restore_clipboard"] = False
+
+        controller._on_transcription_complete("hello world", None)
+
+        ui = controller.ui_controller
+        assert self.keyboard.sent == ["ctrl+v"]
+        assert ui.copied[-1] == "hello world"
+        assert ui.clipboard_restores == []
         assert ui.statuses[-1] == "Ready (Pasted)"
 
     def test_auto_paste_leaves_transcript_when_clipboard_started_blank(self):

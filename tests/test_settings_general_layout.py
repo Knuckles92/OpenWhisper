@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 
 from ui_qt.dialogs.settings_dialog import (
     ADVANCED,
+    APPEARANCE,
     API_KEYS,
     BACKUP,
     CLEANUP,
@@ -90,6 +91,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     RUNTIME,
                     BACKUP,
                     GENERAL,
+                    APPEARANCE,
                     HOTKEYS,
                     API_KEYS,
                     MCP,
@@ -106,30 +108,45 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 scroll = dialog._page_scrolls[key]
                 self.assertIs(scroll.widget(), dialog._pages[key])
                 self.assertTrue(scroll.widgetResizable())
+            def group_titles(page):
+                return [
+                    label.text()
+                    for label in page.findChildren(QLabel)
+                    if label.objectName() == "settingsTileGroupTitle"
+                ]
+
             general = dialog._pages[GENERAL]
             tiles = general.findChildren(SettingTile)
-            self.assertEqual(len(tiles), 5)
-            self.assertEqual(len(general.findChildren(FieldTile)), 2)
+            self.assertEqual(len(tiles), 6)
+            self.assertEqual(len(general.findChildren(FieldTile)), 0)
             self.assertIs(dialog.auto_paste_check, dialog.auto_paste_tile.checkbox)
             self.assertIs(
                 dialog.update_notify_check, dialog.update_notify_tile.checkbox
+            )
+            self.assertEqual(group_titles(general), ["Output", "Window", "Updates"])
+            # Every visual setting lives on Appearance.
+            appearance = dialog._pages[APPEARANCE]
+            self.assertEqual(
+                set(appearance.findChildren(FieldTile)),
+                {
+                    dialog.ui_theme_tile,
+                    dialog.ui_font_scale_tile,
+                    dialog.recording_look_tile,
+                    dialog.streaming_font_size_tile,
+                },
             )
             self.assertIs(
                 dialog.ui_font_scale_tile.control, dialog.ui_font_scale_combo
             )
             self.assertIs(dialog.ui_theme_tile.control, dialog.ui_theme_combo)
-            group_titles = [
-                label.text()
-                for label in general.findChildren(QLabel)
-                if label.objectName() == "settingsTileGroupTitle"
-            ]
-            self.assertEqual(
-                group_titles, ["Output", "Window", "Appearance", "Updates"]
+            self.assertIs(
+                dialog.streaming_font_size_tile.control,
+                dialog.streaming_font_size_spinbox,
             )
+            self.assertEqual(group_titles(appearance), ["Theme and text", "Overlay"])
             recording = dialog._pages[RECORDING]
-            forms = recording.findChildren(QFormLayout)
-            self.assertGreaterEqual(len(forms), 2)
-            self.assertEqual(len(recording.findChildren(FieldTile)), 3)
+            self.assertGreaterEqual(len(recording.findChildren(QFormLayout)), 1)
+            self.assertEqual(len(recording.findChildren(FieldTile)), 2)
             self.assertEqual(len(recording.findChildren(SettingTile)), 1)
             self.assertIs(
                 dialog.streaming_enabled_check,
@@ -459,7 +476,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 dialog.resize(width, 600)
                 for _ in range(8):
                     self.app.processEvents()
-                left, right = dialog.auto_paste_tile, dialog.copy_clipboard_tile
+                left, right = dialog.auto_paste_tile, dialog.restore_clipboard_tile
                 with self.subTest(width=width):
                     if width == 800:
                         self.assertEqual(left.x(), right.x())

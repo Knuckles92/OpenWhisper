@@ -128,6 +128,7 @@ from ui_qt.dialogs.settings_metadata import (
 from ui_qt.utils.list_reconcile import HistoryDelivery
 from ui_qt.dialogs.settings_destinations import (
     ADVANCED,
+    APPEARANCE,
     BASIC_APP,
     BASIC_DICTATION,
     BASIC_MEETINGS,
@@ -676,6 +677,7 @@ class SettingsDialog(QDialog):
             )),
             ("App", (
                 (GENERAL, "General", "bolt-green.svg"),
+                (APPEARANCE, "Appearance", "palette-purple.svg"),
                 (HOTKEYS, "Hotkeys", "keyboard-green.svg"),
                 (API_KEYS, "API keys", "key-blue.svg"),
                 (MCP, "MCP", "server-blue.svg"),
@@ -765,7 +767,7 @@ class SettingsDialog(QDialog):
         self._add_page(
             RECORDING,
             "Recording",
-            "Microphone, saved audio retention, and the live preview overlay.",
+            "Microphone, saved audio retention, and the live preview.",
             self._build_recording_page,
         )
         self._add_page(
@@ -855,6 +857,13 @@ class SettingsDialog(QDialog):
             "How finished transcriptions leave the app, and how the window "
             "behaves when you close it.",
             self._build_general_page,
+        )
+        self._add_page(
+            APPEARANCE,
+            "Appearance",
+            "Theme, text size, and how the overlay near your pointer looks "
+            "while you dictate.",
+            self._build_appearance_page,
         )
         self._add_page(
             HOTKEYS,
@@ -1205,9 +1214,9 @@ class SettingsDialog(QDialog):
 
     def _build_general_page(self, layout: QVBoxLayout) -> None:
         auto_paste_description = (
-            "Types a dictated transcript into whichever window has focus. The "
-            "clipboard is borrowed for the paste and restored afterward. "
-            "Upload File results stay in the window with their own Copy buttons."
+            "Types a dictated transcript into whichever window has focus, "
+            "pasting it through the clipboard. Upload File results stay in "
+            "the window with their own Copy buttons."
         )
         if self._native_wayland:
             from services.hyprland import available
@@ -1224,10 +1233,19 @@ class SettingsDialog(QDialog):
         )
         self.auto_paste_check = self.auto_paste_tile.checkbox
 
+        self.restore_clipboard_tile = SettingTile(
+            "Restore the clipboard after pasting",
+            "Puts back what you had copied once a paste lands, including "
+            "Command Mode rewrites. Turn off to keep the pasted text on the "
+            "clipboard.",
+            design_icon("refresh-blue.svg"),
+        )
+        self.restore_clipboard_check = self.restore_clipboard_tile.checkbox
+
         self.copy_clipboard_tile = SettingTile(
             "Copy to the clipboard",
             "Keeps the transcript on the clipboard when auto-paste is off or "
-            "unavailable. A successful paste restores what was there before.",
+            "unavailable.",
             design_icon("stack-slate.svg"),
         )
         self.copy_clipboard_check = self.copy_clipboard_tile.checkbox
@@ -1263,47 +1281,10 @@ class SettingsDialog(QDialog):
         self.update_notify_check = self.update_notify_tile.checkbox
         self.update_notify_check.setObjectName("updateNotifyEnabledCheck")
 
-        self.ui_theme_combo = ElidingComboBox()
-        self.ui_theme_combo.setObjectName("settingsUiThemeCombo")
-        self.ui_theme_combo.setMinimumHeight(40)
-        self.ui_theme_combo.setMinimumWidth(140)
-        for theme in UiTheme.ALL:
-            self.ui_theme_combo.addItem(UiTheme.LABELS[theme], theme)
-        self.ui_theme_combo.setCurrentIndex(
-            max(0, self.ui_theme_combo.findData(config.UI_THEME))
-        )
-        self.ui_theme_combo.currentIndexChanged.connect(self._on_ui_theme_changed)
-        self.ui_theme_tile = FieldTile(
-            "Theme",
-            "Dark, light, or match your operating system.",
-            self.ui_theme_combo,
-            design_icon("box-blue.svg"),
-        )
-
-        self.ui_font_scale_combo = ElidingComboBox()
-        self.ui_font_scale_combo.setObjectName("settingsUiFontScaleCombo")
-        self.ui_font_scale_combo.setMinimumHeight(40)
-        self.ui_font_scale_combo.setMinimumWidth(140)
-        for percent in UiFontScale.ALL:
-            self.ui_font_scale_combo.addItem(
-                UiFontScale.LABELS[percent], percent
-            )
-        self.ui_font_scale_combo.setCurrentIndex(
-            max(0, self.ui_font_scale_combo.findData(UiFontScale.DEFAULT))
-        )
-        self.ui_font_scale_combo.currentIndexChanged.connect(
-            self._on_ui_font_scale_changed
-        )
-        self.ui_font_scale_tile = FieldTile(
-            "Font size",
-            "Text size in windows and dialogs. The live preview overlay "
-            "has its own under Recording.",
-            self.ui_font_scale_combo,
-            design_icon("typography-blue.svg"),
-        )
-
         self._tile_group(
-            layout, "Output", [self.auto_paste_tile, self.copy_clipboard_tile]
+            layout,
+            "Output",
+            [self.auto_paste_tile, self.restore_clipboard_tile, self.copy_clipboard_tile],
         )
         if sys.platform == "darwin":
             permission_row = QHBoxLayout()
@@ -1320,9 +1301,6 @@ class SettingsDialog(QDialog):
             self._refresh_accessibility_status()
         self._tile_group(layout, "Window", [self.minimize_tray_tile])
         self._tile_group(
-            layout, "Appearance", [self.ui_theme_tile, self.ui_font_scale_tile]
-        )
-        self._tile_group(
             layout, "Updates", [self.update_check_tile, self.update_notify_tile]
         )
 
@@ -1330,6 +1308,11 @@ class SettingsDialog(QDialog):
             self.auto_paste_check,
             SettingsKey.AUTO_PASTE,
             lambda settings: setting_value(SettingsKey.AUTO_PASTE, settings),
+        )
+        self._bindings.checkbox(
+            self.restore_clipboard_check,
+            SettingsKey.RESTORE_CLIPBOARD,
+            lambda settings: setting_value(SettingsKey.RESTORE_CLIPBOARD, settings),
         )
         self._bindings.checkbox(
             self.copy_clipboard_check,
@@ -1506,32 +1489,58 @@ class SettingsDialog(QDialog):
             "native streaming; Parakeet transcribes short audio chunks with the "
             "loaded model; Local Whisper uses a separate tiny.en preview model. "
             "The final transcript uses your selected model and follows the "
-            "General paste and clipboard settings.",
+            "General paste and clipboard settings. Its text size is under "
+            "Appearance.",
             design_icon("bolt-green.svg"),
         )
         self.streaming_enabled_check = self.streaming_enabled_tile.checkbox
         self.streaming_enabled_check.toggled.connect(
             self._on_streaming_enabled_changed
         )
-
-        self.streaming_font_size_label = QLabel("Preview font size:")
-        self.streaming_font_size_spinbox = NoWheelSpinBox()
-        self.streaming_font_size_spinbox.setMinimum(10)
-        self.streaming_font_size_spinbox.setMaximum(48)
-        self.streaming_font_size_spinbox.setSuffix(" pt")
-        self.streaming_font_size_spinbox.setValue(config.STREAMING_OVERLAY_FONT_SIZE)
-        self.streaming_font_size_spinbox.setMinimumHeight(40)
-        self.streaming_font_size_spinbox.setMinimumWidth(120)
-        self.streaming_font_size_spinbox.setKeyboardTracking(False)
-        self.streaming_font_size_spinbox.valueChanged.connect(
-            self._on_streaming_font_changed
-        )
-        self.streaming_enabled_tile.add_body_layout(
-            self._spin_form(
-                self.streaming_font_size_label, self.streaming_font_size_spinbox
-            )
-        )
         self._tile_group(layout, "Live preview", [self.streaming_enabled_tile])
+
+    def _build_appearance_page(self, layout: QVBoxLayout) -> None:
+        self.ui_theme_combo = ElidingComboBox()
+        self.ui_theme_combo.setObjectName("settingsUiThemeCombo")
+        self.ui_theme_combo.setMinimumHeight(40)
+        self.ui_theme_combo.setMinimumWidth(140)
+        for theme in UiTheme.ALL:
+            self.ui_theme_combo.addItem(UiTheme.LABELS[theme], theme)
+        self.ui_theme_combo.setCurrentIndex(
+            max(0, self.ui_theme_combo.findData(config.UI_THEME))
+        )
+        self.ui_theme_combo.currentIndexChanged.connect(self._on_ui_theme_changed)
+        self.ui_theme_tile = FieldTile(
+            "Theme",
+            "Dark, light, or match your operating system.",
+            self.ui_theme_combo,
+            design_icon("palette-purple.svg"),
+        )
+
+        self.ui_font_scale_combo = ElidingComboBox()
+        self.ui_font_scale_combo.setObjectName("settingsUiFontScaleCombo")
+        self.ui_font_scale_combo.setMinimumHeight(40)
+        self.ui_font_scale_combo.setMinimumWidth(140)
+        for percent in UiFontScale.ALL:
+            self.ui_font_scale_combo.addItem(
+                UiFontScale.LABELS[percent], percent
+            )
+        self.ui_font_scale_combo.setCurrentIndex(
+            max(0, self.ui_font_scale_combo.findData(UiFontScale.DEFAULT))
+        )
+        self.ui_font_scale_combo.currentIndexChanged.connect(
+            self._on_ui_font_scale_changed
+        )
+        self.ui_font_scale_tile = FieldTile(
+            "Font size",
+            "Text size in windows and dialogs. The live preview has its own "
+            "size below.",
+            self.ui_font_scale_combo,
+            design_icon("typography-blue.svg"),
+        )
+        self._tile_group(
+            layout, "Theme and text", [self.ui_theme_tile, self.ui_font_scale_tile]
+        )
 
         self.recording_look_bar = SegmentedBar([
             (RecordingOverlayLook.LABELS[look], RecordingOverlayLook.DETAILS[look])
@@ -1553,6 +1562,7 @@ class SettingsDialog(QDialog):
             design_icon("palette-purple.svg"),
         )
         parts = QWidget()
+        parts.setObjectName("recordingLookParts")
         parts_layout = QVBoxLayout(parts)
         parts_layout.setContentsMargins(0, 4, 0, 0)
         parts_layout.setSpacing(2)
@@ -1565,7 +1575,35 @@ class SettingsDialog(QDialog):
         self.recording_parts = parts
         self.recording_look_tile.add_body(parts)
         self.recording_look_tile.add_body(self.recording_look_preview)
-        self._tile_group(layout, "Overlay", [self.recording_look_tile], columns=1)
+
+        self.streaming_font_size_spinbox = NoWheelSpinBox()
+        self.streaming_font_size_spinbox.setAccessibleName("Live preview text size")
+        self.streaming_font_size_spinbox.setMinimum(10)
+        self.streaming_font_size_spinbox.setMaximum(48)
+        self.streaming_font_size_spinbox.setSuffix(" pt")
+        self.streaming_font_size_spinbox.setValue(config.STREAMING_OVERLAY_FONT_SIZE)
+        self.streaming_font_size_spinbox.setMinimumHeight(40)
+        self.streaming_font_size_spinbox.setMinimumWidth(120)
+        self.streaming_font_size_spinbox.setKeyboardTracking(False)
+        self.streaming_font_size_spinbox.valueChanged.connect(
+            self._on_streaming_font_changed
+        )
+        # Left enabled while the preview is off: the switch is on another
+        # page, and a size picked ahead of time is kept.
+        self.streaming_font_size_tile = FieldTile(
+            "Live preview text size",
+            "The words that appear near your pointer as you speak, when "
+            "Real-time transcription preview is on under Recording.",
+            self.streaming_font_size_spinbox,
+            design_icon("typography-blue.svg"),
+            compact=True,
+        )
+        self._tile_group(
+            layout,
+            "Overlay",
+            [self.recording_look_tile, self.streaming_font_size_tile],
+            columns=1,
+        )
 
     def _overlay_part_switch(self, layout: QVBoxLayout, text: str, key: str) -> SettingsSwitch:
         """A labelled switch for one part of the live recording label."""
@@ -3397,6 +3435,8 @@ class SettingsDialog(QDialog):
         general = ("Auto-paste on" if setting_value(SettingsKey.AUTO_PASTE, settings)
                    else "Clipboard" if setting_value(SettingsKey.COPY_CLIPBOARD, settings) else "Manual")
         self.rail.set_value(GENERAL, general)
+        self.rail.set_value(APPEARANCE, f"{UiTheme.LABELS[resolve_ui_theme(settings)]} · "
+                            f"{RecordingOverlayLook.LABELS[resolve_recording_overlay_look(settings)]}")
         self.rail.set_value(RECORDING, settings_microphones.rail_value(settings))
         model = resolve_transcript_cleanup_model(settings)
         cleanup = cleanup_prompts.level_label(settings)
@@ -3704,7 +3744,6 @@ class SettingsDialog(QDialog):
         self.recordings_usage_label.setText(f"Currently {count} {noun} using {format_file_size(total_bytes)}.")
 
     def _on_streaming_enabled_changed(self, checked: bool) -> None:
-        self._update_streaming_font_ui()
         if not self._persist_many(
             {SettingsKey.STREAMING_ENABLED: bool(checked)},
             drops=LEGACY_STREAMING_KEYS,
@@ -3739,11 +3778,6 @@ class SettingsDialog(QDialog):
             return
         if self.on_streaming_font_changed:
             self.on_streaming_font_changed()
-
-    def _update_streaming_font_ui(self) -> None:
-        enabled = self.streaming_enabled_check.isChecked()
-        self.streaming_font_size_label.setEnabled(enabled)
-        self.streaming_font_size_spinbox.setEnabled(enabled)
 
     def _on_cleanup_enabled_changed(self, checked: bool) -> None:
         saved = self._persist(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, bool(checked))
@@ -4778,13 +4812,14 @@ class SettingsDialog(QDialog):
         if self._page_is_loading(GENERAL):
             self.update_check_check.setChecked(resolve_update_check_enabled(settings))
             self.update_notify_tile.setEnabled(self.update_check_check.isChecked())
-            self.ui_font_scale_combo.setCurrentIndex(max(0, self.ui_font_scale_combo.findData(resolve_ui_font_scale(settings))))
-            self.ui_theme_combo.setCurrentIndex(max(0, self.ui_theme_combo.findData(resolve_ui_theme(settings))))
         if self._page_is_loading(RECORDING):
             self._load_retention_settings(settings)
             self.streaming_enabled_check.setChecked(setting_value(SettingsKey.STREAMING_ENABLED, settings))
+            self._microphones.load(settings)
+        if self._page_is_loading(APPEARANCE):
+            self.ui_font_scale_combo.setCurrentIndex(max(0, self.ui_font_scale_combo.findData(resolve_ui_font_scale(settings))))
+            self.ui_theme_combo.setCurrentIndex(max(0, self.ui_theme_combo.findData(resolve_ui_theme(settings))))
             self.streaming_font_size_spinbox.setValue(resolve_streaming_overlay_font_size(settings))
-            self._update_streaming_font_ui()
             look = resolve_recording_overlay_look(settings)
             self.recording_look_bar.setCurrentIndex(RecordingOverlayLook.ALL.index(look))
             self.recording_look_preview.set_look(look)
@@ -4792,7 +4827,6 @@ class SettingsDialog(QDialog):
             self.recording_text_switch.setChecked(resolve_recording_overlay_text(settings))
             self.recording_clock_switch.setChecked(resolve_recording_overlay_clock(settings))
             self._show_overlay_parts()
-            self._microphones.load(settings)
         self._load_meeting_settings(settings)
         if self._page_is_loading(API_KEYS):
             self._load_api_key_settings(settings)

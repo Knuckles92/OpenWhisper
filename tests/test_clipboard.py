@@ -90,6 +90,19 @@ def test_nonblank_text_is_restored():
     assert clipboard.text() == "previous text"
 
 
+def test_stage_without_restore_leaves_transcript_and_keeps_no_lease():
+    clipboard = _text_clipboard("previous text")
+    temporary = TemporaryClipboard(clipboard)
+
+    stage = temporary.stage_text("dictated text", restore=False)
+
+    assert stage.written
+    assert stage.lease is None
+    assert not stage.restore_unavailable
+    assert clipboard.text() == "dictated text"
+    assert not clipboard.mimeData().hasFormat(AUTO_PASTE_MARKER_FORMAT)
+
+
 def test_rich_and_custom_formats_are_restored():
     mime_data = QMimeData()
     mime_data.setText("previous text")
@@ -357,6 +370,19 @@ def test_discarded_prefetch_is_not_used(captures):
     assert len(captures) == 2
 
 
+def test_stage_without_restore_drops_the_prefetch(captures):
+    clipboard = _sequenced_text_clipboard("previous text")
+    # A counter that never moves would pass a stale prefetch off as current.
+    temporary = _prefetched(clipboard, sequence_source=lambda: 1)
+
+    temporary.stage_text("dictated text", restore=False)
+    stage = temporary.stage_text("next transcript")
+
+    assert len(captures) == 2
+    temporary.restore_now(stage.lease)
+    assert clipboard.text() == "dictated text"
+
+
 def test_discard_cancels_a_prefetch_not_yet_taken(captures):
     clipboard = _sequenced_text_clipboard("previous text")
     temporary = TemporaryClipboard(clipboard, sequence_source=clipboard.sequence)
@@ -539,6 +565,15 @@ def test_unsnapshotted_stage_is_rendered(renders):
     stage = temporary.stage_text("dictated text")
 
     assert stage.restore_unavailable
+    assert renders.calls == ["dictated text"]
+
+
+def test_stage_without_restore_is_rendered(renders):
+    clipboard = renders.install(_text_clipboard("previous text"))
+    temporary = TemporaryClipboard(clipboard)
+
+    temporary.stage_text("dictated text", restore=False)
+
     assert renders.calls == ["dictated text"]
 
 

@@ -8,6 +8,12 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+### Added
+- **Choose whether the clipboard comes back after a paste** — **Settings → General → Output** has a new **Restore the clipboard after pasting** switch. It's on by default, which is how pasting already worked: what you had copied is put back once the transcript lands. Turn it off to keep the pasted text on the clipboard so you can paste it again. It covers dictation and Command Mode rewrites, and with it off OpenWhisper no longer copies your clipboard while you speak.
+
+### Changed
+- **One place for how OpenWhisper looks** — **Settings → App → Appearance** now holds the theme, the window font size, the recording overlay's look (with its live preview and label switches), and the live preview's text size. They used to be split between General and Recording. In Basic settings, the App tab links to it.
+
 ## [2.7.0] - 2026-10-08
 
 ### Added

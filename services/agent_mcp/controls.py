@@ -99,6 +99,9 @@ class SettingControl:
 LIVE = "Applies immediately in the desktop app."
 SETTING_CONTROLS = (
     SettingControl(SettingsKey.AUTO_PASTE, "Paste after transcription", "Dictation"),
+    SettingControl(
+        SettingsKey.RESTORE_CLIPBOARD, "Restore clipboard after paste", "Dictation"
+    ),
     SettingControl(SettingsKey.COPY_CLIPBOARD, "Copy to clipboard", "Dictation"),
     SettingControl(
         SettingsKey.RECORDING_TRIGGER_MODE,

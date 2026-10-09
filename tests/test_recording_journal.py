@@ -1,5 +1,7 @@
 """Failure injection for durable capture; no microphone or personal data."""
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+import os
 import subprocess
 import sys
 import threading
@@ -8,7 +10,9 @@ from unittest.mock import MagicMock
 import wave
 
 import numpy as np
+import pytest
 
+from config import config
 from services.recording_journal import RecordingJournal, recover_recordings, recovery_directory
 from services.recorder import AudioRecorder
 
@@ -267,3 +271,52 @@ def test_cancel_returns_while_cancellation_checkpoint_is_stalled(tmp_path, monke
         release.set()
         recorder.cleanup()
     assert not journal.directory.exists()
+
+
+@pytest.mark.parametrize('quiet_tail', [False, True])
+def test_stop_wait_allows_final_storage_checkpoint(tmp_path, monkeypatch, quiet_tail):
+    monkeypatch.setattr('services.recorder.sd.InputStream', MagicMock())
+    monkeypatch.setattr(config, 'POST_ROLL_MS', 50)
+    monkeypatch.setattr(config, 'POST_ROLL_FINALIZE_GRACE_MS', 50)
+    recorder = AudioRecorder(output_file=str(tmp_path / 'capture.wav'))
+    entered, release = threading.Event(), threading.Event()
+    try:
+        assert recorder.start_recording()
+        journal = recorder._audio_spool
+        audio = np.arange(1024, dtype=np.int16).reshape(-1, 1)
+        recorder._audio_callback(audio, len(audio), None, None)
+        journal._queue.join()
+        journal_fd = journal._file.fileno()
+        fsync = os.fsync
+
+        def slow_checkpoint(fd):
+            if fd == journal_fd and journal._stop.is_set():
+                entered.set()
+                assert release.wait(3)
+            return fsync(fd)
+
+        monkeypatch.setattr('services.recording_journal.os.fsync', slow_checkpoint)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            try:
+                assert recorder.stop_recording()
+                if quiet_tail:
+                    recorder._end_post_roll('quiet')
+                pending = executor.submit(recorder.wait_for_stop_completion)
+                assert entered.wait(1)
+                # Storage is still within its own deadline after the capture
+                # deadline has elapsed; it must not turn valid audio into failure.
+                time.sleep(0.15)
+                assert not pending.done()
+                assert not recorder.wait_for_stop_completion(timeout=0.01)
+                release.set()
+                assert pending.result(timeout=1)
+            finally:
+                release.set()
+        assert recorder.last_capture_error is None
+        assert not recorder.is_recording
+        assert recorder.save_recording()
+        with wave.open(recorder.output_file) as saved:
+            assert saved.readframes(len(audio)) == audio.tobytes()
+    finally:
+        release.set()
+        recorder.cleanup()
