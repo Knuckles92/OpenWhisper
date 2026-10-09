@@ -127,6 +127,102 @@ def test_auto_uses_the_vulkan_runtime_only_once_installed(monkeypatch):
     assert resolve_runtime("parakeet", "auto") == ("asr-nvidia-cuda", "cuda")
 
 
+@pytest.fixture
+def fresh_gpu_install(monkeypatch):
+    """No speech runtime yet, on an RTX 2060 that CTranslate2 can count."""
+    from services import gpu_info
+
+    installed = set()
+    monkeypatch.setattr("services.components.current_platform_tag", lambda: "win_amd64")
+    monkeypatch.setattr("services.components.is_installed", lambda key: key in installed)
+    monkeypatch.setattr("ctranslate2.get_cuda_device_count", lambda: 1)
+    monkeypatch.setattr(gpu_info, "nvidia_gpu", lambda: gpu_info.NvidiaGpu("NVIDIA GeForce RTX 2060", 6144, (7, 5)))
+    monkeypatch.setattr("services.local_asr.catalog._vulkan_loader_present", lambda: True)
+    return installed
+
+
+@pytest.mark.parametrize("platform", ["win_amd64", "linux_x86_64"])
+def test_first_use_offers_the_gpu_runtime_auto_would_pick(fresh_gpu_install, monkeypatch, platform):
+    from services.local_asr.catalog import gpu_runtime_offer, missing_runtime
+
+    monkeypatch.setattr("services.components.current_platform_tag", lambda: platform)
+    for model in ("parakeet-v3", "orukeet-v0.1", "nemotron-3.5"):
+        assert gpu_runtime_offer(model, {}) == "asr-nvidia-cuda"
+        # Auto's fallback is still what's missing; the GPU one is the offer.
+        assert missing_runtime(model, {}) == "asr-nvidia-cpu"
+    for model in ("qwen-0.6b", "moonshine-small", "base", "turbo"):
+        assert gpu_runtime_offer(model, {}) is None
+
+
+def test_explicit_devices_keep_their_own_runtime(fresh_gpu_install):
+    from services.local_asr.catalog import gpu_runtime_offer, missing_runtime
+
+    cpu = {"local_asr_devices": {"parakeet": "cpu"}}
+    cuda = {"local_asr_devices": {"parakeet": "cuda"}}
+    assert gpu_runtime_offer("parakeet-v3", cpu) is None
+    assert missing_runtime("parakeet-v3", cpu) == "asr-nvidia-cpu"
+    assert gpu_runtime_offer("parakeet-v3", cuda) is None
+    assert missing_runtime("parakeet-v3", cuda) == "asr-nvidia-cuda"
+
+
+def test_gpu_runtime_offer_is_first_use_only(fresh_gpu_install):
+    from services.local_asr.catalog import gpu_runtime_offer, missing_runtime
+
+    fresh_gpu_install.add("asr-nvidia-cpu")
+    assert gpu_runtime_offer("parakeet-v3", {}) is None
+    assert missing_runtime("parakeet-v3", {}) is None
+    fresh_gpu_install.clear()
+    fresh_gpu_install.add("asr-nvidia-cuda")
+    assert gpu_runtime_offer("parakeet-v3", {}) is None
+    assert missing_runtime("parakeet-v3", {}) is None
+
+
+def test_no_gpu_runtime_offer_where_auto_would_not_use_it(fresh_gpu_install, monkeypatch):
+    from services import gpu_info
+    from services.local_asr.catalog import gpu_runtime_offer
+
+    monkeypatch.setattr(gpu_info, "nvidia_gpu", lambda: None)
+    assert gpu_runtime_offer("parakeet-v3", {}) is None
+    # CTranslate2 can't count the card (e.g. a driver too old for CUDA 12),
+    # so Auto would keep the CPU even with the GPU runtime installed.
+    monkeypatch.setattr(gpu_info, "nvidia_gpu", lambda: gpu_info.NvidiaGpu("NVIDIA GeForce RTX 2060", 6144, (7, 5)))
+    monkeypatch.setattr("ctranslate2.get_cuda_device_count", lambda: 0)
+    assert gpu_runtime_offer("parakeet-v3", {}) is None
+
+
+@pytest.mark.parametrize("capability", [(6, 1), None])
+def test_windows_offers_cuda_only_to_a_known_turing_or_newer_card(fresh_gpu_install, monkeypatch, capability):
+    from services import gpu_info
+    from services.local_asr.catalog import gpu_runtime_offer
+
+    # Windows has no Vulkan release, so these cards' runtime is CUDA, which needs Turing.
+    monkeypatch.setattr(gpu_info, "nvidia_gpu", lambda: gpu_info.NvidiaGpu("NVIDIA GeForce GTX 1050 Ti", 4096, capability))
+    assert gpu_runtime_offer("parakeet-v3", {}) is None
+
+
+def test_linux_offers_vulkan_to_an_older_card_with_the_loader(fresh_gpu_install, monkeypatch):
+    from services import gpu_info
+    from services.local_asr.catalog import gpu_runtime_offer
+
+    monkeypatch.setattr("services.components.current_platform_tag", lambda: "linux_x86_64")
+    monkeypatch.setattr("ctranslate2.get_cuda_device_count", lambda: 0)
+    monkeypatch.setattr(gpu_info, "nvidia_gpu", lambda: gpu_info.NvidiaGpu("NVIDIA GeForce GTX 1050 Ti", 4096, (6, 1)))
+    assert gpu_runtime_offer("nemotron-3.5", {}) == "asr-nvidia-vulkan"
+    monkeypatch.setattr("services.local_asr.catalog._vulkan_loader_present", lambda: False)
+    assert gpu_runtime_offer("nemotron-3.5", {}) is None
+
+
+def test_no_gpu_runtime_offer_this_computer_cannot_load(fresh_gpu_install, monkeypatch):
+    from services.local_asr.catalog import gpu_runtime_offer
+
+    monkeypatch.setattr("services.components.check_compatibility", lambda entry: "Built for another app")
+    assert gpu_runtime_offer("parakeet-v3", {}) is None
+    monkeypatch.setattr("services.components.current_platform_tag", lambda: "darwin_arm64")
+    monkeypatch.setattr("services.components.check_compatibility", lambda entry: None)
+    # Apple Silicon's Auto is already the Metal runtime.
+    assert gpu_runtime_offer("parakeet-v3", {}) is None
+
+
 def test_vulkan_runs_on_the_nvidia_card_not_the_integrated_gpu():
     from services.local_asr.nvidia import nvidia_device_index
 

@@ -116,7 +116,7 @@ class HuggingFaceConsentDialog(QDialog):
 
     def _body_text(self) -> str:
         from services.component_catalog import get_component_details
-        from services.local_asr.catalog import MODELS, missing_runtime
+        from services.local_asr.catalog import MODELS, gpu_runtime_offer, missing_runtime
         from services.settings import settings_manager
 
         from services.model_catalog import (
@@ -154,8 +154,18 @@ class HuggingFaceConsentDialog(QDialog):
         if size:
             lines.append(f"Approximate download size: {size}.")
 
-        runtime = missing_runtime(self.model_name, settings_manager.load_all_settings())
-        if runtime:
+        settings = settings_manager.load_all_settings()
+        runtime = missing_runtime(self.model_name, settings)
+        gpu_runtime = gpu_runtime_offer(self.model_name, settings) if runtime else None
+        if gpu_runtime:
+            lines.append(
+                f"A speech runtime is also required to use this model: "
+                f"{get_component_details(gpu_runtime).display_name} for this computer's "
+                f"NVIDIA GPU, or {get_component_details(runtime).display_name}. The model "
+                "download alone will not enable transcription. After you approve the model "
+                "download, you will be asked which runtime to install."
+            )
+        elif runtime:
             name = get_component_details(runtime).display_name
             lines.append(
                 f"{name} is also required to use this model. The model download alone "

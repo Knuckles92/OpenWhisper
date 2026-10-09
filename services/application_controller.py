@@ -2144,19 +2144,32 @@ class ApplicationController(QObject):
         self.executor.submit(self._hf_model_worker, model_name, load_into_engine)
 
     def _prompt_for_model_runtime(self, model_name: str) -> None:
-        """Ask once per runtime per session, on the Qt thread."""
-        from services.local_asr.catalog import missing_runtime
+        """Ask once per runtime per session, on the Qt thread.
+
+        On Auto with no runtime yet, an NVIDIA GPU that can run the model is
+        offered first, with the CPU runtime Auto falls back to as the
+        alternative. Installing either ends the question.
+        """
+        from services.local_asr.catalog import gpu_runtime_offer, missing_runtime
 
         if (is_hf_hub_offline_env_set() or self._reload_in_flight
                 or self.is_meeting_active() or self.recorder.is_recording or self.is_transcribing()):
             return
-        component = missing_runtime(model_name, settings_manager.load_all_settings())
+        settings = settings_manager.load_all_settings()
+        component = missing_runtime(model_name, settings)
         if not component or component in self._runtime_prompted or component_coordinator.is_installing(component):
             return
+        gpu_component = gpu_runtime_offer(model_name, settings)
+        if gpu_component and component_coordinator.is_installing(gpu_component):
+            return
         self._runtime_prompted.add(component)
-        if self.ui_controller.show_required_runtime_dialog(model_name, component):
-            self.ui_controller.open_downloads(component_id=component)
-            self.request_component_install(component)
+        if gpu_component:
+            chosen = self.ui_controller.show_gpu_runtime_dialog(model_name, gpu_component, component)
+        else:
+            chosen = component if self.ui_controller.show_required_runtime_dialog(model_name, component) else None
+        if chosen:
+            self.ui_controller.open_downloads(component_id=chosen)
+            self.request_component_install(chosen)
 
     def _hf_model_worker(self, model_name: str, load_into_engine: bool = True) -> None:
         from services.local_asr.catalog import MODELS

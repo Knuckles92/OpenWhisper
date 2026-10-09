@@ -534,6 +534,9 @@ class DummyUIController:
     def show_required_runtime_dialog(self, model_name, component_id):
         return False
 
+    def show_gpu_runtime_dialog(self, model_name, gpu_component, cpu_component):
+        return None
+
     def on_meeting_state_changed(self, payload):
         self.meeting_states.append(payload)
 
@@ -3140,6 +3143,7 @@ class TestApplicationController:
         ui.open_downloads = Mock()
         controller.request_component_install = Mock()
         with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
+                patch('services.local_asr.catalog.gpu_runtime_offer', return_value=None), \
                 patch.object(self.app_controller_module.component_coordinator, 'is_installing', return_value=False):
             controller._prompt_for_model_runtime('parakeet-v3')
             controller._prompt_for_model_runtime('parakeet-v3')
@@ -3153,6 +3157,7 @@ class TestApplicationController:
         controller = self._create_controller()
         controller.ui_controller.show_required_runtime_dialog = Mock()
         with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
+                patch('services.local_asr.catalog.gpu_runtime_offer', return_value=None), \
                 patch.object(self.app_controller_module.component_coordinator, 'is_installing', return_value=installing), \
                 patch.object(self.app_controller_module, 'is_hf_hub_offline_env_set', return_value=offline):
             controller._prompt_for_model_runtime('parakeet-v3')
@@ -3163,6 +3168,7 @@ class TestApplicationController:
         controller = self._create_controller()
         controller.ui_controller.show_required_runtime_dialog = Mock(return_value=False)
         with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
+                patch('services.local_asr.catalog.gpu_runtime_offer', return_value=None), \
                 patch.object(self.app_controller_module.component_coordinator, 'is_installing', return_value=False):
             controller._start_hf_model_task('parakeet-v3')
         controller.ui_controller.show_required_runtime_dialog.assert_called_once()
@@ -3183,6 +3189,7 @@ class TestApplicationController:
         controller.request_component_install = Mock()
         with patch('services.local_asr.cache.is_cached', return_value=cached) as is_cached, \
                 patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
+                patch('services.local_asr.catalog.gpu_runtime_offer', return_value=None), \
                 patch.object(self.app_controller_module.component_coordinator, 'is_installing', return_value=False):
             controller._reload_worker()
         is_cached.assert_called_with('parakeet-v3')
@@ -3193,6 +3200,41 @@ class TestApplicationController:
         else:
             ui.show_required_runtime_dialog.assert_not_called()
             controller.request_component_install.assert_not_called()
+
+    @pytest.mark.parametrize('choice', ['asr-nvidia-cuda', 'asr-nvidia-cpu', None])
+    def test_first_use_offers_the_gpu_runtime_with_the_cpu_one(self, choice):
+        from unittest.mock import Mock
+        controller = self._create_controller()
+        ui = controller.ui_controller
+        ui.show_gpu_runtime_dialog = Mock(return_value=choice)
+        ui.show_required_runtime_dialog = Mock()
+        ui.open_downloads = Mock()
+        controller.request_component_install = Mock()
+        with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
+                patch('services.local_asr.catalog.gpu_runtime_offer', return_value='asr-nvidia-cuda'), \
+                patch.object(self.app_controller_module.component_coordinator, 'is_installing', return_value=False):
+            controller._prompt_for_model_runtime('parakeet-v3')
+            controller._prompt_for_model_runtime('parakeet-v3')
+        # Asked once per session, whichever answer; Later asks again next run.
+        ui.show_gpu_runtime_dialog.assert_called_once_with('parakeet-v3', 'asr-nvidia-cuda', 'asr-nvidia-cpu')
+        ui.show_required_runtime_dialog.assert_not_called()
+        if choice:
+            controller.request_component_install.assert_called_once_with(choice)
+            ui.open_downloads.assert_called_once_with(component_id=choice)
+        else:
+            controller.request_component_install.assert_not_called()
+            ui.open_downloads.assert_not_called()
+
+    def test_gpu_runtime_offer_waits_for_its_install_in_flight(self):
+        from unittest.mock import Mock
+        controller = self._create_controller()
+        controller.ui_controller.show_gpu_runtime_dialog = Mock()
+        with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
+                patch('services.local_asr.catalog.gpu_runtime_offer', return_value='asr-nvidia-cuda'), \
+                patch.object(self.app_controller_module.component_coordinator, 'is_installing',
+                             side_effect=lambda component: component == 'asr-nvidia-cuda'):
+            controller._prompt_for_model_runtime('parakeet-v3')
+        controller.ui_controller.show_gpu_runtime_dialog.assert_not_called()
 
 
     def test_history_persistence_is_queued_and_keeps_recording_slot(self):

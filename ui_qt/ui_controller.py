@@ -1131,6 +1131,14 @@ class UIController(QObject):
         dialog = RequiredRuntimeDialog(model_name, component_id, parent=self.main_window)
         return dialog.exec() == dialog.DialogCode.Accepted
 
+    def show_gpu_runtime_dialog(self, model_name: str, gpu_component: str, cpu_component: str):
+        """The GPU runtime offer; the runtime chosen, or None for Later."""
+        from ui_qt.dialogs.required_runtime_dialog import GpuRuntimeDialog
+
+        dialog = GpuRuntimeDialog(model_name, gpu_component, cpu_component, parent=self.main_window)
+        dialog.exec()
+        return dialog.choice
+
     def show_use_gpu_dialog(self, plan) -> bool:
         """The "Use this GPU" offer; True when accepted."""
         from ui_qt.dialogs.use_gpu_dialog import UseGpuDialog

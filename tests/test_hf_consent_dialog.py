@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QPushButton
+from PyQt6.QtWidgets import QApplication, QLabel, QPushButton
 
 from services.settings import HuggingFaceAccessPolicy, SettingsManager
 from ui_qt.dialogs.hf_consent_dialog import HuggingFaceConsentDialog
@@ -124,13 +124,73 @@ class TestSettingsDialogNavigation(_QtTestCase):
 
 def test_optional_model_consent_explains_required_runtime():
     _app = QApplication.instance() or QApplication([])
-    with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'):
+    with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
+            patch('services.local_asr.catalog.gpu_runtime_offer', return_value=None):
         dialog = HuggingFaceConsentDialog('parakeet-v3', HuggingFaceAccessPolicy.ASK)
         body = dialog._body_text()
     assert 'Parakeet TDT 0.6B v3' in body
     assert 'NVIDIA Speech CPU is also required' in body
     assert 'download alone will not enable transcription' in body
     dialog.close()
+
+
+def test_optional_model_consent_names_both_runtimes_when_the_gpu_is_offered():
+    _app = QApplication.instance() or QApplication([])
+    with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
+            patch('services.local_asr.catalog.gpu_runtime_offer', return_value='asr-nvidia-cuda'):
+        dialog = HuggingFaceConsentDialog('parakeet-v3', HuggingFaceAccessPolicy.ASK)
+        body = dialog._body_text()
+    assert "NVIDIA Speech GPU for this computer's NVIDIA GPU, or NVIDIA Speech CPU" in body
+    assert 'asked which runtime to install' in body
+    assert 'download alone will not enable transcription' in body
+    dialog.close()
+
+
+def _gpu_runtime_dialog(model_name, gpu_component, gpu):
+    from ui_qt.dialogs.required_runtime_dialog import GpuRuntimeDialog
+    _app = QApplication.instance() or QApplication([])
+    with patch('services.gpu_info.nvidia_gpu', return_value=gpu):
+        return GpuRuntimeDialog(model_name, gpu_component, 'asr-nvidia-cpu')
+
+
+def test_gpu_runtime_offer_names_the_card_sizes_and_choices():
+    from services.components import catalog_entry_for_platform
+    from services.format_utils import format_size_bytes
+    from services.gpu_info import NvidiaGpu
+
+    dialog = _gpu_runtime_dialog('parakeet-v3', 'asr-nvidia-cuda', NvidiaGpu('NVIDIA GeForce RTX 2060', 6144, (7, 5)))
+    title = dialog.findChild(QLabel, 'headerLabel').text()
+    body = dialog.body.text().replace(' ', ' ')
+    assert title == 'Run Parakeet on the RTX 2060?'
+    assert "This computer's NVIDIA GeForce RTX 2060 can run it" in body
+    assert 'NVIDIA Speech GPU runs the model on the RTX 2060 with CUDA' in body
+    for component in ('asr-nvidia-cuda', 'asr-nvidia-cpu'):
+        entry = catalog_entry_for_platform(component) or {}
+        download = sum(archive['size_bytes'] for archive in entry.get('archives', []))
+        assert (f"{format_size_bytes(download)} download, "
+                f"{format_size_bytes(entry.get('install_bytes', 0))} on disk") in body
+    buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
+    assert set(buttons) == {'Later', 'Use the CPU', 'Use this GPU'}
+    assert buttons['Use this GPU'].isDefault()
+    buttons['Use this GPU'].click()
+    assert dialog.result() == dialog.DialogCode.Accepted and dialog.choice == 'asr-nvidia-cuda'
+
+
+def test_gpu_runtime_offer_cpu_and_later_answers():
+    from services.gpu_info import NvidiaGpu
+
+    gtx = NvidiaGpu('NVIDIA GeForce GTX 1050 Ti', 4096, (6, 1))
+    dialog = _gpu_runtime_dialog('nemotron-3.5', 'asr-nvidia-vulkan', gtx)
+    assert dialog.findChild(QLabel, 'headerLabel').text() == 'Run Nemotron Streaming on the GTX 1050 Ti?'
+    # The card's name and each size stay on one line.
+    assert 'on the GTX 1050 Ti with Vulkan' in dialog.body.text()
+    buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
+    buttons['Use the CPU'].click()
+    assert dialog.result() == dialog.DialogCode.Accepted and dialog.choice == 'asr-nvidia-cpu'
+    dialog = _gpu_runtime_dialog('nemotron-3.5', 'asr-nvidia-vulkan', gtx)
+    buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
+    buttons['Later'].click()
+    assert dialog.result() == dialog.DialogCode.Rejected and dialog.choice is None
 
 
 def test_runtime_prompt_has_explicit_install_and_later_actions():

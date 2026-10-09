@@ -128,22 +128,74 @@ def resolve_runtime(backend: str, requested: str) -> tuple[str, str]:
                 and not is_installed(NVIDIA_METAL_RUNTIME)):
             return "asr-nvidia-cpu", "cpu"
         return NVIDIA_METAL_RUNTIME, "metal"
-    device = requested
-    if device == "auto":
-        try:
-            import ctranslate2
-            device = "cuda" if ctranslate2.get_cuda_device_count() else "cpu"
-        except Exception:
-            device = "cpu"
-        # The Vulkan runtime needs no CUDA libraries, only the card, which
-        # CTranslate2 can't count without them.
-        if device == "cpu" and backend in ("parakeet", "nemotron") and runtime_id(backend, "cuda") == NVIDIA_VULKAN_RUNTIME:
-            device = "cuda"
+    device = _auto_device(backend) if requested == "auto" else requested
     component = runtime_id(backend, device)
     # Explicit CUDA must never silently fall back to CPU.
     if requested == "auto" and not is_installed(component) and backend in ("parakeet", "nemotron"):
         component, device = runtime_id(backend, "cpu"), "cpu"
     return component, device
+
+
+def _auto_device(backend: str) -> str:
+    """The device Auto runs on once its runtime is installed (not Apple Silicon)."""
+    try:
+        import ctranslate2
+        device = "cuda" if ctranslate2.get_cuda_device_count() else "cpu"
+    except Exception:
+        device = "cpu"
+    # The Vulkan runtime needs no CUDA libraries, only the card, which
+    # CTranslate2 can't count without them.
+    if device == "cpu" and backend in ("parakeet", "nemotron") and runtime_id(backend, "cuda") == NVIDIA_VULKAN_RUNTIME:
+        device = "cuda"
+    return device
+
+
+def _vulkan_loader_present() -> bool:
+    import ctypes
+
+    try:
+        ctypes.CDLL("libvulkan.so.1")
+    except OSError:
+        return False
+    return True
+
+
+def gpu_runtime_offer(model_name: str, settings: dict) -> str | None:
+    """The GPU runtime to offer alongside Auto's CPU fallback on first use.
+
+    Auto runs Parakeet and Nemotron on an installed GPU runtime, else on the
+    CPU one, so ``missing_runtime`` asks a fresh install for the CPU runtime
+    even where the NVIDIA GPU would run the model several times faster. This
+    names the runtime Auto would pick once installed (CUDA, or Vulkan for an
+    older card on Linux) while no NVIDIA Speech runtime is installed and this
+    computer can load it. None otherwise, and for an explicit CPU or CUDA
+    choice, which ``missing_runtime`` already answers.
+    """
+    from services.components import (
+        catalog_entry_for_platform, check_compatibility, component_is_published, is_installed,
+    )
+    from services.gpu_info import nvidia_gpu
+
+    model = MODELS.get(model_name)
+    if (model is None or model.backend not in ("parakeet", "nemotron") or apple_silicon()
+            or selected_device(model.backend, settings) != "auto"
+            or is_installed(runtime_id(model.backend, "cpu"))):
+        return None
+    gpu = nvidia_gpu()
+    if gpu is None or _auto_device(model.backend) != "cuda":
+        return None
+    component = runtime_id(model.backend, "cuda")
+    if component == NVIDIA_VULKAN_RUNTIME:
+        if not _vulkan_loader_present():
+            return None
+    # NVIDIA's CUDA release runs on Turing and newer; a card of unknown
+    # capability isn't offered a download it may not run.
+    elif gpu.compute_capability is None or gpu.compute_capability < CUDA_MIN_COMPUTE_CAPABILITY:
+        return None
+    if (is_installed(component) or not component_is_published(component)
+            or check_compatibility(catalog_entry_for_platform(component) or {})):
+        return None
+    return component
 
 
 def missing_runtime(model_name: str, settings: dict) -> str | None:
