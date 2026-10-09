@@ -729,6 +729,9 @@ _MCP_READY_TIMEOUT_S = 20.0
 #: registration, and a short grace covers versions that send none.
 _TOOLS_REGISTERED_WAIT_S = 3.0
 _TOOLS_REGISTERED_GRACE_S = 0.5
+#: How long closing waits for session deletes already on their way, so a
+#: meeting that ends right after a pass doesn't leave it in OpenCode's history.
+_DELETE_ON_CLOSE_S = 2.0
 
 
 @dataclass
@@ -767,6 +770,7 @@ class OpenCodeDriver:
         self._ready = False
         self._commands_updated = threading.Event()
         self._user_default = configured_default_model(OPENCODE)
+        self._deletes: List[threading.Thread] = []
 
     def start(self, server: LoopbackMcpServer,
               personas: Optional[Dict[str, str]] = None,
@@ -884,6 +888,11 @@ class OpenCodeDriver:
 
     def close(self) -> None:
         self._closed = True
+        with self._lock:
+            deletes, self._deletes = self._deletes, []
+        deadline = time.monotonic() + _DELETE_ON_CLOSE_S
+        for thread in deletes:
+            thread.join(max(0.0, deadline - time.monotonic()))
         conn, self._conn = self._conn, None
         if conn is not None:
             conn.close()
@@ -1058,7 +1067,11 @@ class OpenCodeDriver:
             except AcpError:
                 logger.debug("Could not delete OpenCode session %s", session_id)
 
-        threading.Thread(target=delete, name="opencode-session-delete", daemon=True).start()
+        thread = threading.Thread(target=delete, name="opencode-session-delete", daemon=True)
+        with self._lock:
+            self._deletes = [t for t in self._deletes if t.is_alive()]
+            self._deletes.append(thread)
+        thread.start()
 
     @staticmethod
     def _failed(exc: AcpError, cancel: threading.Event) -> PassOutcome:
