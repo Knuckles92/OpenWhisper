@@ -10,6 +10,7 @@ from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QApplication
 
 from services import text_rewrite
+from services.hotkey_manager import format_hotkey_display
 from services.settings import SettingsKey, SettingsView, settings_manager
 from ui_qt.dialogs.settings_destinations import BASIC_DICTATION, COMMANDS
 from tests.test_personalize_s1_settings_page import (  # noqa: F401  (fixtures)
@@ -41,8 +42,10 @@ def test_quick_record_shows_the_hint_with_cleanup_off(ready):
     settings_manager.save_setting(SettingsKey.HOTKEYS, {"command_mode": "ctrl+alt+k"})
     tab.update_hotkeys("*", "-")
     assert tab.command_hint.isVisibleTo(tab) and not tab.command_link.isVisibleTo(tab)
+    # macOS spells the shortcut with symbols (⌃⌥K).
     assert tab.command_hint.text() == (
-        "Command Mode · Ctrl+Alt+K · Select text, then say how to change it."
+        f"Command Mode · {format_hotkey_display('ctrl+alt+k')} · "
+        "Select text, then say how to change it."
     )
 
 
