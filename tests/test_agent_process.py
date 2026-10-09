@@ -84,3 +84,27 @@ def test_probe_timeout_closes_owned_process(tmp_path):
                         stdin=subprocess.DEVNULL)
     time.sleep(.6)
     assert not marker.exists()
+
+
+def test_group_kill_tolerates_macos_eperm_for_an_exited_leader(monkeypatch):
+    """macOS refuses to signal a group whose leader has exited but isn't reaped."""
+    from unittest.mock import Mock
+
+    from services import agent_process
+
+    calls = []
+
+    def killpg(pid, sig):
+        calls.append(sig)
+        if len(calls) > 1:
+            raise PermissionError(1, "Operation not permitted")
+
+    signal = Mock(SIGTERM=15, SIGKILL=9)
+    monkeypatch.setattr(agent_process, "signal", signal, raising=False)
+    monkeypatch.setattr(agent_process.os, "killpg", killpg, raising=False)
+    proc = Mock(pid=4242, _agent_job=None, _agent_process_group=True)
+
+    agent_process.kill_agent_process(proc)
+
+    assert calls == [15, 9]
+    proc.wait.assert_called_once_with(timeout=3.0)
