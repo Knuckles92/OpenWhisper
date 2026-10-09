@@ -19,6 +19,7 @@ from ui_qt.utils.file_reveal import open_folder_in_file_manager
 from ui_qt.utils.list_reconcile import MeetingDelivery, reconcile_cards
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.context_menu import context_menu
+from ui_qt.widgets.history_calendar import CalendarGlyphButton
 
 from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont
@@ -260,6 +261,7 @@ class PastMeetingsPanel(QWidget):
     copy_transcript_requested = pyqtSignal(str)
     delete_meeting_requested = pyqtSignal(str, bool)
     clear_meetings_requested = pyqtSignal(bool)
+    calendar_requested = pyqtSignal()
     _meetings_loaded = pyqtSignal(int, object, str, bool)
     _fetch_progress = pyqtSignal(str, str)
     _fetch_done = pyqtSignal(str, str, str)
@@ -385,6 +387,11 @@ class PastMeetingsPanel(QWidget):
         title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         header.addWidget(title)
         header.addStretch()
+
+        self.calendar_btn = CalendarGlyphButton()
+        self.calendar_btn.setToolTip("See meetings and history on a calendar (Ctrl+Shift+D)")
+        self.calendar_btn.clicked.connect(self.calendar_requested.emit)
+        header.addWidget(self.calendar_btn)
         layout.addLayout(header)
 
         self.search_input = QLineEdit()

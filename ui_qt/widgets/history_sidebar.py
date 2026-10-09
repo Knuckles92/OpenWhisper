@@ -25,8 +25,8 @@ from services.history_manager import (
     entry_version,
     history_manager,
     is_local_entry,
+    remote_history_entry,
 )
-from services.remote_records.kinds import ENTRY_EXT_FIELDS
 from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
 from services.text_llm import profile_display_name
 from ui_qt.utils.collapse_animation import (
@@ -39,6 +39,7 @@ from ui_qt.widgets.context_menu import context_menu
 from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets import history_playback
 from ui_qt.widgets.history_playback import PlaybackControl
+from ui_qt.widgets.history_calendar import CalendarGlyphButton
 from ui_qt.widgets.past_meetings_panel import PastMeetingsPanel
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
@@ -154,26 +155,6 @@ def _record_sync():
     from services.remote_records.sync import record_sync
 
     return record_sync
-
-
-def remote_history_entry(item: dict) -> HistoryEntry:
-    """A host-kept entry (from ``RecordSync.list_remote``) in the shape History renders.
-
-    A transient row, never added to this computer's database. ``stored_on``
-    names the host; ``remote_audio`` says whether it kept the recording.
-    """
-    fields = {name: item.get(name) for name in (
-        "id", "text", "raw_text", "timestamp", "model", "transcription_time",
-        "audio_duration", "file_size", "cleanup_provider", "cleanup_model", "source_name", "title",
-    )}
-    for name in ENTRY_EXT_FIELDS:
-        # From a newer or older host alike: only text is shown.
-        value = item.get(name)
-        fields[name] = value if isinstance(value, str) else None
-    entry = HistoryEntry(**fields)
-    entry.stored_on = str(item.get("stored_on") or "the host")
-    entry.remote_audio = bool(item.get("has_audio"))
-    return entry
 
 
 def _location_chip(entry) -> tuple[str, str]:
@@ -688,6 +669,8 @@ class HistorySidebar(QWidget):
     past_meeting_copy_requested = pyqtSignal(str)
     past_meeting_delete_requested = pyqtSignal(str, bool)
     past_meetings_clear_requested = pyqtSignal(bool)
+    #: The calendar button in either page's header was clicked.
+    calendar_requested = pyqtSignal()
     # Emits the sidebar width every animation frame so the owning window can
     # resize in lockstep (keeps the main content area a constant width).
     width_animated = pyqtSignal(int)
@@ -757,6 +740,11 @@ class HistorySidebar(QWidget):
         header_layout.addWidget(self.header_label)
 
         header_layout.addStretch()
+
+        self.calendar_btn = CalendarGlyphButton()
+        self.calendar_btn.setToolTip("See history on a calendar (Ctrl+Shift+D)")
+        self.calendar_btn.clicked.connect(self.calendar_requested.emit)
+        header_layout.addWidget(self.calendar_btn)
 
         content_layout.addLayout(header_layout)
 
@@ -829,6 +817,9 @@ class HistorySidebar(QWidget):
         )
         self.meetings_content_widget.clear_meetings_requested.connect(
             self.past_meetings_clear_requested.emit
+        )
+        self.meetings_content_widget.calendar_requested.connect(
+            self.calendar_requested.emit
         )
         self.meetings_content_widget.hide()
 

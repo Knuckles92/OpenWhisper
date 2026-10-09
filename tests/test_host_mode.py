@@ -848,7 +848,7 @@ def test_the_view_menu_toggles_host_mode(window):
         action.menu() for action in window.title_bar.menu_bar.actions() if action.text() == "View"
     )
     labels = [action.text() for action in view_menu.actions() if action.text()]
-    assert labels[:3] == ["History", "Compact Mode", "Host Mode"]
+    assert labels[:4] == ["History", "History Calendar", "Compact Mode", "Host Mode"]
     action = window.host_mode_action
     assert action.isCheckable()
     assert action.shortcut().toString() == "Ctrl+Shift+H"

@@ -503,6 +503,35 @@ class DatabaseManager:
                 q = q.limit(limit)
             return q.all()
 
+    def get_history_entries_between(self, start: str, end: str) -> List[TranscriptionHistory]:
+        """Entries whose stored timestamp sorts in ``[start, end)``, oldest first.
+
+        Stored timestamps mix aware UTC values with legacy naive local ones,
+        so callers pass bounds a day wider than they need and bucket by local
+        time themselves (see services/history_calendar).
+        """
+        with self.get_session() as session:
+            return session.query(TranscriptionHistory).filter(
+                TranscriptionHistory.timestamp >= start,
+                TranscriptionHistory.timestamp < end,
+            ).order_by(TranscriptionHistory.timestamp).all()
+
+    def history_calendar_rows(self) -> List[tuple]:
+        """``(id, timestamp, source_name, origin_device_name, audio_duration, entry_kind)``.
+
+        One per entry, but none of its text: what the History calendar needs
+        to place each one on its day.
+        """
+        with self.get_session() as session:
+            return [tuple(row) for row in session.query(
+                TranscriptionHistory.id,
+                TranscriptionHistory.timestamp,
+                TranscriptionHistory.source_name,
+                TranscriptionHistory.origin_device_name,
+                TranscriptionHistory.audio_duration,
+                TranscriptionHistory.entry_kind,
+            ).all()]
+
     def get_history_entry_by_id(self, entry_id: str) -> Optional[TranscriptionHistory]:
         with self.get_session() as session:
             return session.get(TranscriptionHistory, entry_id)

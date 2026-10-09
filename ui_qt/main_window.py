@@ -267,6 +267,7 @@ class MainWindow(QMainWindow):
     # Window-local keyboard shortcuts. Distinct from the global hotkeys in
     # config.DEFAULT_HOTKEYS, which work even when the app is unfocused.
     HISTORY_SHORTCUT = "Ctrl+H"
+    HISTORY_CALENDAR_SHORTCUT = "Ctrl+Shift+D"
     COMPACT_SHORTCUT = "Ctrl+Shift+C"
     HOST_SHORTCUT = "Ctrl+Shift+H"
     QUIT_SHORTCUT = "Ctrl+Q"
@@ -381,6 +382,8 @@ class MainWindow(QMainWindow):
         )
 
         self.on_show_copied_animation: Optional[Callable] = None
+        #: The History calendar window, made on first open and kept after.
+        self._history_calendar = None
 
         self._setup_ui()
         self._setup_menu()
@@ -506,6 +509,7 @@ class MainWindow(QMainWindow):
         self.history_sidebar.past_meetings_clear_requested.connect(
             self.past_meetings_clear_requested.emit
         )
+        self.history_sidebar.calendar_requested.connect(self.open_history_calendar)
         self.history_sidebar.width_animated.connect(self._on_sidebar_width_animated)
         self.history_sidebar.animation.finished.connect(
             self._on_sidebar_animation_finished
@@ -791,6 +795,8 @@ class MainWindow(QMainWindow):
         )
         self.sidebar_action = view_menu.addAction(sidebar_name, self.toggle_history)
         self.sidebar_action.setShortcut(QKeySequence(self.HISTORY_SHORTCUT))
+        calendar_action = view_menu.addAction("History Calendar", self.open_history_calendar)
+        calendar_action.setShortcut(QKeySequence(self.HISTORY_CALENDAR_SHORTCUT))
         self.compact_action = view_menu.addAction(
             "Compact Mode", self.toggle_compact_mode
         )
@@ -1637,24 +1643,57 @@ class MainWindow(QMainWindow):
 
     def refresh_history(self):
         self.history_sidebar.refresh()
+        self._refresh_history_calendar()
 
     def refresh_past_meetings(self) -> None:
         if self.tabbed_content.current_index() == TabbedContentWidget.TAB_MEETING_MODE:
             self.history_sidebar.refresh()
+        self._refresh_history_calendar()
+
+    def open_history_calendar(self) -> None:
+        """Show the History calendar: every dictation, file and meeting by month."""
+        dialog = self._history_calendar
+        if dialog is None:
+            from ui_qt.dialogs.history_calendar_dialog import HistoryCalendarDialog
+
+            dialog = HistoryCalendarDialog(parent=self)
+            dialog.entry_requested.connect(
+                lambda entry: self._open_history_entry(entry, parent=self._history_calendar)
+            )
+            dialog.meeting_requested.connect(self.past_meeting_requested.emit)
+            dialog.meeting_copy_requested.connect(self.past_meeting_copy_requested.emit)
+            dialog.entry_copied.connect(self._on_history_entry_copied)
+            self._history_calendar = dialog
+        if dialog.isVisible():
+            dialog.refresh()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        logger.info("Opened the History calendar")
+
+    def _refresh_history_calendar(self) -> None:
+        if self._history_calendar is not None:
+            self._history_calendar.refresh_if_visible()
 
     def _on_history_entry_selected(self, entry_id: str):
         # Or one the paired host keeps for this computer.
         entry = self.history_sidebar.entry_for(entry_id)
         if not entry:
             return
+        self._open_history_entry(entry)
 
-        dialog = HistoryEntryDialog(entry, parent=self)
+    def _open_history_entry(self, entry, parent=None) -> None:
+        """View one History entry, from the sidebar or the calendar."""
+        dialog = HistoryEntryDialog(entry, parent=parent or self)
         dialog.copied.connect(self._on_history_entry_copied_from_dialog)
         dialog.retranscribe_requested.connect(self._on_retranscribe_requested)
-        dialog.delete_requested.connect(self._on_history_entry_delete_requested)
-        dialog.version_changed.connect(self.history_sidebar.refresh)
+        dialog.delete_requested.connect(
+            lambda _entry_id, entry=entry: self._delete_history_entry(entry)
+        )
+        # An edit or a restored version changes the text both lists show.
+        dialog.version_changed.connect(lambda _entry_id: self.refresh_history())
         dialog.exec()
-        logger.info(f"Opened history entry dialog: {entry_id[:8]}...")
+        logger.info(f"Opened history entry dialog: {entry.id[:8]}...")
 
     def _on_history_entry_copied_from_dialog(self):
         self.set_status("Copied to clipboard")
@@ -1662,21 +1701,22 @@ class MainWindow(QMainWindow):
         if self.on_show_copied_animation:
             self.on_show_copied_animation()
 
-    def _on_history_entry_delete_requested(self, entry_id: str):
-        entry = self.history_sidebar.entry_for(entry_id)
+    def _delete_history_entry(self, entry) -> None:
+        """Delete an entry the entry dialog showed, here or on the host keeping it."""
         if getattr(entry, "stored_on", None):
-            self.history_sidebar.delete_remote_entry(entry_id)
+            self.history_sidebar.delete_remote_entry(entry.id)
             return
-        if history_manager.delete_entry(entry_id):
+        if history_manager.delete_entry(entry.id):
             self.refresh_history()
-            self._on_history_entry_deleted(entry_id)
-            logger.info(f"Deleted history entry from dialog: {entry_id[:8]}...")
+            self._on_history_entry_deleted(entry.id)
+            logger.info(f"Deleted history entry from dialog: {entry.id[:8]}...")
 
     def _on_history_entry_copied(self, entry_id: str):
         self.set_status("Copied to clipboard")
         QTimer.singleShot(2000, lambda: self.set_status("Ready to record"))
 
     def _on_history_entry_deleted(self, entry_id: str):
+        self._refresh_history_calendar()
         self.set_status("Entry deleted")
         QTimer.singleShot(2000, lambda: self.set_status("Ready to record"))
 

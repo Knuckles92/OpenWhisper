@@ -280,6 +280,8 @@ class SqlMeetingRepository:
         include_running: bool = False,
         started_after: str = "",
         meeting_id: Optional[str] = None,
+        started_from: Optional[str] = None,
+        started_before: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Return a bounded Past Meetings page with batched content metadata.
 
@@ -288,6 +290,8 @@ class SqlMeetingRepository:
         query keeps the page bounded and derives all card capabilities in
         three aggregate reads. ``origin`` limits it to one paired computer's
         meetings stored here, or with None to this computer's own.
+        ``started_from``/``started_before`` bound the stored ``started_at``
+        string, as the History calendar does for one month.
         """
         page_limit = max(1, min(int(limit), 501))
         needle = str(query or "").strip()
@@ -309,6 +313,10 @@ class SqlMeetingRepository:
                     (MeetingSession.started_at == cursor_started_at)
                     & (MeetingSession.id < cursor_id),
                 ))
+            if started_from:
+                sessions = sessions.filter(MeetingSession.started_at >= started_from)
+            if started_before:
+                sessions = sessions.filter(MeetingSession.started_at < started_before)
             if origin is None:
                 sessions = sessions.filter(MeetingSession.origin_device_id.is_(None))
             elif origin is not ...:
@@ -438,6 +446,23 @@ class SqlMeetingRepository:
             return session.query(MeetingSession).filter(
                 MeetingSession.origin_device_id == origin
             ).update({MeetingSession.origin_device_name: name}, synchronize_session=False)
+
+    def list_past_meeting_times(self) -> List[Tuple[str, str, Optional[str], float, Optional[str]]]:
+        """``(id, started_at, ended_at, paused_total_s, origin_device_name)`` per past meeting.
+
+        Every meeting Past Meetings lists, without its snapshot: what the
+        History calendar needs to place each one on its day.
+        """
+        with self._db.get_session() as session:
+            return [
+                (row_id, started, ended, float(paused or 0.0), origin)
+                for row_id, started, ended, paused, origin in session.query(
+                    MeetingSession.id, MeetingSession.started_at, MeetingSession.ended_at,
+                    MeetingSession.paused_total_s, MeetingSession.origin_device_name,
+                ).filter(
+                    ~MeetingSession.status.in_(("active", "paused", "ending"))
+                ).all()
+            ]
 
     def origin_spools(self, origin: str) -> List[Tuple[str, str]]:
         """``(meeting_id, spool_dir)`` of the meetings a paired computer stored here."""

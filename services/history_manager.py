@@ -561,6 +561,28 @@ class HistoryManager:
         return None
 
 
+def remote_history_entry(item: dict) -> HistoryEntry:
+    """A host-kept entry (from ``RecordSync.list_remote``) in the shape History renders.
+
+    A transient row, never added to this computer's database. ``stored_on``
+    names the host; ``remote_audio`` says whether it kept the recording.
+    """
+    from services.remote_records.kinds import ENTRY_EXT_FIELDS
+
+    fields = {name: item.get(name) for name in (
+        "id", "text", "raw_text", "timestamp", "model", "transcription_time",
+        "audio_duration", "file_size", "cleanup_provider", "cleanup_model", "source_name", "title",
+    )}
+    for name in ENTRY_EXT_FIELDS:
+        # From a newer or older host alike: only text is shown.
+        value = item.get(name)
+        fields[name] = value if isinstance(value, str) else None
+    entry = HistoryEntry(**fields)
+    entry.stored_on = str(item.get("stored_on") or "the host")
+    entry.remote_audio = bool(item.get("has_audio"))
+    return entry
+
+
 def _record_sync():
     """The outbox that copies records to a paired host (services/remote_records)."""
     from services.remote_records.sync import record_sync
