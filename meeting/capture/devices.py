@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Union
 
 from services.audio_devices import (  # noqa: F401  (re-exported for callers and tests)
@@ -31,6 +32,24 @@ from services.audio_devices import (  # noqa: F401  (re-exported for callers and
 )
 
 logger = logging.getLogger(__name__)
+
+# The meeting capture watchdog re-probes both channels every second, so each
+# discovery outcome would otherwise be logged once per second per meeting.
+_last_logged: Dict[str, str] = {}
+_last_logged_lock = threading.Lock()
+
+
+def _log_on_change(key: str, level: int, message: str, *args: Any) -> None:
+    """Log ``message`` at ``level`` when it differs from the last one for ``key``.
+
+    Repeats of an unchanged outcome drop to DEBUG, so an outage is logged when
+    it starts and again when it recovers instead of on every probe.
+    """
+    rendered = message % args if args else message
+    with _last_logged_lock:
+        repeated = _last_logged.get(key) == rendered
+        _last_logged[key] = rendered
+    logger.log(logging.DEBUG if repeated else level, "%s", rendered)
 
 
 def _sounddevice():
@@ -89,11 +108,14 @@ def find_loopback_device() -> Optional[Dict[str, Any]]:
             wasapi = _wasapi_hostapi_index(sd)
             devices = list(sd.query_devices()) if wasapi is not None else []
         if wasapi is None:
-            # Expected on macOS/Linux; the watchdog polls this every few
-            # seconds, so a warning here drowns the log on every meeting.
-            log = (logger.warning if sys.platform.startswith("win")
-                   else logger.debug)
-            log("No WASAPI host API found; loopback capture unavailable")
+            # Expected on macOS/Linux; the watchdog polls this every second,
+            # so a warning here drowns the log on every meeting.
+            level = (logging.WARNING if sys.platform.startswith("win")
+                     else logging.DEBUG)
+            _log_on_change(
+                "loopback", level,
+                "No WASAPI host API found; loopback capture unavailable",
+            )
             return None
         candidates = [
             (i, dev) for i, dev in enumerate(devices)
@@ -102,17 +124,24 @@ def find_loopback_device() -> Optional[Dict[str, Any]]:
             and LOOPBACK_MARKER in dev["name"]
         ]
         if not candidates:
-            logger.warning("No '%s' WASAPI input devices found", LOOPBACK_MARKER)
+            _log_on_change(
+                "loopback", logging.WARNING,
+                "No '%s' WASAPI input devices found", LOOPBACK_MARKER,
+            )
             return None
 
         default_output_name = _default_output_name(sd, devices, wasapi)
         if default_output_name:
             for i, dev in candidates:
                 if default_output_name in dev["name"]:
-                    logger.info("Loopback device matches default render device: %s",
-                                dev["name"])
+                    _log_on_change(
+                        "loopback", logging.INFO,
+                        "Loopback device matches default render device: %s",
+                        dev["name"],
+                    )
                     return _loopback_dict(i, dev)
-            logger.info(
+            _log_on_change(
+                "loopback", logging.INFO,
                 "No loopback device matches default render device '%s'; "
                 "using first loopback device", default_output_name,
             )
@@ -164,7 +193,8 @@ def find_mic_device(
             chosen = next((d for d in devices if d.index == priority), None)
             if chosen is not None and chosen.key not in excluded:
                 return _chosen(chosen)
-            logger.warning(
+            _log_on_change(
+                "mic-preferred", logging.WARNING,
                 "Preferred mic device index %s is not a valid input device; "
                 "falling back to default", priority,
             )
@@ -178,7 +208,7 @@ def find_mic_device(
         for device in devices:
             if device.key not in excluded:
                 return _chosen(device)
-        logger.warning("No microphone input device found")
+        _log_on_change("mic", logging.WARNING, "No microphone input device found")
         return None
     except Exception:
         logger.exception("Microphone device discovery failed")
@@ -187,7 +217,8 @@ def find_mic_device(
 
 def _chosen(device: InputDevice) -> Dict[str, Any]:
     chosen = _device_dict(device)
-    logger.info(
+    _log_on_change(
+        "mic", logging.INFO,
         "Microphone device: %s (index %d, %d Hz, %d ch)",
         chosen["name"], chosen["index"], chosen["samplerate"], chosen["channels"],
     )

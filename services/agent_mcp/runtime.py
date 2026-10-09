@@ -7,6 +7,7 @@ import socket
 import threading
 from dataclasses import dataclass
 
+from services.asyncio_utils import quiet_connection_lost
 from services.settings import SettingsKey
 
 DEFAULT_PORT = 8767
@@ -217,7 +218,11 @@ class McpRuntime:
                     self._status = ServerStatus(
                         "starting", "Starting MCP…", port, remote_url
                     )
-            asyncio.run(server.serve(sockets=sockets))
+            async def serve() -> None:
+                quiet_connection_lost(asyncio.get_running_loop())
+                await server.serve(sockets=sockets)
+
+            asyncio.run(serve())
             if not self._stop.is_set():
                 error = "MCP stopped unexpectedly. Turn it off and on to retry."
         except CredentialStoreError:

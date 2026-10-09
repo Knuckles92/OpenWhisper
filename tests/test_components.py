@@ -575,6 +575,26 @@ def test_meeting_agent_payload_dir_ignores_install_without_bundle(component_root
         assert components.meeting_agent_payload_dir() is None
 
 
+def test_outdated_meeting_agent_is_reported_once_per_version(
+    component_root, monkeypatch, caplog
+):
+    """Settings and meeting start both resolve the payload; don't repeat."""
+    monkeypatch.setattr(components, "_warned_outdated_pi_versions", set())
+    _make_installed(
+        component_root,
+        ComponentId.MEETING_AGENT,
+        {"version": "node22-pi1", "component_api": 1, "platform": "win_amd64"},
+    )
+    caplog.set_level("WARNING", logger=components.logger.name)
+    with patch.object(components, "_source_sidecar_payload_dir", return_value=None):
+        for _ in range(3):
+            assert components.meeting_agent_payload_dir() is None
+
+    assert [r.getMessage() for r in caplog.records].count(
+        "meeting-agent node22-pi1 is out of date; update it from Downloads"
+    ) == 1
+
+
 def test_meeting_agent_payload_dir_falls_back_to_source_dist(component_root, tmp_path):
     """From source, a built sidecar/dist/bundle.cjs is a valid payload."""
     dist = tmp_path / "sidecar" / "dist"

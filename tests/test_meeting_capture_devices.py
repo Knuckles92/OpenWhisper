@@ -5,15 +5,26 @@ that object is the real ``_InputOutputPair`` (indexable, but not a list or
 tuple). Treating only list/tuple as valid made every Mac meeting open
 whatever sat at index 0 instead of the system default mic.
 """
+import logging
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
+from meeting.capture import devices as capture_devices
 from meeting.capture.devices import (
     find_loopback_device,
     find_mic_device,
     _default_io_indexes,
     _default_output_name,
 )
+
+
+@pytest.fixture(autouse=True)
+def _fresh_log_state():
+    capture_devices._last_logged.clear()
+    yield
+    capture_devices._last_logged.clear()
 
 
 class _InputOutputPair:
@@ -151,3 +162,65 @@ class TestFindLoopbackDevice:
         with patch("meeting.capture.devices._sounddevice", return_value=sd), \
                 patch("meeting.capture.devices.sys.platform", "darwin"):
             assert find_loopback_device() is None
+
+
+def _wasapi_sd(devices):
+    return _fake_sd(devices, default=(0, 1), hostapis=[{
+        "name": "Windows WASAPI",
+        "default_input_device": 0,
+        "default_output_device": 1,
+    }])
+
+
+def _levels(caplog, text):
+    return [r.levelno for r in caplog.records if text in r.getMessage()]
+
+
+class TestProbeLoggingIsRateLimited:
+    """The meeting watchdog probes every second; logs must not follow suit."""
+
+    def test_missing_loopback_warns_once_per_outage(self, caplog):
+        sd = _wasapi_sd([_mic("Mic")])
+        with patch("meeting.capture.devices._sounddevice", return_value=sd), \
+                caplog.at_level(logging.DEBUG, logger="meeting.capture.devices"):
+            for _ in range(5):
+                assert find_loopback_device() is None
+        assert _levels(caplog, "WASAPI input devices found") == [
+            logging.WARNING, *[logging.DEBUG] * 4,
+        ]
+
+    def test_loopback_outage_is_logged_again_after_recovery(self, caplog):
+        loopback = {**_mic("Speakers [Loopback]", hostapi=0), "max_input_channels": 2}
+        sd = _wasapi_sd([_mic("Mic"), {**_mic("Speakers"), "max_input_channels": 0}])
+        with patch("meeting.capture.devices._sounddevice", return_value=sd), \
+                caplog.at_level(logging.DEBUG, logger="meeting.capture.devices"):
+            find_loopback_device()
+            sd.query_devices = lambda: [_mic("Mic"), _mic("Speakers"), loopback]
+            assert find_loopback_device() is not None
+            sd.query_devices = lambda: [_mic("Mic"), _mic("Speakers")]
+            find_loopback_device()
+        assert _levels(caplog, "WASAPI input devices found") == [
+            logging.WARNING, logging.WARNING,
+        ]
+
+    def test_unchanged_mic_choice_logs_info_once(self, caplog):
+        devices = [_mic("Probe"), _mic("Built-in Microphone")]
+        with patch("meeting.capture.devices._sounddevice",
+                   return_value=_fake_sd(devices, default=(1, 2))), \
+                caplog.at_level(logging.DEBUG, logger="meeting.capture.devices"):
+            for _ in range(4):
+                find_mic_device()
+        assert _levels(caplog, "Microphone device:") == [
+            logging.INFO, *[logging.DEBUG] * 3,
+        ]
+
+    def test_changed_mic_choice_is_logged_again(self, caplog):
+        devices = [_mic("USB Mic"), _mic("Built-in Microphone")]
+        with patch("meeting.capture.devices._sounddevice",
+                   return_value=_fake_sd(devices, default=(1, 2))), \
+                caplog.at_level(logging.DEBUG, logger="meeting.capture.devices"):
+            find_mic_device()
+            find_mic_device(0)
+        assert _levels(caplog, "Microphone device:") == [
+            logging.INFO, logging.INFO,
+        ]

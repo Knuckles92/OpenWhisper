@@ -26,6 +26,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised via runtime
 
 from meeting.web.api import create_app
 from meeting.web.ws import WsHub
+from services.asyncio_utils import quiet_connection_lost
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,7 @@ class MeetingWebServer:
     def _run(self, server: uvicorn.Server) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        quiet_connection_lost(loop)
         self._loop = loop
         try:
             loop.run_until_complete(server.serve())

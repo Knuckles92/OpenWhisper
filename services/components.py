@@ -60,6 +60,10 @@ _SIDECAR_BUNDLE_NAME: Final[str] = "bundle.cjs"
 _NODE_EXE_NAME: Final[str] = "node.exe"
 _NODE_BIN_NAME: Final[str] = "node"
 
+# Pi bundle versions already reported as out of date. The payload is resolved
+# on every Settings open and meeting start; one warning per version is enough.
+_warned_outdated_pi_versions: Set[str] = set()
+
 _BUILTIN_GPU_ARCHIVES: Final[Tuple[dict, ...]] = (
     {
         "name": "nvidia_cublas_cu12-12.9.2.10-py3-none-win_amd64.whl",
@@ -773,10 +777,13 @@ def meeting_agent_payload_dir(kind: str = "pi") -> Optional[str]:
             elif _pi_bundle_outdated(manifest.get("version")):
                 # The handshake would refuse it. AI insights need an updated
                 # component or another agent; recording remains available.
-                logger.warning(
-                    "meeting-agent %s is out of date; update it from Downloads",
-                    manifest.get("version"),
-                )
+                version = str(manifest.get("version"))
+                if version not in _warned_outdated_pi_versions:
+                    _warned_outdated_pi_versions.add(version)
+                    logger.warning(
+                        "meeting-agent %s is out of date; update it from "
+                        "Downloads", version,
+                    )
             elif not _payload_has_sidecar_bundle(installed):
                 logger.warning(
                     "meeting-agent component is installed but missing %s",

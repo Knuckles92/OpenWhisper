@@ -2,6 +2,7 @@
 
 import pytest
 import importlib
+import logging
 import sys
 import tempfile
 import time
@@ -2494,6 +2495,38 @@ class TestApplicationController:
         assert elapsed < 5.0
         assert not controller.meeting_active
         assert runtime._engine is None
+
+    def test_abandoned_engine_shutdown_logs_where_it_is_stuck(self, caplog):
+        """The warning must name the wait, not just report the budget."""
+        import threading
+
+        controller = self._create_controller()
+        runtime = controller.meeting_runtime
+        runtime_module = sys.modules[type(runtime).__module__]
+        blocked = threading.Event()
+
+        class _HangingEngine:
+            def shutdown(self):
+                self._wait_for_the_agent_core()
+
+            def _wait_for_the_agent_core(self):
+                blocked.wait(30)
+
+        runtime._engine = _HangingEngine()
+
+        try:
+            with caplog.at_level(logging.WARNING), patch.object(
+                runtime_module, "SHUTDOWN_JOIN_TIMEOUT_S", 0.05
+            ):
+                runtime.cleanup()
+        finally:
+            blocked.set()
+
+        warning = next(
+            r.getMessage() for r in caplog.records
+            if "abandoning it" in r.getMessage()
+        )
+        assert "_wait_for_the_agent_core" in warning
 
     def test_dashboard_urls_are_redacted_before_logging(self):
         controller = self._create_controller()

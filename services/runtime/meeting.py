@@ -9,8 +9,10 @@ even when Meeting Mode dependencies are unavailable.
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
+import traceback
 import webbrowser
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -2077,9 +2079,13 @@ class MeetingRuntime:
         worker.start()
         worker.join(timeout)
         if worker.is_alive():
+            # Name the wait that held it up; the budget alone cannot say which
+            # of the engine's teardown steps stalled.
+            frame = sys._current_frames().get(worker.ident)
+            stack = "".join(traceback.format_stack(frame)) if frame else ""
             logger.warning(
                 f"Meeting engine shutdown still running after {timeout:.1f}s; "
-                "abandoning it so the application can exit"
+                f"abandoning it so the application can exit. Stuck at:\n{stack}"
             )
 
     def _repository(self):
