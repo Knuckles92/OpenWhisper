@@ -30,9 +30,13 @@ native-runtime teardown:
 
 ```powershell
 . .\venv\Scripts\Activate.ps1
-python -m pytest tests/
+python -m pytest tests/ -n auto
 python -m pytest tests/test_recorder.py tests/test_settings.py
 ```
+
+`-n auto` (pytest-xdist, from `requirements-build.txt`) runs the full suite on
+every core: about 1.5 minutes instead of 7 on an 8-core desktop. Leave it off
+for a few files, where starting the workers takes longer than the tests.
 
 CI checks Python correctness and unused code with Ruff 0.16.4:
 
@@ -61,7 +65,7 @@ Open a new terminal after installation. From the repository root:
 ```powershell
 uv sync --locked
 uv run python main.py
-uv run python -m pytest tests/
+uv run python -m pytest tests/ -n auto
 uv run ruff check --select F .
 ```
 

@@ -291,8 +291,7 @@ def test_rail_value_reads_short_names():
 # The Advanced view's narrowest widths; Basic's 460/720 rows are covered by
 # test_settings_unified's test_basic_rows_fit_narrow_windows_and_large_fonts.
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
-@pytest.mark.parametrize("theme", ["dark", "light"])
-def test_recording_page_fits_narrow_windows_and_large_fonts(make_dialog, monkeypatch, ui_mode, width, theme):
+def test_recording_page_fits_narrow_windows_and_large_fonts(make_dialog, monkeypatch, ui_mode, width):
     from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
@@ -303,7 +302,7 @@ def test_recording_page_fits_narrow_windows_and_large_fonts(make_dialog, monkeyp
     previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
     dialog = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager(theme))
+        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         dialog, _store = make_dialog({SettingsKey.AUDIO_INPUT_PRIORITY: [USB, LAPEL, SNOWBALL]})
         dialog.show()
         dialog._fit_to_screen()

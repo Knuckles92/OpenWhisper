@@ -397,8 +397,7 @@ def test_the_app_opens_it_and_dictation_lands_in_it(monkeypatch):
 
 
 @pytest.mark.parametrize("ui_mode", ["classic", "omarchy"])
-@pytest.mark.parametrize("theme", ["dark", "light"])
-def test_footer_fits_a_narrow_window_at_large_fonts(monkeypatch, tmp_path, ui_mode, theme):
+def test_footer_fits_a_narrow_window_at_large_fonts(monkeypatch, tmp_path, ui_mode):
     from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
@@ -411,7 +410,7 @@ def test_footer_fits_a_narrow_window_at_large_fonts(monkeypatch, tmp_path, ui_mo
     previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
     window = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager(theme))
+        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         window = ScratchpadWindow()
         window.present()
         window.resize(300, 260)

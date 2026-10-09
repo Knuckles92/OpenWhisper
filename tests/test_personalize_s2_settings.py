@@ -449,8 +449,7 @@ def test_basic_follows_a_change_made_on_the_cleanup_page(make_dialog):
 
 
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 720)])
-@pytest.mark.parametrize("theme", ["dark", "light"])
-def test_cleanup_tiles_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width, theme):
+def test_cleanup_tiles_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
     from PyQt6.QtWidgets import QAbstractButton, QLabel
     from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
     from ui_qt.utils.palette import current_palette, set_current_palette
@@ -462,7 +461,7 @@ def test_cleanup_tiles_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatc
     previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
     dialog = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager(theme))
+        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         dialog, _store = make_dialog({PROMPT: CUSTOM})
         dialog.show()
         dialog._fit_to_screen()

@@ -378,10 +378,9 @@ def test_page_is_two_columns_at_settings_width_and_chips_wrap_in_balanced_rows(
 
 
 @pytest.mark.parametrize("ui_mode", ["classic", "omarchy"])
-@pytest.mark.parametrize("theme", ["dark", "light"])
 @pytest.mark.parametrize("font_percent", [100, 130])
 def test_split_layout_and_individual_grants_survive_narrow_windows(
-    tmp_path, monkeypatch, ui_mode, theme, font_percent
+    tmp_path, monkeypatch, ui_mode, font_percent
 ):
     from ui_qt.utils.font_scale import (
         apply_ui_font_scale,
@@ -397,7 +396,7 @@ def test_split_layout_and_individual_grants_survive_narrow_windows(
         current_palette(),
     )
     previous_sheet = app.styleSheet()
-    manager = ThemeManager(theme)
+    manager = ThemeManager()
     page, settings, server = make_page(tmp_path)
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
@@ -451,9 +450,8 @@ def test_split_layout_and_individual_grants_survive_narrow_windows(
 
 
 @pytest.mark.parametrize("ui_mode", ["classic", "omarchy"])
-@pytest.mark.parametrize("theme", ["dark", "light"])
 def test_connection_text_fits_in_settings_container_at_all_font_sizes(
-    tmp_path, monkeypatch, ui_mode, theme
+    tmp_path, monkeypatch, ui_mode
 ):
     """A stretch below the page used to compress buttons below their text height."""
     from ui_qt.utils.font_scale import (
@@ -467,7 +465,7 @@ def test_connection_text_fits_in_settings_container_at_all_font_sizes(
     app = QApplication.instance()
     previous_scale = current_ui_font_scale_percent()
     previous_palette, previous_sheet = current_palette(), app.styleSheet()
-    manager = ThemeManager(theme)
+    manager = ThemeManager()
     page, _, server = make_page(tmp_path)
     server.current = ServerStatus("running", "Ready", DEFAULT_PORT)
     page.refresh()

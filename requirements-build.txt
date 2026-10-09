@@ -12,3 +12,4 @@
 #   macOS: Xcode CLT (iconutil, codesign, hdiutil, lipo, otool, plutil)
 pyinstaller>=6.10.0
 pytest>=8.0
+pytest-xdist>=3.6

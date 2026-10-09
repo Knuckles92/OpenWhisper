@@ -140,16 +140,21 @@ def test_dispatcher_deadline_waits_for_queued_calls_and_can_be_replaced():
     dispatcher = OrderedDispatcher("test-deadline")
     seen = []
     try:
+        # Hold the worker first, so no deadline can fire between the calls
+        # that replace or cancel it, however late this thread is scheduled.
+        gate = threading.Event()
+        dispatcher.submit(gate.wait, 5)
         dispatcher.call_at(time.monotonic(), seen.append, "first deadline")
         dispatcher.call_at(time.monotonic() + 0.05, seen.append, "deadline")
-        gate = threading.Event()
-        dispatcher.submit(gate.wait, 1)
         dispatcher.submit(seen.append, "queued")
         time.sleep(0.1)
         gate.set()
         assert _wait_until(lambda: len(seen) == 2)
-        dispatcher.call_at(time.monotonic() + 0.05, seen.append, "canceled")
+        gate.clear()
+        dispatcher.submit(gate.wait, 5)
+        dispatcher.call_at(time.monotonic(), seen.append, "canceled")
         dispatcher.cancel_deadline()
+        gate.set()
         time.sleep(0.15)
     finally:
         dispatcher.stop()

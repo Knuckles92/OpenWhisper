@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 SERVER_NAME = "openwhisper"
 _SUPPORTED_PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 _MAX_BODY_BYTES = 4 * 1024 * 1024
+#: How much of a refused request's body is read before replying.
+_REFUSED_BODY_DRAIN_BYTES = 64 * 1024
 
 #: ``handler(tool_name, arguments, meta) -> (text, is_error)``.
 ToolHandler = Callable[[str, Dict[str, Any], Dict[str, Any]], Tuple[str, bool]]
@@ -228,23 +230,40 @@ class _McpRequestHandler(BaseHTTPRequestHandler):
         if data:
             self.wfile.write(data)
 
+    def _refuse(self, code: int, error: str) -> None:
+        """Reply ``code`` and close, without leaving the client's body unread.
+
+        Closing a socket that still holds unread data resets the connection,
+        and a busy client then loses this reply. The read is short and bounded,
+        so a stranger cannot hold the thread open with a slow body.
+        """
+        self.close_connection = True
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > 0:
+                self.connection.settimeout(0.5)
+                self.rfile.read(min(length, _REFUSED_BODY_DRAIN_BYTES))
+        except (ValueError, OSError):
+            pass
+        self._send(code, {"error": error})
+
     def _authorized_endpoint(self) -> Optional[McpEndpoint]:
         parts = self.path.split("?", 1)[0].strip("/").split("/")
         if len(parts) != 2 or parts[0] != "mcp":
-            self._send(404, {"error": "not found"})
+            self._refuse(404, "not found")
             return None
         # Browsers send Origin; agents do not. A web page must never reach
         # these tools, even from this computer.
         origin = self.headers.get("Origin")
         if origin and origin != "null":
-            self._send(403, {"error": "forbidden"})
+            self._refuse(403, "forbidden")
             return None
         token = parts[1]
         auth = self.headers.get("Authorization", "")
         expected = f"Bearer {token}"
         endpoint = self.owner._endpoint_for(token)
         if endpoint is None or not hmac.compare_digest(auth.encode(), expected.encode()):
-            self._send(401, {"error": "unauthorized"})
+            self._refuse(401, "unauthorized")
             return None
         return endpoint
 

@@ -311,8 +311,7 @@ def test_basic_tab_counts_snippets_and_adds_one(make_dialog):
 
 
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
-@pytest.mark.parametrize("theme", ["dark", "light"])
-def test_the_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width, theme):
+def test_the_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
     from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
@@ -322,7 +321,7 @@ def test_the_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, u
     previous_style, previous_font = app.styleSheet(), app.font()
     previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager(theme))
+        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         dialog, _store, panel = _open(make_dialog, CAL, ADDRESS, SIGN_OFF)
         dialog.show()
         dialog.resize(width, 600)

@@ -1677,7 +1677,9 @@ def test_connection_skips_a_stranger_at_the_first_address_without_sending_the_to
     )
     heard, tokens = [], []
     real_handle = stranger._handle
-    stranger._handle = lambda ws: heard.append(ws.remote_address) or real_handle(ws)
+    # Not ws.remote_address: the client may already have hung up, and asking
+    # a closed socket for its peer raises before anything is recorded.
+    stranger._handle = lambda ws: heard.append(ws) or real_handle(ws)
     stranger.registry.authenticate = lambda token: tokens.append(token)
     try:
         stranger.start(port=host.port, bind="127.0.0.2")

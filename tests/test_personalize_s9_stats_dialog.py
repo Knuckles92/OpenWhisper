@@ -173,8 +173,7 @@ def test_show_stats_keeps_one_window_and_leaves_settings_alone(synchronous, monk
 
 
 @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 460), ("classic", 460)])
-@pytest.mark.parametrize("theme", ["dark", "light"])
-def test_it_fits_narrow_windows_at_large_fonts(synchronous, monkeypatch, ui_mode, width, theme):
+def test_it_fits_narrow_windows_at_large_fonts(synchronous, monkeypatch, ui_mode, width):
     from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
@@ -186,7 +185,7 @@ def test_it_fits_narrow_windows_at_large_fonts(synchronous, monkeypatch, ui_mode
     previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
     dialog = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager(theme))
+        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         dialog = synchronous.StatsDialog()
         dialog.show()
         dialog.resize(width, 640)

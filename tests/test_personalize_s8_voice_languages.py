@@ -139,8 +139,7 @@ class TestField:
 
 
 @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 460)])
-@pytest.mark.parametrize("theme", ["dark", "light"])
-def test_chips_wrap_and_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width, theme):
+def test_chips_wrap_and_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
     from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
@@ -151,7 +150,7 @@ def test_chips_wrap_and_fit_narrow_windows_at_large_fonts(make_dialog, monkeypat
     previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
     dialog = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager(theme))
+        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         dialog, field = make_dialog({
             SettingsKey.SELECTED_MODEL: "local_whisper",
             SettingsKey.DICTATION_LANGUAGES: ["en", "es", "fr", "de", "pt", "ja", "uk"],

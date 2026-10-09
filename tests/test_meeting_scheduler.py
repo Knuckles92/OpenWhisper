@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from meeting import finalization
 from meeting.agent import scheduler as scheduler_mod
 from meeting.agent.scheduler import (
     CheckpointScheduler,
@@ -430,7 +431,8 @@ class TestConsolidationRace:
         thread.start()
         sched._thread = thread
         try:
-            with patch.object(scheduler_mod, "_CONSOLIDATION_JOIN_S", 0.05):
+            with patch.object(scheduler_mod, "_CONSOLIDATION_JOIN_S", 0.05), \
+                    patch.object(scheduler_mod, "_STOP_JOIN_S", 0.05):
                 outcome = sched.run_consolidation(timeout_s=1.0)
             # Two agent runs sharing one core is worse than a missing pass.
             assert agent.calls == []
@@ -499,7 +501,8 @@ class TestConsolidationRace:
 
         engine = FakeSchedulerEngine([{"id": "sg_1", "start_s": 0.0, "end_s": 1.0, "text": "x"}])
         sched = CheckpointScheduler(engine, HangingAgent())
-        outcome = sched.run_consolidation(timeout_s=0.05)
+        with patch.object(finalization, "CANCEL_GRACE_S", 0.05):
+            outcome = sched.run_consolidation(timeout_s=0.05)
         assert outcome.status == "failed"
         assert "timed out" in outcome.message.lower()
 

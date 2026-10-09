@@ -487,7 +487,8 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 dialog.show()
             for scale in (100, 115, 130, 100):
                 apply_ui_font_scale(scale, app=self.app, theme_manager=manager)
-                for width in (980, 800, 1100):
+                # 800 is clamped to the 940 px minimum: the narrowest layout.
+                for width in (800, 1100):
                     dialog.resize(width, 560)
                     for key in dialog.rail.keys():
                         dialog.rail.select(key)

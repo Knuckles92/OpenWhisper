@@ -236,7 +236,13 @@ class TestAsrSuccessPath:
 
 
 class TestAsrRetry:
-    def test_retries_three_times_then_gives_up(self, tmp_path):
+    @pytest.fixture
+    def quick_retries(self, monkeypatch):
+        from meeting.asr import engine as asr_module
+
+        monkeypatch.setattr(asr_module, "RETRY_BACKOFF_S", (0.01, 0.02))
+
+    def test_retries_three_times_then_gives_up(self, tmp_path, quick_retries):
         repo = FakeRepository()
         model = MagicMock()
         model.transcribe.side_effect = RuntimeError("boom")
@@ -258,7 +264,7 @@ class TestAsrRetry:
         finally:
             engine.stop()
 
-    def test_succeeds_after_transient_failures(self, tmp_path):
+    def test_succeeds_after_transient_failures(self, tmp_path, quick_retries):
         repo = FakeRepository()
         model = MagicMock()
         model.transcribe.side_effect = [

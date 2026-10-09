@@ -72,6 +72,8 @@ _RETRY_BACKOFF_S = (30.0, 60.0, 120.0, 300.0)
 #: How long consolidation waits for an in-flight checkpoint to finish — once
 #: politely, then again after canceling it.
 _CONSOLIDATION_JOIN_S = 10.0
+#: How long ``stop()`` waits for the periodic worker to exit.
+_STOP_JOIN_S = 5.0
 #: How far behind the newest already-sent segment each fetch reaches back.
 #: Mic and loopback are separate spools whose chunks pass through one shared ASR
 #: FIFO, so a segment starting well before the newest one can still be stored
@@ -288,7 +290,7 @@ class CheckpointScheduler:
         thread = self._thread
         if (thread is not None and thread.is_alive()
                 and thread is not threading.current_thread()):
-            thread.join(timeout=5.0)
+            thread.join(timeout=_STOP_JOIN_S)
 
     def prepare_for_end(self) -> None:
         """Stop new rolling fires without blocking the meeting-end path.

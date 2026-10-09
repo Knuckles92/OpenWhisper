@@ -146,7 +146,12 @@ def test_remote_outage_keeps_chunks_pending_and_stop_is_prompt(paired, repo, tmp
     assert repo.count_unfinished_chunks("m_remote") == 1
 
 
-def test_live_worker_resumes_pending_audio_after_host_returns(paired, host, engine, repo, tmp_path):
+def test_live_worker_resumes_pending_audio_after_host_returns(
+    paired, host, engine, repo, tmp_path, monkeypatch,
+):
+    from meeting.asr import engine as asr_module
+
+    monkeypatch.setattr(asr_module, "REMOTE_RETRY_BACKOFF_S", (0.1,))
     create_meeting(repo, tmp_path)
     status = []
     asr = MeetingAsrEngine("auto", "m_remote", repo, remote=paired,

@@ -7,14 +7,22 @@ modules.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import ast
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+# Coding-agent shells export PYTHONDONTWRITEBYTECODE, which also stops pytest
+# caching its assertion-rewritten test modules in the (gitignored) __pycache__.
+# Every run then rewrites all of them again: collection takes 13 s instead of
+# 6.6 s, and each xdist worker pays that separately.
+sys.dont_write_bytecode = False
 
 import pytest
 
@@ -47,10 +55,10 @@ def _qt_imports(path: str):
     source_path = Path(path)
     try:
         source = source_path.read_text(encoding="utf-8-sig")
+        if "ui_qt" in source or "PyQt6" in source:
+            return True, ()
         tree = ast.parse(source)
     except (OSError, SyntaxError, UnicodeError):
-        return True, ()
-    if "ui_qt" in source or "PyQt6" in source:
         return True, ()
     package = source_path.relative_to(root).parent.parts
     dependencies = set()
@@ -120,6 +128,19 @@ def pytest_unconfigure(config):
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(_session_status[-1] if _session_status else 0)
+
+
+@pytest.fixture
+def tmp_path(request, tmp_path_factory) -> Path:
+    """pytest's ``tmp_path`` without listing every earlier test's folder.
+
+    pytest numbers each new folder by scanning the whole base directory, so
+    the cost grows with the tests already run. Every test gets one through
+    ``_isolated_settings_store``, which made this 38 s of a 7-minute run.
+    A random suffix needs no scan.
+    """
+    prefix = re.sub(r"\W", "_", request.node.name)[:30]
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=tmp_path_factory.getbasetemp()))
 
 
 @pytest.fixture(scope="session")

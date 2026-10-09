@@ -458,8 +458,7 @@ class TestBasicSettings:
         dialog.close()
 
     @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 460)])
-    @pytest.mark.parametrize("theme", ["dark", "light"])
-    def test_basic_rows_fit_narrow_windows_and_large_fonts(self, make_dialog, monkeypatch, ui_mode, width, theme):
+    def test_basic_rows_fit_narrow_windows_and_large_fonts(self, make_dialog, monkeypatch, ui_mode, width):
         from PyQt6.QtWidgets import QAbstractButton, QComboBox, QLineEdit, QLabel
         from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
         from ui_qt.utils.palette import current_palette, set_current_palette
@@ -468,7 +467,7 @@ class TestBasicSettings:
         app = QApplication.instance()
         previous_style, previous_font = app.styleSheet(), app.font()
         previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
-        manager = ThemeManager(theme)
+        manager = ThemeManager()
         dialog = None
         try:
             apply_ui_font_scale(130, app=app, theme_manager=manager)

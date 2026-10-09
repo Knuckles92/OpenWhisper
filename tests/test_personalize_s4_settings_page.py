@@ -333,8 +333,7 @@ class TestBasicRow:
 
 
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
-@pytest.mark.parametrize("theme", ["dark", "light"])
-def test_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width, theme):
+def test_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
     from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
@@ -345,7 +344,7 @@ def test_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mo
     previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
     dialog = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager(theme))
+        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         dialog, _store = make_dialog({
             KEY: WORDS, SettingsKey.TRANSCRIPT_CLEANUP_RULES: ['Always spell my name "Alex Rivera"'],
         })

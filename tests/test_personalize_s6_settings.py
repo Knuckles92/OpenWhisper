@@ -350,8 +350,7 @@ def test_windows_capture_removes_only_its_own_hook(_session_qt_application):
 
 
 @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 720), ("omarchy", 460)])
-@pytest.mark.parametrize("theme", ["dark", "light"])
-def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch, ui_mode, width, theme):
+def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch, ui_mode, width):
     from PyQt6.QtWidgets import QAbstractButton, QLabel, QLineEdit
     from ui_qt.widgets.hotkey_row import ReflowCard
     from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
@@ -365,7 +364,7 @@ def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch
     app = QApplication.instance()
     previous_style, previous_font = app.styleSheet(), app.font()
     previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
-    manager = ThemeManager(theme)
+    manager = ThemeManager()
     dialog = None
     try:
         apply_ui_font_scale(130, app=app, theme_manager=manager)

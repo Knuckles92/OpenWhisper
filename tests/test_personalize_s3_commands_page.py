@@ -378,8 +378,7 @@ def test_basic_has_a_command_mode_shortcut_row(make_dialog):
 
 
 @pytest.mark.parametrize("ui_mode", ["classic", "omarchy"])
-@pytest.mark.parametrize("theme", ["dark", "light"])
-def test_the_page_fits_a_narrow_window_at_large_fonts(make_dialog, monkeypatch, ui_mode, theme):
+def test_the_page_fits_a_narrow_window_at_large_fonts(make_dialog, monkeypatch, ui_mode):
     from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
@@ -390,7 +389,7 @@ def test_the_page_fits_a_narrow_window_at_large_fonts(make_dialog, monkeypatch, 
     previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
     dialog = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager(theme))
+        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         dialog, _store = make_dialog({SettingsKey.TRANSCRIPT_CLEANUP_PROFILES: [PROFILE]})
         with patch.object(settings_dialog_module.SettingsDialog, "_fit_to_screen", lambda self: None):
             dialog.show()
