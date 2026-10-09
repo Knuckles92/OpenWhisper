@@ -244,6 +244,24 @@ class HotkeyManager:
             or any(is_on_key(hold, hotkey) for hold, hotkey in self._dynamic_held.items())
         )
 
+    def keyboard_hold_active(self, now: Optional[float] = None) -> bool:
+        """Whether the record or Command Mode shortcut is held on a key right now.
+
+        A rehook forgets keyboard holds, so a refresh during one would lose
+        its release. Windows keeps repeating a held key and only a live hook
+        sees the repeats: a hold with no recent key-down has lost its release
+        or its hook, and then a refresh should go ahead.
+        """
+        now = time.monotonic() if now is None else now
+        with self._dispatch_lock:
+            last = self._last_down
+            if last is None or now - last[1] > _REPEAT_WINDOW_S:
+                return False
+            return (
+                (self._record_key_held and self._hold_keys.get('record_toggle') == last[0])
+                or (self._command_key_held and self._hold_keys.get('command_mode') == last[0])
+            )
+
     def _hold_on(self, hold, key: Optional[tuple]) -> None:
         """Remember the physical key a hold was pressed on (None for a mouse button)."""
         if key is None:

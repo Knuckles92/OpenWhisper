@@ -229,6 +229,9 @@ class HotkeyRuntime:
         self._recording_end_counter = itertools.count(1)
         self._recordings_ended = 0
         self._hold_epoch = 0
+        # A periodic refresh that found a shortcut held; the watchdog runs it
+        # once the key is up.
+        self._refresh_pending = False
 
     def setup_hotkeys(self) -> None:
         logger.info("Setting up hotkeys...")
@@ -600,12 +603,24 @@ class HotkeyRuntime:
                 "Re-registering keyboard hook."
             )
             self.rehook_keyboard()
+        elif self._refresh_pending:
+            self.on_periodic_hook_refresh()
 
     def on_periodic_hook_refresh(self) -> None:
         now = time.monotonic()
         if now - self.controller._last_rehook_time < 60.0:
+            self._refresh_pending = False
+            return
+        # A rehook forgets held keys, so refreshing in the middle of a
+        # push-and-hold would drop its release and leave the recording running.
+        hold_active = getattr(self.controller.hotkey_manager, "keyboard_hold_active", None)
+        if hold_active is not None and hold_active():
+            if not self._refresh_pending:
+                logger.info("Keyboard hook refresh waits for the held shortcut")
+            self._refresh_pending = True
             return
 
+        self._refresh_pending = False
         logger.info("Periodic keyboard hook refresh")
         self.rehook_keyboard()
 
