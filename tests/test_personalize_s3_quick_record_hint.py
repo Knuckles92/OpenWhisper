@@ -8,6 +8,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
+from services.hotkey_manager import format_hotkey_display
 
 from services import text_rewrite
 from services.settings import SettingsKey, settings_manager
@@ -46,7 +47,8 @@ def test_with_a_shortcut_it_shows_it_and_follows_changes():
     tab = QuickRecordTab()
 
     assert tab.command_hint.text() == (
-        "Command Mode · Ctrl+Alt+K · Select text, then say how to change it."
+        f"Command Mode · {format_hotkey_display('ctrl+alt+k')} · "
+        "Select text, then say how to change it."
     )
     assert tab.command_hint.isVisibleTo(tab)
     assert not tab.command_link.isVisibleTo(tab)

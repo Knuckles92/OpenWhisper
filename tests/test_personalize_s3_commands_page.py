@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from services import text_rewrite
+from services.hotkey_manager import format_hotkey_display
 from services.settings import SettingsKey, SettingsManager, SettingsView
 from services.text_transforms import STARTER_TRANSFORMS, load_transforms
 from ui_qt.dialogs import settings_commands
@@ -130,7 +131,7 @@ def test_the_shortcut_saves_through_the_hotkey_path(make_dialog):
     field.input.captured.emit("ctrl+alt+k")
 
     assert store.load_hotkey_settings()["command_mode"] == "ctrl+alt+k"
-    assert field.input.text() == "Ctrl+Alt+K"
+    assert field.input.text() == format_hotkey_display("ctrl+alt+k")
     assert field.message.isHidden()
     assert dialog.rail.value(COMMANDS) == "Shortcut set · 4 transforms"
 
@@ -173,7 +174,7 @@ def test_a_shortcut_set_elsewhere_shows_when_the_page_returns(make_dialog):
         assert dialog.set_standard_hotkey("command_mode", "ctrl+alt+j") == ""
         dialog.select_destination(COMMANDS)
         QApplication.processEvents()
-        assert dialog.commands_shortcut.input.text() == "Ctrl+Alt+J"
+        assert dialog.commands_shortcut.input.text() == format_hotkey_display("ctrl+alt+j")
     finally:
         dialog.close()
 
@@ -209,7 +210,8 @@ def test_profile_shortcuts_are_listed_and_link_to_profiles(make_dialog):
     dialog, _store = _commands(make_dialog, {SettingsKey.TRANSCRIPT_CLEANUP_PROFILES: [
         PROFILE, {"id": "mail", "name": "Email", "instructions": "Email."},
     ]})
-    assert dialog.commands_profiles_list.text() == "Support ticket · Ctrl+Alt+T"
+    assert dialog.commands_profiles_list.text() == (
+        f"Support ticket · {format_hotkey_display('ctrl+alt+t')}")
     link = next(b for b in dialog.commands_profiles_tile.findChildren(QAbstractButton)
                 if b.text() == "Open Profiles")
     link.click()
@@ -245,7 +247,9 @@ def test_a_new_transform_is_saved_and_registered(make_dialog):
     saved = load_transforms(store.load_all_settings())
     assert [t.name for t in saved][-1] == "Friendlier"
     assert saved[-1].hotkey == "ctrl+alt+f"
-    assert panel.message.text() == "Saved Friendlier. Select text anywhere and press Ctrl+Alt+F."
+    assert panel.message.text() == (
+        "Saved Friendlier. Select text anywhere and press "
+        f"{format_hotkey_display('ctrl+alt+f')}.")
     dialog.on_settings_changed.assert_called_with("transforms")
     assert dialog.rail.value(COMMANDS) == "No shortcut · 5 transforms"
 

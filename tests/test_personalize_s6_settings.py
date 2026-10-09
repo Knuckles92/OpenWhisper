@@ -13,6 +13,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from services import text_transforms
+from services.hotkey_manager import format_hotkey_display
 from services.settings import RecordingTriggerMode, SettingsKey, SettingsManager, SettingsView
 from services.text_transforms import Transform
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
@@ -98,7 +99,7 @@ def test_new_actions_are_optional_rows_with_their_own_clear(make_dialog):
     dialog, store = make_dialog({SettingsKey.HOTKEYS: {"scratchpad_toggle": "ctrl+alt+n"}})
     for key in NEW_ROWS:
         assert dialog.hotkey_inputs[key].property("optional") is True
-    assert dialog.hotkey_inputs["scratchpad_toggle"].text() == "Ctrl+Alt+N"
+    assert dialog.hotkey_inputs["scratchpad_toggle"].text() == format_hotkey_display("ctrl+alt+n")
     assert dialog.hotkey_clear_buttons["scratchpad_toggle"].isEnabled()
     assert not dialog.hotkey_clear_buttons["command_mode"].isEnabled()
 
@@ -215,7 +216,7 @@ def test_side_button_click_on_the_capturing_field_saves_a_mouse_shortcut(make_di
         assert dialog.capturing is None
         dialog.on_profile_hotkey_capture.assert_called_with(False)
         assert store.load_hotkey_settings()["paste_last_original"] == "shift+mouse4"
-        assert field.text() == "Shift+Mouse 4"
+        assert field.text() == format_hotkey_display("shift+mouse4")
         assert _note(dialog, "paste_last_original") == (
             "Mouse 4 won't work as Back in other apps while it's a shortcut."
         )
@@ -255,7 +256,9 @@ def test_wayland_rows_capture_in_qt_and_explain_side_buttons(make_dialog):
     assert field._capturing
     assert _note(dialog, "scratchpad_toggle") == hotkey_capture.MOUSE_UNSUPPORTED_MESSAGE
     QTest.keyClick(field, Qt.Key.Key_N, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)
-    assert store.load_hotkey_settings()["scratchpad_toggle"] == "ctrl+alt+n"
+    # Qt reports Command as the Control modifier on macOS.
+    primary = "cmd" if hotkey_capture.sys.platform == "darwin" else "ctrl"
+    assert store.load_hotkey_settings()["scratchpad_toggle"] == f"{primary}+alt+n"
     dialog.close()
 
 
