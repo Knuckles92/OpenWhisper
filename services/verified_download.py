@@ -14,6 +14,7 @@ import hashlib
 import logging
 import os
 import re
+import ssl
 import stat
 import threading
 import urllib.error
@@ -112,6 +113,45 @@ def discard_regular_file(path: str) -> None:
             os.unlink(path)
     except OSError:
         pass
+
+
+def describe_network_error(
+    exc: BaseException,
+    *,
+    server: str = "download server",
+    hosts: Sequence[str] = (),
+    http_messages: Optional[Mapping[int, str]] = None,
+) -> str:
+    """Translate a urllib or disk failure into something a user can act on.
+
+    Args:
+        exc: The failure raised while opening or reading a URL.
+        server: What was being contacted, as in "Could not reach the <server>".
+        hosts: Hosts to ask IT to allow when certificate verification fails;
+            empty names ``server`` instead.
+        http_messages: Replacement copy for specific HTTP status codes.
+    """
+    # urllib reports a failed handshake as a URLError wrapping the SSL error.
+    if isinstance(exc, ssl.SSLCertVerificationError) or isinstance(
+        getattr(exc, "reason", None), ssl.SSLCertVerificationError
+    ):
+        if not hosts:
+            allow = f"the {server}"
+        elif len(hosts) == 1:
+            allow = hosts[0]
+        else:
+            allow = f"{', '.join(hosts[:-1])} and {hosts[-1]}"
+        return (
+            f"The {server}'s certificate could not be verified. This is "
+            "usually caused by network security software that inspects HTTPS "
+            f"traffic. Ask your IT team to allow {allow}."
+        )
+    if isinstance(exc, urllib.error.HTTPError):
+        override = (http_messages or {}).get(exc.code)
+        return override or f"The {server} returned an error ({exc.code} {exc.reason})."
+    if isinstance(exc, urllib.error.URLError):
+        return f"Could not reach the {server} ({exc.reason})."
+    return str(exc) or f"Could not reach the {server}."
 
 
 def download_verified(

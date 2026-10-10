@@ -2,6 +2,8 @@
 import hashlib
 import json
 import os
+import ssl
+import urllib.error
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -381,34 +383,66 @@ class TestFetchLatestRelease:
         assert app_update.latest_release_url() == app_update.LATEST_RELEASE_URL
 
 
-class TestNetworkErrorCopy:
-    def test_http_403_is_rate_limit(self):
-        import urllib.error
+def _check_failure(monkeypatch, exc: Exception) -> str:
+    """The message ``fetch_latest_release`` raises when opening fails with ``exc``."""
+    def _open(url, extra_headers=None):
+        raise exc
 
-        exc = urllib.error.HTTPError(
-            app_update.LATEST_RELEASE_URL, 403, "Forbidden", hdrs=None, fp=None
-        )
-        message = app_update._describe_network_error(exc)
+    monkeypatch.setattr(app_update, "_open", _open)
+    with pytest.raises(AppUpdateError) as caught:
+        app_update.fetch_latest_release()
+    return str(caught.value)
+
+
+def _http_error(code: int, reason: str) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(
+        app_update.LATEST_RELEASE_URL, code, reason, hdrs=None, fp=None
+    )
+
+
+def _certificate_failure() -> urllib.error.URLError:
+    # How urllib's opener reports a TLS-inspecting proxy's untrusted certificate.
+    return urllib.error.URLError(ssl.SSLCertVerificationError(
+        1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"
+    ))
+
+
+class TestNetworkErrorCopy:
+    def test_http_403_is_rate_limit(self, monkeypatch):
+        message = _check_failure(monkeypatch, _http_error(403, "Forbidden"))
         assert "rate-limited" in message.lower()
         assert RELEASES_PAGE_URL in message
 
-    def test_http_429_is_rate_limit(self):
-        import urllib.error
+    def test_http_429_is_rate_limit(self, monkeypatch):
+        message = _check_failure(monkeypatch, _http_error(429, "Too Many Requests"))
+        assert "rate-limited" in message.lower()
 
-        exc = urllib.error.HTTPError(
-            app_update.LATEST_RELEASE_URL, 429, "Too Many Requests", hdrs=None, fp=None
-        )
-        assert "rate-limited" in app_update._describe_network_error(exc).lower()
-
-    def test_other_http_error_keeps_status_code(self):
-        import urllib.error
-
-        exc = urllib.error.HTTPError(
-            app_update.LATEST_RELEASE_URL, 500, "Server Error", hdrs=None, fp=None
-        )
-        message = app_update._describe_network_error(exc)
+    def test_other_http_error_keeps_status_code(self, monkeypatch):
+        message = _check_failure(monkeypatch, _http_error(500, "Server Error"))
         assert "500" in message
         assert "rate-limited" not in message.lower()
+
+    def test_wrapped_certificate_failure_gives_guidance(self, monkeypatch):
+        message = _check_failure(monkeypatch, _certificate_failure())
+        assert "update server's certificate could not be verified" in message
+        assert (
+            "allow api.github.com, github.com and "
+            "release-assets.githubusercontent.com."
+        ) in message
+        assert "CERTIFICATE_VERIFY_FAILED" not in message
+
+    def test_certificate_failure_during_download_gives_guidance(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(app_update, "updates_dir", lambda: str(tmp_path))
+        with patch.object(
+            app_update, "detect_channel", return_value=InstallChannel.INSTALLER
+        ), patch.object(app_update.sys, "platform", "win32"), patch.object(
+            app_update, "_open", side_effect=_certificate_failure()
+        ):
+            with pytest.raises(AppUpdateError) as caught:
+                download_installer(_release())
+        assert "update server's certificate could not be verified" in str(caught.value)
 
     def test_failure_status_distinguishes_rate_limit(self):
         assert update_check_failure_status(

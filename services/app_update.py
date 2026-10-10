@@ -26,6 +26,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import partial
 from typing import Callable, Dict, Final, List, Optional, Tuple
 
 from _version import __version__
@@ -55,7 +56,12 @@ from services.update_contract import (
     setup_asset_name,
     updates_root,
 )
-from services.verified_download import DownloadError, download_verified, open_url
+from services.verified_download import (
+    DownloadError,
+    describe_network_error,
+    download_verified,
+    open_url,
+)
 from services.verified_files import NotARegularFile, sha256_file
 
 logger = logging.getLogger(__name__)
@@ -78,6 +84,13 @@ _DOWNLOAD_KEEP_WINDOW_S: Final[int] = 30
 _MAX_REDIRECTS: Final[int] = 5
 _GITHUB_RELEASE_ASSET_HOSTS: Final[Tuple[str, ...]] = (
     "release-assets.githubusercontent.com",
+)
+# Every host an update reaches: the release check, the asset link, and the
+# asset CDN that link redirects to.
+_UPDATE_HOSTS: Final[Tuple[str, ...]] = (
+    "api.github.com",
+    "github.com",
+    *_GITHUB_RELEASE_ASSET_HOSTS,
 )
 
 
@@ -600,7 +613,7 @@ def fetch_latest_release() -> ReleaseInfo:
         ) as response:
             raw = response.read()
     except Exception as exc:
-        raise AppUpdateError(_describe_network_error(exc)) from exc
+        raise AppUpdateError(_describe_update_error(exc)) from exc
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -973,23 +986,12 @@ def update_check_failure_status(error: str) -> str:
     return "Could not check for updates."
 
 
-def _describe_network_error(exc: Exception) -> str:
-    """Translate a urllib failure into something a user can act on."""
-    import ssl
-
-    if isinstance(exc, ssl.SSLCertVerificationError):
-        return (
-            "The update server's certificate could not be verified. This is "
-            "usually caused by network security software that inspects HTTPS "
-            "traffic. Ask your IT team to allow api.github.com and github.com."
-        )
-    if isinstance(exc, urllib.error.HTTPError):
-        if exc.code in (403, 429):
-            return _RATE_LIMIT_MESSAGE
-        return f"The update server returned an error ({exc.code} {exc.reason})."
-    if isinstance(exc, urllib.error.URLError):
-        return f"Could not reach the update server ({exc.reason})."
-    return str(exc) or "The update check failed."
+_describe_update_error: Final[Callable[[BaseException], str]] = partial(
+    describe_network_error,
+    server="update server",
+    hosts=_UPDATE_HOSTS,
+    http_messages={403: _RATE_LIMIT_MESSAGE, 429: _RATE_LIMIT_MESSAGE},
+)
 
 
 def _file_sha256(path: str) -> str:
@@ -1031,7 +1033,7 @@ def _download_verified(
             progress,
             cancel,
             opener=_open,
-            describe_error=_describe_network_error,
+            describe_error=_describe_update_error,
             max_bytes=_MAX_ASSET_BYTES,
             messages=_DOWNLOAD_MESSAGES,
         )

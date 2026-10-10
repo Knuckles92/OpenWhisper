@@ -21,10 +21,10 @@ class Response(io.BytesIO):
         self.headers = headers or {}
 
 
-def fetch(tmp_path, progress=None, cancel=None, **kwargs):
+def fetch(tmp_path, progress=None, cancel=None, url=URL, **kwargs):
     destination = tmp_path / "example.whl"
     components._download_verified(
-        URL, hashlib.sha256(BODY).hexdigest(), len(BODY), str(destination),
+        url, hashlib.sha256(BODY).hexdigest(), len(BODY), str(destination),
         progress or (lambda *args: None), cancel or threading.Event(), **kwargs,
     )
     return destination
@@ -102,10 +102,13 @@ def test_certificate_failure_names_the_host_being_contacted(tmp_path, monkeypatc
     assert "allow files.pythonhosted.org." in message
 
 
-def test_certificate_message_for_a_model_host():
-    exc = urllib.error.URLError(ssl.SSLCertVerificationError("self-signed"))
-    message = components._describe_network_error(
-        exc, "https://huggingface.co/nvidia/model/resolve/main/model.gguf"
-    )
+def test_certificate_message_for_a_model_host(tmp_path, monkeypatch):
+    def intercepted(*args):
+        raise urllib.error.URLError(ssl.SSLCertVerificationError("self-signed"))
+
+    monkeypatch.setattr(components, "_open", intercepted)
+    with pytest.raises(ComponentError) as caught:
+        fetch(tmp_path, url="https://huggingface.co/nvidia/model/resolve/main/model.gguf")
+    message = str(caught.value)
     assert "allow huggingface.co." in message
     assert "pythonhosted" not in message

@@ -39,6 +39,7 @@ from services.format_utils import format_size_bytes
 from services.verified_download import (
     DownloadCanceled,
     DownloadError,
+    describe_network_error,
     download_verified,
     open_url,
 )
@@ -1161,30 +1162,6 @@ def _rmtree(path: str) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _describe_network_error(exc: Exception, url: str = "") -> str:
-    """Translate a urllib failure into something a user can act on."""
-    import ssl
-
-    # urllib reports a failed handshake as a URLError wrapping the SSL error.
-    if isinstance(exc, ssl.SSLCertVerificationError) or isinstance(
-        getattr(exc, "reason", None), ssl.SSLCertVerificationError
-    ):
-        # Name the host being contacted: payloads come from PyPI, nodejs.org,
-        # GitHub and Hugging Face, so a fixed list would send a blocked user
-        # to allowlist hosts this download never touches.
-        host = urllib.parse.urlsplit(url).hostname if url else None
-        return (
-            "The download server's certificate could not be verified. This is "
-            "usually caused by network security software that inspects HTTPS "
-            f"traffic. Ask your IT team to allow {host or 'the download server'}."
-        )
-    if isinstance(exc, urllib.error.HTTPError):
-        return f"The download server returned an error ({exc.code} {exc.reason})."
-    if isinstance(exc, urllib.error.URLError):
-        return f"Could not reach the download server ({exc.reason})."
-    return str(exc)
-
-
 def _download_verified(
     url: str,
     sha256_hex: str,
@@ -1217,6 +1194,10 @@ def _download_verified(
     def overall(phase: str, done: int, _total: int) -> None:
         progress(phase, offset_base + done, grand_total)
 
+    # Name the host being contacted: payloads come from PyPI, nodejs.org,
+    # GitHub and Hugging Face, so a fixed list would send a blocked user to
+    # allowlist hosts this download never touches.
+    host = urllib.parse.urlsplit(url).hostname
     try:
         download_verified(
             url,
@@ -1226,7 +1207,9 @@ def _download_verified(
             overall,
             cancel,
             opener=_open,
-            describe_error=lambda exc: _describe_network_error(exc, url),
+            describe_error=lambda exc: describe_network_error(
+                exc, hosts=(host,) if host else ()
+            ),
             keep_partial_on_cancel=True,
         )
     except DownloadCanceled:
