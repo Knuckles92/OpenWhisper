@@ -1,5 +1,6 @@
 """Unsupported-platform Meeting Mode gate: copy, dialog, tab, and ack."""
 import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +14,9 @@ from meeting.platform import meeting_mode_supported, meeting_unsupported_os_name
 from services.settings import (
     MEETING_LINUX_PREVIEW_ACK_VERSION,
     SettingsKey,
+    SettingsManager,
+    resolve_meeting_linux_preview_ack,
+    resolve_meeting_mode_intro_seen,
     settings_manager,
 )
 from ui_qt.dialogs.meeting_unsupported_dialog import (
@@ -109,22 +113,53 @@ class TestUnsupportedMeetingDialog(unittest.TestCase):
         )
         self.assertIn("Linux", dialog.windowTitle())
 
-    def test_linux_preview_copy_does_not_claim_no_capture_path(self):
+    def test_linux_preview_is_a_short_notice_without_checkboxes(self):
         dialog = MeetingUnsupportedPlatformDialog(
             platform="linux",
             machine="x86_64",
             implementation_ready=True,
         )
         body = dialog.body_label.text().lower()
-        self.assertIn("preview", dialog.windowTitle().lower() + body)
-        self.assertIn("not publicly supported", body)
-        self.assertIn("implemented", body)
+        self.assertIn("preview", dialog.windowTitle().lower())
         self.assertNotIn("has no supported capture path", body)
-        self.assertNotIn(
-            "system audio will not be captured",
-            dialog.ack_no_system_audio.text().lower(),
+        self.assertIn("pulseaudio or pipewire", body)
+        self.assertIn("microphone only", body)
+        self.assertIn("browser", body)
+        # Plain language, two or three sentences.
+        self.assertLessEqual(body.count(". ") + 1, 3)
+        self.assertEqual(dialog.findChildren(QCheckBox), [])
+
+        try_it = dialog.findChild(QPushButton, "meetingUnsupportedContinueButton")
+        not_now = dialog.findChild(QPushButton, "meetingUnsupportedGoBackButton")
+        self.assertEqual(try_it.text(), "Try the preview")
+        self.assertEqual(not_now.text(), "Not now")
+        self.assertTrue(try_it.isEnabled())
+        self.assertTrue(try_it.isDefault())
+        self.assertFalse(not_now.isDefault())
+        self.assertFalse(not_now.autoDefault())
+        # Primary look by property, so the lookup name does not strip it.
+        self.assertEqual(try_it.property("tone"), "primary")
+
+        try_it.click()
+        self.assertEqual(
+            dialog.result_action,
+            MeetingUnsupportedPlatformDialog.RESULT_CONTINUE,
         )
-        self.assertIn("microphone-only", dialog.ack_no_system_audio.text().lower())
+
+    def test_linux_preview_not_now_cancels(self):
+        dialog = MeetingUnsupportedPlatformDialog(
+            platform="linux", machine="aarch64", implementation_ready=True
+        )
+        dialog.findChild(QPushButton, "meetingUnsupportedGoBackButton").click()
+        self.assertEqual(
+            dialog.result_action, MeetingUnsupportedPlatformDialog.RESULT_CANCEL
+        )
+
+    def test_unsupported_go_back_keeps_primary_look(self):
+        dialog = MeetingUnsupportedPlatformDialog(platform="darwin")
+        go_back = dialog.findChild(QPushButton, "meetingUnsupportedGoBackButton")
+        self.assertEqual(go_back.property("tone"), "primary")
+        self.assertTrue(go_back.isDefault())
 
     def test_unsupported_arch_linux_keeps_no_path_wording(self):
         dialog = MeetingUnsupportedPlatformDialog(
@@ -178,17 +213,87 @@ class TestUnsupportedMeetingDialog(unittest.TestCase):
             "ui_qt.dialogs.meeting_unsupported_dialog"
             ".MeetingUnsupportedPlatformDialog",
             return_value=_Accepted(),
-        ) as dialog_cls, patch.object(settings_manager, "save_setting") as save:
+        ) as dialog_cls, patch.object(
+            settings_manager, "update_settings"
+        ) as update, patch.object(settings_manager, "save_setting") as save:
             self.assertTrue(
                 acknowledge_unsupported_meeting_mode(
                     platform="linux", machine="x86_64"
                 )
             )
             dialog_cls.assert_called_once()
-            save.assert_called_once_with(
-                SettingsKey.MEETING_LINUX_PREVIEW_ACK_VERSION,
-                MEETING_LINUX_PREVIEW_ACK_VERSION,
+            update.assert_called_once_with({
+                SettingsKey.MEETING_LINUX_PREVIEW_ACK_VERSION:
+                    MEETING_LINUX_PREVIEW_ACK_VERSION,
+                SettingsKey.MEETING_MODE_INTRO_SEEN: True,
+            })
+            save.assert_not_called()
+
+    def _isolated_settings(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return SettingsManager(os.path.join(tmp.name, "settings.json"))
+
+    def test_accepting_linux_preview_marks_intro_seen(self):
+        isolated = self._isolated_settings()
+
+        class _Accepted:
+            result_action = MeetingUnsupportedPlatformDialog.RESULT_CONTINUE
+
+            def exec(self):
+                return 1
+
+        with patch(
+            "ui_qt.dialogs.meeting_unsupported_dialog.settings_manager",
+            isolated,
+        ), patch(
+            "ui_qt.dialogs.meeting_unsupported_dialog"
+            ".resolve_meeting_linux_preview_ack",
+            return_value=False,
+        ), patch(
+            "ui_qt.dialogs.meeting_unsupported_dialog"
+            ".MeetingUnsupportedPlatformDialog",
+            return_value=_Accepted(),
+        ):
+            self.assertTrue(
+                acknowledge_unsupported_meeting_mode(
+                    platform="linux", machine="x86_64"
+                )
             )
+        saved = isolated.load_all_settings()
+        # The notice replaces the welcome, so the welcome does not follow it.
+        self.assertTrue(resolve_meeting_mode_intro_seen(saved))
+        self.assertTrue(resolve_meeting_linux_preview_ack(saved))
+
+    def test_declining_linux_preview_saves_nothing(self):
+        isolated = self._isolated_settings()
+
+        class _Cancelled:
+            result_action = MeetingUnsupportedPlatformDialog.RESULT_CANCEL
+
+            def exec(self):
+                return 0
+
+        with patch(
+            "ui_qt.dialogs.meeting_unsupported_dialog.settings_manager",
+            isolated,
+        ), patch(
+            "ui_qt.dialogs.meeting_unsupported_dialog"
+            ".resolve_meeting_linux_preview_ack",
+            return_value=False,
+        ), patch(
+            "ui_qt.dialogs.meeting_unsupported_dialog"
+            ".MeetingUnsupportedPlatformDialog",
+            return_value=_Cancelled(),
+        ):
+            self.assertFalse(
+                acknowledge_unsupported_meeting_mode(
+                    platform="linux", machine="x86_64"
+                )
+            )
+        saved = isolated.load_all_settings()
+        self.assertFalse(resolve_meeting_mode_intro_seen(saved))
+        self.assertFalse(resolve_meeting_linux_preview_ack(saved))
 
     def test_linux_preview_skips_dialog_after_current_version_ack(self):
         with patch(

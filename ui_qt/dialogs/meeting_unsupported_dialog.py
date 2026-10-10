@@ -1,10 +1,16 @@
-"""First-time acknowledgement that Meeting Mode is unsupported or unattested.
+"""First-time notice that Meeting Mode is unsupported or a preview.
 
-Shown when a user on a platform without public Meeting Mode promotion — a Mac
-too old for ScreenCaptureKit, an unsupported Linux architecture, or Linux
-x86_64/aarch64 before hardware attestation — opens Meeting Mode or starts a
-meeting from the tray or a hotkey, before they have accepted the warning.
-Continue stays disabled until every explicit checkbox is ticked.
+Shown when a user on a platform without public Meeting Mode promotion opens
+Meeting Mode or starts a meeting from the tray or a hotkey, before they have
+accepted the warning.
+
+Linux x86_64/aarch64, where capture is implemented but not yet attested, gets
+a short preview notice with one always-enabled "Try the preview" button. It
+replaces the Meeting Mode welcome as well, so accepting it marks that seen.
+
+A Mac too old for ScreenCaptureKit or an unsupported Linux architecture has
+no capture path at all; there Continue stays disabled until every explicit
+checkbox is ticked.
 """
 from __future__ import annotations
 
@@ -31,7 +37,8 @@ from services.settings import (
     resolve_meeting_unsupported_platform_ack,
     settings_manager,
 )
-from ui_qt.widgets import Button, PrimaryButton
+from ui_qt.widgets import Button
+from ui_qt.widgets.buttons import compact_primary_button, neutral_button
 
 logger = logging.getLogger(__name__)
 
@@ -70,14 +77,19 @@ class MeetingUnsupportedPlatformDialog(QDialog):
             self.setWindowTitle(
                 f"Meeting Mode on {self.os_name} is a preview"
             )
+            self.setAccessibleDescription(
+                "Preview notice. Choose Try the preview to open Meeting Mode, "
+                "or Not now to go back."
+            )
         else:
             self.setWindowTitle(
                 f"Meeting Mode is not supported on {self.os_name}"
             )
+            self.setAccessibleDescription(
+                "Platform warning. Review and acknowledge every limitation "
+                "before continuing."
+            )
         self.setAccessibleName(self.windowTitle())
-        self.setAccessibleDescription(
-            "Platform warning. Review and acknowledge every limitation before continuing."
-        )
         self.setMinimumWidth(500)
         self.setModal(True)
 
@@ -89,10 +101,7 @@ class MeetingUnsupportedPlatformDialog(QDialog):
         layout.setSpacing(12)
 
         if self._implementation_ready:
-            title = QLabel(
-                f"Meeting Mode on {self.os_name} is implemented but not "
-                "publicly supported yet"
-            )
+            title = QLabel(f"Meeting Mode on {self.os_name} is a preview")
         else:
             title = QLabel(
                 f"Meeting Mode is not supported on {self.os_name}"
@@ -107,27 +116,48 @@ class MeetingUnsupportedPlatformDialog(QDialog):
         layout.addWidget(self.body_label)
 
         if self._implementation_ready:
-            self.ack_unsupported = QCheckBox(
-                f"I understand Meeting Mode on {self.os_name} is a preview "
-                "and not publicly supported yet"
-            )
-            self.ack_no_system_audio = QCheckBox(
-                "I understand capture may fail diagnostics and fall back to "
-                "microphone-only"
-            )
-            self.ack_try_anyway = QCheckBox(
-                "I want to try the preview path anyway"
-            )
+            self._add_preview_buttons(layout)
         else:
-            self.ack_unsupported = QCheckBox(
-                f"I understand Meeting Mode is not supported on {self.os_name}"
-            )
-            self.ack_no_system_audio = QCheckBox(
-                "I understand system audio will not be captured"
-            )
-            self.ack_try_anyway = QCheckBox(
-                "I want to try it anyway, knowing it is unsupported"
-            )
+            self._add_acknowledgements(layout)
+
+    def _add_preview_buttons(self, layout: QVBoxLayout) -> None:
+        """One click: the notice informs, it does not quiz."""
+        layout.addSpacing(8)
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(8)
+        button_layout.addStretch()
+
+        self.go_back_btn = neutral_button(Button("Not now"))
+        self.go_back_btn.setObjectName("meetingUnsupportedGoBackButton")
+        self.go_back_btn.setAutoDefault(False)
+        self.go_back_btn.clicked.connect(self.reject)
+        button_layout.addWidget(self.go_back_btn)
+
+        # A plain Button with the primary tone: renaming a PrimaryButton for
+        # lookup would strip the look it takes from its object name.
+        self.continue_btn = compact_primary_button(Button("Try the preview"))
+        self.continue_btn.setObjectName("meetingUnsupportedContinueButton")
+        self.continue_btn.setDefault(True)
+        self.continue_btn.setAutoDefault(True)
+        self.continue_btn.clicked.connect(
+            lambda: self._finish(self.RESULT_CONTINUE)
+        )
+        button_layout.addWidget(self.continue_btn)
+
+        layout.addLayout(button_layout)
+        self.continue_btn.setFocus()
+
+    def _add_acknowledgements(self, layout: QVBoxLayout) -> None:
+        """No capture path: every limitation is ticked before Continue."""
+        self.ack_unsupported = QCheckBox(
+            f"I understand Meeting Mode is not supported on {self.os_name}"
+        )
+        self.ack_no_system_audio = QCheckBox(
+            "I understand system audio will not be captured"
+        )
+        self.ack_try_anyway = QCheckBox(
+            "I want to try it anyway, knowing it is unsupported"
+        )
 
         self.ack_unsupported.setObjectName("meetingUnsupportedAckUnsupported")
         layout.addWidget(self.ack_unsupported)
@@ -152,7 +182,7 @@ class MeetingUnsupportedPlatformDialog(QDialog):
         button_layout.setSpacing(8)
         button_layout.addStretch()
 
-        self.continue_btn = Button("Continue anyway")
+        self.continue_btn = neutral_button(Button("Continue anyway"))
         self.continue_btn.setObjectName("meetingUnsupportedContinueButton")
         self.continue_btn.setEnabled(False)
         self.continue_btn.setAutoDefault(False)
@@ -162,25 +192,21 @@ class MeetingUnsupportedPlatformDialog(QDialog):
         )
         button_layout.addWidget(self.continue_btn)
 
-        go_back_btn = PrimaryButton("Go back")
-        go_back_btn.setObjectName("meetingUnsupportedGoBackButton")
-        go_back_btn.setDefault(True)
-        go_back_btn.clicked.connect(self.reject)
-        button_layout.addWidget(go_back_btn)
+        self.go_back_btn = compact_primary_button(Button("Go back"))
+        self.go_back_btn.setObjectName("meetingUnsupportedGoBackButton")
+        self.go_back_btn.setDefault(True)
+        self.go_back_btn.clicked.connect(self.reject)
+        button_layout.addWidget(self.go_back_btn)
 
         layout.addLayout(button_layout)
 
     def _body_text(self) -> str:
         if self._implementation_ready:
             return (
-                "Meeting Mode can record microphone and system audio on "
-                f"{self.os_name} x86_64/aarch64 through PulseAudio or "
-                "PipeWire-Pulse, but this path is not publicly supported until "
-                "the hardware release matrix is attested.\n\n"
-                "Capture is implemented and may work after diagnostics. It can "
-                "still fail open/monitor checks and fall back to microphone-only "
-                "for a single meeting. Check every box below if you still want "
-                "to try the preview path."
+                "It records your microphone and, through PulseAudio or "
+                "PipeWire, your system audio. If system audio can't be "
+                "opened, it can continue with your microphone only. The live "
+                "transcript shows in your browser."
             )
         return (
             "Meeting Mode records microphone and system audio on Windows, "
@@ -216,8 +242,9 @@ def acknowledge_unsupported_meeting_mode(
     """Return True when Meeting Mode may proceed on this platform.
 
     Windows is always allowed. On other platforms the first call shows the
-    acknowledgement dialog; a granted answer is persisted so later calls
-    skip it.
+    notice; a granted answer is persisted so later calls skip it. Accepting
+    the Linux preview also marks the Meeting Mode welcome as seen, because
+    the notice already said what it would.
 
     Args:
         parent: Widget to parent the modal dialog to.
@@ -254,10 +281,12 @@ def acknowledge_unsupported_meeting_mode(
 
     try:
         if linux_preview:
-            settings_manager.save_setting(
-                SettingsKey.MEETING_LINUX_PREVIEW_ACK_VERSION,
-                MEETING_LINUX_PREVIEW_ACK_VERSION,
-            )
+            settings_manager.update_settings({
+                SettingsKey.MEETING_LINUX_PREVIEW_ACK_VERSION: (
+                    MEETING_LINUX_PREVIEW_ACK_VERSION
+                ),
+                SettingsKey.MEETING_MODE_INTRO_SEEN: True,
+            })
         else:
             settings_manager.save_setting(
                 SettingsKey.MEETING_UNSUPPORTED_PLATFORM_ACK, True
