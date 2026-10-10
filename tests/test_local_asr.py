@@ -547,13 +547,17 @@ def test_timeout_kills_worker_and_reports_reload(monkeypatch):
     assert worker.process.poll() is not None
 
 
-def test_crash_reports_worker_error(monkeypatch):
+def test_crash_reports_worker_error(monkeypatch, caplog):
     worker = _worker(monkeypatch, 'import sys\nsys.stderr.write("native load failed\\n"); sys.stderr.flush()\nsys.exit(3)')
     try:
-        with pytest.raises(RuntimeError, match="Speech worker stopped"):
+        with pytest.raises(RuntimeError, match="speech engine stopped unexpectedly") as excinfo:
             worker.request("load", timeout=3)
     finally:
         worker.close()
+    # The worker's own output (often a traceback) goes to the log, not the UI.
+    assert "native load failed" not in str(excinfo.value)
+    assert "native load failed" in excinfo.value.detail
+    assert "native load failed" in caplog.text
 
 
 def test_meeting_model_selection_preserves_whisper_fallback():

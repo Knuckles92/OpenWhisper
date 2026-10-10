@@ -48,6 +48,9 @@ class FakeUI:
     def set_transcript(self, text, raw=None):
         pass
 
+    def show_transcription_error(self, message):
+        pass
+
     def set_transcription_stats(self, *args, **kwargs):
         pass
 

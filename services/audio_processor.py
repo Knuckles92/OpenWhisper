@@ -13,6 +13,17 @@ from services.format_utils import format_audio_duration
 
 logger = logging.getLogger(__name__)
 
+
+class UnreadableAudioError(ValueError):
+    """A file that can't be read as audio; the message is meant for the user.
+
+    FFmpeg's own wording ("[Errno 1094995529] Invalid data found when
+    processing input: '<path>'") goes to the log instead.
+    """
+
+
+NOT_AUDIO_MESSAGE = "This doesn't look like an audio file."
+
 @dataclass
 class AudioFilePreview:
     """Preview information for an audio file."""
@@ -140,13 +151,22 @@ class AudioProcessor:
         file_size_bytes = os.path.getsize(audio_path)
         file_size_mb = file_size_bytes / (1024 * 1024)
         needs_splitting = engine_splits and file_size_mb > config.MAX_FILE_SIZE_MB
+        if file_size_bytes == 0:
+            raise UnreadableAudioError("This file is empty.")
 
         try:
             duration_seconds, sample_rate, channels = self._probe_audio_header(
                 audio_path
             )
+        except UnreadableAudioError:
+            raise
+        except PermissionError as e:
+            raise UnreadableAudioError(
+                "OpenWhisper isn't allowed to read this file."
+            ) from e
         except Exception as e:
-            raise ValueError(f"Failed to read audio file: {e}") from e
+            logger.info("Could not read %s as audio: %s", file_name, e)
+            raise UnreadableAudioError(NOT_AUDIO_MESSAGE) from e
 
         if needs_splitting:
             total_samples = round(duration_seconds * sample_rate)
@@ -270,7 +290,7 @@ class AudioProcessor:
 
         with av.open(audio_path) as container:
             if not container.streams.audio:
-                raise ValueError("No audio stream found in file")
+                raise UnreadableAudioError("This file has no audio track.")
 
             stream = container.streams.audio[0]
             sample_rate = stream.rate
@@ -306,7 +326,7 @@ class AudioProcessor:
         found_audio = False
         with av.open(audio_path) as container:
             if not container.streams.audio:
-                raise ValueError("No audio stream found in file")
+                raise UnreadableAudioError("This file has no audio track.")
             stream = container.streams.audio[0]
             sample_rate = stream.rate
             channels = stream.channels
@@ -330,7 +350,7 @@ class AudioProcessor:
                     found_audio = True
                     yield samples, sample_rate, channels
         if not found_audio:
-            raise ValueError("No audio frames found in file")
+            raise UnreadableAudioError("This file has no audio in it.")
 
     def _load_audio_metadata(self, audio_path: str) -> Tuple[np.ndarray, int, int]:
         """Compatibility helper; preview and splitting use bounded streaming."""

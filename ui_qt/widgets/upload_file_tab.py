@@ -19,7 +19,11 @@ from PyQt6.QtWidgets import (
 )
 
 from config import config
-from services.audio_processor import AudioFilePreview, audio_processor
+from services.audio_processor import (
+    AudioFilePreview,
+    UnreadableAudioError,
+    audio_processor,
+)
 from services.batch_upload import (
     BatchItem,
     BatchRelation,
@@ -57,6 +61,7 @@ AUDIO_FILTERS = (
     "Audio Files (*.wav *.mp3 *.m4a *.ogg *.flac *.wma);;"
     "WAV Files (*.wav);;MP3 Files (*.mp3);;All Files (*.*)"
 )
+NO_AUDIO_DROPPED = "Only audio files can be transcribed (WAV, MP3, M4A, OGG, FLAC, WMA)."
 
 #: How long the finished progress panel stays up before the action row returns.
 RESULT_HOLD_MS = 1400
@@ -173,10 +178,14 @@ class DropZoneWidget(QFrame):
         self.setMinimumHeight(150)
         self.setStyleSheet(self._IDLE_STYLE)
 
+        # Stretches center the content rather than layout alignment: an
+        # aligned layout gives a wrapped label its height for a wider width
+        # than it lays the label out at, which cut the notice's first and
+        # last lines.
         layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(4)
+        layout.addStretch(1)
 
         icon_label = QLabel()
         icon_label.setObjectName("dropZoneIcon")
@@ -209,14 +218,16 @@ class DropZoneWidget(QFrame):
 
         # Why the last attempt landed back here (unreadable file, nothing
         # droppable); the tab has no status line of its own.
-        self.notice = QLabel()
+        self.notice = WrappedLabel(break_long_words=True)
         self.notice.setObjectName("dropZoneNotice")
+        self.notice.setTextFormat(Qt.TextFormat.PlainText)
         self.notice.setFont(QFont("Segoe UI", 11))
         self.notice.setStyleSheet("color: @danger-text;")
-        self.notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.notice.setWordWrap(True)
+        self.notice.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self.notice.hide()
+        layout.addSpacing(4)
         layout.addWidget(self.notice)
+        layout.addStretch(1)
 
     def set_notice(self, text: str) -> None:
         self.notice.setText(text)
@@ -245,6 +256,8 @@ class DropZoneWidget(QFrame):
             event.acceptProposedAction()
             self.files_selected.emit(paths, skipped)
             return
+        if skipped:
+            self.set_notice(NO_AUDIO_DROPPED)
         event.ignore()
 
     def mousePressEvent(self, event: QMouseEvent):
@@ -752,6 +765,7 @@ class FileInfoCard(QFrame):
         self.result_label = DecodeLabel()
         self.result_label.setObjectName("uploadResultNote")
         self.result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.result_label.setWordWrap(True)
         self.result_label.hide()
         actions.addWidget(self.result_label)
         actions.addStretch()
@@ -939,10 +953,21 @@ class FileInfoCard(QFrame):
             ]
         # The reveal runs when the action row next comes into view, which is
         # after the progress panel has held its Done state.
+        _repolish(self.result_label, "tone", "")
+        self.result_label.setToolTip("")
         self.result_label.set_segments(segments)
         self.result_label.show()
 
+    def set_error_note(self, message: str) -> None:
+        """Say why the job failed where its timing would have gone."""
+        _repolish(self.result_label, "tone", "danger")
+        self.result_label.setToolTip(message)
+        self.result_label.set_segments([(message, False)], animate=False)
+        self.result_label.show()
+
     def clear_result(self):
+        _repolish(self.result_label, "tone", "")
+        self.result_label.setToolTip("")
         self.result_label.clear()
         self.result_label.hide()
 
@@ -1127,13 +1152,15 @@ class UploadFileTab(TranscriptionTabBase):
 
         if not self._items:
             if skipped:
-                self.drop_zone.set_notice("None of the dropped items are audio files")
+                self.drop_zone.set_notice(NO_AUDIO_DROPPED)
             return
 
         self._queue_note = self._drop_note_for(skipped, duplicates)
         self.drop_zone.set_notice("")
         self.drop_zone.hide()
         self.file_info_card.show()
+        if added:
+            self._reset_result()
         self._render()
         if added:
             self._start_previews(added)
@@ -1164,11 +1191,12 @@ class UploadFileTab(TranscriptionTabBase):
                         path, engine_splits=engine_splits
                     )
                 except FileNotFoundError:
-                    result = "File not found"
-                except ValueError as exc:
-                    result = f"Invalid audio file: {exc}"
+                    result = "This file no longer exists."
+                except UnreadableAudioError as exc:
+                    result = str(exc)
                 except Exception as exc:
-                    result = f"Error: {exc}"
+                    logger.warning("Reading %s failed", path, exc_info=True)
+                    result = f"OpenWhisper couldn't read this file ({type(exc).__name__})."
                 try:
                     self._preview_ready.emit(path, result)
                 except RuntimeError:
@@ -1195,7 +1223,7 @@ class UploadFileTab(TranscriptionTabBase):
                 # Alone, an unreadable file goes back to the drop zone, which
                 # says why.
                 self.clear_file()
-                self.drop_zone.set_notice(message)
+                self.drop_zone.set_notice(f"{os.path.basename(path)}: {message}")
                 return
             item.preview = None
             item.error = message
@@ -1369,6 +1397,7 @@ class UploadFileTab(TranscriptionTabBase):
     def _on_transcribe(self):
         if self.is_transcribing or not self._items:
             return
+        self._reset_result()
         if len(self._items) == 1:
             if not self._audio_path or not os.path.exists(self._audio_path):
                 self.clear_file()
@@ -1440,6 +1469,16 @@ class UploadFileTab(TranscriptionTabBase):
         self.file_info_card.set_copy_enabled(copyable)
         self.expand_btn.setVisible(copyable)
         self._sync_viewer()
+
+    def show_job_error(self, message: str) -> None:
+        """End a failed or canceled job; the card, not the transcript, says why."""
+        self.clear_transcription()
+        self.file_info_card.finish_transcribing(success=False)
+        self._unlock_engine()
+        self.file_info_card.set_copy_enabled(False)
+        reason = message.removeprefix("Error: ").strip()
+        if reason and "canceled" not in reason.lower():
+            self.file_info_card.set_error_note(reason)
 
     def set_batch_result(self, result: BatchResult) -> None:
         """Give the reading window the per-file structure behind a batch."""
@@ -1518,6 +1557,16 @@ class UploadFileTab(TranscriptionTabBase):
         if item is not None and item.transcript:
             self.copy_requested.emit(item.transcript)
 
+    def _reset_result(self) -> None:
+        """Drop the last job's transcript and timing once other files are up.
+
+        Left showing, they read as the new file's result and Copy copied
+        them. History keeps every finished transcript.
+        """
+        self.file_info_card.clear_result()
+        self.file_info_card.set_copy_enabled(False)
+        self.clear_transcription()
+
     def clear_file(self):
         self._items = []
         self._audio_path = None
@@ -1526,7 +1575,7 @@ class UploadFileTab(TranscriptionTabBase):
         card = self.file_info_card
         card.hide()
         card.set_transcribing(False)
-        card.set_copy_enabled(False)
+        self._reset_result()
         card.queue.render([])
         card.queue.set_note("")
         card.set_mode("single")

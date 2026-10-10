@@ -49,6 +49,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 EMPTY_ASR_MESSAGE = "No speech detected (empty after VAD)"
+
+
+class EngineNotReadyError(RuntimeError):
+    """The engine can't take a job yet; the message says what to do instead."""
+
+
+def _start_failure_message(exc: Exception) -> str:
+    if isinstance(exc, EngineNotReadyError):
+        return str(exc)
+    return f"Failed to process audio: {exc}"
 #: Shown when the full pass found nothing but the streaming preview did. Names
 #: the source, because the text on screen is the preview's and is not saved.
 EMPTY_PREVIEW_FALLBACK_MESSAGE = (
@@ -453,7 +463,7 @@ class TranscriptionRuntime:
             self._run_transcription_job(config.RECORDED_AUDIO_FILE)
         except Exception as exc:
             logger.error(f"Failed to start transcription: {exc}")
-            self.controller.transcription_failed.emit(f"Failed to process audio: {exc}")
+            self.controller.transcription_failed.emit(_start_failure_message(exc))
 
     def _run_transcription_job(self, audio_path: str) -> None:
         """Transcribe on the worker thread this job already runs on.
@@ -555,7 +565,7 @@ class TranscriptionRuntime:
             self._submit_transcription_job(audio_path)
         except Exception as exc:
             logger.error(f"Failed to start re-transcription: {exc}")
-            self.on_transcription_error(f"Failed to process audio: {exc}")
+            self.on_transcription_error(_start_failure_message(exc))
 
     def upload_audio_file(
         self, audio_path: str, duration_seconds: Optional[float] = None
@@ -592,7 +602,7 @@ class TranscriptionRuntime:
             self._submit_transcription_job(audio_path)
         except Exception as exc:
             logger.error(f"Failed to process uploaded audio: {exc}")
-            self.on_transcription_error(f"Failed to process audio: {exc}")
+            self.on_transcription_error(_start_failure_message(exc))
 
     def upload_audio_files(self, request: BatchUploadRequest) -> None:
         """Transcribe several uploaded files as one job.
@@ -645,7 +655,7 @@ class TranscriptionRuntime:
             self.controller.executor.submit(self.transcribe_batch, request)
         except Exception as exc:
             logger.error(f"Failed to process uploaded audio files: {exc}")
-            self.on_transcription_error(f"Failed to process audio: {exc}")
+            self.on_transcription_error(_start_failure_message(exc))
 
     def transcribe_batch(self, request: BatchUploadRequest) -> None:
         """Worker for a multi-file upload; strictly serial."""
@@ -1632,7 +1642,7 @@ class TranscriptionRuntime:
         pending_audio = self.controller._pending_audio_path
         status = error_message if refused else f"Error: {error_message}"
         self.controller.ui_controller.set_status(status)
-        self.controller.ui_controller.set_transcript(status)
+        self.controller.ui_controller.show_transcription_error(status)
         self.controller.overlay_state_update.emit(OverlayState.NONE)
         rewrite = refused or (job is not None and job.mode != JobMode.DICTATION)
         if rewrite and not self._cancel_requested.is_set():
@@ -1718,14 +1728,14 @@ class TranscriptionRuntime:
                 self.controller.ensure_local_model_available()
             else:
                 self.controller.reload_whisper_model()
-            raise RuntimeError(backend.device_info)
+            raise EngineNotReadyError(backend.device_info)
         if not backend.is_available() and getattr(backend, "is_model_missing", False):
             # Trigger the consent/download flow, but never transcribe with a
             # model the user has not approved downloading.
             self.controller.ensure_local_model_available()
-            raise Exception(
-                "Whisper model is not downloaded yet — approve the download "
-                "and try again"
+            raise EngineNotReadyError(
+                "The speech model isn't downloaded yet. Approve the download, "
+                "then try again."
             )
 
     def _submit_transcription_job(self, audio_path: str) -> None:

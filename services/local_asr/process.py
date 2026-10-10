@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 import json
+import logging
 import os
 from pathlib import Path
 import queue
@@ -12,6 +13,8 @@ import sys
 import threading
 import time
 import weakref
+
+logger = logging.getLogger(__name__)
 
 _workers = weakref.WeakSet()
 _workers_lock = threading.Lock()
@@ -150,6 +153,25 @@ class SpeechProcess:
         """The worker's last stderr lines, such as the traceback of a failed request."""
         return "\n".join(list(self._errors)[-lines:])
 
+    def _worker_stopped(self) -> RuntimeError:
+        """Log what the worker printed on its way out; callers get one plain line.
+
+        That output is usually a Python traceback, which used to reach the
+        status line verbatim. The full text stays on the error as ``detail``.
+        """
+        # The stderr reader may still be draining the traceback.
+        self._readers[1].join(.5)
+        detail = "\n".join(self._errors)
+        logger.error(
+            "Speech worker stopped (exit code %s):\n%s",
+            self.process.poll(), detail or "(no output)",
+        )
+        error = RuntimeError(
+            "The speech engine stopped unexpectedly. Details are in openwhisper.log."
+        )
+        error.detail = detail
+        return error
+
     def request(self, op: str, *, timeout=180., cancel=None, progress=None, **payload) -> dict:
         with self._lock:
             deadline = time.monotonic() + timeout
@@ -167,7 +189,7 @@ class SpeechProcess:
                 if self._closed:
                     raise RuntimeError("Transcription canceled")
                 if self._input is None:
-                    raise RuntimeError("Speech worker stopped: " + " ".join(self._errors)[-1600:])
+                    raise self._worker_stopped()
                 self._serial += 1
                 serial = self._serial
                 try:
@@ -192,7 +214,7 @@ class SpeechProcess:
                 if self._closed:
                     raise RuntimeError("Transcription canceled")
                 if response is None:
-                    raise RuntimeError("Speech worker stopped: " + " ".join(self._errors)[-1600:])
+                    raise self._worker_stopped()
                 if response.get("id") != serial:
                     continue
                 if "progress" in response:

@@ -15,6 +15,7 @@ from config import config
 from services.audio_processor import (
     AudioFilePreview,
     AudioProcessor,
+    UnreadableAudioError,
     _SMOOTH_BLOCK_SAMPLES,
     _moving_average,
 )
@@ -168,6 +169,25 @@ class TestPreviewErrors:
 
         with pytest.raises(ValueError):
             processor.preview_file(str(path), engine_splits=False)
+
+    @pytest.mark.parametrize(
+        ("content", "expected"),
+        [
+            (b"", "This file is empty."),
+            (b"not audio at all" * 64, "This doesn't look like an audio file."),
+        ],
+    )
+    def test_unreadable_file_says_why_in_plain_words(
+        self, processor, tmp_path, content, expected
+    ):
+        # FFmpeg's "[Errno 1094995529] Invalid data found when processing
+        # input: '<path>'" used to reach the drop zone verbatim.
+        path = tmp_path / "broken.wav"
+        path.write_bytes(content)
+
+        with pytest.raises(UnreadableAudioError) as excinfo:
+            processor.preview_file(str(path), engine_splits=False)
+        assert str(excinfo.value) == expected
 
 
 class TestSplitting:

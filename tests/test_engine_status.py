@@ -37,6 +37,16 @@ def test_ready_details_and_runtime_messages_share_the_card(tab):
     assert tab.resolved_label.text() == "Parakeet TDT 0.6B v3 | cuda"
 
 
+def test_background_news_never_covers_a_problem(tab):
+    tab.set_device_info("base | cpu (int8)", True)
+    tab.set_status("Model download failed: no internet connection")
+    tab.set_ambient_message("Could not check for updates.")
+    assert tab.resolved_label.text() == "Model download failed: no internet connection"
+    tab.set_status("Ready")
+    tab.set_ambient_message("Could not check for updates.")
+    assert tab.resolved_label.text() == "Could not check for updates."
+
+
 def test_loading_animates_and_returns_to_resolved_engine(tab):
     tab.set_engine_busy(True)
     assert tab.status_dot._timer.isActive()

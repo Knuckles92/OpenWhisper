@@ -633,6 +633,15 @@ class TranscriptionTabBase(QWidget):
             self._status_message = ""
         self._refresh_engine_status()
 
+    def set_ambient_message(self, status_text: str) -> None:
+        """Show ``status_text`` only where the idle readout would be.
+
+        For news nobody asked for, such as a failed automatic update check:
+        it must not replace a message that explains a problem.
+        """
+        if not self._status_message:
+            self.set_engine_message(status_text)
+
     def set_device_info(self, device_info: str, ready: Optional[bool] = None):
         """Update the idle readout and readiness from a completed engine probe."""
         self._device_info = device_info

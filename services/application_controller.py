@@ -32,6 +32,7 @@ from services.hf_access import (
     AccessDecision,
     ConsentAction,
     delete_model_from_cache,
+    describe_model_download_error,
     download_model_files,
     hf_access_coordinator,
     is_hf_hub_offline_env_set,
@@ -871,7 +872,11 @@ class ApplicationController(QObject):
         if error and not manual:
             from services.app_update import update_check_failure_status
 
-            self.status_update.emit(update_check_failure_status(error))
+            # Background news: offline, it used to land two seconds after
+            # "Model download failed" and hide the reason the app can't work.
+            show = getattr(self.ui_controller, "set_ambient_status", None)
+            if show is not None:
+                show(update_check_failure_status(error))
         handler = getattr(self.ui_controller, "on_update_check_finished", None)
         if handler:
             handler(result, error, manual)
@@ -2177,6 +2182,7 @@ class ApplicationController(QObject):
         load_into_engine = load_into_engine and model_name not in MODELS
         backend = self.transcription_backends.get("local_whisper")
         success = False
+        downloaded = False
         try:
             if self._shutdown_cancel.is_set():
                 return
@@ -2193,7 +2199,7 @@ class ApplicationController(QObject):
             elif decision != AccessDecision.LOAD_CACHED:
                 self.status_update.emit(f"Model '{model_name}' is unavailable")
                 return
-            success = True
+            downloaded = success = True
             # A download can finish after the user switched engines or started
             # a meeting. Only the selected engine may acquire resident weights.
             with self._engine_lock:
@@ -2207,7 +2213,10 @@ class ApplicationController(QObject):
                     self.gpu_fallback_detected.emit()
         except Exception as exc:
             logger.error("Model download/load failed for '%s': %s", model_name, exc)
-            self.status_update.emit(f"Model download failed: {exc}")
+            self.status_update.emit(
+                f"Model '{model_name}' failed to load (details in openwhisper.log)."
+                if downloaded else describe_model_download_error(model_name, exc)
+            )
         finally:
             hf_access_coordinator.end_request(model_name)
             self.model_download_finished.emit(model_name, success)
@@ -2291,7 +2300,9 @@ class ApplicationController(QObject):
                     success = self._download_model_to_cache(model_name)
                 except Exception as exc:
                     logger.error(f"Model download failed for '{model_name}': {exc}")
-                    self.status_update.emit(f"Model download failed: {exc}")
+                    self.status_update.emit(
+                        describe_model_download_error(model_name, exc)
+                    )
                 finally:
                     # ``claim_batch`` transfers ownership of one coordinator
                     # slot per model to this worker.  Release processed models

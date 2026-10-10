@@ -12,6 +12,7 @@ from services.hf_access import (
     HuggingFaceAccessCoordinator,
     _progress_tqdm_class,
     delete_model_from_cache,
+    describe_model_download_error,
     format_download_size,
     format_size_bytes,
     invalidate_cached_models_snapshot,
@@ -162,6 +163,37 @@ class TestEvaluateAccess:
         self._set_policy(HuggingFaceAccessPolicy.ASK)
         self.coordinator.grant_once("base")
         assert self.coordinator.evaluate_access("small") == AccessDecision.NEEDS_CONSENT
+
+
+class TestDescribeDownloadError:
+    """The status line says what went wrong and what to do; never the errno."""
+
+    @pytest.mark.parametrize("error", [
+        # As the isolated download worker relays it: text only.
+        RuntimeError("[Errno -3] Temporary failure in name resolution"),
+        RuntimeError("[WinError 11001] getaddrinfo failed"),
+        RuntimeError("Could not reach the download server (timed out)."),
+        OSError(101, "Network is unreachable"),
+    ])
+    def test_offline(self, error):
+        message = describe_model_download_error("base", error)
+        assert message.startswith("Couldn't reach the download server for 'base'.")
+        assert message.endswith(" in Downloads.")
+        assert "Errno" not in message
+
+    @pytest.mark.parametrize("error", [
+        RuntimeError("[Errno 28] No space left on device"),
+        OSError(28, "No space left on device"),
+    ])
+    def test_disk_full_names_the_size(self, error):
+        message = describe_model_download_error("base", error)
+        assert message.startswith(f"Not enough disk space for 'base' (about {format_download_size('base').lstrip('~')}).")
+        assert message.endswith(" in Downloads.")
+
+    def test_anything_else_points_at_the_log(self):
+        message = describe_model_download_error("base", RuntimeError("HTTP 500"))
+        assert "openwhisper.log" in message
+        assert "HTTP 500" not in message
 
 
 class TestFormatSizeBytes:

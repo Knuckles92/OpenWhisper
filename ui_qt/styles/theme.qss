@@ -2043,6 +2043,17 @@ QWidget#quickRecordContent QTextEdit#transcriptText[headed="true"]:focus {
     padding: 6px 48px 16px 16px;
 }
 
+/* Room for the reading-window button in the pane's top-right corner. */
+QWidget#uploadFileContent QTextEdit#transcriptText,
+QWidget#uploadFileContent QTextEdit#transcriptText:focus {
+    padding: 16px 44px 16px 16px;
+}
+
+QWidget#uploadFileContent QTextEdit#transcriptText[headed="true"],
+QWidget#uploadFileContent QTextEdit#transcriptText[headed="true"]:focus {
+    padding: 6px 44px 16px 16px;
+}
+
 QFrame#transcriptSwitch {
     background-color: @bg;
     border: 1px solid @border;
@@ -3839,6 +3850,10 @@ QLabel#uploadResultNote {
     color: @text-secondary;
     font-size: 12px;
     background-color: transparent;
+}
+
+QLabel#uploadResultNote[tone="danger"] {
+    color: @danger-text;
 }
 
 /* Multi-file upload: the queue that replaces the single-file header when two

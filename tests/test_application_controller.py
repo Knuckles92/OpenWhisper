@@ -447,12 +447,14 @@ class DummyUIController:
         self.overlay = DummyOverlay()
         self.is_recording = False
         self.statuses = []
+        self.ambient_statuses = []
         self.device_infos = []
         self.device_ready_states = []
         self.engine_busy_states = []
         self.hotkeys = None
         self.refreshed_history = False
         self.transcription_text = None
+        self.transcription_error = None
         self.transcription_raw = None
         self.stats = None
         self.cleaned_up = False
@@ -624,6 +626,9 @@ class DummyUIController:
     def set_status(self, status):
         self.statuses.append(status)
 
+    def set_ambient_status(self, status):
+        self.ambient_statuses.append(status)
+
     def set_device_info(self, device_info, ready=None):
         self.device_infos.append(device_info)
         self.device_ready_states.append(ready)
@@ -657,6 +662,9 @@ class DummyUIController:
     def set_transcript(self, text, raw=None):
         self.transcription_text = text
         self.transcription_raw = raw
+
+    def show_transcription_error(self, message):
+        self.transcription_error = message
 
     def copy_to_clipboard(self, text):
         if not self.copy_succeeds:
@@ -809,11 +817,13 @@ def _install_module_stubs(settings_manager, history_manager, keyboard, db_state)
     from services.hf_access import (
         AccessDecision as _RealAccessDecision,
         ConsentAction as _RealConsentAction,
+        describe_model_download_error as _real_describe_download_error,
     )
 
     hf_access_module = types.ModuleType("services.hf_access")
     hf_access_module.AccessDecision = _RealAccessDecision
     hf_access_module.ConsentAction = _RealConsentAction
+    hf_access_module.describe_model_download_error = _real_describe_download_error
     hf_access_module.resolve_model_repo = lambda name: name
     hf_access_module.download_model_files = (
         lambda name, progress_callback=None, **kwargs: f"/cache/{name}"
@@ -2165,7 +2175,8 @@ class TestApplicationController:
         self._run_batch(controller)
 
         assert self.history_manager.entries == []
-        assert controller.ui_controller.transcription_text == "Error: Transcription canceled"
+        assert controller.ui_controller.transcription_error == "Error: Transcription canceled"
+        assert controller.ui_controller.transcription_text is None
         assert not controller.transcription_runtime.has_active_job
 
     def test_batch_announces_each_large_file_the_backend_splits(self):
@@ -2225,7 +2236,8 @@ class TestApplicationController:
         self._run_batch(controller)
 
         assert self.history_manager.entries == []
-        assert controller.ui_controller.transcription_text.startswith("Error: All 2 files failed")
+        assert controller.ui_controller.transcription_error.startswith("Error: All 2 files failed")
+        assert controller.ui_controller.transcription_text is None
         assert not controller.transcription_runtime.has_active_job
 
     def test_transcribe_clip_delegates_to_current_backend(self):
@@ -2824,12 +2836,16 @@ class TestApplicationController:
         assert success
         assert "Restart" not in message
 
-    def test_auto_update_check_failure_sets_status(self):
+    def test_auto_update_check_failure_is_background_status(self):
         controller = self._create_controller()
         controller._on_update_check_finished(
             None, "GitHub rate-limited this update check.", False
         )
-        assert any("rate limit" in status.lower() for status in controller.ui_controller.statuses)
+        assert not controller.ui_controller.statuses
+        assert any(
+            "rate limit" in status.lower()
+            for status in controller.ui_controller.ambient_statuses
+        )
         assert controller.ui_controller.update_checks[-1] == (
             None, "GitHub rate-limited this update check.", False
         )

@@ -76,6 +76,67 @@ def format_download_size(model_name: str) -> Optional[str]:
     return None if size_mb is None else format_download_mb(size_mb)
 
 
+#: How a missing network reads once it has crossed the download worker's
+#: process boundary as text ("[Errno -3] Temporary failure in name
+#: resolution", WinError 11001, httpx's ConnectError, urllib's reason).
+_OFFLINE_MARKERS: Final = (
+    "name resolution", "getaddrinfo", "name or service not known",
+    "nodename nor servname", "network is unreachable", "no route to host",
+    "connection refused", "connecterror", "failed to establish a new connection",
+    "max retries exceeded", "could not reach the download server", "11001",
+)
+_DISK_FULL_MARKERS: Final = (
+    "no space left on device", "[errno 28]", "not enough space on the disk",
+    "[winerror 112]",
+)
+
+
+def describe_model_download_error(model_name: str, exc: BaseException) -> str:
+    """Status-line copy for a failed model download, with what to do next.
+
+    The raw error (an errno string from the HTTP client or the filesystem)
+    belongs in the log; callers log it. The text ends with "in Downloads." so
+    the status line links there to retry.
+    """
+    import errno
+    import socket
+
+    chain = []
+    current: Optional[BaseException] = exc
+    while current is not None and len(chain) < 8:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    text = " ".join(str(error) for error in chain).lower()
+
+    if "canceled" in text or "cancelled" in text:
+        return f"Download of '{model_name}' was canceled."
+    disk_full = any(
+        isinstance(error, OSError)
+        and (error.errno == errno.ENOSPC or getattr(error, "winerror", None) == 112)
+        for error in chain
+    ) or any(marker in text for marker in _DISK_FULL_MARKERS)
+    if disk_full:
+        size = format_download_size(model_name)  # "~145 MB"
+        needed = f" (about {size.lstrip('~')})" if size else ""
+        return (
+            f"Not enough disk space for '{model_name}'{needed}. "
+            "Free up space, then retry in Downloads."
+        )
+    offline = any(
+        isinstance(error, (socket.gaierror, ConnectionError, TimeoutError))
+        for error in chain
+    ) or any(marker in text for marker in _OFFLINE_MARKERS)
+    if offline:
+        return (
+            f"Couldn't reach the download server for '{model_name}'. "
+            "Check the internet connection, then retry in Downloads."
+        )
+    return (
+        f"Couldn't download '{model_name}' (details in openwhisper.log). "
+        "Retry in Downloads."
+    )
+
+
 def is_model_cached(model_name: str) -> bool:
     """Check whether a model is fully present in the local cache. No network.
 

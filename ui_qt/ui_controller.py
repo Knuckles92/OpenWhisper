@@ -103,6 +103,7 @@ class UIController(QObject):
     record_started = pyqtSignal()
     record_stopped = pyqtSignal()
     transcription_received = pyqtSignal(str, object)  # fixed text, optional raw
+    transcription_error_received = pyqtSignal(str)
     status_changed = pyqtSignal(str)
     audio_levels_updated = pyqtSignal(list)
     agent_data_changed = pyqtSignal(str, dict)
@@ -320,6 +321,7 @@ class UIController(QObject):
         self.record_started.connect(self._show_recording_overlay)
         self.record_stopped.connect(self._show_processing_overlay)
         self.transcription_received.connect(self._display_transcript)
+        self.transcription_error_received.connect(self._display_transcription_error)
         self.status_changed.connect(self._apply_status_to_main_window)
         self.audio_levels_updated.connect(self._apply_audio_levels_to_overlay)
         self.agent_data_changed.connect(self._apply_agent_changes)
@@ -493,6 +495,15 @@ class UIController(QObject):
         tab.expand_transcription()
         self.hide_overlay()
 
+    def _display_transcription_error(self, message: str) -> None:
+        # The status line says why. The transcript box stays empty, because
+        # Copy would copy an error there as if it were a transcript.
+        if self._transcription_source_tab == TabbedContentWidget.TAB_UPLOAD_FILE:
+            self.main_window.upload_file_tab.show_job_error(message)
+        else:
+            self.main_window.clear_transcription()
+        self.hide_overlay()
+
     def _apply_status_to_main_window(self, status: str):
         if self.main_window.quick_record_tab.engine_loading:
             self.main_window.set_status(status)
@@ -555,6 +566,10 @@ class UIController(QObject):
 
     def set_transcript(self, text: str, raw=None):
         self.transcription_received.emit(text, raw)
+
+    def show_transcription_error(self, message: str) -> None:
+        """End a failed or canceled job without a transcript. Any thread."""
+        self.transcription_error_received.emit(message)
 
     def set_device_info(self, device_info: str, ready: Optional[bool] = None):
         self.main_window.set_device_info(device_info, ready)
@@ -644,6 +659,10 @@ class UIController(QObject):
 
     def set_status(self, status: str):
         self.status_changed.emit(status)
+
+    def set_ambient_status(self, status: str) -> None:
+        """Show background news (a failed update check) unless a message is up."""
+        self.main_window.quick_record_tab.set_ambient_message(status)
 
     def set_overlay_state(self, state: OverlayState) -> None:
         """Route an explicit overlay-state change to the correct overlay component.

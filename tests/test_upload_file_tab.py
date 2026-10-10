@@ -12,7 +12,7 @@ from PyQt6.QtCore import Qt, QMimeData, QUrl, QPointF
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 
 from config import config
-from services.audio_processor import AudioFilePreview
+from services.audio_processor import AudioFilePreview, UnreadableAudioError
 from services.batch_upload import BatchRelation
 from services.format_utils import format_sample_rate
 from ui_qt.overlay_state import OverlayState
@@ -27,6 +27,7 @@ from ui_qt.dialogs.batch_relation_dialog import BatchRelationDialog
 from ui_qt.widgets.engine_field import EngineStatus
 from ui_qt.widgets.decode_label import DecodeLabel
 from ui_qt.widgets.upload_file_tab import (
+    NO_AUDIO_DROPPED,
     DropZoneWidget,
     FileInfoCard,
     UploadFileTab,
@@ -525,14 +526,14 @@ class TestUploadFileTab:
         tab = UploadFileTab()
         with _inline_threads(), patch(
             "ui_qt.widgets.upload_file_tab.audio_processor.preview_file",
-            side_effect=ValueError("bad header"),
+            side_effect=UnreadableAudioError("This file is empty."),
         ):
-            tab._on_file_selected("broken.wav")
+            tab._on_file_selected(os.path.join("somewhere", "broken.wav"))
 
         assert not tab.drop_zone.isHidden()
         assert tab.file_info_card.isHidden()
         assert not tab.drop_zone.notice.isHidden()
-        assert tab.drop_zone.notice.text() == "Invalid audio file: bad header"
+        assert tab.drop_zone.notice.text() == "broken.wav: This file is empty."
         assert tab._audio_path is None
 
         with _inline_threads(), patch(
@@ -776,7 +777,7 @@ class TestUploadFileTab:
             tab._on_files_selected(paths, 0)
 
         tab._on_preview_ready(paths[0], _preview(file_name="a.wav"))
-        tab._on_preview_ready(paths[1], "Invalid audio file: bad header")
+        tab._on_preview_ready(paths[1], "This doesn't look like an audio file.")
 
         queue = tab.file_info_card.queue
         assert queue.row_for(paths[1]).state == "failed"
@@ -865,7 +866,24 @@ class TestUploadFileTab:
         tab._on_files_selected([], 3)
 
         assert not tab.drop_zone.isHidden()
-        assert tab.drop_zone.notice.text() == "None of the dropped items are audio files"
+        assert tab.drop_zone.notice.text() == NO_AUDIO_DROPPED
+
+    def test_dropping_only_non_audio_on_the_zone_says_so(self, tmp_path):
+        # The zone's drop handler used to ignore such a drop without a word.
+        text_file = tmp_path / "notes.txt"
+        text_file.write_text("hi")
+        with _isolated_settings():
+            tab = UploadFileTab()
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(str(text_file))])
+        event = QDropEvent(
+            QPointF(10, 10), Qt.DropAction.CopyAction, mime,
+            Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+        )
+        tab.drop_zone.dropEvent(event)
+
+        assert not tab.drop_zone.notice.isHidden()
+        assert tab.drop_zone.notice.text() == NO_AUDIO_DROPPED
 
     def test_adding_files_is_refused_while_a_job_runs(self, tmp_path):
         tab, paths = self._tab_with_files(tmp_path)
@@ -1148,6 +1166,71 @@ class TestUploadFileTab:
         tab.set_transcription_stats(6.9, 10.2, 1024)
 
         tab._on_transcribe()
+        assert tab.file_info_card.result_label.isHidden()
+
+    @pytest.mark.parametrize("next_step", ["add", "remove"])
+    def test_a_finished_result_clears_when_other_files_come_up(self, tmp_path, next_step):
+        tab = self._tab_with_file(tmp_path)
+        tab._on_transcribe()
+        tab.set_transcript("First file's words")
+        tab.set_transcription_stats(6.9, 10.2, 1024)
+        assert tab.transcript_text.toPlainText()
+
+        if next_step == "remove":
+            tab.clear_file()
+        else:
+            other = tmp_path / "second.wav"
+            other.write_bytes(b"\0" * 64)
+            with _inline_threads(), patch(
+                "ui_qt.widgets.upload_file_tab.audio_processor.preview_file",
+                return_value=_preview(file_path=str(other), file_name="second.wav"),
+            ):
+                tab._on_file_selected(str(other))
+
+        assert tab.transcript_text.toPlainText() == ""
+        assert tab.file_info_card.result_label.isHidden()
+        assert not tab.file_info_card.copy_btn._active
+        assert tab.expand_btn.isHidden()
+
+    def test_starting_a_job_clears_the_previous_transcript(self, tmp_path):
+        tab = self._tab_with_file(tmp_path)
+        tab._on_transcribe()
+        tab.set_transcript("First pass")
+        tab.file_info_card.finish_transcribing(True)
+
+        tab._on_transcribe()
+        assert tab.transcript_text.toPlainText() == ""
+
+    def test_a_failed_job_says_why_on_the_card_not_in_the_transcript(self, tmp_path):
+        tab = self._tab_with_file(tmp_path)
+        tab._on_transcribe()
+
+        tab.show_job_error(
+            "Error: The speech model isn't downloaded yet. Approve the download, "
+            "then try again."
+        )
+
+        card = tab.file_info_card
+        assert card.progress.stage is ProgressStage.FAILED
+        assert tab.transcript_text.toPlainText() == ""
+        assert not card.copy_btn._active
+        assert not tab.is_transcribing
+        assert card.result_label.property("tone") == "danger"
+        assert card.result_label.text().startswith("The speech model isn")
+        # The next job's timing replaces the reason in the normal tone.
+        tab._on_transcribe()
+        tab.set_transcript("Words")
+        tab.set_transcription_stats(1.0, 2.0, 1024)
+        assert card.result_label.property("tone") == ""
+
+    def test_a_canceled_job_leaves_no_error_note(self, tmp_path):
+        tab = self._tab_with_file(tmp_path)
+        tab._on_transcribe()
+        tab.set_progress_state(OverlayState.CANCELING)
+
+        tab.show_job_error("Error: Transcription canceled")
+
+        assert tab.file_info_card.progress.stage is ProgressStage.CANCELED
         assert tab.file_info_card.result_label.isHidden()
 
     def test_error_transcript_marks_the_job_failed(self, tmp_path):
