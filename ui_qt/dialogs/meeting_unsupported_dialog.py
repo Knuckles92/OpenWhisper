@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Final, Optional
 
+from PyQt6.QtCore import QSize
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -41,6 +42,8 @@ from ui_qt.widgets import Button
 from ui_qt.widgets.buttons import compact_primary_button, neutral_button
 
 logger = logging.getLogger(__name__)
+
+_PREFERRED_WIDTH = 500
 
 
 class MeetingUnsupportedPlatformDialog(QDialog):
@@ -90,10 +93,14 @@ class MeetingUnsupportedPlatformDialog(QDialog):
                 "before continuing."
             )
         self.setAccessibleName(self.windowTitle())
-        self.setMinimumWidth(500)
         self.setModal(True)
 
         self._setup_ui()
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        # A preferred width, not a minimum: the window's height is measured
+        # at this width, so the wrapped text fits without spare rows.
+        return super().sizeHint().expandedTo(QSize(_PREFERRED_WIDTH, 0))
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
