@@ -24,7 +24,8 @@ from services.settings import (
     resolve_meeting_mode_intro_seen,
     settings_manager,
 )
-from ui_qt.widgets import Button, PrimaryButton
+from ui_qt.widgets import Button
+from ui_qt.widgets.buttons import compact_primary_button
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +101,9 @@ class MeetingModeIntroDialog(QDialog):
         skip_btn.clicked.connect(self.reject)
         button_layout.addWidget(skip_btn)
 
-        got_it_btn = PrimaryButton("Got it")
+        # The tone keeps the primary look under the lookup name; renaming a
+        # PrimaryButton dropped it, which left "Got it" an underlined link.
+        got_it_btn = compact_primary_button(Button("Got it"))
         got_it_btn.setObjectName("meetingIntroGotItButton")
         got_it_btn.setDefault(True)
         got_it_btn.clicked.connect(lambda: self._finish(self.RESULT_GOT_IT))
