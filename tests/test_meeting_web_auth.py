@@ -242,6 +242,38 @@ class TestHostOnlyAuthz:
         assert r.status_code == 200
         assert engine.ended is True
 
+    def test_slow_end_is_logged_with_where_the_time_went(
+        self, client, caplog, monkeypatch
+    ):
+        import logging
+
+        import meeting.web.api as api_module
+
+        tc, engine, _ = client
+        monkeypatch.setattr(api_module, "_SLOW_END_WARN_S", -1.0)
+        with caplog.at_level(logging.WARNING, logger="meeting.web.api"):
+            r = tc.post("/api/meeting/end", params={"token": HOST_TOKEN})
+        assert r.status_code == 200
+        assert engine.ended is True
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert any(
+            "Meeting end request took" in m
+            and "waiting for a worker thread" in m
+            and "in engine.end" in m
+            for m in messages
+        ), messages
+
+    def test_quick_end_is_not_logged(self, client, caplog):
+        import logging
+
+        tc, _, _ = client
+        with caplog.at_level(logging.WARNING, logger="meeting.web.api"):
+            tc.post("/api/meeting/end", params={"token": HOST_TOKEN})
+        assert not any(
+            "Meeting end request took" in rec.getMessage()
+            for rec in caplog.records
+        )
+
     def test_guest_cannot_search_or_export(self, client):
         tc, _, _ = client
         assert tc.get("/api/search", params={"token": GUEST_TOKEN, "q": "x"}

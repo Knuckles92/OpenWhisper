@@ -14,6 +14,7 @@ import functools
 import json
 import logging
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, Optional, Set
@@ -44,6 +45,9 @@ from meeting.web.ws import WsHub
 from services.titles import normalize_title
 
 logger = logging.getLogger(__name__)
+
+#: An End request slower than this is logged with where its time went.
+_SLOW_END_WARN_S = 1.0
 
 #: Meeting fields safe to expose to dashboard clients. Tokens and the raw
 #: state_json snapshot are deliberately excluded.
@@ -959,7 +963,24 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
     @app.post("/api/meeting/end")
     async def api_meeting_end(token: str = "") -> Dict[str, Any]:
         await _require(token, host_only=True)
-        await asyncio.to_thread(engine.end)
+        requested = time.perf_counter()
+        started: list = []
+
+        def _end() -> None:
+            started.append(time.perf_counter())
+            engine.end()
+
+        await asyncio.to_thread(_end)
+        elapsed = time.perf_counter() - requested
+        if elapsed > _SLOW_END_WARN_S:
+            # Split the wait so a saturated thread pool is told apart from
+            # an engine.end() that blocks (it should only spawn its worker).
+            queued = (started[0] - requested) if started else elapsed
+            logger.warning(
+                "Meeting end request took %.2fs (%.2fs waiting for a worker "
+                "thread, %.2fs in engine.end)",
+                elapsed, queued, elapsed - queued,
+            )
         return {"ok": True}
 
     @app.post("/api/meeting/pause")
