@@ -1003,9 +1003,13 @@ class HistorySidebar(QWidget):
     @staticmethod
     def _clear_layout(layout: QVBoxLayout):
         while layout.count():
-            item = layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            widget = layout.takeAt(0).widget()
+            if widget is not None:
+                # Gone now, not at the next event-loop pass: a card left
+                # showing until then reads as one more entry than the header.
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
 
     def _make_empty_label(self, message: str) -> QLabel:
         label = QLabel(message)
@@ -1150,16 +1154,16 @@ class HistorySidebar(QWidget):
             entry.id: entry.also_on for entry in entries if getattr(entry, "also_on", None)
         }
         has_more = len(entries) > self.MAX_HISTORY_ITEMS
-        shown = entries[:self.MAX_HISTORY_ITEMS]
-
-        self.history_header.setText(
-            (
-                f"HISTORY ({len(shown)}{'+' if has_more else ''})"
-                if shown else "HISTORY"
-            )
-        )
+        # One card per entry: a repeated id would get two cards but one slot
+        # in _history_cards, and the extra card would outlive the next refresh.
+        shown, seen = [], set()
+        for entry in entries[:self.MAX_HISTORY_ITEMS]:
+            if entry.id not in seen:
+                seen.add(entry.id)
+                shown.append(entry)
 
         if not shown:
+            self.history_header.setText("HISTORY")
             self._clear_layout(self.history_list_layout)
             self._history_cards = {}
             message = "No matching entries" if query else "No history yet"
@@ -1191,6 +1195,12 @@ class HistorySidebar(QWidget):
         self._history_cards = reconcile_cards(
             self.history_list_layout, shown, self._history_cards, create, fingerprint
         )
+        # Counted from the cards on screen, after they are built: set first,
+        # a card that failed to build left the new count over the old list.
+        rendered = self.rendered_card_count()
+        self.history_header.setText(
+            f"HISTORY ({rendered}{'+' if has_more else ''})" if rendered else "HISTORY"
+        )
         if notice:
             note = self._make_empty_label(
                 f"{notice} Entries kept there show when it is."
@@ -1206,6 +1216,14 @@ class HistorySidebar(QWidget):
                     "to find older entries"
                 )
             )
+
+    def rendered_card_count(self) -> int:
+        """How many entry cards the list holds, each counted once."""
+        layout = self.history_list_layout
+        return len({
+            widget for widget in (layout.itemAt(i).widget() for i in range(layout.count()))
+            if isinstance(widget, HistoryItemWidget)
+        })
 
     def entry_for(self, entry_id: str):
         """This computer's entry, or a host-kept one this list is showing."""
