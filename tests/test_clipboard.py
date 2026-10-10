@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -262,6 +263,18 @@ def _pump(ms=30):
     loop.exec()
 
 
+def _wait_for_prefetch(clipboard, timeout=2.0):
+    """Pump until a requested prefetch has read ``clipboard``.
+
+    It crosses two hops, a queued signal and then a zero-delay timer, so a
+    fixed-length pump can end before the second on a busy machine.
+    """
+    deadline = time.monotonic() + timeout
+    while not clipboard.read_threads:
+        assert time.monotonic() < deadline, "the clipboard prefetch never ran"
+        _pump(5)
+
+
 @pytest.fixture
 def captures(monkeypatch):
     """Count ClipboardSnapshot.capture calls, i.e. real clipboard copies."""
@@ -281,7 +294,7 @@ def _prefetched(clipboard, sequence_source=None):
         clipboard, sequence_source=sequence_source or clipboard.sequence
     )
     temporary.request_prefetch(0)
-    _pump()
+    _wait_for_prefetch(clipboard)
     return temporary
 
 
@@ -424,7 +437,7 @@ def test_prefetch_waits_for_the_event_loop(captures):
     temporary.request_prefetch(0)
 
     assert captures == []
-    _pump()
+    _wait_for_prefetch(clipboard)
     assert len(captures) == 1
 
 
@@ -435,7 +448,7 @@ def test_prefetch_from_another_thread_reads_on_the_qt_thread(captures):
     worker = threading.Thread(target=temporary.request_prefetch, args=(0,))
     worker.start()
     worker.join()
-    _pump()
+    _wait_for_prefetch(clipboard)
 
     assert captures == [threading.main_thread()]
     assert clipboard.read_threads == {threading.main_thread()}
