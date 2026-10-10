@@ -64,9 +64,10 @@ QPushButton#primaryButton:pressed {
     background-color: @accent-pressed;
 }
 
-/* Outranks QPushButton:disabled above, which #primaryButton's own fill
-   beats: without it a disabled primary action still looks clickable. */
-QPushButton#primaryButton:disabled {
+/* Outranks QPushButton:disabled above, which the primary and danger fills
+   beat: without it a disabled primary or danger action still looks clickable. */
+QPushButton#primaryButton:disabled,
+QPushButton#dangerButton:disabled {
     background-color: @surface;
     color: @text-muted;
 }
@@ -3542,13 +3543,11 @@ QLabel#meetingRecoveryRowLabel {
     background-color: transparent;
 }
 
-QPushButton#meetingConsentNotNowButton,
-QPushButton#meetingConsentEnableButton,
-QPushButton#meetingRecoveryCloseButton,
-QPushButton#meetingRecoveryFinalizeButton,
-QPushButton#meetingRecoveryDiscardButton,
-QPushButton#meetingIntroSkipButton,
-QPushButton#meetingIntroGotItButton {
+/* By dialog, not by button name: the primary and danger buttons here keep
+   their class object names, which is what gives them their colour. */
+QDialog#meetingConsentDialog QPushButton,
+QDialog#meetingRecoveryDialog QPushButton,
+QDialog#meetingIntroDialog QPushButton {
     padding: 8px 16px;
     font-size: 13px;
 }

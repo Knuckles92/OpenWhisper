@@ -154,7 +154,7 @@ class HuggingFaceConsentDialog(QDialog):
                 button_layout.addWidget(always_btn)
 
             download_btn = PrimaryButton("Download once")
-            download_btn.setObjectName("consentDownloadOnceButton")
+            download_btn.setProperty("buttonId", "consentDownloadOnceButton")
             download_btn.setAutoDefault(False)
             download_btn.clicked.connect(
                 lambda: self._finish(self.RESULT_DOWNLOAD_ONCE)

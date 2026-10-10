@@ -220,7 +220,7 @@ class AppUpdateDialog(QDialog):
 
         primary = self._primary_label()
         self.primary_btn = PrimaryButton(primary)
-        self.primary_btn.setObjectName("updatePrimaryButton")
+        self.primary_btn.setProperty("buttonId", "updatePrimaryButton")
         self._size_footer_button(self.primary_btn)
         self.primary_btn.clicked.connect(self._on_primary)
         if not primary:

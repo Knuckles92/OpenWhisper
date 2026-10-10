@@ -328,6 +328,9 @@ def compact_primary_button(button: Button) -> Button:
     return button
 
 
+# The theme styles the classes below by object name ("primaryButton",
+# "dangerButton", ...). Give an instance an identifier with
+# setProperty("buttonId", ...), not setObjectName, or it loses its colours.
 class PrimaryButton(Button):
     """Primary action button with gradient."""
 

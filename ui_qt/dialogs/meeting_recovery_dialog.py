@@ -98,13 +98,13 @@ class MeetingRecoveryDialog(QDialog):
         row_layout.addWidget(label, stretch=1)
 
         finalize_btn = PrimaryButton("Finalize")
-        finalize_btn.setObjectName("meetingRecoveryFinalizeButton")
+        finalize_btn.setProperty("buttonId", "meetingRecoveryFinalizeButton")
         finalize_btn.setAccessibleName(f"Finalize {title}")
         finalize_btn.setAccessibleDescription(
             "Transcribe the captured audio and keep this meeting in history."
         )
         discard_btn = DangerButton("Discard")
-        discard_btn.setObjectName("meetingRecoveryDiscardButton")
+        discard_btn.setProperty("buttonId", "meetingRecoveryDiscardButton")
         discard_btn.setAccessibleName(f"Discard {title}")
         discard_btn.setAccessibleDescription(
             "Permanently delete this interrupted meeting and its captured audio."

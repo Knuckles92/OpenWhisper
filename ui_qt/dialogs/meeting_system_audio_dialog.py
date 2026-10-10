@@ -91,7 +91,7 @@ class MeetingSystemAudioPermissionDialog(QDialog):
         button_layout.addWidget(continue_btn)
 
         cancel_btn = PrimaryButton("Go back")
-        cancel_btn.setObjectName("meetingSystemAudioGoBackButton")
+        cancel_btn.setProperty("buttonId", "meetingSystemAudioGoBackButton")
         cancel_btn.setDefault(True)
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)

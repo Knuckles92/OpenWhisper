@@ -18,6 +18,13 @@ class _QtTestCase:
     def setup_class(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    @staticmethod
+    def _button(dialog, name):
+        # Primary and danger buttons keep their class object name for the
+        # theme and carry their identifier in a "buttonId" property.
+        return next((button for button in dialog.findChildren(QPushButton)
+                     if name in (button.objectName(), button.property("buttonId"))), None)
+
 
 class TestConsentDialogCopy(_QtTestCase):
     """Dialog copy: model identity, Hugging Face, size, local storage."""
@@ -57,9 +64,6 @@ class TestConsentDialogCopy(_QtTestCase):
 
 class TestConsentDialogButtons(_QtTestCase):
     """Button availability per policy, and the result each click produces."""
-
-    def _button(self, dialog, name):
-        return dialog.findChild(QPushButton, name)
 
     def test_ask_policy_buttons(self):
         dialog = HuggingFaceConsentDialog("base", HuggingFaceAccessPolicy.ASK)
@@ -151,7 +155,7 @@ class TestConsentDialogShortScreen(_QtTestCase):
             bar = dialog.body_scroll.verticalScrollBar()
             assert bar.maximum() > 0 and bar.value() == 0
             for name in ("consentCancelButton", "consentDownloadOnceButton"):
-                button = dialog.findChild(QPushButton, name)
+                button = self._button(dialog, name)
                 bottom = button.mapTo(dialog, button.rect().bottomLeft()).y()
                 assert bottom <= dialog.height()
             assert dialog.title_label.isVisible()
