@@ -11,11 +11,12 @@ for both, and floats over the catalog's right edge when it is not, so a large
 font scale never squeezes the rows below the point where a name or a size is
 still readable.
 """
+import itertools
 import threading
 import math
 from typing import Callable, Dict, List, Optional, Set
 
-from PyQt6.QtCore import QRect, Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import QObject, QRect, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
     QDialog,
@@ -165,6 +166,29 @@ class BatchDownloadDialog(QDialog):
         layout.addLayout(buttons)
 
 
+class _ScanRelay(QObject):
+    """Brings cache scans to the Qt thread for whichever Downloads pages exist then.
+
+    It lives for the session, so a scan thread never emits on a page: emitting
+    on one raced Settings closing, which can crash the process. Qt drops a
+    deleted page's connection, and the scan's generation says which page asked.
+    """
+
+    finished = pyqtSignal(int, object)
+
+
+_relay: Optional[_ScanRelay] = None
+#: Scan generations, unique across pages because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _scan_relay() -> _ScanRelay:
+    global _relay
+    if _relay is None:
+        _relay = _ScanRelay()
+    return _relay
+
+
 class DownloadsPage(QWidget):
     """The catalog page Settings hosts under Models & storage."""
 
@@ -176,7 +200,6 @@ class DownloadsPage(QWidget):
     component_remove_requested = pyqtSignal(str)
     #: Cache totals or download progress changed (rail value, Overview).
     inventory_changed = pyqtSignal()
-    _cache_scan_finished = pyqtSignal(int, object)
 
     #: Assigned by UIController; called with the model name.
     on_download_requested: Optional[Callable[[str], None]] = None
@@ -222,7 +245,7 @@ class DownloadsPage(QWidget):
 
         self._ui_built = False
         self._inventory = {}
-        self._cache_scan_finished.connect(self._on_cache_scan_finished)
+        _scan_relay().finished.connect(self._on_cache_scan_finished)
         if not defer_build:
             self.ensure_ui()
 
@@ -1146,15 +1169,13 @@ class DownloadsPage(QWidget):
         self._refresh_cached_model_state(cached or {})
         if not scan:
             return
-        self._cache_scan_generation += 1
-        generation = self._cache_scan_generation
+        generation = self._cache_scan_generation = next(_tokens)
+        # Bound here: the worker must not reach back into the page.
+        scan_cache = scan_cached_models
+        finished = _scan_relay().finished
 
         def load() -> None:
-            result = scan_cached_models(max_age_seconds=30.0)
-            try:
-                self._cache_scan_finished.emit(generation, result)
-            except RuntimeError:
-                pass  # Settings was destroyed before the scan finished.
+            finished.emit(generation, scan_cache(max_age_seconds=30.0))
 
         threading.Thread(
             target=load,

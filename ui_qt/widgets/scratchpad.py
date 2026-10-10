@@ -7,6 +7,7 @@ what it holds: counts and lengths only.
 
 from __future__ import annotations
 
+import itertools
 import logging
 import os
 import sys
@@ -14,7 +15,7 @@ import tempfile
 import threading
 from typing import Callable, Optional
 
-from PyQt6.QtCore import QPoint, QRect, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QPoint, QRect, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QCursor, QKeySequence, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
@@ -152,6 +153,31 @@ class _Saver:
             self._written = sequence
 
 
+class _TransformRelay(QObject):
+    """Brings transform results to the Qt thread for whichever Scratchpads exist then.
+
+    It lives for the session, so a transform thread never holds or emits on a
+    window. Holding one let the thread drop the last reference and delete the
+    window off the Qt thread, and emitting on one raced its deletion; both
+    crash the process. Qt drops a deleted window's connection.
+    """
+
+    #: Token, rewritten text, error message.
+    finished = pyqtSignal(int, object, str)
+
+
+_relay: Optional[_TransformRelay] = None
+#: Transform tokens, unique across windows because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _transform_relay() -> _TransformRelay:
+    global _relay
+    if _relay is None:
+        _relay = _TransformRelay()
+    return _relay
+
+
 def _utf16_slice(encoded: bytes, start: int, end: int) -> str:
     """Text between two QTextDocument positions, which count UTF-16 units."""
     start, end = max(0, start), max(0, end)
@@ -209,8 +235,6 @@ class ScratchpadWindow(QWidget):
     get a normal window that the compositor places, sizes and stacks.
     """
 
-    _transform_finished = pyqtSignal(int, object, str)
-
     def __init__(self, copy_text: Optional[Callable[[str], bool]] = None):
         super().__init__(None)
         self._copy_text = copy_text
@@ -254,7 +278,7 @@ class ScratchpadWindow(QWidget):
         self._undo_timer.timeout.connect(self._forget_cleared)
 
         self._build()
-        self._transform_finished.connect(self._on_transform_finished)
+        _transform_relay().finished.connect(self._on_transform_finished)
         app = QApplication.instance()
         if app is not None:
             app.aboutToQuit.connect(self.flush)
@@ -595,8 +619,7 @@ class ScratchpadWindow(QWidget):
         if not text.strip():
             self._notice("Write or dictate something to transform")
             return
-        self._transform_generation += 1
-        generation = self._transform_generation
+        self._transform_generation = generation = next(_tokens)
         self._transform_cursor = cursor
         self.editor.setReadOnly(True)
         self.transform_button.setEnabled(False)
@@ -606,21 +629,21 @@ class ScratchpadWindow(QWidget):
         settings = settings_manager.load_all_settings()
         instruction = transform.instruction
         logger.info("Scratchpad transform started (%d characters)", len(text))
+        # Bound here: the worker must not reach back into the window.
+        rewrite = text_rewrite.rewrite_standalone
+        finished = _transform_relay().finished
 
         def work() -> None:
             result, error = "", ""
             try:
-                result, message = text_rewrite.rewrite_standalone(text, instruction, settings)
+                result, message = rewrite(text, instruction, settings)
                 error = message or ""
             except Exception as exc:
                 # Expected failures come back as the message; this is a bug,
                 # and its text could quote the draft.
                 logger.warning("Scratchpad transform failed (%s)", type(exc).__name__)
                 result, error = "", "Couldn't transform the text"
-            try:
-                self._transform_finished.emit(generation, result, error)
-            except RuntimeError:
-                pass  # The window was destroyed while the rewrite ran.
+            finished.emit(generation, result, error)
 
         threading.Thread(target=work, name="scratchpad-transform", daemon=True).start()
 

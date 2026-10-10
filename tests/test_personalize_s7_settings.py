@@ -1,8 +1,10 @@
 """Settings → Recording: the preferred microphone, its backups, and the Basic mirror."""
+import gc
 import os
 import tempfile
 import threading
 import time
+import weakref
 from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
@@ -10,7 +12,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QCoreApplication
+from PyQt6.QtCore import QCoreApplication, QEvent
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QComboBox, QLabel, QPushButton
 
 from services import audio_devices
@@ -229,6 +231,39 @@ def test_nothing_is_called_disconnected_before_the_device_list_arrives(make_dial
         release.set()
     _pump_until(lambda: dialog._microphones.devices is not None)
     assert _row_text(_rows(dialog)[0]) == ["Microphone (Lapel)", "Not connected"]
+
+
+def test_a_window_closed_while_listing_microphones_is_not_held_by_the_worker(
+    make_dialog, monkeypatch
+):
+    # The worker used to capture the microphone section, and through it the
+    # window: it kept a closed window alive, then could drop the last
+    # reference (deleting a QWidget) off the Qt thread.
+    gate = threading.Event()
+
+    def slow():
+        gate.wait(5)
+        return list(DEVICES)
+
+    monkeypatch.setattr(settings_dialog_module.AudioRecorder, "get_input_devices", staticmethod(slow))
+    dialog, _store = make_dialog({SettingsKey.AUDIO_INPUT_PRIORITY: [USB]}, wait=False)
+    workers = [t for t in threading.enumerate() if t.name == "settings-audio-devices"]
+    assert workers
+    ref = weakref.ref(dialog)
+    dialog.deleteLater()
+    del dialog
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    # PyQt releases the window's lambda slots by a queued call, then
+    # deleteLater; until both run they hold it too.
+    QApplication.processEvents()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    gc.collect()
+    assert ref() is None
+    gate.set()
+    for worker in workers:
+        worker.join(5)
+        assert not worker.is_alive()
+    QApplication.processEvents()
 
 
 def test_refresh_rereads_devices_only_while_nothing_records(make_dialog, monkeypatch):

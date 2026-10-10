@@ -1,13 +1,16 @@
 """The floating Scratchpad: showing it, saving it, dictating into it, transforms."""
+import gc
 import logging
 import os
+import threading
 import time
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from PyQt6.QtCore import QRect, Qt
+from PyQt6.QtCore import QEvent, QRect, Qt
 from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWidgets import QApplication, QAbstractButton
 
@@ -373,6 +376,37 @@ class TestTransforms:
         pad.apply_transform(POLISH)
         assert pad.status_label.text() == "Write or dictate something to transform"
         assert not pad.editor.isReadOnly()
+
+    def test_a_window_deleted_mid_transform_is_not_held_by_the_worker(self, monkeypatch):
+        # The worker used to capture the window: it kept a deleted window
+        # alive, then dropped the last reference (deleting a QWidget) or
+        # emitted on it from its own thread, which can crash the process.
+        gate = threading.Event()
+
+        def rewrite(text, instruction, settings):
+            gate.wait(5)
+            return text.upper(), None
+
+        _install_rewriter(monkeypatch, rewrite)
+        window = ScratchpadWindow()
+        window.editor.setPlainText("private draft words")
+        window.apply_transform(POLISH)
+        workers = [t for t in threading.enumerate() if t.name == "scratchpad-transform"]
+        ref = weakref.ref(window)
+        window.deleteLater()
+        del window
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        # PyQt frees the window's own lambda connections with a queued call
+        # and then a deferred delete; flush both.
+        QApplication.processEvents()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        gc.collect()
+        assert ref() is None
+        gate.set()
+        for worker in workers:
+            worker.join(5)
+            assert not worker.is_alive()
+        QApplication.processEvents()
 
 
 def test_the_app_opens_it_and_dictation_lands_in_it(monkeypatch):

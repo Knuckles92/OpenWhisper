@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import itertools
 import threading
+from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
@@ -26,9 +28,32 @@ from ui_qt.widgets import Button, ElidingComboBox, PrimaryButton, WrappedLabel
 _DEVICE_LABELS = {"cpu": "CPU", "cuda": "NVIDIA GPU", "auto": "Auto"}
 
 
-class RemoteModelsDialog(QDialog):
-    _finished = pyqtSignal(str, object, str)
+class _RequestRelay(QObject):
+    """Brings host replies to the Qt thread for whichever dialogs exist then.
 
+    It lives for the session, so a request thread never holds or emits on a
+    dialog. Holding one let the thread drop the last reference and delete the
+    dialog off the Qt thread, and emitting on one raced it closing; both crash
+    the process. Qt drops a deleted dialog's connection.
+    """
+
+    #: Token, operation, result, error.
+    finished = pyqtSignal(int, str, object, str)
+
+
+_relay: Optional[_RequestRelay] = None
+#: Request tokens, unique across dialogs because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _request_relay() -> _RequestRelay:
+    global _relay
+    if _relay is None:
+        _relay = _RequestRelay()
+    return _relay
+
+
+class RemoteModelsDialog(QDialog):
     def __init__(self, service, host_name: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Models on {host_name}")
@@ -38,9 +63,10 @@ class RemoteModelsDialog(QDialog):
         self._service, self._host_name = service, host_name
         self._pairing = service.client_pairing() if service is not None else None
         self._busy = self._valid = False
+        self._request_token = 0
         self._catalog = {}
         self._device_model = None
-        self._finished.connect(self._on_finished)
+        _request_relay().finished.connect(self._on_finished)
         self._poll = QTimer(self)
         self._poll.setInterval(2000)
         self._poll.timeout.connect(lambda: self._request("model_catalog"))
@@ -353,19 +379,20 @@ class RemoteModelsDialog(QDialog):
                     "select_model": "Loading model on host…",
                 }[op]
             )
+        self._request_token = token = next(_tokens)
+        # Bound here: the worker must not reach back into the dialog.
+        service, pairing = self._service, self._pairing
+        finished = _request_relay().finished
 
         def work():
             result, error = None, ""
             try:
-                result = self._service.remote_model_request(
-                    op, expected_pairing=self._pairing, **fields
+                result = service.remote_model_request(
+                    op, expected_pairing=pairing, **fields
                 )
             except Exception as exc:
                 error = str(exc) or type(exc).__name__
-            try:
-                self._finished.emit(op, result, error)
-            except RuntimeError:
-                pass
+            finished.emit(token, op, result, error)
 
         threading.Thread(target=work, name="remote-model-request", daemon=True).start()
 
@@ -379,7 +406,9 @@ class RemoteModelsDialog(QDialog):
             bar.setValue(min(100, int(100 * done / total)))
         return busy
 
-    def _on_finished(self, op, result, error):
+    def _on_finished(self, token, op, result, error):
+        if token != self._request_token:
+            return
         self._busy = False
         if error:
             self._valid = False

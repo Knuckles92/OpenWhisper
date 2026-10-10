@@ -15,6 +15,7 @@ comes back, and a new line in Recent activity glows as it arrives.
 """
 from __future__ import annotations
 
+import itertools
 import logging
 import threading
 import time
@@ -24,6 +25,7 @@ from typing import Callable, Dict, List, Optional
 
 from PyQt6.QtCore import (
     QElapsedTimer,
+    QObject,
     QPointF,
     QRectF,
     Qt,
@@ -580,6 +582,32 @@ class _EventRow(QFrame):
 
 # ---- the page ----
 
+class _PageRelay(QObject):
+    """Brings service events and model lists to the Qt thread for whichever pages exist then.
+
+    It lives for the session, so a server thread or a model listing never
+    holds or emits on a page. Holding one let the thread drop the last
+    reference and delete the widget off the Qt thread, and emitting on one
+    raced the window closing; both crashed the process. Qt drops a deleted
+    page's connection.
+    """
+
+    service_event = pyqtSignal(int, str)
+    models_loaded = pyqtSignal(int, object)
+
+
+_relay: Optional[_PageRelay] = None
+#: Page and listing tokens, unique across pages because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _page_relay() -> _PageRelay:
+    global _relay
+    if _relay is None:
+        _relay = _PageRelay()
+    return _relay
+
+
 class HostDashboard(QWidget):
     """The main window's page in Host Mode."""
 
@@ -587,9 +615,6 @@ class HostDashboard(QWidget):
     model_requested = pyqtSignal(str, str)
     #: Open Settings on a destination key.
     settings_requested = pyqtSignal(str)
-
-    _service_event = pyqtSignal(str)
-    _models_loaded = pyqtSignal(int, object)
 
     _STYLE = """
         QScrollArea#hostScroll, QWidget#hostContent {
@@ -781,9 +806,14 @@ class HostDashboard(QWidget):
         self.setObjectName("hostDashboard")
         self.setStyleSheet(self._STYLE)
         self._service = None
-        self._listener = lambda kind: self._service_event.emit(kind)
-        self._service_event.connect(self._on_service_event)
-        self._models_loaded.connect(self._on_models_loaded)
+        relay = _page_relay()
+        relay.service_event.connect(self._on_relayed_event)
+        relay.models_loaded.connect(self._on_models_loaded)
+        # The service calls this on its server threads: bound here so it
+        # never holds or reaches the page.
+        self._token = token = next(_tokens)
+        service_event = relay.service_event
+        self._listener = lambda kind: service_event.emit(token, kind)
         #: How host models are listed off the UI thread (tests run it inline).
         self.run_in_background: Callable[[Callable[[], None]], None] = (
             lambda work: threading.Thread(target=work, name="host-dashboard-models",
@@ -1119,6 +1149,10 @@ class HostDashboard(QWidget):
         self._switching = None
         self._engine_error = str(message or "")
         self._render_engine()
+
+    def _on_relayed_event(self, token: int, kind: str) -> None:
+        if token == self._token:
+            self._on_service_event(kind)
 
     def _on_service_event(self, kind: str) -> None:
         if kind in ("activity", "clients"):
@@ -1468,8 +1502,9 @@ class HostDashboard(QWidget):
         service = self._service
         if service is None:
             return
-        self._models_token += 1
-        token = self._models_token
+        self._models_token = token = next(_tokens)
+        # Bound here: the listing must not reach back into the page.
+        loaded = _page_relay().models_loaded
 
         def work():
             try:
@@ -1477,10 +1512,7 @@ class HostDashboard(QWidget):
             except Exception:
                 logger.debug("Could not list this computer's ready models", exc_info=True)
                 models = []
-            try:
-                self._models_loaded.emit(token, list(models or []))
-            except RuntimeError:
-                pass  # The page closed while the list was read.
+            loaded.emit(token, list(models or []))
 
         self.run_in_background(work)
 

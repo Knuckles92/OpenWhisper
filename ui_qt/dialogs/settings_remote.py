@@ -7,6 +7,7 @@ threads and are re-posted to the UI thread the same way.
 """
 from __future__ import annotations
 
+import itertools
 import logging
 import threading
 import time
@@ -143,18 +144,40 @@ def _engine_phrase(engine: dict) -> str:
     return f"{label} on {device} ({compute})" if compute else f"{label} on {device}"
 
 
+class _SectionRelay(QObject):
+    """Brings worker and service results to the Qt thread for whichever pages exist then.
+
+    It lives for the session, so neither a worker thread nor a server thread
+    calling a listener ever emits on a page: emitting on one raced Settings
+    closing, which can crash the process. Qt drops a deleted page's
+    connection, and each result carries the token of the page it is for.
+    """
+
+    service_event = pyqtSignal(int, str)
+    #: (token, pairing or None, the exception or None, the NearbyHost it was for or None)
+    pair_finished = pyqtSignal(int, object, object, object)
+    #: The six digits a pairing request shows while the host's owner decides.
+    pair_code = pyqtSignal(int, str)
+    scan_finished = pyqtSignal(int, object)
+    records_event = pyqtSignal(int, str)
+    records_job_done = pyqtSignal(int, str)
+    recovery_job_done = pyqtSignal(int, str)
+
+
+_relay: Optional[_SectionRelay] = None
+#: Page tokens, unique across Settings windows because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _section_relay() -> _SectionRelay:
+    global _relay
+    if _relay is None:
+        _relay = _SectionRelay()
+    return _relay
+
+
 class RemoteEngineSection(QObject):
     """Builds the page's tiles and keeps them in step with the service."""
-
-    _service_event = pyqtSignal(str)
-    #: (pairing or None, the exception or None, the NearbyHost it was for or None)
-    _pair_finished = pyqtSignal(object, object, object)
-    #: The six digits a pairing request shows while the host's owner decides.
-    _pair_code = pyqtSignal(str)
-    _scan_finished = pyqtSignal(object)
-    _records_event = pyqtSignal(str)
-    _records_job_done = pyqtSignal(str)
-    _recovery_job_done = pyqtSignal(str)
 
     def __init__(self, parent=None, records=None):
         super().__init__(parent)
@@ -167,10 +190,6 @@ class RemoteEngineSection(QObject):
         self._records = records
         self._records_busy = ""
         self._records_note = ""
-        self._records_listener = lambda kind: self._records_event.emit(kind)
-        self._records_event.connect(self._on_records_event)
-        self._records_job_done.connect(self._on_records_job_done)
-        self._recovery_job_done.connect(self._on_recovery_job_done)
         self._recovery_busy = False
         self._select_engine: Optional[Callable[[str], None]] = None
         self._set_rail_value: Optional[Callable[[str], None]] = None
@@ -184,11 +203,20 @@ class RemoteEngineSection(QObject):
         self._manual = False
         #: While a pairing request waits on the host: {"name", "sas", "canceled"}.
         self._request = None
-        self._listener = lambda kind: self._service_event.emit(kind)
-        self._service_event.connect(self._on_service_event)
-        self._pair_finished.connect(self._on_pair_finished)
-        self._pair_code.connect(self._on_pair_code)
-        self._scan_finished.connect(self._on_scan_finished)
+        #: Marks what the shared relay brings back for this page.
+        self._token = token = next(_tokens)
+        relay = _section_relay()
+        # The service and the record sync call these on their own threads.
+        service_event, records_event = relay.service_event, relay.records_event
+        self._listener = lambda kind: service_event.emit(token, kind)
+        self._records_listener = lambda kind: records_event.emit(token, kind)
+        relay.service_event.connect(self._on_service_event)
+        relay.records_event.connect(self._on_records_event)
+        relay.records_job_done.connect(self._on_records_job_done)
+        relay.recovery_job_done.connect(self._on_recovery_job_done)
+        relay.pair_finished.connect(self._on_pair_finished)
+        relay.pair_code.connect(self._on_pair_code)
+        relay.scan_finished.connect(self._on_scan_finished)
         self._countdown = QTimer(self)
         self._countdown.setInterval(1000)
         self._countdown.timeout.connect(self._refresh_pairing_code)
@@ -765,7 +793,8 @@ class RemoteEngineSection(QObject):
             return
         self._scan_busy = True
         self._sweeping = sweep
-        service = self._service
+        service, token = self._service, self._token
+        finished = _section_relay().scan_finished
 
         def work():
             try:
@@ -773,12 +802,14 @@ class RemoteEngineSection(QObject):
             except Exception as exc:
                 logger.warning("Looking for computers to pair with failed: %s", exc)
                 scan = exc
-            self._scan_finished.emit(scan)
+            finished.emit(token, scan)
 
         threading.Thread(target=work, name="remote-engine-nearby-scan", daemon=True).start()
         self.refresh()
 
-    def _on_scan_finished(self, scan) -> None:
+    def _on_scan_finished(self, token: int, scan) -> None:
+        if token != self._token:
+            return
         self._scan_busy = False
         self._sweeping = False
         self._scan_at = time.monotonic()
@@ -1136,15 +1167,16 @@ class RemoteEngineSection(QObject):
         self._pairing_busy = True
         self.pair_button.setEnabled(False)
         self._say("Pairing...")
-        service = self._service
+        service, token = self._service, self._token
+        finished = _section_relay().pair_finished
 
         def work():
             try:
                 pairing = service.pair(address, code, tailscale=tailscale)
             except Exception as exc:
-                self._pair_finished.emit(None, exc, host)
+                finished.emit(token, None, exc, host)
             else:
-                self._pair_finished.emit(pairing, None, host)
+                finished.emit(token, pairing, None, host)
 
         threading.Thread(target=work, name="remote-engine-pair", daemon=True).start()
         self.refresh()
@@ -1165,23 +1197,26 @@ class RemoteEngineSection(QObject):
         self._request = {"name": host.name, "sas": "", "canceled": canceled}
         self.pair_button.setEnabled(False)
         self._say(f"Asking {host.name}...")
-        service = self._service
+        service, token = self._service, self._token
+        relay = _section_relay()
+        finished, code_shown = relay.pair_finished, relay.pair_code
 
         def work():
             try:
                 pairing = service.request_pairing(
-                    host.address, on_code=self._pair_code.emit, canceled=canceled
+                    host.address, on_code=lambda sas: code_shown.emit(token, sas),
+                    canceled=canceled,
                 )
             except Exception as exc:
-                self._pair_finished.emit(None, exc, host)
+                finished.emit(token, None, exc, host)
             else:
-                self._pair_finished.emit(pairing, None, host)
+                finished.emit(token, pairing, None, host)
 
         threading.Thread(target=work, name="remote-engine-pair-request", daemon=True).start()
         self.refresh()
 
-    def _on_pair_code(self, sas: str) -> None:
-        if self._request is None:
+    def _on_pair_code(self, token: int, sas: str) -> None:
+        if token != self._token or self._request is None:
             return
         self._request["sas"] = sas
         name = self._request["name"]
@@ -1226,7 +1261,9 @@ class RemoteEngineSection(QObject):
             )
         return str(exc) or type(exc).__name__
 
-    def _on_pair_finished(self, pairing, error, host) -> None:
+    def _on_pair_finished(self, token: int, pairing, error, host) -> None:
+        if token != self._token:
+            return
         self._pairing_busy = False
         self._request = None
         self.wait_box.hide()
@@ -1364,22 +1401,27 @@ class RemoteEngineSection(QObject):
         self._records_busy = busy
         self._records_note = ""
         self._refresh_records()
+        token, done = self._token, _section_relay().records_job_done
 
         def run():
             try:
                 message = work()
             except Exception as exc:
                 message = str(exc) or type(exc).__name__
-            self._records_job_done.emit(message)
+            done.emit(token, message)
 
         threading.Thread(target=run, name="remote-records-job", daemon=True).start()
 
-    def _on_records_event(self, kind: str) -> None:
+    def _on_records_event(self, token: int, kind: str) -> None:
+        if token != self._token:
+            return
         if kind.startswith("progress:") and self._records_busy:
             self._records_busy = kind[len("progress:"):]
         self._refresh_records()
 
-    def _on_records_job_done(self, message: str) -> None:
+    def _on_records_job_done(self, token: int, message: str) -> None:
+        if token != self._token:
+            return
         self._records_busy = ""
         self._records_note = message
         self._refresh_records()
@@ -1409,11 +1451,10 @@ class RemoteEngineSection(QObject):
             if answer != QMessageBox.StandardButton.Yes:
                 return
             records.set_location("local")
+        listener = self._records_listener
 
         def work() -> str:
-            moved = records.bring_back(
-                lambda text: self._records_event.emit("progress:" + text)
-            )
+            moved = records.bring_back(lambda text: listener("progress:" + text))
             return f"Brought {moved} record{'s' if moved != 1 else ''} back from {host}."
 
         self._run_records_job(f"Bringing records back from {host}…", work)
@@ -1555,6 +1596,7 @@ class RemoteEngineSection(QObject):
         self.recovery_message.setText("Recovering stored records…")
         self.recovery_message.show()
         self.refresh()
+        token, done = self._token, _section_relay().recovery_job_done
 
         def work():
             try:
@@ -1562,18 +1604,20 @@ class RemoteEngineSection(QObject):
                 message = "Stored records are available to the paired computer. Refresh its history to see them."
             except Exception as exc:
                 message = f"Could not recover records: {exc}"
-            self._recovery_job_done.emit(message)
+            done.emit(token, message)
 
         threading.Thread(target=work, name="remote-record-recovery", daemon=True).start()
 
-    def _on_recovery_job_done(self, message: str) -> None:
+    def _on_recovery_job_done(self, token: int, message: str) -> None:
+        if token != self._token:
+            return
         self._recovery_busy = False
         self.recovery_message.setText(message)
         self.recovery_message.show()
         self.refresh()
 
-    def _on_service_event(self, kind: str) -> None:
+    def _on_service_event(self, token: int, kind: str) -> None:
         # "activity" fires around every request a paired computer makes, and
         # nothing on this page shows it.
-        if kind != "activity":
+        if token == self._token and kind != "activity":
             self.refresh()

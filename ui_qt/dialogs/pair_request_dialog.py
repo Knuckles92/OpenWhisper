@@ -7,6 +7,7 @@ someone here answers. ``PairRequestPrompter`` watches the service and shows
 """
 from __future__ import annotations
 
+import itertools
 import logging
 import time
 from typing import Optional
@@ -146,18 +147,44 @@ class PairRequestDialog(QDialog):
         super().closeEvent(event)
 
 
+class _PromptRelay(QObject):
+    """Brings the host's events to the Qt thread for whichever prompters exist then.
+
+    It lives for the session, so a server thread never holds or emits on a
+    prompter. A prompter has no parent: holding one let the thread drop the
+    last reference and delete it off the Qt thread, and emitting on one raced
+    its deletion. Qt drops a deleted prompter's connection.
+    """
+
+    host_event = pyqtSignal(int, str)
+
+
+_relay: Optional[_PromptRelay] = None
+#: Prompter tokens, unique because every prompter shares the relay.
+_tokens = itertools.count(1)
+
+
+def _prompt_relay() -> _PromptRelay:
+    global _relay
+    if _relay is None:
+        _relay = _PromptRelay()
+    return _relay
+
+
 class PairRequestPrompter(QObject):
     """Shows a dialog for each pairing request the host gets, and passes the answer on."""
-
-    _event = pyqtSignal(str)
 
     def __init__(self, service, parent_window=None):
         super().__init__()
         self._service = service
         self._window = parent_window if isinstance(parent_window, QWidget) else None
         self.dialog: Optional[PairRequestDialog] = None
-        self._listener = lambda kind: self._event.emit(kind)
-        self._event.connect(self._on_event)
+        host_event = _prompt_relay().host_event
+        host_event.connect(self._on_event)
+        # The service calls this on its server threads: bound here so it
+        # never holds or reaches the prompter.
+        self._token = token = next(_tokens)
+        self._listener = lambda kind: host_event.emit(token, kind)
         if hasattr(service, "add_listener"):
             service.add_listener(self._listener)
 
@@ -167,8 +194,8 @@ class PairRequestPrompter(QObject):
         if self.dialog is not None:
             self.dialog.dismiss()
 
-    def _on_event(self, kind: str) -> None:
-        if kind in ("pair_request", "state"):
+    def _on_event(self, token: int, kind: str) -> None:
+        if token == self._token and kind in ("pair_request", "state"):
             self.sync()
 
     def sync(self) -> None:

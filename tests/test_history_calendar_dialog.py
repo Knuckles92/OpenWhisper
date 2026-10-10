@@ -1,10 +1,13 @@
 """History calendar window: navigation, filters, the day agenda, and opening records."""
+import gc
+import threading
+import weakref
 from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtCore import QEvent, QPointF, Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
@@ -238,6 +241,50 @@ def test_a_host_kept_meeting_is_fetched_before_it_opens(dialog):
     QApplication.processEvents()
     assert calls == [("meeting", "mh")]
     assert meetings == ["mh"]
+
+
+def test_a_calendar_closed_mid_read_is_not_held_by_its_workers(monkeypatch):
+    # The reads and the download used to run as the dialog's own methods: the
+    # worker kept a closed dialog alive, then dropped the last reference
+    # (deleting a QWidget) or emitted on it from its own thread.
+    from services.remote_records.sync import record_sync
+
+    gate = threading.Event()
+
+    class SlowSource(FakeSource):
+        def load_index(self):
+            gate.wait(5)
+            return super().load_index()
+
+    def check_out(kind, record_id, progress):
+        gate.wait(5)
+        progress(50, 100)
+
+    monkeypatch.setattr(record_sync, "_instance", SimpleNamespace(check_out=check_out))
+    hosted = item("mh", datetime(2026, 9, 27, 19, 0), kind=MEETING, place=(ON, "jed"),
+                  title="Remote sync", source={"id": "mh"})
+    window = HistoryCalendarDialog(source=SlowSource(september()), today=lambda: TODAY,
+                                   first_weekday=6)
+    window.refresh()
+    window._fetch_meeting(hosted)
+    names = {"history-calendar-load", "history-calendar-fetch"}
+    workers = [t for t in threading.enumerate() if t.name in names]
+    assert {t.name for t in workers} == names
+    ref = weakref.ref(window)
+    window.deleteLater()
+    del window
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    # The month arrows' lambdas hold the dialog until Qt frees their
+    # connections, a pass after the dialog goes.
+    QApplication.processEvents()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    gc.collect()
+    assert ref() is None
+    gate.set()
+    for worker in workers:
+        worker.join(5)
+        assert not worker.is_alive()
+    QApplication.processEvents()
 
 
 def test_refresh_merges_bursts_and_waits_while_hidden(dialog):

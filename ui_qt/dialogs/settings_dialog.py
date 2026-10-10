@@ -1,4 +1,5 @@
 import importlib
+import itertools
 import logging
 import os
 import sys
@@ -7,7 +8,7 @@ import threading
 from contextlib import contextmanager
 from typing import Callable, Dict, Optional
 
-from PyQt6.QtCore import QEvent, QRect, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QDialog,
@@ -313,6 +314,35 @@ _HOTKEY_LABELS = {
 }
 
 
+class _ThreadRelay(QObject):
+    """Brings worker results and microphone levels to the Qt thread for whichever windows exist then.
+
+    It lives for the session, so a worker or the rule recorder's audio thread
+    never holds or emits on a window. Holding one let the thread drop the
+    last reference and delete the window off the Qt thread, and emitting on
+    one raced it closing; both crash the process. Qt drops a deleted window's
+    connections.
+    """
+
+    api_key_verified = pyqtSignal(int, str, bool, str)
+    typesafe_route_verified = pyqtSignal(int, str, bool, str)
+    cleanup_rule_polished = pyqtSignal(int, str, str, str)
+    rule_dictation_finished = pyqtSignal(int, str, str)
+    rule_dictation_level = pyqtSignal(int, float)
+
+
+_relay: Optional[_ThreadRelay] = None
+#: Request tokens, unique across windows because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _thread_relay() -> _ThreadRelay:
+    global _relay
+    if _relay is None:
+        _relay = _ThreadRelay()
+    return _relay
+
+
 class _SettingsPage(QWidget):
     def __init__(self):
         super().__init__()
@@ -375,12 +405,6 @@ class SettingsDialog(QDialog):
     #: Room left above the window for a title bar the window manager has not
     #: drawn yet: the frame is unknown until the window is mapped.
     TITLE_BAR_ALLOWANCE = 32
-
-    _cleanup_rule_polished = pyqtSignal(str, str, str)
-    _rule_dictation_finished = pyqtSignal(str, str)
-    _rule_dictation_level = pyqtSignal(float)
-    _api_key_verified = pyqtSignal(str, bool, str)
-    _typesafe_route_verified = pyqtSignal(str, bool, str)
 
     on_audio_device_changed: Optional[Callable] = None
     on_streaming_settings_changed: Optional[Callable] = None
@@ -469,6 +493,12 @@ class SettingsDialog(QDialog):
         self._rule_dictation_state = "idle"
         self._rule_recorder: Optional[AudioRecorder] = None
         self._rule_recorder_device: tuple = ()
+        # The request each relayed result must match; 0 matches none.
+        self._rule_level_token = 0
+        self._rule_polish_token = 0
+        self._rule_dictation_token = 0
+        self._api_key_token = 0
+        self._typesafe_route_token = 0
         self._api_key_testing = False
         self._typesafe_route_testing = False
         self._api_key_source = CredentialSource.NONE
@@ -495,10 +525,12 @@ class SettingsDialog(QDialog):
         self.setMinimumSize(self.MINIMUM_SIZE)
         self.resize(self.DEFAULT_SIZE)
 
-        self._cleanup_rule_polished.connect(self._on_cleanup_rule_polished)
-        self._rule_dictation_finished.connect(self._on_rule_dictation_finished)
-        self._api_key_verified.connect(self._on_api_key_verified)
-        self._typesafe_route_verified.connect(self._on_typesafe_route_verified)
+        relay = _thread_relay()
+        relay.cleanup_rule_polished.connect(self._on_cleanup_rule_polished)
+        relay.rule_dictation_finished.connect(self._on_rule_dictation_finished)
+        relay.rule_dictation_level.connect(self._on_rule_dictation_level)
+        relay.api_key_verified.connect(self._on_api_key_verified)
+        relay.typesafe_route_verified.connect(self._on_typesafe_route_verified)
         self.finished.connect(self._release_rule_recorder)
         self.models.assignments_changed.connect(self._refresh_rail_values)
         self.models.downloads_requested.connect(self.show_downloads)
@@ -1112,8 +1144,6 @@ class SettingsDialog(QDialog):
             if key in self._page_scrolls:
                 layout.addStretch()
             self._built_pages.add(key)
-            if key == CLEANUP_RULES:
-                self._rule_dictation_level.connect(self.cleanup_rule_activity.push_level)
             self._load_settings()
             self.models.refresh(scan=False)
             page.layout().activate()
@@ -2725,17 +2755,26 @@ class SettingsDialog(QDialog):
         self._api_key_testing = True
         self._update_api_key_controls()
         self.message_label.setText(f"Testing {label}…")
+        self._api_key_token = token = next(_tokens)
+        # Bound here: the worker must not reach back into the window.
+        verify_typesafe = typesafe_verify_key
+        verify = verify_api_key
+        done = _thread_relay().api_key_verified
 
         def worker():
             if profile is None:
-                ok, detail = typesafe_verify_key(key)
+                ok, detail = verify_typesafe(key)
             else:
-                ok, detail = verify_api_key(profile, key)
-            self._api_key_verified.emit(name, ok, detail)
+                ok, detail = verify(profile, key)
+            done.emit(token, name, ok, detail)
 
         threading.Thread(target=worker, daemon=True, name="api-key-verify").start()
 
-    def _on_api_key_verified(self, env_name: str, ok: bool, detail: str) -> None:
+    def _on_api_key_verified(
+        self, token: int, env_name: str, ok: bool, detail: str
+    ) -> None:
+        if token != self._api_key_token:
+            return
         self._api_key_testing = False
         self._update_api_key_controls()
         label = self._api_key_label(env_name)
@@ -4056,14 +4095,22 @@ class SettingsDialog(QDialog):
         self._typesafe_route_testing = True
         self.typesafe_route_test_btn.setEnabled(False)
         self._show_typesafe_route_result(None, f"Testing {route.name}…")
+        self._typesafe_route_token = token = next(_tokens)
+        # Bound here: the worker must not reach back into the window.
+        verify = typesafe_verify_key
+        done = _thread_relay().typesafe_route_verified
 
         def worker():
-            ok, detail = typesafe_verify_key(key, route=route)
-            self._typesafe_route_verified.emit(route.id, ok, detail)
+            ok, detail = verify(key, route=route)
+            done.emit(token, route.id, ok, detail)
 
         threading.Thread(target=worker, daemon=True, name="jev-route-verify").start()
 
-    def _on_typesafe_route_verified(self, route_id: str, ok: bool, detail: str) -> None:
+    def _on_typesafe_route_verified(
+        self, token: int, route_id: str, ok: bool, detail: str
+    ) -> None:
+        if token != self._typesafe_route_token:
+            return
         self._typesafe_route_testing = False
         self.typesafe_route_test_btn.setEnabled(True)
         # The person switched routes while this one was being tested.
@@ -4304,6 +4351,8 @@ class SettingsDialog(QDialog):
             self._rule_polish_detail(provider, model, settings)
         )
         self._update_cleanup_rule_controls()
+        self._rule_polish_token = token = next(_tokens)
+        done = _thread_relay().cleanup_rule_polished
 
         def worker():
             try:
@@ -4314,16 +4363,17 @@ class SettingsDialog(QDialog):
                 )
             except Exception as exc:
                 polished, error = raw, str(exc)
-            try:
-                self._cleanup_rule_polished.emit(raw, polished or raw, error or "")
-            except RuntimeError:
-                pass
+            done.emit(token, raw, polished or raw, error or "")
 
         threading.Thread(
             target=worker, name="cleanup-rule-polish", daemon=True
         ).start()
 
-    def _on_cleanup_rule_polished(self, raw: str, polished: str, error: str) -> None:
+    def _on_cleanup_rule_polished(
+        self, token: int, raw: str, polished: str, error: str
+    ) -> None:
+        if token != self._rule_polish_token:
+            return
         self._rule_polishing = False
         dictated, self._rule_polish_dictated = self._rule_polish_dictated, False
         self.cleanup_rule_activity.finish()
@@ -4402,8 +4452,12 @@ class SettingsDialog(QDialog):
             self._rule_recorder = AudioRecorder(
                 device_priority=priority, output_file=self._rule_dictation_path
             )
+            # Levels come from the audio thread, which must not reach back
+            # into the window; the relay hands them to the composer's trace.
+            self._rule_level_token = token = next(_tokens)
+            level = _thread_relay().rule_dictation_level
             self._rule_recorder.set_audio_level_callback(
-                self._emit_rule_dictation_level
+                lambda value: level.emit(token, value)
             )
             self._rule_recorder_device = order
 
@@ -4423,12 +4477,9 @@ class SettingsDialog(QDialog):
         self._rule_dictation_timer.start()
         self._update_cleanup_rule_controls()
 
-    def _emit_rule_dictation_level(self, level: float) -> None:
-        """Hand a level from the audio thread to the composer's trace."""
-        try:
-            self._rule_dictation_level.emit(level)
-        except RuntimeError:
-            pass  # The window is gone; the stream closes with its recorder.
+    def _on_rule_dictation_level(self, token: int, level: float) -> None:
+        if token == self._rule_level_token:
+            self.cleanup_rule_activity.push_level(level)
 
     def _cancel_rule_dictation(self) -> None:
         """Throw the take away without transcribing it."""
@@ -4474,6 +4525,8 @@ class SettingsDialog(QDialog):
         recorder = self._rule_recorder
         transcribe = self.on_dictation_transcribe
         audio_path = self._rule_dictation_path
+        self._rule_dictation_token = token = next(_tokens)
+        done = _thread_relay().rule_dictation_finished
 
         def worker():
             text = ""
@@ -4501,16 +4554,15 @@ class SettingsDialog(QDialog):
                         os.remove(audio_path)
                 except OSError:
                     pass
-            try:
-                self._rule_dictation_finished.emit(text.strip(), error)
-            except RuntimeError:
-                pass
+            done.emit(token, text.strip(), error)
 
         threading.Thread(
             target=worker, name="rule-dictation", daemon=True
         ).start()
 
-    def _on_rule_dictation_finished(self, text: str, error: str) -> None:
+    def _on_rule_dictation_finished(self, token: int, text: str, error: str) -> None:
+        if token != self._rule_dictation_token:
+            return
         self._rule_dictation_state = "idle"
         self._update_cleanup_rule_controls()
         if error:

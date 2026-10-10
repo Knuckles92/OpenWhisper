@@ -123,11 +123,14 @@ class MeetingExportDialog(ExportDialogBase):
         loader = self._entry_loader or _default_entry_loader()
         return lambda meeting: loader(str(meeting.get("id") or "")) or None
 
-    def _progress_title(self, meeting: Dict[str, Any]) -> str:
+    @staticmethod
+    def _progress_title(meeting: Dict[str, Any]) -> str:
         return fallback_meeting_title(meeting)
 
-    def _write_per_item_files(self, entries, fmt: str, output: str, **options) -> None:
+    @staticmethod
+    def _write_per_item_files(entries, fmt: str, output: str, **options) -> None:
         write_per_meeting_files(entries, fmt, output, **options)
 
-    def _render_document(self, entries, fmt: str, **options) -> str:
+    @staticmethod
+    def _render_document(entries, fmt: str, **options) -> str:
         return render_export_document(entries, fmt, **options)

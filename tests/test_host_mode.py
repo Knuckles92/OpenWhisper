@@ -355,6 +355,68 @@ def test_the_page_waits_to_be_shown_before_asking_the_service(service):
     assert page.hero_title.text() == "Sharing Fake Parakeet"
 
 
+def test_a_closed_page_is_held_by_neither_a_server_thread_nor_its_model_listing(service):
+    # The listener and the model listing used to capture the page: either
+    # thread could keep a closed page alive, then drop the last reference
+    # (deleting a QWidget) or emit on it from its own thread, which
+    # segfaulted CI.
+    import gc
+    import threading
+    import weakref
+
+    from PyQt6.QtCore import QEvent
+
+    from ui_qt.widgets.host_dashboard import HostDashboard
+
+    gate = threading.Event()
+    models = service.host_models
+
+    def host_models():
+        gate.wait(5)
+        return models()
+
+    service.host_models = host_models
+    before = set(threading.enumerate())
+    page = HostDashboard()
+    page.bind(service)
+    page.bind_mcp(None)
+    page.refresh()
+    workers = [t for t in threading.enumerate()
+               if t.name == "host-dashboard-models" and t not in before]
+    assert workers
+    listener = service.listeners[0]  # mid-notify on a server thread
+    ref = weakref.ref(page)
+    page.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    # Its lambda connections let go once Qt runs their queued disconnects.
+    _pump(1)
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    del page
+    gc.collect()
+    assert ref() is None
+    assert service.listeners == []
+
+    errors = []
+
+    def notify():
+        try:
+            listener("clients")
+        except Exception as exc:
+            errors.append(exc)
+
+    server = threading.Thread(target=notify, name="host-dashboard-notify")
+    server.start()
+    server.join(5)
+    assert not server.is_alive()
+    gate.set()
+    for worker in workers:
+        worker.join(5)
+        assert not worker.is_alive()
+    _pump()
+    assert errors == []
+    assert ref() is None
+
+
 def test_sharing_off_offers_to_start(dashboard, service):
     service.state.update(enabled=False, running=False)
     dashboard.refresh()

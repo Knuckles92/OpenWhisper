@@ -1,6 +1,7 @@
 """Meeting-specific content for the main window's collapsible sidebar."""
 from __future__ import annotations
 
+import itertools
 import logging
 import os
 import threading
@@ -21,7 +22,7 @@ from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.context_menu import context_menu
 from ui_qt.widgets.history_calendar import CalendarGlyphButton
 
-from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QDialog,
@@ -46,6 +47,33 @@ def _record_sync():
     from services.remote_records.sync import record_sync
 
     return record_sync
+
+
+class _FetchRelay(QObject):
+    """Brings host downloads and deletes to the Qt thread for whichever panels exist then.
+
+    It lives for the session, so a worker thread never holds or emits on a
+    panel. Holding one let the thread drop the last reference and delete the
+    panel off the Qt thread, and emitting on one raced the window closing;
+    both crash the process. Qt drops a deleted panel's connection.
+    """
+
+    #: The asking panel's token, the meeting id, progress text.
+    progress = pyqtSignal(int, str, str)
+    #: The asking panel's token, the meeting id, what follows, error.
+    done = pyqtSignal(int, str, str, str)
+
+
+_relay: Optional[_FetchRelay] = None
+#: Tokens, unique across panels because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _fetch_relay() -> _FetchRelay:
+    global _relay
+    if _relay is None:
+        _relay = _FetchRelay()
+    return _relay
 
 
 def _meeting_location(meeting: Dict[str, Any]) -> tuple[str, str]:
@@ -262,9 +290,6 @@ class PastMeetingsPanel(QWidget):
     delete_meeting_requested = pyqtSignal(str, bool)
     clear_meetings_requested = pyqtSignal(bool)
     calendar_requested = pyqtSignal()
-    _meetings_loaded = pyqtSignal(int, object, str, bool)
-    _fetch_progress = pyqtSignal(str, str)
-    _fetch_done = pyqtSignal(str, str, str)
     MAX_MEETINGS = 100
     #: How long the list waits for the host's meetings before showing this
     #: computer's alone; the host's are merged in when they arrive.
@@ -286,13 +311,15 @@ class PastMeetingsPanel(QWidget):
         self._meeting_cancel = threading.Event()
         self._source_filtered = False
         self._has_more = False
+        #: Picks this panel's downloads off the shared relay.
+        self._token = next(_tokens)
         self.setObjectName("pastMeetingsContent")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._setup_ui()
         self._apply_style()
-        self._meetings_loaded.connect(self._apply_meeting_results)
-        self._fetch_progress.connect(self._on_fetch_progress)
-        self._fetch_done.connect(self._on_fetch_done)
+        relay = _fetch_relay()
+        relay.progress.connect(self._on_fetch_progress)
+        relay.done.connect(self._on_fetch_done)
         self._fetching: set = set()
 
     def set_selected_meeting_id(self, meeting_id: Optional[str]) -> None:
@@ -324,7 +351,11 @@ class PastMeetingsPanel(QWidget):
         if meeting_id in self._fetching:
             return
         self._fetching.add(meeting_id)
-        self._on_fetch_progress(meeting_id, f"Getting it from {host}…")
+        token = self._token
+        self._on_fetch_progress(token, meeting_id, f"Getting it from {host}…")
+        # Bound here: the worker must not reach back into the panel.
+        relay = _fetch_relay()
+        progressed, done = relay.progress, relay.done
 
         def work() -> None:
             try:
@@ -333,7 +364,8 @@ class PastMeetingsPanel(QWidget):
                 else:
                     def progress(got: int, total: int) -> None:
                         if total:
-                            self._fetch_progress.emit(
+                            progressed.emit(
+                                token,
                                 meeting_id,
                                 f"Getting it from {host}… {got * 100 // total}%",
                             )
@@ -341,18 +373,22 @@ class PastMeetingsPanel(QWidget):
                     _record_sync().check_out("meeting", meeting_id, progress)
             except Exception as exc:
                 logger.warning("Could not get a meeting from the host: %s", exc)
-                self._fetch_done.emit(meeting_id, then, str(exc) or type(exc).__name__)
+                done.emit(token, meeting_id, then, str(exc) or type(exc).__name__)
                 return
-            self._fetch_done.emit(meeting_id, then, "")
+            done.emit(token, meeting_id, then, "")
 
         threading.Thread(target=work, name="past-meeting-fetch", daemon=True).start()
 
-    def _on_fetch_progress(self, meeting_id: str, text: str) -> None:
+    def _on_fetch_progress(self, token: int, meeting_id: str, text: str) -> None:
+        if token != self._token:
+            return
         card = self._card(meeting_id)
         if card is not None:
             card.set_progress(text)
 
-    def _on_fetch_done(self, meeting_id: str, then: str, error: str) -> None:
+    def _on_fetch_done(self, token: int, meeting_id: str, then: str, error: str) -> None:
+        if token != self._token:
+            return
         self._fetching.discard(meeting_id)
         if error:
             card = self._card(meeting_id)
@@ -462,7 +498,8 @@ class PastMeetingsPanel(QWidget):
         self._meeting_load_generation += 1
         self._search_timer.start()
 
-    def _start_remote_listing(self, query: str, meetings: list):
+    @staticmethod
+    def _start_remote_listing(query: str, limit: int, meetings: list):
         """Ask the host for this computer's meetings it keeps, on another thread.
 
         Returns ``(done, merged)``, like the History list's; None when there
@@ -483,7 +520,7 @@ class PastMeetingsPanel(QWidget):
                 result["copies"] = records.copies_on_host(
                     "meeting", [str(m.get("id") or "") for m in meetings]
                 )
-                result["items"] = records.list_remote("meeting", query, self.MAX_MEETINGS + 1)
+                result["items"] = records.list_remote("meeting", query, limit)
             except Exception as exc:
                 logger.debug("Couldn't list the host's meetings: %s", exc)
             finally:
@@ -510,29 +547,28 @@ class PastMeetingsPanel(QWidget):
 
         return done, merged
 
+    @staticmethod
     def _load_meetings(
-        self,
-        query: str = "",
+        query: str,
+        limit: int,
+        repository,
+        provider: Optional[Callable[[], Iterable[Dict[str, Any]]]] = None,
     ) -> tuple[list[Dict[str, Any]], bool]:
-        if self._meeting_provider is not None:
-            rows = self._meeting_provider()
+        if provider is not None:
+            rows = provider()
             source_filtered = False
         else:
-            if self._repository is None:
-                from meeting.persist.repository import SqlMeetingRepository
-
-                self._repository = SqlMeetingRepository()
             summary_loader = getattr(
-                self._repository, "list_past_meeting_summaries", None
+                repository, "list_past_meeting_summaries", None
             )
             if callable(summary_loader):
                 rows = summary_loader(
-                    limit=self.MAX_MEETINGS + 1,
+                    limit=limit,
                     query=query,
                 )
                 source_filtered = True
             else:
-                rows = self._repository.list_meetings()
+                rows = repository.list_meetings()
                 source_filtered = False
         meetings = []
         for row in rows:
@@ -542,9 +578,9 @@ class PastMeetingsPanel(QWidget):
                 in _NON_HISTORICAL_STATUSES
             ):
                 continue
-            if "content_summary" not in meeting and self._repository is not None:
+            if "content_summary" not in meeting and repository is not None:
                 meeting["content_summary"] = summarize_meeting_content(
-                    self._repository, str(meeting.get("id") or "")
+                    repository, str(meeting.get("id") or "")
                 )
             meetings.append(meeting)
         return meetings, source_filtered
@@ -583,6 +619,7 @@ class PastMeetingsPanel(QWidget):
         delivery = MeetingDelivery()
         delivery.loaded.connect(self._apply_meeting_results)
 
+        limit = self.MAX_MEETINGS + 1
         # Explicit providers are small test/integration seams and retain their
         # synchronous behavior. Production repository reads run off the Qt
         # thread and return only one bounded page.
@@ -596,26 +633,30 @@ class PastMeetingsPanel(QWidget):
                 self.meetings_list_layout.addWidget(
                     self._placeholder("Loading past meetings…")
                 )
+            # Bound here: the worker must not reach back into the panel.
+            load_meetings, repository = self._load_meetings, self._repository
+            start_remote_listing = self._start_remote_listing
+            merge_wait_s = self.REMOTE_MERGE_WAIT_S
 
             def load() -> None:
                 meetings = []
                 error = ""
                 source_filtered = False
                 try:
-                    meetings, source_filtered = self._load_meetings(query)
+                    meetings, source_filtered = load_meetings(query, limit, repository)
                 except Exception as exc:
                     logger.error("Failed to load past meetings: %s", exc)
                     error = str(exc)
                 if canceled.is_set():
                     return
-                remote = None if error else self._start_remote_listing(query, meetings)
+                remote = None if error else start_remote_listing(query, limit, meetings)
                 if remote is None:
                     delivery.loaded.emit(
                         generation, meetings, error, source_filtered
                     )
                     return
                 done, merged = remote
-                if not done.wait(self.REMOTE_MERGE_WAIT_S):
+                if not done.wait(merge_wait_s):
                     delivery.loaded.emit(generation, meetings, "", source_filtered)
                     while not done.wait(0.1):
                         if canceled.is_set():
@@ -631,7 +672,9 @@ class PastMeetingsPanel(QWidget):
             return
 
         try:
-            self._meetings, self._source_filtered = self._load_meetings(query)
+            self._meetings, self._source_filtered = self._load_meetings(
+                query, limit, self._repository, self._meeting_provider
+            )
         except Exception as exc:
             logger.error("Failed to load past meetings: %s", exc)
             self._meetings = []

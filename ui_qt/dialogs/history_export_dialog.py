@@ -99,11 +99,14 @@ class HistoryExportDialog(ExportDialogBase):
     def _entry_collector(self) -> Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]:
         return lambda entry: entry
 
-    def _progress_title(self, entry: Dict[str, Any]) -> str:
+    @staticmethod
+    def _progress_title(entry: Dict[str, Any]) -> str:
         return entry.get("preview_text") or ""
 
-    def _write_per_item_files(self, entries, fmt: str, output: str, **options) -> None:
+    @staticmethod
+    def _write_per_item_files(entries, fmt: str, output: str, **options) -> None:
         write_per_entry_files(entries, fmt, output, **options)
 
-    def _render_document(self, entries, fmt: str, **options) -> str:
+    @staticmethod
+    def _render_document(entries, fmt: str, **options) -> str:
         return render_export_document(entries, fmt, **options)

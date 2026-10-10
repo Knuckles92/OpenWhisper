@@ -1,8 +1,10 @@
 """Settings destination for the app-owned MCP server and agent onboarding."""
 
 import html
+import itertools
+from typing import Optional
 
-from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
     QBoxLayout,
@@ -45,6 +47,30 @@ from ui_qt.widgets.segmented_bar import SegmentButton, SegmentedBar
 
 # Stands in for the access token in the on-screen preview; copies get the real one.
 _HIDDEN_TOKEN = "•" * 12
+
+
+class _ServiceRelay(QObject):
+    """Brings remote engine changes to the Qt thread for whichever MCP views exist then.
+
+    It lives for the session, so the service's threads never hold or emit on
+    a view. Holding one let a thread drop the last reference and delete the
+    view off the Qt thread, and emitting on one raced Settings closing; both
+    crash the process. Qt drops a deleted view's connection.
+    """
+
+    service_event = pyqtSignal(int, str)
+
+
+_relay: Optional[_ServiceRelay] = None
+#: View tokens, unique across views because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _service_relay() -> _ServiceRelay:
+    global _relay
+    if _relay is None:
+        _relay = _ServiceRelay()
+    return _relay
 
 
 class _ActionButton(Button):
@@ -930,8 +956,6 @@ class McpSettingsView(QWidget):
     already running and this computer's is not.
     """
 
-    _service_event = pyqtSignal(str)
-
     def __init__(self, settings, *, parent=None):
         super().__init__(parent)
         self.setObjectName("mcpSettingsView")
@@ -970,7 +994,16 @@ class McpSettingsView(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(500)
         self._timer.timeout.connect(self._sync)
-        self._service_event.connect(self._on_service_event)
+        relay = _service_relay()
+        relay.service_event.connect(self._on_service_event)
+        self._token = token = next(_tokens)
+        event = relay.service_event
+
+        def listener(kind):
+            # Called on whatever thread the change happened; the relay re-posts it.
+            event.emit(token, kind)
+
+        self._listener = listener
         self._refresh_history_sharing()
 
     # ---- the service ----
@@ -987,11 +1020,9 @@ class McpSettingsView(QWidget):
                 self.destroyed.connect(lambda *_: service.remove_listener(listener))
         self._refresh_pairing()
 
-    def _listener(self, kind):
-        # Called on whatever thread the change happened; the signal re-posts it.
-        self._service_event.emit(kind)
-
-    def _on_service_event(self, kind):
+    def _on_service_event(self, token, kind):
+        if token != self._token:
+            return
         if kind in ("client", "host_renamed"):
             self._refresh_pairing()
 

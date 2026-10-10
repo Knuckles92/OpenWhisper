@@ -3,12 +3,14 @@
 The history and Past Meetings export dialogs differ only in their copy, the
 criteria checkbox, the two "include" options, and how an item turns into a
 document; everything else lives here. Collection and rendering run on a
-worker thread, and every UI update arrives via signals so nothing touches
-widgets off the Qt thread. Cancel is cooperative and checked between items —
-nothing is written until collection finishes.
+worker thread that never sees the dialog; every UI update arrives through a
+session-lived relay, so nothing touches widgets off the Qt thread. Cancel is
+cooperative and checked between items — nothing is written until collection
+finishes.
 """
 from __future__ import annotations
 
+import itertools
 import logging
 import os
 import threading
@@ -17,6 +19,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from PyQt6.QtCore import (
     QDate,
+    QObject,
     QParallelAnimationGroup,
     QPropertyAnimation,
     QRect,
@@ -79,6 +82,34 @@ _FORMAT_EXTENSIONS = {
 _SELECTED_LIST_HEIGHT = 180
 
 
+class _ExportRelay(QObject):
+    """Brings export progress and results to the Qt thread for whichever dialogs exist then.
+
+    It lives for the session, so an export thread never holds or emits on a
+    dialog. Holding one let the thread drop the last reference and delete the
+    dialog off the Qt thread, and emitting on one raced its parent deleting
+    it; both crash the process. Qt drops a deleted dialog's connections.
+    """
+
+    #: Each carries the export's token, then the dialog signal's arguments.
+    progress = pyqtSignal(int, int, int, str)
+    finished = pyqtSignal(int, int, str)
+    failed = pyqtSignal(int, str)
+    canceled = pyqtSignal(int)
+
+
+_relay: Optional[_ExportRelay] = None
+#: Export tokens, unique across dialogs because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _export_relay() -> _ExportRelay:
+    global _relay
+    if _relay is None:
+        _relay = _ExportRelay()
+    return _relay
+
+
 class ExportDialogBase(QDialog):
     """Pick items, criteria, and a format, then export them to disk.
 
@@ -124,13 +155,19 @@ class ExportDialogBase(QDialog):
         self.setMaximumWidth(680)
         self.setModal(True)
         self._worker: threading.Thread | None = None
-        self._cancel_requested = False
+        self._export_token = 0
+        self._cancel_requested = threading.Event()
         self._anim_group: QParallelAnimationGroup | None = None
         self._section_targets: dict[QWidget, bool] = {}
         self.progress.connect(self._on_progress)
         self.export_finished.connect(self._on_export_finished)
         self.export_failed.connect(self._on_export_failed)
         self.export_canceled.connect(self._on_export_canceled)
+        relay = _export_relay()
+        relay.progress.connect(self._relay_progress)
+        relay.finished.connect(self._relay_finished)
+        relay.failed.connect(self._relay_failed)
+        relay.canceled.connect(self._relay_canceled)
 
         self.setObjectName(f"{self._NAME_PREFIX}Dialog")
         self.setWindowTitle(self._TITLE)
@@ -724,57 +761,74 @@ class ExportDialogBase(QDialog):
                 f"No {self._NOUN_PLURAL} match the selected criteria.",
             )
             return
-        params = {
-            "targets": targets,
-            "fmt": self._current_format(),
-            "per_item": self.per_item_check.isChecked(),
-            "output": self.path_edit.text().strip(),
-            "options": self._include_options(),
-        }
-        self._cancel_requested = False
+        fmt = self._current_format()
+        per_item = self.per_item_check.isChecked()
+        output = self.path_edit.text().strip()
+        options = self._include_options()
+        # Bound here: the worker must not reach back into the dialog.
+        collect = self._entry_collector()
+        title_of = self._progress_title
+        write_files = self._write_per_item_files
+        render = self._render_document
+        failed_log = self._FAILED_LOG
+        self._cancel_requested = cancel = threading.Event()
+        self._export_token = token = next(_tokens)
+        relay = _export_relay()
         self._set_busy(True)
         self.progress.emit(0, len(targets), "")
+
+        def work() -> None:
+            try:
+                entries: List[Dict[str, Any]] = []
+                total = len(targets)
+                for index, item in enumerate(targets):
+                    if cancel.is_set():
+                        relay.canceled.emit(token)
+                        return
+                    entry = collect(item)
+                    if entry is not None:
+                        entries.append(entry)
+                    relay.progress.emit(token, index + 1, total, title_of(item))
+                if cancel.is_set():
+                    relay.canceled.emit(token)
+                    return
+                if per_item:
+                    write_files(entries, fmt, output, **options)
+                else:
+                    document = render(entries, fmt, **options)
+                    parent = os.path.dirname(output)
+                    if parent:
+                        os.makedirs(parent, exist_ok=True)
+                    with open(output, "w", encoding="utf-8") as handle:
+                        handle.write(document)
+                relay.finished.emit(token, len(entries), output)
+            except Exception as exc:
+                logger.exception(failed_log)
+                relay.failed.emit(token, str(exc))
+
         self._worker = threading.Thread(
-            target=self._export_worker,
-            args=(params,),
-            name=self._THREAD_NAME,
-            daemon=True,
+            target=work, name=self._THREAD_NAME, daemon=True
         )
         self._worker.start()
 
-    def _export_worker(self, params: Dict[str, Any]) -> None:
-        try:
-            collect = self._entry_collector()
-            entries: List[Dict[str, Any]] = []
-            targets = params["targets"]
-            total = len(targets)
-            for index, item in enumerate(targets):
-                if self._cancel_requested:
-                    self.export_canceled.emit()
-                    return
-                entry = collect(item)
-                if entry is not None:
-                    entries.append(entry)
-                self.progress.emit(index + 1, total, self._progress_title(item))
-            if self._cancel_requested:
-                self.export_canceled.emit()
-                return
-            fmt = params["fmt"]
-            output = params["output"]
-            options = params["options"]
-            if params["per_item"]:
-                self._write_per_item_files(entries, fmt, output, **options)
-            else:
-                document = self._render_document(entries, fmt, **options)
-                parent = os.path.dirname(output)
-                if parent:
-                    os.makedirs(parent, exist_ok=True)
-                with open(output, "w", encoding="utf-8") as handle:
-                    handle.write(document)
-            self.export_finished.emit(len(entries), output)
-        except Exception as exc:
-            logger.exception(self._FAILED_LOG)
-            self.export_failed.emit(str(exc))
+    # The relay serves every dialog; each passes on only its own export's
+    # reports, as its public signals, on the Qt thread.
+
+    def _relay_progress(self, token: int, done: int, total: int, title: str) -> None:
+        if token == self._export_token:
+            self.progress.emit(done, total, title)
+
+    def _relay_finished(self, token: int, count: int, output: str) -> None:
+        if token == self._export_token:
+            self.export_finished.emit(count, output)
+
+    def _relay_failed(self, token: int, message: str) -> None:
+        if token == self._export_token:
+            self.export_failed.emit(message)
+
+    def _relay_canceled(self, token: int) -> None:
+        if token == self._export_token:
+            self.export_canceled.emit()
 
     def _set_busy(self, busy: bool) -> None:
         self.export_btn.setVisible(not busy)
@@ -823,7 +877,7 @@ class ExportDialogBase(QDialog):
         self.progress_label.setText("Export canceled — nothing was written")
 
     def _on_cancel_work(self) -> None:
-        self._cancel_requested = True
+        self._cancel_requested.set()
         self.cancel_work_btn.setEnabled(False)
         self.progress_label.setText("Canceling…")
 
@@ -870,14 +924,24 @@ class ExportDialogBase(QDialog):
         raise NotImplementedError
 
     def _entry_collector(self) -> Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]:
-        """Return item -> export entry, or None to skip; runs on the worker."""
+        """Return item -> export entry, or None to skip.
+
+        Called on the Qt thread as an export starts; the function it returns
+        runs on the worker, so it must not reach back into the dialog.
+        """
         raise NotImplementedError
 
-    def _progress_title(self, item: Dict[str, Any]) -> str:
+    # The worker calls these three, so they are static: it never holds the
+    # dialog.
+
+    @staticmethod
+    def _progress_title(item: Dict[str, Any]) -> str:
         raise NotImplementedError
 
-    def _write_per_item_files(self, entries, fmt: str, output: str, **options) -> None:
+    @staticmethod
+    def _write_per_item_files(entries, fmt: str, output: str, **options) -> None:
         raise NotImplementedError
 
-    def _render_document(self, entries, fmt: str, **options) -> str:
+    @staticmethod
+    def _render_document(entries, fmt: str, **options) -> str:
         raise NotImplementedError

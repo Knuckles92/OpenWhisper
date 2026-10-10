@@ -187,13 +187,15 @@ class MicrophoneSection:
         generation = dialog._audio_device_generation
         delivery = HistoryDelivery()
         delivery.loaded.connect(dialog._apply_audio_devices)
+        # Bound here: through the section the worker would hold the window.
+        list_devices = self._list_devices
 
         def load():
             outcome = ""
             try:
                 if refresh:
                     outcome = OUTCOME_REFRESHED if audio_devices.refresh_portaudio() else OUTCOME_BUSY
-                devices = self._list_devices()
+                devices = list_devices()
             except Exception:
                 logger.warning("Couldn't discover audio inputs", exc_info=True)
                 devices = []

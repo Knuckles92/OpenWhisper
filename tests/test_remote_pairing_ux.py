@@ -731,6 +731,66 @@ def test_host_page_shows_what_may_keep_others_out(tmp_path, monkeypatch, engine)
         dialog.deleteLater()
 
 
+def test_a_page_closed_mid_search_is_not_held_by_its_threads(monkeypatch):
+    # The search worker and the service's listeners used to emit on the page
+    # from their own threads, which raced Settings closing; the listeners
+    # also kept a closed page alive for as long as the service lived.
+    import gc
+    import weakref
+
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWidgets import QApplication, QWidget
+
+    from ui_qt.dialogs.settings_remote import RemoteEngineSection
+
+    gate = threading.Event()
+    failures = []
+    monkeypatch.setattr(threading, "excepthook", failures.append)
+
+    class Listened:
+        def __init__(self):
+            self.listeners = []
+
+        def add_listener(self, listener):
+            self.listeners.append(listener)
+
+        def remove_listener(self, listener):
+            self.listeners.remove(listener)
+
+    class Service(Listened):
+        def client_pairing(self):
+            return None
+
+        def scan_nearby(self, sweep=False):
+            gate.wait(5)
+            return None
+
+    service, records = Service(), Listened()
+    parent = QWidget()
+    section = RemoteEngineSection(parent, records=records)
+    section.bind(service)
+    section.scan_nearby(force=True)
+    workers = [t for t in threading.enumerate() if t.name == "remote-engine-nearby-scan"]
+    assert workers
+    ref = weakref.ref(section)
+    del section
+    parent.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    del parent
+    gc.collect()
+    assert ref() is None
+    gate.set()
+    # The service and the record sync still hold the closed page's listeners.
+    listeners = [*service.listeners, *records.listeners]
+    told = threading.Thread(target=lambda: [listener("state") for listener in listeners])
+    told.start()
+    for thread in [*workers, told]:
+        thread.join(5)
+        assert not thread.is_alive()
+    QApplication.processEvents()
+    assert failures == []
+
+
 # ---- the host's question ----
 
 class _AskingService:
@@ -832,3 +892,46 @@ def test_closing_the_question_denies_and_a_withdrawn_one_just_goes():
         assert service.answers == [("r1", False)]
     finally:
         prompter.detach()
+
+
+def test_a_replaced_prompter_is_not_held_by_a_server_thread():
+    # The listener used to capture the prompter, which has no parent: a
+    # server thread that copied the listeners before detach could drop the
+    # last reference (deleting it off the Qt thread) or emit on it as it was
+    # deleted, which segfaulted CI.
+    import gc
+    import weakref
+
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    from ui_qt.dialogs.pair_request_dialog import PairRequestPrompter
+
+    service = _AskingService()
+    prompter = PairRequestPrompter(service)
+    listener = service.listeners[0]  # mid-notify on a server thread
+    prompter.detach()
+    ref = weakref.ref(prompter)
+    prompter.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    del prompter
+    gc.collect()
+    assert ref() is None
+
+    service.request = {"id": "r1", "name": "laptop", "address": "192.168.1.30",
+                       "sas": "042917", "seconds_left": 90.0}
+    errors = []
+
+    def notify():
+        try:
+            listener("pair_request")
+        except Exception as exc:
+            errors.append(exc)
+
+    server = threading.Thread(target=notify, name="pair-request-notify")
+    server.start()
+    server.join(5)
+    assert not server.is_alive()
+    QApplication.processEvents()
+    assert errors == []
+    assert ref() is None

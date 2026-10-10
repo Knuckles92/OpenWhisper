@@ -412,6 +412,7 @@ def test_browser_legacy_host_keeps_use_action_and_explains_setup():
 
     dialog = RemoteModelsDialog(None, "old-host")
     dialog._on_finished(
+        dialog._request_token,
         "model_catalog",
         dict(
             models=[

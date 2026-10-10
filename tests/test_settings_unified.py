@@ -5,9 +5,11 @@ only exist because of that: legacy destination names, the Overview landing
 page, the Downloads rail value, and the Ctrl+K palette across every page.
 """
 import builtins
+import gc
 import os
 import tempfile
 import threading
+import weakref
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -16,11 +18,12 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
 from PyQt6.QtGui import QWheelEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
+from services import credentials
 from services.hf_access import CachedModelInfo
 from services.settings import (
     HuggingFaceAccessPolicy,
@@ -34,11 +37,13 @@ from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_destinations import (
     CLEANUP,
+    CLEANUP_RULES,
     BASIC_APP,
     BASIC_DICTATION,
     BASIC_MEETINGS,
     DOWNLOADS,
     GENERAL,
+    MEETING_FAST,
     MEETING_INTELLIGENCE,
     MEETING_VOICE,
     MCP,
@@ -57,6 +62,7 @@ from ui_qt.dialogs.settings_search import (
     match_entries,
 )
 from ui_qt.ui_controller import UIController
+from tests.test_rule_composer import _FakeRecorder
 
 BASE_REPO = "Systran/faster-whisper-base"
 
@@ -251,25 +257,34 @@ class TestRouting:
         dialog.close()
 
     def test_runtime_result_cannot_overwrite_a_new_device_selection(self, make_dialog):
-        with patch.object(models_module.ModelAssignments, "_check_engine_runtime"):
+        with patch.object(models_module, "_check_engine_runtime"):
             dialog, store = make_dialog(
                 {SettingsKey.SELECTED_MODEL: "parakeet"}, background_cache_scan=True
             )
             models = dialog.models
+            dialog.ensure_page(VOICE_MODEL)
+            auto = models._engine_runtime_pending[("parakeet", "auto")]
             store.save_setting("local_asr_devices", {"parakeet": "cpu"})
             models._refresh_engine_inventory()
+            cpu = models._engine_runtime_pending[("parakeet", "cpu")]
             current = models.engine_inventory_label.text()
 
-            models._on_engine_runtime_checked(("parakeet", "auto"), " · Old runtime.")
+            models._on_engine_runtime_checked(("parakeet", "auto"), " · Old runtime.", auto)
             assert models.engine_inventory_label.text() == current
 
-            models._on_engine_runtime_checked(("parakeet", "cpu"), " · CPU runtime.")
-            assert models.engine_inventory_label.text().endswith(" · CPU runtime.")
+            # A result for another Settings window's request is not this one's.
+            models._on_engine_runtime_checked(("parakeet", "cpu"), " · Theirs.", cpu + 1)
+            assert models.engine_inventory_label.text() == current
 
             store.save_setting(SettingsKey.SELECTED_MODEL, "api")
             models.refresh_engine_selection()
-            models._on_engine_runtime_checked(("parakeet", "cpu"), " · Late result.")
+            models._on_engine_runtime_checked(("parakeet", "cpu"), " · Late result.", cpu)
             assert models.engine_inventory_label.text() == ""
+
+            # Kept for when the engine is chosen again.
+            store.save_setting(SettingsKey.SELECTED_MODEL, "parakeet")
+            models.refresh_engine_selection()
+            assert models.engine_inventory_label.text().endswith(" · Late result.")
 
     def test_legacy_model_manager_names_land_on_a_destination(
         self, make_dialog, subtests
@@ -756,3 +771,68 @@ class TestSearchPalette:
         entries = dialog.search_palette.current_entries()
         assert entries[0].destination == VOICE_MODEL
         dialog.close()
+
+
+class TestWorkers:
+    @pytest.mark.parametrize("work", [
+        "api-key-verify", "jev-route-verify", "cleanup-rule-polish", "rule-dictation",
+    ])
+    def test_a_window_closed_mid_work_is_not_held_by_the_worker(
+        self, make_dialog, monkeypatch, work
+    ):
+        # The workers used to capture the window (dictation also through its
+        # recorder's level callback): one kept a closed window alive, then
+        # dropped the last reference (deleting a QWidget) or emitted on it
+        # from its own thread, which segfaulted CI.
+        gate = threading.Event()
+
+        def blocked(result):
+            def call(*_args, **_kwargs):
+                gate.wait(5)
+                return result
+            return call
+
+        dialog, _store = make_dialog()
+        if work == "api-key-verify":
+            monkeypatch.setattr(settings_dialog_module, "verify_api_key", blocked((True, "ok")))
+            dialog.focus_api_keys("OPENAI_API_KEY")
+            dialog.api_key_edit.setText("sk-proj-abcdefghijklmnopqrstuvwxyz")
+            dialog._test_api_key()
+        elif work == "jev-route-verify":
+            credentials.store().set(
+                settings_dialog_module.TYPESAFE_CREDENTIAL_ENV, "ts-live-0123456789abcdefghij"
+            )
+            monkeypatch.setattr(
+                settings_dialog_module, "typesafe_verify_key", blocked((True, "ok"))
+            )
+            dialog.select_destination(MEETING_FAST)
+            dialog._test_typesafe_route()
+        elif work == "cleanup-rule-polish":
+            monkeypatch.setattr(
+                "services.transcript_cleanup.polish_cleanup_rule", blocked(("Rule.", None))
+            )
+            dialog.select_destination(CLEANUP_RULES)
+            dialog._polish_cleanup_rule("capitalize kubernetes")
+        else:
+            monkeypatch.setattr(settings_dialog_module, "AudioRecorder", _FakeRecorder)
+            dialog.on_dictation_transcribe = blocked("capitalize kubernetes")
+            dialog.select_destination(CLEANUP_RULES)
+            dialog._toggle_rule_dictation()
+            dialog._toggle_rule_dictation()
+        workers = [t for t in threading.enumerate() if t.name == work]
+        assert workers
+        ref = weakref.ref(dialog)
+        dialog.deleteLater()
+        del dialog
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        # PyQt releases the window's lambda slots by a queued call, then
+        # deleteLater; until both run they hold it too.
+        QApplication.processEvents()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        gc.collect()
+        assert ref() is None
+        gate.set()
+        for worker in workers:
+            worker.join(5)
+            assert not worker.is_alive()
+        QApplication.processEvents()

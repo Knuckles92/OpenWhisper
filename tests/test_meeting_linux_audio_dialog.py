@@ -419,6 +419,45 @@ class TestMeetingLinuxAudioDialog(unittest.TestCase):
         self.assertEqual(after, before)
         self.assertGreaterEqual(calls["n"], 2)
 
+    def test_a_dialog_closed_mid_probe_is_not_held_by_the_worker(self):
+        # The worker used to capture the dialog: it kept a closed dialog
+        # alive, then dropped the last reference (deleting a QWidget) or
+        # emitted on it from its own thread, which segfaulted CI.
+        import gc
+        import threading
+        import weakref
+
+        from PyQt6.QtCore import QEvent
+
+        gate = threading.Event()
+
+        def probe():
+            gate.wait(5)
+            return _capability(ready=True)
+
+        before = set(threading.enumerate())
+        dialog = MeetingLinuxAudioDialog(_capability(), probe=probe)
+        dialog._retry_detection()
+        workers = [
+            t for t in threading.enumerate()
+            if t.name == "linux-audio-readiness-probe" and t not in before
+        ]
+        self.assertTrue(workers)
+        ref = weakref.ref(dialog)
+        dialog.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        # Its lambda connections let go once Qt runs their queued disconnects.
+        self.app.processEvents()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        del dialog
+        gc.collect()
+        self.assertIsNone(ref())
+        gate.set()
+        for worker in workers:
+            worker.join(5)
+            self.assertFalse(worker.is_alive())
+        self.app.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main()

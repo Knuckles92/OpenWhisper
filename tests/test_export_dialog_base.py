@@ -1,7 +1,10 @@
 """Shared export behavior exercised through both concrete dialogs."""
 from __future__ import annotations
 
+import gc
 import os
+import threading
+import weakref
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -106,7 +109,7 @@ def test_close_during_export_requests_cancel_and_keeps_dialog_open(export_dialog
 
     dialog.close()
     assert dialog.isVisible()
-    assert dialog._cancel_requested
+    assert dialog._cancel_requested.is_set()
     assert not dialog.cancel_work_btn.isEnabled()
     dialog.export_canceled.emit()
     assert dialog._worker is None
@@ -143,8 +146,8 @@ def test_format_values_match_both_export_services():
         assert getattr(base, name) == getattr(history_export, name)
 
 
-def _run_worker(dialog, per_item):
-    """Run the export worker inline and return what it emitted."""
+def _run_export(dialog, per_item):
+    """Run an export on its worker to the end and return what the dialog reported."""
     from unittest.mock import patch
 
     from PyQt6.QtWidgets import QMessageBox
@@ -152,15 +155,14 @@ def _run_worker(dialog, per_item):
     emitted = []
     dialog.export_finished.connect(lambda count, out: emitted.append((count, out)))
     dialog.export_failed.connect(lambda message: emitted.append(("failed", message)))
-    targets = dialog._resolve_targets()
+    dialog.per_item_check.setChecked(per_item)
     with patch.object(QMessageBox, "information"), patch.object(QMessageBox, "warning"):
-        dialog._export_worker({
-            "targets": targets,
-            "fmt": dialog._current_format(),
-            "per_item": per_item,
-            "output": dialog.path_edit.text().strip(),
-            "options": dialog._include_options(),
-        })
+        dialog._on_export()
+        worker = dialog._worker
+        worker.join(5)
+        assert not worker.is_alive()
+        QApplication.processEvents()
+    assert dialog._worker is None
     return emitted
 
 
@@ -183,7 +185,7 @@ def test_history_worker_passes_include_options_to_writers(
     try:
         dialog.include_raw_check.setChecked(False)
         dialog.path_edit.setText(str(tmp_path / "out.md"))
-        emitted = _run_worker(dialog, per_item)
+        emitted = _run_export(dialog, per_item)
         kind, written, fmt, options = calls[0]
         assert kind == ("files" if per_item else "doc")
         assert [entry["id"] for entry in written] == ["a", "b"]
@@ -219,7 +221,7 @@ def test_meeting_worker_loads_entries_and_skips_missing(
     try:
         dialog.include_intelligence_check.setChecked(False)
         dialog.path_edit.setText(str(tmp_path / "out.md"))
-        emitted = _run_worker(dialog, per_item)
+        emitted = _run_export(dialog, per_item)
         kind, written, fmt, options = calls[0]
         assert kind == ("files" if per_item else "doc")
         assert written == [{"meeting": "a"}]
@@ -228,3 +230,42 @@ def test_meeting_worker_loads_entries_and_skips_missing(
     finally:
         dialog.deleteLater()
         app.sendPostedEvents(dialog, QEvent.Type.DeferredDelete)
+
+
+@pytest.mark.parametrize("kind", ["history", "meeting"])
+def test_a_dialog_deleted_mid_export_is_not_held_by_the_worker(monkeypatch, tmp_path, kind):
+    # The worker used to run as a method of the dialog: it kept a deleted
+    # dialog alive, then dropped the last reference (deleting a QWidget) or
+    # emitted on it from its own thread, which can crash the process.
+    gate = threading.Event()
+
+    def render(entries, fmt, **options):
+        gate.wait(5)
+        return "doc"
+
+    monkeypatch.setattr(f"ui_qt.dialogs.{kind}_export_dialog.render_export_document", render)
+    items = [{"id": "a", "preview_text": "Alpha", "title": "Alpha"}]
+    if kind == "history":
+        dialog = HistoryExportDialog(entry_provider=lambda: items)
+    else:
+        dialog = MeetingExportDialog(
+            meeting_provider=lambda: items, entry_loader=lambda meeting_id: {"id": meeting_id}
+        )
+    dialog.path_edit.setText(str(tmp_path / "out.md"))
+    dialog._on_export()
+    workers = [t for t in threading.enumerate() if t.name == dialog._THREAD_NAME]
+    ref = weakref.ref(dialog)
+    dialog.deleteLater()
+    del dialog
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    # PyQt frees the dialog's own lambda connections with a queued call and
+    # then a deferred delete; flush both.
+    QApplication.processEvents()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    gc.collect()
+    assert ref() is None
+    gate.set()
+    for worker in workers:
+        worker.join(5)
+        assert not worker.is_alive()
+    QApplication.processEvents()

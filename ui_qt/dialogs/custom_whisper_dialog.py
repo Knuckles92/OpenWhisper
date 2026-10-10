@@ -1,9 +1,11 @@
 """Review discovered local or Hugging Face Whisper models before adding them."""
 from __future__ import annotations
 
+import itertools
 import threading
+from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -28,10 +30,33 @@ from services.whisper_sources import (
 from ui_qt.widgets import Button, PrimaryButton
 
 
+class _DiscoveryRelay(QObject):
+    """Brings discovery results to the Qt thread for whichever dialogs exist then.
+
+    It lives for the session, so a discovery thread never holds or emits on a
+    dialog. Holding one let the thread drop the last reference and delete the
+    dialog off the Qt thread, and emitting on one raced it closing; both crash
+    the process. Qt drops a deleted dialog's connection.
+    """
+
+    #: Token, model names, error.
+    found = pyqtSignal(int, object, str)
+
+
+_relay: Optional[_DiscoveryRelay] = None
+#: Discovery tokens, unique across dialogs because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _discovery_relay() -> _DiscoveryRelay:
+    global _relay
+    if _relay is None:
+        _relay = _DiscoveryRelay()
+    return _relay
+
+
 class CustomWhisperDialog(QDialog):
     """Discovery reads filenames; adding sources neither downloads nor activates."""
-
-    _found = pyqtSignal(int, object, str)
 
     def __init__(self, settings: dict, cached: dict, parent=None):
         super().__init__(parent)
@@ -98,34 +123,33 @@ class CustomWhisperDialog(QDialog):
         self.add_button.clicked.connect(self._add_selected)
         buttons.addWidget(self.add_button)
         layout.addLayout(buttons)
-        self._found.connect(self._show_found)
+        _discovery_relay().found.connect(self._show_found)
         QTimer.singleShot(0, self._find_cached)
 
     def _scan(self, operation, message: str) -> None:
-        self._generation += 1
-        generation = self._generation
+        """Run ``operation`` off the Qt thread; it must not reach back into the dialog."""
+        self._generation = generation = next(_tokens)
         self._busy = True
         self.results.clear()
         self.add_button.setEnabled(False)
         self.status_label.setText(message)
         for button in (self.local_button, self.cached_button, self.hub_button):
             button.setEnabled(False)
+        found = _discovery_relay().found
 
         def run():
             try:
                 models, error = operation(), ""
             except Exception as exc:
                 models, error = [], str(exc)
-            try:
-                self._found.emit(generation, models, error)
-            except RuntimeError:
-                pass  # The dialog was destroyed while discovery was running.
+            found.emit(generation, models, error)
 
         threading.Thread(target=run, name="custom-whisper-discovery", daemon=True).start()
 
     def _find_cached(self) -> None:
         if not self._busy:
-            self._scan(lambda: discover_cached_models(self._cached), "Checking cached model folders…")
+            cached = self._cached
+            self._scan(lambda: discover_cached_models(cached), "Checking cached model folders…")
 
     def _choose_local_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Choose a Whisper model or parent folder")
@@ -181,7 +205,7 @@ class CustomWhisperDialog(QDialog):
             self.accept()
 
     def done(self, result: int) -> None:
-        self._generation += 1
+        self._generation = next(_tokens)
         super().done(result)
 
 

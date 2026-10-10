@@ -3,14 +3,17 @@
 The page is built standalone here; ``test_settings_unified`` covers how the
 Settings window hosts it.
 """
+import gc
 import os
+import threading
+import weakref
 from unittest.mock import patch
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtCore import QEvent, QPoint, Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
     QApplication,
@@ -1252,3 +1255,38 @@ class TestSectionTabs(_DialogTestCase):
             dialog.show()
             self.app.processEvents()
         assert dialog.tabs.isHidden() and dialog.models_section.isVisible()
+
+
+@pytest.mark.parametrize("parented", [False, True])
+def test_a_page_closed_mid_scan_is_not_held_by_the_worker(parented):
+    # The worker used to emit on the page from its own thread, which raced
+    # Settings closing; a parentless page it held could also be deleted there.
+    QApplication.instance() or QApplication([])
+    gate = threading.Event()
+
+    def scan(max_age_seconds=None):
+        gate.wait(5)
+        return {}
+
+    with patch.object(dialog_module, "scan_cached_models", side_effect=scan), \
+            patch.object(dialog_module, "peek_cached_models", return_value={}), \
+            patch.object(dialog_module, "settings_manager", InMemorySettings({})), \
+            patch("services.local_asr.cache.inventory", return_value={}):
+        parent = QWidget() if parented else None
+        page = DownloadsPage(parent=parent, defer_build=True)
+        page.refresh()
+        workers = [t for t in threading.enumerate() if t.name == "downloads-cache-scan"]
+        assert workers
+        ref = weakref.ref(page)
+        del page
+        if parent is not None:
+            parent.deleteLater()
+            QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+            del parent
+        gc.collect()
+        assert ref() is None
+        gate.set()
+        for worker in workers:
+            worker.join(5)
+            assert not worker.is_alive()
+        QApplication.processEvents()

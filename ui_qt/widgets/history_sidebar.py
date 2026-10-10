@@ -5,6 +5,7 @@ in ``resizeEvent`` rather than managed by a layout, so animating the sidebar
 width clips/reveals pre-laid-out content instead of re-running layout and text
 wrapping on every frame.
 """
+import itertools
 import logging
 import os
 import threading
@@ -13,7 +14,9 @@ from PyQt6.QtWidgets import (
     QScrollArea, QFrame, QApplication, QLineEdit, QSizePolicy,
     QMessageBox, QCheckBox, QComboBox, QGridLayout,
 )
-from PyQt6.QtCore import QEvent, Qt, pyqtSignal, QPropertyAnimation, pyqtProperty, QSize, QTimer, QUrl
+from PyQt6.QtCore import (
+    QEvent, QObject, Qt, pyqtSignal, QPropertyAnimation, pyqtProperty, QSize, QTimer, QUrl,
+)
 from PyQt6.QtGui import QFont, QDesktopServices
 
 from config import config
@@ -157,6 +160,34 @@ def _record_sync():
     return record_sync
 
 
+class _RemoteRelay(QObject):
+    """Brings host downloads and deletes to the Qt thread for whichever widgets exist then.
+
+    It lives for the session, so a worker thread never holds or emits on a
+    card or the sidebar. Holding one let the thread drop the last reference
+    and delete the widget off the Qt thread, and emitting on one raced a
+    refresh or the window closing; both crash the process. Qt drops a
+    deleted widget's connection.
+    """
+
+    #: The asking card's token, the recording's path ("" on failure), error.
+    audio_ready = pyqtSignal(int, str, str)
+    #: The asking sidebar's token, the entry id, error.
+    deleted = pyqtSignal(int, str, str)
+
+
+_relay: _RemoteRelay | None = None
+#: Tokens, unique across cards and sidebars because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _remote_relay() -> _RemoteRelay:
+    global _relay
+    if _relay is None:
+        _relay = _RemoteRelay()
+    return _relay
+
+
 def _location_chip(entry) -> tuple[str, str]:
     """``(text, tooltip)`` for where an entry is kept, or empty."""
     stored_on = getattr(entry, "stored_on", None)
@@ -269,7 +300,6 @@ class HistoryItemWidget(QFrame):
     retranscribe_requested = pyqtSignal(str)
     #: ``(entry_id, version)``: show the original or the AI's version.
     version_requested = pyqtSignal(str, str)
-    _remote_audio_ready = pyqtSignal(str, str)
 
     def __init__(self, entry: HistoryEntry, parent=None, *, settings=None):
         super().__init__(parent)
@@ -279,7 +309,10 @@ class HistoryItemWidget(QFrame):
         self._audio_path = None
         self.playback = None
         self._stored_on = getattr(entry, "stored_on", None)
-        self._remote_audio_ready.connect(self._on_remote_audio_ready)
+        #: Picks this card's downloads off the shared relay.
+        self._token = next(_tokens)
+        if self._stored_on:
+            _remote_relay().audio_ready.connect(self._on_remote_audio_ready)
         if self.entry.audio_file and not self._stored_on:
             self._audio_path = history_manager.get_recording_path(self.entry.audio_file)
         self.setObjectName("historyItem")
@@ -452,20 +485,24 @@ class HistoryItemWidget(QFrame):
         if button is not None:
             button.setEnabled(False)
             button.setText(f"Getting it from {self._stored_on}…")
-        entry_id = self.entry.id
+        # Bound here: the worker must not reach back into the card.
+        entry_id, token = self.entry.id, self._token
+        ready = _remote_relay().audio_ready
 
         def fetch() -> None:
             try:
                 path = _record_sync().audio_for(entry_id)
             except Exception as exc:
                 logger.warning("Could not fetch a recording from the host: %s", exc)
-                self._remote_audio_ready.emit("", str(exc) or type(exc).__name__)
+                ready.emit(token, "", str(exc) or type(exc).__name__)
                 return
-            self._remote_audio_ready.emit(path, "")
+            ready.emit(token, path, "")
 
         threading.Thread(target=fetch, name="history-remote-audio", daemon=True).start()
 
-    def _on_remote_audio_ready(self, path: str, error: str) -> None:
+    def _on_remote_audio_ready(self, token: int, path: str, error: str) -> None:
+        if token != self._token:
+            return
         button = getattr(self, "retranscribe_btn", None)
         if button is not None:
             button.setEnabled(True)
@@ -674,8 +711,6 @@ class HistorySidebar(QWidget):
     # Emits the sidebar width every animation frame so the owning window can
     # resize in lockstep (keeps the main content area a constant width).
     width_animated = pyqtSignal(int)
-    _history_loaded = pyqtSignal(int, str, object, str)
-    _remote_deleted = pyqtSignal(str, str)
     #: History waits this long for the host's entries before showing this
     #: computer's alone; the host's are merged in when they arrive.
     REMOTE_MERGE_WAIT_S = 0.4
@@ -698,12 +733,13 @@ class HistorySidebar(QWidget):
         self._remote_entries = {}
         #: Entries kept here and copied to the host: id -> the host's name.
         self._also_on = {}
+        #: Picks this sidebar's deletes off the shared relay.
+        self._token = next(_tokens)
 
         self._setup_ui()
         self._setup_meetings_ui()
         self._apply_style()
-        self._history_loaded.connect(self._apply_history_results)
-        self._remote_deleted.connect(self._on_remote_deleted)
+        _remote_relay().deleted.connect(self._on_remote_deleted)
 
         self.setMinimumWidth(self.COLLAPSED_WIDTH)
         self.setMaximumWidth(self.COLLAPSED_WIDTH)
@@ -1039,6 +1075,9 @@ class HistorySidebar(QWidget):
             )
 
         limit = self.MAX_HISTORY_ITEMS + 1
+        # Bound here: the worker must not reach back into the sidebar.
+        start_remote_listing = self._start_remote_listing
+        merge_wait_s = self.REMOTE_MERGE_WAIT_S
 
         def load() -> None:
             entries = []
@@ -1056,12 +1095,12 @@ class HistorySidebar(QWidget):
             if error:
                 delivery.loaded.emit(generation, query, entries, error)
                 return
-            remote = self._start_remote_listing(query, limit, entries)
+            remote = start_remote_listing(query, limit, entries)
             if remote is None:
                 delivery.loaded.emit(generation, query, entries, "")
                 return
             done, merged = remote
-            if not done.wait(self.REMOTE_MERGE_WAIT_S):
+            if not done.wait(merge_wait_s):
                 # Show this computer's entries now rather than wait on the host.
                 delivery.loaded.emit(generation, query, entries, "")
                 while not done.wait(0.1):
@@ -1076,7 +1115,8 @@ class HistorySidebar(QWidget):
             daemon=True,
         ).start()
 
-    def _start_remote_listing(self, query: str, limit: int, entries):
+    @staticmethod
+    def _start_remote_listing(query: str, limit: int, entries):
         """Ask the host for this computer's entries it keeps, on another thread.
 
         Returns ``(done, merged)``: ``merged()`` is ``entries`` with the
@@ -1358,19 +1398,24 @@ class HistorySidebar(QWidget):
 
     def delete_remote_entry(self, entry_id: str) -> None:
         """Delete a host-kept entry there, off the UI thread."""
+        # Bound here: the worker must not reach back into the sidebar.
+        token, deleted = self._token, _remote_relay().deleted
+
         def work() -> None:
             try:
                 _record_sync().delete_remote("dictation", entry_id)
             except Exception as exc:
                 logger.warning("Could not delete a host-kept entry: %s", exc)
-                self._remote_deleted.emit(entry_id, str(exc) or type(exc).__name__)
+                deleted.emit(token, entry_id, str(exc) or type(exc).__name__)
                 return
             history_manager.forget_dictation(entry_id)
-            self._remote_deleted.emit(entry_id, "")
+            deleted.emit(token, entry_id, "")
 
         threading.Thread(target=work, name="history-remote-delete", daemon=True).start()
 
-    def _on_remote_deleted(self, entry_id: str, error: str) -> None:
+    def _on_remote_deleted(self, token: int, entry_id: str, error: str) -> None:
+        if token != self._token:
+            return
         if error:
             QMessageBox.warning(
                 self, "Delete History Entry", f"The entry couldn't be deleted: {error}"

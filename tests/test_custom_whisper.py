@@ -1,10 +1,13 @@
 """Custom sources use the chosen folder, with discovery and explicit UI opt-in."""
+import gc
+import threading
+import weakref
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDialog
+from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtWidgets import QApplication, QDialog
 
 from services import hf_access
 from services.settings import SettingsKey, resolve_meeting_whisper_model
@@ -170,6 +173,34 @@ def test_discovery_results_require_selection_and_adding_does_not_activate(monkey
     assert values[SettingsKey.CUSTOM_WHISPER_MODELS] == dialog.selected_models
     assert values[SettingsKey.WHISPER_MODEL] == "base"
     assert values[SettingsKey.MEETING_WHISPER_MODEL] == "auto"
+
+
+def test_a_dialog_closed_mid_discovery_is_not_held_by_the_worker(monkeypatch):
+    # The worker used to capture the dialog: it kept a closed dialog alive,
+    # then dropped the last reference (deleting a QWidget) or emitted on it
+    # from its own thread, which can crash the process.
+    gate = threading.Event()
+
+    def discover(cached):
+        gate.wait(5)
+        return ["owner/model/ct2_int8"]
+
+    monkeypatch.setattr(dialog_module.QTimer, "singleShot", lambda *_: None)
+    monkeypatch.setattr(dialog_module, "discover_cached_models", discover)
+    dialog = dialog_module.CustomWhisperDialog({}, {})
+    dialog._find_cached()
+    workers = [t for t in threading.enumerate() if t.name == "custom-whisper-discovery"]
+    ref = weakref.ref(dialog)
+    dialog.deleteLater()
+    del dialog
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    gc.collect()
+    assert ref() is None
+    gate.set()
+    for worker in workers:
+        worker.join(5)
+        assert not worker.is_alive()
+    QApplication.processEvents()
 
 
 def test_discovery_offline_still_allows_local_and_cached_models(monkeypatch):

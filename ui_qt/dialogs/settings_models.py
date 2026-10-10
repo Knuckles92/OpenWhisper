@@ -11,6 +11,7 @@ each model destination's current value through ``rail.set_value`` and emits
 ``assignments_changed`` so the host can refresh values that combine a model
 with its own settings (AI cleanup, the Overview).
 """
+import itertools
 import logging
 import sys
 import threading
@@ -159,6 +160,51 @@ def meeting_language_label(code: str) -> str:
     )
 
 
+class _WorkerRelay(QObject):
+    """Brings worker results to the Qt thread for whichever Settings exist then.
+
+    It lives for the session, so a worker thread never emits on Settings:
+    emitting on it raced Settings closing, which can crash the process. Qt
+    drops a deleted receiver's connection, and each result carries the token
+    of the request it answers, so it reaches only the Settings that asked.
+    """
+
+    text_models_loaded = pyqtSignal(str, str, list, str, object)
+    cache_scan_finished = pyqtSignal(int, object)
+    engine_runtime_checked = pyqtSignal(object, str, int)
+    meeting_remote_checked = pyqtSignal(int, str)
+
+
+_relay: Optional[_WorkerRelay] = None
+#: Request tokens, unique across Settings windows because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _worker_relay() -> _WorkerRelay:
+    global _relay
+    if _relay is None:
+        _relay = _WorkerRelay()
+    return _relay
+
+
+def _check_engine_runtime(key: tuple[str, str], token: int, checked) -> None:
+    """Report through ``checked`` whether ``key``'s runtime is installed."""
+    # Auto detection can import CTranslate2/PyTorch. Keep it off the Qt
+    # thread even when the user only opens Overview or General.
+    try:
+        from services.components import is_installed
+        from services.local_asr.catalog import resolve_runtime
+
+        component, _device = resolve_runtime(*key)
+        name = component_coordinator.describe(component).display_name
+        state = "installed" if is_installed(component) else "not installed"
+        label = f" · {name} {state}."
+    except Exception:
+        logger.debug("Engine runtime lookup failed", exc_info=True)
+        label = ". Open Downloads to check its runtime."
+    checked.emit(key, label, token)
+
+
 class ModelAssignments(QObject):
     """Every model assignment, built as pages and sections for Settings.
 
@@ -176,10 +222,6 @@ class ModelAssignments(QObject):
     downloads_requested = pyqtSignal(str)
     #: A model assignment or its rail value changed.
     assignments_changed = pyqtSignal()
-    _text_models_loaded = pyqtSignal(str, str, list, str, object)
-    _cache_scan_finished = pyqtSignal(int, object)
-    _engine_runtime_checked = pyqtSignal(object, str)
-    _meeting_remote_checked = pyqtSignal(str)
 
     COMPUTE_CHOICES = ("auto", "float16", "float32", "int8")
 
@@ -203,7 +245,9 @@ class ModelAssignments(QObject):
         self._get_loaded_model = get_loaded_model
         self._background_cache_scan = bool(background_cache_scan)
         self._cache_scan_generation = 0
-        self._engine_runtime_pending: set[tuple[str, str]] = set()
+        self._meeting_remote_token = 0
+        #: Engine runtime checks under way, each with its request's token.
+        self._engine_runtime_pending: Dict[tuple[str, str], int] = {}
         self._engine_runtime_labels: Dict[tuple[str, str], str] = {}
         self._engine_inventory_label_key: Optional[tuple[str, str]] = None
         self._engine_inventory_prefix = ""
@@ -220,10 +264,11 @@ class ModelAssignments(QObject):
         self._pi_payload_available = meeting_agent_payload_dir() is not None
         self._opencode_payload_available = meeting_agent_payload_dir("opencode") is not None
         self._built = set()
-        self._text_models_loaded.connect(self._on_text_models_loaded)
-        self._cache_scan_finished.connect(self._on_cache_scan_finished)
-        self._engine_runtime_checked.connect(self._on_engine_runtime_checked)
-        self._meeting_remote_checked.connect(self._on_meeting_remote_checked)
+        relay = _worker_relay()
+        relay.text_models_loaded.connect(self._on_text_models_loaded)
+        relay.cache_scan_finished.connect(self._on_cache_scan_finished)
+        relay.engine_runtime_checked.connect(self._on_engine_runtime_checked)
+        relay.meeting_remote_checked.connect(self._on_meeting_remote_checked)
 
     def __getattr__(self, name):
         destination = MODEL_CONTROL_DESTINATIONS.get(name)
@@ -655,6 +700,8 @@ class ModelAssignments(QObject):
         settings = self._settings_snapshot()
         self.meeting_remote_test.setEnabled(False)
         self.meeting_remote_status.setText("Connecting to the paired computer…")
+        token = self._meeting_remote_token = next(_tokens)
+        checked = _worker_relay().meeting_remote_checked
 
         def check():
             backend = None
@@ -669,14 +716,13 @@ class ModelAssignments(QObject):
             finally:
                 if backend is not None:
                     backend.cleanup()
-            try:
-                self._meeting_remote_checked.emit(message)
-            except RuntimeError:
-                pass  # Settings closed while connecting.
+            checked.emit(token, message)
 
         threading.Thread(target=check, name="meeting-remote-check", daemon=True).start()
 
-    def _on_meeting_remote_checked(self, message):
+    def _on_meeting_remote_checked(self, token, message):
+        if token != self._meeting_remote_token:
+            return
         self.meeting_remote_test.setEnabled(True)
         self.meeting_remote_status.setText(message)
 
@@ -1164,6 +1210,7 @@ class ModelAssignments(QObject):
         self._catalog_tokens[key] = token
         if provider == picker.provider:
             picker.set_loading(True)
+        loaded = _worker_relay().text_models_loaded
 
         def worker():
             try:
@@ -1174,10 +1221,7 @@ class ModelAssignments(QObject):
             except Exception as exc:
                 models = []
                 error = str(exc)
-            try:
-                self._text_models_loaded.emit(provider, sort, models, error, token)
-            except RuntimeError:
-                pass  # Settings was destroyed before the catalog finished.
+            loaded.emit(provider, sort, models, error, token)
 
         threading.Thread(
             target=worker,
@@ -1494,43 +1538,29 @@ class ModelAssignments(QObject):
                 self._engine_inventory_label_key = key
                 self.engine_inventory_label.setText(text)
                 if key not in self._engine_runtime_pending:
-                    self._engine_runtime_pending.add(key)
+                    token = self._engine_runtime_pending[key] = next(_tokens)
+                    checked = _worker_relay().engine_runtime_checked
                     if self._background_cache_scan:
                         threading.Thread(
-                            target=self._check_engine_runtime,
-                            args=(key,),
+                            target=_check_engine_runtime,
+                            args=(key, token, checked),
                             name="settings-engine-runtime",
                             daemon=True,
                         ).start()
                     else:
-                        self._check_engine_runtime(key)
+                        _check_engine_runtime(key, token, checked)
                 return
         except Exception:
             logger.debug("Engine inventory lookup failed", exc_info=True)
             text = "Open Downloads to see which models are on this computer."
         self.engine_inventory_label.setText(text)
 
-    def _check_engine_runtime(self, key: tuple[str, str]) -> None:
-        # Auto detection can import CTranslate2/PyTorch. Keep it off the Qt
-        # thread even when the user only opens Overview or General.
-        try:
-            from services.components import is_installed
-            from services.local_asr.catalog import resolve_runtime
-
-            component, _device = resolve_runtime(*key)
-            name = component_coordinator.describe(component).display_name
-            state = "installed" if is_installed(component) else "not installed"
-            label = f" · {name} {state}."
-        except Exception:
-            logger.debug("Engine runtime lookup failed", exc_info=True)
-            label = ". Open Downloads to check its runtime."
-        try:
-            self._engine_runtime_checked.emit(key, label)
-        except RuntimeError:
-            pass  # Settings was destroyed while detection was running.
-
-    def _on_engine_runtime_checked(self, key: tuple[str, str], label: str) -> None:
-        self._engine_runtime_pending.discard(key)
+    def _on_engine_runtime_checked(
+        self, key: tuple[str, str], label: str, token: int
+    ) -> None:
+        if self._engine_runtime_pending.get(key) != token:
+            return  # Another Settings window asked.
+        del self._engine_runtime_pending[key]
         self._engine_runtime_labels[key] = label
         if (
             self.engine_combo.currentData() == key[0]
@@ -1669,15 +1699,13 @@ class ModelAssignments(QObject):
         self._refresh_cached_model_state(peek_cached_models() or {})
         if not scan:
             return
-        self._cache_scan_generation += 1
-        generation = self._cache_scan_generation
+        generation = self._cache_scan_generation = next(_tokens)
+        # Bound here: the worker must not reach back into Settings.
+        scan_cache = scan_cached_models
+        finished = _worker_relay().cache_scan_finished
 
         def load() -> None:
-            result = scan_cached_models(max_age_seconds=30.0)
-            try:
-                self._cache_scan_finished.emit(generation, result)
-            except RuntimeError:
-                pass  # Settings was destroyed before the scan finished.
+            finished.emit(generation, scan_cache(max_age_seconds=30.0))
 
         threading.Thread(
             target=load,

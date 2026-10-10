@@ -1,11 +1,12 @@
 """Audio file upload and transcription tab."""
+import itertools
 import logging
 import os
 import threading
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from PyQt6.QtCore import QMimeData, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QMimeData, QObject, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QFont, QMouseEvent
 from PyQt6.QtWidgets import (
     QFileDialog,
@@ -116,6 +117,31 @@ def _audio_paths_from_mime(mime: QMimeData) -> tuple[list[str], int]:
 def _run_in_thread(target: Callable[[], None], name: str) -> None:
     """Start a daemon worker. Tests replace this to run the target inline."""
     threading.Thread(target=target, name=name, daemon=True).start()
+
+
+class _PreviewRelay(QObject):
+    """Brings file previews to the Qt thread for whichever upload tabs exist then.
+
+    It lives for the session, so a preview thread never holds or emits on a
+    tab. Holding one let the thread drop the last reference and delete the
+    tab off the Qt thread, and emitting on one raced its deletion; both crash
+    the process. Qt drops a deleted tab's connection.
+    """
+
+    #: (tab token, path, AudioFilePreview or error message)
+    ready = pyqtSignal(int, str, object)
+
+
+_relay: Optional[_PreviewRelay] = None
+#: Tab tokens, unique across tabs because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _preview_relay() -> _PreviewRelay:
+    global _relay
+    if _relay is None:
+        _relay = _PreviewRelay()
+    return _relay
 
 
 class DropZoneWidget(QFrame):
@@ -993,8 +1019,6 @@ class UploadFileTab(TranscriptionTabBase):
     upload_files_requested = pyqtSignal(object)
     cancel_requested = pyqtSignal()
     copy_requested = pyqtSignal(str)
-    #: (path, AudioFilePreview or error message) from the preview worker.
-    _preview_ready = pyqtSignal(str, object)
 
     CONTENT_OBJECT_NAME = "uploadFileContent"
     TRANSCRIPT_PLACEHOLDER = (
@@ -1068,7 +1092,9 @@ class UploadFileTab(TranscriptionTabBase):
         queue.copy_clicked.connect(self._on_row_copy)
         queue.picker.relation_changed.connect(self._on_relation_changed)
         queue.picker.edit_custom_requested.connect(self._on_edit_custom)
-        self._preview_ready.connect(self._on_preview_ready)
+        # Marks this tab's previews on the relay every tab shares.
+        self._preview_token = next(_tokens)
+        _preview_relay().ready.connect(self._on_preview_ready)
 
     @property
     def is_transcribing(self) -> bool:
@@ -1183,6 +1209,9 @@ class UploadFileTab(TranscriptionTabBase):
         decoding ten files at once.
         """
         engine_splits = self._engine_splits_files()
+        # Bound here: the worker must not reach back into the tab.
+        token = self._preview_token
+        ready = _preview_relay().ready
 
         def worker() -> None:
             for path in paths:
@@ -1197,15 +1226,13 @@ class UploadFileTab(TranscriptionTabBase):
                 except Exception as exc:
                     logger.warning("Reading %s failed", path, exc_info=True)
                     result = f"OpenWhisper couldn't read this file ({type(exc).__name__})."
-                try:
-                    self._preview_ready.emit(path, result)
-                except RuntimeError:
-                    # The tab was destroyed while the worker was still reading.
-                    return
+                ready.emit(token, path, result)
 
         _run_in_thread(worker, "upload-preview")
 
-    def _on_preview_ready(self, path: str, result: object) -> None:
+    def _on_preview_ready(self, token: int, path: str, result: object) -> None:
+        if token != self._preview_token:
+            return
         item = self._item_for(path)
         if item is None:
             return

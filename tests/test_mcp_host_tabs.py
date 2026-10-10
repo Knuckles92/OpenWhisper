@@ -1,9 +1,13 @@
 """The MCP page's This computer / host tabs, over a fake host."""
 from __future__ import annotations
 
+import gc
+import threading
+import weakref
 from types import SimpleNamespace
 
 import pytest
+from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QApplication
 
 from services.agent_mcp.runtime import DEFAULT_PORT, ServerStatus
@@ -30,6 +34,10 @@ class FakeRemoteService(FakeService):
 
     def remove_listener(self, listener):
         self.listeners.remove(listener)
+
+    def notify(self, kind):
+        for listener in list(self.listeners):
+            listener(kind)
 
 
 def pump(view, cycles=6):
@@ -72,8 +80,7 @@ class HistoryService(FakeRemoteService):
     def set_share_history(self, enabled):
         self.history_changes.append(enabled)
         self.settings.save_setting(SettingsKey.REMOTE_CLIENT_HISTORY, enabled)
-        for listener in self.listeners:
-            listener("client")
+        self.notify("client")
 
 
 @pytest.mark.parametrize("mode", ["classic", "omarchy"])
@@ -126,19 +133,55 @@ def test_history_sharing_preserves_existing_consent_and_refreshes_without_repair
         assert view.share_history_tile.checkbox.isChecked()
         assert service.history_changes == []
         settings.save_setting(SettingsKey.REMOTE_CLIENT_HISTORY, False)
-        view._on_service_event("client")
+        service.notify("client")
         assert not view.share_history_tile.checkbox.isChecked()
         assert service.history_changes == []
         service.pairing = None
-        view._on_service_event("client")
+        service.notify("client")
         assert not view.share_history_tile.isEnabled()
         assert "Pair a host in Remote engine" in view.share_history_tile.description_label.text()
         service.pairing = PAIRING
-        view._on_service_event("client")
+        service.notify("client")
         assert view.share_history_tile.isEnabled()
         assert settings.get(SettingsKey.REMOTE_CLIENT_HISTORY) is False
     finally:
         close(view)
+
+
+def test_a_view_closed_mid_notify_is_not_held_by_the_service_thread(tmp_path):
+    # The service used to hold the view's bound listener: a thread partway
+    # through notifying kept a closed view alive, then dropped the last
+    # reference (deleting a QWidget) or emitted on it from its own thread.
+    gate = threading.Event()
+    copied = threading.Event()
+    service = FakeRemoteService(pairing=None)
+
+    def notify():
+        listeners = list(service.listeners)  # As the service copies them under its lock.
+        copied.set()
+        gate.wait(5)
+        for listener in listeners:
+            listener("client")
+
+    view = make_view(tmp_path, service)
+    worker = threading.Thread(target=notify, name="remote-engine-notify", daemon=True)
+    worker.start()
+    assert copied.wait(5)
+    ref = weakref.ref(view)
+    view.deleteLater()
+    del view
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    # PyQt releases the view's lambda slots by a queued call, then
+    # deleteLater; until both run they hold it too.
+    QApplication.processEvents()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    gc.collect()
+    assert ref() is None
+    assert service.listeners == []
+    gate.set()
+    worker.join(5)
+    assert not worker.is_alive()
+    QApplication.processEvents()
 
 
 def test_a_computer_with_no_host_gets_no_tabs(tmp_path):
@@ -158,11 +201,11 @@ def test_pairing_adds_tabs_and_unpairing_removes_them(tmp_path):
     try:
         view.show()
         service.pairing = PAIRING
-        view._on_service_event("client")
+        service.notify("client")
         pump(view)
         assert [b.text() for b in view.tabs.buttons] == ["This computer", "jed"]
         service.pairing = None
-        view._on_service_event("client")
+        service.notify("client")
         pump(view)
         assert view.tabs is None and view.local.isVisible() and view._link is None
     finally:

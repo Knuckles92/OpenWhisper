@@ -1,5 +1,8 @@
+import gc
 import os
 import sys
+import threading
+import weakref
 
 import pytest
 from dataclasses import replace
@@ -8,7 +11,7 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QLabel, QScrollArea
-from PyQt6.QtCore import Qt, QMimeData, QUrl, QPointF
+from PyQt6.QtCore import QEvent, Qt, QMimeData, QUrl, QPointF
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 
 from config import config
@@ -761,8 +764,9 @@ class TestUploadFileTab:
         with patch("ui_qt.widgets.upload_file_tab._run_in_thread"):
             tab._on_files_selected(paths, 0)
 
-        tab._on_preview_ready(paths[1], _preview(file_name="b.wav", duration_seconds=120.0))
-        tab._on_preview_ready(paths[0], _preview(file_name="a.wav", duration_seconds=60.0))
+        token = tab._preview_token
+        tab._on_preview_ready(token, paths[1], _preview(file_name="b.wav", duration_seconds=120.0))
+        tab._on_preview_ready(token, paths[0], _preview(file_name="a.wav", duration_seconds=60.0))
 
         queue = tab.file_info_card.queue
         assert queue.row_for(paths[0]).duration_chip.text() == "1m 0s"
@@ -776,8 +780,9 @@ class TestUploadFileTab:
         with patch("ui_qt.widgets.upload_file_tab._run_in_thread"):
             tab._on_files_selected(paths, 0)
 
-        tab._on_preview_ready(paths[0], _preview(file_name="a.wav"))
-        tab._on_preview_ready(paths[1], "This doesn't look like an audio file.")
+        token = tab._preview_token
+        tab._on_preview_ready(token, paths[0], _preview(file_name="a.wav"))
+        tab._on_preview_ready(token, paths[1], "This doesn't look like an audio file.")
 
         queue = tab.file_info_card.queue
         assert queue.row_for(paths[1]).state == "failed"
@@ -791,6 +796,40 @@ class TestUploadFileTab:
         assert tab._audio_path == paths[0]
         assert tab.file_info_card.transcribe_btn.isEnabled()
         assert queue.note_label.isHidden()
+
+    def test_a_tab_deleted_mid_preview_is_not_held_by_the_worker(self, tmp_path):
+        # The worker used to capture the tab: it kept a deleted tab alive,
+        # then dropped the last reference (deleting a QWidget) or emitted on
+        # it from its own thread, which can crash the process.
+        gate = threading.Event()
+
+        def preview(path, engine_splits):
+            gate.wait(5)
+            return _preview(file_name=os.path.basename(path))
+
+        with _isolated_settings():
+            tab = UploadFileTab()
+        with patch(
+            "ui_qt.widgets.upload_file_tab.audio_processor.preview_file",
+            side_effect=preview,
+        ):
+            tab._on_files_selected([str(tmp_path / "a.wav")], 0)
+            workers = [t for t in threading.enumerate() if t.name == "upload-preview"]
+            ref = weakref.ref(tab)
+            tab.deleteLater()
+            del tab
+            QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+            # PyQt frees the tab's own lambda connections with a queued call
+            # and then a deferred delete; flush both.
+            QApplication.processEvents()
+            QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+            gc.collect()
+            assert ref() is None
+            gate.set()
+            for worker in workers:
+                worker.join(5)
+                assert not worker.is_alive()
+        QApplication.processEvents()
 
     def test_reorder_buttons_swap_rows_and_the_request_order(self, tmp_path):
         tab, paths = self._tab_with_files(tmp_path, names=("a.wav", "b.wav", "c.wav"))

@@ -8,6 +8,7 @@ executor slot or delay process exit.
 """
 from __future__ import annotations
 
+import itertools
 import logging
 import threading
 import time
@@ -55,10 +56,28 @@ _PREFERRED_WIDTH = 560
 _MIN_CONTENT_HEIGHT = 140
 
 
-class _ProbeBridge(QObject):
-    """Marshal probe results onto the GUI thread via a queued signal."""
+class _ProbeRelay(QObject):
+    """Brings probe results to the GUI thread for whichever dialogs exist then.
 
-    finished = pyqtSignal(object)
+    It lives for the session, so a probe worker never holds or emits on a
+    dialog. Holding one let the worker drop the last reference and delete the
+    dialog off the GUI thread, and emitting on its child raced the dialog
+    closing; both crashed the process. Qt drops a deleted dialog's connection.
+    """
+
+    finished = pyqtSignal(int, object)
+
+
+_relay: Optional[_ProbeRelay] = None
+#: Probe generations, unique across dialogs because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _probe_relay() -> _ProbeRelay:
+    global _relay
+    if _relay is None:
+        _relay = _ProbeRelay()
+    return _relay
 
 
 def _timeout_capability(
@@ -132,8 +151,11 @@ class MeetingLinuxAudioDialog(QDialog):
         self._probe_pending = False
         # Generation tokens invalidate timed-out or superseded probe attempts.
         self._probe_generation = 0
-        self._probe_bridge = _ProbeBridge(self)
-        self._probe_bridge.finished.connect(self._on_probe_finished)
+        _probe_relay().finished.connect(self._on_probe_finished)
+        # Owned, so a dialog deleted mid-probe takes its deadline with it.
+        self._probe_deadline = QTimer(self)
+        self._probe_deadline.setSingleShot(True)
+        self._probe_deadline.timeout.connect(self._on_probe_timeout)
         self.setWindowTitle("System audio needs a quick setup")
         self.setAccessibleName("Set up Linux system audio")
         self.setAccessibleDescription(
@@ -400,32 +422,27 @@ class MeetingLinuxAudioDialog(QDialog):
         if self._probe_pending:
             return
         self._set_busy(True)
-        generation = self._probe_generation + 1
-        self._probe_generation = generation
+        self._probe_generation = generation = next(_tokens)
+        # Bound here: the worker must not hold or reach the dialog.
+        finished = _probe_relay().finished
 
         def _done(capability: LinuxAudioCapability) -> None:
             # Queued onto the GUI thread; ignored when generation was invalidated.
-            self._probe_bridge.finished.emit((generation, capability))
+            finished.emit(generation, capability)
 
         _spawn_daemon_probe(self._probe, on_done=_done)
-        QTimer.singleShot(
-            int(max(0.1, self._probe_timeout_s) * 1000),
-            lambda: self._on_probe_timeout(generation),
-        )
+        # Restarted per attempt, so it always times out the one now running.
+        self._probe_deadline.start(int(max(0.1, self._probe_timeout_s) * 1000))
 
-    def _on_probe_timeout(self, generation: int) -> None:
-        if generation != self._probe_generation or not self._probe_pending:
+    def _on_probe_timeout(self) -> None:
+        if not self._probe_pending:
             return
         # Invalidate this generation so a late ready result cannot auto-accept.
-        self._probe_generation = generation + 1
+        self._probe_generation = next(_tokens)
         self._set_busy(False)
         self._apply_capability(_timeout_capability(self._capability))
 
-    def _on_probe_finished(self, payload) -> None:
-        try:
-            generation, capability = payload
-        except Exception:
-            return
+    def _on_probe_finished(self, generation: int, capability) -> None:
         if generation != self._probe_generation:
             # Timed out, superseded, or closed — ignore stale completions.
             return
@@ -443,7 +460,7 @@ class MeetingLinuxAudioDialog(QDialog):
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
         # Invalidate in-flight generations; daemon workers are abandoned.
-        self._probe_generation += 1
+        self._probe_generation = next(_tokens)
         self._probe_pending = False
         super().closeEvent(event)
 

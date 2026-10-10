@@ -5,13 +5,17 @@ chat-model sections of AI cleanup and Intelligence. These tests host it in a
 minimal rail harness; ``test_settings_unified`` covers the real window.
 Catalog, download, and component behavior lives in ``test_settings_downloads``.
 """
+import gc
 import pytest
 import os
 import tempfile
+import threading
+import weakref
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 from services import installed_agents
@@ -1272,3 +1276,35 @@ def test_meeting_remote_settings_link_and_unpaired_connection_check(monkeypatch)
         assert _wait_for(lambda: (QApplication.processEvents() or True)
                          and host.models.meeting_remote_test.isEnabled())
         assert "Pair a computer" in host.models.meeting_remote_status.text()
+
+
+def test_settings_closed_mid_scan_is_not_held_by_the_worker():
+    # The worker used to emit on Settings from its own thread, which raced
+    # Settings being destroyed (every test's teardown, and app shutdown).
+    gate = threading.Event()
+
+    def scan(max_age_seconds=None):
+        gate.wait(5)
+        return {}
+
+    settings = InMemorySettings({SettingsKey.SELECTED_MODEL: "local_whisper"})
+    with _isolated_settings(settings), \
+            patch.object(dialog_module, "scan_cached_models", side_effect=scan):
+        host = QWidget()
+        models = ModelAssignments(host, NavRail(host), QLabel(host))
+        models.refresh()
+        workers = [t for t in threading.enumerate()
+                   if t.name == "settings-models-cache-scan"]
+        assert workers
+        ref = weakref.ref(models)
+        del models
+        host.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        del host
+        gc.collect()
+        assert ref() is None
+        gate.set()
+        for worker in workers:
+            worker.join(5)
+            assert not worker.is_alive()
+        QApplication.processEvents()

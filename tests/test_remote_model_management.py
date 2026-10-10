@@ -349,6 +349,46 @@ def test_dialog_confirms_download_and_polls_until_complete(managed, downloads, m
         dialog.close()
 
 
+def test_a_dialog_closed_mid_request_is_not_held_by_the_worker():
+    # The worker used to capture the dialog: it kept a closed dialog alive,
+    # then dropped the last reference (deleting a QWidget) or emitted on it
+    # from its own thread, which can crash the process.
+    import gc
+    import weakref
+
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    from ui_qt.dialogs.remote_models import RemoteModelsDialog
+
+    gate = threading.Event()
+
+    def request(op, expected_pairing=None, **fields):
+        gate.wait(5)
+        return {"models": []}
+
+    service = SimpleNamespace(client_pairing=lambda: None, remote_model_request=request)
+    dialog = RemoteModelsDialog(service, "devbox")
+    dialog.show()
+    assert dialog._busy
+    workers = [t for t in threading.enumerate() if t.name == "remote-model-request"]
+    ref = weakref.ref(dialog)
+    dialog.deleteLater()
+    del dialog
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    # PyQt frees the dialog's own lambda connections with a queued call and
+    # then a deferred delete; flush both.
+    QApplication.processEvents()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    gc.collect()
+    assert ref() is None
+    gate.set()
+    for worker in workers:
+        worker.join(5)
+        assert not worker.is_alive()
+    QApplication.processEvents()
+
+
 def test_settings_tile_is_off_by_default_and_only_changes_host_permission(managed):
     from ui_qt.dialogs.settings_dialog import SettingsDialog
 

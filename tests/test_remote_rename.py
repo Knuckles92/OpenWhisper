@@ -281,7 +281,7 @@ def test_the_mcp_page_names_the_host_by_its_new_name(tmp_path):
         pump(view)
         assert [button.text() for button in view.tabs.buttons] == ["This computer", "jed"]
         service.pairing = replace(pairing, host_name="Studio PC", paired_name="jed")
-        view._on_service_event("host_renamed")
+        service.notify("host_renamed")
         pump(view)
         assert [button.text() for button in view.tabs.buttons] == ["This computer", "Studio PC"]
     finally:

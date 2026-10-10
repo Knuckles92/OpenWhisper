@@ -5,14 +5,19 @@ one over TLS.
 """
 from __future__ import annotations
 
+import gc
 import os
+import threading
 import time
+import weakref
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from services.remote_records import sync as sync_module
@@ -337,6 +342,96 @@ def test_a_slow_host_doesnt_hold_up_this_computers_history(records, monkeypatch)
     assert _pump(lambda: count() == 1, timeout=0.9)
     assert _pump(lambda: count() == 2, timeout=3.0)
     sidebar.deleteLater()
+
+
+def _gated_listing(records, monkeypatch):
+    """Hold the host's listing until the returned gate opens; ``listing`` is set once asked."""
+    gate, listing = threading.Event(), threading.Event()
+    listed = records.list_remote
+
+    def list_remote(*args, **kwargs):
+        listing.set()
+        gate.wait(5)
+        return listed(*args, **kwargs)
+
+    monkeypatch.setattr(records, "list_remote", list_remote)
+    return gate, listing
+
+
+def _destroyed_while_workers_run(widgets, names, gate):
+    """Close ``widgets`` with their workers still waiting, and check none holds one."""
+    workers = [t for t in threading.enumerate() if t.name in names]
+    assert {t.name for t in workers} == names
+    refs = [weakref.ref(widget) for widget in widgets]
+    for widget in widgets:
+        widget.deleteLater()
+    widgets.clear()
+    del widget
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    gc.collect()
+    assert [ref() for ref in refs] == [None] * len(refs)
+    gate.set()
+    for worker in workers:
+        worker.join(5)
+        assert not worker.is_alive()
+    QApplication.processEvents()
+
+
+def test_a_history_closed_mid_host_request_is_not_held_by_its_workers(records, monkeypatch):
+    # The workers used to capture the sidebar or the card: they kept a closed
+    # one alive, then dropped the last reference (deleting a QWidget) or
+    # emitted on it from their own thread, which segfaulted CI.
+    from ui_qt.widgets.history_sidebar import (
+        HistoryItemWidget,
+        HistorySidebar,
+        remote_history_entry,
+    )
+
+    records.remote["dictation"] = [_remote_entry("remote-new", "new one")]
+    gate, listing = _gated_listing(records, monkeypatch)
+    monkeypatch.setattr(records, "delete_remote", lambda *_a: gate.wait(5))
+    monkeypatch.setattr(records, "audio_for", lambda *_a: gate.wait(5) and "", raising=False)
+    sidebar = HistorySidebar()
+    card = HistoryItemWidget(remote_history_entry(
+        dict(_remote_entry("remote-new", "new one"), stored_on="devbox")
+    ))
+    sidebar._load_history()
+    sidebar.delete_remote_entry("remote-new")
+    card._request_retranscribe()
+    assert listing.wait(3)
+    widgets = [sidebar, card]
+    del sidebar, card
+
+    _destroyed_while_workers_run(widgets, {
+        "history-sidebar-load", "history-remote-load",
+        "history-remote-delete", "history-remote-audio",
+    }, gate)
+
+
+def test_past_meetings_closed_mid_host_request_are_not_held_by_their_workers(records, monkeypatch):
+    # As History's: the load and the download used to capture the panel.
+    from ui_qt.widgets.past_meetings_panel import PastMeetingsPanel
+
+    records.remote["meeting"] = [{"id": "m_remote000001", "started_at": "2026-09-01T00:00:00+00:00"}]
+    gate, listing = _gated_listing(records, monkeypatch)
+
+    def check_out(kind, record_id, progress=None):
+        gate.wait(5)
+        progress(50, 100)
+
+    monkeypatch.setattr(records, "check_out", check_out)
+    panel = PastMeetingsPanel(
+        repository=SimpleNamespace(list_past_meeting_summaries=lambda **_kw: [])
+    )
+    panel.refresh()
+    panel._fetch_from_host("m_remote000001", "devbox", then="open")
+    assert listing.wait(3)
+    widgets = [panel]
+    del panel
+
+    _destroyed_while_workers_run(
+        widgets, {"past-meetings-load", "past-meetings-remote", "past-meeting-fetch"}, gate,
+    )
 
 
 def test_opening_a_host_meeting_downloads_it_first(records):

@@ -164,7 +164,9 @@ def test_deleting_the_moved_dictation_on_the_host_forgets_it(host, client, tmp_p
     new = _dictate(tmp_path, "new", "Send the invoice today.", "send the invoice today um")
     client.run_once()
     deleted = threading.Event()
-    sidebar = SimpleNamespace(_remote_deleted=SimpleNamespace(emit=lambda *_a: deleted.set()))
+    relay = SimpleNamespace(deleted=SimpleNamespace(emit=lambda *_a: deleted.set()))
+    monkeypatch.setattr(history_sidebar, "_remote_relay", lambda: relay)
+    sidebar = SimpleNamespace(_token=1)
 
     history_sidebar.HistorySidebar.delete_remote_entry(sidebar, new.id)
 

@@ -14,12 +14,13 @@ through them doesn't wait.
 from __future__ import annotations
 
 import calendar
+import itertools
 import logging
 import threading
 from datetime import date
 from typing import Callable, Dict, FrozenSet, List, Optional
 
-from PyQt6.QtCore import QLocale, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QLocale, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QSizePolicy, QVBoxLayout, QWidget,
@@ -289,6 +290,67 @@ def _month_title(key: MonthKey) -> str:
     return f"{calendar.month_name[key[1]]} {key[0]}"
 
 
+class _CalendarRelay(QObject):
+    """Brings reads and host downloads to the Qt thread for whichever calendars exist then.
+
+    It lives for the session, so a worker thread never holds or emits on a
+    dialog. Holding one let the thread drop the last reference and delete the
+    dialog off the Qt thread, and emitting on one raced it closing; both crash
+    the process. Qt drops a deleted dialog's connection.
+    """
+
+    #: The read's generation, the marks (None on failure), the notice.
+    index_loaded = pyqtSignal(int, object, str)
+    #: The read's generation, the year and month, its items.
+    month_loaded = pyqtSignal(int, int, int, object)
+    #: The asking dialog's token, the meeting id, progress text.
+    fetch_progress = pyqtSignal(int, str, str)
+    #: The asking dialog's token, the meeting id, error.
+    fetch_done = pyqtSignal(int, str, str)
+
+
+_relay: Optional[_CalendarRelay] = None
+#: Generations and tokens, unique across dialogs because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _calendar_relay() -> _CalendarRelay:
+    global _relay
+    if _relay is None:
+        _relay = _CalendarRelay()
+    return _relay
+
+
+def _load_all(source: CalendarSource, relay: _CalendarRelay, generation: int,
+              view: MonthKey, prefetch: int) -> None:
+    try:
+        marks = source.load_index()
+    except Exception as exc:
+        logger.error("Couldn't read the History calendar: %s", exc)
+        relay.index_loaded.emit(generation, None, "History could not be loaded.")
+        return
+    relay.index_loaded.emit(generation, marks, "")
+    _load_months(source, relay, generation, [view])
+    if source.remote_wanted():
+        remote = source.load_remote(mark.record_id for mark in marks)
+        relay.index_loaded.emit(generation, marks + remote, source.notice)
+        if remote:
+            _load_months(source, relay, generation, [view])
+    _load_months(source, relay, generation, [shift_month(view, step)
+                                             for step in range(-prefetch, prefetch + 1) if step])
+
+
+def _load_months(source: CalendarSource, relay: _CalendarRelay, generation: int,
+                 keys: List[MonthKey]) -> None:
+    for key in keys:
+        try:
+            items = source.load_month(*key)
+        except Exception as exc:
+            logger.error("Couldn't read %s for the History calendar: %s", _month_title(key), exc)
+            items = []
+        relay.month_loaded.emit(generation, key[0], key[1], items)
+
+
 class HistoryCalendarDialog(QDialog):
     """A month of recordings: what, when, and where each one is kept.
 
@@ -301,11 +363,6 @@ class HistoryCalendarDialog(QDialog):
     meeting_requested = pyqtSignal(str)
     meeting_copy_requested = pyqtSignal(str)
     entry_copied = pyqtSignal(str)
-
-    _index_loaded = pyqtSignal(int, object, str)
-    _month_loaded = pyqtSignal(int, int, int, object)
-    _fetch_progress = pyqtSignal(str, str)
-    _fetch_done = pyqtSignal(str, str)
 
     #: Months read ahead on each side of the one shown.
     PREFETCH = 1
@@ -330,7 +387,7 @@ class HistoryCalendarDialog(QDialog):
         self._index = CalendarIndex()
         self._loaded = False
         self._stale = True
-        self._generation = 0
+        self._generation = next(_tokens)
         #: Rows read per month; ``_fresh`` holds those read since the last refresh.
         self._months: Dict[MonthKey, List[CalendarItem]] = {}
         self._fresh: set = set()
@@ -343,6 +400,8 @@ class HistoryCalendarDialog(QDialog):
         self._notice = ""
         self._cards: List[AgendaCard] = []
         self._fetching: set = set()
+        #: Picks this dialog's downloads off the shared relay; reads go by generation.
+        self._token = next(_tokens)
         self._pulse_pending = True
         # Changes elsewhere tend to arrive in bursts (a transcription refreshes
         # History and Past Meetings together), so their refreshes are merged.
@@ -362,10 +421,11 @@ class HistoryCalendarDialog(QDialog):
         self._scroll_timer.setInterval(0)
         self._scroll_timer.timeout.connect(self._restore_agenda_scroll)
 
-        self._index_loaded.connect(self._on_index_loaded)
-        self._month_loaded.connect(self._on_month_loaded)
-        self._fetch_progress.connect(self._on_fetch_progress)
-        self._fetch_done.connect(self._on_fetch_done)
+        relay = _calendar_relay()
+        relay.index_loaded.connect(self._on_index_loaded)
+        relay.month_loaded.connect(self._on_month_loaded)
+        relay.fetch_progress.connect(self._on_fetch_progress)
+        relay.fetch_done.connect(self._on_fetch_done)
         self._setup_ui()
 
     # ---- building ----
@@ -554,14 +614,15 @@ class HistoryCalendarDialog(QDialog):
         """Read everything again: after a recording, delete or edit elsewhere."""
         self._refresh_timer.stop()
         self._stale = False
-        self._generation += 1
-        generation = self._generation
+        self._generation = generation = next(_tokens)
         self._fresh = set()
         view = self._view
         # _load_all reads these; _render mustn't ask for them again meanwhile.
         self._loading = {view} | {shift_month(view, step)
                                   for step in range(-self.PREFETCH, self.PREFETCH + 1)}
-        self._run(lambda: self._load_all(generation, view))
+        # Bound here: the worker must not reach back into the dialog.
+        source, relay, prefetch = self._source, _calendar_relay(), self.PREFETCH
+        self._run(lambda: _load_all(source, relay, generation, view, prefetch))
 
     def refresh_if_visible(self) -> None:
         """Refresh soon when shown, or the next time it is."""
@@ -576,32 +637,6 @@ class HistoryCalendarDialog(QDialog):
             return
         threading.Thread(target=work, name="history-calendar-load", daemon=True).start()
 
-    def _load_all(self, generation: int, view: MonthKey) -> None:
-        try:
-            marks = self._source.load_index()
-        except Exception as exc:
-            logger.error("Couldn't read the History calendar: %s", exc)
-            self._index_loaded.emit(generation, None, "History could not be loaded.")
-            return
-        self._index_loaded.emit(generation, marks, "")
-        self._load_months(generation, [view])
-        if self._source.remote_wanted():
-            remote = self._source.load_remote(mark.record_id for mark in marks)
-            self._index_loaded.emit(generation, marks + remote, self._source.notice)
-            if remote:
-                self._load_months(generation, [view])
-        self._load_months(generation, [shift_month(view, step)
-                                       for step in range(-self.PREFETCH, self.PREFETCH + 1) if step])
-
-    def _load_months(self, generation: int, keys: List[MonthKey]) -> None:
-        for key in keys:
-            try:
-                items = self._source.load_month(*key)
-            except Exception as exc:
-                logger.error("Couldn't read %s for the History calendar: %s", _month_title(key), exc)
-                items = []
-            self._month_loaded.emit(generation, key[0], key[1], items)
-
     def _request_months(self, center: MonthKey) -> None:
         """Read the shown month and its neighbours, unless already read or on the way."""
         wanted = [shift_month(center, step) for step in (0, 1, -1)[: 1 + 2 * self.PREFETCH]]
@@ -609,8 +644,9 @@ class HistoryCalendarDialog(QDialog):
         if not missing:
             return
         self._loading.update(missing)
-        generation = self._generation
-        self._run(lambda: self._load_months(generation, missing))
+        # Bound here: the worker must not reach back into the dialog.
+        source, relay, generation = self._source, _calendar_relay(), self._generation
+        self._run(lambda: _load_months(source, relay, generation, missing))
 
     def _on_index_loaded(self, generation: int, marks, notice: str) -> None:
         if generation != self._generation:
@@ -964,22 +1000,26 @@ class HistoryCalendarDialog(QDialog):
         if meeting_id in self._fetching:
             return
         self._fetching.add(meeting_id)
-        self._on_fetch_progress(meeting_id, f"Getting it from {host}…")
+        token = self._token
+        self._on_fetch_progress(token, meeting_id, f"Getting it from {host}…")
+        # Bound here: the worker must not reach back into the dialog.
+        relay = _calendar_relay()
+        progressed, done = relay.fetch_progress, relay.fetch_done
 
         def work() -> None:
             from services.remote_records.sync import record_sync
 
             def progress(got: int, total: int) -> None:
                 if total:
-                    self._fetch_progress.emit(meeting_id, f"Getting it from {host}… {got * 100 // total}%")
+                    progressed.emit(token, meeting_id, f"Getting it from {host}… {got * 100 // total}%")
 
             try:
                 record_sync.check_out("meeting", meeting_id, progress)
             except Exception as exc:
                 logger.warning("Couldn't get a meeting from the host: %s", exc)
-                self._fetch_done.emit(meeting_id, str(exc) or type(exc).__name__)
+                done.emit(token, meeting_id, str(exc) or type(exc).__name__)
                 return
-            self._fetch_done.emit(meeting_id, "")
+            done.emit(token, meeting_id, "")
 
         threading.Thread(target=work, name="history-calendar-fetch", daemon=True).start()
 
@@ -989,12 +1029,16 @@ class HistoryCalendarDialog(QDialog):
                 return card
         return None
 
-    def _on_fetch_progress(self, meeting_id: str, text: str) -> None:
+    def _on_fetch_progress(self, token: int, meeting_id: str, text: str) -> None:
+        if token != self._token:
+            return
         card = self._card(meeting_id)
         if card is not None:
             card.set_progress(text)
 
-    def _on_fetch_done(self, meeting_id: str, error: str) -> None:
+    def _on_fetch_done(self, token: int, meeting_id: str, error: str) -> None:
+        if token != self._token:
+            return
         self._fetching.discard(meeting_id)
         if error:
             card = self._card(meeting_id)
