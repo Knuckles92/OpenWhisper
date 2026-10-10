@@ -97,6 +97,116 @@ class TestMeetingLinuxAudioDialog(unittest.TestCase):
         dialog.go_back_btn.click()
         self.assertEqual(dialog.result_action, MeetingLinuxAudioDialog.RESULT_CANCEL)
 
+    def _shown(self, dialog):
+        dialog.show()
+        self.addCleanup(dialog.deleteLater)
+        self.addCleanup(dialog.close)
+        for _ in range(12):
+            self.app.processEvents()
+        return dialog
+
+    def _assert_no_button_squeezed(self, dialog):
+        from PyQt6.QtWidgets import QPushButton
+
+        buttons = [b for b in dialog.findChildren(QPushButton) if b.isVisible()]
+        self.assertTrue(buttons)
+        for button in buttons:
+            self.assertGreaterEqual(
+                button.width(), button.sizeHint().width(), button.text()
+            )
+            # Fully inside the dialog, not pushed past its edge.
+            top_left = button.mapTo(dialog, button.rect().topLeft())
+            self.assertGreaterEqual(top_left.x(), 0, button.text())
+            self.assertLessEqual(
+                top_left.x() + button.width(), dialog.width(), button.text()
+            )
+            self.assertLessEqual(
+                top_left.y() + button.height(), dialog.height(), button.text()
+            )
+
+    def test_buttons_keep_their_label_width_at_any_dialog_width(self):
+        for reason in ("soundcard_missing", "audio_server_unavailable"):
+            with self.subTest(reason=reason):
+                dialog = self._shown(
+                    MeetingLinuxAudioDialog(
+                        _capability(reason=reason), guide_url="file:///guide"
+                    )
+                )
+                self._assert_no_button_squeezed(dialog)
+                # Narrower than the rows need: the dialog refuses, and the
+                # fix-it tools wrap instead of clipping their labels.
+                dialog.resize(240, dialog.height())
+                for _ in range(12):
+                    self.app.processEvents()
+                self.assertGreaterEqual(dialog.width(), dialog.minimumWidth())
+                self._assert_no_button_squeezed(dialog)
+
+    def test_continue_microphone_only_is_the_primary_default(self):
+        dialog = MeetingLinuxAudioDialog(_capability(), guide_url="file:///guide")
+        self.assertEqual(dialog.mic_only_btn.property("tone"), "primary")
+        self.assertTrue(dialog.mic_only_btn.isDefault())
+        self.assertFalse(dialog.go_back_btn.isDefault())
+        self.assertFalse(dialog.go_back_btn.autoDefault())
+        self.assertNotEqual(dialog.go_back_btn.property("tone"), "primary")
+
+    def test_diagnostic_only_commands_start_folded(self):
+        dialog = self._shown(
+            MeetingLinuxAudioDialog(
+                _capability(reason="audio_server_unavailable"),
+                guide_url="file:///guide",
+            )
+        )
+        self.assertTrue(dialog.commands_toggle.isVisible())
+        self.assertFalse(dialog.commands_edit.isVisible())
+        self.assertFalse(dialog.copy_btn.isVisible())
+        self.assertIn("systemctl", dialog.commands_edit.toPlainText())
+
+        dialog.commands_toggle.setChecked(True)
+        self.app.processEvents()
+        self.assertTrue(dialog.commands_edit.isVisible())
+        self.assertTrue(dialog.copy_btn.isVisible())
+        self.assertEqual(dialog.commands_toggle.text(), "Hide diagnostic commands")
+        self._assert_no_button_squeezed(dialog)
+
+        # A fix to paste is never folded away.
+        fix = self._shown(
+            MeetingLinuxAudioDialog(_capability(), guide_url="file:///guide")
+        )
+        self.assertFalse(fix.commands_toggle.isVisible())
+        self.assertTrue(fix.commands_edit.isVisible())
+        self.assertTrue(fix.copy_btn.isVisible())
+
+    def test_short_screen_scrolls_the_explanation_not_the_buttons(self):
+        from PyQt6.QtCore import QRect
+
+        class _ShortScreen:
+            # 1024x640, the smallest screen a tester ran Meeting Mode on.
+            def availableGeometry(self):
+                return QRect(0, 0, 1024, 640)
+
+        with patch.object(
+            MeetingLinuxAudioDialog, "screen", return_value=_ShortScreen()
+        ):
+            dialog = MeetingLinuxAudioDialog(
+                _capability(reason="audio_server_unavailable"),
+                guide_url="file:///guide",
+            )
+            dialog.commands_toggle.setChecked(True)
+            dialog = self._shown(dialog)
+            needed = dialog._content.heightForWidth(dialog._content_scroll.width())
+            # More to read than fits: the explanation scrolls...
+            self.assertGreater(needed, dialog._content_scroll.height())
+            self.assertLessEqual(dialog.height(), 640 - 64)
+            # ...and every choice stays whole and on screen.
+            self._assert_no_button_squeezed(dialog)
+
+    def test_fits_its_explanation_when_the_screen_has_room(self):
+        dialog = self._shown(
+            MeetingLinuxAudioDialog(_capability(), guide_url="file:///guide")
+        )
+        needed = dialog._content.heightForWidth(dialog._content_scroll.width())
+        self.assertLessEqual(needed, dialog._content_scroll.height())
+
     def test_ensure_helper_ready_path(self):
         with patch(
             "ui_qt.dialogs.meeting_linux_audio_dialog.probe_linux_audio",

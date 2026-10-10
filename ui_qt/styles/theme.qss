@@ -320,7 +320,10 @@ QScrollArea#settingsPageScroll > QWidget > QWidget,
 #downloadsPage QScrollArea > QWidget > QWidget,
 QScrollArea#transcriptionTabScrollArea,
 QScrollArea#transcriptionTabScrollArea > QWidget,
-QScrollArea#transcriptionTabScrollArea > QWidget > QWidget {
+QScrollArea#transcriptionTabScrollArea > QWidget > QWidget,
+QScrollArea#meetingLinuxAudioScroll,
+QScrollArea#meetingLinuxAudioScroll > QWidget,
+QScrollArea#meetingLinuxAudioScroll > QWidget > QWidget {
     background-color: transparent;
     border: none;
 }

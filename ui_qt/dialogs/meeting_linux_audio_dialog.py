@@ -14,15 +14,18 @@ import time
 from pathlib import Path
 from typing import Callable, Final, Optional
 
-from PyQt6.QtCore import QEventLoop, QObject, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QEventLoop, QObject, QSize, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
+    QScrollArea,
     QTextEdit,
     QVBoxLayout,
+    QWidget,
 )
 
 from config import bundle_root
@@ -36,12 +39,20 @@ from services.linux_deps import (
     LINUX_SYSTEM_AUDIO_GUIDE,
     meeting_audio_remediation,
 )
-from ui_qt.widgets import Button, PrimaryButton
+from ui_qt.widgets import Button
+from ui_qt.widgets.button_row import ButtonRow
+from ui_qt.widgets.buttons import compact_primary_button, neutral_button
 
 logger = logging.getLogger(__name__)
 
 #: Hard deadline for one readiness probe as a user-visible operation.
 _PROBE_OPERATION_TIMEOUT_S = 8.0
+
+#: Preferred (not minimum) dialog width in pixels.
+_PREFERRED_WIDTH = 560
+
+#: The explanation may scroll, but never shrinks below this on a short screen.
+_MIN_CONTENT_HEIGHT = 140
 
 
 class _ProbeBridge(QObject):
@@ -129,8 +140,8 @@ class MeetingLinuxAudioDialog(QDialog):
             "Review detected audio issues and setup commands, retry detection, "
             "continue microphone only, or go back."
         )
-        self.setMinimumWidth(560)
         self.setModal(True)
+        self._fitted = False
         self._setup_ui()
         self._apply_capability(capability)
 
@@ -149,19 +160,48 @@ class MeetingLinuxAudioDialog(QDialog):
         self.title_label.setWordWrap(True)
         layout.addWidget(self.title_label)
 
+        # The explanation scrolls on a short screen; the title and both button
+        # rows stay put, so the choices are always reachable.
+        self._content = QWidget()
+        self._content.setObjectName("meetingLinuxAudioContent")
+        content = QVBoxLayout(self._content)
+        content.setContentsMargins(0, 0, 6, 0)
+        content.setSpacing(12)
+        self._content_scroll = QScrollArea()
+        self._content_scroll.setObjectName("meetingLinuxAudioScroll")
+        self._content_scroll.setWidgetResizable(True)
+        self._content_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._content_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._content_scroll.setMinimumHeight(_MIN_CONTENT_HEIGHT)
+        self._content_scroll.setWidget(self._content)
+        layout.addWidget(self._content_scroll, 1)
+
         self.body_label = QLabel("")
         self.body_label.setObjectName("consentBodyLabel")
         self.body_label.setWordWrap(True)
-        layout.addWidget(self.body_label)
+        content.addWidget(self.body_label)
 
         self.meta_label = QLabel("")
         self.meta_label.setObjectName("meetingLinuxAudioMeta")
         self.meta_label.setWordWrap(True)
-        layout.addWidget(self.meta_label)
+        content.addWidget(self.meta_label)
+
+        # Diagnostic-only failures list several status commands; they start
+        # folded so the explanation and actions fit a small display.
+        self._commands_foldable = False
+        self.commands_toggle = neutral_button(Button("Show diagnostic commands"))
+        self.commands_toggle.setObjectName("meetingLinuxAudioCommandsToggle")
+        self.commands_toggle.setCheckable(True)
+        self.commands_toggle.setAutoDefault(False)
+        self.commands_toggle.toggled.connect(self._on_commands_toggled)
+        self.commands_toggle.hide()
+        content.addWidget(self.commands_toggle, 0, Qt.AlignmentFlag.AlignLeft)
 
         self.commands_label = QLabel("Setup commands")
         self.commands_label.setObjectName("meetingLinuxAudioCommandsLabel")
-        layout.addWidget(self.commands_label)
+        content.addWidget(self.commands_label)
 
         self.commands_edit = QTextEdit()
         self.commands_edit.setObjectName("meetingLinuxAudioCommands")
@@ -173,47 +213,117 @@ class MeetingLinuxAudioDialog(QDialog):
             "Linux system-audio capture. Review before running in a terminal."
         )
         self.commands_label.setBuddy(self.commands_edit)
-        layout.addWidget(self.commands_edit)
+        content.addWidget(self.commands_edit)
 
         self.note_label = QLabel("")
         self.note_label.setObjectName("meetingLinuxAudioNote")
         self.note_label.setWordWrap(True)
-        layout.addWidget(self.note_label)
+        content.addWidget(self.note_label)
+        content.addStretch(1)
 
-        button_row = QHBoxLayout()
-        button_row.setSpacing(8)
-
-        self.copy_btn = Button("Copy command")
+        # Fix-it tools wrap onto more rows when the dialog is narrow instead
+        # of squeezing their labels.
+        self.copy_btn = neutral_button(Button("Copy command"))
         self.copy_btn.setObjectName("meetingLinuxAudioCopyButton")
+        self.copy_btn.setAutoDefault(False)
         self.copy_btn.clicked.connect(self._copy_commands)
-        button_row.addWidget(self.copy_btn)
 
-        self.guide_btn = Button("Open setup guide")
+        self.guide_btn = neutral_button(Button("Open setup guide"))
         self.guide_btn.setObjectName("meetingLinuxAudioGuideButton")
+        self.guide_btn.setAutoDefault(False)
         self.guide_btn.clicked.connect(self._open_guide)
-        button_row.addWidget(self.guide_btn)
 
-        self.retry_btn = Button("Retry detection")
+        self.retry_btn = neutral_button(Button("Retry detection"))
         self.retry_btn.setObjectName("meetingLinuxAudioRetryButton")
+        self.retry_btn.setAutoDefault(False)
         self.retry_btn.clicked.connect(self._retry_detection)
-        button_row.addWidget(self.retry_btn)
 
-        button_row.addStretch()
+        self.tool_row = ButtonRow([self.copy_btn, self.guide_btn, self.retry_btn])
+        layout.addWidget(self.tool_row)
 
-        self.mic_only_btn = Button("Continue microphone only")
+        # The decision gets its own row, so its labels are never squeezed.
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
+        action_row.addStretch()
+
+        self.go_back_btn = neutral_button(Button("Go back"))
+        self.go_back_btn.setObjectName("meetingLinuxAudioGoBackButton")
+        self.go_back_btn.setAutoDefault(False)
+        self.go_back_btn.clicked.connect(self.reject)
+        action_row.addWidget(self.go_back_btn)
+
+        # A plain Button with the primary tone: renaming a PrimaryButton for
+        # lookup would strip the look it takes from its object name.
+        self.mic_only_btn = compact_primary_button(
+            Button("Continue microphone only")
+        )
         self.mic_only_btn.setObjectName("meetingLinuxAudioMicOnlyButton")
+        self.mic_only_btn.setDefault(True)
         self.mic_only_btn.clicked.connect(
             lambda: self._finish(self.RESULT_MICROPHONE_ONLY)
         )
-        button_row.addWidget(self.mic_only_btn)
+        action_row.addWidget(self.mic_only_btn)
 
-        self.go_back_btn = PrimaryButton("Go back")
-        self.go_back_btn.setObjectName("meetingLinuxAudioGoBackButton")
-        self.go_back_btn.setDefault(True)
-        self.go_back_btn.clicked.connect(self.reject)
-        button_row.addWidget(self.go_back_btn)
+        layout.addLayout(action_row)
 
-        layout.addLayout(button_row)
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        # A comfortable reading width; the layout alone sets the minimum, so
+        # the dialog never gets narrower than its button rows need.
+        return super().sizeHint().expandedTo(QSize(_PREFERRED_WIDTH, 0))
+
+    def setVisible(self, visible: bool) -> None:  # noqa: N802 - Qt API
+        if visible and not self._fitted:
+            # Before QDialog centers itself, so it centers the final size.
+            self._fitted = True
+            self.adjustSize()
+            self._fit_height()
+        super().setVisible(visible)
+
+    def _fit_height(self) -> None:
+        """Show all of the explanation when the screen has room for it.
+
+        ``adjustSize`` caps a window at two thirds of the screen and sizes a
+        scroll area by a rough hint, so measure the content at its real width
+        and grow (or shrink) to that, never past the screen.
+        """
+        layout = self.layout()
+        layout.activate()
+        if not self.isVisible():
+            # A window that has not been shown yet has not placed its
+            # children; place them so their sizes are this width's.
+            layout.setGeometry(self.rect())
+            self.tool_row.refresh()
+            layout.invalidate()
+            layout.setGeometry(self.rect())
+        width = self._content_scroll.width()
+        if width <= 0:
+            return
+        content = self._content
+        if content.hasHeightForWidth():
+            needed = content.heightForWidth(width)
+        else:
+            needed = content.sizeHint().height()
+        target = self.height() - self._content_scroll.height() + needed
+        screen = self.screen()
+        if screen is not None:
+            # Leave room for the window frame and a desktop panel.
+            target = min(target, screen.availableGeometry().height() - 64)
+        self.resize(self.width(), max(target, self.minimumHeight()))
+
+    def _on_commands_toggled(self, expanded: bool) -> None:
+        self._show_commands(expanded)
+        if self.isVisible():
+            self._fit_height()
+
+    def _show_commands(self, expanded: bool) -> None:
+        shown = expanded or not self._commands_foldable
+        self.commands_label.setVisible(shown)
+        self.commands_edit.setVisible(shown)
+        self.copy_btn.setVisible(shown)
+        self.commands_toggle.setText(
+            "Hide diagnostic commands" if expanded else "Show diagnostic commands"
+        )
+        self.tool_row.refresh()
 
     def _apply_capability(self, capability: LinuxAudioCapability) -> None:
         self._capability = capability
@@ -249,6 +359,18 @@ class MeetingLinuxAudioDialog(QDialog):
         self.note_label.setText("\n".join(notes))
         self.note_label.setVisible(bool(notes))
         self.copy_btn.setEnabled(bool(remediation.commands))
+        # Status checks only, no fix to paste: fold them behind a toggle.
+        self._commands_foldable = (
+            remediation.reason == "audio_server_unavailable"
+            and bool(remediation.commands)
+        )
+        self.commands_toggle.setVisible(self._commands_foldable)
+        self.commands_label.setText(
+            "Diagnostic commands" if self._commands_foldable else "Setup commands"
+        )
+        self._show_commands(self.commands_toggle.isChecked())
+        if self.isVisible():
+            self._fit_height()
 
     def _copy_commands(self) -> None:
         text = self.commands_edit.toPlainText().strip()
