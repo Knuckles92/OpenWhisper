@@ -2504,7 +2504,8 @@ QTabBar#contentTabBar::tab:disabled {
 }
 
 /* Meeting Mode is the last tab. Grey it on macOS/Linux without disabling
-   the tab, so a selected unsupported session is not stolen by Qt. */
+   the tab, so a selected unsupported session is not stolen by Qt. Once
+   opened it reads like any selected tab, never like a disabled one. */
 QTabBar#contentTabBar[unsupportedMeeting="true"]::tab:last {
     color: @text-faint;
 }
@@ -2514,8 +2515,8 @@ QTabBar#contentTabBar[unsupportedMeeting="true"]::tab:last:hover {
 }
 
 QTabBar#contentTabBar[unsupportedMeeting="true"]::tab:last:selected {
-    color: @text-muted;
-    border-bottom: 2px solid @border-hover;
+    color: @accent;
+    border-bottom: 2px solid @accent;
 }
 
 /* Tooltips — elevated surface so they read against the dark window.

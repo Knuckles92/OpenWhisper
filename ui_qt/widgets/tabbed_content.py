@@ -112,8 +112,8 @@ class TabbedContentWidget(QWidget):
                 color: @text-muted;
             }
             QTabBar[unsupportedMeeting="true"]::tab:last:selected {
-                color: @text-muted;
-                border-bottom: 2px solid @border-hover;
+                color: @accent;
+                border-bottom: 2px solid @accent;
             }
         """)
 

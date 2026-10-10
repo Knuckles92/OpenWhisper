@@ -437,6 +437,33 @@ class TestMeetingTabUnsupportedLock(unittest.TestCase):
                 tip,
             )
 
+    def test_selected_unsupported_tab_reads_as_selected_not_disabled(self):
+        import re
+        from pathlib import Path
+
+        def rule(sheet, selector):
+            match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", sheet)
+            self.assertIsNotNone(match, selector)
+            return " ".join(match.group(1).split())
+
+        tabs = self._make_tabs(supported=False, acked=True)
+        local = tabs.tab_bar.styleSheet()
+        theme = (
+            Path(__file__).resolve().parents[1] / "ui_qt" / "styles" / "theme.qss"
+        ).read_text(encoding="utf-8")
+        for sheet, prefix in ((local, "QTabBar"), (theme, "QTabBar#contentTabBar")):
+            selected = rule(sheet, f"{prefix}::tab:selected")
+            locked_selected = rule(
+                sheet, f'{prefix}[unsupportedMeeting="true"]::tab:last:selected'
+            )
+            # Same accent text and underline as any selected tab.
+            self.assertEqual(locked_selected, selected)
+            # The unselected locked tab keeps its muted look.
+            self.assertNotEqual(
+                rule(sheet, f'{prefix}[unsupportedMeeting="true"]::tab:last'),
+                selected,
+            )
+
     def test_linux_preview_tab_tooltip(self):
         with patch(
             "meeting.platform.linux_meeting_implementation_ready",
