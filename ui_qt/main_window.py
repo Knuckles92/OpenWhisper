@@ -380,6 +380,13 @@ class MainWindow(QMainWindow):
         self._tab_history_refresh_timer.timeout.connect(
             self._refresh_history_sidebar_if_expanded
         )
+        #: A result's stats card, to scroll into view once the window has
+        #: finished growing for it.
+        self._stats_to_reveal = None
+        self._stats_reveal_timer = QTimer(self)
+        self._stats_reveal_timer.setSingleShot(True)
+        self._stats_reveal_timer.setInterval(SECTION_COLLAPSE_DURATION_MS + 50)
+        self._stats_reveal_timer.timeout.connect(self._reveal_shown_stats)
 
         self.on_show_copied_animation: Optional[Callable] = None
         #: The History calendar window, made on first open and kept after.
@@ -1170,6 +1177,10 @@ class MainWindow(QMainWindow):
         if self._host_mode:
             # A dictation finished behind the dashboard; its size is its own.
             return
+        stats = self.sender()
+        if visible and isinstance(stats, QWidget):
+            self._stats_to_reveal = stats
+            self._stats_reveal_timer.start()
         stats_height = 60 if visible else 0
         current_height = self.height()
 
@@ -1183,6 +1194,28 @@ class MainWindow(QMainWindow):
 
         self._transcription_tab_height = new_height
         self._animate_resize(self.width(), new_height)
+
+    def _reveal_shown_stats(self) -> None:
+        """Scroll a result's stats into view below the transcript.
+
+        The window grows by a guess, and not at all once it is as tall as the
+        screen (1024x640) or the compositor sizes it, which left the stats
+        under the tab's fold, behind the footer.
+        """
+        from PyQt6.QtWidgets import QApplication, QScrollArea
+
+        stats, self._stats_to_reveal = self._stats_to_reveal, None
+        try:
+            if stats is None or not stats.isVisible():
+                return
+            QApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
+            area = stats.parentWidget()
+            while area is not None:
+                if isinstance(area, QScrollArea):
+                    area.ensureWidgetVisible(stats, 0, 12)
+                area = area.parentWidget()
+        except RuntimeError:
+            pass  # The tab was deleted before the window settled.
 
     def open_settings(self):
         logger.info("Opening settings dialog")

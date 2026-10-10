@@ -311,3 +311,32 @@ class TestMainWindowCompactMode:
         before = self.window.height()
         self.window._on_sidebar_width_animated(380)
         assert self.window.height() == before
+
+    def test_result_stats_scroll_into_view_when_the_window_cannot_grow(self):
+        """At 1024x640 the window is already screen-tall: the stats sat below the fold."""
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtTest import QTest
+
+        window = self.window
+        window._available_screen_rect = lambda: QRect(0, 0, 1024, 640)
+        window.setGeometry(0, 0, 680, 640)
+        window.show()
+        self.app.processEvents()
+        tab = window.quick_record_tab
+        area = tab.scroll_area
+        tab.set_transcription_collapsed(False)
+        # Content taller than the tab's viewport, as on a short screen; the
+        # open transcript takes the extra, so the stats sit at the bottom.
+        area.widget().setMinimumHeight(area.viewport().height() + 400)
+        self.app.processEvents()
+        assert area.verticalScrollBar().value() == 0
+
+        tab.set_transcription_stats(1.2, 3.4, 56_000)
+        stats = tab.stats_widget
+        for _ in range(150):
+            if area.verticalScrollBar().value() > 0:
+                break
+            QTest.qWait(10)
+
+        top = stats.mapTo(area.viewport(), stats.rect().topLeft()).y()
+        assert 0 <= top and top + stats.height() <= area.viewport().height()
