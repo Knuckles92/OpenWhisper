@@ -252,6 +252,8 @@ def test_available_component_ids_by_platform():
         )
         assert len(ComponentCoordinator().list_components()) == 2
 
+    # Windows asks the kernel for its architecture, not platform.machine(),
+    # so a pretend-Windows host patches host_machine itself.
     with patch.object(components.sys, "platform", "win32"), patch.object(
         components, "host_machine", return_value="AMD64"
     ):

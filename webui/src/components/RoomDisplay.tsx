@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { Chapter } from '../chapters';
 import { speakerColor } from '../people';
+import { InlineMarkdown } from './report/MarkdownView';
 import type { CardItem, MeetingStateDoc, Participant, Segment } from '../types';
 import './roomDisplay.css';
 
@@ -130,7 +131,7 @@ export default function RoomDisplay({
             <h2 className="room-heading decision">Decided</h2>
             {decisions.length ? (
               <ul className="room-list">
-                {decisions.map((item) => <li key={item.id}>{item.text}</li>)}
+                {decisions.map((item) => <li key={item.id}><InlineMarkdown text={item.text} /></li>)}
               </ul>
             ) : (
               <p className="room-empty">Nothing decided yet.</p>
@@ -145,7 +146,7 @@ export default function RoomDisplay({
                   return (
                     <li key={item.id}>
                       {owner && <strong>{owner.display_name} </strong>}
-                      {item.text}
+                      <InlineMarkdown text={item.text} />
                     </li>
                   );
                 })}

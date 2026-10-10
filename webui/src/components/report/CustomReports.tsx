@@ -252,7 +252,7 @@ export default function CustomReports({
               {error
                 || (running
                   ? 'One report is written at a time. This one will appear below.'
-                  : 'Reports are written by the meeting’s cloud text model and saved with the meeting.')}
+                  : 'Reports are written by the meeting’s AI insights model and saved with the meeting.')}
             </p>
           </div>
         )}

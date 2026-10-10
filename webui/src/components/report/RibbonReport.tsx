@@ -10,6 +10,7 @@ import {
   speakerName,
 } from '../../report';
 import type { CardItem, MeetingInfo, MeetingStateDoc, Segment } from '../../types';
+import { InlineMarkdown } from './MarkdownView';
 import ReportTimestamp from './ReportTimestamp';
 import TimelineMinimap, { type MarkerCard, type MinimapMarker } from './TimelineMinimap';
 
@@ -100,7 +101,7 @@ export default function RibbonReport({
           {label}{sev ? ` · ${sev}` : ''}
         </span>
         <p>
-          {item.text}{' '}
+          <InlineMarkdown text={item.text} />{' '}
           <ReportTimestamp
             evidence={item.evidence}
             segs={segs}
@@ -162,8 +163,8 @@ export default function RibbonReport({
               <div className="rb-time">{clock(time)}</div>
               <div className="rb-rail"><span className="rb-dot" /></div>
               <div className="rb-body">
-                <h3 className="rb-beat">{beat.text}</h3>
-                {note && <p className="rb-note">{note.text}</p>}
+                <h3 className="rb-beat"><InlineMarkdown text={beat.text} /></h3>
+                {note && <p className="rb-note"><InlineMarkdown text={note.text} /></p>}
                 {mine.map(renderCut)}
               </div>
             </div>
