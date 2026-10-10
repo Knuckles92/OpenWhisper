@@ -101,6 +101,24 @@ def _requires_qt(path: str) -> bool:
     return False
 
 
+@pytest.hookimpl(trylast=True)
+def pytest_configure(config):
+    """Point the data root at a throwaway folder before anything resolves it.
+
+    Every data path comes from ``config.data_root()``: AppConfig's settings,
+    database, recordings and meeting spools, plus backups, remote records and
+    the host identity, which call it directly. From a git checkout the root
+    is the checkout itself, so the developer's real history, recordings and
+    meetings. Collection already reaches it: pytest probes test modules'
+    names, which builds the lazy database singleton, and importing main takes
+    a data lease and applies any pending restore. ``OPENWHISPER_DATA_DIR``
+    comes first in that resolution, and child processes inherit it.
+
+    trylast: pytest attaches its tmp_path factory in its own configure hook.
+    """
+    os.environ["OPENWHISPER_DATA_DIR"] = str(config._tmp_path_factory.mktemp("data"))
+
+
 def pytest_collection_modifyitems(items):
     for item in items:
         if _requires_qt(str(item.path)):
@@ -136,7 +154,7 @@ def tmp_path(request, tmp_path_factory) -> Path:
 
     pytest numbers each new folder by scanning the whole base directory, so
     the cost grows with the tests already run. Every test gets one through
-    ``_isolated_settings_store``, which made this 38 s of a 7-minute run.
+    ``_isolated_data_root``, which made this 38 s of a 7-minute run.
     A random suffix needs no scan.
     """
     prefix = re.sub(r"\W", "_", request.node.name)[:30]
@@ -162,42 +180,32 @@ def _session_qt_application():
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _session_settings_store(tmp_path_factory):
-    from config import config
-    from services.settings import settings_manager
+def _session_data_root():
+    """Name every config path under this process's data root, relative to it.
 
-    # Keep a disposable fallback through shutdown: Qt callbacks can outlive
-    # per-test patches and must never regain access to the user's settings.
-    settings_path = str(tmp_path_factory.mktemp("settings-session") / "settings.json")
-    config.SETTINGS_FILE = settings_path
-    settings_manager.settings_file = settings_path
-    config.RECORDED_AUDIO_FILE = str(tmp_path_factory.mktemp("recording-session") / "recorded_audio.wav")
-    # From source, recordings/ is CWD-relative: the checkout's own saved
-    # audio, which retention rotation deletes without a Recycle Bin.
-    config.RECORDINGS_FOLDER = str(tmp_path_factory.mktemp("recordings-session"))
-    # openwhisper.db is CWD-relative too: the checkout's real history. An
-    # empty database imports HISTORY_FILE and renames it, so move both.
-    database_folder = tmp_path_factory.mktemp("database-session")
-    config.DATABASE_FILE = str(database_folder / "openwhisper.db")
-    config.HISTORY_FILE = str(database_folder / "transcription_history.json")
-    # The Scratchpad autosaves into the data root, the checkout from source.
-    config.SCRATCHPAD_FILE = str(tmp_path_factory.mktemp("scratchpad-session") / "scratchpad.txt")
-    # Diagnostic handlers retain their paths after a controller shuts down.
-    # Keep that session fallback away from the checkout and the user's logs.
-    config.LOG_FILE = str(tmp_path_factory.mktemp("diagnostics-session") / "openwhisper.log")
+    The root is pytest_configure's throwaway folder, so a value inside it can
+    only have come from ``data_root()``; a path added to AppConfig is moved
+    per test without being listed here. Qt callbacks can outlive per-test
+    patches and land back in this folder, never in the developer's data.
+    """
+    from config import config, data_root
     from services.database import db
-    from services.history_manager import history_manager
 
-    # The lazy singletons bind their paths on first use; rebuild them here.
-    db.close()
-    history_manager._instance = None
-    yield
+    root = data_root()
+    assert config.SETTINGS_FILE.startswith(root + os.sep), (
+        "config was imported before pytest_configure chose the test data root"
+    )
+    yield {
+        name: os.path.relpath(value, root)
+        for name, value in vars(config).items()
+        if isinstance(value, str) and value.startswith(root + os.sep)
+    }
     db.close()
 
 
 @pytest.fixture(autouse=True)
 def _isolated_qt_widgets(
-    request, _isolated_settings_store, _isolated_credential_store
+    request, _isolated_data_root, _isolated_credential_store
 ):
     """Destroy each test's widgets before the next test can restyle them.
 
@@ -207,8 +215,8 @@ def _isolated_qt_widgets(
     made later font/theme tests repolish thousands of abandoned controls until
     CI's 20-minute guard killed the suite.
 
-    Preserve widgets owned by broader-scoped fixtures. Settings and credentials
-    remain isolated while destruction callbacks run.
+    Preserve widgets owned by broader-scoped fixtures. The data root and
+    credentials remain isolated while destruction callbacks run.
     """
     if request.node.get_closest_marker("qt") is None:
         yield
@@ -228,20 +236,20 @@ def _isolated_qt_widgets(
 
 
 @pytest.fixture(autouse=True)
-def _isolated_settings_store(_session_settings_store, tmp_path):
-    from config import config
+def _isolated_data_root(_session_data_root, tmp_path):
+    """Make tmp_path this test's data root.
+
+    Direct ``data_root()`` callers and child processes follow the variable;
+    config's paths, resolved once at import, move to the same names here.
+    """
+    from config import DATA_DIR_ENV, config
     from services.settings import settings_manager
 
     with pytest.MonkeyPatch.context() as patcher:
-        settings_path = str(tmp_path / "settings.json")
-        patcher.setattr(config, "SETTINGS_FILE", settings_path)
-        patcher.setattr(settings_manager, "settings_file", settings_path)
-        patcher.setattr(config, "RECORDED_AUDIO_FILE", str(tmp_path / "recorded_audio.wav"))
-        patcher.setattr(config, "RECORDINGS_FOLDER", str(tmp_path / "recordings"))
-        patcher.setattr(config, "DATABASE_FILE", str(tmp_path / "openwhisper.db"))
-        patcher.setattr(config, "HISTORY_FILE", str(tmp_path / "transcription_history.json"))
-        patcher.setattr(config, "SCRATCHPAD_FILE", str(tmp_path / "scratchpad.txt"))
-        patcher.setattr(config, "LOG_FILE", str(tmp_path / "openwhisper.log"))
+        patcher.setenv(DATA_DIR_ENV, str(tmp_path))
+        for name, relative in _session_data_root.items():
+            patcher.setattr(config, name, str(tmp_path / relative))
+        patcher.setattr(settings_manager, "settings_file", config.SETTINGS_FILE)
         # Bind the real module now: some tests swap services.database in
         # sys.modules, and teardown must still reach this manager.
         from services.database import db
