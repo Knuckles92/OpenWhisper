@@ -3,15 +3,18 @@
 import io
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from services.linux_deps import (
     MEETING_AUDIO_LIBRARIES,
+    OPENWHISPER_RELEASES_URL,
     check_linux_dependencies,
     detect_package_family,
     install_command,
     meeting_audio_remediation,
     missing_libraries,
+    reinstall_commands,
 )
 
 
@@ -92,6 +95,74 @@ class TestLinuxDeps(unittest.TestCase):
             # Mutually exclusive recovery guidance lives in the note, not as a
             # single pasteable fallback command.
             self.assertIn("||", unavailable.restart_note)
+
+    def test_source_install_missing_soundcard_keeps_pip_advice(self):
+        remediation = meeting_audio_remediation(
+            "soundcard_missing", "apt", packaged=False
+        )
+        self.assertIn("python -m pip install 'soundcard>=0.4.3'", remediation.commands)
+        self.assertIn("same environment", remediation.explanation)
+        self.assertIn("python -m pip show soundcard", remediation.verification)
+
+    def test_packaged_missing_soundcard_says_reinstall_not_pip(self):
+        from _version import __version__
+
+        expected = {
+            "apt": f"sudo apt install --reinstall ./OpenWhisper-{__version__}-linux-amd64.deb",
+            "pacman": f"sudo pacman -U ./OpenWhisper-{__version__}-linux-x86_64.pkg.tar.zst",
+            "dnf": None,
+            "unknown": None,
+        }
+        for family, command in expected.items():
+            with self.subTest(family=family):
+                remediation = meeting_audio_remediation(
+                    "soundcard_missing", family, packaged=True
+                )
+                text = " ".join(
+                    (remediation.title, remediation.explanation)
+                    + remediation.commands
+                    + remediation.verification
+                ).lower()
+                self.assertNotIn("pip", text)
+                self.assertNotIn("python", text)
+                self.assertNotIn("same environment", text)
+                self.assertIn("reinstall", text)
+                self.assertIn(OPENWHISPER_RELEASES_URL, remediation.explanation)
+                self.assertEqual(
+                    remediation.commands, (command,) if command else ()
+                )
+
+    def test_packaged_is_detected_from_frozen_build(self):
+        with patch.object(sys, "frozen", True, create=True):
+            frozen = meeting_audio_remediation("soundcard_missing", "apt")
+        source = meeting_audio_remediation("soundcard_missing", "apt")
+        self.assertIn("--reinstall", " ".join(frozen.commands))
+        self.assertIn("pip install", " ".join(source.commands))
+
+    def test_packaged_libpulse_check_needs_no_python(self):
+        packaged = meeting_audio_remediation(
+            "libpulse_missing", "apt", packaged=True
+        )
+        self.assertIn("libpulse0", " ".join(packaged.commands))
+        self.assertNotIn("python", " ".join(packaged.verification))
+        source = meeting_audio_remediation("libpulse_missing", "apt", packaged=False)
+        self.assertIn("python -c", " ".join(source.verification))
+
+    def test_reinstall_commands_match_release_asset_names(self):
+        self.assertEqual(
+            reinstall_commands("apt", "9.8.7"),
+            ("sudo apt install --reinstall ./OpenWhisper-9.8.7-linux-amd64.deb",),
+        )
+        self.assertEqual(
+            reinstall_commands("pacman", "9.8.7"),
+            ("sudo pacman -U ./OpenWhisper-9.8.7-linux-x86_64.pkg.tar.zst",),
+        )
+        self.assertEqual(reinstall_commands("dnf", "9.8.7"), ())
+        script = (
+            Path(__file__).resolve().parents[1] / "scripts" / "build_installer.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn('OpenWhisper-$VERSION-linux-amd64.deb"', script)
+        self.assertIn('OpenWhisper-$VERSION-linux-x86_64.pkg.tar.zst"', script)
 
     def test_install_command_matches_family(self):
         missing = [("libEGL.so.1", {"apt": "libegl1", "dnf": "mesa-libEGL", "pacman": "libgl"})]

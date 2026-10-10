@@ -13,7 +13,7 @@ from __future__ import annotations
 import ctypes
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, TextIO, Tuple
+from typing import Dict, List, Optional, Sequence, TextIO, Tuple
 
 REQUIRED_LIBRARIES: Tuple[Tuple[str, Dict[str, str]], ...] = (
     ("libEGL.so.1", {
@@ -73,6 +73,9 @@ MEETING_AUDIO_LIBRARIES: Tuple[Tuple[str, Dict[str, str]], ...] = (
 )
 
 LINUX_SYSTEM_AUDIO_GUIDE = "docs/linux-system-audio.md"
+
+#: Where the packaged (.deb / pacman) builds are published.
+OPENWHISPER_RELEASES_URL = "https://github.com/knuckles92/openwhisper/releases"
 
 
 @dataclass(frozen=True)
@@ -163,6 +166,35 @@ def _family_commands(family: str, packages: Sequence[str]) -> Tuple[str, ...]:
     return ()
 
 
+def _app_version() -> str:
+    try:
+        from _version import __version__
+    except Exception:
+        return ""
+    return str(__version__ or "")
+
+
+def reinstall_commands(family: str, version: str = "") -> Tuple[str, ...]:
+    """Reinstall command for a downloaded OpenWhisper package, by family.
+
+    Names match the release assets ``scripts/build_installer.sh`` builds.
+    Only Debian/Ubuntu (.deb) and Arch (pacman) packages exist, so other
+    families get no command.
+    """
+    version = version or _app_version()
+    if not version:
+        return ()
+    if family == "apt":
+        return (
+            f"sudo apt install --reinstall ./OpenWhisper-{version}-linux-amd64.deb",
+        )
+    if family == "pacman":
+        return (
+            f"sudo pacman -U ./OpenWhisper-{version}-linux-x86_64.pkg.tar.zst",
+        )
+    return ()
+
+
 def _service_commands(family: str) -> Tuple[str, ...]:
     # Advice only — never executed by the app.
     return (
@@ -175,15 +207,24 @@ def meeting_audio_remediation(
     reason: str,
     package_family: str = "unknown",
     server_kind: str = "unknown",
+    *,
+    packaged: Optional[bool] = None,
 ) -> MeetingAudioRemediation:
     """Return structured remediation for a Linux Meeting Mode capture failure.
 
     ``server_kind`` gates stack-changing advice. Native PulseAudio users with
     transient sink/monitor/open failures must never be told to install or
     enable a competing PipeWire stack.
+
+    ``packaged`` is True for the frozen .deb / pacman builds, which bundle
+    SoundCard and have no ``python`` or ``pip`` of their own; ``None``
+    detects it from ``sys.frozen``. Packaged installs are told to reinstall
+    instead of being given pip or ``python -c`` steps.
     """
     family = package_family if package_family in {"apt", "dnf", "pacman"} else "unknown"
     stack = (server_kind or "unknown").strip().lower()
+    if packaged is None:
+        packaged = bool(getattr(sys, "frozen", False))
 
     titles = {
         "soundcard_missing": "SoundCard is not installed",
@@ -198,6 +239,26 @@ def meeting_audio_remediation(
         "unknown_failure": "System audio could not be prepared",
     }
     title = titles.get(reason, titles["unknown_failure"])
+
+    if reason == "soundcard_missing" and packaged:
+        commands = reinstall_commands(family)
+        explanation = (
+            "This OpenWhisper install is missing its bundled audio component "
+            "(SoundCard), so it can't capture system audio. Reinstall "
+            f"OpenWhisper from {OPENWHISPER_RELEASES_URL}, then retry detection."
+        )
+        if commands:
+            explanation += (
+                f" Download the version {_app_version()} package there, then "
+                "run the command below in the folder you saved it to."
+            )
+        return MeetingAudioRemediation(
+            reason=reason,
+            package_family=family,
+            title="OpenWhisper's audio component is missing",
+            explanation=explanation,
+            commands=commands,
+        )
 
     if reason == "soundcard_missing":
         commands = (
@@ -241,7 +302,11 @@ def meeting_audio_remediation(
             title=title,
             explanation=explanation,
             commands=commands,
-            verification=("python -c \"import ctypes; ctypes.CDLL('libpulse.so.0')\"",),
+            verification=(
+                # A packaged build has no ``python`` to run this with.
+                ("ldconfig -p | grep libpulse.so.0",) if packaged
+                else ("python -c \"import ctypes; ctypes.CDLL('libpulse.so.0')\"",)
+            ),
         )
 
     if reason == "pipewire_pulse_missing":
