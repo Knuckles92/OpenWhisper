@@ -13,6 +13,7 @@ import type { CardItem, ExportFormat, MeetingRow, MeetingStateDoc, Participant, 
 import type { Segment } from '../types';
 import ConfirmDialog from './ConfirmDialog';
 import TranscriptPane from './TranscriptPane';
+import { InlineMarkdown } from './report/MarkdownView';
 import ReportTabs from './report/ReportTabs';
 import './history.css';
 
@@ -692,7 +693,7 @@ export default function HistoryPane({
                   <span className="shelf-count">{decisions.length}</span>
                 </h4>
                 <ul>
-                  {decisions.slice(0, 3).map((item) => <li key={item.id}>{item.text}</li>)}
+                  {decisions.slice(0, 3).map((item) => <li key={item.id}><InlineMarkdown text={item.text} /></li>)}
                 </ul>
                 {decisions.length > 3 && <p className="shelf-more">+{decisions.length - 3} more in the report</p>}
               </section>
@@ -708,7 +709,7 @@ export default function HistoryPane({
                     const due = String(item.data?.deadline || item.data?.due_date || '');
                     return (
                       <li key={item.id} className="shelf-action">
-                        <span>{item.text}</span>
+                        <span><InlineMarkdown text={item.text} /></span>
                         {(owner || due) && (
                           <span className="shelf-action-meta">{[owner, due].filter(Boolean).join(' · ')}</span>
                         )}

@@ -252,8 +252,10 @@ def test_available_component_ids_by_platform():
         )
         assert len(ComponentCoordinator().list_components()) == 2
 
+    # Windows asks the kernel for its architecture, not platform.machine(),
+    # so a pretend-Windows host patches host_machine itself.
     with patch.object(components.sys, "platform", "win32"), patch.object(
-        components.platform_module, "machine", return_value="AMD64"
+        components, "host_machine", return_value="AMD64"
     ):
         # NVIDIA publishes the Vulkan speech runtime for Linux only.
         assert components.available_component_ids() == (
@@ -320,7 +322,7 @@ def test_meeting_agent_catalog_is_published():
             assert int(archive["size_bytes"]) > 0
 
     with patch.object(components.sys, "platform", "win32"), patch.object(
-        components.platform_module, "machine", return_value="AMD64"
+        components, "host_machine", return_value="AMD64"
     ):
         assert ComponentId.MEETING_AGENT in components.available_component_ids()
 
@@ -737,7 +739,7 @@ def test_a_superseded_install_is_offered_the_update(component_root):
     )
 
     with patch.object(components.sys, "platform", "win32"), patch.object(
-        components.platform_module, "machine", return_value="AMD64"
+        components, "host_machine", return_value="AMD64"
     ):
         info = coordinator.describe("gpu-accel")
 

@@ -14,7 +14,7 @@ const ReportTabs = require('../src/components/report/ReportTabs.tsx').default;
 const ReportDownload = require('../src/components/report/ReportDownload.tsx').default;
 const {EvidenceProvider} = require('../src/evidence.tsx');
 const {CARD_KEYS} = require('../src/types.ts');
-const {liveItems} = require('../src/report.ts');
+const {ALL_REPORT_VIEWS, liveItems} = require('../src/report.ts');
 
 function item(card, text, extra = {}) {
   return {id:card, card, text, status:'proposed', data:{}, evidence:[],
@@ -122,4 +122,23 @@ test('Ribbon includes untimed and early insights once, even without timeline bea
       assert.equal(body.split(text).length - 1, 1, text);
     }
   }
+});
+
+test('every report view renders inline Markdown in captured items', () => {
+  const state = fixture();
+  state.cards.action_items[0].text = 'Invite the **400 beta users**';
+  state.cards.live_notes[0].text = 'Budget covers *two* pilots';
+  for (const activeView of ALL_REPORT_VIEWS) {
+    const sheet = dom(renderToStaticMarkup(React.createElement(ReportTabs, {
+      state, segments, activeView, transcriptComplete:true,
+    }))).querySelector('.report-sheet');
+    // The recap email is a plain-text draft, copied and mailed as written.
+    for (const draft of sheet.querySelectorAll('pre')) draft.remove();
+    assert.doesNotMatch(sheet.textContent, /\*/, activeView);
+    assert.ok([...sheet.querySelectorAll('strong')].some(node => node.textContent === '400 beta users'), activeView);
+  }
+  const ribbon = dom(renderToStaticMarkup(React.createElement(ReportTabs, {
+    state, segments, activeView:'ribbon',
+  })));
+  assert.equal(ribbon.querySelector('.rb-note em').textContent, 'two');
 });
