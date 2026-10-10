@@ -172,18 +172,17 @@ QPushButton#successButton[inactive="true"]:pressed {
     color: rgba(@on-tint-rgb, 0.55);
 }
 
+/* Stop and Cancel while nothing is recording: a neutral outline, so only
+   the action that applies now wears a colour. A tinted fill read as live. */
 QPushButton#dangerButton[inactive="true"],
 QPushButton#dangerButton[inactive="true"]:hover,
-QPushButton#dangerButton[inactive="true"]:pressed {
-    background-color: rgba(@danger-rgb, 0.28);
-    color: rgba(@on-tint-rgb, 0.55);
-}
-
+QPushButton#dangerButton[inactive="true"]:pressed,
 QPushButton#warningButton[inactive="true"],
 QPushButton#warningButton[inactive="true"]:hover,
 QPushButton#warningButton[inactive="true"]:pressed {
-    background-color: rgba(@warning-rgb, 0.28);
-    color: rgba(@on-tint-rgb, 0.55);
+    background-color: @surface;
+    color: @text-muted;
+    border: 1px solid @border;
 }
 
 /* ComboBox (Model selector) */
