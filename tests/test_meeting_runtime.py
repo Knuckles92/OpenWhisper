@@ -61,10 +61,9 @@ class _Controller(QObject):
         self._engine_released = False
 
 
-@pytest.fixture(scope="module")
-def qapp():
-    app = QCoreApplication.instance() or QCoreApplication([])
-    return app
+@pytest.fixture
+def qapp(_session_qt_application):
+    return _session_qt_application
 
 
 @pytest.fixture
