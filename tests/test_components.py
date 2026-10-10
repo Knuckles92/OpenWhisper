@@ -201,7 +201,7 @@ def test_available_component_ids_by_platform():
     with patch("services.gpu_info.nvidia_gpu", return_value=None), patch.object(
         components.sys, "platform", "linux"
     ), patch.object(
-        components.platform_module, "machine", return_value="x86_64"
+        components, "host_machine", return_value="x86_64"
     ):
         assert components.available_component_ids() == (
             ComponentId.GPU_ACCEL,
@@ -211,14 +211,14 @@ def test_available_component_ids_by_platform():
         )
 
     with patch.object(components.sys, "platform", "linux"), patch.object(
-        components.platform_module, "machine", return_value="aarch64"
+        components, "host_machine", return_value="aarch64"
     ):
         assert components.available_component_ids() == (
             ComponentId.MEETING_AGENT,
         )
 
     with patch.object(components.sys, "platform", "darwin"), patch.object(
-        components.platform_module, "machine", return_value="arm64"
+        components, "host_machine", return_value="arm64"
     ), patch.object(components, "_macos_version", return_value=(15, 0)):
         # OpenCode is listed once its macOS archive is pinned.
         assert components.available_component_ids() == (
@@ -232,7 +232,7 @@ def test_available_component_ids_by_platform():
         assert len(ComponentCoordinator().list_components()) == 6
 
     with patch.object(components.sys, "platform", "darwin"), patch.object(
-        components.platform_module, "machine", return_value="arm64"
+        components, "host_machine", return_value="arm64"
     ), patch.object(components, "_macos_version", return_value=(14, 6)):
         # Moonshine publishes only a macOS 15 build.
         assert ComponentId.ASR_MOONSHINE not in components.available_component_ids()
@@ -243,7 +243,7 @@ def test_available_component_ids_by_platform():
         )
 
     with patch.object(components.sys, "platform", "darwin"), patch.object(
-        components.platform_module, "machine", return_value="x86_64"
+        components, "host_machine", return_value="x86_64"
     ):
         # Intel Macs run from source: the meeting agents and NVIDIA Speech CPU.
         assert components.available_component_ids() == (
@@ -253,7 +253,7 @@ def test_available_component_ids_by_platform():
         assert len(ComponentCoordinator().list_components()) == 2
 
     with patch.object(components.sys, "platform", "win32"), patch.object(
-        components.platform_module, "machine", return_value="AMD64"
+        components, "host_machine", return_value="AMD64"
     ):
         # NVIDIA publishes the Vulkan speech runtime for Linux only.
         assert components.available_component_ids() == (
@@ -320,7 +320,7 @@ def test_meeting_agent_catalog_is_published():
             assert int(archive["size_bytes"]) > 0
 
     with patch.object(components.sys, "platform", "win32"), patch.object(
-        components.platform_module, "machine", return_value="AMD64"
+        components, "host_machine", return_value="AMD64"
     ):
         assert ComponentId.MEETING_AGENT in components.available_component_ids()
 
@@ -737,7 +737,7 @@ def test_a_superseded_install_is_offered_the_update(component_root):
     )
 
     with patch.object(components.sys, "platform", "win32"), patch.object(
-        components.platform_module, "machine", return_value="AMD64"
+        components, "host_machine", return_value="AMD64"
     ):
         info = coordinator.describe("gpu-accel")
 
