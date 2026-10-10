@@ -31,6 +31,23 @@ from ui_qt.widgets.wrapped_label import WrappedLabel
 logger = logging.getLogger(__name__)
 
 
+def show_download_sizes(combo) -> None:
+    """Give each model its download size as a tooltip.
+
+    Only the tooltip: the item text is the model id that settings store and
+    ``set_values`` finds again.
+    """
+    from services.model_catalog import MODEL_DOWNLOAD_SIZE_MB, format_download_mb
+
+    for index in range(combo.count()):
+        size_mb = MODEL_DOWNLOAD_SIZE_MB.get(combo.itemData(index) or combo.itemText(index))
+        combo.setItemData(
+            index,
+            f"About {format_download_mb(size_mb).lstrip('~')} download" if size_mb else None,
+            Qt.ItemDataRole.ToolTipRole,
+        )
+
+
 class LocalEngineControls(QWidget):
     """The Model / Device / Quant columns of the engine card's field row.
 
@@ -66,6 +83,7 @@ class LocalEngineControls(QWidget):
         layout.setSpacing(10)
 
         self.model_combo = engine_combo(config.WHISPER_MODEL_CHOICES)
+        show_download_sizes(self.model_combo)
         # CUDA is unavailable on macOS (no Metal backend in faster-whisper).
         device_choices = (
             ["auto", "cpu"] if sys.platform == "darwin" else ["auto", "cuda", "cpu"]
@@ -119,6 +137,7 @@ class LocalEngineControls(QWidget):
             from services.whisper_sources import custom_models
             self.model_combo.addItems([*config.WHISPER_MODEL_CHOICES,
                                       *custom_models(settings_manager.load_all_settings())])
+        show_download_sizes(self.model_combo)
         self.model_combo.blockSignals(False)
         self.compute_combo.parentWidget().setVisible(backend not in BACKENDS)
         self.sync_language_field()
@@ -202,6 +221,7 @@ class LocalEngineControls(QWidget):
             combo.blockSignals(True)
             if combo is self.model_combo and combo.findText(value) < 0:
                 combo.addItem(value)
+                show_download_sizes(combo)
             # A paired client can select any precision supported by this
             # host, including mixed types beyond the short default menu.
             if combo is self.compute_combo and combo.findText(value) < 0:

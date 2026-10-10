@@ -615,6 +615,36 @@ def test_controls_preserve_whisper_and_other_speech_families(tmp_path, monkeypat
     widget.close()
 
 
+def test_model_menu_tells_each_download_size_without_renaming_models(tmp_path, monkeypatch):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QApplication
+    from services.settings import SettingsManager
+    from ui_qt.widgets import local_engine_controls as controls
+    _app = QApplication.instance() or QApplication([])
+    manager = SettingsManager(str(tmp_path/"settings.json"))
+    manager.update_settings({"whisper_model": "large-v3"})
+    monkeypatch.setattr(controls, "settings_manager", manager)
+    widget = controls.LocalEngineControls()
+    combo = widget.model_combo
+
+    def tip(text):
+        return combo.itemData(combo.findText(text), Qt.ItemDataRole.ToolTipRole)
+
+    # The stored id is still the item's text, so settings find it again.
+    assert combo.currentText() == "large-v3"
+    assert tip("large-v3") == "About 3.1 GB download"
+    assert tip("tiny") == "About 76 MB download"
+    assert tip("auto") is None
+    widget.set_backend("parakeet")
+    parakeet = combo.findData("parakeet-v3")
+    assert combo.itemData(parakeet, Qt.ItemDataRole.ToolTipRole).startswith("About ")
+    widget.set_backend("local_whisper")
+    widget.set_values("someone/custom", "auto", "auto")
+    assert combo.currentText() == "someone/custom" and tip("someone/custom") is None
+    assert tip("large-v3") == "About 3.1 GB download"
+    widget.close()
+
+
 def test_meeting_preview_copies_capture_and_flushes_last_audio():
     from meeting.asr.preview import MeetingSpeechPreview
     from meeting.interfaces import CaptureBlock
