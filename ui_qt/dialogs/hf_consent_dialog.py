@@ -78,7 +78,8 @@ class HuggingFaceConsentDialog(QDialog):
         return f'Download "{self.model_name}" model?'
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
+        # Kept: on Omarchy, fit_desktop_dialog moves it into a scroll area.
+        self._content_layout = layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
 
@@ -178,7 +179,7 @@ class HuggingFaceConsentDialog(QDialog):
 
     def _fit_body(self) -> None:
         """Show the whole notice when it fits on screen; scroll it when not."""
-        layout = self.layout()
+        layout = self._content_layout
         margins = layout.contentsMargins()
         width = max(self.width(), self.minimumWidth())
         inner = width - margins.left() - margins.right()
