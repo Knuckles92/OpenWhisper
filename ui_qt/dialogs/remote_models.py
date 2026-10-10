@@ -140,7 +140,7 @@ class RemoteModelsDialog(QDialog):
         details.addWidget(self.install_button)
         details.addStretch()
         self.select_button = PrimaryButton("Use on host")
-        self.select_button.setObjectName("remoteModelSelectButton")
+        self.select_button.setProperty("buttonId", "remoteModelSelectButton")
         self.select_button.clicked.connect(self._select)
         inspector_scroll = QScrollArea()
         inspector_scroll.setWidgetResizable(True)

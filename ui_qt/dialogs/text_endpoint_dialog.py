@@ -112,7 +112,7 @@ class TextEndpointDialog(QDialog):
         cancel.setObjectName("textEndpointCancelButton")
         cancel.clicked.connect(self.reject)
         save = PrimaryButton("Save endpoint")
-        save.setObjectName("textEndpointSaveButton")
+        save.setProperty("buttonId", "textEndpointSaveButton")
         save.clicked.connect(self._save)
         buttons.addWidget(cancel)
         buttons.addWidget(save)

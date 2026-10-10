@@ -1126,7 +1126,7 @@ class RemoteEngineSection(QObject):
             rename.setToolTip("Change the name this computer shows for it")
             rename.clicked.connect(lambda _checked=False, d=device: self._rename_device(d))
             remove = DangerButton("Remove")
-            remove.setObjectName("remoteRemoveDeviceButton")
+            remove.setProperty("buttonId", "remoteRemoveDeviceButton")  # not setObjectName: the theme styles it by "dangerButton"
             device_id = device.get("id")
             remove.clicked.connect(lambda _checked=False, d=device_id: self._remove_device(d))
             row_layout.addWidget(label, stretch=1)

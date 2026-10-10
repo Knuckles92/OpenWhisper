@@ -73,7 +73,7 @@ class MeetingAudioConsentDialog(QDialog):
         button_layout.addWidget(not_now_btn)
 
         enable_btn = PrimaryButton("Allow audio upload")
-        enable_btn.setObjectName("meetingAudioConsentEnableButton")
+        enable_btn.setProperty("buttonId", "meetingAudioConsentEnableButton")
         enable_btn.clicked.connect(lambda: self._finish(self.RESULT_ENABLE))
         button_layout.addWidget(enable_btn)
         enable_btn.setDefault(True)

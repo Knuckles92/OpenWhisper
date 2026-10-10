@@ -189,7 +189,7 @@ class MeetingConsentDialog(QDialog):
         button_layout.addWidget(not_now_btn)
 
         enable_btn = PrimaryButton("Turn on AI insights")
-        enable_btn.setObjectName("meetingConsentEnableButton")
+        enable_btn.setProperty("buttonId", "meetingConsentEnableButton")
         enable_btn.clicked.connect(lambda: self._finish(self.RESULT_ENABLE))
         button_layout.addWidget(enable_btn)
         enable_btn.setDefault(True)

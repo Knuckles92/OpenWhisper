@@ -283,3 +283,13 @@ def test_remote_engine_tiles_keep_the_theme_card_style(remote_page):
                  section.keep_records_tile, section.manage_mcp_tile, section.devices_tile):
         assert tile.objectName() == "settingsTile"
     assert section.manage_mcp_tile.property("tileId") == "remoteManageMcpTile"
+
+
+def test_paired_computer_remove_buttons_keep_the_danger_style(remote_page):
+    """Renaming Remove once turned it into a grey block; its identifier goes in a property."""
+    section, _ = remote_page
+    section._rebuild_devices([{"id": "dev-a", "name": "Laptop"}, {"id": "dev-b", "name": "Desk"}], set())
+    removes = [button for button in section.devices_tile.findChildren(QAbstractButton)
+               if button.property("buttonId") == "remoteRemoveDeviceButton"]
+    assert len(removes) == 2
+    assert all(button.objectName() == "dangerButton" for button in removes)

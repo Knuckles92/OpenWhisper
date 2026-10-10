@@ -17,7 +17,10 @@ class _QtTestCase:
 
 class TestAudioConsentDialog(_QtTestCase):
     def _button(self, dialog, name):
-        return dialog.findChild(QPushButton, name)
+        # Primary and danger buttons keep their class object name for the
+        # theme and carry their identifier in a "buttonId" property.
+        return next((button for button in dialog.findChildren(QPushButton)
+                     if name in (button.objectName(), button.property("buttonId"))), None)
 
     def test_buttons_and_default_result(self):
         dialog = MeetingAudioConsentDialog()

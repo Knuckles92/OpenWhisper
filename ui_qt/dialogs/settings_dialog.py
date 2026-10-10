@@ -2477,7 +2477,7 @@ class SettingsDialog(QDialog):
         fit_compact_button(self.api_key_test_button, 90)
         self.api_key_test_button.clicked.connect(self._test_api_key)
         self.api_key_remove_button = DangerButton("Remove saved key")
-        self.api_key_remove_button.setObjectName("apiKeyRemoveButton")
+        self.api_key_remove_button.setProperty("buttonId", "apiKeyRemoveButton")
         fit_compact_button(self.api_key_remove_button, 160)
         self.api_key_remove_button.clicked.connect(self._remove_api_key)
         buttons.addWidget(self.api_key_save_button)
