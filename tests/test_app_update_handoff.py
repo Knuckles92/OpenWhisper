@@ -10,10 +10,11 @@ from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 _QAPP = QApplication.instance() or QApplication([])
 
+from ui_qt.main_window import MainWindow
 from ui_qt.ui_controller import UIController, arm_handoff_watchdog
 
 
@@ -21,9 +22,13 @@ class _FakeWindow:
     def __init__(self):
         self._force_quit = False
         self.quit_calls = 0
+        self.confirm_quit = None
 
     def quit_application(self):
         self.quit_calls += 1
+
+    def request_quit(self):
+        MainWindow.request_quit(self)
 
 
 class _FakeController:
@@ -109,6 +114,31 @@ class TestNativeHandoff(unittest.TestCase):
         UIController._on_tray_exit(controller)
 
         self.assertEqual(controller.main_window.quit_calls, 1)
+
+    def test_a_user_quit_mid_task_asks_first(self):
+        controller = _FakeController()
+        controller._update_work_is_busy = lambda: "transcription"
+        window = controller.main_window
+        window.confirm_quit = lambda: UIController._confirm_quit_while_busy(controller)
+
+        with patch("ui_qt.ui_controller.QMessageBox") as message_box:
+            message_box.StandardButton = QMessageBox.StandardButton
+            message_box.question.return_value = message_box.StandardButton.No
+            UIController._on_tray_exit(controller)
+            self.assertEqual(window.quit_calls, 0)
+            self.assertIn("transcription", message_box.question.call_args.args[2])
+
+            message_box.question.return_value = message_box.StandardButton.Yes
+            UIController._on_tray_exit(controller)
+            self.assertEqual(window.quit_calls, 1)
+
+    def test_the_update_handoff_quits_without_asking_again(self):
+        controller = _FakeController()
+        controller.main_window.confirm_quit = MagicMock(return_value=False)
+
+        UIController.exit_for_update(controller)
+
+        controller.main_window.confirm_quit.assert_not_called()
 
 
 

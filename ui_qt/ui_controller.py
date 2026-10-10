@@ -297,6 +297,7 @@ class UIController(QObject):
             self._connect_meeting_tab(meeting_tab)
 
         self.main_window.on_show_copied_animation = self.show_copied_animation
+        self.main_window.confirm_quit = self._confirm_quit_while_busy
 
         self.tray_manager.show_requested.connect(self._on_tray_show)
         self.tray_manager.hide_requested.connect(self._on_tray_hide)
@@ -460,7 +461,7 @@ class UIController(QObject):
         logger.info("Exit requested from tray")
         # Must go through the window: a bare QApplication.quit() is vetoed by
         # the minimize-to-tray closeEvent, which only hid the window again.
-        self.main_window.quit_application()
+        self.main_window.request_quit()
 
     def _on_tray_toggle_recording(self):
         if self.is_recording:
@@ -1902,6 +1903,20 @@ class UIController(QObject):
         if self.get_component_installing and self.get_component_installing():
             return "a component install"
         return None
+
+    def _confirm_quit_while_busy(self) -> bool:
+        busy = self._update_work_is_busy()
+        if not busy:
+            return True
+        answer = QMessageBox.question(
+            self.main_window,
+            "Quit OpenWhisper?",
+            f"OpenWhisper is busy with {busy}. Quitting now stops it before "
+            "it finishes.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def _confirm_update_while_busy(self) -> bool:
         busy = self._update_work_is_busy()

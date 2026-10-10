@@ -389,6 +389,8 @@ class MainWindow(QMainWindow):
         self._stats_reveal_timer.timeout.connect(self._reveal_shown_stats)
 
         self.on_show_copied_animation: Optional[Callable] = None
+        #: Asked before a quit the user requested; False keeps the app open.
+        self.confirm_quit: Optional[Callable[[], bool]] = None
         #: The History calendar window, made on first open and kept after.
         self._history_calendar = None
 
@@ -764,7 +766,7 @@ class MainWindow(QMainWindow):
         self.quit_button.setMinimumWidth(100)
         self.quit_button.setStyleSheet(self._QUIT_BUTTON_STYLE)
         HotkeyHintFilter(self.quit_button, self.QUIT_SHORTCUT)
-        self.quit_button.clicked.connect(self.quit_application)
+        self.quit_button.clicked.connect(self.request_quit)
         footer_layout.addWidget(self.quit_button)
 
         footer_layout.addStretch()
@@ -789,7 +791,7 @@ class MainWindow(QMainWindow):
             "Minimize to Tray", self.minimize_to_tray
         )
         quit_action = file_menu.addAction(
-            "Quit" if sys.platform == "darwin" else "Exit", self.quit_application
+            "Quit" if sys.platform == "darwin" else "Exit", self.request_quit
         )
         quit_action.setMenuRole(QAction.MenuRole.NoRole)
         quit_action.setShortcut(QKeySequence(self.QUIT_SHORTCUT))
@@ -1531,6 +1533,13 @@ class MainWindow(QMainWindow):
             self.showNormal()
         self.raise_()
         self.activateWindow()
+
+    def request_quit(self) -> None:
+        """Quit for the user, after they confirm stopping work in progress."""
+        if self.confirm_quit is not None and not self.confirm_quit():
+            logger.info("Quit canceled: work in progress")
+            return
+        self.quit_application()
 
     def quit_application(self):
         logger.info("Quitting application")
