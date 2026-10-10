@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 
 import httpx
 import openai
@@ -91,6 +92,106 @@ class TestCredentialStore:
         assert mask_key(None) == "••••"
         assert mask_key("short") == "••••"
         assert mask_key(SECRET) == "••••abcd"
+
+    def test_failed_read_is_not_retried_until_the_key_is_saved(self):
+        class _PromptingBackend(credentials.MemoryCredentialBackend):
+            reads = 0
+
+            def get_password(self, service, username):
+                self.reads += 1
+                raise RuntimeError("prompt dismissed")
+
+        backend = _PromptingBackend()
+        store = CredentialStore(backend_factory=lambda: (backend, "fake"))
+        assert store.get(NAME) is None
+        assert store.get(NAME) is None
+        assert backend.reads == 1
+        store.set(NAME, SECRET)
+        assert store.get(NAME) == SECRET
+
+
+class _FakeItem:
+    def __init__(self, secret: str, locked: bool) -> None:
+        self.secret = secret
+        self.locked = locked
+        self.unlock_calls = 0
+        self.deleted = False
+
+    def is_locked(self) -> bool:
+        return self.locked
+
+    def unlock(self) -> bool:
+        self.unlock_calls += 1
+        self.locked = False
+        return False
+
+    def get_secret(self) -> bytes:
+        assert not self.locked
+        return self.secret.encode()
+
+    def delete(self) -> None:
+        assert not self.locked
+        self.deleted = True
+
+
+class _FakeSecretStorage:
+    """Just the module-level calls the lookup-only backend makes."""
+
+    def __init__(self, items: list[_FakeItem]) -> None:
+        self.items = items
+        self.queries: list[dict] = []
+
+    def dbus_init(self):
+        class _Connection:
+            def close(self):
+                pass
+
+        return _Connection()
+
+    def search_items(self, connection, attributes):
+        self.queries.append(attributes)
+        return iter(self.items)
+
+    def get_default_collection(self, *args, **kwargs):
+        raise AssertionError("a lookup must not create the Default keyring")
+
+
+class TestSecretServiceLookups:
+    def _backend(self, monkeypatch, items):
+        fake = _FakeSecretStorage(items)
+        monkeypatch.setitem(sys.modules, "secretstorage", fake)
+        return credentials._secret_service_backend_class()(), fake
+
+    def test_missing_key_never_prompts(self, monkeypatch):
+        backend, fake = self._backend(monkeypatch, [])
+        assert backend.get_password("OpenWhisper", "OPENAI_API_KEY") is None
+        assert fake.queries == [
+            {"username": "OPENAI_API_KEY", "service": "OpenWhisper"}
+        ]
+
+    def test_unlocked_copy_is_read_before_a_locked_one(self, monkeypatch):
+        locked = _FakeItem("locked-value", locked=True)
+        unlocked = _FakeItem("unlocked-value", locked=False)
+        backend, _ = self._backend(monkeypatch, [locked, unlocked])
+        assert backend.get_password("OpenWhisper", NAME) == "unlocked-value"
+        assert locked.unlock_calls == 0
+
+    def test_saved_locked_key_asks_to_unlock(self, monkeypatch):
+        item = _FakeItem(SECRET, locked=True)
+        backend, _ = self._backend(monkeypatch, [item])
+        assert backend.get_password("OpenWhisper", NAME) == SECRET
+        assert item.unlock_calls == 1
+
+    def test_delete_without_a_saved_key_never_prompts(self, monkeypatch):
+        from keyring.errors import PasswordDeleteError
+
+        backend, _ = self._backend(monkeypatch, [])
+        with pytest.raises(PasswordDeleteError):
+            backend.delete_password("OpenWhisper", NAME)
+        item = _FakeItem(SECRET, locked=True)
+        backend, _ = self._backend(monkeypatch, [item])
+        backend.delete_password("OpenWhisper", NAME)
+        assert item.deleted
 
 
 class TestResolutionOrder:

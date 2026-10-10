@@ -12,11 +12,13 @@ path still works.
 """
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import sys
 import threading
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -103,9 +105,58 @@ def platform_backend() -> tuple[CredentialBackend, str]:
     elif sys.platform == "darwin":
         from keyring.backends.macOS import Keyring as Backend
     else:
-        from keyring.backends.SecretService import Keyring as Backend
+        Backend = _secret_service_backend_class()
     Backend.priority  # noqa: B018 - raises RuntimeError when unusable
     return Backend(), name
+
+
+@functools.cache
+def _secret_service_backend_class() -> type:
+    """keyring's Secret Service backend, with reads that never create a keyring.
+
+    keyring opens the default collection before every lookup, and when a
+    desktop has no "Default" keyring yet, opening it *creates* one: the user
+    gets "Choose password for new keyring" for a key they never saved, once
+    per read. Lookups and deletes here search every collection through the
+    service instead. Only a matching item that is locked asks to be unlocked,
+    because then a key really was saved. Saving still goes through keyring,
+    where creating the keyring is what the user asked for.
+    """
+    from keyring.backends.SecretService import Keyring
+    from keyring.errors import PasswordDeleteError
+
+    class LookupOnlySecretService(Keyring):
+        def _matching_items(self, connection, service: str, username: str):
+            import secretstorage
+
+            items = secretstorage.search_items(
+                connection, self._query(service, username)
+            )
+            # Unlocked copies first, so a locked duplicate never prompts.
+            return sorted(items, key=lambda item: item.is_locked())
+
+        def get_password(self, service, username):
+            import secretstorage
+
+            with closing(secretstorage.dbus_init()) as connection:
+                for item in self._matching_items(connection, service, username):
+                    if item.is_locked():
+                        self.unlock(item)
+                    return item.get_secret().decode("utf-8")
+            return None
+
+        def delete_password(self, service, username):
+            import secretstorage
+
+            with closing(secretstorage.dbus_init()) as connection:
+                for item in self._matching_items(connection, service, username):
+                    if item.is_locked():
+                        self.unlock(item)
+                    item.delete()
+                    return
+            raise PasswordDeleteError("No such password!")
+
+    return LookupOnlySecretService
 
 
 def memory_backend() -> tuple[CredentialBackend, str]:
@@ -174,7 +225,10 @@ class CredentialStore:
                     "Reading %s from the credential store failed: %s",
                     name, type(exc).__name__,
                 )
-                return None
+                # Remembered like a missing key: retrying on every read put
+                # a fresh unlock prompt up at each launch step and recording.
+                # Saving or removing the key in Settings clears it.
+                value = None
             value = value or None
             self._cache[name] = value
             return value
