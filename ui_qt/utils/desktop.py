@@ -1,6 +1,6 @@
 """Use actual Qt platform capabilities, not the presence of an XWayland display."""
 
-from PyQt6.QtCore import QEvent, QObject, QSize, Qt
+from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -22,6 +22,20 @@ def is_wayland() -> bool:
 
 def compositor_managed() -> bool:
     return is_wayland() or use_omarchy_ui()
+
+
+def on_screen_position(frame: QRect, available: QRect) -> QPoint:
+    """Where a window's frame goes so that all of it is on ``available``.
+
+    Left where it is when it already fits; otherwise centred on ``available``,
+    and never with its top-left corner, the title bar's, off it.
+    """
+    if available.contains(frame):
+        return frame.topLeft()
+    return QPoint(
+        max(available.x(), available.x() + (available.width() - frame.width()) // 2),
+        max(available.y(), available.y() + (available.height() - frame.height()) // 2),
+    )
 
 
 def without_window_buttons(flags):

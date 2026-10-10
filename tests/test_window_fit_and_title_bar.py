@@ -81,6 +81,57 @@ def test_the_real_dialog_opens_inside_the_screen():
         dialog.close()
 
 
+def test_a_window_already_on_screen_stays_put():
+    from ui_qt.utils.desktop import on_screen_position
+
+    frame = QRect(40, 30, 900, 500)
+    assert on_screen_position(frame, QRect(0, 0, 1024, 640)) == frame.topLeft()
+
+
+def test_a_window_off_the_right_edge_is_centred_on_the_screen():
+    """The Linux report: at 1024x640 Settings opened off the right edge."""
+    from PyQt6.QtCore import QPoint
+    from ui_qt.utils.desktop import on_screen_position
+
+    available = QRect(0, 0, 1024, 640)
+    frame = QRect(300, 120, 960, 576)
+    position = on_screen_position(frame, available)
+    assert position == QPoint(32, 32)
+    assert available.contains(QRect(position, frame.size()))
+
+
+def test_a_window_bigger_than_the_screen_keeps_its_title_bar_on_it():
+    from PyQt6.QtCore import QPoint
+    from ui_qt.utils.desktop import on_screen_position
+
+    available = QRect(1920, 24, 1024, 616)
+    assert on_screen_position(QRect(2500, 300, 1315, 850), available) == QPoint(1920, 24)
+
+
+def test_the_real_dialog_moves_wholly_onto_a_small_screen(monkeypatch):
+    monkeypatch.setattr("ui_qt.utils.desktop.compositor_managed", lambda: False)
+    dialog = SettingsDialog(get_loaded_model=lambda: None, background_cache_scan=False)
+    available = QRect(0, 0, 1024, 640)
+    try:
+        dialog.show()
+        QApplication.processEvents()
+        dialog.resize(960, 560)
+        dialog.move(500, 300)
+        QApplication.processEvents()
+
+        dialog._place_on_screen(available)
+        QApplication.processEvents()
+
+        frame = dialog.frameGeometry()
+        if frame == dialog.geometry():
+            frame = frame.adjusted(0, -SettingsDialog.TITLE_BAR_ALLOWANCE, 0, 0)
+        assert available.contains(frame)
+        done = dialog.findChild(QWidget, "modelManagerCloseButton")
+        assert done.toolTip() == "Close Settings (Esc)"
+    finally:
+        dialog.close()
+
+
 def test_title_bar_stylesheet_parses():
     from ui_qt.main_window import CustomTitleBar
 

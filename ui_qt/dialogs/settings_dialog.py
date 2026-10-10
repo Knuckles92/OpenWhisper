@@ -7,7 +7,7 @@ import threading
 from contextlib import contextmanager
 from typing import Callable, Dict, Optional
 
-from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QRect, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QDialog,
@@ -372,6 +372,9 @@ class SettingsDialog(QDialog):
     MINIMUM_SIZE = QSize(940, 520)
     BASIC_DEFAULT_SIZE = QSize(1040, 850)
     BASIC_MINIMUM_SIZE = QSize(720, 520)
+    #: Room left above the window for a title bar the window manager has not
+    #: drawn yet: the frame is unknown until the window is mapped.
+    TITLE_BAR_ALLOWANCE = 32
 
     _cleanup_rule_polished = pyqtSignal(str, str, str)
     _rule_dictation_finished = pyqtSignal(str, str)
@@ -909,6 +912,7 @@ class SettingsDialog(QDialog):
         footer.addWidget(self.message_label, stretch=1)
         close_btn = Button("Done")
         close_btn.setObjectName("modelManagerCloseButton")
+        close_btn.setToolTip("Close Settings (Esc)")
         fit_compact_button(close_btn, 110)
         close_btn.clicked.connect(self.close)
         footer.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignBottom)
@@ -1378,11 +1382,39 @@ class SettingsDialog(QDialog):
         if fitted != self.size():
             self.resize(fitted)
 
+    def _place_on_screen(self, available: Optional[QRect] = None) -> None:
+        """Move the window wholly onto the screen its parent is on.
+
+        QDialog centres it over the main window, and _fit_to_screen only
+        shrinks it: on a 1024x640 screen it opened off the right edge and
+        over the main window's footer. Left where it is when it fits, else
+        centred on the screen. Wayland and tiling desktops place windows
+        themselves.
+        """
+        from ui_qt.utils.desktop import compositor_managed, on_screen_position
+
+        if compositor_managed():
+            return
+        if available is None:
+            parent = self.parentWidget()
+            screen = (parent.screen() if parent is not None else None) or self.screen()
+            if screen is None:
+                return
+            available = screen.availableGeometry()
+        frame = self.frameGeometry()
+        if frame == self.geometry():
+            frame = frame.adjusted(0, -self.TITLE_BAR_ALLOWANCE, 0, 0)
+        position = on_screen_position(frame, available)
+        if position != frame.topLeft():
+            self.move(position)
+
     def showEvent(self, event):
         if not event.spontaneous():
             # Before QDialog's own showEvent, which centres by the size.
             self._fit_to_screen()
         super().showEvent(event)
+        if not event.spontaneous():
+            self._place_on_screen()
         if self._native_wayland and "_hotkey_instruction" in self.__dict__:
             from PyQt6.QtWidgets import QApplication
 
