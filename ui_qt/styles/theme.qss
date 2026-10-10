@@ -202,14 +202,13 @@ QComboBox::drop-down {
     width: 24px;
 }
 
+/* The chevron's stroke is @text-secondary; the Settings family swaps in the
+   slate one below. */
 QComboBox::down-arrow {
-    image: none; /* TODO: Add SVG icon if possible, or use character */
-    border-left: 2px solid @text-secondary;
-    border-bottom: 2px solid @text-secondary;
-    width: 8px;
-    height: 8px;
+    image: url(ui_qt/assets/tabler/chevron-down-gray@icon-suffix.svg);
+    width: 16px;
+    height: 16px;
     margin-right: 10px;
-    /* Note: CSS transform is not supported in QSS */
 }
 
 QComboBox QAbstractItemView {
@@ -609,11 +608,10 @@ QComboBox#textModelCombo:focus {
     border-color: @accent;
 }
 
-/* Every combo in Settings. The global fallback draws its arrow from two
-   borders, which reads as a stray corner mark beside a real chevron. */
+/* Every combo in Settings takes the slate chevron at the standard size,
+   engine fields included (their own rule is smaller). */
 QDialog#settingsDialog QComboBox::down-arrow {
     image: url(ui_qt/assets/tabler/chevron-down-slate@icon-suffix.svg);
-    border: none;
     width: 16px;
     height: 16px;
     margin-right: 10px;
@@ -1353,14 +1351,6 @@ QWidget#backupSettingsPage QSpinBox {
 
 QWidget#backupSettingsPage QComboBox {
     padding-right: 30px;
-}
-
-QWidget#backupSettingsPage QComboBox::down-arrow {
-    image: url(ui_qt/assets/tabler/chevron-down-slate@icon-suffix.svg);
-    border: none;
-    width: 16px;
-    height: 16px;
-    margin-right: 10px;
 }
 
 QWidget#backupSettingsPage QLineEdit:focus,
@@ -2402,13 +2392,10 @@ QComboBox#hostModelCombo::drop-down {
     width: 20px;
 }
 
-/* The global fallback draws its arrow from two borders, which reads as a stray
-   corner mark at this field size. */
+/* A smaller chevron for the compact field. */
 QComboBox#engineField::down-arrow,
 QComboBox#engineFieldPrimary::down-arrow,
 QComboBox#hostModelCombo::down-arrow {
-    image: url(ui_qt/assets/tabler/chevron-down-gray@icon-suffix.svg);
-    border: none;
     width: 14px;
     height: 14px;
     margin-right: 5px;
@@ -3399,10 +3386,6 @@ QDialog#historyExportDialog QComboBox {
 QDialog#meetingExportDialog QComboBox::down-arrow,
 QDialog#historyExportDialog QComboBox::down-arrow {
     image: url(ui_qt/assets/tabler/chevron-down-slate@icon-suffix.svg);
-    border: none;
-    width: 16px;
-    height: 16px;
-    margin-right: 10px;
 }
 
 QListWidget#meetingExportList,
