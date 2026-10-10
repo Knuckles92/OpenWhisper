@@ -154,15 +154,30 @@ export default function HeaderBar({
     setTitleDraft(state.title);
   }, [state.title]);
 
-  const meetingLive = state.status === 'active';
-  const meetingEnding = state.status === 'ending';
-  const sessionRunning = meetingLive || state.status === 'paused' || meetingEnding;
+  // Confirming End shows "Ending" at once. The socket's own "ending" can lag
+  // while the host winds capture down, and a silent wait reads as a hang.
+  // It holds until the socket reports the end or the request fails.
+  const [endRequested, setEndRequested] = useState(false);
+  const sessionOpen =
+    state.status === 'active' || state.status === 'paused' || state.status === 'ending';
+  useEffect(() => {
+    if (!sessionOpen) setEndRequested(false);
+  }, [sessionOpen]);
+  useEffect(() => {
+    setEndRequested(false);
+  }, [state.meeting_id]);
+  const displayStatus = endRequested && sessionOpen ? 'ending' : state.status;
+
+  const meetingLive = displayStatus === 'active';
+  const meetingEnding = displayStatus === 'ending';
+  const meetingPaused = displayStatus === 'paused';
+  const sessionRunning = meetingLive || meetingPaused || meetingEnding;
   const statusClass = meetingLive
     ? 'live'
-    : state.status === 'paused' || meetingEnding
+    : meetingPaused || meetingEnding
       ? 'paused'
       : 'ended';
-  const elapsed = useElapsed(meeting, state.status);
+  const elapsed = useElapsed(meeting, displayStatus);
 
   const fullGuestUrl = guestUrl
     ? guestUrl.startsWith('http')
@@ -193,12 +208,15 @@ export default function HeaderBar({
     if (trimmed !== state.title) void onSendOp(ops.setTitle(trimmed));
   };
 
-  const hostAction = async (fn: () => Promise<unknown>) => {
+  /** Runs a host request, surfacing a failure; resolves false when it failed. */
+  const hostAction = async (fn: () => Promise<unknown>): Promise<boolean> => {
     setBusy(true);
     try {
       await fn();
+      return true;
     } catch (err) {
       onClientError(err instanceof Error ? err.message : 'The request could not be completed.');
+      return false;
     } finally {
       setBusy(false);
     }
@@ -279,7 +297,7 @@ export default function HeaderBar({
           ) : (
             <div className={`cb-status ${statusClass}`} role="status" aria-live="polite">
               <span className="cb-dot" aria-hidden="true" />
-              <span className="cb-status-label">{statusLabel(state.status)}</span>
+              <span className="cb-status-label">{statusLabel(displayStatus)}</span>
               {elapsed !== null && (
                 <span className="cb-timer" aria-label={`Elapsed ${clockTime(elapsed)}`}>
                   {clockTime(elapsed)}
@@ -379,7 +397,7 @@ export default function HeaderBar({
                   </svg>
                 </button>
               )}
-              {state.status === 'paused' && (
+              {meetingPaused && (
                 <button
                   type="button"
                   className="cb-button"
@@ -641,7 +659,10 @@ export default function HeaderBar({
         onCancel={() => setPendingConfirm(null)}
         onConfirm={() => {
           setPendingConfirm(null);
-          hostAction(() => api.endMeeting(token));
+          setEndRequested(true);
+          void hostAction(() => api.endMeeting(token)).then((ok) => {
+            if (!ok) setEndRequested(false);
+          });
         }}
       />
       <ConfirmDialog
