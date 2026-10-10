@@ -4,11 +4,24 @@ Shown when a requested local model is missing from the cache and the access
 policy requires user consent (``ask``) or an explicit override (``never``).
 Also explains the read-only state when an external ``HF_HUB_OFFLINE=1``
 environment override disables downloads entirely.
+
+A download can be gigabytes, so nothing here starts one by default: Cancel
+is the default and focused button, and the size is in the title, which stays
+in view with the buttons however short the screen is; the long notice scrolls.
 """
 import logging
 from typing import Final
 
-from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QVBoxLayout
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 from services.hf_access import (
     ConsentAction,
@@ -26,6 +39,13 @@ class HuggingFaceConsentDialog(QDialog):
     RESULT_DOWNLOAD_ONCE: Final[str] = ConsentAction.DOWNLOAD_ONCE
     RESULT_ALWAYS_ALLOW: Final[str] = ConsentAction.ALWAYS_ALLOW
     RESULT_OPEN_SETTINGS: Final[str] = ConsentAction.OPEN_SETTINGS
+
+    #: The dialog's width; the notice wraps to it.
+    WIDTH = 520
+    #: Kept free of the screen's height for the window frame and panels.
+    SCREEN_MARGIN = 64
+    #: The notice never shrinks below this, however short the screen.
+    MIN_BODY_HEIGHT = 96
 
     def __init__(self, model_name: str, policy: str, env_blocked: bool = False,
                  parent=None):
@@ -51,19 +71,34 @@ class HuggingFaceConsentDialog(QDialog):
 
         self._setup_ui()
 
+    def _title_text(self) -> str:
+        size = format_download_size(self.model_name)
+        if size:
+            return f'Download "{self.model_name}" (about {size.lstrip("~")})?'
+        return f'Download "{self.model_name}" model?'
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
 
-        title = QLabel(f'Download "{self.model_name}" model?')
-        title.setObjectName("headerLabel")
-        layout.addWidget(title)
+        self.title_label = QLabel(self._title_text())
+        self.title_label.setObjectName("headerLabel")
+        self.title_label.setWordWrap(True)
+        layout.addWidget(self.title_label)
+
+        # Publisher, licence, version and the security notice run long: they
+        # scroll, so the title and buttons stay in view on a 640 px screen.
+        self._body_host = QWidget()
+        self._body_host.setObjectName("consentBody")
+        body_layout = QVBoxLayout(self._body_host)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(12)
 
         body = QLabel(self._body_text())
         body.setObjectName("consentBodyLabel")
         body.setWordWrap(True)
-        layout.addWidget(body)
+        body_layout.addWidget(body)
 
         storage_note = QLabel(
             "Model files are stored locally on this computer. Once downloaded, "
@@ -71,7 +106,17 @@ class HuggingFaceConsentDialog(QDialog):
         )
         storage_note.setObjectName("infoLabel")
         storage_note.setWordWrap(True)
-        layout.addWidget(storage_note)
+        body_layout.addWidget(storage_note)
+
+        self.body_scroll = QScrollArea()
+        self.body_scroll.setObjectName("consentBodyScroll")
+        self.body_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.body_scroll.setWidgetResizable(True)
+        self.body_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.body_scroll.setWidget(self._body_host)
+        layout.addWidget(self.body_scroll, stretch=1)
 
         layout.addSpacing(8)
         button_layout = QHBoxLayout()
@@ -83,6 +128,8 @@ class HuggingFaceConsentDialog(QDialog):
             close_btn.setObjectName("consentCloseButton")
             close_btn.clicked.connect(self.reject)
             button_layout.addWidget(close_btn)
+            close_btn.setDefault(True)
+            self._safe_button = close_btn
         else:
             cancel_btn = Button("Cancel")
             cancel_btn.setObjectName("consentCancelButton")
@@ -99,6 +146,7 @@ class HuggingFaceConsentDialog(QDialog):
             else:
                 always_btn = Button("Always allow")
                 always_btn.setObjectName("consentAlwaysAllowButton")
+                always_btn.setAutoDefault(False)
                 always_btn.clicked.connect(
                     lambda: self._finish(self.RESULT_ALWAYS_ALLOW)
                 )
@@ -106,13 +154,58 @@ class HuggingFaceConsentDialog(QDialog):
 
             download_btn = PrimaryButton("Download once")
             download_btn.setObjectName("consentDownloadOnceButton")
+            download_btn.setAutoDefault(False)
             download_btn.clicked.connect(
                 lambda: self._finish(self.RESULT_DOWNLOAD_ONCE)
             )
             button_layout.addWidget(download_btn)
-            download_btn.setDefault(True)
+            # Enter or Space on a dialog that just popped up must not start
+            # a multi-gigabyte download.
+            cancel_btn.setDefault(True)
+            self._safe_button = cancel_btn
 
         layout.addLayout(button_layout)
+        self._safe_button.setFocus()
+        self.resize(self.WIDTH, self.sizeHint().height())
+
+    def _available_height(self) -> int:
+        """The height of the screen the dialog opens on, less its panels."""
+        parent = self.parentWidget()
+        screen = (parent.screen() if parent is not None else None) or self.screen()
+        if screen is None:
+            return 10_000
+        return screen.availableGeometry().height()
+
+    def _fit_body(self) -> None:
+        """Show the whole notice when it fits on screen; scroll it when not."""
+        layout = self.layout()
+        margins = layout.contentsMargins()
+        width = max(self.width(), self.minimumWidth())
+        inner = width - margins.left() - margins.right()
+        content = self._body_host.heightForWidth(inner)
+        if content < 0:
+            content = self._body_host.sizeHint().height()
+        # Everything but the notice: title, spacing, buttons and margins.
+        self.body_scroll.setFixedHeight(0)
+        layout.activate()
+        outside = layout.totalHeightForWidth(width) if layout.hasHeightForWidth() else (
+            layout.totalSizeHint().height()
+        )
+        room = self._available_height() - self.SCREEN_MARGIN - outside
+        height = max(self.MIN_BODY_HEIGHT, min(content, room))
+        self.body_scroll.setMinimumHeight(height)
+        self.body_scroll.setMaximumHeight(max(height, content))
+        layout.activate()
+        self.resize(width, outside + height)
+
+    def showEvent(self, event):
+        if not event.spontaneous():
+            # Before QDialog's own showEvent, which places it by its size.
+            self._fit_body()
+        super().showEvent(event)
+        if not event.spontaneous():
+            self.body_scroll.verticalScrollBar().setValue(0)
+            self._safe_button.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _body_text(self) -> str:
         from services.component_catalog import get_component_details
@@ -149,10 +242,7 @@ class HuggingFaceConsentDialog(QDialog):
             lines.append(CUSTOM_MODEL_NOTICE)
         if details and "SHA-256" in details.verification:
             lines.append("Integrity checks do not guarantee security or accuracy.")
-
-        size = format_download_size(self.model_name)
-        if size:
-            lines.append(f"Approximate download size: {size}.")
+        # The download size is in the title, where it stays in view.
 
         settings = settings_manager.load_all_settings()
         runtime = missing_runtime(self.model_name, settings)

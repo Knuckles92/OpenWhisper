@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QLabel, QPushButton
 
 from services.settings import HuggingFaceAccessPolicy, SettingsManager
@@ -26,14 +28,21 @@ class TestConsentDialogCopy(_QtTestCase):
         assert "base" in body
         assert "Hugging Face" in body
         assert "Systran/faster-whisper-base" in body
-        # Bundled estimate shown without contacting Hugging Face
-        assert "~145 MB" in body
+        # Bundled estimate shown without contacting Hugging Face, once: in
+        # the title, which never scrolls out of view.
+        assert dialog.title_label.text() == 'Download "base" (about 145 MB)?'
+        assert "145 MB" not in body
+
+    def test_large_model_title_carries_its_size(self):
+        dialog = HuggingFaceConsentDialog("large-v3", HuggingFaceAccessPolicy.ASK)
+        assert dialog.title_label.text() == 'Download "large-v3" (about 3.1 GB)?'
 
     def test_unknown_model_omits_size_estimate(self):
         dialog = HuggingFaceConsentDialog(
             "someone/custom-model", HuggingFaceAccessPolicy.ASK
         )
         assert "Approximate download size" not in dialog._body_text()
+        assert dialog.title_label.text() == 'Download "someone/custom-model" model?'
 
     def test_never_dialog_explains_policy(self):
         dialog = HuggingFaceConsentDialog("base", HuggingFaceAccessPolicy.NEVER)
@@ -93,6 +102,68 @@ class TestConsentDialogButtons(_QtTestCase):
         dialog = HuggingFaceConsentDialog("base", HuggingFaceAccessPolicy.ASK)
         self._button(dialog, "consentCancelButton").click()
         assert dialog.result_action == HuggingFaceConsentDialog.RESULT_CANCEL
+
+    def test_cancel_is_the_default_and_focused_button(self):
+        for policy in (HuggingFaceAccessPolicy.ASK, HuggingFaceAccessPolicy.NEVER):
+            dialog = HuggingFaceConsentDialog("large-v3", policy)
+            defaults = [b.objectName() for b in dialog.findChildren(QPushButton) if b.isDefault()]
+            assert defaults == ["consentCancelButton"]
+            assert dialog.focusWidget() is self._button(dialog, "consentCancelButton")
+            assert not self._button(dialog, "consentDownloadOnceButton").autoDefault()
+        always = self._button(
+            HuggingFaceConsentDialog("large-v3", HuggingFaceAccessPolicy.ASK),
+            "consentAlwaysAllowButton",
+        )
+        assert not always.autoDefault()
+
+    def test_enter_does_not_start_the_download(self):
+        dialog = HuggingFaceConsentDialog("large-v3", HuggingFaceAccessPolicy.ASK)
+        dialog.show()
+        self.app.processEvents()
+        QTest.keyClick(dialog, Qt.Key.Key_Return)
+        assert dialog.result_action == HuggingFaceConsentDialog.RESULT_CANCEL
+        assert dialog.result() == dialog.DialogCode.Rejected
+
+        # Not even with the download button focused: it is not auto-default.
+        dialog = HuggingFaceConsentDialog("large-v3", HuggingFaceAccessPolicy.ASK)
+        dialog.show()
+        self.app.processEvents()
+        self._button(dialog, "consentDownloadOnceButton").setFocus()
+        QTest.keyClick(dialog, Qt.Key.Key_Enter)
+        assert dialog.result_action == HuggingFaceConsentDialog.RESULT_CANCEL
+        dialog.close()
+
+
+class TestConsentDialogShortScreen(_QtTestCase):
+    """At 1024x640 the title, size and buttons stay in view; the notice scrolls."""
+
+    def _shown(self, available_height):
+        dialog = HuggingFaceConsentDialog("large-v3", HuggingFaceAccessPolicy.ASK)
+        dialog._available_height = lambda: available_height
+        dialog.show()
+        self.app.processEvents()
+        return dialog
+
+    def test_a_short_screen_scrolls_the_notice_and_keeps_the_buttons(self):
+        dialog = self._shown(400)
+        try:
+            assert dialog.height() <= 400 - dialog.SCREEN_MARGIN
+            bar = dialog.body_scroll.verticalScrollBar()
+            assert bar.maximum() > 0 and bar.value() == 0
+            for name in ("consentCancelButton", "consentDownloadOnceButton"):
+                button = dialog.findChild(QPushButton, name)
+                bottom = button.mapTo(dialog, button.rect().bottomLeft()).y()
+                assert bottom <= dialog.height()
+            assert dialog.title_label.isVisible()
+        finally:
+            dialog.close()
+
+    def test_a_tall_screen_shows_the_whole_notice(self):
+        dialog = self._shown(2000)
+        try:
+            assert dialog.body_scroll.verticalScrollBar().maximum() == 0
+        finally:
+            dialog.close()
 
 
 class TestSettingsDialogNavigation(_QtTestCase):
@@ -171,7 +242,9 @@ def test_gpu_runtime_offer_names_the_card_sizes_and_choices():
                 f"{format_size_bytes(entry.get('install_bytes', 0))} on disk") in body
     buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
     assert set(buttons) == {'Later', 'Use the CPU', 'Use this GPU'}
-    assert buttons['Use this GPU'].isDefault()
+    # Enter on a prompt that just appeared must not start a download.
+    assert [text for text, button in buttons.items() if button.isDefault()] == ['Later']
+    assert not buttons['Use this GPU'].autoDefault() and not buttons['Use the CPU'].autoDefault()
     buttons['Use this GPU'].click()
     assert dialog.result() == dialog.DialogCode.Accepted and dialog.choice == 'asr-nvidia-cuda'
 
@@ -199,6 +272,8 @@ def test_runtime_prompt_has_explicit_install_and_later_actions():
     dialog = RequiredRuntimeDialog('parakeet-v3', 'asr-nvidia-cpu')
     assert 'needs both its model files and NVIDIA Speech CPU to work' in dialog.body.text()
     buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
+    assert [text for text, button in buttons.items() if button.isDefault()] == ['Later']
+    assert not buttons['Install required runtime'].autoDefault()
     buttons['Install required runtime'].click()
     assert dialog.result() == dialog.DialogCode.Accepted
     dialog = RequiredRuntimeDialog('parakeet-v3', 'asr-nvidia-cpu')

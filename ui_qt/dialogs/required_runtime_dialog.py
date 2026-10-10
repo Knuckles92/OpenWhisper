@@ -56,8 +56,11 @@ class RequiredRuntimeDialog(QDialog):
         later.clicked.connect(self.reject)
         buttons.addWidget(later)
         install = PrimaryButton("Install required runtime")
-        install.setDefault(True)
+        install.setAutoDefault(False)
         install.clicked.connect(self.accept)
+        # Enter on a prompt that just appeared must not start a download.
+        later.setDefault(True)
+        later.setFocus()
         buttons.addWidget(install)
         layout.addLayout(buttons)
 
@@ -66,7 +69,8 @@ class GpuRuntimeDialog(QDialog):
     """First use of Parakeet or Nemotron on Auto with an NVIDIA GPU.
 
     ``choice`` is the runtime to install: the GPU one ("Use this GPU", the
-    default), the CPU one, or None for Later.
+    recommended choice), the CPU one, or None for Later. Later is the default
+    button: Enter on a prompt that just appeared must not start a download.
     """
 
     def __init__(self, model_name: str, gpu_component: str, cpu_component: str, parent=None):
@@ -111,11 +115,14 @@ class GpuRuntimeDialog(QDialog):
         later.clicked.connect(self.reject)
         buttons.addWidget(later)
         cpu = Button("Use the CPU")
+        cpu.setAutoDefault(False)
         cpu.clicked.connect(lambda: self._choose(cpu_component))
         buttons.addWidget(cpu)
         use = PrimaryButton("Use this GPU")
-        use.setDefault(True)
+        use.setAutoDefault(False)
         use.clicked.connect(lambda: self._choose(gpu_component))
+        later.setDefault(True)
+        later.setFocus()
         buttons.addWidget(use)
         layout.addLayout(buttons)
 
