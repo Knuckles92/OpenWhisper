@@ -8,6 +8,7 @@ import {
   splitSummary,
 } from '../../report';
 import type { CardItem, MeetingInfo, MeetingStateDoc, Segment } from '../../types';
+import { InlineMarkdown } from './MarkdownView';
 import ReportTimestamp from './ReportTimestamp';
 
 interface BriefReportProps {
@@ -74,7 +75,7 @@ export default function BriefReport({
             <ol className="br-list">
               {decisions.map((item) => (
                 <li key={item.id}>
-                  <p className="br-statement">{item.text}</p>
+                  <p className="br-statement"><InlineMarkdown text={item.text} /></p>
                   <p className="br-sub">
                     Settled at{' '}
                     <ReportTimestamp
@@ -108,7 +109,7 @@ export default function BriefReport({
                         : ''}
                     </span>
                     <span className="br-what">
-                      {item.text}{' '}
+                      <InlineMarkdown text={item.text} />{' '}
                       <ReportTimestamp
                         evidence={item.evidence}
                         segs={segs}
@@ -131,7 +132,7 @@ export default function BriefReport({
             <ul className="br-open">
               {risks.map((item) => (
                 <li key={item.id}>
-                  <p className="br-q">{item.text}</p>
+                  <p className="br-q"><InlineMarkdown text={item.text} /></p>
                   <p className="br-a">
                     {severity(item) || 'unrated'} ·{' '}
                     <ReportTimestamp
@@ -213,7 +214,7 @@ export default function BriefReport({
             <hr className="br-rule" />
             <h2 className="br-h">Your own note</h2>
             <p className="br-q" style={{ borderLeft: '2px solid var(--line)', paddingLeft: 20 }}>
-              {userNotes[0].text}
+              <InlineMarkdown text={userNotes[0].text} />
             </p>
           </>
         )}

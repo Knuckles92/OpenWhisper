@@ -12,6 +12,7 @@ import {
   speakerName,
 } from '../../report';
 import type { CardItem, MeetingInfo, MeetingStateDoc, Question, Segment } from '../../types';
+import { InlineMarkdown } from './MarkdownView';
 import ReportTimestamp from './ReportTimestamp';
 
 interface SignalReportProps {
@@ -104,7 +105,7 @@ export default function SignalReport({
         <Column title="Decided" count={decisions.length}>
           {decisions.map((item) => (
             <li key={item.id}>
-              {item.text}
+              <InlineMarkdown text={item.text} />
               <span className="sg-meta">
                 <ReportTimestamp
                   evidence={item.evidence}
@@ -122,7 +123,7 @@ export default function SignalReport({
             const owner = ownerId(item);
             return (
               <li key={item.id}>
-                {item.text}
+                <InlineMarkdown text={item.text} />
                 <span className="sg-meta">
                   <b>{owner ? speakerName(state.participants, owner) : 'unassigned'}</b>
                   {' · '}
@@ -141,7 +142,7 @@ export default function SignalReport({
         <Column title="Watch" count={watch.length} watch>
           {watch.map((item) => (
             <li key={item.id}>
-              {item.text}
+              {item.kind === 'risk' ? <InlineMarkdown text={item.text} /> : item.text}
               <span className="sg-meta">
                 {item.kind === 'question'
                   ? 'open question · '

@@ -12,6 +12,7 @@ import {
   recapEmail,
   type OwnerGroup,
 } from './followThrough';
+import { InlineMarkdown } from './MarkdownView';
 import ReportTimestamp from './ReportTimestamp';
 import './handoffReport.css';
 
@@ -109,7 +110,7 @@ export default function HandoffReport({
                         <li key={item.id}>
                           <span className="ho-box" aria-hidden="true" />
                           <div className="ho-task">
-                            <span>{item.text}</span>
+                            <span><InlineMarkdown text={item.text} /></span>
                             <ItemFlags item={item} />
                             <span className="ho-task-meta">
                               {due && <span className="ho-due">Due: {due}</span>}
