@@ -3,18 +3,20 @@
 The picker never runs an agent here: every test patches the scan and model
 lookups in ``ui_qt.widgets.agent_picker`` (conftest stubs them otherwise).
 """
+import gc
 import os
 import threading
 import time
+import weakref
 from unittest.mock import patch
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtCore import QEvent, QPoint, Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from services.installed_agents import AgentModel, InstalledAgent
 from services.settings import MeetingAgentCore
@@ -220,6 +222,37 @@ class TestScanning:
         picker._on_scan_done(stale, FOUND_TWO)
         assert picker.is_scanning()
         assert picker.agents() is None
+
+    @pytest.mark.parametrize("parented", [False, True])
+    def test_a_picker_closed_mid_scan_is_not_held_by_the_worker(self, parented):
+        # The worker used to capture the picker: it kept a closed picker
+        # alive, then dropped the last reference (deleting a QWidget) or
+        # emitted on it from its own thread, which segfaulted CI.
+        gate = threading.Event()
+
+        def scan(refresh=False):
+            gate.wait(5)
+            return FOUND_TWO
+
+        with patch.object(agent_picker, "cached_agents", return_value=None), \
+                patch.object(agent_picker, "scan_installed_agents", side_effect=scan):
+            parent = QWidget() if parented else None
+            picker = AgentPicker(parent)
+            picker.start_scan(refresh=False)
+        workers = [t for t in threading.enumerate() if t.name == "settings-agent-scan"]
+        ref = weakref.ref(picker)
+        del picker
+        if parent is not None:
+            parent.deleteLater()
+            QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+            del parent
+        gc.collect()
+        assert ref() is None
+        gate.set()
+        for worker in workers:
+            worker.join(5)
+            assert not worker.is_alive()
+        QApplication.processEvents()
 
     def test_a_failing_scan_reads_as_nothing_found(self):
         with patch.object(agent_picker, "scan_installed_agents", side_effect=OSError("x")):

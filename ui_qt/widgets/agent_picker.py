@@ -13,6 +13,7 @@ anything, so reopening Settings is quiet.
 """
 from __future__ import annotations
 
+import itertools
 import logging
 import math
 import re
@@ -23,6 +24,7 @@ from typing import Dict, Final, Iterable, List, Optional
 from PyQt6.QtCore import (
     QElapsedTimer,
     QEvent,
+    QObject,
     QPointF,
     QRectF,
     QSize,
@@ -119,6 +121,31 @@ def cached_agents() -> Optional[Dict[str, Optional[InstalledAgent]]]:
 def list_agent_models(agent: InstalledAgent) -> List[AgentModel]:
     """``agent``'s models, its own default first. Blocking for OpenCode."""
     return installed_agents.list_models(agent)
+
+
+class _ScanRelay(QObject):
+    """Brings scan and model-list results to the Qt thread for whichever pickers exist then.
+
+    It lives for the session, so a worker thread never holds or emits on a
+    picker. Holding one let the thread drop the last reference and delete the
+    widget off the Qt thread, and emitting on one raced Settings closing; both
+    crashed the process. Qt drops a deleted picker's connection.
+    """
+
+    scan_done = pyqtSignal(int, object)
+    models_done = pyqtSignal(str, int, object)
+
+
+_relay: Optional[_ScanRelay] = None
+#: Request tokens, unique across pickers because they share the relay.
+_tokens = itertools.count(1)
+
+
+def _scan_relay() -> _ScanRelay:
+    global _relay
+    if _relay is None:
+        _relay = _ScanRelay()
+    return _relay
 
 
 # ---- what a tile says ----
@@ -1107,8 +1134,6 @@ class AgentPicker(QWidget):
     model_chosen = pyqtSignal(str, str)
     #: A scan result was applied (fresh or cached).
     results_changed = pyqtSignal()
-    _scan_done = pyqtSignal(int, object)
-    _models_done = pyqtSignal(str, int, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1116,7 +1141,6 @@ class AgentPicker(QWidget):
         self._agents: Optional[Dict[str, Optional[InstalledAgent]]] = None
         self._scanning = False
         self._generation = 0
-        self._model_generation = 0
         self._choice = BUILTIN
         self._saved_models: Dict[str, str] = {}
         self._models: Dict[str, List[AgentModel]] = {}
@@ -1227,8 +1251,9 @@ class AgentPicker(QWidget):
         self._tick = QTimer(self)
         self._tick.setInterval(_TICK_MS)
         self._tick.timeout.connect(self._on_tick)
-        self._scan_done.connect(self._on_scan_done)
-        self._models_done.connect(self._on_models_done)
+        relay = _scan_relay()
+        relay.scan_done.connect(self._on_scan_done)
+        relay.models_done.connect(self._on_models_done)
 
         cached = cached_agents()
         if cached is not None:
@@ -1262,8 +1287,7 @@ class AgentPicker(QWidget):
         self.start_scan(refresh=True)
 
     def start_scan(self, refresh: bool) -> None:
-        self._generation += 1
-        generation = self._generation
+        self._generation = generation = next(_tokens)
         self._scanning = True
         self.look_again_button.setEnabled(False)
         self.count_label.setText("Looking for coding agents on this computer…")
@@ -1272,17 +1296,17 @@ class AgentPicker(QWidget):
         if refresh:
             self._models.clear()
         self._tick.start()
+        # Bound here: the worker must not reach back into the picker.
+        scan = scan_installed_agents
+        done = _scan_relay().scan_done
 
         def worker() -> None:
             try:
-                result = scan_installed_agents(refresh=refresh)
+                result = scan(refresh=refresh)
             except Exception:
                 logger.warning("Scanning for installed agents failed", exc_info=True)
                 result = {}
-            try:
-                self._scan_done.emit(generation, result)
-            except RuntimeError:
-                pass  # Settings closed before the scan finished.
+            done.emit(generation, result)
 
         threading.Thread(target=worker, name="settings-agent-scan", daemon=True).start()
 
@@ -1393,20 +1417,18 @@ class AgentPicker(QWidget):
         self.model_status.show()
         if agent.id in self._models_loading:
             return
-        self._model_generation += 1
-        generation = self._model_generation
+        generation = next(_tokens)
         self._models_loading[agent.id] = generation
+        list_models = list_agent_models
+        done = _scan_relay().models_done
 
         def worker() -> None:
             try:
-                models = list(list_agent_models(agent))
+                models = list(list_models(agent))
             except Exception:
                 logger.warning("Could not list %s models", agent.id, exc_info=True)
                 models = []
-            try:
-                self._models_done.emit(agent.id, generation, models)
-            except RuntimeError:
-                pass  # Settings closed first.
+            done.emit(agent.id, generation, models)
 
         threading.Thread(target=worker, name=f"settings-{agent.id}-models",
                          daemon=True).start()
