@@ -468,10 +468,13 @@ a {
       "rail";
   }
 
+  /* min-height: auto, not 0: in the fixed-height scrolling grid a zero
+     floor lets these rows collapse, and the rail then paints over the
+     transcript that overflows its row. */
   .workspace-conversation,
   .workspace-rail {
     height: auto;
-    min-height: 0;
+    min-height: auto;
     max-height: none;
     overflow: visible;
     position: static;

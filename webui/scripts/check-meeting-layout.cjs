@@ -58,6 +58,20 @@ const server = http.createServer((req, res) => {
     assert.deepEqual(errors, [], 'No runtime errors');
     console.log(`PASS ${label}`);
   }
+  // Stacked widths (<=1200px) put the rail under the transcript; a collapsed
+  // grid row lets its cards paint over the turns that overflow the row.
+  async function checkRailClear(label) {
+    const overlaps = await page.evaluate(() => {
+      const box = el => el.getBoundingClientRect();
+      const shown = el => el.checkVisibility() && box(el).height > 0;
+      const hit = (a, b) => a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1;
+      const turns = [...document.querySelectorAll('.workspace-conversation .segment')].filter(shown);
+      const cards = [...document.querySelectorAll('.workspace-rail .panel')].filter(shown);
+      return cards.flatMap(card => turns.filter(turn => hit(box(card), box(turn))).map(turn => `${card.className} over ${turn.className}`)).slice(0, 5);
+    });
+    assert.deepEqual(overlaps, [], `${label}: rail cards paint over the transcript`);
+    console.log(`PASS ${label} rail clear of transcript`);
+  }
   try {
     for (const width of [1920, 1280, 1201, 1024, 900, 768, 601, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
@@ -83,6 +97,7 @@ const server = http.createServer((req, res) => {
       await page.goto(base + '/m/test');
       await page.locator('.card-add-row').waitFor();
       await check(`${width}px live meeting`);
+      await checkRailClear(`${width}px live meeting`);
       if (process.env.UI_SCREENSHOTS && [1920,390].includes(width)) await page.screenshot({path:path.join(process.env.UI_SCREENSHOTS,`live-${width}.png`)});
       state.status = 'ended'; meeting.status = 'ended';
       await page.goto(base + '/m/test');
