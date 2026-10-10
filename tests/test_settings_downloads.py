@@ -974,6 +974,41 @@ class TestComponents(_DialogTestCase):
         assert row.install_button.isEnabled()
         assert row.install_button.text() == "Install"
 
+    def test_remove_waits_a_moment_where_install_just_was(self):
+        """Remove lands under the pointer when an install ends; a double-click must miss it."""
+        with patch.object(ComponentRowWidget, "REMOVE_GUARD_MS", 40):
+            row = ComponentRowWidget("gpu-accel")
+        removes = []
+        row.remove_clicked.connect(removes.append)
+        row.update_state(
+            self._info(ComponentState.NOT_INSTALLED, download_bytes=1_000_000),
+            installing=True,
+        )
+        row.update_state(self._info(ComponentState.INSTALLED), installing=False)
+
+        assert not row.remove_button.isHidden()
+        assert not row.remove_button.isEnabled()
+        row.remove_button.click()
+        # A refresh during the pause doesn't cut it short.
+        row.update_state(self._info(ComponentState.INSTALLED), installing=False)
+        assert not row.remove_button.isEnabled()
+        assert removes == []
+
+        for _ in range(200):
+            if row.remove_button.isEnabled():
+                break
+            QTest.qWait(10)
+        assert row.remove_button.isEnabled()
+        row.remove_button.click()
+        assert removes == ["gpu-accel"]
+
+    def test_remove_is_ready_at_once_for_a_component_already_installed(self):
+        row = ComponentRowWidget("gpu-accel")
+        row.update_state(self._info(ComponentState.INSTALLED), installing=False)
+
+        assert row.remove_button.isEnabled()
+        assert ComponentRowWidget.REMOVE_GUARD_MS == 600
+
     def test_existing_cuda_setup_is_not_reported_missing(self):
         row = ComponentRowWidget("gpu-accel")
         row.update_state(

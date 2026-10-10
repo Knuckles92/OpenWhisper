@@ -10,7 +10,7 @@ Components group and the model list read as one list.
 """
 import logging
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QHBoxLayout,
@@ -86,6 +86,11 @@ class ComponentRowWidget(DownloadRow):
     install_clicked = pyqtSignal(str)
     cancel_clicked = pyqtSignal(str)
     remove_clicked = pyqtSignal(str)
+
+    #: Once an install ends, Remove takes the place of Install/Cancel, right
+    #: under the pointer. It stays disabled this long so the second click of
+    #: a double-click, or an impatient one, can't land on it.
+    REMOVE_GUARD_MS = 600
 
     def __init__(self, component_id: str, parent=None):
         """Initialize the row for one component.
@@ -163,6 +168,11 @@ class ComponentRowWidget(DownloadRow):
         )
         row.addWidget(self.remove_button)
 
+        self._remove_guard = QTimer(self)
+        self._remove_guard.setSingleShot(True)
+        self._remove_guard.setInterval(self.REMOVE_GUARD_MS)
+        self._remove_guard.timeout.connect(self._release_remove)
+
         outer.addLayout(row)
 
         self.progress = QProgressBar()
@@ -180,6 +190,9 @@ class ComponentRowWidget(DownloadRow):
         else:
             self.install_clicked.emit(self.component_id)
 
+    def _release_remove(self) -> None:
+        self.remove_button.setEnabled(True)
+
     def update_state(self, info: ComponentInfo, installing: bool) -> None:
         """Render the row for a component state.
 
@@ -187,6 +200,7 @@ class ComponentRowWidget(DownloadRow):
             info: Current component description.
             installing: True while an install for this component is in flight.
         """
+        just_finished = self._installing and not installing
         self._installing = installing
         self.name_label.setText(info.display_name)
 
@@ -205,6 +219,11 @@ class ComponentRowWidget(DownloadRow):
 
         self.progress.hide()
         self.progress.setValue(0)
+        if just_finished:
+            self.remove_button.setEnabled(False)
+            self._remove_guard.start()
+        elif not self._remove_guard.isActive():
+            self.remove_button.setEnabled(True)
 
         text, tone = _STATE_BADGES.get(info.state, ("Unknown", "idle"))
         self._set_badge(text, tone)
