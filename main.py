@@ -117,8 +117,46 @@ def _run_package_self_test() -> None:
     print("OpenWhisper package self-test passed")
 
 
+_USAGE = """\
+Usage: openwhisper [OPTION]
+
+With no option, opens OpenWhisper.
+
+Options:
+  -h, --help              Show this help and exit.
+  --version               Print the version and exit.
+  --diagnostics OUTPUT.json
+                          Write a sanitized support report to a new JSON file
+                          and exit. Nothing is uploaded.
+  --api [--database PATH] [--port N]
+                          Serve the read-only History API on 127.0.0.1 (port
+                          8766 by default) without opening the app. Set
+                          OPENWHISPER_API_TOKEN to a random token of at least
+                          32 characters first.
+  --self-test             Check that the app's modules and bundled files load,
+                          and exit.
+  --workflow-smoke [REPORT.json]
+                          Run a headless check of the dictation pipeline,
+                          optionally saving its report, and exit.
+
+Environment:
+  OPENWHISPER_UI=omarchy|classic
+                          Use the Omarchy or the classic look instead of
+                          detecting the desktop.
+  OPENWHISPER_DATA_DIR=PATH
+                          Keep settings, history and recordings in PATH.
+  OPENWHISPER_LOG_LEVEL=LEVEL
+                          Log at DEBUG, INFO (the default), WARNING or ERROR.
+"""
+
+
 def _handle_early_cli() -> None:
     """Handle worker and metadata modes before native-library bootstrap."""
+    if sys.argv[1:2] in (["-h"], ["--help"]):
+        # Before anything loads Qt or CUDA: help must answer in a terminal
+        # with no display, and at once.
+        print(_USAGE, end="")
+        raise SystemExit(0)
     if sys.argv[1:2] == ["--diagnostics"]:
         from services.diagnostics import main as diagnostics_main
 

@@ -34,6 +34,50 @@ def test_ui_import_in_fresh_process(module):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_help_prints_usage_and_exits_without_opening_the_app(flag):
+    result = subprocess.run(
+        [sys.executable, "main.py", flag],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    usage = result.stdout
+    assert usage.startswith("Usage: openwhisper")
+    for option in ("--version", "--diagnostics OUTPUT.json", "--api [--database PATH] [--port N]",
+                   "OPENWHISPER_API_TOKEN", "--self-test", "--workflow-smoke [REPORT.json]",
+                   "OPENWHISPER_UI=omarchy|classic"):
+        assert option in usage
+    for internal in ("--local-asr-worker", "--isolated-worker", "--macos-update-helper", "internal"):
+        assert internal not in usage
+
+
+def test_help_loads_neither_qt_nor_the_speech_runtimes():
+    code = """
+import runpy, sys
+sys.argv = ['main.py', '--help']
+try:
+    runpy.run_path('main.py', run_name='__main__')
+except SystemExit as exit:
+    assert exit.code == 0, exit.code
+loaded = [name for name in sys.modules
+          if name.split('.')[0] in ('PyQt6', 'ctranslate2', 'torch', 'numpy', 'services', 'ui_qt')]
+assert not loaded, loaded
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_main_import_does_not_eagerly_import_application_controller():
     code = """
 import sys
