@@ -9,6 +9,7 @@ user speaks and history is saved after the paste; these tests pin both.
 
 import logging
 import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -414,10 +415,22 @@ def _start_from_hotkey_thread(runtime):
     assert started == [True]
 
 
+def _wait_for_prefetch(captures, timeout=2.0):
+    """Pump until the prefetch a hotkey-thread start requested has been taken.
+
+    It crosses two hops, a queued signal and then a zero-delay timer, so a
+    fixed-length pump can end before the second on a busy machine.
+    """
+    deadline = time.monotonic() + timeout
+    while not captures:
+        assert time.monotonic() < deadline, "the clipboard prefetch never ran"
+        _pump(5)
+
+
 def test_dictation_pastes_without_copying_the_clipboard_again(monkeypatch, captures):
     h = _clipboard_harness(monkeypatch)
     _start_from_hotkey_thread(h.runtime)
-    _pump()
+    _wait_for_prefetch(captures)
     # Captured once, on the Qt thread, while "recording".
     assert captures == [threading.main_thread()]
 
@@ -455,7 +468,7 @@ def test_restore_off_pastes_and_leaves_the_transcript_without_copying_the_clipbo
 def test_copy_made_during_dictation_is_what_gets_restored(monkeypatch, captures):
     h = _clipboard_harness(monkeypatch)
     _start_from_hotkey_thread(h.runtime)
-    _pump()
+    _wait_for_prefetch(captures)
 
     h.clipboard.setText("copied mid-dictation")
     h.controller.recorder.is_recording = False
@@ -470,7 +483,7 @@ def test_copy_made_during_dictation_is_what_gets_restored(monkeypatch, captures)
 def test_canceled_dictation_leaves_no_snapshot_behind(monkeypatch, captures):
     h = _clipboard_harness(monkeypatch)
     _start_from_hotkey_thread(h.runtime)
-    _pump()
+    _wait_for_prefetch(captures)
     h.runtime.cancel()
     _pump()
 
