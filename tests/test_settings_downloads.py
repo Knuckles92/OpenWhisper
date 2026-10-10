@@ -831,8 +831,37 @@ class TestBatchSelection(_DialogTestCase):
         dialog.rows["tiny"].select_checkbox.setChecked(True)
         dialog._on_clear_selection_clicked()
         assert not dialog.rows["tiny"].select_checkbox.isChecked()
-        assert dialog.selection_summary.text() == ""
+        assert dialog.selection_summary.text() == "Tick models to download several at once"
         assert not dialog.download_selected_button.isEnabled()
+        assert dialog.download_selected_button.toolTip() == "Tick the models to download first"
+
+        dialog.rows["tiny"].select_checkbox.setChecked(True)
+        assert dialog.download_selected_button.isEnabled()
+        assert dialog.download_selected_button.toolTip() == ""
+
+    def test_disabled_download_selected_looks_disabled(self):
+        """#primaryButton's accent fill outranked QPushButton:disabled."""
+        previous_stylesheet = self.app.styleSheet()
+        self.app.setStyleSheet(ThemeManager().stylesheet)
+        try:
+            dialog, _values = self._make_dialog()
+            button = dialog.download_selected_button
+            dialog.resize(1100, 700)
+            dialog.show()
+            dialog.rows["tiny"].select_checkbox.setChecked(True)
+            self.app.processEvents()
+            enabled = button.grab().toImage().pixelColor(button.width() // 2, 4)
+
+            dialog._on_clear_selection_clicked()
+            self.app.processEvents()
+            assert not button.isEnabled()
+            disabled = button.grab().toImage().pixelColor(button.width() // 2, 4)
+            dialog.close()
+        finally:
+            self.app.setStyleSheet(previous_stylesheet)
+
+        assert enabled.blue() > enabled.red() + 60  # the accent fill
+        assert abs(disabled.blue() - disabled.red()) < 40  # a muted surface
 
     def test_select_all_checks_only_missing_models(self):
         dialog, _values = self._make_dialog(

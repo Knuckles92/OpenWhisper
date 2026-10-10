@@ -64,6 +64,13 @@ QPushButton#primaryButton:pressed {
     background-color: @accent-pressed;
 }
 
+/* Outranks QPushButton:disabled above, which #primaryButton's own fill
+   beats: without it a disabled primary action still looks clickable. */
+QPushButton#primaryButton:disabled {
+    background-color: @surface;
+    color: @text-muted;
+}
+
 /* Settings actions, chosen by property (ui_qt/widgets/buttons.py) so a button
    keeps its own object name. A property selector ranks below the #id rules
    above and below, so these never override the primary and danger buttons. */
@@ -828,6 +835,15 @@ QWidget#downloadsPage QPushButton#primaryButton {
     font-size: 13px;
     padding: 6px 16px;
     border-radius: 8px;
+}
+
+/* "Download selected" with nothing ticked: the MCP page's disabled look.
+   The padding gives up the border's pixel so the button keeps its size. */
+QWidget#downloadsPage QPushButton#primaryButton:disabled {
+    color: @slate-text-disabled;
+    background-color: @slate-disabled;
+    border: 1px solid @slate-border;
+    padding: 5px 15px;
 }
 
 /* Batch selection in the Downloads window: flat link actions, running

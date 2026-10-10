@@ -1035,24 +1035,32 @@ class DownloadsPage(QWidget):
         total_bytes = sum(size for size in sizes if math.isfinite(size))
         estimate = (f"~{format_size_bytes(total_bytes)} to download"
                     if all(math.isfinite(size) for size in sizes) else "download size unknown")
+        busy = self._download_slot_busy()
+        any_selectable = (
+            bool(self._missing_names())
+            and not busy
+            and not self._downloads_blocked
+        )
+        # Nothing ticked: say what the bar is for, or the disabled button
+        # reads as broken.
         self.selection_summary.setText(
-            f"{count} selected · {estimate}"
-            if count
+            f"{count} selected · {estimate}" if count
+            else "Tick models to download several at once" if any_selectable
             else ""
         )
         noun = "model" if count == 1 else "models"
         self.download_selected_button.setText(
             f"Download {count} {noun}…" if count else "Download selected"
         )
-        busy = self._download_slot_busy()
         selectable = bool(names) and not busy and not self._downloads_blocked
         self.download_selected_button.setEnabled(selectable)
-        self.clear_selection_button.setEnabled(bool(names) and not busy)
-        any_selectable = (
-            bool(self._missing_names())
-            and not busy
-            and not self._downloads_blocked
+        self.download_selected_button.setToolTip(
+            "" if selectable
+            else "Downloads are disabled by HF_HUB_OFFLINE" if self._downloads_blocked
+            else "Wait for the current download to finish" if busy
+            else "Tick the models to download first"
         )
+        self.clear_selection_button.setEnabled(bool(names) and not busy)
         self.select_all_button.setEnabled(any_selectable)
         self.download_all_button.setEnabled(any_selectable)
         self.download_all_button.setVisible(bool(self._missing_names()))
