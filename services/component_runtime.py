@@ -40,8 +40,8 @@ def register_dll_directory(path: str) -> bool:
 
     Without the PATH prepend, transcription fails with "Library
     cublas64_12.dll is not found or cannot be loaded" even though the DLL is
-    present. This mirrors the behavior of ``_register_cuda_dll_directories``
-    in ``main.py`` for source installs.
+    present. This mirrors the behavior of
+    ``native_libraries.register_cuda_dll_directories`` for the pip wheels.
 
     """
     if sys.platform != "win32" or not os.path.isdir(path):
@@ -67,7 +67,7 @@ def preload_shared_libraries(path: str) -> List[str]:
     ``dlopen``s ``libcublas.so.12`` by name the first time a GPU model runs,
     and glibc answers a by-name request from libraries already loaded, so
     loading them from this folder with ``RTLD_GLOBAL`` first is enough.
-    ``main._preload_cuda_libraries`` does the same for the pip wheels.
+    ``native_libraries.preload_cuda_libraries`` does the same for the pip wheels.
     A library that fails to load is skipped, not fatal.
     """
     if not sys.platform.startswith("linux") or not os.path.isdir(path):
@@ -94,7 +94,7 @@ def _activate_gpu_libraries(component_dir: str) -> Tuple[bool, str]:
     if sys.platform.startswith("linux"):
         from services.components import gpu_runtime_available
 
-        # CUDA from the pip wheels or the system is already loaded (main.py
+        # CUDA from the pip wheels or the system is already loaded (startup
         # preloads it first); a second copy of cuBLAS would only cost memory.
         if gpu_runtime_available():
             return True, ""
@@ -165,24 +165,21 @@ def activate_component(component_id: str) -> Tuple[bool, str]:
 def activate_components() -> ActivationReport:
     """Put every usable installed component on the native search path.
 
-    Never raises. Each component is activated independently so one damaged
-    payload cannot block the others or prevent the application from starting.
+    Never raises, and never changes the component store: settling an
+    interrupted install is the app's startup job (``prune_orphans``), so a
+    benchmark can activate the same components without disturbing an app
+    that is mid-download. Each component is activated independently so one
+    damaged payload cannot block the others or prevent the application from
+    starting.
     """
     activated: List[str] = []
     rejected: List[Tuple[str, str]] = []
 
     try:
-        from services.components import (
-            available_component_ids, is_installed, prune_orphans,
-        )
+        from services.components import available_component_ids, is_installed
     except Exception:
         logger.debug("Component system unavailable", exc_info=True)
         return ActivationReport()
-
-    try:
-        prune_orphans()
-    except Exception:
-        logger.debug("Could not prune component orphans", exc_info=True)
 
     for component_id in available_component_ids():
         if not is_installed(component_id):

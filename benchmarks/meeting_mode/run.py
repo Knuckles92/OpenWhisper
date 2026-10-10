@@ -18,11 +18,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Meeting Mode normally starts through main.py, whose import-time bootstrap
-# registers the pip-installed CUDA DLL directories before CTranslate2 loads.
-# The benchmark must follow that same native-runtime path or it silently falls
-# back to CPU and measures a configuration the desktop app does not use.
-import main as _app_bootstrap  # noqa: E402,F401
+# Before CTranslate2 loads, the app makes CUDA loadable from the pip wheels and
+# from an installed GPU Acceleration component. The benchmark must follow that
+# same native-runtime path or it silently falls back to CPU and measures a
+# configuration the desktop app does not use. Importing this module does it, so
+# scripts that reuse decode_meeting get it too; it never starts the app.
+from services import native_libraries  # noqa: E402
+from services.component_runtime import activate_components  # noqa: E402
+
+native_libraries.register_cuda_dll_directories()
+native_libraries.preload_cuda_libraries()
+activate_components()
 
 from benchmarks.meeting_mode.ami import (  # noqa: E402
     MeetingSpec,

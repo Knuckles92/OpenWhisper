@@ -103,8 +103,17 @@ def test_source_startup_activates_components_before_backend_imports(activation_f
 import sys
 import types
 
-activation = types.ModuleType('services.component_runtime')
+import services.components
+
 calls = []
+def prune_orphans():
+    assert 'ctranslate2' not in sys.modules
+    calls.append('pruned')
+    if sys.argv[1] == 'broken':
+        raise OSError('Component store unavailable')
+services.components.prune_orphans = prune_orphans
+
+activation = types.ModuleType('services.component_runtime')
 def activate_components():
     assert 'ctranslate2' not in sys.modules
     assert 'services.application_controller' not in sys.modules
@@ -117,7 +126,7 @@ assert not getattr(sys, 'frozen', False)
 
 import main
 
-assert calls == ['activated'], calls
+assert calls == ['pruned', 'activated'], calls
 assert hasattr(main, 'main')
 """
     result = subprocess.run(
@@ -129,169 +138,6 @@ assert hasattr(main, 'main')
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-
-
-def test_frozen_startup_reuses_cuda_dlls_from_an_older_bundle(
-    tmp_path, monkeypatch
-):
-    """An installer upgrade must not discard a previously working GPU setup."""
-    import main
-
-    bundle_root = tmp_path / "_internal"
-    bin_dir = bundle_root / "nvidia" / "cublas" / "bin"
-    bin_dir.mkdir(parents=True)
-
-    registered = []
-    handle = object()
-
-    def add_dll_directory(path):
-        registered.append(path)
-        return handle
-
-    monkeypatch.setattr(main.sys, "platform", "win32")
-    monkeypatch.setattr(main.sys, "frozen", True, raising=False)
-    monkeypatch.setattr(main.sys, "_MEIPASS", str(bundle_root), raising=False)
-    monkeypatch.setattr(main.sys, "executable", str(tmp_path / "OpenWhisper.exe"))
-    monkeypatch.setattr(
-        main.site,
-        "getsitepackages",
-        lambda: (_ for _ in ()).throw(AssertionError("system site inspected")),
-    )
-    monkeypatch.setattr(
-        main.site,
-        "getusersitepackages",
-        lambda: (_ for _ in ()).throw(AssertionError("user site inspected")),
-    )
-    monkeypatch.setattr(
-        main.os, "add_dll_directory", add_dll_directory, raising=False
-    )
-    monkeypatch.setenv("PATH", "C:\\Windows\\System32")
-    main._CUDA_DLL_DIRECTORY_HANDLES.clear()
-
-    main._register_cuda_dll_directories()
-
-    assert registered == [str(bin_dir)]
-    assert main._CUDA_DLL_DIRECTORY_HANDLES == [handle]
-    assert str(bin_dir) in main.os.environ["PATH"].split(main.os.pathsep)
-
-
-def test_frozen_startup_registers_system32_for_qt_icu(tmp_path, monkeypatch):
-    import main
-
-    system32 = tmp_path / "System32"
-    system32.mkdir()
-    qt_bin = tmp_path / "_internal" / "PyQt6" / "Qt6" / "bin"
-    qt_bin.mkdir(parents=True)
-
-    registered = []
-
-    def add_dll_directory(path):
-        registered.append(path)
-        return object()
-
-    monkeypatch.setattr(main.sys, "platform", "win32")
-    monkeypatch.setattr(main.sys, "frozen", True, raising=False)
-    monkeypatch.setattr(main.sys, "_MEIPASS", str(tmp_path / "_internal"), raising=False)
-    monkeypatch.setattr(main.sys, "executable", str(tmp_path / "OpenWhisper.exe"))
-    monkeypatch.setattr(main.os, "add_dll_directory", add_dll_directory, raising=False)
-    monkeypatch.setenv("SystemRoot", str(tmp_path))
-    monkeypatch.setenv("PATH", "C:\\Windows\\System32")
-    main._QT_ICU_DLL_HANDLES.clear()
-
-    main._register_qt_icu_directories()
-
-    assert str(qt_bin) in registered
-    assert str(system32) in registered
-    path_parts = main.os.environ["PATH"].split(main.os.pathsep)
-    assert str(qt_bin) in path_parts
-    assert str(system32) in path_parts
-
-
-def _linux_nvidia_tree(tmp_path, monkeypatch, *, libraries):
-    """Stage a fake site-packages/nvidia tree and pretend we are on Linux."""
-    import main
-
-    site_packages = tmp_path / "site-packages"
-    for relative in libraries:
-        target = site_packages / "nvidia" / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(b"")
-
-    monkeypatch.setattr(main.sys, "platform", "linux")
-    monkeypatch.setattr(main.site, "getsitepackages", lambda: [str(site_packages)])
-    monkeypatch.setattr(main.site, "getusersitepackages", lambda: "")
-    main._CUDA_LIBRARY_HANDLES.clear()
-    main.CUDA_PRELOADED_LIBRARIES.clear()
-    return main
-
-
-def test_linux_startup_preloads_nvidia_wheel_libraries(tmp_path, monkeypatch):
-    """CTranslate2 dlopens libcublas.so.12 by bare SONAME.
-
-    LD_LIBRARY_PATH cannot be changed from inside a running process, so the
-    libraries must already be loaded with RTLD_GLOBAL for that lookup to resolve.
-    """
-    main = _linux_nvidia_tree(
-        tmp_path, monkeypatch,
-        libraries=["cublas/lib/libcublas.so.12", "cublas/lib/libcublasLt.so.12"],
-    )
-
-    loaded = []
-    handle = object()
-
-    class _FakeCtypes:
-        RTLD_GLOBAL = 256
-
-        @staticmethod
-        def CDLL(path, mode=None):
-            loaded.append((path, mode))
-            return handle
-
-    monkeypatch.setitem(__import__("sys").modules, "ctypes", _FakeCtypes)
-
-    main._preload_cuda_libraries()
-
-    assert [mode for _, mode in loaded] == [256, 256]
-    assert sorted(main.CUDA_PRELOADED_LIBRARIES) == [
-        "libcublas.so.12", "libcublasLt.so.12",
-    ]
-    # Handles must outlive the call: dropping them closes the dlopen handle.
-    assert main._CUDA_LIBRARY_HANDLES == [handle, handle]
-
-
-def test_linux_preload_survives_an_unloadable_library(tmp_path, monkeypatch):
-    """One broken library must not stop the others, or block startup."""
-    main = _linux_nvidia_tree(
-        tmp_path, monkeypatch,
-        libraries=["cublas/lib/libcublas.so.12", "cudnn/lib/libcudnn.so.9"],
-    )
-
-    class _FakeCtypes:
-        RTLD_GLOBAL = 256
-
-        @staticmethod
-        def CDLL(path, mode=None):
-            if "cudnn" in path:
-                raise OSError("cannot open shared object file")
-            return object()
-
-    monkeypatch.setitem(__import__("sys").modules, "ctypes", _FakeCtypes)
-
-    main._preload_cuda_libraries()
-
-    assert main.CUDA_PRELOADED_LIBRARIES == ["libcublas.so.12"]
-
-
-def test_preload_is_a_no_op_on_windows(tmp_path, monkeypatch):
-    """Windows uses os.add_dll_directory; preloading there would be redundant."""
-    main = _linux_nvidia_tree(
-        tmp_path, monkeypatch, libraries=["cublas/lib/libcublas.so.12"],
-    )
-    monkeypatch.setattr(main.sys, "platform", "win32")
-
-    main._preload_cuda_libraries()
-
-    assert main.CUDA_PRELOADED_LIBRARIES == []
 
 
 # Startup profiling hooks.

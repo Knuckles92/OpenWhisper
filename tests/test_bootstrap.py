@@ -195,44 +195,27 @@ class TestBootstrap:
 
 
 class TestCudaPreloadSummary:
-    """The Linux CUDA preload log must survive being run as ``__main__``.
+    """Startup preloads before logging exists; the summary reports it later."""
 
-    ``python main.py`` registers the entry module as ``__main__``, not
-    ``main``, so a lookup of only ``sys.modules["main"]`` silently logged
-    nothing in every real launch — confirmed on Linux hardware.
-    """
+    def _capture(self, libraries, caplog):
+        from services import component_runtime, native_libraries
 
-    class _Entrypoint:
-        def __init__(self, libraries):
-            self.CUDA_PRELOADED_LIBRARIES = libraries
-
-    def _capture(self, modules, caplog):
-        with patch.object(bootstrap.sys, "platform", "linux"), patch.dict(
-            bootstrap.sys.modules, modules, clear=False
-        ):
+        with patch.object(bootstrap.sys, "platform", "linux"), patch.object(
+            native_libraries, "CUDA_PRELOADED_LIBRARIES", libraries
+        ), patch.object(component_runtime, "PRELOADED_LIBRARIES", []):
             with caplog.at_level(logging.INFO):
                 bootstrap.log_cuda_preload_summary()
         return caplog.text
 
-    def test_logs_when_entry_module_is_dunder_main(self, caplog):
-        entry = self._Entrypoint(["libcublas.so.12", "libcudart.so.12"])
-        modules = {"__main__": entry}
-        with patch.dict(bootstrap.sys.modules, {}, clear=False):
-            bootstrap.sys.modules.pop("main", None)
-            output = self._capture(modules, caplog)
+    def test_logs_the_preloaded_wheel_libraries(self, caplog):
+        output = self._capture(["libcublas.so.12", "libcudart.so.12"], caplog)
 
         assert "Preloaded 2 CUDA library/libraries" in output
         assert "libcublas.so.12" in output
 
-    def test_logs_when_entry_module_is_main(self, caplog):
-        entry = self._Entrypoint(["libcublas.so.12"])
-        output = self._capture({"main": entry}, caplog)
-
-        assert "Preloaded 1 CUDA library/libraries" in output
-
     def test_reports_when_nothing_was_preloaded(self, caplog):
         """An empty list is a real answer: wheels absent, so CPU it is."""
-        output = self._capture({"main": self._Entrypoint([])}, caplog)
+        output = self._capture([], caplog)
 
         assert "No NVIDIA CUDA libraries preloaded" in output
 

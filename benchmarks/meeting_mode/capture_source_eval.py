@@ -414,7 +414,7 @@ def sources(model_name: str = "auto", parallel_headsets: bool = False,
             slice_s: float = ASR_SLICE_S) -> dict:
     """Run production chunking/Whisper on mix and blind selected headset."""
     download_headsets()
-    # Import here: main.py initializes CUDA DLL paths before CTranslate2.
+    # Import here: run.py makes CUDA loadable before CTranslate2 loads.
     from benchmarks.meeting_mode.run import decode_meeting
     from benchmarks.meeting_mode.ami import MeetingSpec
     from meeting.asr.engine import MeetingAsrEngine
