@@ -17,6 +17,7 @@ import {
   keptItems,
   openQuestions,
 } from './followThrough';
+import { InlineMarkdown } from './MarkdownView';
 import ReportTimestamp from './ReportTimestamp';
 import './editorialReport.css';
 
@@ -135,7 +136,7 @@ export default function EditorialReport({
                   {decisions.map((item) => (
                     <li key={item.id}>
                       <div>
-                        <span className="ed-statement">{item.text}</span>
+                        <span className="ed-statement"><InlineMarkdown text={item.text} /></span>
                         <ItemFlags item={item} />
                         <ReportTimestamp
                           evidence={item.evidence}
@@ -171,7 +172,7 @@ export default function EditorialReport({
                           <tr key={item.id}>
                             <td className="ed-owner">{itemOwnerName(item, state) ?? 'Unassigned'}</td>
                             <td>
-                              {item.text}
+                              <InlineMarkdown text={item.text} />
                               <ItemFlags item={item} />
                             </td>
                             <td className="ed-due">{due ? <><span className="sr-only">Due: </span>{due}</> : '—'}</td>
