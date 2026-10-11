@@ -454,6 +454,34 @@ def test_windowed_interpreter_speaks_over_inherited_pipes(app, spawn):
     assert "Connected to OpenWhisper" in channel.stderr
 
 
+def test_an_empty_stdin_ends_the_channel_at_once():
+    done = subprocess.run(
+        [sys.executable, str(MAIN), "--channel"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        cwd=str(REPO),
+        env=_env(OPENWHISPER_URL=f"http://127.0.0.1:{_closed_port()}", OPENWHISPER_TOKEN=TOKEN),
+        timeout=60,
+    )
+    assert done.returncode == 0
+    assert done.stdout == b""
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the windowed interpreter is a Windows question")
+def test_a_windowed_start_without_pipes_exits_quietly():
+    """A double-clicked shortcut gives the windowed app no stdio; no error dialog, just exit 2."""
+    pythonw = Path(sys.executable).with_name("pythonw.exe")
+    if not pythonw.is_file():
+        pytest.skip("no pythonw.exe next to this interpreter")
+    process = subprocess.Popen(
+        [str(pythonw), str(MAIN), "--channel"],
+        cwd=str(REPO),
+        env=_env(OPENWHISPER_URL=f"http://127.0.0.1:{_closed_port()}", OPENWHISPER_TOKEN=TOKEN),
+        creationflags=subprocess.DETACHED_PROCESS,
+    )
+    assert process.wait(60) == 2
+
+
 # -- the event stream in-process ----------------------------------------------------
 
 

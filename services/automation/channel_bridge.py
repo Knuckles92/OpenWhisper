@@ -957,17 +957,19 @@ def protocol_streams() -> Optional[tuple[Any, BinaryIO]]:
     Anything else that writes to stdout (a print, a native library) is sent to
     stderr instead, so it can never corrupt the protocol.
     """
+    # The interpreter leaves these None when it found no usable descriptor,
+    # as in a windowed executable started without pipes (a double-click).
+    if sys.stdin is None or sys.stdout is None:
+        return None
     try:
         in_fd = os.dup(0)
-    except OSError:
-        return None
-    try:
         out_fd = os.dup(1)
+        for fd in (in_fd, out_fd):
+            _binary_mode(fd)
+        reader = PipeLineReader(in_fd) if sys.platform == "win32" and _is_pipe(in_fd) else os.fdopen(in_fd, "rb")
+        writer = os.fdopen(out_fd, "wb")
     except OSError:
-        os.close(in_fd)
         return None
-    for fd in (in_fd, out_fd):
-        _binary_mode(fd)
     try:
         os.dup2(2, 1)
     except OSError:
@@ -975,8 +977,7 @@ def protocol_streams() -> Optional[tuple[Any, BinaryIO]]:
         os.dup2(devnull, 1)
         os.close(devnull)
     sys.stdout = sys.stderr
-    reader = PipeLineReader(in_fd) if sys.platform == "win32" and _is_pipe(in_fd) else os.fdopen(in_fd, "rb")
-    return reader, os.fdopen(out_fd, "wb")
+    return reader, writer
 
 
 def _configure_logging() -> None:
@@ -1007,14 +1008,15 @@ def main(argv: list[str]) -> int:
         if sys.stderr is not None:
             sys.stderr.write(_USAGE if help_asked else "Unexpected arguments. Run --channel --help for usage.\n")
         return 0 if help_asked else 2
-    _configure_logging()
-    streams = protocol_streams()
-    if streams is None:
-        logger.error("Claude Code starts the channel with pipes on stdin and stdout; it can't run without them.")
-        return 2
-    reader, writer = streams
-    version = _app_version()
+    # Nothing may escape: the windowed app would show an error dialog.
     try:
+        _configure_logging()
+        streams = protocol_streams()
+        if streams is None:
+            logger.error("Claude Code starts the channel with pipes on stdin and stdout; it can't run without them.")
+            return 2
+        reader, writer = streams
+        version = _app_version()
         server = ChannelServer(reader, writer, AppLink.from_environment(version=version), version=version)
         return server.serve()
     except Exception as exc:
