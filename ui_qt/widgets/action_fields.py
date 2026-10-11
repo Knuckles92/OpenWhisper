@@ -268,7 +268,12 @@ class StatusLine(QFrame):
         layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(10)
         self.dot = StatusDot(diameter=10)
-        layout.addWidget(self.dot, alignment=Qt.AlignmentFlag.AlignTop)
+        # Level with the first line of the message, however many it wraps to.
+        dot_column = QVBoxLayout()
+        dot_column.setContentsMargins(0, 5, 0, 0)
+        dot_column.addWidget(self.dot)
+        dot_column.addStretch(1)
+        layout.addLayout(dot_column)
         self.message = hint_label("")
         self.message.setProperty("tileId", "actionStatusMessage")
         self.link = page_link(link_text, link_tip)
