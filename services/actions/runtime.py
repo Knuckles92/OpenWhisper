@@ -341,10 +341,9 @@ def _agent(params: dict, text: str, job, cancel: threading.Event) -> ActionResul
         # still running.
         text = prompt_with_context(text, job.snapshot(timeout=config.CONTEXT_CAPTURE_DEADLINE_S))
     if params["mode"] == AgentMode.ASK:
-        result = agents.ask(params["agent"], text, model=params["model"], cancel=cancel)
-        # An ask runs without tools, so one canceled before it answered
-        # left nothing behind: it was stopped. One that answered wasn't.
-        return _STOPPED if cancel.is_set() and not result.ok else result
+        # The ask says whether its cancel stopped it (``stopped``); one that
+        # answered, or failed on its own, wasn't.
+        return agents.ask(params["agent"], text, model=params["model"], cancel=cancel)
     return agents.handoff(params["agent"], text, folder=params["folder"],
                           surface=params["surface"])
 

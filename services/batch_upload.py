@@ -110,7 +110,6 @@ class BatchResult:
     combined_cleanup_model: Optional[str] = None
     #: Set when the combined cleanup was attempted and fell back to raw text.
     cleanup_error: Optional[str] = None
-    canceled: bool = False
     total_elapsed_s: float = 0.0
     transcription_time_s: float = 0.0
     cleanup_time_s: float = 0.0

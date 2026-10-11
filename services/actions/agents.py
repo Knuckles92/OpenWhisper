@@ -317,7 +317,7 @@ def _ask_headless(agent: installed_agents.InstalledAgent, text: str, model: str,
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
     if run.status == "canceled":
-        return ActionResult(False, f"Stopped asking {name}.")
+        return ActionResult(False, f"Stopped asking {name}.", stopped=True)
     if run.status == "timeout":
         return ActionResult(False, f"{name} didn't answer in time.")
     if run.status == "unstartable":
@@ -670,7 +670,7 @@ def _ask_opencode(agent: installed_agents.InstalledAgent, text: str, model: str,
         if session_id:
             conn.notify("session/cancel", {"sessionId": session_id})
         if cancel.is_set():
-            return ActionResult(False, f"Stopped asking {name}.")
+            return ActionResult(False, f"Stopped asking {name}.", stopped=True)
         if time.monotonic() >= deadline:
             return ActionResult(False, f"{name} didn't answer in time.")
         detail = str(exc)
@@ -687,7 +687,7 @@ def _ask_opencode(agent: installed_agents.InstalledAgent, text: str, model: str,
         conn.close(wait_s=1.0)
     reason = result.get("stopReason") if isinstance(result, dict) else None
     if reason == "cancelled":
-        return ActionResult(False, f"Stopped asking {name}.")
+        return ActionResult(False, f"Stopped asking {name}.", stopped=True)
     if reason == "refusal":
         return ActionResult(False, "OpenCode's model wouldn't answer that.")
     with lock:

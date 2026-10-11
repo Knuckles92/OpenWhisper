@@ -106,7 +106,7 @@ class BlockedAsk:
         self.started.set()
         while not self.release.is_set():
             if cancel is not None and cancel.wait(0.01):
-                return ActionResult(False, "Canceled")
+                return ActionResult(False, "Stopped asking Claude Code.", stopped=True)
         return ActionResult(True, "", "the answer")
 
 

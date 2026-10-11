@@ -30,7 +30,7 @@ class BlockedAsk:
             self.calls.append((text, cancel))
         while not self.release.is_set():
             if cancel is not None and cancel.wait(0.01):
-                return ActionResult(False, "Stopped asking Claude Code.")
+                return ActionResult(False, "Stopped asking Claude Code.", stopped=True)
         return ActionResult(True, "", "the answer: " + text)
 
     def started(self, count):

@@ -391,6 +391,7 @@ def test_cancel_kills_the_agent_and_its_helpers(fakes, monkeypatch):
     pid = int(pid_file.read_text()) if pid_file.exists() else None
     try:
         assert not result.ok and result.message == "Stopped asking Codex."
+        assert result.stopped  # the action runtime reports it as canceled
         assert pid is not None and _wait_dead(pid)
     finally:
         if pid is not None:
@@ -486,4 +487,4 @@ def test_opencode_timeout_and_cancel_end_the_session(fakes, monkeypatch):
     cancel = threading.Event()
     threading.Timer(1.0, cancel.set).start()
     canceled = agents.ask("opencode_cli", WORDS, timeout_s=60, cancel=cancel)
-    assert canceled.message == "Stopped asking OpenCode."
+    assert canceled.message == "Stopped asking OpenCode." and canceled.stopped

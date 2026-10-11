@@ -122,7 +122,7 @@ def test_a_quick_answer_that_came_back_as_it_was_canceled_is_too_late(h, monkeyp
 def test_one_cancel_says_once_what_it_stopped_and_what_was_too_late(h, drained, monkeypatch):
     def ask(agent_id, text, *, model="", timeout_s=120.0, cancel=None):
         cancel.wait(5)
-        return ActionResult(False, "Stopped asking Claude Code.")
+        return ActionResult(False, "Stopped asking Claude Code.", stopped=True)
 
     monkeypatch.setattr(agents, "ask", ask)
     h.add(QUICK)
