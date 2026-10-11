@@ -5,7 +5,7 @@ import os
 import tempfile
 import time
 from contextlib import ExitStack
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -43,41 +43,14 @@ AGENT = {
 }
 
 
-@dataclass(frozen=True)
-class _Status:
-    """routing.RoutingStatus with the ``fix`` field the routing fixes add."""
-
-    enabled: bool
-    ready: bool
-    message: str
-    fix: str = ""
-
-
 @pytest.fixture(autouse=True)
 def routing_status(monkeypatch):
-    """Routing's own words, with the ``fix`` the page reads; tests may set ``.fixed``.
-
-    The routing fixes add ``RoutingStatus.fix`` and these constants; this
-    branch is tested before they merge, so it states them here.
-    """
-    for name, value in (("FIX_FAST_JUDGMENTS", "fast_judgments"), ("FIX_ACTIONS", "actions"),
-                        ("FIX_TRIGGER", "trigger")):
-        monkeypatch.setattr(routing, name, value, raising=False)
+    """Routing's own status, unless a test sets ``.fixed``."""
     real = routing.status
     state = MagicMock()
     state.fixed = None
-
-    def status(settings):
-        if state.fixed is not None:
-            return state.fixed
-        found = real(settings)
-        fix = ""
-        if found.enabled and not found.ready:
-            fix = (routing.FIX_FAST_JUDGMENTS if "Fast judgments" in found.message
-                   else routing.FIX_ACTIONS)
-        return _Status(found.enabled, found.ready, found.message, fix)
-
-    monkeypatch.setattr(routing, "status", status)
+    monkeypatch.setattr(routing, "status",
+                        lambda settings: state.fixed if state.fixed is not None else real(settings))
     return state
 
 
@@ -415,8 +388,8 @@ def test_route_by_voice_status_follows_its_shortcut(make_dialog, monkeypatch):
     # Whether anything starts Route by voice depends on its shortcut.
     def status(settings):
         if settings.get("hotkeys", {}).get("route_record"):
-            return _Status(True, True, "Route by voice is on.")
-        return _Status(True, False, "Set a Route by voice shortcut below.", routing.FIX_TRIGGER)
+            return routing.RoutingStatus(True, True, "Route by voice is on.")
+        return routing.RoutingStatus(True, False, "Set a Route by voice shortcut below.", routing.FIX_TRIGGER)
 
     monkeypatch.setattr(routing, "status", status)
     dialog, _store = make_dialog({SettingsKey.VOICE_ROUTING_ENABLED: True})
@@ -479,7 +452,7 @@ def test_closing_settings_without_the_app_is_quiet(make_dialog):
     ("fast_judgments", True), ("actions", False), ("trigger", False), ("", False)])
 def test_the_fast_judgments_link_shows_only_when_they_are_the_fix(make_dialog, routing_status,
                                                                   fix, linked):
-    routing_status.fixed = _Status(True, False, "Route by voice needs something.", fix)
+    routing_status.fixed = routing.RoutingStatus(True, False, "Route by voice needs something.", fix)
     dialog, _store = make_dialog({SettingsKey.VOICE_ROUTING_ENABLED: True})
     status = dialog.actions_routing_status
     assert status.state == "attention"
@@ -487,14 +460,14 @@ def test_the_fast_judgments_link_shows_only_when_they_are_the_fix(make_dialog, r
 
 
 def test_route_by_voice_off_has_no_link(make_dialog, routing_status):
-    routing_status.fixed = _Status(False, False, "Route by voice is off.")
+    routing_status.fixed = routing.RoutingStatus(False, False, "Route by voice is off.")
     dialog, _store = make_dialog()
     assert dialog.actions_routing_status.state == "off"
     assert not dialog.actions_routing_status.link.isVisible()
 
 
 def test_the_privacy_line_says_what_each_way_of_routing_sends(make_dialog, routing_status):
-    routing_status.fixed = _Status(True, False, "Route by voice needs Fast judgments.",
+    routing_status.fixed = routing.RoutingStatus(True, False, "Route by voice needs Fast judgments.",
                                    routing.FIX_FAST_JUDGMENTS)
     dialog, _store = make_dialog({SettingsKey.VOICE_ROUTING_ENABLED: True})
     privacy = dialog.actions_routing_privacy
@@ -507,7 +480,7 @@ def test_the_privacy_line_says_what_each_way_of_routing_sends(make_dialog, routi
         "Everything you record with the Route by voice shortcut, and normal dictations that "
         "start with an action's name, are sent to TypeSafe or OpenRouter to choose the action.")
     # Ready, routing's own words say what is sent.
-    routing_status.fixed = _Status(True, True, "Route by voice is on.")
+    routing_status.fixed = routing.RoutingStatus(True, True, "Route by voice is on.")
     settings_actions.refresh(dialog)
     assert not privacy.isVisible()
 
