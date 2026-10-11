@@ -144,7 +144,7 @@ talking to a local API.
 9. **Live API** (see Contracts): state, SSE events, actions list/run,
    recording start/stop/cancel, filter leases, notices. Permissions:
    `api_live_events` (on), `api_run_actions`, `api_control_recording`,
-   `api_text_filters` (off).
+   `api_text_filters`, `api_agent_prompts` (off).
 10. **MCP**: tools `get_live_state`, `list_actions`, `run_action`,
     `start_dictation`, `stop_dictation`, `cancel_dictation`, `recent_events`,
     `notify_user`, gated by the same permissions, plus the MCP Events draft
@@ -215,14 +215,14 @@ SCHEMA_VERSION = 1
 @dataclass(frozen=True)
 class Event:
     id: str          # "evt_" + 24 hex chars, unique
-    seq: int         # 1, 2, 3 … per app session
+    seq: int         # counts up; the app's bus starts each run after a per-boot base
     type: str        # catalog type
     time: str        # ISO-8601 UTC with milliseconds and "Z"
     data: Mapping[str, Any]   # JSON-safe
     def to_dict(self) -> dict      # {"id","seq","type","time","v","data"}
     def to_json(self) -> str       # compact, ensure_ascii=False
 class EventBus:
-    def __init__(self, *, buffer_size: int = 500) -> None
+    def __init__(self, *, buffer_size: int = 500, seq_base: int = 0) -> None
     def publish(self, event_type: str, data: Mapping[str, Any], *, replay: bool = True) -> Event
         # any thread, never blocks; replay=False (live preview) skips the replay buffer
     def subscribe(self, callback: Callable[[Event], None], *,
@@ -244,7 +244,7 @@ def set_bus(replacement: Optional[EventBus]) -> EventBus   # tests
 ```
 A callback that raises is logged (type name only) and stays subscribed. A
 callback slower than 1 s is logged once. `publish` validates that `data` is
-JSON-serializable (`TypeError` → logged, event dropped).
+JSON-serializable and encodes as UTF-8 (`TypeError` → logged, event dropped).
 
 ### `services/automation/catalog.py` (FULL)
 
@@ -258,10 +258,10 @@ return the `data` dict, so every publisher produces the same shape.
 | `recording.canceled` | `job_id` | foundation |
 | `transcription.preview` | `job_id, text, final` (≤ 4/s) | foundation |
 | `transcription.completed` | `job_id, mode, action_id, source, routed, text, raw_text, language, app, cleanup, audio_s` | foundation |
-| `transcription.failed` | `job_id, error` | foundation |
+| `transcription.failed` | `job_id, error, message` | foundation |
 | `history.saved` | `job_id, record_id, kind` | foundation |
-| `action.ran` | `job_id, action_id, name, kind, ok, message, output` | C |
-| `channel.message` | `job_id, action_id, text, app` | C |
+| `action.ran` | `job_id, action_id, name, kind, source, ok, message, output, text` | C |
+| `channel.message` | `job_id, action_id, source, text, app` | C |
 | `route.decided` | `job_id, action_id, confidence, fallback` | F |
 | `filter.failed` | `filter_id, name, stage, reason` | B |
 | `meeting.started` | `meeting_id, title` | A (meeting_events) |
@@ -280,7 +280,7 @@ maps every type to a one-line description (UI checklists, docs, events/list).
 ### `services/automation/permissions.py` (FULL)
 
 ```python
-LIVE_EVENTS, RUN_ACTIONS, CONTROL_RECORDING, TEXT_FILTERS  # SettingsKey values
+LIVE_EVENTS, RUN_ACTIONS, CONTROL_RECORDING, TEXT_FILTERS, AGENT_PROMPTS  # SettingsKey values
 ALL: tuple[str, ...]
 class PermissionDenied(Exception): permission: str; message: str
 def granted(settings: Mapping, permission: str) -> bool
@@ -576,6 +576,7 @@ The MCP page keeps its module (`settings_mcp.py`, H).
 | `api_run_actions` | bool, False | A / H |
 | `api_control_recording` | bool, False | A / H |
 | `api_text_filters` | bool, False | A / H |
+| `api_agent_prompts` | bool, False | review fixes / H |
 | `automation_webhooks` | list, [] | B / H |
 | `automation_programs` | list, [] | B / H |
 | `automation_filters` | list, [] | B / H |
@@ -588,7 +589,7 @@ Secrets live in the credential store, never in settings:
 persist in `config.MCP_EVENT_SUBSCRIPTIONS_FILE` (JSON, data root).
 Backup restore: every webhook, program, filter, and webhook/program/agent
 action comes back disabled; `api_run_actions`, `api_control_recording`,
-`api_text_filters`, `mcp_events_enabled` false; `actions` is exempt from the
+`api_text_filters`, `api_agent_prompts`, `mcp_events_enabled` false; `actions` is exempt from the
 URL scrub (link templates need their query).
 
 ## Ownership
@@ -696,7 +697,8 @@ Deviations the streams made, and why; the code is the reference.
   (2025-11-25 and older) because Claude Code registers channels only there; it
   answers `server/discover` with method-not-found, reads the Windows stdin pipe
   with PeekNamedPipe (synchronous pipe I/O serialises the process), and leaves
-  `source` out of meta (Claude Code already adds it). A session that loads the
+  `source` out of meta (Claude Code already adds it; `origin` says where the
+  words came from). A session that loads the
   entry without the channel flag still counts as a listener.
 - **Routing** threshold is 0.5 (measured; `benchmarks/voice_routing`), the
   gate tolerates fillers, lead-ins, name tails and sound-alike words, and Route

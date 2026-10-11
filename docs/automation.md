@@ -53,8 +53,8 @@ why; if its transform can't run, it gets your cleaned-up words instead and
 says so. Actions a program starts over the API never touch your clipboard.
 
 Actions that take a while (an agent's answer, a webhook, a program) keep
-running after the dictation is saved, up to 8 at a time. **Cancel** stops
-them, along with any recording.
+running after the dictation is saved, 4 at a time with up to 4 more waiting.
+**Cancel** stops them, along with any recording.
 
 The **Agent hotkey** card at the top of the page sets up the action for your
 installed agent in one place. **Try it** runs an action with sample words
