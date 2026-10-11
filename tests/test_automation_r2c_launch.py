@@ -222,8 +222,17 @@ def test_the_command_is_filled_in_as_shellexecute_does(template, expected):
 
 
 def test_the_link_goes_in_as_it_is():
-    link = r"s:a\1 %1 \\ $(x) & | ^ é 😀"
+    link = r"s:a\1%1\\$(x)&|^é😀"
     assert launch._fill_command('"p.exe" "%1"', link) == f'"p.exe" "{link}"'
+
+
+@pytest.mark.parametrize("link, filled", [
+    ('s:x" -profile "C:\\evil', 's:x%22%20-profile%20%22C:\\evil'),  # can't end the quotes
+    ("s:a b\tc", "s:a%20b%09c"),                                     # one argument
+    ("s:a\u2003b", "s:a%E2%80%83b"),                                 # UTF-8 bytes
+])
+def test_a_link_cant_leave_its_argument(link, filled):
+    assert launch._fill_command('"p.exe" -osint -url "%1"', link) == f'"p.exe" -osint -url "{filled}"'
 
 
 def test_a_handler_whose_program_is_gone_counts_as_missing(windows, monkeypatch):

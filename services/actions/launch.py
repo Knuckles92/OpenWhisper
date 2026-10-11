@@ -232,13 +232,22 @@ _FIELD_RE = re.compile(r"%(.)", re.DOTALL)
 def _fill_command(template: str, uri: str) -> str:
     """A protocol's command line with ``uri`` filled in the way ShellExecute does it.
 
-    The link goes in as it is, inside whatever quotes the command puts around
-    it; ``%%`` is a percent sign and other fields stay as written.
+    The link goes in inside whatever quotes the command puts around it, with
+    quotes, whitespace and control characters percent-encoded: a link never
+    contains them, and they could end those quotes or split the link into
+    more arguments. ``%%`` is a percent sign and other fields stay as written.
     """
+    link = "".join(
+        "".join(f"%{byte:02X}" for byte in ch.encode("utf-8"))
+        if ch == '"' or ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F
+        else ch
+        for ch in uri
+    )
+
     def field(match: re.Match) -> str:
         name = match.group(1).upper()
         if name in _LINK_FIELDS:
-            return uri
+            return link
         if name in _PARAMETER_FIELDS:
             return ""
         return "%" if name == "%" else match.group(0)
