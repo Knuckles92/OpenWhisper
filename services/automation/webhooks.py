@@ -81,6 +81,10 @@ class SecretUnavailable(RuntimeError):
     """
 
 
+#: Why a delivery to a webhook that is no longer saved, with no secret, failed.
+SECRET_MISSING = "The signing secret is missing."
+
+
 def _iso_now() -> str:
     now = datetime.now(timezone.utc)
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
@@ -147,6 +151,36 @@ def ensure_secret(hook_id: str) -> str:
             existing = store().get(name)
             if existing:
                 return existing
+            secret = signing.new_secret()
+            store().set(name, secret)
+        except Exception as exc:
+            raise SecretUnavailable(_store_copy(exc)) from exc
+    return secret
+
+
+def _delivery_secret(hook_id: str) -> Optional[str]:
+    """The secret a delivery signs with; None when the webhook is no longer saved.
+
+    A saved webhook's secret is made on its first delivery. Settings deletes
+    a webhook from settings before it calls ``delete_secret``, and this
+    checks settings under the same lock before making one, so a delivery or
+    test already on its way never brings a deleted webhook's secret back.
+
+    Raises:
+        SecretUnavailable: the credential store can't read or save it.
+    """
+    from services.automation import signing
+    from services.automation.models import find_webhook
+    from services.credentials import store
+
+    name = _secret_name(hook_id)
+    with _secret_lock:
+        try:
+            existing = store().get(name)
+            if existing:
+                return existing
+            if find_webhook(_load_settings(), hook_id) is None:
+                return None
             secret = signing.new_secret()
             store().set(name, secret)
         except Exception as exc:
@@ -484,7 +518,10 @@ def _deliver(hook: Webhook, event: Event, attempt: int,
     """One attempt; returns the record and the wait before a retry (None: done)."""
     at = _iso_now()
     try:
-        secret = ensure_secret(hook.id)
+        secret = _delivery_secret(hook.id)
+        if secret is None:
+            return DeliveryRecord(event.id, event.type, at, False, None, 0, SECRET_MISSING,
+                                  attempt), None
         body = event.to_json().encode("utf-8")
         headers = _signed_headers(secret, event.id, body)
     except SecretUnavailable as exc:
