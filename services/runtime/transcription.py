@@ -61,6 +61,19 @@ def _start_failure_message(exc: Exception) -> str:
     if isinstance(exc, EngineNotReadyError):
         return str(exc)
     return f"Failed to process audio: {exc}"
+
+
+def _reads_selection(action, source: str) -> bool:
+    """Whether an action job reads the selected text as context.
+
+    Only when the user started it: a program (the live API, MCP) must not
+    learn what is selected in the user's app by running an action.
+    """
+    return (action.param("include_selection") is True
+            and source in event_catalog.USER_SOURCES)
+
+
+
 #: ``_maybe_cleanup_transcript``'s default: the profile the recording started with.
 _RECORDING_PROFILE = object()
 #: Status when a text filter answered that it handled the words itself.
@@ -126,6 +139,9 @@ class TranscriptionRuntime:
         # A text filter answered that it handled the words: save them, but
         # deliver nothing. Set by the worker, read by on_transcription_complete.
         self._filter_canceled = False
+        # Spoken routing's judge couldn't answer, so the words are pasted
+        # with a notice saying so. Set by the worker, read by _deliver.
+        self._route_failed = False
         # Decodes a long dictation's completed windows while it is recorded.
         self._incremental = IncrementalDictation()
         self._stop_started_at = 0.0
@@ -188,6 +204,7 @@ class TranscriptionRuntime:
             self._rewrite_pending = False
             self._refused = False
             self._filter_canceled = False
+            self._route_failed = False
             self._formatting_profile = None
             self._shaping_notice = ""
             self._job_active = False
@@ -351,9 +368,7 @@ class TranscriptionRuntime:
                 action_id=action.id if action is not None else "",
                 source=source,
                 route=route,
-                include_selection=bool(
-                    action is not None and action.param("include_selection") is True
-                ),
+                include_selection=action is not None and _reads_selection(action, source),
             )
             logger.info("Recording started")
             self.controller.ui_controller.clear_transcription_stats()
@@ -1236,14 +1251,19 @@ class TranscriptionRuntime:
         text = self._run_filters(BEFORE_CLEANUP, raw, job, settings)
         if text is None:
             return raw, None, None
+        # A Cancel during any stage ends the job here: canceled words never
+        # reach the next filter, the judge or cleanup.
+        self._raise_if_canceled()
         if job.mode == JobMode.DICTATION and job.route:
             job, text = self._route(text, job, settings)
+            self._raise_if_canceled()
         if job.mode == JobMode.ACTION:
             fixed, raw_text, info = self._shape_action(text, job, settings)
         else:
             fixed, raw_text, info = self._maybe_cleanup_transcript(text)
         if not (fixed or "").strip():
             return fixed, raw_text, info
+        self._raise_if_canceled()
         final = self._run_filters(AFTER_CLEANUP, fixed, job, settings)
         if final is None or final == fixed:
             return fixed, raw_text, info
@@ -1259,7 +1279,7 @@ class TranscriptionRuntime:
         from services.automation import filters
 
         try:
-            outcome = filters.apply(stage, text, job, settings)
+            outcome = filters.apply(stage, text, job, settings, cancel=self._cancel_requested)
         except Exception:
             logger.warning("Text filters failed; keeping the text")
             return text
@@ -1273,16 +1293,21 @@ class TranscriptionRuntime:
     def _route(self, text: str, job, settings):
         """``(job, text)``: an ACTION job when the words name an action; worker.
 
-        Anything short of a confident answer leaves the dictation as it is.
+        Anything short of a confident answer leaves the dictation as it is;
+        when the judge couldn't answer, the paste says so.
         """
         from services.actions import routing
         from services.actions.model import find_action
 
         try:
-            decision = routing.decide(text, job, settings)
+            decision = routing.decide(text, job, settings, cancel=self._cancel_requested)
         except Exception:
             logger.warning("Spoken routing failed; pasting the dictation")
             decision = None
+        if decision is not None and decision.failure:
+            with self._job_lock:
+                self._route_failed = True
+            return job, text
         action = find_action(settings, decision.action_id) if decision is not None else None
         if action is None or not action.enabled:
             return job, text
@@ -1373,8 +1398,12 @@ class TranscriptionRuntime:
         Raises:
             ControlError: ``refused``, ``not_found`` or ``busy``, with a
                 message to show.
+            PermissionDenied: A program (``source`` api or mcp) asked for an
+                agent or Claude Code channel action without the
+                AGENT_PROMPTS permission.
         """
-        from services.actions.model import find_action
+        from services.actions.model import ActionKind, find_action
+        from services.automation import permissions
         from services.automation.control import BUSY, NOT_FOUND, REFUSED, ControlError
 
         text = (text or "").strip()
@@ -1386,9 +1415,15 @@ class TranscriptionRuntime:
         action = find_action(settings, action_id)
         if action is None or not action.enabled:
             raise ControlError(NOT_FOUND, "No enabled action has that id.")
+        if (source not in event_catalog.USER_SOURCES
+                and action.kind in (ActionKind.AGENT, ActionKind.CHANNEL)):
+            # A program's words would reach the user's coding agent as a prompt.
+            permissions.require(settings, permissions.AGENT_PROMPTS)
+        if not self.controller.action_runtime.accepting():
+            raise ControlError(BUSY, "OpenWhisper isn't taking actions right now.")
         job = dictation_pipeline.begin_job(
             JobMode.ACTION, settings, action_id=action.id, source=source,
-            include_selection=action.param("include_selection") is True,
+            include_selection=_reads_selection(action, source),
         )
         if not self.begin_rewrite_job(job, source_name=f"Action · {action.name}"):
             raise ControlError(BUSY, "OpenWhisper is busy with another recording.")
@@ -1667,7 +1702,14 @@ class TranscriptionRuntime:
         )
         if pasted:
             dictation_pipeline.after_paste(job, text, before_cleanup)
-        if job is not None and job.route == "hotkey":
+        with self._job_lock:
+            route_failed = self._route_failed
+        if job is not None and job.route and route_failed:
+            # The judge couldn't answer, which is not the same as no action
+            # being named: the words may have been meant for one.
+            reason = "Couldn't reach Fast judgments"
+            self._notify(f"{reason} — pasted instead" if pasted else reason)
+        elif job is not None and job.route == "hotkey":
             # Route by voice found no action for these words; say so, since
             # the user asked for a route, not a paste.
             self._notify(
@@ -1903,6 +1945,13 @@ class TranscriptionRuntime:
             job: A command or transform DictationJob carrying the selection.
             source_name: How the history entry names where the text came from.
         """
+        # Under the capture lock, like a start, stop or cancel: a recording
+        # being stopped has stopped its stream before it claims the slot,
+        # and a rewrite (an action run over the API) must not take it then.
+        with self._capture_lock:
+            return self._begin_rewrite_job(job, source_name=source_name)
+
+    def _begin_rewrite_job(self, job, *, source_name: str) -> bool:
         # Rewrites run from other apps, so a refusal also shows by the pointer.
         if self.controller.recorder.is_recording:
             self._notify(self._report_busy("rewriting text"))

@@ -50,6 +50,8 @@ PUBLIC_TYPES: tuple[str, ...] = tuple(t for t in EVENT_TYPES if t != EVENTS_GAP)
 
 #: Values of ``source``: who started the job.
 SOURCES = ("hotkey", "ui", "api", "mcp", "dbus", "routing")
+#: Sources where the user started the job; any other is a program's request.
+USER_SOURCES = frozenset({"hotkey", "ui", "dbus"})
 #: ``mode`` of a transcription read from a file rather than dictated live.
 FILE_MODE = "file"
 #: Modes whose ``raw_text`` is the words before AI cleanup. A command's or

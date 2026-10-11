@@ -2503,7 +2503,13 @@ class ApplicationController(QObject):
         return True
 
     def cancel(self) -> None:
+        """The user's Cancel (shortcut, buttons, tray, D-Bus, API, MCP).
+
+        Stops the recording or transcription, and any action still running:
+        an agent still thinking must not paste its answer after "Canceled".
+        """
         self.transcription_runtime.cancel()
+        self.action_runtime.cancel()
 
     def minimize_to_tray(self) -> None:
         """Toggle the main window between tray-hidden and foreground states.
