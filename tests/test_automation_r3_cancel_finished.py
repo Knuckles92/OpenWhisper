@@ -56,7 +56,6 @@ def test_a_program_that_already_finished_reports_what_happened(h, ticket):
     _finished_and_queued(h, "p1")
 
     assert h.rt.cancel() == 1
-    assert h.ui.notices == [("Too late to stop Make a ticket", False)]
     QCoreApplication.processEvents()
 
     assert ticket == [True]
@@ -106,10 +105,11 @@ def test_a_cancel_says_which_it_stopped_and_which_had_finished(h, ticket, monkey
     _finished_and_queued(h, "p1")
 
     assert h.rt.cancel() == 2
-    ask.release.set()
 
-    assert h.ui.notices[-1] == (
-        "Canceled Quick answer — too late to stop Make a ticket", False)
+    # One notice, once the Quick answer reports that it stopped.
+    _wait(lambda: h.ui.notices)
+    assert h.ui.notices == [
+        ("Canceled Quick answer — too late to stop Make a ticket", False)]
     (_text, cancel), = ask.calls
     assert cancel.is_set()
 

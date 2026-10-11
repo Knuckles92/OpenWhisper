@@ -86,7 +86,7 @@ def test_the_users_cancel_while_a_delivered_job_is_saved_stops_its_quick_answer(
 
     (_text, cancel), = h.ask.calls
     assert cancel.is_set()
-    assert h.ui.statuses[-1] == "Canceled Quick answer"
+    _wait(lambda: h.ui.statuses[-1] == "Canceled Quick answer")
     # Nothing was recording or transcribing, so no recording says it was canceled.
     assert catalog.RECORDING_CANCELED not in types(h)
 

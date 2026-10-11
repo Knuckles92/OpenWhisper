@@ -138,6 +138,7 @@ def test_a_try_it_run_is_canceled_and_told_so(h, blocked):
 
     assert h.rt.cancel() == 1
 
+    _wait(lambda: results)  # once the ask reports that it stopped
     assert results == [ActionResult(False, runtime.CANCELED_MESSAGE)]
     assert _ran(h)[-1]["source"] == "ui"
 
@@ -150,6 +151,7 @@ def test_cancel_can_spare_the_users_own_runs(h, blocked):
 
     assert h.rt.cancel(tests_only=True) == 1
 
+    _wait(lambda: results)
     assert results == [ActionResult(False, runtime.CANCELED_MESSAGE)]
     (mine,) = [cancel for text, cancel in blocked.calls if text == "mine"]
     assert not mine.is_set()
