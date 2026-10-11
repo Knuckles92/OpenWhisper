@@ -2,7 +2,9 @@
 
 OpenWhisper's opt-in local HTTP API lets scripts and agent clients search saved
 dictations and meetings, then retrieve the source text and meeting insights.
-The desktop app also provides an opt-in [MCP server](mcp.md) in Settings → MCP.
+The desktop app also provides an opt-in [MCP server](mcp.md) in Settings → API & MCP,
+and, on the same listener, a [live API](automation.md#live-api) with events,
+actions and recording control. This standalone History API serves history only.
 An installable agent skill remains a follow-up integration.
 
 The API runs as a separate, headless process using the app's existing FastAPI

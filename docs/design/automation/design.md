@@ -657,3 +657,48 @@ when a stub returns nothing. Merge order: B, A, C2, C, D, E, F, H, G.
   in your report.
 - Do not edit CHANGELOG, README, docs or this file. Report user-visible
   changes, contract gaps, and anything you could not verify.
+
+## Changes during integration
+
+Deviations the streams made, and why; the code is the reference.
+
+- **Selection context** is `job.snapshot().text` (`TextContext.selected` with
+  `selection_known`), not `text_context`. A routed dictation, or any job
+  with `route` set, records `target` even with app awareness off, so a later
+  answer can be pasted into the app it started in.
+- **Paste for answers**: `TranscriptionRuntime.paste_text_now(text, *, job=None)`
+  lets an action's answer paste while its own job still holds the slot.
+- **Webhooks** expose `post_signed_reply(...) -> (DeliveryRecord, body)`,
+  `msg_id=`/`headers=` keywords, `SecretUnavailable`, `user_agent()`;
+  `programs.child_env(extra)` (program hooks and program actions both use
+  it, so OpenWhisper's `.env` keys never reach user programs);
+  `filters.drop_all_leases()` (called when the listener stops). Leases need
+  `api_text_filters` at dictation time, not only when registered, and
+  `Lease.expires_at` is wall-clock.
+- **Launch** detects URL handlers on Windows with `AssocQueryStringW` (MSIX
+  apps declare protocols in their manifest, leaving a bare registry key);
+  `open_in_terminal` takes `env=`, refuses `.cmd`/`.bat`/`.ps1`, and on macOS
+  runs a one-shot `.command` script with every argument shell-quoted. Claude
+  Code gets a lone word with a trailing space, because it reads a lone word
+  naming one of its commands (`purge`, `update`) as that command even after
+  `--`.
+- **Agent ask**: Codex runs with `--ignore-user-config` (no user MCP servers,
+  hooks or notify program; the configured default model is passed with `-m`);
+  OpenCode asks over ACP with deny-all permissions.
+- **Live API**: cancel when idle is `refused`; Meeting Mode during a start is
+  `busy`; SSE data lines escape U+2028/U+2029/U+0085; `events.gap` has no
+  `id:` and seq 0; Last-Event-ID wins over `since`.
+- **MCP Events** follows ChatGPT's published shape: `capabilities.events`,
+  verification challenge, delivery body `{eventId, name, timestamp, data,
+  cursor}`, `X-MCP-Subscription-Id`, retries 2/10/60 s, 410 removes the
+  subscription, error codes from the incubation sketch (CallbackEndpointError
+  -32015 as ChatGPT documents). `events_ext` keeps its own pooled HTTP client.
+- **Channel bridge** is a hand-rolled stdio server on the initialize handshake
+  (2025-11-25 and older) because Claude Code registers channels only there; it
+  answers `server/discover` with method-not-found, reads the Windows stdin pipe
+  with PeekNamedPipe (synchronous pipe I/O serialises the process), and leaves
+  `source` out of meta (Claude Code already adds it). A session that loads the
+  entry without the channel flag still counts as a listener.
+- **Routing** threshold is 0.5 (measured; `benchmarks/voice_routing`), the
+  gate tolerates fillers, lead-ins, name tails and sound-alike words, and Route
+  by voice says "No action matched — pasted instead" when it falls back.
