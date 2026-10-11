@@ -556,6 +556,8 @@ class ApplicationController(QObject):
         )
         self.ui_controller.on_settings_changed = self.on_settings_changed
         self.ui_controller.on_try_action = self.action_runtime.test
+        self.ui_controller.on_cancel_try_runs = (
+            lambda: self.action_runtime.cancel(tests_only=True))
 
     def command_key_pressed(self, at: float) -> None:
         """The Command Mode shortcut went down; hotkey dispatcher thread."""

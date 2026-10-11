@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Callable, Mapping, Optional
 
-from PyQt6.QtCore import QTimer, pyqtSignal
+from PyQt6.QtCore import QPoint, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QLabel, QMessageBox, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from services.actions.model import (
@@ -33,6 +33,8 @@ from ui_qt.widgets.reflow import Reflow
 LIST, GALLERY, EDITOR = "list", "gallery", "editor"
 #: How long a just-saved card glows.
 FLASH_MS = 1600
+#: Room kept above and below a part of the page scrolled into view.
+REVEAL_MARGIN = 24
 
 
 def unique_name(name: str, settings: Mapping) -> str:
@@ -60,6 +62,8 @@ class ActionsPanel(QWidget):
     actions_changed = pyqtSignal()
     capture_changed = pyqtSignal(bool)
     destination_requested = pyqtSignal(str)
+    #: The page came into view; another page may have changed what it shows.
+    shown = pyqtSignal()
 
     def __init__(self, *, manager, try_action: Callable, parent=None):
         super().__init__(parent)
@@ -125,14 +129,28 @@ class ActionsPanel(QWidget):
         settings = self._settings() if settings is None else settings
         actions = [a for a in load_actions(settings) if a.id != AGENT_ACTION_ID]
         self.list.set_actions(actions)
+        if self.mode == EDITOR:
+            self.editor.refresh_choices(settings)
+            self._follow_saved(settings)
         self.add_button.setEnabled(len(load_actions(settings)) < MAX_ACTIONS)
         # With no actions the empty card's own button invites the first one.
         self.add_button.setVisible(self.mode == LIST and bool(actions))
         self.add_button.setToolTip(
             "" if self.add_button.isEnabled()
             else f"You can keep up to {MAX_ACTIONS} actions. Delete one to add another.")
-        if self.mode == EDITOR:
-            self.editor.refresh_choices(settings)
+
+    def _follow_saved(self, settings: Mapping) -> None:
+        """The action being edited changed or went away elsewhere, such as on the agent card."""
+        before = self.editor.saved_action
+        if before is None:
+            return
+        saved = find_action(settings, before.id)
+        if saved is None:
+            self.editor.discard()
+            self._show(LIST)
+            self.show_notice(f"{before.name} was removed.")
+        elif saved != before:
+            self.editor.follow(saved)
 
     def _show(self, mode: str) -> None:
         self.mode = mode
@@ -152,18 +170,43 @@ class ActionsPanel(QWidget):
 
     def start_from_preset(self, preset: Preset) -> None:
         settings = self._settings()
+        # "What it's for" starts empty: routing sends it to the judge, and a
+        # preset's blurb says what the preset does, not what you'd use it for.
         action = Action(
             new_id(), unique_name(preset.name, settings), preset.kind, dict(preset.params),
-            shaping=preset.shaping, description=preset.description.rstrip("."),
+            shaping=preset.shaping,
         )
         self._open_editor(action, is_new=True, note=preset.note)
 
     def edit(self, action_id: str) -> None:
+        if self.mode == EDITOR and not self.editor.is_new and self.editor.action_id == action_id:
+            self._scroll_to(self.editor)  # Already open, with whatever you changed.
+            return
         action = find_action(self._settings(), action_id)
         if action is None:
             self.refresh()
             return
-        self._open_editor(action, is_new=False)
+        if self._leave_editor():
+            self._open_editor(action, is_new=False)
+
+    def _leave_editor(self) -> bool:
+        """Before the editor shows another action: save this one's changes, drop them, or stay.
+
+        Returns:
+            False to keep editing this one.
+        """
+        if self.mode != EDITOR or not self.editor.has_unsaved_changes():
+            return True
+        name = self.editor.draft().name or "this action"
+        answer = QMessageBox.question(
+            self, "Unsaved action", f"Save your changes to {name}?",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if answer == QMessageBox.StandardButton.Save:
+            return self.editor.save()
+        return answer == QMessageBox.StandardButton.Discard
 
     def _open_editor(self, action: Action, *, is_new: bool, note: str = "") -> None:
         self.show_notice("")
@@ -234,6 +277,10 @@ class ActionsPanel(QWidget):
 
     # ---- small touches ----
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.shown.emit()
+
     def show_notice(self, text: str, tone: str = "") -> None:
         self.notice.setText(text)
         set_style_property(self.notice, "tone", tone)
@@ -266,5 +313,12 @@ class ActionsPanel(QWidget):
         area = self.parentWidget()
         while area is not None and not isinstance(area, QScrollArea):
             area = area.parentWidget()
-        if area is not None:
-            area.ensureWidgetVisible(target, 0, 24)
+        if area is None:
+            return
+        if target.height() + 2 * REVEAL_MARGIN <= area.viewport().height():
+            area.ensureWidgetVisible(target, 0, REVEAL_MARGIN)
+            return
+        # Too tall to show whole (ensureWidgetVisible would centre it): its
+        # top, where the title and the first field are.
+        top = target.mapTo(area.widget(), QPoint(0, 0)).y()
+        area.verticalScrollBar().setValue(top - REVEAL_MARGIN)

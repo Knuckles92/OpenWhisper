@@ -115,6 +115,10 @@ class ActionCard(InfoTile):
             self.switch.setChecked(on)
         set_style_property(self, "off", not on)
 
+    def focus_order(self) -> tuple[QWidget, ...]:
+        """Its controls in the order they read: the switch at the top, then Edit and Delete."""
+        return (self.switch, self.edit_link, self.delete_link)
+
 
 class ActionList(QWidget):
     """The cards, two to a row when there's room, or an invitation to add one."""
@@ -160,6 +164,8 @@ class ActionList(QWidget):
         self.grid.setVerticalSpacing(12)
         layout.addWidget(self.grid_box)
         self.cards: list[ActionCard] = []
+        #: The actions the cards were made from; None before the first.
+        self._actions: Optional[list[Action]] = None
         self._columns = 0
         self._reflow_timer = QTimer(self)
         self._reflow_timer.setSingleShot(True)
@@ -170,6 +176,10 @@ class ActionList(QWidget):
         return next((card for card in self.cards if card.action.id == action_id), None)
 
     def set_actions(self, actions: list[Action]) -> None:
+        if list(actions) == self._actions:
+            # Nothing changed: the cards keep their place, their focus and any glow.
+            return
+        self._actions = list(actions)
         for card in self.cards:
             self.grid.removeWidget(card)
             card.hide()
@@ -185,6 +195,19 @@ class ActionList(QWidget):
         self.grid_box.setVisible(bool(self.cards))
         self._columns = 0
         self._arrange()
+        self._chain_focus()
+
+    def _chain_focus(self) -> None:
+        """Tab reaches the cards in reading order, right after what comes before the list.
+
+        Cards are made after the rest of the page, so Tab would otherwise
+        reach them last, after Route by voice.
+        """
+        previous = self.empty_add
+        for card in self.cards:
+            for widget in card.focus_order():
+                QWidget.setTabOrder(previous, widget)
+                previous = widget
 
     def _arrange(self) -> None:
         columns = 2 if self.width() >= round(TWO_COLUMNS_FROM * current_ui_font_scale()) else 1

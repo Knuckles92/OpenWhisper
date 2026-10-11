@@ -6,6 +6,7 @@ import tempfile
 import threading
 import time
 from contextlib import ExitStack
+from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -41,6 +42,16 @@ HOOK = {
     "id": "h1", "name": "Home Assistant", "kind": "webhook",
     "params": {"url": "http://homeassistant.local/api/webhook/voice", "output": "notice"},
 }
+
+
+@dataclass(frozen=True)
+class _RoutingStatus:
+    """A routing.RoutingStatus: ``fix`` names what Route by voice still needs."""
+
+    enabled: bool
+    ready: bool
+    message: str
+    fix: str = ""
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -693,7 +704,8 @@ def test_opencode_sessions_open_in_a_terminal(make_dialog, agents):
     saved = find_action(store.load_all_settings(), AGENT_ACTION_ID)
     assert (saved.param("agent"), saved.param("surface")) == ("opencode_cli", "auto")
     assert not app.isEnabled()
-    assert fields.surface_hint.text() == "OpenCode has no app to open, so it opens in a new terminal."
+    assert fields.surface_hint.text() == (
+        "OpenCode has no app, so it opens in a new terminal and starts on your words right away.")
 
 
 def test_more_options_opens_the_full_editor_on_the_agent_action(make_dialog):
@@ -726,24 +738,24 @@ def test_routing_switches_save_and_gate_each_other(make_dialog):
     assert not on_dictation.isEnabled()
 
 
-def test_routing_status_shows_routings_own_words_and_links_until_ready(make_dialog, monkeypatch):
+def test_routing_status_shows_routings_own_words_and_links_to_its_fix(make_dialog, monkeypatch):
     from services.actions import routing
 
-    monkeypatch.setattr(routing, "status", lambda settings: routing.RoutingStatus(
+    monkeypatch.setattr(routing, "status", lambda settings: _RoutingStatus(
         False, False, "Route by voice is off."))
     dialog, _store = make_dialog()
     status = dialog.actions_routing_status
     assert status.message.text() == "Route by voice is off."
-    assert status.state == "off" and status.link.isVisible()
+    assert status.state == "off" and not status.link.isVisible()
     assert dialog.actions_routing_privacy.isVisible()
-    monkeypatch.setattr(routing, "status", lambda settings: routing.RoutingStatus(
-        True, False, "Turn on Fast judgments to route by voice."))
+    monkeypatch.setattr(routing, "status", lambda settings: _RoutingStatus(
+        True, False, "Turn on Fast judgments to route by voice.", routing.FIX_FAST_JUDGMENTS))
     dialog.actions_routing_tile.checkbox.click()
     assert status.message.text() == "Turn on Fast judgments to route by voice."
-    assert status.state == "attention"
+    assert status.state == "attention" and status.link.isVisible()
     status.link.click()
     assert dialog.rail.current_key() == "meeting_fast"
-    monkeypatch.setattr(routing, "status", lambda settings: routing.RoutingStatus(
+    monkeypatch.setattr(routing, "status", lambda settings: _RoutingStatus(
         True, True, "Ready. Words that name an action go to TypeSafe to choose it."))
     dialog.select_destination(ACTIONS)
     settings_actions.refresh(dialog)

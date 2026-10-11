@@ -421,6 +421,8 @@ class SettingsDialog(QDialog):
     # (action, sample_text, done): try a saved action from the Actions page;
     # done(ActionResult) runs on the Qt thread.
     on_try_action: Optional[Callable] = None
+    # (): cancel the Actions page's "Try it" runs still going (Settings closed).
+    on_cancel_try_runs: Optional[Callable[[], None]] = None
     get_meeting_active: Optional[Callable[[], bool]] = None
 
     def __init__(

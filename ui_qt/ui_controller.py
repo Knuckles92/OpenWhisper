@@ -159,6 +159,8 @@ class UIController(QObject):
         self.on_settings_changed: Callable[[str], None] = _ignore_settings_change
         # (action, sample_text, done): ActionRuntime.test, set by the controller.
         self.on_try_action: Optional[Callable] = None
+        # (): cancels Settings' "Try it" runs (ActionRuntime.cancel), set by the controller.
+        self.on_cancel_try_runs: Optional[Callable[[], None]] = None
         # RemoteEngineService, set by the application controller.
         self._remote_engine = None
         self.on_model_download_requested: Optional[Callable] = None
@@ -938,6 +940,11 @@ class UIController(QObject):
             return
         self.on_try_action(action, sample_text, done)
 
+    def _cancel_try_runs(self) -> None:
+        # Read at call time, like on_try_action.
+        if self.on_cancel_try_runs is not None:
+            self.on_cancel_try_runs()
+
     def show_streaming_overlay(self):
         self.streaming_flow_active = True
         self.overlay.clear_streaming_text()
@@ -1072,6 +1079,7 @@ class UIController(QObject):
         )
         dialog.on_settings_changed = self._on_settings_page_changed
         dialog.on_try_action = self._try_action
+        dialog.on_cancel_try_runs = self._cancel_try_runs
         dialog.remote_section.bind(self.remote_engine, self.select_transcription_backend)
         dialog.bind_remote_service(self.remote_engine)
         models = dialog.models
