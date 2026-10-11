@@ -10,10 +10,10 @@ slot frees as soon as its history is saved, however long an agent thinks.
 Their results come back to the Qt thread through one relay that lives for
 the session; a worker only ever emits a token and a result. At most
 ``MAX_PENDING`` of them run or wait at once; more are refused. ``cancel``
-drops the runs still waiting and stops agents and programs (killed with
-what they started); a run it is too late to stop, one whose work already
-returned included, finishes, reports what happened, and its answer goes
-nowhere.
+drops the runs still waiting and tells agents and programs under way to
+stop (killed with what they started); each one's result then says whether
+it was stopped. A run that wasn't (it can't be stopped, or its work was
+already done) finishes, reports what happened, and its answer goes nowhere.
 
 A run the user started that fails leaves the words on the clipboard, so
 nothing said is lost. One a program started over the live API or MCP never
@@ -33,7 +33,7 @@ import re
 import threading
 import traceback
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import Any, Callable, Optional
 
@@ -87,11 +87,20 @@ FULL_ANSWER_COPIED = " — full answer copied"
 
 @dataclass(frozen=True)
 class ActionResult:
-    """How a run went: ``message`` is shown as it is; ``output`` is an answer's text."""
+    """How a run went: ``message`` is shown as it is; ``output`` is an answer's text.
+
+    ``stopped``: its cancel stopped the work before it was done (a program
+    killed or never started, a quick answer that gave none).
+    """
 
     ok: bool
     message: str
     output: Optional[str] = None
+    stopped: bool = False
+
+
+#: The result of work its cancel stopped.
+_STOPPED = ActionResult(False, CANCELED_MESSAGE, stopped=True)
 
 
 def _described(exc: BaseException) -> str:
@@ -264,6 +273,10 @@ def _program(argv: list, stdin: bytes, timeout_s: float, env: dict,
 
     code, out, error = programs.run_once(argv, stdin, timeout_s=timeout_s, env=env,
                                          cancel=cancel)
+    if error == programs.CANCELED:
+        # Only a program still running is stopped: one that already exited
+        # ran to its end, whatever cancel says while its output drains.
+        return _STOPPED
     if error:
         return ActionResult(False, error)
     if code != 0:
@@ -328,7 +341,10 @@ def _agent(params: dict, text: str, job, cancel: threading.Event) -> ActionResul
         # still running.
         text = prompt_with_context(text, job.snapshot(timeout=config.CONTEXT_CAPTURE_DEADLINE_S))
     if params["mode"] == AgentMode.ASK:
-        return agents.ask(params["agent"], text, model=params["model"], cancel=cancel)
+        result = agents.ask(params["agent"], text, model=params["model"], cancel=cancel)
+        # An ask runs without tools, so one canceled before it answered
+        # left nothing behind: it was stopped. One that answered wasn't.
+        return _STOPPED if cancel.is_set() and not result.ok else result
     return agents.handoff(params["agent"], text, folder=params["folder"],
                           surface=params["surface"])
 
@@ -349,12 +365,23 @@ class _Run:
     done: Optional[Callable[[ActionResult], None]] = None
     #: Stops an agent or a program early (``cancel``, or the app closing).
     cancel: threading.Event = field(default_factory=threading.Event)
-    #: Set by the worker once the work has returned, before its result heads
-    #: for the Qt thread: from then on it is too late to stop.
-    finished: threading.Event = field(default_factory=threading.Event)
     #: Why the words aren't what the user asked for (a transform or cleanup
     #: profile that couldn't run); shown with the outcome.
     notice: str = ""
+
+
+@dataclass(eq=False)
+class _Cancel:
+    """One cancel: what it did, said once every run it is stopping has answered."""
+
+    #: Settings' "Try it" runs only: their page shows what happened.
+    quiet: bool
+    #: Runs that never started, or were stopped.
+    stopped: list = field(default_factory=list)
+    #: Runs that finished all the same.
+    late: list = field(default_factory=list)
+    #: Programs and quick answers told to stop, whose results aren't back.
+    waiting: int = 0
 
 
 @dataclass
@@ -363,19 +390,19 @@ class _Pending:
 
     run: _Run
     future: Optional[Future] = None
-    #: Canceled once under way, too late to stop: it finishes, and only
-    #: what happened is reported; its answer goes nowhere.
-    canceled: bool = False
+    #: The cancel that reached it under way. Its result says whether the
+    #: work was stopped; if not, only what happened is reported, and its
+    #: answer goes nowhere.
+    canceled_by: Optional[_Cancel] = None
 
 
-def _stoppable(run: _Run) -> bool:
-    """Whether a run under way can still be stopped: a program, or an
-    agent's quick answer (both killed with everything they started), whose
-    work hasn't returned yet (its result is on the way)."""
-    action = run.action
-    return not run.finished.is_set() and (action.kind == ActionKind.PROGRAM or (
+def _stoppable(action: Action) -> bool:
+    """Whether a run under way takes its cancel: a program, or an agent's
+    quick answer (both killed with everything they started). Whether it
+    was stopped, or its work was already done, only its result can say."""
+    return action.kind == ActionKind.PROGRAM or (
         action.kind == ActionKind.AGENT and action.param("mode") == AgentMode.ASK
-    ))
+    )
 
 
 def _runs(runs: list) -> str:
@@ -517,55 +544,69 @@ class ActionRuntime:
     def cancel(self, *, tests_only: bool = False) -> int:
         """Cancel the runs still waiting and stop those that can be; Qt thread.
 
-        A waiting run never starts, and an agent's quick answer or a program
-        is stopped with everything it started: ``action.ran`` says
-        ``Canceled``, and a Settings "Try it" gets that result too. A run
-        already under way that can't be stopped (a link opening, a webhook
-        posting, a session being handed off, or any run whose work has
-        already returned) finishes, and ``action.ran`` reports what really
+        A waiting run never starts: ``action.ran`` says ``Canceled`` now,
+        and a Settings "Try it" gets that result too. An agent's quick
+        answer or a program under way is told to stop (killed with
+        everything it started), and its result says how that went: stopped
+        (``Canceled``), or its work was already done. A run that wasn't
+        stopped, or can't be (a link opening, a webhook posting, a session
+        being handed off), finishes, and ``action.ran`` reports what really
         happened; only its answer is dropped, so nothing is pasted, copied,
         shown or put in the Scratchpad for it. Unless ``tests_only``, the
-        status line and a notice say what was canceled and what was too late.
+        status line and a notice say what was canceled and what was too
+        late, once every program and quick answer told to stop has
+        answered (within moments).
 
         Args:
             tests_only: Only Settings' "Try it" runs (its page went away).
 
         Returns:
-            How many runs the cancel reached.
+            How many runs the cancel reached, counting those an earlier
+            cancel is still stopping.
         """
+        cancel = _Cancel(quiet=tests_only)
         with self._lock:
-            stopped, late = [], []
+            canceled, earlier = [], 0
             for token, pending in list(self._pending.items()):
-                if pending.canceled or (tests_only and pending.run.done is None):
+                if tests_only and pending.run.done is None:
+                    continue
+                if pending.canceled_by is not None:
+                    earlier += 1  # an earlier cancel reached it; its result is on the way
                     continue
                 # A future that cancels hadn't started and now never will.
-                waiting = pending.future is None or pending.future.cancel()
-                if waiting or _stoppable(pending.run):
-                    stopped.append((token, self._pending.pop(token)))
+                if pending.future is None or pending.future.cancel():
+                    canceled.append((token, self._pending.pop(token)))
+                    cancel.stopped.append(pending.run)
+                    continue
+                # Under way: its result says what this cancel did.
+                pending.canceled_by = cancel
+                if _stoppable(pending.run.action):
+                    pending.run.cancel.set()
+                    cancel.waiting += 1
                 else:
-                    pending.canceled = True
-                    late.append(pending.run)
-        if stopped and _relay is not None:
-            _relay.drop([token for token, _pending in stopped])
-        for _token, pending in stopped:
-            pending.run.cancel.set()
-        for _token, pending in stopped:
+                    cancel.late.append(pending.run)
+        if canceled and _relay is not None:
+            _relay.drop([token for token, _pending in canceled])
+        for _token, pending in canceled:
             run = pending.run
+            run.cancel.set()
             self._publish_ran(run, False, CANCELED_MESSAGE, Output.NONE)
             if run.done is not None:
                 run.done(ActionResult(False, CANCELED_MESSAGE))
-        if stopped or late:
-            logger.info("Canceled %d action run(s); %d too far along to stop",
-                        len(stopped), len(late))
-            if not tests_only:
-                self._say_canceled([pending.run for _token, pending in stopped], late)
-        return len(stopped) + len(late)
+        reached = len(canceled) + cancel.waiting + len(cancel.late)
+        if reached:
+            logger.info("Canceled %d action run(s) before they started; stopping %d; "
+                        "%d can't be stopped", len(canceled), cancel.waiting, len(cancel.late))
+        self._tell(cancel)
+        return reached + earlier
 
-    def _say_canceled(self, stopped: list, late: list) -> None:
-        """What the user's Cancel did: the runs it stopped, and those too far along."""
-        parts = [f"Canceled {_runs(stopped)}"] if stopped else []
-        if late:
-            parts.append(f"too late to stop {_runs(late)}")
+    def _tell(self, cancel: _Cancel) -> None:
+        """Say what a cancel did, once every run it is stopping has answered."""
+        if cancel.quiet or cancel.waiting or not (cancel.stopped or cancel.late):
+            return
+        parts = [f"Canceled {_runs(cancel.stopped)}"] if cancel.stopped else []
+        if cancel.late:
+            parts.append(f"too late to stop {_runs(cancel.late)}")
         message = " — ".join(parts)
         message = message[:1].upper() + message[1:]
         ui = self.controller.ui_controller
@@ -656,17 +697,18 @@ class ActionRuntime:
             self.controller.ui_controller.set_status(f"{run.action.name} · working…")
         kind = run.action.kind
         # Bound here: the worker never reaches back into the runtime.
-        emit, cancel, finished = relay.finished.emit, run.cancel, run.finished
+        emit, cancel = relay.finished.emit, run.cancel
 
         def task() -> None:
             if cancel.is_set():
-                return  # stopped, or the app closed, as a worker took it
+                # Stopped as a worker took it (or the app closed: its token is gone).
+                emit(token, _STOPPED)
+                return
             try:
                 result = work()
             except Exception as exc:
                 logger.warning("A %s action failed: %s", kind, _described(exc))
                 result = ActionResult(False, "something went wrong")
-            finished.set()
             emit(token, result)
 
         try:
@@ -677,15 +719,35 @@ class ActionRuntime:
     def _finish_from_worker(self, token: int, run: _Run, result: ActionResult) -> None:
         with self._lock:
             pending = self._pending.pop(token, None)
-        if not result.ok and run.done is None:
-            result = ActionResult(False, f"{run.action.name}: {result.message}")
-        if pending is not None and pending.canceled and run.done is None:
-            # Canceled too late to stop: say what happened, use no answer.
-            message = result.message.rstrip(".") if not result.ok else (
-                result.message or f"Sent to {run.action.name}")
-            self._publish_ran(run, result.ok, message, Output.NONE)
+        if pending is not None and pending.canceled_by is not None:
+            self._finish_canceled(run, result, pending.canceled_by)
             return
+        if not result.ok and run.done is None:
+            result = replace(result, message=f"{run.action.name}: {result.message}")
         self._finish(run, result)
+
+    def _finish_canceled(self, run: _Run, result: ActionResult, cancel: _Cancel) -> None:
+        """The outcome of a run ``cancel`` reached under way; Qt thread.
+
+        Its result says whether the cancel stopped it. If not, it is too
+        late: what happened is reported, and its answer goes nowhere.
+        """
+        if result.stopped:
+            self._publish_ran(run, False, CANCELED_MESSAGE, Output.NONE)
+            if run.done is not None:
+                run.done(ActionResult(False, CANCELED_MESSAGE))
+        elif run.done is not None:
+            self._finish(run, result)  # "Try it" learns what happened
+        else:
+            name = run.action.name
+            message = f"{name}: {result.message}".rstrip(".") if not result.ok else (
+                result.message or f"Sent to {name}")
+            self._publish_ran(run, result.ok, message, Output.NONE)
+        if _stoppable(run.action):
+            # The cancel was waiting to hear how this one went.
+            cancel.waiting -= 1
+            (cancel.stopped if result.stopped else cancel.late).append(run)
+            self._tell(cancel)
 
     def _finish(self, run: _Run, result: ActionResult) -> None:
         """Show the outcome, route an answer and publish ``action.ran``; Qt thread."""

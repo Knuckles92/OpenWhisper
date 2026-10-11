@@ -127,7 +127,11 @@ def test_a_second_cancel_leaves_a_run_already_reached_alone(h, posting):
     h.rt.deliver(_job("w1"), "hello world", raw_text=None, html="")
     _wait(posting.started)
     assert h.rt.cancel() == 1
-    assert h.rt.cancel() == 0
+    said = list(h.ui.notices)
+
+    # Still finishing, so the second press reaches it, but cancels and says nothing again.
+    assert h.rt.cancel() == 1
+    assert h.ui.notices == said and _ran(h) == []
 
 
 # -- finding 1: a Cancel cancels what is in progress, and says what it canceled -----
@@ -171,7 +175,7 @@ def test_a_cancel_from_the_hotkey_thread_reaches_actions_on_the_qt_thread(
     threads = []
     controller.transcription_runtime = SimpleNamespace(cancel=lambda: False)
     controller.action_runtime = SimpleNamespace(
-        cancel=lambda: threads.append(threading.current_thread()))
+        cancel=lambda: threads.append(threading.current_thread()) or 1)
     controller.actions_cancel_requested.connect(controller._cancel_actions)  # as _connect_signals
 
     hotkey = threading.Thread(target=controller.cancel)
@@ -198,6 +202,8 @@ def test_cancel_with_nothing_recording_stops_the_quick_answer_and_says_so(h, thi
 
     (_text, cancel), = thinking.calls
     assert cancel.is_set()
+    # Said once the Quick answer reports that it stopped.
+    _wait(lambda: h.ui.notices)
     assert h.ui.statuses[-1] == "Canceled Quick answer"
     assert h.ui.notices[-1] == ("Canceled Quick answer", False)
 
@@ -208,6 +214,7 @@ def test_a_cancel_too_late_to_stop_a_run_says_so(h, thinking, posting):
 
     _users_cancel(h, canceled_a_job=False)
 
+    _wait(lambda: h.ui.notices)
     assert h.ui.statuses[-1] == "Canceled Quick answer — too late to stop Translate"
     assert h.ui.notices[-1] == (h.ui.statuses[-1], False)
 
@@ -220,5 +227,6 @@ def test_closing_settings_cancels_its_try_it_runs_quietly(h, monkeypatch):
     _wait(lambda: ask.started(1))
 
     assert h.rt.cancel(tests_only=True) == 1
+    _wait(lambda: results)
     assert results == [ActionResult(False, runtime.CANCELED_MESSAGE)]
     assert h.ui.statuses == [] and h.ui.notices == []

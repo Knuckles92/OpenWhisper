@@ -190,9 +190,9 @@ def _stop(controller) -> None:
 
 
 def _cancel(controller) -> None:
-    # Recordings and jobs still working only: the actions the user started
-    # are theirs to stop, including those a delivered job (only being
-    # saved) handed its words to.
+    # Recordings and jobs still working that no Cancel has reached yet: the
+    # actions the user started are theirs to stop, including those a
+    # delivered job (only being saved) handed its words to.
     runtime = controller.transcription_runtime
     if not runtime.cancelable or not runtime.cancel():
         raise ControlError(REFUSED, "Nothing is recording or transcribing.")

@@ -167,10 +167,13 @@ class TranscriptionRuntime:
     @property
     def cancelable(self) -> bool:
         """Whether a Cancel has something to stop: a recording, or a job
-        still working on its result (not one only being saved)."""
+        still working on its result (not one only being saved), that no
+        Cancel has reached yet."""
         with self._job_lock:
-            working = self._job_active and not self._saving
-        return working or bool(self.controller.recorder.is_recording)
+            working = (self._job_active and not self._saving
+                       and not self._cancel_requested.is_set())
+        recorder = self.controller.recorder
+        return working or (bool(recorder.is_recording) and recorder.capture_canceled is not True)
 
     @property
     def current_job(self) -> Optional[dictation_pipeline.DictationJob]:
@@ -678,26 +681,36 @@ class TranscriptionRuntime:
 
         A job whose result was already delivered (or whose failure was
         reported) only holds the slot while it is saved; it is not canceled.
+        Only a job's first Cancel publishes ``recording.canceled`` and shows
+        the canceled state; a repeat while it winds down changes nothing.
 
         Returns:
-            False when there was neither a recording, a job still working
-            nor a transcription to cancel.
+            True when this or an earlier Cancel is stopping a recording or a
+            job; False when there was neither a recording, a job still
+            working nor a transcription to cancel.
         """
         with self._capture_lock:
             return self._cancel()
 
     def _cancel(self) -> bool:
-        recording = self.controller.recorder.is_recording
+        recorder = self.controller.recorder
+        capturing = bool(recorder.is_recording)
+        # A capture a Cancel already threw away is only closing its stream.
+        discarded = capturing and recorder.capture_canceled is True
+        recording = capturing and not discarded
         logger.info(f"Cancel called. Recording: {recording}")
         with self._job_lock:
             # Under the lock _settle reads it with: a job either sees this
             # cancel before it delivers, or was already settled.
             working = self._job_active and not self._saving
+            repeat = working and self._cancel_requested.is_set()
             if working:
                 # A stop's post-roll, the worker, filters, routing and
                 # cleanup each look at it.
                 self._cancel_requested.set()
             job = self._active_job if self._job_active else self._job
+        if repeat or (discarded and not working):
+            return True  # the first Cancel is already stopping it
         self._cancel_started_at = time.monotonic() if recording or working else 0.0
         if self._cancel_started_at:
             self._end_preview()
@@ -711,8 +724,9 @@ class TranscriptionRuntime:
         if self.controller.current_backend and self.controller.current_backend.is_transcribing:
             self._cancel_transcription()
             return True
-        self.controller.overlay_state_update.emit(OverlayState.CANCELING)
-        self.controller.status_update.emit("Canceled")
+        if working:
+            self.controller.overlay_state_update.emit(OverlayState.CANCELING)
+            self.controller.status_update.emit("Canceled")
         return working
 
     def _cancel_recording(self) -> None:
@@ -974,7 +988,6 @@ class TranscriptionRuntime:
                 result = BatchResult(
                     request=request,
                     items=tuple(results),
-                    canceled=canceled,
                     total_elapsed_s=total_elapsed,
                     transcription_time_s=total_transcription_time,
                     cleanup_time_s=total_cleanup_time,
@@ -1027,29 +1040,32 @@ class TranscriptionRuntime:
         self.controller.status_update.emit(message)
 
     def on_batch_complete(self, result: BatchResult) -> None:
-        # The files are transcribed; only saving them holds the slot.
-        self._settle()
+        # The files are transcribed; only saving them holds the slot. A
+        # Cancel that got here first, while the files ran or after, stopped
+        # whatever was left: what was done is kept, and the status says so.
+        canceled = self._settle()
         request = result.request
         ui = self.controller.ui_controller
         succeeded = [r for r in result.items if r.succeeded]
         saveable = [r for r in succeeded if r.text.strip()]
+        is_empty = (not (result.combined_text or "").strip() if request.combine
+                    else not saveable)
+        if canceled and is_empty:
+            self.on_transcription_error("Transcription canceled")
+            return
 
         if request.combine:
             display = result.combined_text or ""
             raw_display = result.combined_raw_text
-            is_empty = not display.strip()
             if is_empty:
                 display = EMPTY_ASR_MESSAGE
                 raw_display = None
         else:
             if not succeeded:
-                if result.canceled:
-                    self.on_transcription_error("Transcription canceled")
-                else:
-                    first_error = result.items[0].error if result.items else "no files"
-                    self.on_transcription_error(
-                        f"All {len(result.items)} files failed: {first_error}"
-                    )
+                first_error = result.items[0].error if result.items else "no files"
+                self.on_transcription_error(
+                    f"All {len(result.items)} files failed: {first_error}"
+                )
                 return
             display = format_batch_transcript(
                 [
@@ -1073,7 +1089,6 @@ class TranscriptionRuntime:
                         for r in result.items
                     ]
                 )
-            is_empty = not saveable
 
         # The tab treats NONE while it is still running as a failure, so the
         # transcript must land first.
@@ -1147,16 +1162,15 @@ class TranscriptionRuntime:
                 ),
             )
 
-        if result.canceled:
-            ui.set_status(
-                f"Canceled — kept {len(saveable)} of {len(request.items)} files"
-            )
-            self._queue_history(entries)
-            return
-
-        status = "Ready"
+        if canceled:
+            kept = ("the transcript" if request.combine
+                    else f"{len(saveable)} of {len(request.items)} files")
+            status = f"Canceled — kept {kept}"
+        else:
+            status = "Ready"
         if result.cleanup_error == CANCELED_REASON:
-            status += " — AI cleanup canceled; showing raw text"
+            # Only a Cancel cuts the cleanup short.
+            status += " without AI cleanup"
         elif result.cleanup_error:
             status += (
                 f" — AI cleanup failed ({result.cleanup_error}); showing raw text"
@@ -1614,11 +1628,16 @@ class TranscriptionRuntime:
     def _abandon_canceled_job(self, stage: str) -> None:
         """Release a dictation job canceled before any transcript existed.
 
-        ``_cancel`` already showed the canceled state, so this only drops what
-        the job still holds: its early-decode session, the clipboard snapshot
-        taken for the paste, and the pending metadata.
+        ``_cancel`` already showed the canceled state, so this only ends the
+        job for listeners, as a cancel ends every job that took the slot,
+        and drops what it still holds: its early-decode session, the
+        clipboard snapshot taken for the paste, and the pending metadata.
         """
         logger.info("Dictation canceled %s; nothing transcribed", stage)
+        publish_event(
+            event_catalog.TRANSCRIPTION_FAILED,
+            event_catalog.transcription_failed(self._active_job, event_catalog.FAILURE_CANCELED),
+        )
         self._incremental.discard()
         self.controller.ui_controller.discard_clipboard_prefetch()
         self._clear_pending_audio_metadata()
@@ -1668,7 +1687,7 @@ class TranscriptionRuntime:
             self._stop_started_at = 0.0
         # From here the result is delivered and only saving holds the slot:
         # a later Cancel reaches the actions it ran instead.
-        if self._settle() and self._deliver_to_clipboard:
+        if self._settle():
             # The cancel arrived between the worker's emit and this slot.
             self.on_transcription_error("Transcription canceled")
             return
@@ -2176,8 +2195,15 @@ class TranscriptionRuntime:
                 return
             self._rewrite_pending = False
         self.controller.overlay_state_update.emit(OverlayState.NONE)
-        # A cancel during the selection read already said "Canceled".
-        if status and not self._cancel_requested.is_set():
+        if self._cancel_requested.is_set():
+            # A cancel during the selection read already said "Canceled";
+            # it ends the job for listeners as it would a running rewrite.
+            publish_event(
+                event_catalog.TRANSCRIPTION_FAILED,
+                event_catalog.transcription_failed(
+                    self._active_job, event_catalog.FAILURE_CANCELED),
+            )
+        elif status:
             self.controller.status_update.emit(status)
             self._notify(status)
         self._clear_pending_audio_metadata()
