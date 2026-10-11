@@ -11,8 +11,9 @@ Their results come back to the Qt thread through one relay that lives for
 the session; a worker only ever emits a token and a result. At most
 ``MAX_PENDING`` of them run or wait at once; more are refused. ``cancel``
 drops the runs still waiting and stops agents and programs (killed with
-what they started); a run it is too late to stop finishes, reports what
-happened, and its answer goes nowhere.
+what they started); a run it is too late to stop, one whose work already
+returned included, finishes, reports what happened, and its answer goes
+nowhere.
 
 A run the user started that fails leaves the words on the clipboard, so
 nothing said is lost. One a program started over the live API or MCP never
@@ -348,6 +349,9 @@ class _Run:
     done: Optional[Callable[[ActionResult], None]] = None
     #: Stops an agent or a program early (``cancel``, or the app closing).
     cancel: threading.Event = field(default_factory=threading.Event)
+    #: Set by the worker once the work has returned, before its result heads
+    #: for the Qt thread: from then on it is too late to stop.
+    finished: threading.Event = field(default_factory=threading.Event)
     #: Why the words aren't what the user asked for (a transform or cleanup
     #: profile that couldn't run); shown with the outcome.
     notice: str = ""
@@ -364,12 +368,14 @@ class _Pending:
     canceled: bool = False
 
 
-def _stoppable(action: Action) -> bool:
+def _stoppable(run: _Run) -> bool:
     """Whether a run under way can still be stopped: a program, or an
-    agent's quick answer (both killed with everything they started)."""
-    return action.kind == ActionKind.PROGRAM or (
+    agent's quick answer (both killed with everything they started), whose
+    work hasn't returned yet (its result is on the way)."""
+    action = run.action
+    return not run.finished.is_set() and (action.kind == ActionKind.PROGRAM or (
         action.kind == ActionKind.AGENT and action.param("mode") == AgentMode.ASK
-    )
+    ))
 
 
 def _runs(runs: list) -> str:
@@ -515,10 +521,11 @@ class ActionRuntime:
         is stopped with everything it started: ``action.ran`` says
         ``Canceled``, and a Settings "Try it" gets that result too. A run
         already under way that can't be stopped (a link opening, a webhook
-        posting, a session being handed off) finishes, and ``action.ran``
-        reports what really happened; only its answer is dropped, so nothing
-        is pasted, copied, shown or put in the Scratchpad for it. Unless
-        ``tests_only``, the status line and a notice say what was canceled.
+        posting, a session being handed off, or any run whose work has
+        already returned) finishes, and ``action.ran`` reports what really
+        happened; only its answer is dropped, so nothing is pasted, copied,
+        shown or put in the Scratchpad for it. Unless ``tests_only``, the
+        status line and a notice say what was canceled and what was too late.
 
         Args:
             tests_only: Only Settings' "Try it" runs (its page went away).
@@ -533,7 +540,7 @@ class ActionRuntime:
                     continue
                 # A future that cancels hadn't started and now never will.
                 waiting = pending.future is None or pending.future.cancel()
-                if waiting or _stoppable(pending.run.action):
+                if waiting or _stoppable(pending.run):
                     stopped.append((token, self._pending.pop(token)))
                 else:
                     pending.canceled = True
@@ -649,7 +656,7 @@ class ActionRuntime:
             self.controller.ui_controller.set_status(f"{run.action.name} · working…")
         kind = run.action.kind
         # Bound here: the worker never reaches back into the runtime.
-        emit, cancel = relay.finished.emit, run.cancel
+        emit, cancel, finished = relay.finished.emit, run.cancel, run.finished
 
         def task() -> None:
             if cancel.is_set():
@@ -659,6 +666,7 @@ class ActionRuntime:
             except Exception as exc:
                 logger.warning("A %s action failed: %s", kind, _described(exc))
                 result = ActionResult(False, "something went wrong")
+            finished.set()
             emit(token, result)
 
         try:
