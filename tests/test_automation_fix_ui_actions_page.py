@@ -428,6 +428,21 @@ def test_route_by_voice_status_follows_its_shortcut(make_dialog, monkeypatch):
     assert line.message.text() == "Set a Route by voice shortcut below."
 
 
+# ---- Try it runs end with Settings ----
+
+
+def test_the_app_passes_settings_a_way_to_cancel_try_runs():
+    from types import SimpleNamespace
+
+    from ui_qt.ui_controller import UIController
+
+    controller = SimpleNamespace(on_cancel_try_runs=None)
+    UIController._cancel_try_runs(controller)  # Not wired yet: nothing to cancel.
+    controller.on_cancel_try_runs = MagicMock()
+    UIController._cancel_try_runs(controller)
+    controller.on_cancel_try_runs.assert_called_once_with()
+
+
 # ---- 4/5. Route by voice's status, links and privacy line ----
 
 
