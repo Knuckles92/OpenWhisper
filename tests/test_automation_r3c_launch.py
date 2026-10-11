@@ -153,8 +153,20 @@ def test_no_desktop_or_no_answer_from_explorer_means_not_opened(monkeypatch):
 
 
 def _has_desktop():
-    application, _hwnd = launch._desktop_application()
-    return application is not None
+    """Whether this session's Explorer has a desktop (a CI service may have none)."""
+    import ctypes
+    from ctypes import wintypes
+
+    application, hwnd = launch._desktop_application()
+    if application is None:
+        return False
+    user32, kernel32 = ctypes.WinDLL("user32"), ctypes.WinDLL("kernel32")
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    pid, theirs, ours = wintypes.DWORD(), wintypes.DWORD(), wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return bool(kernel32.ProcessIdToSessionId(pid, ctypes.byref(theirs))
+                and kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(ours))
+                and theirs.value == ours.value)
 
 
 def _recorder(tmp_path):
