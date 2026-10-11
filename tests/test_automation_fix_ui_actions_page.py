@@ -617,3 +617,33 @@ def test_search_leaves_out_tiles_in_a_part_marked_as_choices():
         [PageSource("page", "Crumb", "Page", "", page, "bolt-green.svg")])}
     assert {"Shown", "Folded away"} <= titles
     assert "A choice" not in titles
+
+
+PRESET_NAMES = {"Webhook", "Run a program", "Copy only", "Send to my scripts", "Your own link"}
+
+
+def _actions_titles(dialog):
+    return {entry.title for entry in dialog._search_index() if entry.destination == ACTIONS}
+
+
+def test_search_finds_the_actions_page_but_not_its_gallery(make_dialog):
+    from ui_qt.dialogs.settings_destinations import GENERAL
+
+    dialog, _store = make_dialog({SettingsKey.ACTIONS: [ASK_CLAUDE]}, select=False)
+    # Not built yet: the page's own search fields.
+    assert {"Agent hotkey", "Your actions", "Route by voice"} <= _actions_titles(dialog)
+    dialog.select_destination(ACTIONS)
+    pump()
+    titles = _actions_titles(dialog)
+    assert {"Agent hotkey", "Ask Claude", "Route by voice"} <= titles
+    assert not PRESET_NAMES & titles
+    dialog.actions_panel.add_action()
+    pump()
+    assert not PRESET_NAMES & _actions_titles(dialog)
+    # Built, but another page is showing: its tiles are still found.
+    dialog.actions_panel.show_list()
+    dialog.select_destination(GENERAL)
+    pump()
+    titles = _actions_titles(dialog)
+    assert {"Agent hotkey", "Ask Claude", "Route by voice"} <= titles
+    assert not PRESET_NAMES & titles

@@ -74,6 +74,8 @@ class PresetGallery(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setProperty("tileId", "actionGallery")
+        # Starting points, not settings: Settings search leaves them out.
+        self.setProperty("settingsSearch", False)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
