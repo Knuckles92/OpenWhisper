@@ -1,13 +1,11 @@
 """Every job's events end, failures carry a category, and files publish completions."""
 
 import time
-from types import SimpleNamespace
 
 import pytest
 from PyQt6.QtTest import QTest
 
-from services.automation import catalog, events
-from services.automation.events import EventBus
+from services.automation import catalog
 from services.batch_upload import (
     BatchItem,
     BatchItemResult,
@@ -123,48 +121,42 @@ def test_a_stop_refused_as_busy_publishes_recording_canceled(h):
 
 
 @pytest.fixture
-def bus():
-    bus = EventBus()
-    previous = events.set_bus(bus)
-    seen = []
-    bus.subscribe(seen.append)
-    yield SimpleNamespace(bus=bus, seen=seen)
-    events.set_bus(previous)
-    bus.close()
+def sent():
+    """What PreviewEvents hands to TranscriptionRuntime.publish_preview."""
+    return []
 
 
-def _previews(bus, count, timeout=2.0):
+def _previews(sent, count, timeout=2.0):
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline and len(bus.seen) < count:
+    while time.monotonic() < deadline and len(sent) < count:
         QTest.qWait(5)
-    return [(e.data["text"], e.data["final"]) for e in bus.seen]
+    return [(text, final) for _job, text, final in sent]
 
 
-def test_the_last_throttled_preview_still_goes_out(_qapp, bus):
+def test_the_last_throttled_preview_still_goes_out(_qapp, sent):
     from services.application_controller import PreviewEvents
 
-    previews = PreviewEvents()
+    previews = PreviewEvents(lambda *preview: sent.append(preview))
     job = DictationJob()
     previews.offer(job, "hel", False)
     previews.offer(job, "hello", False)       # within a quarter second: held
     previews.offer(job, "hello wor", False)   # replaces the held one
-    assert _previews(bus, 2) == [("hel", False), ("hello wor", False)]
-    assert all(e.data["job_id"] == job.id for e in bus.seen)
+    assert _previews(sent, 2) == [("hel", False), ("hello wor", False)]
+    assert all(preview[0] is job for preview in sent)
 
 
-def test_a_final_preview_goes_out_at_once_and_drops_the_held_one(_qapp, bus):
+def test_a_final_preview_goes_out_at_once_and_drops_the_held_one(_qapp, sent):
     from services.application_controller import PreviewEvents
 
-    previews = PreviewEvents()
+    previews = PreviewEvents(lambda *preview: sent.append(preview))
     job = DictationJob()
     previews.offer(job, "hel", False)
     previews.offer(job, "hello", False)
     previews.offer(job, "hello world", True)
     QTest.qWait(400)
-    assert [(e.data["text"], e.data["final"]) for e in bus.seen] == [
+    assert [(text, final) for _job, text, final in sent] == [
         ("hel", False), ("hello world", True),
     ]
-    assert not bus.bus.recent()  # previews are never replayed
 
 
 # -- failures carry a category, never raw exception text (security #13) ----------

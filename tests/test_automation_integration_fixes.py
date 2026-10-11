@@ -9,27 +9,33 @@ from services.automation import app_control, filters, programs
 from services.automation.control import ControlError
 
 
-def _controller(*, recording=False, busy=False, running=0):
+def _controller(*, recording=False, busy=False):
     calls = []
     return SimpleNamespace(
         recorder=SimpleNamespace(is_recording=recording),
-        transcription_runtime=SimpleNamespace(has_active_job=busy),
-        action_runtime=SimpleNamespace(running=lambda: running),
-        cancel=lambda: calls.append("cancel"),
+        transcription_runtime=SimpleNamespace(
+            has_active_job=busy, cancel=lambda: calls.append("cancel") or True),
+        # The user's Cancel, which also reaches their running actions.
+        cancel=lambda: calls.append("user_cancel"),
         calls=calls,
     )
 
 
-def test_an_api_cancel_stops_actions_still_running():
-    controller = _controller(running=2)
+@pytest.mark.parametrize("state", [{"recording": True}, {"busy": True}])
+def test_an_api_cancel_cancels_only_the_recording_or_job(state):
+    controller = _controller(**state)
     app_control._cancel(controller)
     assert controller.calls == ["cancel"]
 
 
-def test_an_api_cancel_with_nothing_going_on_is_refused():
+def test_an_api_cancel_with_nothing_recording_or_transcribing_is_refused():
+    # Actions the user started may still be running; a program can't stop them.
+    controller = _controller()
     with pytest.raises(ControlError) as refused:
-        app_control._cancel(_controller())
-    assert refused.value.code == "refused"
+        app_control._cancel(controller)
+    assert (refused.value.code, refused.value.message) == (
+        "refused", "Nothing is recording or transcribing.")
+    assert controller.calls == []
 
 
 def test_a_canceled_program_filter_stops_its_program(monkeypatch):

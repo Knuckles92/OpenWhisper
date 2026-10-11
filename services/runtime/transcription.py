@@ -94,10 +94,12 @@ class TranscriptionRuntime:
         self._job_active = False
         # Backends reset their own cancel flag on every transcribe() call, so
         # a cancel that lands between files of a batch would be lost; this
-        # event outlives the individual calls.
+        # event outlives the individual calls. Each job gets its own
+        # (_claim_job), so the next job never un-cancels one whose filters
+        # or routing are still being stopped.
         self._cancel_requested = threading.Event()
-        # The same event ends a cleanup request's wait, so a Cancel during
-        # "Cleaning up..." frees the job instead of waiting on the provider.
+        # The job's event also ends a cleanup request's wait, so a Cancel
+        # during "Cleaning up..." frees the job instead of waiting on the provider.
         self._transcript_cleanup = TranscriptCleanup(
             cancel_event=self._cancel_requested, defer_client=True
         )
@@ -118,6 +120,10 @@ class TranscriptionRuntime:
         # The recording's DictationJob from its start until its stop claims
         # the slot; uploads never inherit one.
         self._job: Optional[dictation_pipeline.DictationJob] = None
+        # The job whose live preview is published: from just after
+        # recording.started until just before recording.stopped or
+        # recording.canceled. Read and changed under _job_lock.
+        self._previewing: Optional[dictation_pipeline.DictationJob] = None
         # The job the claimed slot is working on. The worker, delivery and
         # history read only this, copied to a local first.
         self._active_job: Optional[dictation_pipeline.DictationJob] = None
@@ -165,7 +171,11 @@ class TranscriptionRuntime:
                 return False
             self._job_active = True
             self._active_job = job
-            self._cancel_requested.clear()
+            # A new event rather than a cleared one: a program filter the
+            # last job abandoned on its cancel looks again only every 50 ms,
+            # and must still see that cancel to be stopped.
+            self._cancel_requested = threading.Event()
+            self._transcript_cleanup.cancel_event = self._cancel_requested
         self._rearm_remote_engine()
         return True
 
@@ -173,8 +183,33 @@ class TranscriptionRuntime:
         """Drop the recording's job and profile so no later job inherits them."""
         with self._job_lock:
             self._job = None
+            self._previewing = None
             self._recording_profile = None
             self._profile_settings = None
+
+    def _end_preview(self) -> None:
+        """Publish no more of the recording's preview; before it is said to end.
+
+        Under the lock ``publish_preview`` publishes with, so a preview
+        being published finishes first and none comes after.
+        """
+        with self._job_lock:
+            self._previewing = None
+
+    def publish_preview(self, job, text: str, final: bool) -> None:
+        """``transcription.preview`` for ``job`` while it records; any thread.
+
+        Dropped once its recording stopped or was canceled. Previews are
+        delivered live only; they never fill the replay buffer.
+        """
+        with self._job_lock:
+            if job is None or getattr(self._previewing, "id", None) != job.id:
+                return
+            publish_event(
+                event_catalog.TRANSCRIPTION_PREVIEW,
+                event_catalog.transcription_preview(job, text, final),
+                replay=False,
+            )
 
     def _rearm_remote_engine(self) -> None:
         """Clear a remote engine's cancel once no job it was meant for is left.
@@ -233,6 +268,7 @@ class TranscriptionRuntime:
         if (getattr(recorder, 'last_capture_error', None) != message
                 or getattr(recorder, 'capture_canceled', False) is True):
             return  # queued notification from a canceled/replaced capture
+        self._end_preview()
         self.controller.recording_state_changed.emit(False)
         self.controller.status_update.emit(message + ' — preserving captured audio')
         self.controller.streaming_runtime.cancel_streaming_session()
@@ -379,6 +415,8 @@ class TranscriptionRuntime:
             publish_event(
                 event_catalog.RECORDING_STARTED, event_catalog.recording_started(self._job)
             )
+            with self._job_lock:
+                self._previewing = self._job
             if mode == JobMode.COMMAND:
                 self.controller.overlay_state_update.emit(OverlayState.COMMAND_LISTENING)
                 self.controller.status_update.emit("Command Mode · Listening...")
@@ -447,6 +485,7 @@ class TranscriptionRuntime:
             duration = self.controller.recorder.get_recording_duration()
         except Exception:
             duration = None
+        self._end_preview()
         publish_event(
             event_catalog.RECORDING_STOPPED,
             event_catalog.recording_stopped(self._job, duration),
@@ -597,32 +636,41 @@ class TranscriptionRuntime:
         else:
             self.stop_recording()
 
-    def cancel(self) -> None:
-        """Cancel an active recording or transcription, depending on state."""
-        with self._capture_lock:
-            self._cancel()
+    def cancel(self) -> bool:
+        """Cancel an active recording or transcription, depending on state.
 
-    def _cancel(self) -> None:
+        Returns:
+            False when there was neither a recording, a job nor a
+            transcription to cancel.
+        """
+        with self._capture_lock:
+            return self._cancel()
+
+    def _cancel(self) -> bool:
         logger.info(f"Cancel called. Recording: {self.controller.recorder.is_recording}")
         self._cancel_started_at = time.monotonic() if (
             self.controller.recorder.is_recording or self.has_active_job
         ) else 0.0
         if self._cancel_started_at:
             job = self._job or self._active_job
+            self._end_preview()
             publish_event(
                 event_catalog.RECORDING_CANCELED, event_catalog.recording_canceled(job)
             )
 
         if self.controller.recorder.is_recording:
             self._cancel_recording()
-        elif self.controller.current_backend and self.controller.current_backend.is_transcribing:
+            return True
+        if self.controller.current_backend and self.controller.current_backend.is_transcribing:
             self._cancel_requested.set()
             self._cancel_transcription()
-        else:
-            if self.has_active_job:
-                self._cancel_requested.set()
-            self.controller.overlay_state_update.emit(OverlayState.CANCELING)
-            self.controller.status_update.emit("Canceled")
+            return True
+        canceled = self.has_active_job
+        if canceled:
+            self._cancel_requested.set()
+        self.controller.overlay_state_update.emit(OverlayState.CANCELING)
+        self.controller.status_update.emit("Canceled")
+        return canceled
 
     def _cancel_recording(self) -> None:
         if self.has_active_job:
@@ -1965,8 +2013,9 @@ class TranscriptionRuntime:
     def begin_rewrite_job(self, job: dictation_pipeline.DictationJob, *, source_name: str) -> bool:
         """Claim the slot for a rewrite of selected text; Qt thread.
 
-        Refused while recording or while another job runs. The caller then
-        either submits the rewrite or abandons it, which frees the slot.
+        Refused while recording, while a recording starts, stops or is
+        canceled, or while another job runs. The caller then either submits
+        the rewrite or abandons it, which frees the slot.
 
         Args:
             job: A command or transform DictationJob carrying the selection.
@@ -1975,8 +2024,15 @@ class TranscriptionRuntime:
         # Under the capture lock, like a start, stop or cancel: a recording
         # being stopped has stopped its stream before it claims the slot,
         # and a rewrite (an action run over the API) must not take it then.
-        with self._capture_lock:
+        # Never waited for: a start holds it while the audio device opens,
+        # seconds for Bluetooth, and the Qt thread must not stall on that.
+        if not self._capture_lock.acquire(blocking=False):
+            self._notify(self._report_busy("rewriting text"))
+            return False
+        try:
             return self._begin_rewrite_job(job, source_name=source_name)
+        finally:
+            self._capture_lock.release()
 
     def _begin_rewrite_job(self, job, *, source_name: str) -> bool:
         # Rewrites run from other apps, so a refusal also shows by the pointer.

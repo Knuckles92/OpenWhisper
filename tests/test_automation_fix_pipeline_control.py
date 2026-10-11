@@ -87,13 +87,15 @@ def test_canceled_words_reach_no_later_stage(h, monkeypatch, cancel_at):
     assert _events(h, "transcription.failed")
 
 
-def test_cancel_also_stops_running_actions():
+@pytest.mark.parametrize("canceled_a_job", [True, False])
+def test_cancel_stops_running_actions_only_with_no_job_to_cancel(canceled_a_job):
     from services.application_controller import ApplicationController
 
-    controller = SimpleNamespace(transcription_runtime=Mock(), action_runtime=Mock())
+    controller = SimpleNamespace(transcription_runtime=Mock(), actions_cancel_requested=Mock())
+    controller.transcription_runtime.cancel.return_value = canceled_a_job
     ApplicationController.cancel(controller)
     controller.transcription_runtime.cancel.assert_called_once_with()
-    controller.action_runtime.cancel.assert_called_once_with()
+    assert controller.actions_cancel_requested.emit.call_count == (0 if canceled_a_job else 1)
 
 
 # -- what a program may run (security #7, #8, concurrency #6) --------------------
@@ -218,7 +220,8 @@ def test_a_program_run_cannot_take_the_slot_from_a_recording_being_stopped(h):
     stopper.join(2)
     runner.join(2)
 
-    assert not finished_early
+    # Refused at once (the stop holds the capture lock), never waiting for it.
+    assert finished_early
     assert outcome == ["busy"]
     assert [fn.__name__ for fn, _args in h.submitted] == ["finish_recording_job"]
 

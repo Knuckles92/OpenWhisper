@@ -9,9 +9,10 @@ own small pool rather than the transcription executor: the dictation's job
 slot frees as soon as its history is saved, however long an agent thinks.
 Their results come back to the Qt thread through one relay that lives for
 the session; a worker only ever emits a token and a result. At most
-``MAX_PENDING`` of them run or wait at once; more are refused, and
-``cancel`` stops them all (agents and programs are killed, late results
-dropped).
+``MAX_PENDING`` of them run or wait at once; more are refused. ``cancel``
+drops the runs still waiting and stops agents and programs (killed with
+what they started); a run it is too late to stop finishes, reports what
+happened, and its answer goes nowhere.
 
 A run the user started that fails leaves the words on the clipboard, so
 nothing said is lost; one a program started over the live API or MCP only
@@ -340,6 +341,22 @@ class _Pending:
 
     run: _Run
     future: Optional[Future] = None
+    #: Canceled once under way, too late to stop: it finishes, and only
+    #: what happened is reported; its answer goes nowhere.
+    canceled: bool = False
+
+
+def _stoppable(action: Action) -> bool:
+    """Whether a run under way can still be stopped: a program, or an
+    agent's quick answer (both killed with everything they started)."""
+    return action.kind == ActionKind.PROGRAM or (
+        action.kind == ActionKind.AGENT and action.param("mode") == AgentMode.ASK
+    )
+
+
+def _runs(runs: list) -> str:
+    """``runs`` for a message: the action's name, or how many."""
+    return runs[0].action.name if len(runs) == 1 else f"{len(runs)} actions"
 
 
 def _output_of(action: Action) -> str:
@@ -448,11 +465,6 @@ class ActionRuntime:
             return
         self._start(run)
 
-    def running(self) -> int:
-        """How many blocking runs are running or waiting; any thread."""
-        with self._lock:
-            return len(self._pending)
-
     def accepting(self) -> bool:
         """Whether another blocking run would be taken now; any thread.
 
@@ -463,38 +475,61 @@ class ActionRuntime:
             return not self._closed and len(self._pending) < MAX_PENDING
 
     def cancel(self, *, tests_only: bool = False) -> int:
-        """Cancel every run that is running or waiting; Qt thread.
+        """Cancel the runs still waiting and stop those that can be; Qt thread.
 
-        Agents and programs are stopped with what they started, and nothing
-        a canceled run would have pasted, copied or shown appears.
-        ``action.ran`` says ``Canceled``; a Settings "Try it" gets that
-        result too.
+        A waiting run never starts, and an agent's quick answer or a program
+        is stopped with everything it started: ``action.ran`` says
+        ``Canceled``, and a Settings "Try it" gets that result too. A run
+        already under way that can't be stopped (a link opening, a webhook
+        posting, a session being handed off) finishes, and ``action.ran``
+        reports what really happened; only its answer is dropped, so nothing
+        is pasted, copied, shown or put in the Scratchpad for it. Unless
+        ``tests_only``, the status line and a notice say what was canceled.
 
         Args:
             tests_only: Only Settings' "Try it" runs (its page went away).
 
         Returns:
-            How many runs were canceled.
+            How many runs the cancel reached.
         """
         with self._lock:
-            tokens = [token for token, pending in self._pending.items()
-                      if not tests_only or pending.run.done is not None]
-            canceled = [self._pending.pop(token) for token in tokens]
-        if not canceled:
-            return 0
-        if _relay is not None:
-            _relay.drop(tokens)
-        for pending in canceled:
+            stopped, late = [], []
+            for token, pending in list(self._pending.items()):
+                if pending.canceled or (tests_only and pending.run.done is None):
+                    continue
+                # A future that cancels hadn't started and now never will.
+                waiting = pending.future is None or pending.future.cancel()
+                if waiting or _stoppable(pending.run.action):
+                    stopped.append((token, self._pending.pop(token)))
+                else:
+                    pending.canceled = True
+                    late.append(pending.run)
+        if stopped and _relay is not None:
+            _relay.drop([token for token, _pending in stopped])
+        for _token, pending in stopped:
             pending.run.cancel.set()
-            if pending.future is not None:
-                pending.future.cancel()  # still waiting: never starts
-        for pending in canceled:
+        for _token, pending in stopped:
             run = pending.run
             self._publish_ran(run, False, CANCELED_MESSAGE, Output.NONE)
             if run.done is not None:
                 run.done(ActionResult(False, CANCELED_MESSAGE))
-        logger.info("Canceled %d action run(s)", len(canceled))
-        return len(canceled)
+        if stopped or late:
+            logger.info("Canceled %d action run(s); %d too far along to stop",
+                        len(stopped), len(late))
+            if not tests_only:
+                self._say_canceled([pending.run for _token, pending in stopped], late)
+        return len(stopped) + len(late)
+
+    def _say_canceled(self, stopped: list, late: list) -> None:
+        """What the user's Cancel did: the runs it stopped, and those too far along."""
+        parts = [f"Canceled {_runs(stopped)}"] if stopped else []
+        if late:
+            parts.append(f"too late to stop {_runs(late)}")
+        message = " — ".join(parts)
+        message = message[:1].upper() + message[1:]
+        ui = self.controller.ui_controller
+        ui.set_status(message)
+        ui.show_notice(message)
 
     def close(self) -> None:
         """Stop work in progress at quit: cancel agents, drop late results."""
@@ -580,7 +615,7 @@ class ActionRuntime:
 
         def task() -> None:
             if cancel.is_set():
-                return  # canceled before a worker took it
+                return  # stopped, or the app closed, as a worker took it
             try:
                 result = work()
             except Exception as exc:
@@ -595,9 +630,15 @@ class ActionRuntime:
 
     def _finish_from_worker(self, token: int, run: _Run, result: ActionResult) -> None:
         with self._lock:
-            self._pending.pop(token, None)
+            pending = self._pending.pop(token, None)
         if not result.ok and run.done is None:
             result = ActionResult(False, f"{run.action.name}: {result.message}")
+        if pending is not None and pending.canceled and run.done is None:
+            # Canceled too late to stop: say what happened, use no answer.
+            message = result.message.rstrip(".") if not result.ok else (
+                result.message or f"Sent to {run.action.name}")
+            self._publish_ran(run, result.ok, message, Output.NONE)
+            return
         self._finish(run, result)
 
     def _finish(self, run: _Run, result: ActionResult) -> None:
