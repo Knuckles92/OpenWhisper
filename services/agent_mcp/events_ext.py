@@ -36,9 +36,12 @@ passes its ``refreshBefore``. URLs, secrets and event data are never logged.
 
 A subscription remembers whether it came from this computer or a Tailscale
 peer. A peer's subscriptions are delivered only while agents over Tailscale
-are allowed, and a peer can't name a callback on this computer or its local
-network, by address or by a name that resolves there (checked again before
-each delivery).
+are allowed, and a peer can't name a callback on this computer (its Tailscale
+address included) or its local network, by address or by a name that
+resolves there. That is checked again before each delivery, and each request
+connects to the address checked, never to a second lookup's answer. A peer
+hears only that a verification or delivery failed, never how: a refused
+connection, a timeout and a TLS error would tell it which ports answer.
 """
 
 from __future__ import annotations
@@ -120,6 +123,10 @@ CALLBACK_REASONS = (
     "http_5xx",
     "challenge_failed",
 )
+#: What a Tailscale peer hears about any failed verification, and the
+#: ``lastError`` of any failed try to deliver to a peer's callback.
+PEER_VERIFICATION_FAILED = "challenge_failed"
+PEER_DELIVERY_FAILED = "delivery_failed"
 
 
 class EventsError(Exception):
@@ -366,13 +373,44 @@ PRIVATE = "private"
 UNRESOLVED = "unresolved"
 
 
-def _destination(url: str) -> str:
-    """Where a callback URL leads: ``PUBLIC``, ``PRIVATE`` or ``UNRESOLVED``.
+#: Tailscale's service address (MagicDNS, the local web interface): each
+#: computer's own Tailscale answers it.
+_TAILSCALE_SERVICE = frozenset(
+    ipaddress.ip_address(address) for address in ("100.100.100.100", "fd7a:115c:a1e0::53")
+)
+
+
+def _is_this_computer(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Whether a connection to ``address`` stays on this computer.
+
+    True for an address of one of its own interfaces, its Tailscale address
+    included: only those can be bound. A connection from this computer to
+    itself passes no tailnet access rule.
+    """
+    import socket
+
+    if address in _TAILSCALE_SERVICE:
+        return True
+    family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as probe:
+            probe.bind((str(address), 0))
+    except OSError:
+        return False
+    return True
+
+
+def _destination(url: str) -> tuple[str, Optional[str]]:
+    """Where a callback URL leads (``PUBLIC``, ``PRIVATE`` or ``UNRESOLVED``),
+    and for ``PUBLIC`` the address to connect to.
 
     Private is this computer or a local network: a loopback, private,
-    link-local or other non-global address, a local name (localhost, .local,
-    .lan, .home.arpa), or a name that resolves to any of those. Tailscale
-    addresses are the peer's own network and count as public.
+    link-local or other non-global address, an address of this computer
+    (its Tailscale address included), a local name (localhost, .local, .lan,
+    .home.arpa), or a name that resolves to any of those. Other Tailscale
+    addresses are the peer's own network and count as public. A name is
+    looked up once: a request must go to the address returned, not to what
+    another lookup answers.
     """
     import socket
 
@@ -382,27 +420,38 @@ def _destination(url: str) -> str:
     parts = urlsplit(url)
     host = parts.hostname or ""
     if not host or url_is_private(url):
-        return PRIVATE
+        return PRIVATE, None
     try:
-        addresses = [ipaddress.ip_address(host)]
+        found = [ipaddress.ip_address(host)]
     except ValueError:
         try:
             infos = socket.getaddrinfo(host, parts.port or 443, type=socket.SOCK_STREAM)
         except (OSError, UnicodeError):
-            return UNRESOLVED
-        addresses = [ipaddress.ip_address(info[4][0].split("%", 1)[0]) for info in infos]
+            return UNRESOLVED, None
+        found = [ipaddress.ip_address(info[4][0].split("%", 1)[0]) for info in infos]
+    addresses = [getattr(address, "ipv4_mapped", None) or address for address in found]
     if not addresses:
-        return UNRESOLVED
+        return UNRESOLVED, None
     for address in addresses:
-        address = getattr(address, "ipv4_mapped", None) or address
-        if not is_tailscale_address(address) and not address.is_global:
-            return PRIVATE
-    return PUBLIC
+        if _is_this_computer(address) or not (
+            address.is_global or is_tailscale_address(address)
+        ):
+            return PRIVATE, None
+    return PUBLIC, str(addresses[0])
 
 
-def _require_reachable_by_peer(url: str) -> None:
-    """A Tailscale peer's callback must not lead into this computer or its network."""
-    destination = _destination(url)
+def _callback_failed(reason: str) -> EventsError:
+    return EventsError(
+        CALLBACK_ENDPOINT_ERROR,
+        f"The callback URL did not pass verification ({reason}).",
+        {"reason": reason},
+    )
+
+
+def _require_reachable_by_peer(url: str) -> str:
+    """The address a Tailscale peer's callback is reached at; it must not lead
+    into this computer or its network."""
+    destination, address = _destination(url)
     if destination == PRIVATE:
         raise EventsError(
             INVALID_PARAMS,
@@ -410,11 +459,8 @@ def _require_reachable_by_peer(url: str) -> None:
             "computer or its local network.",
         )
     if destination == UNRESOLVED:
-        raise EventsError(
-            CALLBACK_ENDPOINT_ERROR,
-            "The callback URL did not pass verification (connection_refused).",
-            {"reason": "connection_refused"},
-        )
+        raise _callback_failed(PEER_VERIFICATION_FAILED)
+    return address
 
 
 def _is_loopback(host: str) -> bool:
@@ -970,22 +1016,36 @@ def _new_client(timeout_s: float = REQUEST_TIMEOUT_S):
 
 
 def _post(url: str, body: bytes, headers: Mapping[str, str], timeout_s: float, *,
-          client: Any = None) -> _Reply:
+          client: Any = None, connect_to: Optional[str] = None) -> _Reply:
     """One POST; never follows redirects, never raises.
 
     Args:
         client: A reusable client from ``_new_client``; building one costs
             about a tenth of a second (TLS setup), so delivery workers keep theirs.
+        connect_to: The address to connect to, instead of looking up the
+            URL's host. The Host header and the TLS server name stay that
+            host, and the certificate is still checked against it. Such a
+            request opens a connection of its own: ``client``'s are keyed by
+            address and may have been opened under another host's name.
     """
     import httpx
 
-    owned = client is None
+    owned = None
     quiet = _quiet.set(True)
     try:
-        if owned:
-            client = _new_client(timeout_s)
+        target = httpx.URL(url)
+        headers = dict(headers)
+        extensions = {}
+        if connect_to is not None:
+            headers["host"] = target.netloc.decode("ascii")
+            if target.scheme == "https":
+                extensions["sni_hostname"] = target.raw_host.decode("ascii")
+            target = target.copy_with(host=connect_to)
+        if client is None or connect_to is not None:
+            owned = client = _new_client(timeout_s)
         with client.stream(
-            "POST", url, content=body, headers=dict(headers), timeout=timeout_s
+            "POST", target, content=body, headers=headers, timeout=timeout_s,
+            extensions=extensions,
         ) as response:
             received = bytearray()
             for chunk in response.iter_bytes():
@@ -1003,8 +1063,8 @@ def _post(url: str, body: bytes, headers: Mapping[str, str], timeout_s: float, *
     except (httpx.HTTPError, OSError, ValueError) as exc:
         return _Reply(None, category="tls_error" if _is_tls_failure(exc) else "connection_refused")
     finally:
-        if owned and client is not None:
-            client.close()
+        if owned is not None:
+            owned.close()
         _quiet.reset(quiet)
 
 
@@ -1020,8 +1080,14 @@ def _signed_headers(keys: list[str], msg_id: str, body: bytes, sub_id: str) -> d
     return headers
 
 
-def _verify_callback(sub_id: str, url: str, secret: str) -> None:
-    """Prove the callback wants our events before activating; EventsError when not."""
+def _verify_callback(sub_id: str, url: str, secret: str, *,
+                     peer_address: Optional[str] = None) -> None:
+    """Prove the callback wants our events before activating; EventsError when not.
+
+    Args:
+        peer_address: For a Tailscale peer's callback, the checked address
+            to connect to. Every failure then reads alike to the peer.
+    """
     with _state_lock:
         until = _verified.get(url)
     if until is not None and until > time.monotonic():
@@ -1031,7 +1097,10 @@ def _verify_callback(sub_id: str, url: str, secret: str) -> None:
         {"type": "verification", "challenge": challenge}, separators=(",", ":")
     ).encode("utf-8")
     msg_id = "msg_verification_" + secrets.token_hex(12)
-    reply = _post(url, body, _signed_headers([secret], msg_id, body, sub_id), REQUEST_TIMEOUT_S)
+    reply = _post(
+        url, body, _signed_headers([secret], msg_id, body, sub_id), REQUEST_TIMEOUT_S,
+        connect_to=peer_address,
+    )
     reason = "challenge_failed"
     if reply.ok:
         try:
@@ -1050,11 +1119,7 @@ def _verify_callback(sub_id: str, url: str, secret: str) -> None:
     elif reply.category in CALLBACK_REASONS:
         reason = reply.category
     logger.info("MCP Events callback verification failed for %s: %s", sub_id, reason)
-    raise EventsError(
-        CALLBACK_ENDPOINT_ERROR,
-        f"The callback URL did not pass verification ({reason}).",
-        {"reason": reason},
-    )
+    raise _callback_failed(PEER_VERIFICATION_FAILED if peer_address is not None else reason)
 
 
 # -- delivery ------------------------------------------------------------------
@@ -1264,13 +1329,16 @@ def _deliver(job: _Job, client: Any = None) -> Optional[float]:
     subscription = registry.get(job.sub_id)
     if subscription is None or not _delivery_allowed(_load_settings(), subscription):
         return None
-    if subscription.origin != ORIGIN_LOCAL:
-        # Checked again for each try: a name may resolve here by now.
-        destination = _destination(subscription.url)
+    peer = subscription.origin != ORIGIN_LOCAL
+    address = None
+    if peer:
+        # Checked again for each try (the name may resolve here by now), and
+        # the try goes to the address checked, never to a second lookup's.
+        destination, address = _destination(subscription.url)
         if destination != PUBLIC:
             registry.record(
                 subscription.id,
-                "address_refused" if destination == PRIVATE else "connection_refused",
+                "address_refused" if destination == PRIVATE else PEER_DELIVERY_FAILED,
             )
             return None
     keys = registry.signing_secrets(subscription.id)
@@ -1283,6 +1351,7 @@ def _deliver(job: _Job, client: Any = None) -> Optional[float]:
         _signed_headers(keys, job.event_id, job.body, subscription.id),
         REQUEST_TIMEOUT_S,
         client=client,
+        connect_to=address,
     )
     logger.debug(
         "MCP Events %s to %s: %s", job.event_type, subscription.id,
@@ -1293,7 +1362,7 @@ def _deliver(job: _Job, client: Any = None) -> Optional[float]:
         return None
     # Any other answer, 410 Gone included, fails this delivery only: the
     # subscription ends when it is unsubscribed, expires or is cleared.
-    registry.record(subscription.id, reply.category)
+    registry.record(subscription.id, PEER_DELIVERY_FAILED if peer else reply.category)
     if not reply.retryable or job.attempt > len(RETRY_DELAYS_S):
         return None
     delay = RETRY_DELAYS_S[job.attempt - 1]
@@ -1409,8 +1478,7 @@ def subscribe(params: Mapping[str, Any], saved: Mapping[str, Any], origin: str) 
     name = _event_name(params.get("name"))
     arguments = normalize_arguments(name, params.get("arguments"))
     url, secret = _delivery(params.get("delivery"), subscribing=True)
-    if origin != ORIGIN_LOCAL:
-        _require_reachable_by_peer(url)
+    peer_address = None if origin == ORIGIN_LOCAL else _require_reachable_by_peer(url)
     ttl_ms = _granted_ttl_ms(params)
     sub_id = subscription_id(name, arguments, url)
     registry = _registry()
@@ -1418,7 +1486,7 @@ def subscribe(params: Mapping[str, Any], saved: Mapping[str, Any], origin: str) 
     existing = registry.get(sub_id)
     if existing is None and len(registry.active()) >= MAX_SUBSCRIPTIONS:
         raise _too_many()
-    _verify_callback(sub_id, url, secret)
+    _verify_callback(sub_id, url, secret, peer_address=peer_address)
     now = time.time()
     subscription = EventSubscription(
         sub_id,
