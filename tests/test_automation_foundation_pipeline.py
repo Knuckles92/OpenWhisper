@@ -386,3 +386,17 @@ def test_a_dictation_that_may_be_routed_learns_its_app_without_app_awareness(mon
     assert plain.target is None and requests == []
     routed = dictation_pipeline.begin_job(JobMode.DICTATION, off, route="hotkey")
     assert routed.target is not None and routed.focus is None and requests == [False]
+
+
+def test_route_by_voice_says_when_no_action_matched(h, monkeypatch):
+    monkeypatch.setattr(routing, "decide", lambda *a, **k: None)
+    assert h.runtime._claim_job(DictationJob(mode=JobMode.DICTATION, route="hotkey"))
+    h.runtime.transcribe_audio_file(h.audio)
+    h.paste.assert_called_once_with()
+    assert h.ui.notices[-1] == "No action matched — pasted instead"
+
+    # A plain dictation that merely could have been routed stays silent.
+    h.ui.notices.clear()
+    assert h.runtime._claim_job(DictationJob(mode=JobMode.DICTATION, route="auto"))
+    h.runtime.transcribe_audio_file(h.audio)
+    assert h.ui.notices == []

@@ -1624,6 +1624,12 @@ class TranscriptionRuntime:
         )
         if pasted:
             dictation_pipeline.after_paste(job, text, before_cleanup)
+        if job is not None and job.route == "hotkey":
+            # Route by voice found no action for these words; say so, since
+            # the user asked for a route, not a paste.
+            self._notify(
+                "No action matched — pasted instead" if pasted else "No action matched"
+            )
         if forced:
             if not pasted:
                 self._notify(self._delivery_status)
