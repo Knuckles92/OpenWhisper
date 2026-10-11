@@ -565,7 +565,7 @@ def create_app(
     # running app is behind it; the headless --api never serves it.
     from services.automation.api import create_live_router
 
-    app.include_router(create_live_router(settings))
+    app.include_router(create_live_router(settings, enabled=enabled))
     app.mount("/", http_app)
     if allowed_hosts:
 
