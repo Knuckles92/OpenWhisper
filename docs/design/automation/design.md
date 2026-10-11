@@ -671,7 +671,7 @@ Deviations the streams made, and why; the code is the reference.
 - **Webhooks** expose `post_signed_reply(...) -> (DeliveryRecord, body)`,
   `msg_id=`/`headers=` keywords, `SecretUnavailable`, `user_agent()`;
   `programs.child_env(extra)` (program hooks and program actions both use
-  it, so OpenWhisper's `.env` keys never reach user programs);
+  it; built on `process_env.external_env`, below);
   `filters.drop_all_leases()` (called when the listener stops). Leases need
   `api_text_filters` at dictation time, not only when registered, and
   `Lease.expires_at` is wall-clock.
@@ -690,8 +690,7 @@ Deviations the streams made, and why; the code is the reference.
   `id:` and seq 0; Last-Event-ID wins over `since`.
 - **MCP Events** follows ChatGPT's published shape: `capabilities.events`,
   verification challenge, delivery body `{eventId, name, timestamp, data,
-  cursor}`, `X-MCP-Subscription-Id`, retries 2/10/60 s, 410 removes the
-  subscription, error codes from the incubation sketch (CallbackEndpointError
+  cursor}`, `X-MCP-Subscription-Id`, retries 2/10/60 s, error codes from the incubation sketch (CallbackEndpointError
   -32015 as ChatGPT documents). `events_ext` keeps its own pooled HTTP client.
 - **Channel bridge** is a hand-rolled stdio server on the initialize handshake
   (2025-11-25 and older) because Claude Code registers channels only there; it
@@ -702,3 +701,68 @@ Deviations the streams made, and why; the code is the reference.
 - **Routing** threshold is 0.5 (measured; `benchmarks/voice_routing`), the
   gate tolerates fillers, lead-ins, name tails and sound-alike words, and Route
   by voice says "No action matched — pasted instead" when it falls back.
+
+### After review round 1
+
+Seven review lenses (security, concurrency, pipeline, protocol, actions
+behaviour, UI, cross-platform) and six fix streams changed these contracts:
+
+- **Event bus**: the app's bus numbers from a per-boot base,
+  `int(time.time() * 1000)`, so a Last-Event-ID from before a restart reads
+  as a gap instead of matching new events. Recipients are fixed when an event
+  is published (a subscriber added later never sees it live; it replays
+  instead). `events.clear()` empties the replay buffer and is called when
+  history entries or meetings are deleted. `publish` raises TypeError for data that
+  doesn't encode as UTF-8 (a lone surrogate), so no subscriber ever gets it.
+- **Events**: `transcription.completed` carries `raw_text: null` for Command
+  Mode and transforms (that text was the user's selection).
+  `transcription.failed` has `error` (`canceled`, `no_speech`, `refused`,
+  `failed`) and a user-facing `message`, never exception text. `action.ran`
+  has `source` and, for Send to my scripts, `text`; `channel.message` has
+  `source`. `catalog.USER_SOURCES` (`hotkey`, `ui`, `dbus`) are the sources a
+  person started.
+- **Permissions**: `api_agent_prompts` ("send words to your coding agents",
+  off) is required, besides `api_run_actions` or `api_control_recording`,
+  whenever a program runs or starts an agent or Claude Code channel action
+  (`app_control._enabled_action`; the MCP tools go through the same path).
+- **Channel bridge**: each message's meta has `origin` (`dictated`,
+  `program`, `openwhisper`), and the instructions tell Claude Code to treat
+  only `dictated` as the user's request. The bridge sends the MCP token only
+  to a loopback `OPENWHISPER_URL`, and forwards `events.gap` as an
+  `openwhisper` notice.
+- **MCP**: the MCP app is routed at `/mcp` only; other paths reach the live
+  API's JSON 404. MCP Events: any non-2xx answer, 410 included, fails that
+  delivery only; a subscription ends when it is unsubscribed, expires or is
+  cleared. The registry lock is never held across network I/O, and its file
+  is replaced with a short retry on Windows (a reader holding it open).
+  A Tailscale peer's subscriptions are delivered only while agents over
+  Tailscale are allowed, and a peer can't name a callback on this computer or
+  its network, by address or by a name resolving there (checked again before
+  each delivery).
+- **Webhooks**: one delivery lane (bounded queue + thread) per webhook, so a
+  slow receiver only delays its own events. A delivery makes a missing secret
+  only while the webhook is still saved (`_delivery_secret`), so a delivery in
+  flight never recreates a deleted webhook's secret.
+- **Programs**: `run_once(..., cancel=)`; canceling or timing out kills the
+  whole process tree, while a clean exit leaves children it launched running.
+  Program filters pass the dictation's cancel through.
+- **Actions**: `ActionRuntime.deliver(job, text, *, raw_text, html,
+  notice="")` shows the notice with the outcome; `cancel(*, tests_only=False)`
+  stops running and queued runs (Cancel and the API's cancel both reach it);
+  `accepting()` is False at `MAX_PENDING` (8) runs; `running()` counts them.
+  A shaping problem never loses the words: `_shape_action` falls back to the
+  cleaned words with a notice, and only Command Mode's refusal drops audio.
+  Answers from program-started runs never touch the clipboard.
+- **Routing**: `decide` waits at most `ROUTE_TIMEOUT_S` of wall-clock time and
+  returns `RouteDecision(failure="timeout"|"unreachable")` when the judge
+  couldn't answer, so Route by voice says why it pasted; `RoutingStatus.fix`
+  names what is missing (`fast_judgments`, `actions`, `trigger`). The gate no
+  longer hears "could", "called" or "cold" as Claude.
+- **Environment**: `services/process_env.py` records every change the app
+  makes to its own environment (`set_for_app`, `prepend_for_app`);
+  `external_env()` undoes them plus the frozen loader's paths and the app's
+  virtualenv. `installed_agents.agent_child_env` and `programs.child_env`
+  build on it, so links, terminals, agents, hooks and actions start in the
+  user's environment.
+- **Hotkeys**: `hotkey_conflicts.STANDARD_LABELS` is the one label map for
+  standard shortcuts.
