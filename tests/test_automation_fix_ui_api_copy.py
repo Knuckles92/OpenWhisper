@@ -57,3 +57,9 @@ def test_follow_live_events_names_what_it_shares_while_on_by_default(live):
     line = check.accessibleDescription()
     for shared in ("finished dictations", "actions", "meeting lines"):
         assert shared in line
+
+def test_the_channel_card_says_words_a_program_sends_are_marked_and_need_permission(live):
+    note = live.channel_programs.text()
+    assert "Send words to my coding agents" in note
+    assert "program" in note and "Claude" in note
+    assert live.channel_card.isAncestorOf(live.channel_programs)

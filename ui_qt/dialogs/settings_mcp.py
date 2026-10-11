@@ -1221,6 +1221,11 @@ class LiveAutomationSection(QWidget):
         # Full width, so the command wraps between words rather than inside them.
         layout.addWidget(self.channel_command)
         layout.addWidget(self.copy_channel_command, 0, Qt.AlignmentFlag.AlignLeft)
+        self.channel_programs = McpSettingsPage._detail(
+            "A program can send words here too once you allow Send words to my coding "
+            "agents. Claude sees they came from a program, not from you."
+        )
+        layout.addWidget(self.channel_programs)
         layout.addStretch()
 
     # ---- layout ----
