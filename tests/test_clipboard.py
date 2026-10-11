@@ -174,12 +174,10 @@ def test_scheduled_restore_runs_after_event_loop_turn():
 
     assert temporary.schedule_restore(stage.lease, 0)
     assert clipboard.text() == "dictated text"
-    # A fixed quit timer can already be overdue when a busy runner enters
-    # the loop, ending it before the zero-delay restoration is dispatched.
-    deadline = time.monotonic() + 2.0
-    while clipboard.text() != "previous text":
-        assert time.monotonic() < deadline, "the scheduled clipboard restore never ran"
-        _pump(5)
+    loop = QEventLoop()
+    QTimer.singleShot(20, loop.quit)
+    loop.exec()
+    assert clipboard.text() == "previous text"
 
 
 def test_snapshot_failure_keeps_transcript_and_reports_unavailable():

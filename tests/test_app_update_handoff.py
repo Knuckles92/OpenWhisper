@@ -136,9 +136,12 @@ class TestNativeHandoff(unittest.TestCase):
         controller = _FakeController()
         controller.main_window.confirm_quit = MagicMock(return_value=False)
 
-        UIController.exit_for_update(controller)
+        # Exiting the real application disables later nested Qt event loops.
+        with patch("ui_qt.ui_controller.QApplication") as qapp:
+            UIController.exit_for_update(controller)
 
         controller.main_window.confirm_quit.assert_not_called()
+        qapp.instance.return_value.exit.assert_called_once_with(0)
 
 
 
