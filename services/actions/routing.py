@@ -1,4 +1,4 @@
-"""Spoken routing: which saved action the words name, decided by Jev (stream F).
+"""Route by voice: which saved action the words name, decided by Jev (stream F).
 
 Two gates, as with the meeting note taker's voice commands
 (meeting/voice_commands.py):
@@ -545,6 +545,17 @@ class RoutingStatus:
     enabled: bool
     ready: bool
     message: str
+    #: What is missing: ``FIX_FAST_JUDGMENTS``, ``FIX_ACTIONS`` or
+    #: ``FIX_TRIGGER``; "" when ready or off.
+    fix: str = ""
+
+
+#: Fast judgments are off, or the chosen route has no key.
+FIX_FAST_JUDGMENTS = "fast_judgments"
+#: No actions, or every action is turned off.
+FIX_ACTIONS = "actions"
+#: Nothing starts it: no Route by voice shortcut, and normal dictations aren't listened to.
+FIX_TRIGGER = "trigger"
 
 
 #: ``RouteDecision.failure``: no answer within ``ROUTE_TIMEOUT_S``.
@@ -662,17 +673,26 @@ def _decide(text: str, job, settings: Mapping, judge,
     return RouteDecision(judgment.action_id, judgment.payload, judgment.confidence)
 
 
-_WHERE_ACTIONS = "Settings → Actions"
+#: The status shows on the Actions page, below the actions and the Route by
+#: voice switch and above its shortcut; Fast judgments live on another page.
 _WHERE_FAST = "Settings → Meeting Mode → Fast judgments"
+#: ``hotkeys`` entry of the Route by voice shortcut.
+ROUTE_HOTKEY_NAME = "route_record"
+
+
+def _route_shortcut(settings: Mapping) -> str:
+    hotkeys = settings.get("hotkeys")
+    value = hotkeys.get(ROUTE_HOTKEY_NAME) if isinstance(hotkeys, Mapping) else ""
+    return value.strip() if isinstance(value, str) else ""
 
 
 def status(settings: Mapping) -> RoutingStatus:
-    """Whether spoken routing can run, and what to tell the user; never raises."""
+    """Whether Route by voice can run, what it still needs, and what it sends; never raises."""
     try:
         return _status(settings or {})
     except Exception as exc:
-        logger.debug("Spoken routing status unavailable: %s", type(exc).__name__)
-        return RoutingStatus(False, False, "Spoken routing isn't available right now.")
+        logger.debug("Route by voice status unavailable: %s", type(exc).__name__)
+        return RoutingStatus(False, False, "Route by voice isn't available right now.")
 
 
 def _status(settings: Mapping) -> RoutingStatus:
@@ -684,26 +704,36 @@ def _status(settings: Mapping) -> RoutingStatus:
     )
 
     if not resolve_voice_routing_enabled(settings):
-        return RoutingStatus(False, False, f"Spoken routing is off. Turn it on in {_WHERE_ACTIONS}.")
+        return RoutingStatus(False, False, "Route by voice is off. Turn it on above.")
     judge_route = typesafe.route_from_settings(dict(settings))
     if not resolve_typesafe_enabled(settings):
         return RoutingStatus(True, False, (
-            f"Spoken routing needs Fast judgments. Turn them on in {_WHERE_FAST}."))
+            f"Route by voice needs Fast judgments. Turn them on in {_WHERE_FAST}."),
+            FIX_FAST_JUDGMENTS)
     if not typesafe.key_present(dict(settings), route=judge_route):
         return RoutingStatus(True, False, (
-            f"Spoken routing needs {judge_route.key_phrase}. Add one in {_WHERE_FAST}."))
+            f"Route by voice needs {judge_route.key_phrase}. Add one in {_WHERE_FAST}."),
+            FIX_FAST_JUDGMENTS)
     actions = load_actions(settings)
     if not actions:
         return RoutingStatus(True, False, (
-            f"Spoken routing is on, but there are no actions yet. Add one in {_WHERE_ACTIONS}."))
+            "Route by voice is on, but there are no actions yet. Add one above."), FIX_ACTIONS)
     if not any(a.enabled for a in actions):
         return RoutingStatus(True, False, (
-            f"Spoken routing is on, but every action is turned off. Turn one on in "
-            f"{_WHERE_ACTIONS}."))
-    if resolve_voice_routing_on_dictation(settings):
-        sent = ("What you record with Route by voice, and dictations that start with an "
-                f"action's name, are sent to {judge_route.name} to choose the action.")
+            "Route by voice is on, but every action is turned off. Turn one on above."),
+            FIX_ACTIONS)
+    shortcut = bool(_route_shortcut(settings))
+    on_dictation = resolve_voice_routing_on_dictation(settings)
+    if not (shortcut or on_dictation):
+        return RoutingStatus(True, False, (
+            "Route by voice is on, but has nothing to listen to yet. Set a Route by voice "
+            "shortcut below, or turn on Also listen to normal dictations."), FIX_TRIGGER)
+    to = f"to {judge_route.name} to choose the action."
+    if shortcut and on_dictation:
+        sent = ("Everything you record with the Route by voice shortcut, and dictations "
+                f"that start with an action's name, are sent {to}")
+    elif shortcut:
+        sent = f"Everything you record with the Route by voice shortcut is sent {to}"
     else:
-        sent = (f"What you record with Route by voice is sent to {judge_route.name} to "
-                "choose the action.")
-    return RoutingStatus(True, True, f"Spoken routing is on. {sent}")
+        sent = f"Dictations that start with an action's name are sent {to}"
+    return RoutingStatus(True, True, f"Route by voice is on. {sent}")
