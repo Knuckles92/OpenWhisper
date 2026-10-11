@@ -91,6 +91,11 @@ class TranscriptionRuntime:
         )
         # Why the most recent cleanup pass fell back to raw text, or None.
         self._last_cleanup_failure: Optional[str] = None
+        # The cleanup profile that pass formatted with, or None.
+        self._formatting_profile = None
+        # Why an action got different words than it asked for (its transform
+        # couldn't run); set by the worker, shown with the outcome.
+        self._shaping_notice = ""
         # Dictation lands in whatever application the hotkey was pressed in, so
         # its result is copied and pasted. An upload is started from inside the
         # window and its result stays there; the Upload File tab has its own
@@ -183,6 +188,8 @@ class TranscriptionRuntime:
             self._rewrite_pending = False
             self._refused = False
             self._filter_canceled = False
+            self._formatting_profile = None
+            self._shaping_notice = ""
             self._job_active = False
             self._deliver_to_clipboard = True
 
@@ -1062,6 +1069,7 @@ class TranscriptionRuntime:
             settings = self._profile_settings if profile else settings_manager.load_all_settings()
         else:
             settings = settings_manager.load_all_settings()
+        self._formatting_profile = profile
         if not raw or not raw.strip():
             return raw, None, None
         # Before the switch below: the dictionary applies with cleanup off,
@@ -1291,14 +1299,16 @@ class TranscriptionRuntime:
     def _shape_action(self, text: str, job, settings):
         """Prepare an action's words the way it asks; worker.
 
-        Raises:
-            CommandRefused: The action is gone, or its transform can't run.
+        Never refuses: the words were dictated, so a shaping problem falls
+        back to the cleaned words, as a failed cleanup falls back to raw
+        text. An action deleted meanwhile still gets them; the action
+        runtime says it is gone and copies them.
         """
         from services.actions.model import SHAPING_RAW, find_action
 
         action = find_action(settings, job.action_id)
         if action is None:
-            raise CommandRefused("That action no longer exists")
+            return self._maybe_cleanup_transcript(text, profile=None)
         if action.shaping == SHAPING_RAW:
             prepared = dictation_pipeline.prepare_text(text, job, settings)
             self._spoken_text = prepared.text
@@ -1319,11 +1329,24 @@ class TranscriptionRuntime:
 
         transform = find_transform(settings, transform_id)
         if transform is None:
+            self._shaping_notice = (
+                "This action's transform no longer exists — sent your cleaned words"
+            )
             return fixed, raw_text, info
         self.controller.overlay_state_update.emit(OverlayState.REWRITING)
-        result, _source, rewrite_info = self.controller.command_runtime.rewrite_text(
-            fixed, transform.instruction
-        )
+        try:
+            result, _source, rewrite_info = self.controller.command_runtime.rewrite_text(
+                fixed, transform.instruction
+            )
+        except Exception as exc:
+            # The cancel ends the rewrite's wait; that is a cancel, not a failure.
+            self._raise_if_canceled()
+            logger.warning(
+                "An action's transform couldn't run (%s); sending the cleaned words",
+                type(exc).__name__,
+            )
+            self._shaping_notice = f"{transform.name} couldn't run — sent your cleaned words"
+            return fixed, raw_text, info
         self._delivery_html = ""
         return result, (raw_text if raw_text is not None else fixed), rewrite_info or info
 
@@ -1376,12 +1399,21 @@ class TranscriptionRuntime:
     def _refuse(self, message: str) -> None:
         """Report a command or transform with nothing to paste; worker thread.
 
-        A refusal is not a failed transcription, so the instruction audio is
-        not kept: copying it into Recordings would push out older dictation
-        audio, and its journal is dropped so the next start does not recover
-        it either.
+        A refusal is not a failed transcription, so a Command Mode
+        instruction's audio is not kept: copying it into Recordings would
+        push out older dictation audio, and its journal is dropped so the
+        next start does not recover it either. Dictated words are never
+        dropped this way: any other job keeps its audio like a failure.
         """
         logger.info("Nothing to paste for this command or transform")
+        job = self._active_job
+        if job is not None and job.mode == JobMode.COMMAND:
+            self._drop_instruction_audio()
+        with self._job_lock:
+            self._refused = True
+        self.controller.transcription_failed.emit(message)
+
+    def _drop_instruction_audio(self) -> None:
         pending = self.controller._pending_audio_path
         if pending and os.path.abspath(pending) == os.path.abspath(config.RECORDED_AUDIO_FILE):
             acknowledge = getattr(self.controller.recorder, "acknowledge_recording", None)
@@ -1392,9 +1424,6 @@ class TranscriptionRuntime:
                     logger.exception("Could not drop the Command Mode recording")
         # The held slot keeps other jobs off both until on_transcription_error.
         self.controller._pending_audio_path = None
-        with self._job_lock:
-            self._refused = True
-        self.controller.transcription_failed.emit(message)
 
     def _abandon_canceled_job(self, stage: str) -> None:
         """Release a dictation job canceled before any transcript existed.
@@ -1543,13 +1572,10 @@ class TranscriptionRuntime:
             ),
         )
 
-        cleanup_notice = (
-            f" — {self._recording_profile.name} formatting failed "
-            f"({self._last_cleanup_failure}); using raw transcript"
-            if self._recording_profile and self._last_cleanup_failure else ""
-        )
+        notice = self._delivery_notice()
+        status_suffix = f" — {notice}" if notice else ""
         if not self._deliver_to_clipboard:
-            self.controller.ui_controller.set_status("Ready" + cleanup_notice)
+            self.controller.ui_controller.set_status("Ready" + status_suffix)
             entry.update(context)
             self._queue_history([entry])
             return
@@ -1565,26 +1591,43 @@ class TranscriptionRuntime:
         # Deliver immediately; copying retained audio, fsync, and SQLite writes
         # run on a worker while Qt and the target application remain responsive.
         try:
-            self._deliver(transcript, job, status_suffix=cleanup_notice, before_cleanup=raw_text)
+            self._deliver(transcript, job, notice=notice, before_cleanup=raw_text)
         finally:
             entry.update(context)
             self._queue_history([entry])
 
+    def _delivery_notice(self) -> str:
+        """Why the words delivered aren't the ones asked for, or ""; Qt thread."""
+        if self._shaping_notice:
+            return self._shaping_notice
+        profile = self._formatting_profile
+        if profile is not None and self._last_cleanup_failure:
+            return (
+                f"{profile.name} formatting failed "
+                f"({self._last_cleanup_failure}); using raw transcript"
+            )
+        return ""
+
     def _deliver(
-        self, transcript: str, job, status_suffix: str = "", before_cleanup: Optional[str] = None
+        self, transcript: str, job, notice: str = "", before_cleanup: Optional[str] = None
     ) -> None:
         """Put a finished transcript where the user is working.
 
+        ``notice`` says why the words aren't what the user asked for (a
+        cleanup or transform that couldn't run), shown with the outcome.
         ``before_cleanup`` is the transcript before AI cleanup changed it, if it
         did; dictionary learning compares the user's corrections with it.
         """
         ui = self.controller.ui_controller
         if job is not None and job.mode == JobMode.ACTION:
-            # The words belong to the action, not to the focused app.
+            # The words belong to the action, not to the focused app, which
+            # shows its own outcome with the notice.
             self.controller.action_runtime.deliver(
                 job, transcript, raw_text=before_cleanup, html=self._delivery_html,
+                notice=notice,
             )
             return
+        status_suffix = f" — {notice}" if notice else ""
         insert = getattr(ui, "insert_into_scratchpad", None)
         if callable(insert):
             try:
