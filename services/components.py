@@ -3,7 +3,7 @@
 This file is the only catalog of component download URLs. Each archive pins an
 immutable URL and SHA-256, fetched by ``services.verified_download``.
 
-The app installer is not listed here — Help → Check for Updates uses GitHub
+The app installer is not listed here — Check for Updates uses GitHub
 ``/releases/latest``. ``MEETING_AGENT_RELEASE_TAG`` hosts the sidecar zip and
 does not move with that latest installer.
 

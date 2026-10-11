@@ -32,6 +32,8 @@ def _action(kind, **params):
      "Opens Obsidian with your words"),
     (_action(ActionKind.AGENT, agent="codex", mode="handoff"),
      "Opens a Codex session with your words"),
+    (_action(ActionKind.AGENT, agent="codex", mode="handoff", new_folder=True),
+     "Opens a Codex session in a new folder with your words"),
     (_action(ActionKind.AGENT, agent="claude_code", mode="ask", output="scratchpad"),
      "Asks Claude Code and shows the answer in the Scratchpad"),
     (_action(ActionKind.AGENT, agent="opencode_cli", mode="ask", output="paste"),

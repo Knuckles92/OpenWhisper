@@ -80,6 +80,7 @@ PARAMS: dict[str, dict[str, Any]] = {
         "mode": AgentMode.HANDOFF,
         "surface": AgentSurface.AUTO,
         "folder": "",
+        "new_folder": False,
         "include_selection": False,
         "model": "",
         "output": Output.SCRATCHPAD,
@@ -359,7 +360,7 @@ def _validate_params(action: Action) -> None:
         if p("surface") not in AgentSurface.ALL:
             raise ValueError("Choose where the session opens.")
         folder = p("folder") or ""
-        if folder and not os.path.isabs(folder):
+        if not p("new_folder") and folder and not os.path.isabs(folder):
             raise ValueError("Choose the working folder with its full path.")
         if p("output") not in Output.ALL:
             raise ValueError("Choose where the answer goes.")

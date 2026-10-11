@@ -134,7 +134,7 @@ Other speech engines use their own runtimes from Downloads. On Apple Silicon Mac
 
 ## Updates
 
-Use **Help → Check for Updates**. Configure automatic checks and notifications in **Settings → General**.
+On macOS, use **OpenWhisper → Check for Updates**. On Windows and Linux, use **Help → Check for Updates**. Configure automatic checks and notifications in **Settings → General**.
 
 - **Windows:** Apply the in-app update or follow the setup prompt.
 - **macOS:** The verified update installs and restarts the app, restoring the previous version if startup fails. If the app cannot replace itself, it opens the verified DMG for replacement in Applications.

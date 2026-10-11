@@ -828,10 +828,15 @@ class MainWindow(QMainWindow):
         )
 
         help_menu = menubar.addMenu("Help")
-        updates_action = help_menu.addAction(
-            "Check for Updates...", self.check_for_updates
+        updates_action = QAction("Check for Updates...", self)
+        # Set the role before insertion so macOS merges it into the app menu.
+        updates_action.setMenuRole(
+            QAction.MenuRole.ApplicationSpecificRole
+            if sys.platform == "darwin"
+            else QAction.MenuRole.NoRole
         )
-        updates_action.setMenuRole(QAction.MenuRole.NoRole)
+        updates_action.triggered.connect(self.check_for_updates)
+        help_menu.addAction(updates_action)
         about_action = help_menu.addAction("About", self.show_about)
         about_action.setMenuRole(QAction.MenuRole.NoRole)
 

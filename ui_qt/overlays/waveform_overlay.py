@@ -181,6 +181,7 @@ class WaveformOverlay(QWidget):
         self.hidden_timer.timeout.connect(self.hide)
 
         self._hands_free = False
+        self._recording_destination = ""
         self._language = ""
         self._language_choices: tuple = ()
         self._language_changed_at: Optional[float] = None
@@ -285,7 +286,7 @@ class WaveformOverlay(QWidget):
         """A live look: its voice drawing, the particles if it has them, the live label."""
         elapsed = time.monotonic() - self._listen_started
         command = self.current_state == self.STATE_COMMAND_LISTENING
-        tone = "accent" if command else "danger"
+        tone = "accent" if command or self._recording_destination else "danger"
         if not self._embedded and not command:
             moments.draw_edge_flash(painter, QRectF(self.rect()), elapsed, 0.0, tone)
         grow = moments.ease_out_cubic(moments.phase(elapsed, 0.05, 0.4))
@@ -492,9 +493,10 @@ class WaveformOverlay(QWidget):
 
     def _draw_background(self, painter: QPainter):
         command = self.current_state == self.STATE_COMMAND_LISTENING
+        accented = command or bool(self._recording_destination)
         if self._embedded:
             painter.fillRect(self.rect(), token_color("bg"))
-            painter.setPen(QPen(token_color("accent") if command else token_color("border"), 1))
+            painter.setPen(QPen(token_color("accent") if accented else token_color("border"), 1))
             painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
             return
         # Inset by half the pen width so the 1px border isn't clipped.
@@ -505,9 +507,7 @@ class WaveformOverlay(QWidget):
         painter.fillPath(path, token_color("overlay-bg"))
         painter.setPen(QPen(token_color("overlay-border"), 1))
         painter.drawPath(path)
-        if command:
-            # Command Mode is a recording that edits text; the accent ring
-            # tells it apart from dictation at a glance.
+        if accented:
             ring = QPainterPath()
             ring.addRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 11.5, 11.5)
             painter.setPen(QPen(token_color("accent", 210), 1.6))
@@ -611,11 +611,12 @@ class WaveformOverlay(QWidget):
         return 2.0 if self._embedded else _BADGE_HEIGHT / 2
 
     def _draw_listening_extras(self, painter: QPainter) -> None:
-        """The hands-free or Command Mode badge, the language chip and a caption."""
+        if self._recording_destination:
+            self._draw_mode_badge(painter)
         if self.current_state not in self.LISTENING_STATES:
             self._chip_rect = QRectF()
             return
-        if self._hands_free or self.current_state == self.STATE_COMMAND_LISTENING:
+        if not self._recording_destination and (self._hands_free or self.current_state == self.STATE_COMMAND_LISTENING):
             self._draw_mode_badge(painter)
         self._chip_rect = self._draw_language_chip(painter) if self._chip_visible() else QRectF()
         if self._caption:
@@ -623,7 +624,7 @@ class WaveformOverlay(QWidget):
 
     def _draw_mode_badge(self, painter: QPainter) -> None:
         command = self.current_state == self.STATE_COMMAND_LISTENING
-        text = "Command Mode" if command else "Hands-free"
+        text = "Command Mode" if command else self._recording_destination or "Hands-free"
         font = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
         lock_width = 8 if self._hands_free else 0
         width = QFontMetrics(font).horizontalAdvance(text) + 18 + (lock_width + 5 if lock_width else 0)
@@ -891,6 +892,8 @@ class WaveformOverlay(QWidget):
                     if self._visual is not None:
                         self._visual.begin_work()
             self.current_state = state
+            if state not in self.LISTENING_STATES | self._FADING_STATES or state == self.STATE_COMMAND_LISTENING:
+                self._recording_destination = ""
             self.animation_time = 0.0
             self.cancel_progress = 0.0
             self.last_frame_time = time.monotonic()  # Reset to prevent huge delta on first frame
@@ -994,6 +997,15 @@ class WaveformOverlay(QWidget):
         if bool(on) != self._hands_free:
             self._hands_free = bool(on)
             self.update()
+
+    @property
+    def recording_destination(self) -> str:
+        return self._recording_destination
+
+    def set_recording_destination(self, destination: str) -> None:
+        """Keep the capture's destination visible through its transcription and cleanup."""
+        self._recording_destination = destination
+        self.update()
 
     def set_language(self, code: str, choices) -> None:
         """Show the active dictation language when there is more than one."""
@@ -1152,6 +1164,7 @@ class WaveformOverlay(QWidget):
         self._streaming_preview_text = ""
         self._anchor_pos = None
         self._end_listening_extras()
+        self._recording_destination = ""
         self._notice = ""
         self._collapse_from = []
         self._language = ""

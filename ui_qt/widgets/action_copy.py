@@ -117,6 +117,8 @@ def summary(action: Action) -> str:
             phrase = _THE_RESULT.get(p("output"), "")
             return (f"Asks {name} and {phrase.format(it='the answer')}" if phrase
                     else f"Asks {name} quietly")
+        if p("new_folder"):
+            return f"Opens a {name} session in a new folder with your words"
         return f"Opens a {name} session with your words"
     if kind == ActionKind.CHANNEL:
         return "Sends your words to your Claude Code session"

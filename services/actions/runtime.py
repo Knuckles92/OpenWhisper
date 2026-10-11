@@ -345,7 +345,7 @@ def _agent(params: dict, text: str, job, cancel: threading.Event) -> ActionResul
         # answered, or failed on its own, wasn't.
         return agents.ask(params["agent"], text, model=params["model"], cancel=cancel)
     return agents.handoff(params["agent"], text, folder=params["folder"],
-                          surface=params["surface"])
+                          surface=params["surface"], new_folder=params["new_folder"])
 
 
 # -- the runtime ------------------------------------------------------------------
@@ -667,7 +667,7 @@ class ActionRuntime:
                 run.cancel))
         elif kind == ActionKind.AGENT:
             params = {key: action.param(key) for key in (
-                "agent", "mode", "surface", "folder", "include_selection", "model")}
+                "agent", "mode", "surface", "folder", "new_folder", "include_selection", "model")}
             self._submit(run, partial(_agent, params, run.text, run.job, run.cancel))
         else:
             self._finish(run, ActionResult(False, "OpenWhisper can't run this kind of action"))

@@ -1,7 +1,7 @@
 """Dialog for application update checks.
 
 Shown automatically the first time a newer GitHub release exists, and from
-Help → Check for Updates. Opt-out checkboxes persist the same Settings keys
+Check for Updates. Opt-out checkboxes persist the same Settings keys
 as Settings → General.
 """
 from __future__ import annotations

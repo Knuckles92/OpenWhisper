@@ -724,11 +724,23 @@ class AgentFields(QWidget):
         session.addWidget(self.surface_hint)
         # Only a session starts somewhere: a quick answer runs with no files.
         session.addSpacing(4)
-        session.addWidget(field_label("Working folder"))
+        self.new_folder_row = SwitchRow(
+            "Create a new folder automatically",
+            "A fresh folder per request in ~/OpenWhisper Agent Tasks.",
+        )
+        self.new_folder_row.switch.toggled.connect(self._emit_changed)
+        session.addWidget(self.new_folder_row)
+        self.folder_box = QWidget()
+        self.folder_box.setProperty("tileId", "actionRow")
+        folder_layout = QVBoxLayout(self.folder_box)
+        folder_layout.setContentsMargins(0, 0, 0, 0)
+        folder_layout.setSpacing(6)
         self.folder = PathField("Working folder", folder=True,
                                 placeholder="Optional · where the agent starts")
         self.folder.changed.connect(self._emit_changed)
-        session.addWidget(self.folder)
+        folder_layout.addWidget(field_label("Working folder", self.folder.line))
+        folder_layout.addWidget(self.folder)
+        session.addWidget(self.folder_box)
         layout.addWidget(self.session_box)
 
         self.answer_box = QWidget()
@@ -779,7 +791,8 @@ class AgentFields(QWidget):
         self._compact = False
         self._caps = ((self.chooser, CHOOSER_MAX_WIDTH), (self.mode_bar, BAR_MAX_WIDTH),
                       (self.surface_bar, BAR_MAX_WIDTH), (self.answer_box, CHOOSER_MAX_WIDTH),
-                      (self.folder, CHOOSER_MAX_WIDTH), (self.selection_row, CHOOSER_MAX_WIDTH),
+                      (self.folder_box, CHOOSER_MAX_WIDTH), (self.new_folder_row, CHOOSER_MAX_WIDTH),
+                      (self.selection_row, CHOOSER_MAX_WIDTH),
                       (self.selection_note, CHOOSER_MAX_WIDTH))
         cap_widths(self._caps)
         self.set_params({})
@@ -800,6 +813,7 @@ class AgentFields(QWidget):
             "mode": mode,
             "surface": AgentSurface.ALL[max(0, self.surface_bar.currentIndex())],
             "folder": self.folder.path(),
+            "new_folder": self.new_folder_row.switch.isChecked(),
             "include_selection": self.selection_row.switch.isChecked(),
             "model": self.model_edit.text().strip(),
             "output": self.output_combo.value(),
@@ -821,6 +835,7 @@ class AgentFields(QWidget):
             self.output_combo.set_value(output)
             self.model_edit.setText(values["model"] or "")
             self.folder.set_path(values["folder"] or "")
+            self.new_folder_row.switch.setChecked(bool(values["new_folder"]))
             self.selection_row.switch.setChecked(bool(values["include_selection"]))
         finally:
             self._loading = False
@@ -852,6 +867,12 @@ class AgentFields(QWidget):
         self.session_box.setVisible(handoff)
         self.answer_box.setVisible(not handoff)
         surface = AgentSurface.ALL[max(0, self.surface_bar.currentIndex())]
+        self.folder_box.setVisible(not self.new_folder_row.switch.isChecked())
+        folder_hint = "A fresh folder per request in ~/OpenWhisper Agent Tasks."
+        if self.chooser.current() == "codex" and surface != AgentSurface.TERMINAL:
+            folder_hint += " The Codex app adds it as a local project."
+        self.new_folder_row.detail_label.setText(folder_hint)
+        self.new_folder_row.switch.setAccessibleDescription(folder_hint)
         app_button = self.surface_bar.buttons[AgentSurface.ALL.index(AgentSurface.APP)]
         has_app = self.chooser.current() not in AGENTS_WITHOUT_APP
         app_button.setEnabled(has_app)

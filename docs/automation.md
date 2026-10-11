@@ -72,6 +72,16 @@ The **Agent hotkey** card at the top of the page sets up the action for your
 installed agent in one place. **Try it** runs an action with sample words
 without saving anything to History.
 
+For sessions, **Create a new folder automatically** gives each request an
+empty, persistent folder under `~/OpenWhisper Agent Tasks`. OpenWhisper
+creates it and passes it to the agent; your files remain there for later
+turns. Turning the option off restores your chosen working folder, or the
+agent's default if none was chosen. Quick answers don't create folders.
+Codex adds these folders as local projects. Its native **Don't work in a
+project** option isn't exposed by the [documented app links](https://learn.chatgpt.com/docs/app/commands),
+so automatic folder creation is a fallback for requests that don't need an
+existing project.
+
 Every action you dictate is saved in History as `Action · <name>`, with the
 original words alongside.
 

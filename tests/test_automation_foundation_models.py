@@ -124,6 +124,19 @@ def test_public_dict_hides_urls_paths_and_folders():
     assert "secret" not in str(hook.public_dict())
 
 
+def test_new_folder_choice_is_saved_and_old_actions_keep_their_folder():
+    chosen = os.path.abspath(os.sep)
+    action = Action("ag", "Agent", ActionKind.AGENT,
+                    {"agent": "codex", "folder": chosen})
+    settings = _saved(actions.save_action, None, action)
+    old, = actions.load_actions(settings)
+    assert old.param("folder") == chosen and old.param("new_folder") is False
+    actions.save_action(settings, Action("ag", "Agent", ActionKind.AGENT,
+                                         {"agent": "codex", "folder": chosen, "new_folder": True}))
+    new, = actions.load_actions(settings)
+    assert new.param("folder") == chosen and new.param("new_folder") is True
+
+
 def test_links_are_percent_encoded_and_dangerous_schemes_refused():
     assert actions.expand_link("claude://claude.ai/new?q={text}", "a & b?/c") == (
         "claude://claude.ai/new?q=a%20%26%20b%3F%2Fc"

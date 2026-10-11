@@ -25,6 +25,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from urllib.parse import quote
 
@@ -77,7 +78,8 @@ def available() -> dict[str, bool]:
 
 # ---- handoff ----
 
-def handoff(agent_id: str, text: str, *, folder: str = "", surface: str = "auto") -> ActionResult:
+def handoff(agent_id: str, text: str, *, folder: str = "", surface: str = "auto",
+            new_folder: bool = False) -> ActionResult:
     """Open a visible session of ``agent_id`` with ``text`` ready.
 
     Args:
@@ -86,6 +88,9 @@ def handoff(agent_id: str, text: str, *, folder: str = "", surface: str = "auto"
         folder: Absolute working folder, or "" for the agent's default (home).
         surface: ``auto`` (app link when its handler is registered, else a
             terminal), ``app`` (links only) or ``terminal``.
+        new_folder: Create a persistent, empty folder for this session under
+            ``~/OpenWhisper Agent Tasks``, instead of using ``folder``.
+            Codex app links register this folder as a local project.
     """
     name = AGENT_NAMES.get(agent_id)
     if name is None:
@@ -94,9 +99,33 @@ def handoff(agent_id: str, text: str, *, folder: str = "", surface: str = "auto"
         return ActionResult(False, "Choose where the agent opens: app, terminal or automatic.")
     if not text.strip():
         return ActionResult(False, f"There's nothing to send to {name}.")
-    if folder and not (os.path.isabs(folder) and os.path.isdir(folder)):
+    if not new_folder and folder and not (os.path.isabs(folder) and os.path.isdir(folder)):
         return ActionResult(False, "This action's working folder doesn't exist anymore. "
                                    "Choose another in Settings.")
+    if new_folder:
+        try:
+            folder = _new_handoff_folder()
+        except OSError:
+            return ActionResult(False, "Couldn't create a new working folder. "
+                                       "Check that ~/OpenWhisper Agent Tasks is writable.")
+    return _handoff_session(agent_id, text, folder, surface)
+
+
+def _new_handoff_folder() -> str:
+    """A durable folder per handoff, outside OpenWhisper's source/data folders.
+
+    A visible session can keep working and be resumed after OpenWhisper exits,
+    so this directory is never removed as a temporary workspace. Its name
+    contains only the time and a random suffix, never the dictated words.
+    """
+    root = os.path.join(os.path.expanduser("~"), "OpenWhisper Agent Tasks")
+    os.makedirs(root, exist_ok=True)
+    prefix = datetime.now().strftime("task-%Y-%m-%d-%H%M%S-")
+    return tempfile.mkdtemp(prefix=prefix, dir=root)
+
+
+def _handoff_session(agent_id: str, text: str, folder: str, surface: str) -> ActionResult:
+    name = AGENT_NAMES[agent_id]
     if surface != AgentSurface.TERMINAL:
         failure = ""
         for scheme, uri in app_links(agent_id, text, folder):

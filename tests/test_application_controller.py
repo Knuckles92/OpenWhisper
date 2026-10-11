@@ -402,6 +402,9 @@ class DummyOverlay:
     def set_hands_free(self, on):
         self.hands_free = on
 
+    def set_recording_destination(self, destination):
+        self.recording_destination = destination
+
     def set_language(self, code):
         self.language = code
 

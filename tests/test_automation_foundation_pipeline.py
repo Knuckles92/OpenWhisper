@@ -163,6 +163,7 @@ def h(monkeypatch, tmp_path):
         streaming_runtime=Mock(),
         is_meeting_active=lambda: False,
         overlay_state_update=Signal(),
+        recording_destination_changed=Signal(),
         status_update=Signal(),
         transcription_completed=Signal(),
         transcription_failed=Signal(),

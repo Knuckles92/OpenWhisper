@@ -160,6 +160,7 @@ def h(monkeypatch, tmp_path):
         overlay_state_update=Signal(),
         status_update=Signal(),
         recording_state_changed=Signal(),
+        recording_destination_changed=Signal(),
         streaming_overlay_hide=Signal(),
         transcription_completed=Signal(),
         transcription_failed=Signal(),

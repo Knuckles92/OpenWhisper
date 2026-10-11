@@ -465,11 +465,17 @@ Params by kind (unknown keys are dropped on load):
 | Kind | Params |
 | --- | --- |
 | open_link | `template` |
-| agent | `agent` (claude_code/codex/opencode_cli), `mode` (handoff/ask), `surface` (auto/app/terminal), `folder`, `include_selection` (bool), `model`, `output` |
+| agent | `agent` (claude_code/codex/opencode_cli), `mode` (handoff/ask), `surface` (auto/app/terminal), `folder`, `new_folder` (bool, default false), `include_selection` (bool), `model`, `output` |
 | channel | — |
 | webhook | `url`, `output` |
 | program | `program`, `args` (list of str), `output`, `timeout_s` |
 | clipboard / scripts | — |
+
+For handoffs, `new_folder` overrides `folder` and creates a persistent,
+unique directory in `~/OpenWhisper Agent Tasks`, used by both app links and
+terminal fallbacks. Existing actions retain their folder/default behavior.
+Codex's deep link registers the directory as a local project; it does not
+select the native projectless mode.
 
 ### `services/actions/runtime.py` (STUB → C)
 

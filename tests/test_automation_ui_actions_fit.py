@@ -104,14 +104,18 @@ def _controls(widget):
 
 def _open(dialog, state):
     panel = dialog.actions_panel
-    if state == "gallery":
+    if state == "new-folder":
+        fields = dialog.actions_agent_card.fields
+        fields.chooser.choices["codex"].click()
+        fields.new_folder_row.switch.click()
+    elif state == "gallery":
         panel.add_action()
     elif state != "list":
         panel.add_action()
         panel.start_from_preset(panel.gallery.tile(state).preset)
 
 
-@pytest.mark.parametrize("state", ["list", "gallery", "quick-answer", "webhook", "program"])
+@pytest.mark.parametrize("state", ["list", "new-folder", "gallery", "quick-answer", "webhook", "program"])
 @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 720), ("omarchy", 460)])
 def test_the_actions_page_fits_narrow_windows_and_large_fonts(make_dialog, monkeypatch,
                                                               ui_mode, width, state):

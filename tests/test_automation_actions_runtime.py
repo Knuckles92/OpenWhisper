@@ -489,13 +489,15 @@ def test_program_output_none_ignores_stdout(h, monkeypatch):
 # -- agent ------------------------------------------------------------------------
 
 
-def test_agent_handoff_passes_folder_and_surface(h, monkeypatch):
+@pytest.mark.parametrize("new_folder", [False, True])
+def test_agent_handoff_passes_folder_and_surface(h, monkeypatch, new_folder):
     h.add(Action("agent", "Agent hotkey", ActionKind.AGENT, {
-        "agent": "codex", "mode": "handoff", "surface": "terminal", "folder": "D:\\work"}))
+        "agent": "codex", "mode": "handoff", "surface": "terminal", "folder": "D:\\work",
+        "new_folder": new_folder}))
     calls = []
 
-    def handoff(agent_id, text, *, folder="", surface="auto"):
-        calls.append((agent_id, text, folder, surface))
+    def handoff(agent_id, text, *, folder="", surface="auto", new_folder=False):
+        calls.append((agent_id, text, folder, surface, new_folder))
         return ActionResult(True, "Opened Codex in a terminal")
 
     monkeypatch.setattr(agents, "handoff", handoff)
@@ -503,7 +505,7 @@ def test_agent_handoff_passes_folder_and_surface(h, monkeypatch):
     h.rt.deliver(_job("agent"), "add a test", raw_text=None, html="")
     _finished(h)
 
-    assert calls == [("codex", "add a test", "D:\\work", "terminal")]
+    assert calls == [("codex", "add a test", "D:\\work", "terminal", new_folder)]
     assert h.ui.statuses[0] == "Agent hotkey · working…"
     assert h.ui.notices == [("Opened Codex in a terminal", True)]
 

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Optional
 
 from config import config
 from services import audio_player, dictation_pipeline, recognition_context
+from services.actions.model import AGENT_NAMES, ActionKind
 from services.automation import catalog as event_catalog
 from services.automation.events import publish as publish_event
 from services.dictation_pipeline import JobMode
@@ -446,6 +447,13 @@ class TranscriptionRuntime:
                 route=route,
                 include_selection=action is not None and _reads_selection(action),
             )
+            destination = ""
+            if action is not None and action.kind == ActionKind.AGENT:
+                agent_name = AGENT_NAMES.get(action.param("agent"), "")
+                destination = f"Agent · {agent_name}" if agent_name else "Agent"
+            # Publish before streaming can show the overlay, using the action
+            # resolved for this capture rather than re-reading mutable settings.
+            self.controller.recording_destination_changed.emit(destination)
             logger.info("Recording started")
             self.controller.ui_controller.clear_transcription_stats()
             self.controller.ui_controller.main_window.clear_partial_transcription()

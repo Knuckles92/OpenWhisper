@@ -4,6 +4,7 @@ Links, terminals and agent lookups are recorded instead of opened.
 """
 import os
 import types
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -193,6 +194,66 @@ def test_codex_terminal_keeps_the_words_out_of_its_commands(desk, tmp_path):
     assert agents.handoff("codex", "exec", folder=str(tmp_path)).ok
     (argv, cwd, _env), = desk.terminals
     assert argv == [CODEX.path, "--", "exec"] and cwd == str(tmp_path)
+
+
+def test_codex_new_folders_are_distinct_empty_and_persistent(desk, monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    desk.handlers["codex"] = True
+    stale = str(tmp_path / "missing-old-project")
+    assert agents.handoff("codex", WORDS, folder=stale, new_folder=True).ok
+    first = Path(_query(desk.opened[0])[1]["path"])
+    assert first.is_dir() and list(first.iterdir()) == []
+    output = first / "notes.txt"
+    output.write_text("Keep these files for the agent's next turn.")
+
+    assert agents.handoff("codex", WORDS, new_folder=True).ok
+    second = Path(_query(desk.opened[1])[1]["path"])
+    assert second.is_dir() and list(second.iterdir()) == []
+    assert first != second
+    assert first.parent == second.parent == tmp_path / "OpenWhisper Agent Tasks"
+    assert output.read_text() == "Keep these files for the agent's next turn."
+    assert _query(desk.opened[0])[1]["prompt"] == WORDS
+    assert stale not in desk.opened[0]
+    assert desk.terminals == []
+
+
+@pytest.mark.parametrize("agent_id", ["claude_code", "codex", "opencode_cli"])
+def test_new_folder_is_the_terminal_working_directory(desk, monkeypatch, tmp_path, agent_id):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    assert agents.handoff(agent_id, WORDS, new_folder=True, surface="terminal").ok
+    (argv, cwd, _env), = desk.terminals
+    assert Path(cwd).is_dir() and list(Path(cwd).iterdir()) == []
+    assert argv == agents.terminal_argv(agent_id, desk.installed[agent_id].path, WORDS)
+    assert Path(cwd).parent == tmp_path / "OpenWhisper Agent Tasks"
+
+
+def test_new_folder_survives_an_app_failure_and_terminal_fallback(desk, monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    desk.handlers["codex"] = True
+    attempted = []
+
+    def broken(uri):
+        attempted.append(uri)
+        raise launch.LaunchError("That app didn't open.")
+
+    monkeypatch.setattr(launch, "open_uri", broken)
+    assert agents.handoff("codex", WORDS, new_folder=True).ok
+    assert desk.terminals[0][1] == _query(attempted[0])[1]["path"]
+    assert len(list((tmp_path / "OpenWhisper Agent Tasks").iterdir())) == 1
+
+
+def test_new_folder_failure_does_not_open_an_agent_in_an_existing_project(desk, monkeypatch, tmp_path):
+    def refuse():
+        raise PermissionError("Read-only filesystem")
+
+    monkeypatch.setattr(agents, "_new_handoff_folder", refuse)
+    desk.handlers["codex"] = True
+    result = agents.handoff("codex", WORDS, folder=str(tmp_path), new_folder=True)
+    assert not result.ok and "Couldn't create a new working folder" in result.message
+    assert desk.opened == [] and desk.terminals == []
 
 
 def test_opencode_opens_a_terminal_session_with_the_prompt(desk):

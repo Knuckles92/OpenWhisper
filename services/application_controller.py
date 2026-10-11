@@ -168,6 +168,7 @@ class ApplicationController(QObject):
     status_update = pyqtSignal(str)
     stt_state_changed = pyqtSignal(bool)
     recording_state_changed = pyqtSignal(bool)
+    recording_destination_changed = pyqtSignal(str)
     profile_record_requested = pyqtSignal(str)
     # An action's shortcut, emitted from the hotkey dispatcher thread with
     # the action's id (docs/design/automation/design.md).
@@ -2820,6 +2821,9 @@ class ApplicationController(QObject):
             self.overlay_state_update.connect(self.ui_controller.set_overlay_state)
         self.stt_state_changed.connect(self.hotkey_runtime.on_stt_state_changed)
         self.recording_state_changed.connect(self._on_recording_state_changed)
+        self.recording_destination_changed.connect(
+            self.ui_controller.overlay.set_recording_destination
+        )
         self.minimize_to_tray_requested.connect(
             self.ui_controller.main_window.toggle_tray_visibility
         )

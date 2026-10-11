@@ -1871,7 +1871,7 @@ class UIController(QObject):
         )
 
     def _on_check_for_updates_requested(self) -> None:
-        """Help → Check for Updates. Always hits GitHub."""
+        """Manual update checks always hit GitHub."""
         if self.on_check_for_updates:
             self.on_check_for_updates()
 

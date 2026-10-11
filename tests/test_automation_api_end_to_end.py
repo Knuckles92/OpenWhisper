@@ -142,6 +142,7 @@ class Controller(QObject):
         self._streaming_enabled = False
         self.overlay_state_update = Signal()
         self.recording_state_changed = Signal()
+        self.recording_destination_changed = Signal()
         self.transcription_completed = Signal()
         self.transcription_failed = Signal()
         self.executor = SimpleNamespace(submit=lambda fn, *args: self.submitted.append((fn, args)))

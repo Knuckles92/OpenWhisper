@@ -168,6 +168,7 @@ def _harness(monkeypatch, ui_factory=FakeUI):
         overlay_state_update=overlay,
         status_update=Mock(),
         recording_state_changed=Mock(),
+        recording_destination_changed=Mock(),
         persistence_executor=SimpleNamespace(submit=lambda fn, *args: fn(*args)),
         _pending_audio_path="recording.wav",
         _pending_audio_duration=10.0,

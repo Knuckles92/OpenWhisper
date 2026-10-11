@@ -665,6 +665,47 @@ def test_agent_selection_points_at_app_awareness_when_it_is_off(make_dialog):
     assert dialog.rail.current_key() == "styles"
 
 
+def test_automatic_folder_choice_saves_and_restores_the_chosen_folder(make_dialog):
+    agent = {"id": AGENT_ACTION_ID, "name": "Agent hotkey", "kind": "agent",
+             "params": {"agent": "codex", "folder": os.getcwd()}}
+    dialog, store = make_dialog({SettingsKey.ACTIONS: [agent]})
+    card = dialog.actions_agent_card
+    fields = card.fields
+    assert not fields.new_folder_row.switch.isChecked()
+    assert fields.folder.isVisible()
+
+    fields.new_folder_row.switch.click()
+    saved = find_action(store.load_all_settings(), AGENT_ACTION_ID)
+    assert saved.param("new_folder") is True and saved.param("folder") == os.getcwd()
+    assert not fields.folder.isVisible()
+    assert "in a new folder" in card.description_label.text()
+    assert "local project" in fields.new_folder_row.detail_label.text()
+
+    card.load(store.load_all_settings())
+    assert fields.new_folder_row.switch.isChecked() and not fields.folder.isVisible()
+    fields.mode_bar.buttons[1].click()
+    assert not fields.new_folder_row.isVisible()
+    assert find_action(store.load_all_settings(), AGENT_ACTION_ID).param("new_folder") is True
+    fields.mode_bar.buttons[0].click()
+    fields.new_folder_row.switch.click()
+    assert fields.folder.isVisible() and fields.folder.path() == os.getcwd()
+    assert find_action(store.load_all_settings(), AGENT_ACTION_ID).param("new_folder") is False
+
+
+def test_full_editor_keeps_the_automatic_folder_choice(make_dialog):
+    agent = {"id": AGENT_ACTION_ID, "name": "Agent hotkey", "kind": "agent",
+             "params": {"agent": "codex", "new_folder": True}}
+    dialog, store = make_dialog({SettingsKey.ACTIONS: [agent]})
+    dialog.actions_agent_card.more_button.click()
+    fields = dialog.actions_panel.editor.agent_fields
+    assert fields.new_folder_row.switch.isChecked() and not fields.folder.isVisible()
+    fields.surface_bar.buttons[2].click()
+    assert "local project" not in fields.new_folder_row.detail_label.text()
+    dialog.actions_panel.editor.save_button.click()
+    saved = find_action(store.load_all_settings(), AGENT_ACTION_ID)
+    assert saved.param("new_folder") is True and saved.param("surface") == "terminal"
+
+
 def test_agent_card_looks_for_agents_then_says_none_were_found(make_dialog, agents):
     agents.found = {}
     dialog, _store = make_dialog()
