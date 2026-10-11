@@ -305,6 +305,7 @@ def test_live_cards_fit_and_split_into_columns_below_the_dialog_width(
     app = QApplication.instance()
     previous_scale, previous_palette, previous_sheet = (
         current_ui_font_scale_percent(), current_palette(), app.styleSheet())
+    previous_font = app.font()
     manager = ThemeManager()
     view = make_view(tmp_path, local_running=True)
     view.live.endpoints.toggle.click()
@@ -349,6 +350,7 @@ def test_live_cards_fit_and_split_into_columns_below_the_dialog_width(
         apply_ui_font_scale(previous_scale, app=app)
         set_current_palette(previous_palette)
         app.setStyleSheet(previous_sheet)
+        app.setFont(previous_font)
         view.deleteLater()
 
 

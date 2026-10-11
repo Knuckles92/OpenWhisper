@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from concurrent.futures import Future
+from types import SimpleNamespace
 
 import pytest
 
@@ -417,12 +418,15 @@ def test_at_most_ten_leases_even_when_registered_at_once():
 
 def test_leases_expire_unless_renewed(monkeypatch):
     monkeypatch.setattr(filters, "LEASE_TTL_S", 0.3)
+    clock = SimpleNamespace(now=1000.0)
+    monkeypatch.setattr(filters, "time", SimpleNamespace(
+        time=lambda: clock.now, monotonic=lambda: clock.now))
     kept = filters.register_lease("http://127.0.0.1:9/kept", BEFORE_CLEANUP)
     lapsed = filters.register_lease("http://127.0.0.1:9/lapsed", BEFORE_CLEANUP)
-    time.sleep(0.2)
+    clock.now += 0.2
     renewed = filters.renew_lease(kept.id)
     assert renewed.expires_at > kept.expires_at
-    time.sleep(0.2)
+    clock.now += 0.2
     assert filters.leases() == [renewed]
     with pytest.raises(KeyError):
         filters.renew_lease(lapsed.id)

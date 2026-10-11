@@ -787,6 +787,7 @@ def test_sections_fit_narrow_columns_at_every_scale(store, monkeypatch, ui_mode,
     app = QApplication.instance()
     previous_scale, previous_palette, previous_sheet = (
         current_ui_font_scale_percent(), current_palette(), app.styleSheet())
+    previous_font = app.font()
     manager = ThemeManager()
     store.mutate_settings(lambda s: s.update({
         SettingsKey.AUTOMATION_WEBHOOKS: [HOOK],
@@ -833,3 +834,4 @@ def test_sections_fit_narrow_columns_at_every_scale(store, monkeypatch, ui_mode,
         apply_ui_font_scale(previous_scale, app=app)
         set_current_palette(previous_palette)
         app.setStyleSheet(previous_sheet)
+        app.setFont(previous_font)
