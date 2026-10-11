@@ -182,7 +182,7 @@ class OmarchyControls(QObject):
             ui.main_window.restore_from_tray()
             return True
         method = {
-            "record": "_on_tray_toggle_recording",
+            "record": "_on_shell_toggle_recording",
             "cancel": "cancel_recording",
             "meeting": "_on_tray_meeting_toggle",
             "scratchpad": "toggle_scratchpad",

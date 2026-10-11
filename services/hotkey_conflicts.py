@@ -18,6 +18,20 @@ PROFILE = "profile"
 TRANSFORM = "transform"
 ACTION = "action"
 
+#: How messages name each standard shortcut's action.
+STANDARD_LABELS: dict[str, str] = {
+    "record_toggle": "Recording",
+    "cancel": "Cancel",
+    "meeting_toggle": "Meeting Mode",
+    "enable_disable": "Enable/disable",
+    "minimize_tray": "Minimize to tray",
+    "command_mode": "Command Mode",
+    "scratchpad_toggle": "Scratchpad",
+    "cycle_language": "Switch language",
+    "paste_last_original": "Paste original",
+    "route_record": "Route by voice",
+}
+
 
 def _signature(hotkey: str):
     return parse_hotkey(normalize_hotkey(hotkey))
@@ -44,8 +58,8 @@ def hotkey_conflict(
             saved ones.
 
     Returns:
-        The action's name with spaces, the profile's name, or the
-        transform's name.
+        The standard shortcut's label (STANDARD_LABELS), or the profile's,
+        transform's or action's name.
     """
     if not hotkey:
         return ""
@@ -58,7 +72,7 @@ def hotkey_conflict(
         if exclude == (STANDARD, action):
             continue
         if value and _signature(value) == signature:
-            return action.replace("_", " ")
+            return STANDARD_LABELS.get(action, action.replace("_", " "))
     for profile in load_cleanup_profiles(settings):
         if exclude == (PROFILE, profile.id):
             continue

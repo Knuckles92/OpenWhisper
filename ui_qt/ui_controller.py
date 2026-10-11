@@ -465,11 +465,16 @@ class UIController(QObject):
         # the minimize-to-tray closeEvent, which only hid the window again.
         self.main_window.request_quit()
 
-    def _on_tray_toggle_recording(self):
+    def _on_tray_toggle_recording(self, source: str = "ui"):
+        """The tray's record item; its recording's events say ``source``."""
         if self.is_recording:
             self.stop_recording()
         else:
-            self.start_recording()
+            self.start_recording(source=source)
+
+    def _on_shell_toggle_recording(self):
+        """The desktop shell's record button (Omarchy, over D-Bus)."""
+        self._on_tray_toggle_recording(source="dbus")
 
     def _on_overlay_state_changed(self, state: str):
         logger.debug(f"Overlay state changed to: {state}")
@@ -519,15 +524,19 @@ class UIController(QObject):
     def _apply_audio_levels_to_overlay(self, levels: List[float]):
         self.overlay.update_audio_levels(levels)
 
-    def start_recording(self, profile_id: str = ""):
-        """Request a recording start; UI flips only after the stream opens."""
+    def start_recording(self, profile_id: str = "", *, source: str = "ui"):
+        """Request a recording start; UI flips only after the stream opens.
+
+        ``source`` is who asked, for the recording's events: the window and
+        tray ("ui") or the desktop shell ("dbus").
+        """
         self._transcription_source_tab = TabbedContentWidget.TAB_QUICK_RECORD
         if profile_id and self.on_profile_record_start:
-            if self.on_profile_record_start(profile_id) is False:
+            if self.on_profile_record_start(profile_id, source=source) is False:
                 self._revert_refused_record_start()
                 return False
         elif self.on_record_start:
-            if self.on_record_start() is False:
+            if self.on_record_start(source=source) is False:
                 self._revert_refused_record_start()
                 return False
         else:

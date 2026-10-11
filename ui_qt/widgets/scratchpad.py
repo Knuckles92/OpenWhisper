@@ -66,7 +66,8 @@ def show_text(ui, text: str) -> None:
     """Show the Scratchpad with ``text`` added at the end, on a line of its own.
 
     For answers that arrive later (an agent action's reply), not dictations:
-    the user's cursor and selection are left where they were.
+    the user's cursor, selection and focus are left where they were. The
+    saved notes load first, so loading them can't replace the answer.
     """
     if not text:
         return
@@ -74,8 +75,9 @@ def show_text(ui, text: str) -> None:
     if pad is None:
         pad = ScratchpadWindow(copy_text=getattr(ui, "copy_to_clipboard", None))
         ui._scratchpad = pad
+    pad.ensure_loaded()
     pad.append_block(text)
-    pad.present()
+    pad.reveal()
 
 
 def insert(ui, text: str) -> bool:
@@ -400,13 +402,28 @@ class ScratchpadWindow(QWidget):
 
     def present(self) -> None:
         """Show, raise and focus the Scratchpad, loading its text the first time."""
-        if not self._loaded:
-            self._load()
-            self._restore_geometry()
+        self.ensure_loaded()
         self.show()
         self.raise_()
         self.activateWindow()
         self.editor.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+
+    def reveal(self) -> None:
+        """Show and raise the Scratchpad without taking focus from the user's app.
+
+        For an answer that arrives later: the user may be typing elsewhere.
+        """
+        self.ensure_loaded()
+        if not self.isVisible():
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+            self.show()
+        self.raise_()
+
+    def ensure_loaded(self) -> None:
+        """Read the saved notes and window place the first time; before any edit."""
+        if not self._loaded:
+            self._load()
+            self._restore_geometry()
 
     def _default_rect(self, available: QRect) -> QRect:
         scale = current_ui_font_scale()

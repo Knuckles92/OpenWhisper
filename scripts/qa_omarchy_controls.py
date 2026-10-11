@@ -39,7 +39,7 @@ controller = SimpleNamespace(
     is_meeting_active=lambda: False,
     ui_controller=SimpleNamespace(
         main_window=QWidget(),
-        _on_tray_toggle_recording=lambda: pressed.append("record-button"),
+        _on_shell_toggle_recording=lambda: pressed.append("record-button"),
     ),
 )
 native = OmarchyControls(controller)

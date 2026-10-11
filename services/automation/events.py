@@ -59,7 +59,13 @@ class Event:
 
 
 class Subscription:
-    """One subscriber; ``close()`` stops further deliveries (idempotent)."""
+    """One subscriber; it gets exactly the events published while it is open.
+
+    ``close()`` (idempotent) ends that: nothing published afterwards
+    reaches it, though an event published before may still be on its way.
+    So replacing a subscription by opening the new one before closing the
+    old loses nothing; an event both got is told apart by its ``seq``.
+    """
 
     def __init__(self, bus: "EventBus", callback: Callable[[Event], None],
                  types: Optional[frozenset], label: str) -> None:
@@ -92,15 +98,25 @@ def _types(types: Optional[Iterable[str]]) -> Optional[frozenset]:
 class EventBus:
     """Thread-safe publish/subscribe with a bounded replay buffer."""
 
-    def __init__(self, *, buffer_size: int = DEFAULT_BUFFER_SIZE) -> None:
+    def __init__(self, *, buffer_size: int = DEFAULT_BUFFER_SIZE, seq_base: int = 0) -> None:
+        """
+        Args:
+            seq_base: Numbering continues after this. The app's bus starts
+                each run above the last one's (see ``bus()``), so a client's
+                position from an earlier run is always behind this run's
+                first event and reads as a gap, never as a recent event.
+        """
         self._lock = threading.Condition()
         self._buffer: deque[Event] = deque(maxlen=max(1, int(buffer_size)))
-        self._pending: deque[Event] = deque()
+        # Each event with the subscriptions open when it was published.
+        self._pending: deque[tuple[Event, list[Subscription]]] = deque()
         self._subscriptions: list[Subscription] = []
-        self._seq = itertools.count(1)
-        self._last_seq = 0
-        # The newest event no longer in the buffer (evicted or cleared).
-        self._evicted_seq = 0
+        base = max(0, int(seq_base))
+        self._seq = itertools.count(base + 1)
+        self._last_seq = base
+        # The newest event no longer in the buffer (evicted or cleared);
+        # everything up to the base belongs to earlier runs.
+        self._evicted_seq = base
         self._thread: Optional[threading.Thread] = None
         self._closed = False
 
@@ -116,11 +132,16 @@ class EventBus:
                 meaningful events out of the buffer.
 
         Raises:
-            TypeError: ``data`` is not JSON-serializable.
+            TypeError: ``data`` is not JSON-serializable, or does not encode
+                as UTF-8 (a lone surrogate, as from half an emoji).
         """
         payload = dict(data or {})
-        # Fail here, at the publisher, rather than in every subscriber.
-        json.dumps(payload, ensure_ascii=False)
+        # Fail here, at the publisher, rather than in every subscriber: the
+        # streams, webhooks and programs all send it as UTF-8 JSON.
+        try:
+            json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        except UnicodeEncodeError:
+            raise TypeError("event data must encode as UTF-8") from None
         with self._lock:
             seq = next(self._seq)
             event = Event(
@@ -135,8 +156,13 @@ class EventBus:
                 if len(self._buffer) == self._buffer.maxlen:
                     self._evicted_seq = self._buffer[0].seq
                 self._buffer.append(event)
-            if self._subscriptions and not self._closed:
-                self._pending.append(event)
+            # The recipients are fixed now: a subscription opened later never
+            # gets this event, one closed later still does.
+            recipients = [] if self._closed else [
+                s for s in self._subscriptions if s.wants(event)
+            ]
+            if recipients:
+                self._pending.append((event, recipients))
                 self._ensure_thread()
                 self._lock.notify()
         return event
@@ -147,6 +173,9 @@ class EventBus:
                   types: Optional[Iterable[str]] = None,
                   label: str = "") -> Subscription:
         """Call ``callback(event)`` on the dispatch thread for each new event.
+
+        Only events published after this call reach it, never ones published
+        before that the dispatcher has not handed out yet.
 
         Args:
             callback: Must return quickly (enqueue and return).
@@ -186,8 +215,9 @@ class EventBus:
             last = self._last_seq
             evicted = self._evicted_seq
         if seq > last:
-            # A position from an earlier app session (numbering restarts
-            # with the app): everything buffered is new to this client.
+            # Not a position this run gave out (a bus counting from 1, or a
+            # clock set back since an earlier run): everything buffered is
+            # new to this client.
             seq, gap = 0, True
         else:
             gap = seq < evicted
@@ -211,7 +241,7 @@ class EventBus:
             return self._last_seq
 
     def clear(self) -> None:
-        """Forget buffered events (history was cleared); sequence numbers continue."""
+        """Forget buffered events (history was deleted); sequence numbers continue."""
         with self._lock:
             self._buffer.clear()
             self._evicted_seq = self._last_seq
@@ -245,11 +275,8 @@ class EventBus:
                     self._lock.wait()
                 if self._closed:
                     return
-                event = self._pending.popleft()
-                subscriptions = [s for s in self._subscriptions if s.wants(event)]
-            for subscription in subscriptions:
-                if subscription.closed:
-                    continue
+                event, recipients = self._pending.popleft()
+            for subscription in recipients:
                 started = time.monotonic()
                 try:
                     subscription.callback(event)
@@ -271,13 +298,39 @@ _bus: Optional[EventBus] = None
 _bus_lock = threading.Lock()
 
 
+def _run_seq_base() -> int:
+    """Where this run's numbering starts: milliseconds since 1970.
+
+    It only grows from one app run to the next, so a stream that reconnects
+    with a position from an earlier run is behind this run's first event and
+    learns it missed events. Thirteen digits, safe as a JavaScript number.
+    """
+    return int(time.time() * 1000)
+
+
 def bus() -> EventBus:
     """The process-wide bus, created on first use."""
     global _bus
     with _bus_lock:
         if _bus is None:
-            _bus = EventBus()
+            _bus = EventBus(seq_base=_run_seq_base())
         return _bus
+
+
+def clear() -> None:
+    """Forget the process-wide bus's replay buffer, if there is a bus; never raises.
+
+    Called when history entries or meetings are deleted, so their text can't
+    be replayed to a stream that reconnects.
+    """
+    with _bus_lock:
+        current = _bus
+    if current is None:
+        return
+    try:
+        current.clear()
+    except Exception as exc:
+        logger.debug("Could not clear the event buffer: %s", type(exc).__name__)
 
 
 def set_bus(replacement: Optional[EventBus]) -> Optional[EventBus]:

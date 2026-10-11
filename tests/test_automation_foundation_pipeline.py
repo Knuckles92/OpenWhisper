@@ -258,7 +258,7 @@ def test_raw_shaping_skips_ai_cleanup(h):
 
 def test_a_filter_can_take_over_delivery_without_losing_the_words(h, monkeypatch):
     monkeypatch.setattr(filters, "apply",
-                        lambda stage, text, job, settings=None: FilterOutcome(text, canceled=True))
+                        lambda stage, text, job, settings=None, **_k: FilterOutcome(text, canceled=True))
     assert h.runtime._claim_job(DictationJob(mode=JobMode.DICTATION))
     h.runtime.transcribe_audio_file(h.audio)
 
@@ -269,14 +269,14 @@ def test_a_filter_can_take_over_delivery_without_losing_the_words(h, monkeypatch
     assert not h.runtime.has_active_job
     # The next job delivers normally.
     monkeypatch.setattr(filters, "apply",
-                        lambda stage, text, job, settings=None: FilterOutcome(text))
+                        lambda stage, text, job, settings=None, **_k: FilterOutcome(text))
     assert h.runtime._claim_job(DictationJob(mode=JobMode.DICTATION))
     h.runtime.transcribe_audio_file(h.audio)
     h.paste.assert_called_once_with()
 
 
 def test_an_after_cleanup_filter_replaces_the_final_text(h, monkeypatch):
-    def apply(stage, text, job, settings=None):
+    def apply(stage, text, job, settings=None, *, cancel=None):
         if stage == "after_cleanup":
             return FilterOutcome(text.replace("CLAUDE", "Claude"), changed=True)
         return FilterOutcome(text)
@@ -291,7 +291,7 @@ def test_an_after_cleanup_filter_replaces_the_final_text(h, monkeypatch):
 
 
 def test_a_failing_filter_keeps_the_text(h, monkeypatch):
-    def apply(stage, text, job, settings=None):
+    def apply(stage, text, job, settings=None, *, cancel=None):
         raise RuntimeError("bug in a filter")
 
     monkeypatch.setattr(filters, "apply", apply)
@@ -303,7 +303,7 @@ def test_a_failing_filter_keeps_the_text(h, monkeypatch):
 def test_routing_turns_a_dictation_into_an_action_job(h, monkeypatch):
     asked = []
 
-    def decide(text, job, settings, *, judge=None):
+    def decide(text, job, settings, *, judge=None, cancel=None):
         asked.append((text, job.route))
         return routing.RouteDecision("a1", "what time it is", 0.93)
 
@@ -366,7 +366,8 @@ def test_failures_are_published(h):
     assert h.runtime._claim_job(job)
     h.runtime.on_transcription_error("engine exploded")
     failed, = _events(h, "transcription.failed")
-    assert failed.data == {"job_id": job.id, "error": "engine exploded"}
+    # A category, never the exception's text (it can name files).
+    assert failed.data == {"job_id": job.id, "error": "failed", "message": None}
 
 
 def test_a_dictation_that_may_be_routed_learns_its_app_without_app_awareness(monkeypatch):

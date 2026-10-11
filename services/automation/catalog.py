@@ -50,8 +50,20 @@ PUBLIC_TYPES: tuple[str, ...] = tuple(t for t in EVENT_TYPES if t != EVENTS_GAP)
 
 #: Values of ``source``: who started the job.
 SOURCES = ("hotkey", "ui", "api", "mcp", "dbus", "routing")
+#: Sources where the user started the job; any other is a program's request.
+USER_SOURCES = frozenset({"hotkey", "ui", "dbus"})
 #: ``mode`` of a transcription read from a file rather than dictated live.
 FILE_MODE = "file"
+#: ``transcription.failed`` ``error``: why a job ended without text.
+FAILURE_CANCELED = "canceled"
+FAILURE_NO_SPEECH = "no_speech"
+#: Nothing to do, for a reason the user was told (``message``).
+FAILURE_REFUSED = "refused"
+FAILURE_FAILED = "failed"
+FAILURES = frozenset({FAILURE_CANCELED, FAILURE_NO_SPEECH, FAILURE_REFUSED, FAILURE_FAILED})
+#: Modes whose ``raw_text`` is the words before AI cleanup. A command's or
+#: transform's original is the user's selected text, which events never carry.
+_RAW_TEXT_MODES = frozenset({"dictation", "action", FILE_MODE})
 
 
 def known_types(types: Iterable[str]) -> list[str]:
@@ -120,8 +132,12 @@ def transcription_completed(
     """Finished text; ``fields`` are the entry's ``history_fields`` (app, language).
 
     A job of None is an upload or a re-transcription (``mode`` "file").
+    ``raw_text`` is published only where it is the words before AI cleanup,
+    never for Command Mode or a transform, whose original is the selection.
     """
     base = job_fields(job)
+    if base["mode"] not in _RAW_TEXT_MODES:
+        raw_text = None
     cleanup = None
     if cleanup_info is not None:
         cleanup = {
@@ -141,8 +157,16 @@ def transcription_completed(
     }
 
 
-def transcription_failed(job: Any, error: str) -> dict:
-    return {"job_id": job_fields(job)["job_id"], "error": str(error or "")[:500]}
+def transcription_failed(job: Any, error: str, *, message: Optional[str] = None) -> dict:
+    """Why a job ended without text: a FAILURE_* category, never an exception's
+    text (it can name files and folders).
+
+    ``message`` is kept only for a refusal: the copy the user was shown
+    ("Select text first").
+    """
+    category = error if error in FAILURES else FAILURE_FAILED
+    refusal = str(message)[:500] if category == FAILURE_REFUSED and message else None
+    return {"job_id": job_fields(job)["job_id"], "error": category, "message": refusal}
 
 
 def history_saved(job_id: str, record_id: Any, kind: str) -> dict:

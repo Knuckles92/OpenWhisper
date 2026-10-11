@@ -234,11 +234,61 @@ def _read_settings(path: Path) -> dict[str, Any]:
 
 #: Settings whose text is the user's own content, where a URL is something
 #: they typed to paste later rather than an endpoint that may hold a secret.
-_URL_SCRUB_EXEMPT = frozenset({"dictation_snippets", "actions"})
+_URL_SCRUB_EXEMPT = frozenset({"dictation_snippets"})
 #: Saved hooks that run or send something; restored switched off.
 _AUTOMATION_LISTS = ("automation_webhooks", "automation_programs", "automation_filters")
 #: Action kinds that run a program, call a URL or start an agent.
 _ACTIVE_ACTION_KINDS = frozenset({"webhook", "program", "agent"})
+_SECRET_KEY_WORDS = ("password", "secret", "private_key", "api_key", "credential",
+                     "token", "authorization", "header", "cookie")
+
+
+def _scrub(value: Any, keep_urls: bool = False) -> Any:
+    """``value`` without secret-named keys or credentials and queries in URLs.
+
+    Defense in depth for older/extension settings that may store a secret.
+    """
+    if isinstance(value, dict):
+        return {key: _scrub(item, keep_urls or key in _URL_SCRUB_EXEMPT)
+                for key, item in value.items()
+                if isinstance(key, str)
+                and not any(word in key.lower() for word in _SECRET_KEY_WORDS)}
+    if isinstance(value, list):
+        return [_scrub(item, keep_urls) for item in value]
+    if isinstance(value, str) and not keep_urls:
+        try:
+            parts = urlsplit(value)
+        except ValueError:
+            return "" if value.lower().startswith(("http://", "https://")) else value
+        if parts.scheme in ("http", "https") and parts.netloc:
+            # Endpoint URLs can carry credentials in userinfo or query.
+            return urlunsplit((parts.scheme, parts.netloc.rsplit("@", 1)[-1],
+                               parts.path, "", ""))
+    return value
+
+
+def _sanitize_actions(raw: Any) -> list[dict[str, Any]]:
+    """Saved actions exactly as the app reads them, with their power off.
+
+    Each goes through the actions model's own loader, so what is checked
+    here (the kind, above all) is what the app will run: a row the loader
+    drops is dropped, and one it normalizes ("program " to "program") is
+    restored normalized. Webhook, program and agent actions come back off.
+    URLs are scrubbed like the rest of the settings, except a link action's
+    template, whose query is where the words go.
+    """
+    from services.actions.model import ActionKind, load_actions
+    from services.settings import SettingsKey
+
+    rows = []
+    for action in load_actions({SettingsKey.ACTIONS: raw}):
+        row = _scrub(action.to_dict())
+        if action.kind == ActionKind.OPEN_LINK and "template" in action.params:
+            row["params"]["template"] = action.params["template"]
+        if action.kind in _ACTIVE_ACTION_KINDS:
+            row["enabled"] = False
+        rows.append(row)
+    return rows
 
 
 def _sanitize_settings(settings: dict[str, Any]) -> dict[str, Any]:
@@ -275,36 +325,11 @@ def _sanitize_settings(settings: dict[str, Any]) -> dict[str, Any]:
                 {**item, "enabled": False} if isinstance(item, dict) else item
                 for item in cleaned[key]
             ]
-    if isinstance(cleaned.get("actions"), list):
-        cleaned["actions"] = [
-            {**item, "enabled": False}
-            if isinstance(item, dict) and item.get("kind") in _ACTIVE_ACTION_KINDS
-            else item
-            for item in cleaned["actions"]
-        ]
-    # Defense in depth for older/extension settings that may store a secret.
-    def scrub(value: Any, keep_urls: bool = False) -> Any:
-        if isinstance(value, dict):
-            return {key: scrub(item, keep_urls or key in _URL_SCRUB_EXEMPT)
-                    for key, item in value.items()
-                    if isinstance(key, str) and not any(
-                        word in key.lower() for word in
-                        ("password", "secret", "private_key", "api_key", "credential",
-                         "token", "authorization", "header", "cookie")
-                    )}
-        if isinstance(value, list):
-            return [scrub(item, keep_urls) for item in value]
-        if isinstance(value, str) and not keep_urls:
-            try:
-                parts = urlsplit(value)
-            except ValueError:
-                return "" if value.lower().startswith(("http://", "https://")) else value
-            if parts.scheme in ("http", "https") and parts.netloc:
-                # Endpoint URLs can carry credentials in userinfo or query.
-                return urlunsplit((parts.scheme, parts.netloc.rsplit("@", 1)[-1],
-                                   parts.path, "", ""))
-        return value
-    return scrub(cleaned)
+    actions = cleaned.pop("actions", None)
+    cleaned = _scrub(cleaned)
+    if actions is not None:
+        cleaned["actions"] = _sanitize_actions(actions)
+    return cleaned
 
 
 def _table(conn: sqlite3.Connection, name: str) -> bool:
