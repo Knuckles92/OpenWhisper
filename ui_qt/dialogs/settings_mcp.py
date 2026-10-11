@@ -1067,7 +1067,8 @@ class LiveAutomationSection(QWidget):
             (
                 SettingsKey.API_TEXT_FILTERS,
                 "Change dictated text",
-                "Let a program on this computer rewrite or hold back words before they're pasted.",
+                "Let a program on this computer rewrite or hold back words before they're pasted "
+                "or sent to an action. Words for coding agents also need the switch below.",
                 "filter-purple.svg",
             ),
             (

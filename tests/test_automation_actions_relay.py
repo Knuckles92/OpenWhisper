@@ -73,7 +73,7 @@ def h(monkeypatch):
 
 
 def _job(action_id):
-    return DictationJob(mode=JobMode.ACTION, action_id=action_id)
+    return DictationJob(mode=JobMode.ACTION, action_id=action_id, source="hotkey")
 
 
 def _spin(seconds):

@@ -103,13 +103,14 @@ class FakeRuntime:
         self.begin_ok = True
         self.events = []
 
-    def start_recording(self, profile_id="", mode=JobMode.DICTATION, *, selection=None):
+    def start_recording(self, profile_id="", mode=JobMode.DICTATION, *, selection=None,
+                        source="hotkey"):
         self.events.append(("start", mode))
         if not self.start_ok:
             return False
         self.controller.recorder.is_recording = True
         self._job = dictation_pipeline.begin_job(
-            mode, self.settings.load_all_settings(), selection=selection)
+            mode, self.settings.load_all_settings(), selection=selection, source=source)
         return True
 
     def begin_rewrite_job(self, job, *, source_name):

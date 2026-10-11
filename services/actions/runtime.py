@@ -45,7 +45,7 @@ from services.actions.model import (
     expand_link,
     find_action,
 )
-from services.automation import catalog, events
+from services.automation import catalog, events, permissions
 from services.settings import settings_manager
 
 logger = logging.getLogger(__name__)
@@ -67,6 +67,8 @@ NOTICE_MAX_CHARS = 140
 #: Job sources that are another program, not the user: a failed run of
 #: theirs never overwrites the clipboard.
 PROGRAM_SOURCES = ("api", "mcp")
+#: Kinds that hand their words to the user's coding agent, which acts on them.
+AGENT_KINDS = (ActionKind.AGENT, ActionKind.CHANNEL)
 #: The fixed frame around the selection an agent action passes as context.
 CONTEXT_OPEN = '<context source="OpenWhisper">'
 CONTEXT_CLOSE = "</context>"
@@ -78,6 +80,7 @@ NO_SCRIPTS_MESSAGE = "Nothing is listening for your scripts"
 CLOSING_MESSAGE = "OpenWhisper is closing"
 BUSY_MESSAGE = "Too many actions are still running"
 CANCELED_MESSAGE = "Canceled"
+PROGRAM_WORDS_MESSAGE = "Words from a program need “Send words to my coding agents”"
 COPIED_INSTEAD = " — copied instead"
 FULL_ANSWER_COPIED = " — full answer copied"
 
@@ -300,13 +303,29 @@ def _inside_frame(value: str) -> str:
     return _FRAME_TAG.sub("&lt;", value)
 
 
+def program_words_allowed(action, settings) -> bool:
+    """Whether ``action`` may get words a program supplied or changed.
+
+    The one rule for programs and the user's coding agents: an agent or
+    Claude Code channel action hands its words to an agent that acts on
+    them, so it takes a program's words (DictationJob.program_words) only
+    with "Send words to my coding agents" (AGENT_PROMPTS). Delivery applies
+    it to every job; the live API and MCP apply it before starting one, to
+    answer with a permission error at once; and text filters leased over
+    the API leave alone an action job it would refuse.
+    """
+    return action.kind not in AGENT_KINDS or permissions.granted(
+        settings, permissions.AGENT_PROMPTS)
+
+
 def _agent(params: dict, text: str, job, cancel: threading.Event) -> ActionResult:
     from config import config
     from services.actions import agents
 
     if params["include_selection"]:
-        # The capture runs from the recording's start; a run from the API
-        # may still be waiting for it, which a worker can afford.
+        # Only a job the user started has the selection (begin_job). Its
+        # capture ran while they spoke; a worker can afford to wait for one
+        # still running.
         text = prompt_with_context(text, job.snapshot(timeout=config.CONTEXT_CAPTURE_DEADLINE_S))
     if params["mode"] == AgentMode.ASK:
         return agents.ask(params["agent"], text, model=params["model"], cancel=cancel)
@@ -431,7 +450,9 @@ class ActionRuntime:
         """Run ``job``'s action with ``text``; Qt thread, returns at once.
 
         Shows the outcome, and publishes ``action.ran`` (and
-        ``channel.message`` for a channel action).
+        ``channel.message`` for a channel action). Words a program supplied
+        or changed reach an agent or channel action only as
+        ``program_words_allowed`` says.
         """
         # A routed dictation took a clipboard snapshot for a paste that
         # will not happen.
@@ -444,6 +465,10 @@ class ActionRuntime:
         if action is None or not action.enabled:
             self._finish(run, ActionResult(
                 False, MISSING_MESSAGE if action is None else DISABLED_MESSAGE))
+            return
+        if job.program_words and not program_words_allowed(action, settings):
+            # Not sent; the user's own run keeps the words on the clipboard.
+            self._finish(run, ActionResult(False, PROGRAM_WORDS_MESSAGE))
             return
         self._start(run)
 

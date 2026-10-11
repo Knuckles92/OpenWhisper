@@ -63,14 +63,14 @@ def _start_failure_message(exc: Exception) -> str:
     return f"Failed to process audio: {exc}"
 
 
-def _reads_selection(action, source: str) -> bool:
-    """Whether an action job reads the selected text as context.
+def _reads_selection(action) -> bool:
+    """Whether an action job asks for the selected text as context.
 
-    Only when the user started it: a program (the live API, MCP) must not
-    learn what is selected in the user's app by running an action.
+    begin_job reads it only for a job the user started: a program (the live
+    API, MCP) must not learn what is selected in the user's app by running
+    an action.
     """
-    return (action.param("include_selection") is True
-            and source in event_catalog.USER_SOURCES)
+    return action.param("include_selection") is True
 
 
 #: ``_maybe_cleanup_transcript``'s default: the profile the recording started with.
@@ -404,7 +404,7 @@ class TranscriptionRuntime:
                 action_id=action.id if action is not None else "",
                 source=source,
                 route=route,
-                include_selection=action is not None and _reads_selection(action, source),
+                include_selection=action is not None and _reads_selection(action),
             )
             logger.info("Recording started")
             self.controller.ui_controller.clear_transcription_stats()
@@ -1316,7 +1316,7 @@ class TranscriptionRuntime:
         from services.automation.models import AFTER_CLEANUP, BEFORE_CLEANUP
 
         settings = settings_manager.load_all_settings()
-        text = self._run_filters(BEFORE_CLEANUP, raw, job, settings)
+        job, text = self._run_filters(BEFORE_CLEANUP, raw, job, settings)
         if text is None:
             return raw, None, None
         # A Cancel during any stage ends the job here: canceled words never
@@ -1332,19 +1332,22 @@ class TranscriptionRuntime:
         if not (fixed or "").strip():
             return fixed, raw_text, info
         self._raise_if_canceled()
-        final = self._run_filters(AFTER_CLEANUP, fixed, job, settings)
+        job, final = self._run_filters(AFTER_CLEANUP, fixed, job, settings)
         if final is None or final == fixed:
             return fixed, raw_text, info
         # The rich-text version no longer matches the words.
         self._delivery_html = ""
         return final, (raw_text if raw_text is not None else fixed), info
 
-    def _run_filters(self, stage: str, text: str, job, settings) -> Optional[str]:
-        """``text`` after ``stage``'s text filters; None when one took over delivery.
+    def _run_filters(self, stage: str, text: str, job, settings):
+        """``(job, text)`` after ``stage``'s text filters; text None when one
+        took over delivery.
 
         A filter takes over by canceling, or by turning words into nothing;
         a transcript that was empty to begin with is no speech, not that.
-        Never raises: a failing filter keeps the text (services.automation.filters).
+        The job notes when a program's leased filter changed the words
+        (DictationJob.program_words). Never raises: a failing filter keeps
+        the text (services.automation.filters).
         """
         from services.automation import filters
 
@@ -1352,14 +1355,20 @@ class TranscriptionRuntime:
             outcome = filters.apply(stage, text, job, settings, cancel=self._cancel_requested)
         except Exception:
             logger.warning("Text filters failed; keeping the text")
-            return text
+            return job, text
         filtered = outcome.text if isinstance(outcome.text, str) else text
         emptied = bool((text or "").strip()) and not filtered.strip()
         if outcome.canceled or emptied:
             with self._job_lock:
                 self._filter_canceled = True
-            return None
-        return filtered
+            return job, None
+        if outcome.program_changed:
+            changed = dataclasses.replace(job, changed_by_program=True)
+            with self._job_lock:
+                if self._active_job is job:
+                    self._active_job = changed
+            job = changed
+        return job, filtered
 
     def _route(self, text: str, job, settings):
         """``(job, text)``: an ACTION job when the words name an action; worker.
@@ -1469,11 +1478,12 @@ class TranscriptionRuntime:
         Raises:
             ControlError: ``refused``, ``not_found`` or ``busy``, with a
                 message to show.
-            PermissionDenied: A program (``source`` api or mcp) asked for an
-                agent or Claude Code channel action without the
-                AGENT_PROMPTS permission.
+            PermissionDenied: A program (any ``source`` but the user's) asked
+                for an action that doesn't take its words without the
+                AGENT_PROMPTS permission (``program_words_allowed``).
         """
-        from services.actions.model import ActionKind, find_action
+        from services.actions.model import find_action
+        from services.actions.runtime import program_words_allowed
         from services.automation import permissions
         from services.automation.control import BUSY, NOT_FOUND, REFUSED, ControlError
 
@@ -1486,15 +1496,15 @@ class TranscriptionRuntime:
         action = find_action(settings, action_id)
         if action is None or not action.enabled:
             raise ControlError(NOT_FOUND, "No enabled action has that id.")
-        if (source not in event_catalog.USER_SOURCES
-                and action.kind in (ActionKind.AGENT, ActionKind.CHANNEL)):
-            # A program's words would reach the user's coding agent as a prompt.
-            permissions.require(settings, permissions.AGENT_PROMPTS)
+        if not event_catalog.user_started(source) and not program_words_allowed(action, settings):
+            # A program's words would reach the user's coding agent as a prompt;
+            # delivery would refuse them, so say so now.
+            raise permissions.PermissionDenied(permissions.AGENT_PROMPTS)
         if not self.controller.action_runtime.accepting():
             raise ControlError(BUSY, "OpenWhisper isn't taking actions right now.")
         job = dictation_pipeline.begin_job(
             JobMode.ACTION, settings, action_id=action.id, source=source,
-            include_selection=_reads_selection(action, source),
+            include_selection=_reads_selection(action),
         )
         if not self.begin_rewrite_job(job, source_name=f"Action · {action.name}"):
             raise ControlError(BUSY, "OpenWhisper is busy with another recording.")

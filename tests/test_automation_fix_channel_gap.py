@@ -22,7 +22,8 @@ def gap(last_id, missed_from_seq):
 
 def message(seq, text):
     payload = {"id": f"evt_{seq}", "seq": seq, "type": "channel.message", "v": 1,
-               "data": {"job_id": "j", "source": "hotkey", "action_id": "c", "text": text, "app": None}}
+               "data": {"job_id": "j", "source": "hotkey", "origin": "dictated", "action_id": "c",
+                        "text": text, "app": None}}
     return SseEvent("channel.message", json.dumps(payload), str(seq))
 
 

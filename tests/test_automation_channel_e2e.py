@@ -216,6 +216,7 @@ def _message(text: str = "rename the helper to load_config", **extra) -> dict:
     return {
         "job_id": "0123456789abcdef",
         "source": "hotkey",
+        "origin": "dictated",
         "action_id": "claude_channel",
         "text": text,
         "app": {"id": "code", "name": "Visual Studio Code", "category": "editor"},

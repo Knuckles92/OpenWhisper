@@ -4,7 +4,8 @@ A filter sees the words of a live dictation or action at one stage
 (``before_cleanup`` or ``after_cleanup``) and answers with new text, no
 change, or "deliver nothing". Saved filters (Settings > Hooks) run first, in
 their saved order, then filters leased over the live API, in the order they
-were registered.
+were registered. Words a lease changed are a program's, not the user's
+(``FilterOutcome.program_changed``).
 
 Request: ``{"v":1,"stage","job_id","mode","action_id","text","language","app"}``
 as JSON (POSTed to an ``http`` filter; on stdin, with a newline, for a
@@ -59,6 +60,9 @@ class FilterOutcome:
     text: str
     canceled: bool = False
     changed: bool = False
+    #: A filter leased over the live API (a program's, not one of the user's
+    #: saved filters) changed the words.
+    program_changed: bool = False
 
 
 @dataclass(frozen=True)
@@ -201,6 +205,8 @@ class _Step:
     url: str
     argv: tuple[str, ...]
     timeout_s: float
+    #: Leased over the live API by a program, rather than saved by the user.
+    leased: bool = False
 
 
 @dataclass(frozen=True)
@@ -371,18 +377,39 @@ def _failed(step: _Step, stage: str, reason: str) -> None:
     events.publish(catalog.FILTER_FAILED, catalog.filter_failed(step.id, step.name, stage, reason))
 
 
-def _steps(stage: str, mode: str, settings: Mapping) -> list[_Step]:
+def _leases_apply(job, settings: Mapping) -> bool:
+    """Whether filters leased over the API may change this job's words.
+
+    They need the text filters permission. Words a lease changed are a
+    program's, and an action job whose action wouldn't take a program's
+    words (an agent or Claude Code channel action without "Send words to my
+    coding agents") skips leases, so the user's own words still go to it.
+    """
     from services.automation import permissions
+
+    if not permissions.granted(settings, permissions.TEXT_FILTERS):
+        return False
+    if job.mode != "action":
+        return True
+    from services.actions.model import find_action
+    from services.actions.runtime import program_words_allowed
+
+    action = find_action(settings, job.action_id)
+    return action is None or program_words_allowed(action, settings)
+
+
+def _steps(stage: str, job, settings: Mapping) -> list[_Step]:
     from services.automation.models import FILTER_HTTP, load_filters
 
     steps = [
         _Step(f.id, f.name, f.kind, f.url, (f.program, *f.args), f.timeout_ms / 1000)
         for f in load_filters(settings) if f.enabled and f.stage == stage
     ]
-    if permissions.granted(settings, permissions.TEXT_FILTERS):
+    if _leases_apply(job, settings):
         steps.extend(
-            _Step(lease.id, "API filter", FILTER_HTTP, lease.url, (), lease.timeout_ms / 1000)
-            for lease in leases() if lease.stage == stage and mode in lease.modes
+            _Step(lease.id, "API filter", FILTER_HTTP, lease.url, (), lease.timeout_ms / 1000,
+                  leased=True)
+            for lease in leases() if lease.stage == stage and job.mode in lease.modes
         )
     return steps
 
@@ -428,9 +455,11 @@ def apply(stage: str, text: str, job, settings: Optional[Mapping] = None, *,
     keeps the text.
 
     ``canceled`` is True only when a filter answered cancel, or turned the
-    words into none. When ``cancel`` is set (the dictation was canceled), the
-    wait on the current filter ends at once, the rest are skipped, and
-    ``FilterOutcome(text)`` comes back unchanged, without ``filter.failed``.
+    words into none. ``program_changed`` is True when a lease left different
+    words than the saved filters did. When ``cancel`` is set (the dictation
+    was canceled), the wait on the current filter ends at once, the rest are
+    skipped, and ``FilterOutcome(text)`` comes back unchanged, without
+    ``filter.failed``.
     """
     mode = getattr(job, "mode", None) if job is not None else None
     if (mode not in MODES or not isinstance(text, str) or not text.strip()
@@ -438,7 +467,7 @@ def apply(stage: str, text: str, job, settings: Optional[Mapping] = None, *,
         return FilterOutcome(text)
     if settings is None:
         settings = _load_settings()
-    steps = _steps(stage, mode, settings)
+    steps = _steps(stage, job, settings)
     if not steps:
         return FilterOutcome(text)
     _prepare_clients(steps)
@@ -454,7 +483,8 @@ def apply(stage: str, text: str, job, settings: Optional[Mapping] = None, *,
         "language": language,
         "app": app,
     }
-    current = text
+    # Saved filters run before leases: what they leave is still the user's.
+    current = users_text = text
     for index, step in enumerate(steps):
         if cancel is not None and cancel.is_set():
             return FilterOutcome(text)
@@ -475,9 +505,13 @@ def apply(stage: str, text: str, job, settings: Optional[Mapping] = None, *,
         if verdict.kind == _FAILED:
             _failed(step, stage, verdict.reason)
         elif verdict.kind == _CANCEL or (verdict.kind == _REPLACE and not verdict.text.strip()):
-            return FilterOutcome(current, canceled=True, changed=current != text)
+            return FilterOutcome(current, canceled=True, changed=current != text,
+                                 program_changed=current != users_text)
         elif verdict.kind == _REPLACE:
             current = verdict.text
+            if not step.leased:
+                users_text = current
     if cancel is not None and cancel.is_set():
         return FilterOutcome(text)
-    return FilterOutcome(current, changed=current != text)
+    return FilterOutcome(current, changed=current != text,
+                         program_changed=current != users_text)

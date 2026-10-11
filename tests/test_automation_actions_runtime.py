@@ -235,7 +235,8 @@ def test_channel_publishes_the_words_to_listening_sessions(h):
 
     (message,) = h.bus.recent(types=[catalog.CHANNEL_MESSAGE])
     assert message.data == {
-        "job_id": job.id, "source": "hotkey", "action_id": "ch", "text": "fix the build",
+        "job_id": job.id, "source": "hotkey", "origin": "dictated", "action_id": "ch",
+        "text": "fix the build",
         "app": {"id": "outlook.exe", "name": "Outlook", "category": message.data["app"]["category"]},
     }
     assert h.ui.copied == []
@@ -246,7 +247,7 @@ def test_channel_publishes_the_words_to_listening_sessions(h):
 def test_channel_app_is_null_while_the_capture_is_still_running(h):
     h.add(Action("ch", "Tell my session", ActionKind.CHANNEL))
     h.bus.subscribe(lambda event: None, label="claude-channel")
-    job = DictationJob(mode=JobMode.ACTION, action_id="ch", focus=Future())
+    job = DictationJob(mode=JobMode.ACTION, action_id="ch", source="hotkey", focus=Future())
 
     h.rt.deliver(job, "words", raw_text=None, html="")
 

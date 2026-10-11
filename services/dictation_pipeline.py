@@ -25,6 +25,7 @@ from services import (
     focus_context,
     snippets,
 )
+from services.automation import catalog
 from services.batch_upload import compose_batch_cleanup_prompt
 from services.cleanup_profiles import compose_profile_prompt
 from services.focus_context import FocusSnapshot
@@ -110,6 +111,20 @@ class DictationJob:
     route: str = ""
     #: Spoken routing turned this dictation into an ACTION job.
     routed: bool = False
+    #: A text filter a program leased over the live API changed the words
+    #: (the user's own saved filters don't count).
+    changed_by_program: bool = False
+
+    @property
+    def program_words(self) -> bool:
+        """Whether a program supplied this job's words or changed them.
+
+        A program supplied them when it started the job: any source but the
+        user's own (catalog.USER_SOURCES), so an unknown one counts too.
+        Such words reach the user's coding agents only with "Send words to
+        my coding agents" (services.actions.runtime.program_words_allowed).
+        """
+        return self.changed_by_program or not catalog.user_started(self.source)
 
     def snapshot(self, timeout: float = 0.0) -> Optional[FocusSnapshot]:
         """The focus capture, or None when it failed or isn't ready; never raises.
@@ -166,18 +181,27 @@ def begin_job(mode: str, settings: Mapping, *, selection=None, action_id: str = 
         action_id: The action an ACTION job runs.
         source: Who started the job (see DictationJob.source).
         route: See DictationJob.route.
-        include_selection: An ACTION job wants the selected text, which the
-            focus capture reads when app awareness is on.
+        include_selection: An ACTION job's action wants the selected text,
+            which the focus capture reads when app awareness is on.
+
+    Only a job the user started reads the selection: Command Mode's is what
+    it rewrites, a dictation replaces it (with the text near the cursor
+    on), and an action reads it when asked. A job a program started never
+    does, so no program learns what is selected in the user's app.
     """
     settings = settings or {}
     focus = target = None
     try:
         if resolve_app_context_enabled(settings):
+            include_text = resolve_app_context_read_text(settings)
+            wanted = {
+                JobMode.COMMAND: True,
+                JobMode.DICTATION: include_text,
+                JobMode.ACTION: include_selection,
+            }.get(mode, False)
             focus = focus_context.get_service().request(
-                include_text=resolve_app_context_read_text(settings),
-                include_selection=mode == JobMode.COMMAND or (
-                    mode == JobMode.ACTION and include_selection
-                ),
+                include_text=include_text,
+                include_selection=wanted and catalog.user_started(source),
             )
         elif mode != JobMode.DICTATION or route:
             # A rewrite pastes even with auto-paste off, and an action's

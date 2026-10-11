@@ -88,7 +88,11 @@ class ContextCaptureService:
     """
 
     def request(self, *, include_text: bool, include_selection: bool = False) -> Future:
-        """Start a capture; the Future resolves to a FocusSnapshot."""
+        """Start a capture; the Future resolves to a FocusSnapshot.
+
+        ``include_text`` reads the text around the caret, ``include_selection``
+        the selected text; a snapshot carries the selection only when asked.
+        """
         raise NotImplementedError
 
     def current_identity(self) -> AppIdentity | None:
