@@ -11,13 +11,16 @@ Their results come back to the Qt thread through one relay that lives for
 the session; a worker only ever emits a token and a result. At most
 ``MAX_PENDING`` of them run or wait at once; more are refused. ``cancel``
 drops the runs still waiting and stops agents and programs (killed with
-what they started); a run it is too late to stop finishes, reports what
-happened, and its answer goes nowhere.
+what they started); a run it is too late to stop, one whose work already
+returned included, finishes, reports what happened, and its answer goes
+nowhere.
 
 A run the user started that fails leaves the words on the clipboard, so
-nothing said is lost; one a program started over the live API or MCP only
-reports the failure (status, notice and ``action.ran``). Dictated text, links, program paths and arguments, selections, secrets and
-replies are never logged.
+nothing said is lost. One a program started over the live API or MCP never
+touches the clipboard or types into an app: an answer it would paste or copy
+goes to the Scratchpad, and a failure is only reported (status, notice and
+``action.ran``). Dictated text, links, program paths and arguments,
+selections, secrets and replies are never logged.
 """
 
 from __future__ import annotations
@@ -346,6 +349,9 @@ class _Run:
     done: Optional[Callable[[ActionResult], None]] = None
     #: Stops an agent or a program early (``cancel``, or the app closing).
     cancel: threading.Event = field(default_factory=threading.Event)
+    #: Set by the worker once the work has returned, before its result heads
+    #: for the Qt thread: from then on it is too late to stop.
+    finished: threading.Event = field(default_factory=threading.Event)
     #: Why the words aren't what the user asked for (a transform or cleanup
     #: profile that couldn't run); shown with the outcome.
     notice: str = ""
@@ -362,12 +368,14 @@ class _Pending:
     canceled: bool = False
 
 
-def _stoppable(action: Action) -> bool:
+def _stoppable(run: _Run) -> bool:
     """Whether a run under way can still be stopped: a program, or an
-    agent's quick answer (both killed with everything they started)."""
-    return action.kind == ActionKind.PROGRAM or (
+    agent's quick answer (both killed with everything they started), whose
+    work hasn't returned yet (its result is on the way)."""
+    action = run.action
+    return not run.finished.is_set() and (action.kind == ActionKind.PROGRAM or (
         action.kind == ActionKind.AGENT and action.param("mode") == AgentMode.ASK
-    )
+    ))
 
 
 def _runs(runs: list) -> str:
@@ -375,19 +383,29 @@ def _runs(runs: list) -> str:
     return runs[0].action.name if len(runs) == 1 else f"{len(runs)} actions"
 
 
-def _output_of(action: Action) -> str:
-    """Where an action's answer goes: an Output value."""
+def _users_own(job) -> bool:
+    """Whether the user started the job, rather than a program (the live API
+    or MCP): only the user's runs copy to the clipboard or paste into an app."""
+    return catalog.user_started(getattr(job, "source", ""))
+
+
+def _output_of(run: _Run) -> str:
+    """Where a run's answer goes: an Output value.
+
+    A program's run never copies or pastes: an answer it would put on the
+    clipboard or paste into the user's app goes to the Scratchpad, which
+    shows it without acting on it.
+    """
+    action = run.action
     answers = action.kind in (ActionKind.WEBHOOK, ActionKind.PROGRAM) or (
         action.kind == ActionKind.AGENT and action.param("mode") == AgentMode.ASK
     )
     output = action.param("output") if answers else Output.NONE
-    return output if output in Output.ALL else Output.NONE
-
-
-def _users_own(job) -> bool:
-    """Whether the user started the job, rather than a program: a failed run
-    of a program's never overwrites the clipboard."""
-    return catalog.user_started(getattr(job, "source", ""))
+    if output not in Output.ALL:
+        return Output.NONE
+    if output in (Output.PASTE, Output.CLIPBOARD) and not _users_own(run.job):
+        return Output.SCRATCHPAD
+    return output
 
 
 def _short(text: str, limit: int = NOTICE_MAX_CHARS) -> str:
@@ -503,10 +521,11 @@ class ActionRuntime:
         is stopped with everything it started: ``action.ran`` says
         ``Canceled``, and a Settings "Try it" gets that result too. A run
         already under way that can't be stopped (a link opening, a webhook
-        posting, a session being handed off) finishes, and ``action.ran``
-        reports what really happened; only its answer is dropped, so nothing
-        is pasted, copied, shown or put in the Scratchpad for it. Unless
-        ``tests_only``, the status line and a notice say what was canceled.
+        posting, a session being handed off, or any run whose work has
+        already returned) finishes, and ``action.ran`` reports what really
+        happened; only its answer is dropped, so nothing is pasted, copied,
+        shown or put in the Scratchpad for it. Unless ``tests_only``, the
+        status line and a notice say what was canceled and what was too late.
 
         Args:
             tests_only: Only Settings' "Try it" runs (its page went away).
@@ -521,7 +540,7 @@ class ActionRuntime:
                     continue
                 # A future that cancels hadn't started and now never will.
                 waiting = pending.future is None or pending.future.cancel()
-                if waiting or _stoppable(pending.run.action):
+                if waiting or _stoppable(pending.run):
                     stopped.append((token, self._pending.pop(token)))
                 else:
                     pending.canceled = True
@@ -570,7 +589,11 @@ class ActionRuntime:
 
     def _start(self, run: _Run) -> None:
         action, kind = run.action, run.action.kind
-        if kind == ActionKind.CLIPBOARD:
+        if kind == ActionKind.CLIPBOARD and not _users_own(run.job):
+            # Like an answer a program's run would copy (_output_of).
+            self.controller.ui_controller.show_in_scratchpad(run.text)
+            self._finish(run, ActionResult(True, "Put in the Scratchpad"))
+        elif kind == ActionKind.CLIPBOARD:
             copied = self._copy(run.text, run.html)
             self._finish(run, ActionResult(copied, "Copied" if copied else "Couldn't copy the words"))
         elif kind == ActionKind.SCRIPTS:
@@ -633,7 +656,7 @@ class ActionRuntime:
             self.controller.ui_controller.set_status(f"{run.action.name} · working…")
         kind = run.action.kind
         # Bound here: the worker never reaches back into the runtime.
-        emit, cancel = relay.finished.emit, run.cancel
+        emit, cancel, finished = relay.finished.emit, run.cancel, run.finished
 
         def task() -> None:
             if cancel.is_set():
@@ -643,6 +666,7 @@ class ActionRuntime:
             except Exception as exc:
                 logger.warning("A %s action failed: %s", kind, _described(exc))
                 result = ActionResult(False, "something went wrong")
+            finished.set()
             emit(token, result)
 
         try:
@@ -689,7 +713,7 @@ class ActionRuntime:
     def _route(self, run: _Run, result: ActionResult) -> tuple[bool, str, str]:
         """Put the answer where the action sends it; ``(ok, message, where it went)``."""
         name = run.action.name
-        output = _output_of(run.action)
+        output = _output_of(run)
         answer = (result.output or "").strip()
         if output == Output.NONE or not answer:
             message = result.message or f"Sent to {name}"
@@ -707,8 +731,9 @@ class ActionRuntime:
         if output == Output.NOTICE:
             shown, message = _short(answer), f"Showed {name}'s answer"
             # A notice holds only the start of a long answer; the clipboard
-            # keeps all of it.
-            if len(" ".join(answer.split())) > NOTICE_MAX_CHARS and self._copy(answer):
+            # keeps all of it, for the user's own runs.
+            if (len(" ".join(answer.split())) > NOTICE_MAX_CHARS and _users_own(run.job)
+                    and self._copy(answer)):
                 shown, message = shown + FULL_ANSWER_COPIED, message + FULL_ANSWER_COPIED
             self._say(run, shown, ok=True)
             return True, message, Output.NOTICE
@@ -721,7 +746,10 @@ class ActionRuntime:
         return False, message, Output.NONE
 
     def _paste(self, run: _Run, answer: str) -> tuple[bool, str, str]:
-        """Paste ``answer`` only into the app the job started in, else copy it."""
+        """Paste ``answer`` only into the app the job started in, else copy it.
+
+        Only the user's runs get here (``_output_of``).
+        """
         from services.dictation_pipeline import PasteTarget, paste_target
 
         name = run.action.name

@@ -647,7 +647,8 @@ def test_a_refused_paste_is_copied_instead(h, monkeypatch):
 def test_a_job_without_a_start_app_never_pastes(h, monkeypatch):
     _answering(h, monkeypatch)
 
-    h.rt.deliver(DictationJob(mode=JobMode.ACTION, action_id="p1"), "x", raw_text=None, html="")
+    h.rt.deliver(DictationJob(mode=JobMode.ACTION, action_id="p1", source="hotkey"), "x",
+                 raw_text=None, html="")
     _finished(h)
 
     assert h.controller.transcription_runtime.pasted == []
