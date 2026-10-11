@@ -33,6 +33,12 @@ own agent. Subscriptions persist in ``config.MCP_EVENT_SUBSCRIPTIONS_FILE``
 without secrets; each secret is in the credential store. Deliveries stop
 while MCP, MCP Events or live events are off, and when a subscription
 passes its ``refreshBefore``. URLs, secrets and event data are never logged.
+
+A subscription remembers whether it came from this computer or a Tailscale
+peer. A peer's subscriptions are delivered only while agents over Tailscale
+are allowed, and a peer can't name a callback on this computer or its local
+network, by address or by a name that resolves there (checked again before
+each delivery).
 """
 
 from __future__ import annotations
@@ -89,6 +95,10 @@ MAX_REPLY_BYTES = 16 * 1024
 SECRET_NAME_PREFIX = "OPENWHISPER_MCP_EVENT_SECRET_"
 #: Everyone holding the MCP token is the same principal: the user's agents.
 PRINCIPAL = "openwhisper-mcp-token"
+#: Where a subscription was made: this computer, or a Tailscale peer.
+ORIGIN_LOCAL = "local"
+ORIGIN_TAILSCALE = "tailscale"
+ORIGINS = (ORIGIN_LOCAL, ORIGIN_TAILSCALE)
 OFF_MESSAGE = "MCP Events is turned off in OpenWhisper Settings > API & MCP."
 
 # JSON-RPC error codes. CallbackEndpointError is ChatGPT's documented
@@ -349,6 +359,63 @@ def validate_callback_url(url: Any) -> str:
     )
 
 
+#: ``_destination`` answers.
+PUBLIC = "public"
+PRIVATE = "private"
+UNRESOLVED = "unresolved"
+
+
+def _destination(url: str) -> str:
+    """Where a callback URL leads: ``PUBLIC``, ``PRIVATE`` or ``UNRESOLVED``.
+
+    Private is this computer or a local network: a loopback, private,
+    link-local or other non-global address, a local name (localhost, .local,
+    .lan, .home.arpa), or a name that resolves to any of those. Tailscale
+    addresses are the peer's own network and count as public.
+    """
+    import socket
+
+    from services.automation.models import url_is_private
+    from services.remote_asr.tailscale import is_tailscale_address
+
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if not host or url_is_private(url):
+        return PRIVATE
+    try:
+        addresses = [ipaddress.ip_address(host)]
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(host, parts.port or 443, type=socket.SOCK_STREAM)
+        except (OSError, UnicodeError):
+            return UNRESOLVED
+        addresses = [ipaddress.ip_address(info[4][0].split("%", 1)[0]) for info in infos]
+    if not addresses:
+        return UNRESOLVED
+    for address in addresses:
+        address = getattr(address, "ipv4_mapped", None) or address
+        if not is_tailscale_address(address) and not address.is_global:
+            return PRIVATE
+    return PUBLIC
+
+
+def _require_reachable_by_peer(url: str) -> None:
+    """A Tailscale peer's callback must not lead into this computer or its network."""
+    destination = _destination(url)
+    if destination == PRIVATE:
+        raise EventsError(
+            INVALID_PARAMS,
+            "Subscribing from another computer, delivery.url can't be an address on this "
+            "computer or its local network.",
+        )
+    if destination == UNRESOLVED:
+        raise EventsError(
+            CALLBACK_ENDPOINT_ERROR,
+            "The callback URL did not pass verification (connection_refused).",
+            {"reason": "connection_refused"},
+        )
+
+
 def _is_loopback(host: str) -> bool:
     if host.lower() == "localhost":
         return True
@@ -454,6 +521,10 @@ class EventSubscription:
     #: Unix seconds; delivery stops at this moment unless refreshed.
     refresh_before: int
     created_at: str
+    #: Who made or last refreshed it: ``ORIGIN_LOCAL`` (an agent on this
+    #: computer) or ``ORIGIN_TAILSCALE`` (a peer, delivered to only while
+    #: the user allows agents over Tailscale).
+    origin: str
 
     def expired(self, now: Optional[float] = None) -> bool:
         return (time.time() if now is None else now) >= self.refresh_before
@@ -466,6 +537,7 @@ class EventSubscription:
             "url": self.url,
             "refresh_before": _iso(self.refresh_before),
             "created_at": self.created_at,
+            "origin": self.origin,
         }
 
     @classmethod
@@ -488,9 +560,12 @@ class EventSubscription:
         except EventsError:
             return None
         created_at = record.get("created_at")
+        origin = record.get("origin")
         return cls(
             sub_id, name, arguments, url, refresh_before,
             created_at if isinstance(created_at, str) else "",
+            # Unknown: the more restricted of the two.
+            origin if origin in ORIGINS else ORIGIN_TAILSCALE,
         )
 
 
@@ -1073,14 +1148,20 @@ def _enabled(saved: Mapping[str, Any]) -> bool:
     return resolve_mcp_events_enabled(saved)
 
 
-def _delivery_allowed(saved: Mapping[str, Any]) -> bool:
-    """Rechecked before every try: MCP, MCP Events and live events must all be on."""
+def _delivery_allowed(saved: Mapping[str, Any], subscription: EventSubscription) -> bool:
+    """Rechecked before every try: MCP, MCP Events and live events must all be
+    on, and a Tailscale peer's subscription needs Tailscale access on too, so it
+    never outlives the access that made it."""
     from services.settings import SettingsKey
 
     return (
         saved.get(SettingsKey.MCP_ENABLED) is True
         and _enabled(saved)
         and permissions.granted(saved, permissions.LIVE_EVENTS)
+        and (
+            subscription.origin == ORIGIN_LOCAL
+            or saved.get(SettingsKey.MCP_TAILSCALE_ENABLED) is True
+        )
     )
 
 
@@ -1128,8 +1209,17 @@ def _deliver(job: _Job, client: Any = None) -> Optional[float]:
     """Worker thread: one try; the delay before the next one, or None."""
     registry = _registry()
     subscription = registry.get(job.sub_id)
-    if subscription is None or not _delivery_allowed(_load_settings()):
+    if subscription is None or not _delivery_allowed(_load_settings(), subscription):
         return None
+    if subscription.origin != ORIGIN_LOCAL:
+        # Checked again for each try: a name may resolve here by now.
+        destination = _destination(subscription.url)
+        if destination != PUBLIC:
+            registry.record(
+                subscription.id,
+                "address_refused" if destination == PRIVATE else "connection_refused",
+            )
+            return None
     keys = registry.signing_secrets(subscription.id)
     if not keys:
         registry.record(subscription.id, "secret_missing")
@@ -1248,20 +1338,26 @@ def _require_access(saved: Mapping[str, Any]) -> None:
         )
 
 
-def list_events(params: Mapping[str, Any], saved: Mapping[str, Any]) -> dict:
+def list_events(params: Mapping[str, Any], saved: Mapping[str, Any], origin: str) -> dict:
     """``events/list``: one page holds every event, so there is no nextCursor."""
     _require_access(saved)
     return {"events": descriptors()}
 
 
-def subscribe(params: Mapping[str, Any], saved: Mapping[str, Any]) -> dict:
-    """``events/subscribe``: create or refresh a webhook subscription."""
+def subscribe(params: Mapping[str, Any], saved: Mapping[str, Any], origin: str) -> dict:
+    """``events/subscribe``: create or refresh a webhook subscription.
+
+    ``origin`` is where the request came from (``ORIGIN_LOCAL`` or
+    ``ORIGIN_TAILSCALE``); a refresh takes the newer request's.
+    """
     from services.credentials import CredentialStoreError
 
     _require_access(saved)
     name = _event_name(params.get("name"))
     arguments = normalize_arguments(name, params.get("arguments"))
     url, secret = _delivery(params.get("delivery"), subscribing=True)
+    if origin != ORIGIN_LOCAL:
+        _require_reachable_by_peer(url)
     ttl_ms = _granted_ttl_ms(params)
     sub_id = subscription_id(name, arguments, url)
     registry = _registry()
@@ -1278,6 +1374,7 @@ def subscribe(params: Mapping[str, Any], saved: Mapping[str, Any]) -> dict:
         url,
         int(now + ttl_ms / 1000),
         existing.created_at if existing is not None else _iso(now),
+        origin,
     )
     try:
         created = registry.upsert(subscription, secret)
@@ -1290,8 +1387,8 @@ def subscribe(params: Mapping[str, Any], saved: Mapping[str, Any]) -> dict:
     except OSError:
         raise EventsError(INTERNAL_ERROR, "OpenWhisper could not save the subscription.") from None
     logger.info(
-        "MCP Events subscription %s %s for %s", sub_id,
-        "created" if created else "refreshed", name,
+        "MCP Events subscription %s %s for %s from %s", sub_id,
+        "created" if created else "refreshed", name, origin,
     )
     return {
         "id": sub_id,
@@ -1300,12 +1397,12 @@ def subscribe(params: Mapping[str, Any], saved: Mapping[str, Any]) -> dict:
         "cursor": None,
         "truncated": False,
         "deliveryStatus": registry.delivery_status(
-            sub_id, _delivering() and _delivery_allowed(saved)
+            sub_id, _delivering() and _delivery_allowed(saved, subscription)
         ),
     }
 
 
-def unsubscribe(params: Mapping[str, Any], saved: Mapping[str, Any]) -> dict:
+def unsubscribe(params: Mapping[str, Any], saved: Mapping[str, Any], origin: str) -> dict:
     """``events/unsubscribe``: idempotent, keyed like subscribe (never by id)."""
     _require_access(saved)
     name = _event_name(params.get("name"))
@@ -1317,7 +1414,9 @@ def unsubscribe(params: Mapping[str, Any], saved: Mapping[str, Any]) -> dict:
     return {}
 
 
-METHODS: dict[str, Callable[[Mapping[str, Any], Mapping[str, Any]], dict]] = {
+#: Each takes the request's params, the saved settings and the request's origin.
+Method = Callable[[Mapping[str, Any], Mapping[str, Any], str], dict]
+METHODS: dict[str, Method] = {
     "events/list": list_events,
     "events/subscribe": subscribe,
     "events/unsubscribe": unsubscribe,
@@ -1339,15 +1438,22 @@ def install(mcp: Any, settings: Any) -> None:
     from mcp.types import RequestParams
     from pydantic import ConfigDict
 
+    from services.automation.api import peer_is_local
+
     class EventsParams(RequestParams):
         model_config = ConfigDict(extra="allow")
 
-    def handler(method: Callable[[Mapping[str, Any], Mapping[str, Any]], dict]):
+    def handler(method: Method):
         async def handle(ctx: Any, params: EventsParams) -> dict:
             body = dict(params.model_extra or {})
+            # The HTTP request the message came in; without one, the peer
+            # can't be shown to be this computer.
+            local = peer_is_local(getattr(ctx, "request", None))
+            origin = ORIGIN_LOCAL if local else ORIGIN_TAILSCALE
 
             def run() -> dict:
-                return method(body, _load_settings(settings) if settings is not None else {})
+                saved = _load_settings(settings) if settings is not None else {}
+                return method(body, saved, origin)
 
             try:
                 return await asyncio.to_thread(run)

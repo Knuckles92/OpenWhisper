@@ -93,7 +93,8 @@ def client(tmp_path, settings, control, bus):
     path = tmp_path / "live.db"
     DatabaseManager(str(path)).close()
     app = create_app(path, TOKEN, enabled=lambda: True, settings=settings)
-    with TestClient(app, base_url="http://127.0.0.1") as test_client:
+    # A program on this computer: only it may lease text filters.
+    with TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)) as test_client:
         yield test_client
 
 

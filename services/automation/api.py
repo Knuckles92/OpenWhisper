@@ -28,6 +28,7 @@ comment arrives every 15 seconds.
 # No ``from __future__ import annotations``: FastAPI reads the route
 # signatures, whose types are imported inside create_live_router.
 import asyncio
+import ipaddress
 import json
 import logging
 import secrets
@@ -170,6 +171,23 @@ async def read_json_body(request, limit: int) -> dict:
     if not isinstance(value, dict):
         raise _Invalid("The request body must be a JSON object.")
     return value
+
+
+def peer_is_local(request) -> bool:
+    """Whether ``request`` (a Starlette request) came from this computer.
+
+    The listener answers loopback clients and, when the user allows agents
+    over Tailscale, Tailscale peers; anything but a loopback address is
+    another computer.
+    """
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", "") or ""
+    try:
+        address = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False
+    mapped = getattr(address, "ipv4_mapped", None)
+    return (mapped or address).is_loopback
 
 
 def is_unicode_text(value: str) -> bool:
@@ -521,6 +539,12 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
     )
     async def create_filter(request: Request):
         """Lease a text filter: ``{"url", "stage", "timeout_ms"?}``; renew within 60 s."""
+        if not peer_is_local(request):
+            # A filter's address is on this computer, which a Tailscale peer
+            # must not point OpenWhisper's dictations at.
+            return failure("filters", _Invalid(
+                "Only a program on this computer can lease a text filter.", 403, "forbidden"
+            ))
         try:
             body = await read_json_body(request, MAX_SMALL_BODY)
         except _Invalid as exc:

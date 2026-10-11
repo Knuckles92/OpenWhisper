@@ -125,9 +125,11 @@ def make_client(tmp_path, settings):
     path = tmp_path / "history.db"
     if not path.exists():
         DatabaseManager(str(path)).close()
+    # An agent on this computer: only it may subscribe callbacks on loopback.
     return TestClient(
         create_app(path, TOKEN, enabled=lambda: True, settings=settings),
         base_url="http://127.0.0.1",
+        client=("127.0.0.1", 50000),
     )
 
 

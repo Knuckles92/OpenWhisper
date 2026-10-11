@@ -74,7 +74,7 @@ def settings():
 def subscription(n, *, expires_in=3600.0):
     return events_ext.EventSubscription(
         f"sub_{n:032x}", catalog.TRANSCRIPTION_COMPLETED, {}, f"http://127.0.0.1:9/{n}",
-        int(time.time() + expires_in), "",
+        int(time.time() + expires_in), "", events_ext.ORIGIN_LOCAL,
     )
 
 
