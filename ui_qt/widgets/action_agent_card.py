@@ -30,7 +30,7 @@ from services.hotkey_manager import format_hotkey_display
 from ui_qt.utils.icons import design_icon
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets import action_relay
-from ui_qt.widgets.action_copy import summary
+from ui_qt.widgets.action_copy import summary, try_outcome
 from ui_qt.widgets.action_fields import (
     AgentFields,
     ShortcutField,
@@ -348,9 +348,8 @@ class AgentHotkeyCard(InfoTile):
             return
         self._try_token = 0
         self.try_button.setEnabled(True)
-        ok = bool(getattr(result, "ok", False))
-        message = getattr(result, "message", "") or ("It worked." if ok else "It didn't work.")
-        self.show_message(message, "ok" if ok else "error")
+        # A quick answer comes back with the answer itself, as in the editor.
+        self.show_message(try_outcome(result), "ok" if result.ok else "error")
 
     # ---- messages ----
 

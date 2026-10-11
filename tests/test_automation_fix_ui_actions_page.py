@@ -450,3 +450,42 @@ def test_route_by_voice_has_no_caption_repeating_its_tile(make_dialog):
                 if label.isVisible()]
     assert "Route by voice" not in captions
     assert dialog.actions_routing_tile.title_label.text() == "Route by voice"
+
+
+# ---- 6/7. What "Try it" shows ----
+
+
+def test_the_agent_card_shows_a_quick_answer(make_dialog):
+    from services.actions.runtime import ActionResult
+
+    agent = {**AGENT, "params": {"agent": "claude_code", "mode": "ask"}}
+    dialog, _store = make_dialog({SettingsKey.ACTIONS: [agent]})
+    dialog.on_try_action = lambda _action, _text, done: done(
+        ActionResult(True, "Asked Claude Code", "Hello! Nice to meet you."))
+    card = dialog.actions_agent_card
+    card.try_button.click()
+    assert card.message.text() == "Asked Claude Code\nHello! Nice to meet you."
+    assert card.message.property("tone") == "ok"
+
+
+def test_try_it_shows_only_the_start_of_a_long_output(make_dialog):
+    from services.actions.runtime import ActionResult
+
+    dialog, _store = make_dialog()
+    outputs = ["line of output\n" * 4000, "x" * 5000]
+    dialog.on_try_action = lambda _action, _text, done: done(ActionResult(True, "", outputs.pop(0)))
+    panel = dialog.actions_panel
+    panel.add_action()
+    panel.start_from_preset(panel.gallery.tile("copy").preset)
+    editor = panel.editor
+    editor.try_it()
+    assert editor.try_result.text() == "It worked.\n" + "\n".join(["line of output"] * 6) + "…"
+    editor.try_it()
+    assert editor.try_result.text() == "It worked.\n" + "x" * 500 + "…"
+
+
+def test_shortened_keeps_what_fits_as_it_is():
+    from ui_qt.widgets.action_copy import shortened
+
+    assert shortened("  one\r\ntwo  ") == "one\ntwo"
+    assert shortened("\n".join(str(n) for n in range(7))) == "0\n1\n2\n3\n4\n5…"

@@ -36,6 +36,7 @@ from ui_qt.widgets.action_copy import (
     SAMPLE_WORDS,
     parse_arguments,
     parse_spoken_names,
+    try_outcome,
 )
 from ui_qt.widgets.action_fields import (
     AgentFields,
@@ -545,12 +546,7 @@ class ActionEditor(InfoTile):
             return
         self._try_token = 0
         self.try_button.setEnabled(True)
-        ok = bool(getattr(result, "ok", False))
-        message = getattr(result, "message", "") or ("It worked." if ok else "It didn't work.")
-        output = getattr(result, "output", None)
-        if output:
-            message = f"{message}\n{output}"
-        self._show_try_result(message, "ok" if ok else "error")
+        self._show_try_result(try_outcome(result), "ok" if result.ok else "error")
 
     def _show_try_result(self, text: str, tone: str) -> None:
         self.try_result.setText(text)

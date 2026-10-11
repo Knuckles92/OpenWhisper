@@ -21,6 +21,9 @@ from services.actions.model import (
 
 #: Words "Try it" and the link preview start with.
 SAMPLE_WORDS = "What's on my calendar tomorrow?"
+#: The most of an answer or a program's output "Try it" shows.
+TRY_OUTPUT_LINES = 6
+TRY_OUTPUT_CHARS = 500
 
 KIND_ICONS = {
     ActionKind.OPEN_LINK: "world-blue.svg",
@@ -126,6 +129,21 @@ def summary(action: Action) -> str:
     if kind == ActionKind.SCRIPTS:
         return "Tells the programs listening to OpenWhisper"
     return "Does something with your words"
+
+
+def shortened(text: str) -> str:
+    """``text`` cut to a few lines and characters, ending in "…" when any was left out."""
+    whole = "\n".join((text or "").strip().splitlines())
+    kept = "\n".join(whole.splitlines()[:TRY_OUTPUT_LINES])
+    if len(kept) > TRY_OUTPUT_CHARS:
+        kept = kept[:TRY_OUTPUT_CHARS].rstrip()
+    return kept if kept == whole else f"{kept}…"
+
+
+def try_outcome(result) -> str:
+    """What "Try it" says about an ``ActionResult``: what happened, then the answer, shortened."""
+    message = result.message or ("It worked." if result.ok else "It didn't work.")
+    return f"{message}\n{shortened(result.output)}" if result.output else message
 
 
 def spoken_hint(action: Action) -> str:
