@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
@@ -49,8 +49,6 @@ from services.runtime import (
 )
 from services.runtime.command import CommandRuntime
 from services.actions.runtime import ActionRuntime
-from services.automation import catalog as event_catalog
-from services.automation.events import publish as publish_event
 from services.dictation_pipeline import JobMode
 from services.settings import (
     SETTING_DEFAULTS,
@@ -104,13 +102,15 @@ class PreviewEvents:
 
     Text that arrives too soon is held and sent when the quarter second is
     up (only the newest), so listeners always end on the latest preview
-    rather than a stale one. A final preview goes out at once. Previews are
-    delivered live only; they never fill the replay buffer.
+    rather than a stale one. A final preview goes out at once. ``publish``
+    (TranscriptionRuntime.publish_preview) drops text held, or still on its
+    way, when its recording stops or is canceled.
     """
 
     INTERVAL_S = 0.25
 
-    def __init__(self) -> None:
+    def __init__(self, publish: Callable[[object, str, bool], None]) -> None:
+        self._publish = publish
         # Created on the Qt thread, like the controller's other timers.
         self._timer = QTimer()
         self._timer.setSingleShot(True)
@@ -138,11 +138,7 @@ class PreviewEvents:
 
     def _send(self, job, text: str, final: bool) -> None:
         self._sent_at = time.monotonic()
-        publish_event(
-            event_catalog.TRANSCRIPTION_PREVIEW,
-            event_catalog.transcription_preview(job, text, final),
-            replay=False,
-        )
+        self._publish(job, text, final)
 
 
 class ApplicationController(QObject):
@@ -396,7 +392,7 @@ class ApplicationController(QObject):
         self.transcription_runtime = TranscriptionRuntime(self)
         self.command_runtime = CommandRuntime(self)
         self.action_runtime = ActionRuntime(self)
-        self._preview_events = PreviewEvents()
+        self._preview_events = PreviewEvents(self.transcription_runtime.publish_preview)
         self.meeting_runtime = MeetingRuntime(self)
 
         self._setup_transcription_backends(local_backend=local_backend)

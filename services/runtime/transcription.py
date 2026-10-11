@@ -118,6 +118,10 @@ class TranscriptionRuntime:
         # The recording's DictationJob from its start until its stop claims
         # the slot; uploads never inherit one.
         self._job: Optional[dictation_pipeline.DictationJob] = None
+        # The job whose live preview is published: from just after
+        # recording.started until just before recording.stopped or
+        # recording.canceled. Read and changed under _job_lock.
+        self._previewing: Optional[dictation_pipeline.DictationJob] = None
         # The job the claimed slot is working on. The worker, delivery and
         # history read only this, copied to a local first.
         self._active_job: Optional[dictation_pipeline.DictationJob] = None
@@ -173,8 +177,33 @@ class TranscriptionRuntime:
         """Drop the recording's job and profile so no later job inherits them."""
         with self._job_lock:
             self._job = None
+            self._previewing = None
             self._recording_profile = None
             self._profile_settings = None
+
+    def _end_preview(self) -> None:
+        """Publish no more of the recording's preview; before it is said to end.
+
+        Under the lock ``publish_preview`` publishes with, so a preview
+        being published finishes first and none comes after.
+        """
+        with self._job_lock:
+            self._previewing = None
+
+    def publish_preview(self, job, text: str, final: bool) -> None:
+        """``transcription.preview`` for ``job`` while it records; any thread.
+
+        Dropped once its recording stopped or was canceled. Previews are
+        delivered live only; they never fill the replay buffer.
+        """
+        with self._job_lock:
+            if job is None or getattr(self._previewing, "id", None) != job.id:
+                return
+            publish_event(
+                event_catalog.TRANSCRIPTION_PREVIEW,
+                event_catalog.transcription_preview(job, text, final),
+                replay=False,
+            )
 
     def _rearm_remote_engine(self) -> None:
         """Clear a remote engine's cancel once no job it was meant for is left.
@@ -233,6 +262,7 @@ class TranscriptionRuntime:
         if (getattr(recorder, 'last_capture_error', None) != message
                 or getattr(recorder, 'capture_canceled', False) is True):
             return  # queued notification from a canceled/replaced capture
+        self._end_preview()
         self.controller.recording_state_changed.emit(False)
         self.controller.status_update.emit(message + ' — preserving captured audio')
         self.controller.streaming_runtime.cancel_streaming_session()
@@ -379,6 +409,8 @@ class TranscriptionRuntime:
             publish_event(
                 event_catalog.RECORDING_STARTED, event_catalog.recording_started(self._job)
             )
+            with self._job_lock:
+                self._previewing = self._job
             if mode == JobMode.COMMAND:
                 self.controller.overlay_state_update.emit(OverlayState.COMMAND_LISTENING)
                 self.controller.status_update.emit("Command Mode · Listening...")
@@ -447,6 +479,7 @@ class TranscriptionRuntime:
             duration = self.controller.recorder.get_recording_duration()
         except Exception:
             duration = None
+        self._end_preview()
         publish_event(
             event_catalog.RECORDING_STOPPED,
             event_catalog.recording_stopped(self._job, duration),
@@ -614,6 +647,7 @@ class TranscriptionRuntime:
         ) else 0.0
         if self._cancel_started_at:
             job = self._job or self._active_job
+            self._end_preview()
             publish_event(
                 event_catalog.RECORDING_CANCELED, event_catalog.recording_canceled(job)
             )
