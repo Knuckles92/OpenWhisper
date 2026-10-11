@@ -266,6 +266,7 @@ def _sanitize_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "api_run_actions": False,
         "api_control_recording": False,
         "api_text_filters": False,
+        "api_agent_prompts": False,
         "mcp_events_enabled": False,
     })
     for key in _AUTOMATION_LISTS:

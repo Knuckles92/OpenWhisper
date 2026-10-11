@@ -298,6 +298,7 @@ def test_control_permissions_writes_and_live_revocation(
                     "run_actions": False,
                     "control_recording": False,
                     "text_filters": False,
+                    "agent_prompts": False,
                     "mcp_events": False,
                 }
                 assert (await client.call_tool("get_status", {})).structured_content[

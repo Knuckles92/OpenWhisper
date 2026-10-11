@@ -298,6 +298,9 @@ class SettingsKey:
     API_RUN_ACTIONS: Final[str] = "api_run_actions"
     API_CONTROL_RECORDING: Final[str] = "api_control_recording"
     API_TEXT_FILTERS: Final[str] = "api_text_filters"
+    # On top of running actions: let a program send words to the user's
+    # coding agent (an agent or Claude Code channel action), which acts on them.
+    API_AGENT_PROMPTS: Final[str] = "api_agent_prompts"
     # Saved hooks: [{id, name, url, events, enabled}] and so on; secrets are
     # in the credential store.
     AUTOMATION_WEBHOOKS: Final[str] = "automation_webhooks"
@@ -716,6 +719,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.API_RUN_ACTIONS: False,
     SettingsKey.API_CONTROL_RECORDING: False,
     SettingsKey.API_TEXT_FILTERS: False,
+    SettingsKey.API_AGENT_PROMPTS: False,
     SettingsKey.AUTOMATION_WEBHOOKS: [],
     SettingsKey.AUTOMATION_PROGRAMS: [],
     SettingsKey.AUTOMATION_FILTERS: [],

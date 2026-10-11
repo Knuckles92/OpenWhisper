@@ -149,9 +149,13 @@ def history_saved(job_id: str, record_id: Any, kind: str) -> dict:
     return {"job_id": job_id or "", "record_id": str(record_id), "kind": kind or ""}
 
 
-def action_ran(job: Any, action: Any, *, ok: bool, message: str, output: str) -> dict:
-    return {
-        "job_id": job_fields(job)["job_id"],
+def action_ran(job: Any, action: Any, *, ok: bool, message: str, output: str,
+               text: Optional[str] = None) -> dict:
+    """``text`` is the words the action got, for "Send to my scripts" only."""
+    fields = job_fields(job)
+    data = {
+        "job_id": fields["job_id"],
+        "source": fields["source"],
         "action_id": getattr(action, "id", ""),
         "name": getattr(action, "name", ""),
         "kind": getattr(action, "kind", ""),
@@ -159,11 +163,18 @@ def action_ran(job: Any, action: Any, *, ok: bool, message: str, output: str) ->
         "message": str(message or "")[:500],
         "output": output or "none",
     }
+    if text is not None:
+        data["text"] = text
+    return data
 
 
 def channel_message(job: Any, action: Any, text: str, app: Optional[Mapping]) -> dict:
+    """``source`` tells a listener whether the user dictated the words
+    (hotkey, ui, routing) or a program sent them (api, mcp)."""
+    fields = job_fields(job)
     return {
-        "job_id": job_fields(job)["job_id"],
+        "job_id": fields["job_id"],
+        "source": fields["source"],
         "action_id": getattr(action, "id", ""),
         "text": text or "",
         "app": dict(app) if app else None,

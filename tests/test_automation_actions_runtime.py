@@ -190,7 +190,7 @@ def test_clipboard_copies_the_words_with_their_formatting(h):
     assert h.ui.copied == [("hello", "<i>hello</i>")]
     assert h.ui.notices == [("Copied", True)]
     ran = _ran(h)[-1]
-    assert ran == {"job_id": ran["job_id"], "action_id": "c1", "name": "Copy only",
+    assert ran == {"job_id": ran["job_id"], "source": "hotkey", "action_id": "c1", "name": "Copy only",
                    "kind": "clipboard", "ok": True, "message": "Copied", "output": "none"}
 
 
@@ -233,7 +233,7 @@ def test_channel_publishes_the_words_to_listening_sessions(h):
 
     (message,) = h.bus.recent(types=[catalog.CHANNEL_MESSAGE])
     assert message.data == {
-        "job_id": job.id, "action_id": "ch", "text": "fix the build",
+        "job_id": job.id, "source": "hotkey", "action_id": "ch", "text": "fix the build",
         "app": {"id": "outlook.exe", "name": "Outlook", "category": message.data["app"]["category"]},
     }
     assert h.ui.copied == []

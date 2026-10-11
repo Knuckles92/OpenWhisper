@@ -532,6 +532,10 @@ class RouteDecision:
     action_id: str
     payload: str
     confidence: float
+    #: Set, with an empty ``action_id``, when the judge couldn't answer
+    #: ("unreachable", "timeout"), so Route by voice can say so instead of
+    #: "No action matched".
+    failure: str = ""
 
 
 @dataclass(frozen=True)
