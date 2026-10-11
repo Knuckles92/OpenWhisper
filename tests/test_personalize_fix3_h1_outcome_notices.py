@@ -258,7 +258,7 @@ def test_busy_refusals_of_rewrites_and_pastes_show_by_the_pointer(h, notices):  
     busy = "A transcription is already in progress — wait before "
     assert h.runtime._claim_job(DictationJob(mode=JobMode.DICTATION))
     assert not h.runtime.begin_rewrite_job(
-        DictationJob(mode=JobMode.TRANSFORM), source_name="Transform · Polish")
+        DictationJob(mode=JobMode.TRANSFORM, source="hotkey"), source_name="Transform · Polish")
     assert not h.runtime.paste_text_now("um hello")
     assert notices == [(busy + "rewriting text", False), (busy + "pasting", False)]
 

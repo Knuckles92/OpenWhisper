@@ -534,7 +534,7 @@ def test_stats_failures_never_touch_the_saved_entry(h, monkeypatch):
 
 
 def test_rewrite_jobs_are_refused_while_recording_or_busy(h):
-    job = DictationJob(mode=JobMode.TRANSFORM)
+    job = DictationJob(mode=JobMode.TRANSFORM, source="hotkey")
     h.controller.recorder.is_recording = True
     assert not h.runtime.begin_rewrite_job(job, source_name="Polish")
 

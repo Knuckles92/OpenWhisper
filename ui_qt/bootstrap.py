@@ -69,6 +69,10 @@ def setup_logging() -> None:
         handlers=handlers,
         force=True,
     )
+    # httpx and httpcore log every request's full URL at INFO, and URLs can
+    # carry dictated words (link actions), tokens or webhook paths.
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
     from services.diagnostics import install_failure_capture
 
     install_failure_capture()

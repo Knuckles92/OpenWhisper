@@ -41,6 +41,8 @@ class SegmentButton(QPushButton):
         self._layout = layout
         self._detail = None
         self._title = None
+        self._wrapping = False
+        self._natural = None
         for text, name in ((title, "mcpChoiceTitle"), (detail, "mcpChoiceDetail")):
             if not text:
                 continue
@@ -60,6 +62,7 @@ class SegmentButton(QPushButton):
         label.setObjectName(name)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        label.setWordWrap(self._wrapping)
         self._layout.addWidget(label)
         return label
 
@@ -68,6 +71,7 @@ class SegmentButton(QPushButton):
         if self._title is not None and self._title.text() != text:
             self._title.setText(text)
             self.setAccessibleName(text)
+            self._natural = None
             self.updateGeometry()
 
     def set_detail(self, text):
@@ -76,13 +80,60 @@ class SegmentButton(QPushButton):
             self._detail = self._line(text, "mcpChoiceDetail")
         self._detail.setText(text)
         self.setAccessibleDescription(text)
+        self._natural = None
         self.updateGeometry()
 
+    def natural_width(self):
+        """The width with every line on one line; measured again after a change."""
+        if self._natural is None:
+            wrapping = self._wrapping
+            self.set_wrapping(False)
+            self._natural = self.layout().sizeHint().width()
+            self.set_wrapping(wrapping)
+        return self._natural
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self._natural = None
+
+    def set_wrapping(self, wrap):
+        """Let the lines wrap, for a tray too narrow for even one choice per row.
+
+        Wrapping, the button takes the tray's width and is as tall as its text
+        needs at that width; otherwise it keeps one line per text and is as wide
+        as its longest.
+        """
+        if wrap == self._wrapping:
+            return
+        self._wrapping = wrap
+        for label in (self._title, self._detail):
+            if label is not None:
+                label.setWordWrap(wrap)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Ignored if wrap else QSizePolicy.Policy.Minimum,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.updateGeometry()
+
+    def hasHeightForWidth(self):
+        # Like WrappedLabel: the size hints carry the height for the current
+        # width, so the page's minimum height stays honest.
+        return False
+
     def sizeHint(self):
-        return self.layout().sizeHint().expandedTo(QSize(0, 28 if self._compact else 36))
+        floor = 28 if self._compact else 36
+        if self._wrapping and self.width() > 0:
+            return QSize(0, max(self.layout().totalHeightForWidth(self.width()), floor))
+        return self.layout().sizeHint().expandedTo(QSize(0, floor))
 
     def minimumSizeHint(self):
         return self.sizeHint()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._wrapping and event.oldSize().width() != event.size().width():
+            self.updateGeometry()
 
     def paintEvent(self, event):
         option = QStyleOptionButton()
@@ -149,11 +200,14 @@ class SegmentedBar(QWidget):
         layout = self.layout()
         margins = layout.contentsMargins()
         gap = layout.horizontalSpacing()
-        cell = max(button.sizeHint().width() for button in self.buttons)
-        for button in self.buttons:
-            button.setMinimumWidth(cell)
+        cell = max(button.natural_width() for button in self.buttons)
         room = self.width() - margins.left() - margins.right() + gap
         fits = max(1, min(len(self.buttons), room // (cell + gap)))
+        # Too narrow for even one choice per row: one column, and the text wraps.
+        wrap = cell + gap > room
+        for button in self.buttons:
+            button.set_wrapping(wrap)
+            button.setMinimumWidth(0 if wrap else cell)
         rows = -(-len(self.buttons) // fits)
         # Balance the rows so four choices wrap 2 + 2, never 3 + 1.
         self._place(-(-len(self.buttons) // rows))

@@ -152,6 +152,21 @@ def _control_value(widget: QWidget) -> str:
     return ""
 
 
+def _among_choices(tile: QWidget, page: QWidget) -> bool:
+    """Whether ``tile`` sits in a part of ``page`` made of choices rather than settings.
+
+    A page marks such a part, say a gallery of starting points built from
+    tiles, with ``setProperty("settingsSearch", False)``. Tiles that are only
+    folded away or on another tab are still settings, so they stay found.
+    """
+    widget = tile
+    while widget is not None and widget is not page:
+        if widget.property("settingsSearch") is False:
+            return True
+        widget = widget.parentWidget()
+    return False
+
+
 def build_index(
     pages: Sequence[PageSource],
     downloads=None,
@@ -166,7 +181,7 @@ def build_index(
         ))
         seen = set()
         for tile in page.widget.findChildren(TileBase):
-            if tile.isHidden():
+            if tile.isHidden() or _among_choices(tile, page.widget):
                 continue
             title = tile.title_label.text().strip()
             if not title or (title, page.key) in seen:

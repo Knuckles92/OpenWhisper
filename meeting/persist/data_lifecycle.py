@@ -95,7 +95,12 @@ def delete_meeting_data(
 
 
 def _deleted(meeting: dict) -> None:
-    """Delete the paired host's copy too, when there is one."""
+    """Forget the meeting's replayable live events; delete the paired host's copy too."""
+    # meeting.segments events carry what was said; a stream that reconnects
+    # must not get them back.
+    from services.automation import events
+
+    events.clear()
     if meeting.get("origin_device_id"):
         return  # A paired computer's meeting stored here; it has no copy elsewhere.
     try:

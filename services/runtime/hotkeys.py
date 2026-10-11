@@ -15,7 +15,8 @@ from services import synthetic_keys, text_transforms
 from services._hotkey_common import OrderedDispatcher
 from services.hotkey_manager import HotkeyManager, USE_PYNPUT_BACKEND
 from services.cleanup_profiles import load_cleanup_profiles
-from services.hotkey_conflicts import PROFILE, TRANSFORM, hotkey_conflict
+from services.actions.model import load_actions
+from services.hotkey_conflicts import ACTION, PROFILE, TRANSFORM, hotkey_conflict
 from services.settings import (
     SETTING_DEFAULTS,
     RecordingTriggerMode,
@@ -255,6 +256,7 @@ class HotkeyRuntime:
             on_scratchpad_toggle=controller.scratchpad_toggle_requested.emit,
             on_cycle_language=controller.cycle_language_requested.emit,
             on_paste_last_original=self._paste_last_original_after_keys_up,
+            on_route_record=controller.toggle_route_recording,
             on_status_update=controller.update_status_with_auto_hide,
             on_status_update_auto_hide=controller.update_status_with_auto_hide,
         )
@@ -481,7 +483,7 @@ class HotkeyRuntime:
             self.refresh_profile_hotkeys()
 
     def refresh_profile_hotkeys(self) -> None:
-        """Register profile and transform shortcuts.
+        """Register profile, transform and action shortcuts.
 
         A shortcut that collides with any other binding is skipped rather than
         letting whichever matches first win.
@@ -508,11 +510,22 @@ class HotkeyRuntime:
         except Exception:
             logger.exception("Could not load transform shortcuts")
             transforms = {}
+        try:
+            actions = {
+                a.id: a.hotkey for a in load_actions(settings)
+                if a.enabled and free(a.hotkey, ACTION, a.id)
+            }
+        except Exception:
+            logger.exception("Could not load action shortcuts")
+            actions = {}
         manager.set_dynamic_hotkeys(
             PROFILE, profiles, self.controller.profile_record_requested.emit
         )
         manager.set_dynamic_hotkeys(
             TRANSFORM, transforms, self.controller.transform_requested.emit
+        )
+        manager.set_dynamic_hotkeys(
+            ACTION, actions, self.controller.action_record_requested.emit
         )
         if self._omarchy_controls:
             self._omarchy_controls.refresh()

@@ -31,7 +31,8 @@ Use a [packaged release](#install) with bundled Python and dependencies, or [run
 - **Settings:** Use Basic for everyday Dictation, Meetings, and App controls; switch to Advanced for full model configuration, downloads, and Ctrl+K search. Both views edit the same settings and remember your last selected view.
 - **History:** Search, play back, retranscribe, and export transcripts as Markdown, plain text, or JSON, and switch an entry between its original and AI-cleaned versions. See [export format support](docs/export-support.md) for what each format includes.
 - **Agent history API (preview):** Search saved transcripts and meeting notes through an opt-in, authenticated local API. See [API setup](docs/agent-api.md).
-- **MCP:** Enable **Settings → MCP** to connect an agent to history, transcripts, and meeting insights. Optionally allow retitling and choose which settings agents may change. See [MCP setup](docs/mcp.md).
+- **MCP:** Enable **Settings → API & MCP** to connect an agent to history, transcripts, and meeting insights. Optionally allow retitling and choose which settings agents may change. See [MCP setup](docs/mcp.md).
+- **Actions and automation:** Send what you say to a new Claude or ChatGPT chat, your coding agent, a running Claude Code session, a webhook or a program, with a shortcut or by naming it ("Claude, …"). Follow live events, run actions and change dictated text from your own tools over a local API, webhooks and MCP. See [Actions, live events and hooks](docs/automation.md).
 
 The app also includes microphone selection, a system tray where available, and dark, light, or system-matched themes.
 

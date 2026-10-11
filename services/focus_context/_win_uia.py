@@ -205,7 +205,10 @@ class UiaTextReader:
             return None
         anchor = None
         try:
+            # The selection also anchors the text around it, but its words
+            # are returned only to a caller that asked for them.
             anchor, selection_known = self._selection(pattern)
+            selection_known = selection_known and include_selection
             if anchor is None and has_caret_range:
                 anchor = self._caret(pattern)
             if anchor is None:

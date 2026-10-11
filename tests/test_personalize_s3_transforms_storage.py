@@ -100,8 +100,8 @@ def test_shortcuts_conflict_with_actions_profiles_and_other_transforms():
     save_transform(settings, Transform("tidy", "Tidy", "Tidy.", "ctrl+alt+y"))
 
     for hotkey, owner in (
-        ("Alt+Ctrl+R", "record toggle"),
-        ("ctrl+alt+k", "command mode"),
+        ("Alt+Ctrl+R", "Recording"),
+        ("ctrl+alt+k", "Command Mode"),
         ("ctrl+alt+t", "Ticket"),
         ("alt+ctrl+y", "Tidy"),
     ):

@@ -37,16 +37,16 @@ def test_free_and_empty_shortcuts_conflict_with_nothing(settings):
 
 def test_standard_actions_conflict_by_their_saved_or_default_shortcut(settings):
     record = config.DEFAULT_HOTKEYS["record_toggle"]
-    assert hotkey_conflict(record, settings) == "record toggle"
+    assert hotkey_conflict(record, settings) == "Recording"
 
     settings[SettingsKey.HOTKEYS] = {"command_mode": "ctrl+alt+c"}
     # Modifier order does not matter.
-    assert hotkey_conflict("alt+ctrl+c", settings) == "command mode"
+    assert hotkey_conflict("alt+ctrl+c", settings) == "Command Mode"
     # Unsaved edits replace the saved shortcuts.
     assert hotkey_conflict("ctrl+alt+c", settings, standard_hotkeys={}) == ""
     assert hotkey_conflict(
         "ctrl+alt+s", settings, standard_hotkeys={"scratchpad_toggle": "ctrl+alt+s"}
-    ) == "scratchpad toggle"
+    ) == "Scratchpad"
 
 
 def test_profiles_and_transforms_conflict_by_name(settings):
@@ -69,7 +69,7 @@ def test_an_excluded_standard_action_is_free_to_keep_its_shortcut(settings):
     record = config.DEFAULT_HOTKEYS["record_toggle"]
     assert hotkey_conflict(record, settings, exclude=(STANDARD, "record_toggle")) == ""
     # Excluding one kind never hides another kind with the same id.
-    assert hotkey_conflict(record, settings, exclude=(PROFILE, "record_toggle")) == "record toggle"
+    assert hotkey_conflict(record, settings, exclude=(PROFILE, "record_toggle")) == "Recording"
 
 
 def test_profile_wrapper_matches_the_shared_check(settings):
@@ -78,7 +78,7 @@ def test_profile_wrapper_matches_the_shared_check(settings):
     assert profile_hotkey_conflict("ctrl+shift+f9", settings, exclude_id="notes") == ""
     assert profile_hotkey_conflict(
         "ctrl+alt+c", settings, standard_hotkeys={"command_mode": "ctrl+alt+c"}
-    ) == "command mode"
+    ) == "Command Mode"
 
 
 def test_transforms_are_read_through_their_module(monkeypatch):

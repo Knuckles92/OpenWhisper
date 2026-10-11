@@ -28,6 +28,7 @@ from ui_qt.dialogs import settings_metadata
 from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_basic import BasicSettingsPage
 from ui_qt.dialogs.settings_destinations import (
+    ACTIONS,
     BASIC_DICTATION,
     CLEANUP,
     CLEANUP_PROFILES,
@@ -35,7 +36,9 @@ from ui_qt.dialogs.settings_destinations import (
     COMMANDS,
     DICTIONARY,
     GENERAL,
+    HOOKS,
     HOTKEYS,
+    MCP,
     MEETING_VOICE,
     OVERVIEW,
     SNIPPETS,
@@ -135,11 +138,15 @@ def _intro_tiles(widget):
 
 
 class TestPersonalizeRail:
-    def test_personalize_group_sits_between_dictation_and_meeting_mode(self, make_dialog):
+    def test_personalize_and_automate_sit_between_dictation_and_meeting_mode(self, make_dialog):
         dialog, _store = make_dialog()
         keys = dialog.rail.keys()
         personalize = (DICTIONARY, SNIPPETS, STYLES, CLEANUP_RULES, CLEANUP_PROFILES, COMMANDS)
-        assert keys[keys.index(CLEANUP) + 1:keys.index(MEETING_VOICE)] == personalize
+        automate = (ACTIONS, HOOKS, MCP)
+        assert keys[keys.index(CLEANUP) + 1:keys.index(ACTIONS)] == personalize
+        assert keys[keys.index(ACTIONS):keys.index(MEETING_VOICE)] == automate
+        assert {dialog._rail_groups[key] for key in automate} == {"Automate"}
+        assert [dialog.rail.name(key) for key in automate] == ["Actions", "Hooks", "API & MCP"]
         assert dialog._rail_groups[CLEANUP] == "Dictation"
         assert {dialog._rail_groups[key] for key in personalize} == {"Personalize"}
         assert [dialog.rail.name(key) for key in personalize] == [
@@ -182,7 +189,8 @@ class TestPersonalizeRail:
                     if entry.destination == key and entry.target_name == attr
                 ]
                 assert [entry.title for entry in entries] == [title]
-                assert entries[0].detail == f"Personalize › {dialog.rail.name(key)}"
+                group = dialog._rail_groups[key]
+                assert entries[0].detail == f"{group} › {dialog.rail.name(key)}"
                 assert key not in dialog._built_pages
                 dialog._on_search_activated(entries[0])
                 QApplication.processEvents()

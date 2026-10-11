@@ -350,6 +350,8 @@ class CommandRuntime:
             focus=focus if resolve_app_context_enabled(settings) else None,
             selection=selection,
             target=focus,
+            # Transforms run only from their shortcuts.
+            source="hotkey",
         )
         runtime = self.controller.transcription_runtime
         if not runtime.begin_rewrite_job(job, source_name=f"Transform · {transform.name}"):
@@ -411,6 +413,19 @@ class CommandRuntime:
             level="",
         )
         return result, (selection if selection.strip() else None), info
+
+    def rewrite_text(
+        self, text: str, instruction: str,
+    ) -> tuple[str, Optional[str], Optional[CleanupInfo]]:
+        """Rewrite ``text`` with a saved instruction; executor worker, job slot held.
+
+        An action shaped by a transform uses this on its own dictated words.
+
+        Raises:
+            CommandRefused: No AI provider, or the model refused.
+            RuntimeError: With a user-facing message when the model fails.
+        """
+        return self._rewrite(text, instruction)
 
     def complete_recording(
         self, raw: str, job,

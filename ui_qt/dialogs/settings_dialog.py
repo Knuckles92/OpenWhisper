@@ -128,6 +128,7 @@ from ui_qt.dialogs.settings_metadata import (
 )
 from ui_qt.utils.list_reconcile import HistoryDelivery
 from ui_qt.dialogs.settings_destinations import (
+    ACTIONS,
     ADVANCED,
     APPEARANCE,
     BASIC_APP,
@@ -142,6 +143,7 @@ from ui_qt.dialogs.settings_destinations import (
     DICTIONARY,
     DOWNLOADS,
     GENERAL,
+    HOOKS,
     HOTKEYS,
     MCP,
     MEETING_AFTER,
@@ -209,7 +211,7 @@ from ui_qt.widgets.hotkey_capture import (
 from ui_qt.widgets.hotkey_row import ReflowCard
 from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.settings_switch import SettingsSwitch
-from services.hotkey_conflicts import STANDARD, hotkey_conflict
+from services.hotkey_conflicts import STANDARD, STANDARD_LABELS, hotkey_conflict
 from services.settings import (
     resolve_flow_features_intro_seen,
     resolve_recording_hands_free_latch,
@@ -252,8 +254,10 @@ _HF_POLICY_LABELS = {
 _SEARCH_ALIASES = {
     MCP: (
         "Connect an agent with MCP",
-        "App › MCP",
-        "model context protocol agent server connection claude cursor history api",
+        "Automate › API & MCP",
+        "model context protocol agent server connection claude cursor history api "
+        "live api events stream webhook subscribe mcp events claude code channel "
+        "permissions run actions start recordings change dictated text curl",
     ),
     VOICE_MODEL: (
         "Model assignments",
@@ -297,21 +301,13 @@ _PAGE_MODULES = (
     (SNIPPETS, "ui_qt.dialogs.settings_snippets", "text-plus-green.svg"),
     (STYLES, "ui_qt.dialogs.settings_styles", "palette-purple.svg"),
     (COMMANDS, "ui_qt.dialogs.settings_commands", "wand-purple.svg"),
+    (ACTIONS, "ui_qt.dialogs.settings_actions", "bolt-green.svg"),
+    (HOOKS, "ui_qt.dialogs.settings_hooks", "webhook-blue.svg"),
 )
 _PAGE_MODULE_ICONS = {key: icon for key, _path, icon in _PAGE_MODULES}
 
 #: How a hotkey message names each standard action.
-_HOTKEY_LABELS = {
-    "record_toggle": "Recording",
-    "cancel": "Cancel",
-    "meeting_toggle": "Meeting Mode",
-    "enable_disable": "Enable/disable",
-    "minimize_tray": "Minimize to tray",
-    "command_mode": "Command Mode",
-    "scratchpad_toggle": "Scratchpad",
-    "cycle_language": "Switch language",
-    "paste_last_original": "Paste original",
-}
+_HOTKEY_LABELS = STANDARD_LABELS
 
 
 class _ThreadRelay(QObject):
@@ -422,6 +418,11 @@ class SettingsDialog(QDialog):
     on_recording_trigger_mode_changed: Optional[Callable[[str], None]] = None
     on_dictation_transcribe: Optional[Callable[[str], str]] = None
     on_settings_changed: Optional[Callable[[str], None]] = None
+    # (action, sample_text, done): try a saved action from the Actions page;
+    # done(ActionResult) runs on the Qt thread.
+    on_try_action: Optional[Callable] = None
+    # (): cancel the Actions page's "Try it" runs still going (Settings closed).
+    on_cancel_try_runs: Optional[Callable[[], None]] = None
     get_meeting_active: Optional[Callable[[], bool]] = None
 
     def __init__(
@@ -698,6 +699,11 @@ class SettingsDialog(QDialog):
                 (CLEANUP_PROFILES, "Profiles", "typography-blue.svg"),
                 (COMMANDS, "Commands", _PAGE_MODULE_ICONS[COMMANDS]),
             )),
+            ("Automate", (
+                (ACTIONS, "Actions", _PAGE_MODULE_ICONS[ACTIONS]),
+                (HOOKS, "Hooks", _PAGE_MODULE_ICONS[HOOKS]),
+                (MCP, "API & MCP", "server-blue.svg"),
+            )),
             ("Meeting Mode", (
                 (MEETING_VOICE, "Voice & speakers", "microphone-blue.svg"),
                 (MEETING_INTELLIGENCE, "Intelligence", "stack-purple.svg"),
@@ -715,7 +721,6 @@ class SettingsDialog(QDialog):
                 (APPEARANCE, "Appearance", "palette-purple.svg"),
                 (HOTKEYS, "Hotkeys", "keyboard-green.svg"),
                 (API_KEYS, "API keys", "key-blue.svg"),
-                (MCP, "MCP", "server-blue.svg"),
                 (ADVANCED, "Developer options", "box-blue.svg"),
             )),
         ):
@@ -917,8 +922,9 @@ class SettingsDialog(QDialog):
         )
         self._add_page(
             MCP,
-            "Connect your AI assistant",
-            "MCP · Search your saved dictations and meetings.",
+            "API & MCP",
+            "Let agents and your own programs read history, follow live "
+            "events and run actions.",
             self._build_mcp_page,
         )
         self._add_page(
@@ -1053,8 +1059,7 @@ class SettingsDialog(QDialog):
             hotkey, self._settings_snapshot(), standard_hotkeys={**updated, action: ""},
         )
         if conflict:
-            names = {other.replace("_", " "): label for other, label in _HOTKEY_LABELS.items()}
-            error = f"That shortcut is already used by {names.get(conflict, conflict)}."
+            error = f"That shortcut is already used by {conflict}."
             self.message_label.setText(error)
             return error
         return self._save_hotkeys(updated, f"{_HOTKEY_LABELS.get(action, 'Shortcut')} hotkey updated.")
@@ -1167,6 +1172,7 @@ class SettingsDialog(QDialog):
 
     def _build_mcp_page(self, layout: QVBoxLayout) -> None:
         self.mcp_view = McpSettingsView(settings_manager)
+        self.mcp_view.settings_changed.connect(self.notify_changed)
         # This computer's own controls; the view adds the paired host's.
         self.mcp_page = self.mcp_view.local
         self.mcp_history_tile = self.mcp_view.share_history_tile
@@ -2847,6 +2853,15 @@ class SettingsDialog(QDialog):
         )
         layout.addWidget(
             self._hotkey_shortcut_row(
+                "route_record",
+                "Route by voice",
+                "Record, then send your words to the action they name, such as "
+                "“Ask Claude…”. Turn on Route by voice on the Actions page.",
+                optional=True,
+            )
+        )
+        layout.addWidget(
+            self._hotkey_shortcut_row(
                 "cancel",
                 "Cancel",
                 "Discard an active recording or interrupt transcription.",
@@ -2906,6 +2921,9 @@ class SettingsDialog(QDialog):
         profile_link = neutral_button(Button("Profile recording shortcuts…"))
         profile_link.clicked.connect(lambda: self.select_destination(CLEANUP_PROFILES))
         fit_compact_button(profile_link, 0)
+        actions_link = neutral_button(Button("Action shortcuts…"))
+        actions_link.clicked.connect(lambda: self.select_destination(ACTIONS))
+        fit_compact_button(actions_link, 0)
         reset_button = neutral_button(Button("Reset to defaults"))
         reset_button.setObjectName("hotkeyResetButton")
         fit_compact_button(reset_button, 150)
@@ -2916,6 +2934,7 @@ class SettingsDialog(QDialog):
         profile_row_layout = QHBoxLayout(profile_row)
         profile_row_layout.setContentsMargins(0, 0, 0, 0)
         profile_row_layout.addWidget(profile_link)
+        profile_row_layout.addWidget(actions_link)
         profile_row_layout.addStretch()
         layout.addSpacing(4)
         layout.addWidget(Reflow(profile_row, reset_button))
@@ -4757,8 +4776,7 @@ class SettingsDialog(QDialog):
         )
         if not conflict:
             return ""
-        names = {action.replace("_", " "): label for action, label in _HOTKEY_LABELS.items()}
-        return f"That shortcut is already used by {names.get(conflict, conflict)}."
+        return f"That shortcut is already used by {conflict}."
 
     def _on_hotkey_capture_failed(
         self, thread: HotkeyCaptureThread, message: str

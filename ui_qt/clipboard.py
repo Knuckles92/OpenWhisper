@@ -129,7 +129,9 @@ def prefer_wayland_data_control() -> None:
     compositors that offer it, such as Hyprland. A value the user set is kept.
     """
     if sys.platform.startswith("linux"):
-        os.environ.setdefault(_DATA_CONTROL_ENV, "1")
+        from services.process_env import set_for_app
+
+        set_for_app(_DATA_CONTROL_ENV, "1", keep_existing=True)
 
 
 def foreign_copies_visible() -> bool:

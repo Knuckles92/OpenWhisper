@@ -7,6 +7,9 @@ numpy>=1.24.0
 # `pynput` on macOS/Linux (also drives synthetic Cmd+V / Ctrl+V auto-paste).
 keyboard>=0.13.5 ; sys_platform == "win32"
 pynput>=1.7.6 ; sys_platform != "win32"
+# Windows: action links open through Explorer's desktop (pythoncom and the
+# shell's COM interfaces); without it they open from OpenWhisper itself.
+pywin32>=311 ; sys_platform == "win32"
 openai>=1.66.0
 certifi>=2024.2.2
 faster-whisper>=1.0.0

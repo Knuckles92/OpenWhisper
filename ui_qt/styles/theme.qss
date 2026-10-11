@@ -5335,3 +5335,716 @@ QLabel#statsAppWords {
     font-weight: 600;
 }
 /* personalize:S9 end */
+
+/* automation:G begin */
+/* Settings > Automate > Actions (ui_qt/widgets/action_*.py). Every rule here is
+   self-contained: the widgets also appear outside the page's own containers. */
+QWidget[tileId="actionRow"],
+QWidget[tileId="actionsPanel"],
+QWidget[tileId="actionList"],
+QWidget[tileId="actionGallery"],
+QWidget[tileId="actionAgentFields"],
+QWidget[tileId="actionAgentChooser"],
+QWidget[tileId="actionShapingField"],
+QWidget[tileId="actionPathField"],
+QWidget[tileId="actionShortcutField"],
+QWidget[tileId="actionRouteShortcut"],
+QFrame#actionSwitchRow {
+    background-color: transparent;
+    border: none;
+}
+
+QWidget[tileId="actionRow"] QLabel,
+QWidget[tileId="actionAgentFields"] QLabel,
+QWidget[tileId="actionsPanel"] QLabel,
+QWidget[tileId="actionGallery"] QLabel,
+QFrame#actionSwitchRow QLabel {
+    background-color: transparent;
+}
+
+QLabel#actionHint {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QLabel#actionHint[tone="ok"] {
+    color: @success-text;
+}
+
+QLabel#actionHint[tone="warning"] {
+    color: @warning-text;
+}
+
+QLabel#actionHint[tone="error"] {
+    color: @danger-text-soft;
+}
+
+QLabel#actionSectionLabel {
+    color: @slate-text;
+    background-color: transparent;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QFrame#actionDivider {
+    background-color: @slate-border-subtle;
+    border: none;
+}
+
+/* Text boxes match the shortcut boxes beside them. */
+QLineEdit[tileId="actionInput"],
+QPlainTextEdit[tileId="actionInput"],
+QSpinBox[tileId="actionInput"],
+QComboBox#actionOutputCombo,
+QComboBox#actionShapingCombo {
+    color: @slate-text;
+    background-color: @slate-field;
+    border: 1px solid @slate-border-strong;
+    border-radius: 9px;
+    padding: 6px 11px;
+    font-size: 13px;
+    selection-background-color: @accent;
+}
+
+QComboBox#actionOutputCombo,
+QComboBox#actionShapingCombo {
+    padding-right: 32px;
+}
+
+QLineEdit[tileId="actionInput"]:hover,
+QPlainTextEdit[tileId="actionInput"]:hover,
+QSpinBox[tileId="actionInput"]:hover,
+QComboBox#actionOutputCombo:hover,
+QComboBox#actionShapingCombo:hover {
+    border-color: @slate-border-hover;
+}
+
+QLineEdit[tileId="actionInput"]:focus,
+QPlainTextEdit[tileId="actionInput"]:focus,
+QSpinBox[tileId="actionInput"]:focus,
+QComboBox#actionOutputCombo:focus,
+QComboBox#actionShapingCombo:focus {
+    border-color: @accent;
+}
+
+QLineEdit[tileId="actionInput"]:read-only {
+    color: @slate-text-2;
+}
+
+QLineEdit[tileId="actionInput"]:disabled,
+QPlainTextEdit[tileId="actionInput"]:disabled,
+QComboBox#actionOutputCombo:disabled,
+QComboBox#actionShapingCombo:disabled {
+    color: @slate-text-disabled;
+    border-color: @slate-border-subtle;
+}
+
+/* Tile icons sit in a soft square of their own colour, like the MCP cards. */
+QLabel#settingsTileIcon[iconTone="blue"] {
+    background-color: rgba(@accent-rgb, 0.14);
+    border-radius: 9px;
+}
+
+QLabel#settingsTileIcon[iconTone="purple"] {
+    background-color: rgba(@purple-rgb, 0.16);
+    border-radius: 9px;
+}
+
+QLabel#settingsTileIcon[iconTone="green"] {
+    background-color: rgba(@success-rgb, 0.14);
+    border-radius: 9px;
+}
+
+QLabel#settingsTileIcon[iconTone="gray"] {
+    background-color: @slate-raised;
+    border-radius: 9px;
+}
+
+/* The Agent hotkey card leads the page with a little warmth. */
+QFrame#settingsTile[tileId="actionAgentCard"],
+QFrame#settingsTile[tileId="actionAgentCard"]:hover {
+    background-color: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(@purple-rgb, 0.11), stop: 0.55 @slate-surface, stop: 1 @slate-surface);
+    border: 1px solid rgba(@purple-rgb, 0.30);
+    border-radius: 14px;
+}
+
+QFrame#settingsTile[tileId="actionAgentCard"][checked="true"],
+QFrame#settingsTile[tileId="actionAgentCard"][checked="true"]:hover {
+    border-color: rgba(@purple-rgb, 0.48);
+}
+
+QFrame#settingsTile[tileId="actionAgentCard"][searchHit="true"] {
+    background-color: @accent-tint;
+    border-color: @accent-border;
+}
+
+QLabel#settingsTileTitle[tileId="actionAgentTitle"] {
+    font-size: 15px;
+}
+
+QFrame#settingsTile[tileId="actionAgentCard"] QLabel#settingsTileIcon[iconTone="purple"] {
+    background-color: rgba(@purple-rgb, 0.20);
+    border-radius: 11px;
+}
+
+/* One installed agent: its mark lights up once a scan finds it. */
+QPushButton#actionAgentChoice {
+    color: @slate-text;
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 11px;
+    padding: 0;
+}
+
+QPushButton#actionAgentChoice:hover {
+    background-color: @slate-raised;
+    border-color: @slate-border-hover;
+}
+
+QPushButton#actionAgentChoice:focus {
+    border-color: @accent;
+}
+
+QPushButton#actionAgentChoice:checked {
+    background-color: rgba(@accent-rgb, 0.14);
+    border-color: rgba(@accent-rgb, 0.60);
+}
+
+QPushButton#actionAgentChoice:disabled {
+    background-color: transparent;
+    border: 1px dashed @slate-border;
+}
+
+QPushButton#actionAgentChoice:checked:disabled {
+    background-color: @slate-raised;
+}
+
+QPushButton#actionAgentChoice QLabel {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#actionAgentName {
+    color: @slate-text;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#actionAgentDetail {
+    color: @slate-text-3;
+    font-size: 11px;
+}
+
+QLabel#actionAgentDetail[tone="found"] {
+    color: @success-text;
+}
+
+QLabel#actionAgentName:disabled,
+QLabel#actionAgentDetail:disabled {
+    color: @slate-text-4;
+}
+
+/* Action cards. */
+QFrame#settingsTile[tileId="actionCard"][off="true"] QLabel#settingsTileTitle,
+QFrame#settingsTile[tileId="actionCard"][off="true"] QLabel#settingsTileDescription {
+    color: @slate-text-4;
+}
+
+QFrame#settingsTile[tileId="actionCard"][searchHit="true"] {
+    background-color: @accent-tint;
+    border-color: @accent-border;
+}
+
+/* Links, like the other pages' "Open ..." links but without their
+   "min-height: 0": Settings pages lay out at their minimum height, so a link
+   must never be allowed below its own text. */
+QPushButton#actionLink {
+    color: @accent;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 0;
+}
+
+QPushButton#actionLink:hover,
+QPushButton#actionLink:focus {
+    color: @accent-soft;
+    text-decoration: underline;
+}
+
+QPushButton#actionLink[tone="danger"] {
+    color: @danger-text-soft;
+}
+
+QPushButton#actionLink:disabled {
+    color: @slate-text-disabled;
+}
+
+QLabel#actionChip {
+    color: @slate-text-2;
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 9px;
+    padding: 2px 9px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#actionChip[tone="key"] {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.12);
+    border-color: rgba(@accent-rgb, 0.32);
+}
+
+QLabel#actionChip[tone="voice"] {
+    color: @purple-text;
+    background-color: rgba(@purple-rgb, 0.12);
+    border-color: rgba(@purple-rgb, 0.32);
+}
+
+QLabel#actionChip[tone="muted"] {
+    color: @slate-text-4;
+    background-color: transparent;
+    border: 1px dashed @slate-border-strong;
+    font-weight: 400;
+}
+
+/* No actions yet. */
+QFrame#actionsEmpty {
+    background-color: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 rgba(@accent-rgb, 0.07), stop: 1 @slate-disabled);
+    border: 1px dashed @slate-border-strong;
+    border-radius: 12px;
+}
+
+QLabel#actionsEmptyTitle {
+    color: @slate-text;
+    background-color: transparent;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QLabel#actionsEmptyText {
+    color: @slate-text-3;
+    background-color: transparent;
+    font-size: 12px;
+}
+
+/* Add action: each starting point is a card you can click or tab to. */
+QFrame#settingsTile[tileId="actionPreset"]:focus {
+    border-color: @accent;
+}
+
+/* Route by voice: where it stands, in its own words. */
+QFrame#actionStatusLine {
+    background-color: @slate-surface;
+    border: 1px solid @slate-border-subtle;
+    border-radius: 12px;
+}
+
+QFrame#actionStatusLine[state="ready"] {
+    background-color: rgba(@success-rgb, 0.08);
+    border-color: rgba(@success-rgb, 0.30);
+}
+
+QFrame#actionStatusLine[state="attention"] {
+    background-color: @warning-tint;
+    border-color: @warning-tint-border;
+}
+
+QFrame#actionStatusLine QWidget,
+QFrame#actionStatusLine QLabel {
+    background-color: transparent;
+}
+
+QLabel#actionHint[tileId="actionStatusMessage"] {
+    color: @slate-text-2;
+    font-size: 13px;
+}
+
+/* What a link will open, for the sample words. */
+QLabel#actionLinkPreview {
+    color: @slate-text-3;
+    background-color: @slate-field;
+    border: 1px solid @slate-border-subtle;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+QLabel#actionLinkPreview[tone="warning"] {
+    color: @warning-text;
+}
+
+/* "Try it" says what happened, as it happened. */
+QLabel#actionTryResult {
+    color: @slate-text-2;
+    background-color: @slate-field;
+    border: 1px solid @slate-border-subtle;
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-size: 12px;
+}
+
+QLabel#actionTryResult[tone="ok"] {
+    color: @success-text;
+    background-color: rgba(@success-rgb, 0.10);
+    border-color: rgba(@success-rgb, 0.32);
+}
+
+QLabel#actionTryResult[tone="error"] {
+    color: @danger-text-soft;
+    background-color: rgba(@danger-rgb, 0.08);
+    border-color: rgba(@danger-rgb, 0.30);
+}
+/* automation:G end */
+
+/* automation:H begin */
+/* Settings > Hooks: each tile holds a list of saved hooks with an editor
+   card that opens under the row being edited. Every container and label the
+   widgets nest is transparent, so only the rows and the editor are surfaces. */
+QWidget#hooksSection,
+QWidget#hooksList,
+QWidget#hooksRowText,
+QWidget#hooksButtonRow,
+QWidget#hooksExtras,
+QWidget#hooksInlineField,
+QWidget#hooksEventChooser,
+QWidget#hooksRecent,
+QWidget#hooksRecentRow,
+QWidget#hooksLeases,
+QWidget#hooksLeaseRows,
+QWidget#hooksSection QLabel {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#hooksCount {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.12);
+    border: 1px solid rgba(@accent-rgb, 0.25);
+    border-radius: 10px;
+    padding: 3px 9px;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+QFrame#hooksRow {
+    background-color: @slate-field;
+    border: 1px solid @slate-border-subtle;
+    border-radius: 10px;
+}
+
+QFrame#hooksRow:hover {
+    background-color: @slate-raised;
+    border-color: @slate-border;
+}
+
+QFrame#hooksRow[selected="true"] {
+    background-color: @accent-tint;
+    border-color: @accent-tint-border;
+}
+
+QLabel#hooksRowName {
+    color: @slate-text;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#hooksRowDetail {
+    color: @slate-text-3;
+    font-size: 12px;
+}
+
+QFrame#hooksRow[off="true"] QLabel#hooksRowName {
+    color: @slate-text-3;
+}
+
+QFrame#hooksEmpty {
+    background-color: @slate-disabled;
+    border: 1px dashed @slate-border-strong;
+    border-radius: 10px;
+}
+
+QLabel#hooksEmptyText {
+    color: @slate-text-2;
+    background-color: transparent;
+    font-size: 13px;
+}
+
+QFrame#hooksEditor {
+    background-color: @slate-surface;
+    border: 1px solid @accent-tint-border;
+    border-radius: 12px;
+}
+
+QFrame#hooksEditor QLabel {
+    background-color: transparent;
+    border: none;
+}
+
+QFrame#hooksEditor QLineEdit,
+QFrame#hooksEditor QPlainTextEdit#hooksArgs,
+QFrame#hooksEditor QSpinBox {
+    color: @slate-text;
+    background-color: @slate-field;
+    border: 1px solid @slate-border-strong;
+    border-radius: 9px;
+    padding: 7px 12px;
+    font-size: 13px;
+    selection-background-color: @accent;
+}
+
+QFrame#hooksEditor QPlainTextEdit#hooksArgs {
+    padding: 4px 8px;
+}
+
+QFrame#hooksEditor QLineEdit:hover,
+QFrame#hooksEditor QPlainTextEdit#hooksArgs:hover,
+QFrame#hooksEditor QSpinBox:hover {
+    border-color: @slate-border-hover;
+}
+
+QFrame#hooksEditor QLineEdit:focus,
+QFrame#hooksEditor QPlainTextEdit#hooksArgs:focus,
+QFrame#hooksEditor QSpinBox:focus {
+    border-color: @accent;
+}
+
+QFrame#hooksDivider {
+    background-color: @slate-border-subtle;
+    border: none;
+}
+
+QLabel#hooksSectionLabel {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#hooksHint {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QLabel#hooksHint[tone="warning"] {
+    color: @warning-text;
+}
+
+/* What went wrong with a test or a secret, in words that wrap. */
+QLabel#hooksHint[tone="error"] {
+    color: @danger-text;
+}
+
+QLabel#hooksMessage {
+    color: @success-text;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QLabel#hooksMessage[tone="error"] {
+    color: @danger-text;
+}
+
+/* Event chips: checkable tags that wrap; checked ones wear the accent. */
+QPushButton#hooksEventChip {
+    color: @slate-text-2;
+    background-color: transparent;
+    border: 1px solid @slate-border-strong;
+    border-radius: 13px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#hooksEventChip:hover {
+    color: @slate-text;
+    background-color: @slate-field;
+    border-color: @slate-border-hover;
+}
+
+QPushButton#hooksEventChip:focus {
+    border-color: @accent;
+}
+
+QPushButton#hooksEventChip:checked {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.16);
+    border-color: rgba(@accent-rgb, 0.55);
+}
+
+QPushButton#hooksEventChip:checked:hover {
+    background-color: rgba(@accent-rgb, 0.24);
+}
+
+/* A short honest result next to Send test, Run test and the secret buttons. */
+QLabel#hooksChip {
+    color: @slate-text-2;
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 10px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#hooksChip[tone="ok"] {
+    color: @success-text;
+    background-color: rgba(@success-rgb, 0.12);
+    border-color: rgba(@success-rgb, 0.32);
+}
+
+QLabel#hooksChip[tone="error"] {
+    color: @danger-text;
+    background-color: rgba(@danger-rgb, 0.10);
+    border-color: rgba(@danger-rgb, 0.32);
+}
+
+QLabel#hooksChip[tone="busy"] {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.10);
+    border-color: rgba(@accent-rgb, 0.30);
+}
+
+QLabel#hooksRecentTime {
+    color: @slate-text-3;
+    font-size: 12px;
+}
+
+QLabel#hooksRecentWhat {
+    color: @slate-text-2;
+    font-size: 12px;
+}
+
+QLabel#hooksRecentEmpty {
+    color: @slate-text-3;
+    font-size: 12px;
+}
+
+QLabel#hooksRecentResult {
+    color: @success-text;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#hooksRecentResult[tone="error"] {
+    color: @danger-text;
+}
+
+QFrame#hooksLeaseRow {
+    background-color: @slate-field;
+    border: 1px solid @slate-border-subtle;
+    border-radius: 9px;
+}
+
+QFrame#hooksLeaseRow QLabel {
+    background-color: transparent;
+    border: none;
+}
+
+/* Settings > API & MCP: the live API, MCP Events and Claude Code channel cards
+   sit outside #mcpSettingsPage, so they carry their own copies of its rules. */
+QWidget#mcpLiveSection,
+QWidget#mcpLiveSection QLabel,
+QWidget#mcpLiveRow,
+QWidget#mcpEndpoints {
+    background-color: transparent;
+    border: none;
+}
+
+QWidget#mcpLiveSection QLabel#mcpCardIcon {
+    background-color: rgba(@accent-rgb, 0.14);
+    border-radius: 9px;
+}
+
+QWidget#mcpLiveSection QLineEdit,
+QWidget#mcpLiveSection QPlainTextEdit {
+    color: @slate-text;
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 13px;
+}
+
+QWidget#mcpLiveSection QLineEdit:disabled {
+    color: @slate-text-disabled;
+}
+
+QWidget#mcpLiveSection QPlainTextEdit#mcpChannelConfig {
+    font-family: "Cascadia Mono", "Consolas", "SF Mono", "Menlo", monospace;
+    font-size: 12px;
+}
+
+/* The launch command wraps instead of scrolling, so all of it shows. */
+QWidget#mcpLiveSection QLabel#mcpCommandBox {
+    color: @slate-text;
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: "Cascadia Mono", "Consolas", "SF Mono", "Menlo", monospace;
+    font-size: 12px;
+}
+
+QWidget#mcpLiveSection QLabel#mcpLiveStatus {
+    color: @slate-text-2;
+    font-size: 13px;
+}
+
+QWidget#mcpLiveSection QLabel#mcpPreviewChip {
+    color: @warning-text;
+    background-color: rgba(@warning-rgb, 0.12);
+    border: 1px solid rgba(@warning-rgb, 0.32);
+    border-radius: 10px;
+    padding: 2px 9px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QPushButton#mcpEndpoint {
+    color: @accent;
+    background-color: transparent;
+    border: none;
+    padding: 2px 0;
+    font-family: "Cascadia Mono", "Consolas", "SF Mono", "Menlo", monospace;
+    font-size: 12px;
+    text-align: left;
+}
+
+QPushButton#mcpEndpoint:hover,
+QPushButton#mcpEndpoint:focus {
+    color: @accent-soft;
+    text-decoration: underline;
+}
+
+QPushButton#mcpEndpoint:disabled {
+    color: @slate-text-disabled;
+}
+
+/* A text link. No min-height override, so its height never drops below the text. */
+QPushButton#hooksLink {
+    color: @accent;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 0;
+    text-align: left;
+}
+
+QPushButton#hooksLink:hover,
+QPushButton#hooksLink:focus {
+    color: @accent-soft;
+    text-decoration: underline;
+}
+/* automation:H end */

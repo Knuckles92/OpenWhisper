@@ -16,6 +16,21 @@ from services.settings import SettingsKey
 STANDARD = "standard"
 PROFILE = "profile"
 TRANSFORM = "transform"
+ACTION = "action"
+
+#: How messages name each standard shortcut's action.
+STANDARD_LABELS: dict[str, str] = {
+    "record_toggle": "Recording",
+    "cancel": "Cancel",
+    "meeting_toggle": "Meeting Mode",
+    "enable_disable": "Enable/disable",
+    "minimize_tray": "Minimize to tray",
+    "command_mode": "Command Mode",
+    "scratchpad_toggle": "Scratchpad",
+    "cycle_language": "Switch language",
+    "paste_last_original": "Paste original",
+    "route_record": "Route by voice",
+}
 
 
 def _signature(hotkey: str):
@@ -38,13 +53,13 @@ def hotkey_conflict(
             standard shortcuts.
         exclude: ``(kind, id)`` of the binding being edited, so it does not
             conflict with itself. ``kind`` is "standard" (id is the action),
-            "profile" or "transform".
+            "profile", "transform" or "action" (a saved action).
         standard_hotkeys: Standard shortcuts not saved yet; they replace the
             saved ones.
 
     Returns:
-        The action's name with spaces, the profile's name, or the
-        transform's name.
+        The standard shortcut's label (STANDARD_LABELS), or the profile's,
+        transform's or action's name.
     """
     if not hotkey:
         return ""
@@ -57,7 +72,7 @@ def hotkey_conflict(
         if exclude == (STANDARD, action):
             continue
         if value and _signature(value) == signature:
-            return action.replace("_", " ")
+            return STANDARD_LABELS.get(action, action.replace("_", " "))
     for profile in load_cleanup_profiles(settings):
         if exclude == (PROFILE, profile.id):
             continue
@@ -72,4 +87,11 @@ def hotkey_conflict(
             continue
         if transform.hotkey and _signature(transform.hotkey) == signature:
             return transform.name
+    from services.actions.model import load_actions
+
+    for action in load_actions(settings):
+        if exclude == (ACTION, action.id):
+            continue
+        if action.hotkey and _signature(action.hotkey) == signature:
+            return action.name
     return ""

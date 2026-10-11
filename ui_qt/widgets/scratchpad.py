@@ -62,6 +62,24 @@ def toggle(ui) -> None:
         pad.present()
 
 
+def show_text(ui, text: str) -> None:
+    """Show the Scratchpad with ``text`` added at the end, on a line of its own.
+
+    For answers that arrive later (an agent action's reply), not dictations:
+    the user's cursor, selection and focus are left where they were. The
+    saved notes load first, so loading them can't replace the answer.
+    """
+    if not text:
+        return
+    pad = getattr(ui, "_scratchpad", None)
+    if pad is None:
+        pad = ScratchpadWindow(copy_text=getattr(ui, "copy_to_clipboard", None))
+        ui._scratchpad = pad
+    pad.ensure_loaded()
+    pad.append_block(text)
+    pad.reveal()
+
+
 def insert(ui, text: str) -> bool:
     """Insert a finished dictation into the focused Scratchpad.
 
@@ -384,13 +402,31 @@ class ScratchpadWindow(QWidget):
 
     def present(self) -> None:
         """Show, raise and focus the Scratchpad, loading its text the first time."""
-        if not self._loaded:
-            self._load()
-            self._restore_geometry()
+        self.ensure_loaded()
         self.show()
         self.raise_()
         self.activateWindow()
         self.editor.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+
+    def reveal(self) -> None:
+        """Show and raise the Scratchpad without taking focus from the user's app.
+
+        For an answer that arrives later: the user may be typing elsewhere.
+        """
+        self.ensure_loaded()
+        if not self.isVisible():
+            # Qt reads it when showing; cleared after, so the user's own
+            # opens (present, the on-top re-show) still activate.
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+            self.show()
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
+        self.raise_()
+
+    def ensure_loaded(self) -> None:
+        """Read the saved notes and window place the first time; before any edit."""
+        if not self._loaded:
+            self._load()
+            self._restore_geometry()
 
     def _default_rect(self, available: QRect) -> QRect:
         scale = current_ui_font_scale()
@@ -549,6 +585,17 @@ class ScratchpadWindow(QWidget):
         self.editor.setTextCursor(cursor)
         self.editor.ensureCursorVisible()
 
+    def append_block(self, text: str) -> None:
+        """Add ``text`` after everything else, separated by a blank line."""
+        from PyQt6.QtGui import QTextCursor
+
+        existing = self.editor.toPlainText()
+        separator = "" if not existing.strip() else ("\n" if existing.endswith("\n") else "\n\n")
+        cursor = QTextCursor(self.editor.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertText(separator + text.strip())
+        self.editor.ensureCursorVisible()
+
     # ---- footer actions ----
 
     def copy_all(self) -> None:
@@ -619,6 +666,13 @@ class ScratchpadWindow(QWidget):
         if not text.strip():
             self._notice("Write or dictate something to transform")
             return
+        # The result replaces exactly the text read here. Anchored at its
+        # start and keeping its end, the cursor leaves out text added at
+        # either edge meanwhile, such as an action's answer (show_text).
+        start, end = cursor.selectionStart(), cursor.selectionEnd()
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        cursor.setKeepPositionOnInsert(True)
         self._transform_generation = generation = next(_tokens)
         self._transform_cursor = cursor
         self.editor.setReadOnly(True)
@@ -657,6 +711,7 @@ class ScratchpadWindow(QWidget):
             self._notice(error or "The transform returned nothing")
             return
         if cursor is not None:
+            cursor.setKeepPositionOnInsert(False)  # so it ends after the result
             cursor.insertText(result)
             self.editor.setTextCursor(cursor)
         undo = QKeySequence(QKeySequence.StandardKey.Undo).toString(QKeySequence.SequenceFormat.NativeText)

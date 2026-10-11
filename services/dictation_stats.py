@@ -32,7 +32,7 @@ from services.models import DictationStat, TranscriptionHistory
 logger = logging.getLogger(__name__)
 
 #: Entry kinds that count; uploads, batches and re-transcriptions don't.
-COUNTED_KINDS = ("dictation", "command", "transform")
+COUNTED_KINDS = ("dictation", "command", "transform", "action")
 #: A row that only says history was already counted (or stats were reset),
 #: so it is never counted again.
 _MARKER_KIND = "marker"

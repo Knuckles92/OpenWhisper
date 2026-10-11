@@ -57,6 +57,7 @@ class _Controller:
         self.hands_free_changed = _Signal()
         self.transform_requested = _Signal()
         self.profile_record_requested = _Signal()
+        self.action_record_requested = _Signal()
         self.calls = []
         self.command_threads = []
         self.runtime = None

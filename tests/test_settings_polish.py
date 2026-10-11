@@ -73,6 +73,36 @@ def test_segmented_bar_details_can_change_while_shown():
         bar.deleteLater()
 
 
+def test_segmented_bar_wraps_its_text_when_not_even_one_choice_fits():
+    page = QWidget()
+    layout = QVBoxLayout(page)
+    bar = SegmentedBar((("Open a session", ""), ("Quick answer", "")), compact=True)
+    layout.addWidget(bar)
+    try:
+        page.setFixedWidth(500)
+        page.show()
+        QApplication.processEvents()
+        one_line = bar.buttons[0].height()
+        natural = bar.buttons[0].natural_width()
+
+        page.setFixedWidth(natural // 2)
+        for _ in range(5):
+            QApplication.processEvents()
+        for button in bar.buttons:
+            assert button.width() <= bar.width()
+            assert button.height() > one_line  # the text went onto more lines
+            assert button.height() >= button.minimumSizeHint().height()
+
+        page.setFixedWidth(500)
+        for _ in range(5):
+            QApplication.processEvents()
+        assert [button.height() for button in bar.buttons] == [one_line, one_line]
+        assert bar.buttons[0].y() == bar.buttons[1].y()  # side by side again
+    finally:
+        page.close()
+        page.deleteLater()
+
+
 COMMIT = "d90ca5fe260221311c53c58e660288d3deb8d356"
 FOLDER = "C:" + "\\Users\\Big D\\Documents\\openwhisper-models\\faster-whisper-large-v3-turbo-ct2\\model.bin"
 

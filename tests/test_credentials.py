@@ -34,7 +34,11 @@ SECRET = "sk-test-secret-value-1234abcd"
 @pytest.fixture(autouse=True)
 def _no_dotenv_and_clean_env(monkeypatch, tmp_path):
     """Keep the repo's real .env and shell out of these tests."""
+    from services import process_env
+
     monkeypatch.setattr(credentials, "env_file_path", lambda: str(tmp_path / ".env"))
+    # Loading .env records what it set as the app's own; keep that to the test.
+    monkeypatch.setattr(process_env, "_original", dict(process_env._original))
     for name in (NAME, "OPENAI_API_KEY", "OPENROUTER_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     yield tmp_path / ".env"
@@ -211,7 +215,7 @@ class TestResolutionOrder:
 
     def test_dotenv_is_the_last_resort(self, monkeypatch, _no_dotenv_and_clean_env):
         _no_dotenv_and_clean_env.write_text(f"{NAME}=file-value\n", encoding="utf-8")
-        # load_dotenv copies into os.environ; make sure teardown removes it.
+        # Loading .env copies it into os.environ; make sure teardown removes it.
         monkeypatch.setenv(NAME, "placeholder")
         monkeypatch.delenv(NAME)
         assert credential_source(NAME) == CredentialSource.DOTENV

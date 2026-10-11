@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
@@ -48,6 +48,8 @@ from services.runtime import (
     TranscriptionRuntime,
 )
 from services.runtime.command import CommandRuntime
+from services.actions.runtime import ActionRuntime
+from services.dictation_pipeline import JobMode
 from services.settings import (
     SETTING_DEFAULTS,
     HuggingFaceAccessPolicy,
@@ -71,6 +73,8 @@ REMOTE_WATCH_INTERVAL_MS = 1000
 #: Seconds before each automatic reconnect to an unreachable host; the last
 #: repeats until it answers.
 REMOTE_RETRY_DELAYS_S = (2, 5, 15, 30, 60)
+#: What the user's Cancel says when it found nothing to cancel.
+NOTHING_TO_CANCEL = "Nothing to cancel"
 
 
 def _import_openai_sdk() -> None:
@@ -93,6 +97,50 @@ class _ClientModelSwitch:
     #: Why the switch can't happen now; empty once it is queued.
     error: Optional[str] = None
     done: threading.Event = field(default_factory=threading.Event)
+
+
+class PreviewEvents:
+    """Live preview text as ``transcription.preview``, at most four a second; Qt thread.
+
+    Text that arrives too soon is held and sent when the quarter second is
+    up (only the newest), so listeners always end on the latest preview
+    rather than a stale one. A final preview goes out at once. ``publish``
+    (TranscriptionRuntime.publish_preview) drops text held, or still on its
+    way, when its recording stops or is canceled.
+    """
+
+    INTERVAL_S = 0.25
+
+    def __init__(self, publish: Callable[[object, str, bool], None]) -> None:
+        self._publish = publish
+        # Created on the Qt thread, like the controller's other timers.
+        self._timer = QTimer()
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._flush)
+        self._sent_at: Optional[float] = None
+        self._held: Optional[tuple] = None
+
+    def offer(self, job, text: str, final: bool) -> None:
+        wait = 0.0 if self._sent_at is None else (
+            self._sent_at + self.INTERVAL_S - time.monotonic()
+        )
+        if final or wait <= 0:
+            self._timer.stop()
+            self._held = None
+            self._send(job, text, final)
+            return
+        self._held = (job, text, final)
+        if not self._timer.isActive():
+            self._timer.start(max(1, int(wait * 1000) + 1))
+
+    def _flush(self) -> None:
+        held, self._held = self._held, None
+        if held is not None:
+            self._send(*held)
+
+    def _send(self, job, text: str, final: bool) -> None:
+        self._sent_at = time.monotonic()
+        self._publish(job, text, final)
 
 
 class ApplicationController(QObject):
@@ -121,6 +169,12 @@ class ApplicationController(QObject):
     stt_state_changed = pyqtSignal(bool)
     recording_state_changed = pyqtSignal(bool)
     profile_record_requested = pyqtSignal(str)
+    # An action's shortcut, emitted from the hotkey dispatcher thread with
+    # the action's id (docs/design/automation/design.md).
+    action_record_requested = pyqtSignal(str)
+    # The user's Cancel reached the actions still running; emitted from the
+    # hotkey dispatcher thread too, and ActionRuntime works on the Qt thread.
+    actions_cancel_requested = pyqtSignal()
     partial_transcription = pyqtSignal(str, bool)
     streaming_text_update = pyqtSignal(str, bool)
     streaming_overlay_show = pyqtSignal()
@@ -339,6 +393,8 @@ class ApplicationController(QObject):
         self.streaming_runtime = StreamingRuntime(self)
         self.transcription_runtime = TranscriptionRuntime(self)
         self.command_runtime = CommandRuntime(self)
+        self.action_runtime = ActionRuntime(self)
+        self._preview_events = PreviewEvents(self.transcription_runtime.publish_preview)
         self.meeting_runtime = MeetingRuntime(self)
 
         self._setup_transcription_backends(local_backend=local_backend)
@@ -500,6 +556,9 @@ class ApplicationController(QObject):
             self.meeting_runtime.start_new_meeting
         )
         self.ui_controller.on_settings_changed = self.on_settings_changed
+        self.ui_controller.on_try_action = self.action_runtime.test
+        self.ui_controller.on_cancel_try_runs = (
+            lambda: self.action_runtime.cancel(tests_only=True))
 
     def command_key_pressed(self, at: float) -> None:
         """The Command Mode shortcut went down; hotkey dispatcher thread."""
@@ -511,9 +570,14 @@ class ApplicationController(QObject):
 
     def on_settings_changed(self, kind: str) -> None:
         """A Settings page saved something of ``kind`` (see notify_changed)."""
-        if kind in ("transforms", "hotkeys"):
-            # Transforms and the new actions register as global shortcuts.
+        if kind in ("transforms", "hotkeys", "actions"):
+            # Transforms, actions and the newer standard shortcuts register
+            # as global shortcuts.
             self.hotkey_runtime.refresh_profile_hotkeys()
+        if kind in ("webhooks", "programs", "filters", "mcp_events"):
+            from services.automation import service as automation_service
+
+            automation_service.reload(kind)
 
     def reload_whisper_model(self) -> None:
         """Schedule a debounced, background reload of the local whisper model.
@@ -1083,6 +1147,12 @@ class ApplicationController(QObject):
             daemon=True,
         ).start()
         self._warm_openai_sdk()
+        try:
+            from services.automation import service as automation_service
+
+            automation_service.start(self)
+        except Exception:
+            logger.exception("Could not start automation")
 
     def _initialize_startup_database(self) -> None:
         error = ""
@@ -2354,8 +2424,12 @@ class ApplicationController(QObject):
     def reconfigure_streaming(self) -> None:
         self.streaming_runtime.reconfigure_streaming()
 
-    def start_recording(self) -> bool:
-        """Start audio recording (UI callback target).
+    def start_recording(self, *, source: str = "hotkey") -> bool:
+        """Start audio recording (UI callback and push-and-hold target).
+
+        Args:
+            source: Who asked, for the recording's events: "hotkey", or
+                "ui" / "dbus" from the window, tray and desktop shell.
 
         Returns:
             False when the start was refused (Meeting Mode is active, or the
@@ -2368,12 +2442,12 @@ class ApplicationController(QObject):
         if unavailable:
             self.status_update.emit(unavailable)
             return False
-        return self.transcription_runtime.start_recording() is not False
+        return self.transcription_runtime.start_recording(source=source) is not False
 
-    def start_profile_recording(self, profile_id: str) -> bool:
+    def start_profile_recording(self, profile_id: str, *, source: str = "hotkey") -> bool:
         if self._refuse_dictation_during_meeting():
             return False
-        return self.transcription_runtime.start_recording(profile_id) is not False
+        return self.transcription_runtime.start_recording(profile_id, source=source) is not False
 
     def toggle_profile_recording(self, profile_id: str) -> None:
         # A shortcut pressed during capture only stops that capture. Its
@@ -2382,6 +2456,39 @@ class ApplicationController(QObject):
             self.stop_recording()
         else:
             self.start_profile_recording(profile_id)
+
+    def start_action_recording(self, action_id: str, *, source: str = "hotkey") -> bool:
+        """Record words for a saved action; False when refused."""
+        if self._refuse_dictation_during_meeting():
+            return False
+        return self.transcription_runtime.start_recording(
+            mode=JobMode.ACTION, action_id=action_id, source=source,
+        ) is not False
+
+    def toggle_action_recording(self, action_id: str) -> None:
+        """An action's shortcut: stop the recording, or record for that action."""
+        if self.recorder.is_recording:
+            self.stop_recording()
+        else:
+            self.start_action_recording(action_id)
+
+    def toggle_route_recording(self) -> None:
+        """Route by voice: stop the recording, or record words for whichever action they name.
+
+        Hotkey thread, like toggle_recording.
+        """
+        if self.recorder.is_recording:
+            self.stop_recording()
+            return
+        if self._refuse_dictation_during_meeting():
+            return
+        from services.actions import routing
+
+        status = routing.status(settings_manager.load_all_settings())
+        if not status.ready:
+            self.status_update.emit(status.message)
+            return
+        self.transcription_runtime.start_recording(route="hotkey", source="hotkey")
 
     def stop_recording(self) -> None:
         self.transcription_runtime.stop_recording()
@@ -2448,7 +2555,23 @@ class ApplicationController(QObject):
         return True
 
     def cancel(self) -> None:
-        self.transcription_runtime.cancel()
+        """The user's Cancel (shortcut, buttons, tray, D-Bus).
+
+        Cancels the recording or transcription in progress, and only that:
+        a Quick answer still thinking from before keeps going. With neither,
+        it cancels the actions still running, which is how a long Quick
+        answer is stopped. Either way the status says what was canceled,
+        or that there was nothing to cancel (a dictation already pasted and
+        being saved included).
+        """
+        if not self.transcription_runtime.cancel():
+            self.actions_cancel_requested.emit()
+
+    def _cancel_actions(self) -> None:
+        """The user's Cancel for the actions still running; Qt thread."""
+        if not self.action_runtime.cancel():
+            self.ui_controller.set_status(NOTHING_TO_CANCEL)
+            self.ui_controller.show_notice(NOTHING_TO_CANCEL)
 
     def minimize_to_tray(self) -> None:
         """Toggle the main window between tray-hidden and foreground states.
@@ -2580,6 +2703,8 @@ class ApplicationController(QObject):
     def _connect_signals(self) -> None:
         self.startup_database_ready.connect(self._on_startup_database_ready)
         self.profile_record_requested.connect(self.toggle_profile_recording)
+        self.action_record_requested.connect(self.toggle_action_recording)
+        self.actions_cancel_requested.connect(self._cancel_actions)
         self.transcription_completed.connect(self._on_transcription_complete)
         self.transcription_failed.connect(self._on_transcription_error)
         self.batch_completed.connect(self._on_batch_complete)
@@ -2702,8 +2827,13 @@ class ApplicationController(QObject):
             self.ui_controller.main_window.set_partial_transcription
         )
         self.streaming_text_update.connect(self.ui_controller.update_streaming_text)
+        self.streaming_text_update.connect(self._publish_preview)
         self.streaming_overlay_show.connect(self.ui_controller.show_streaming_overlay)
         self.streaming_overlay_hide.connect(self.ui_controller.hide_streaming_overlay)
+
+    def _publish_preview(self, text: str, is_final: bool) -> None:
+        """Live preview text as transcription.preview; Qt thread."""
+        self._preview_events.offer(self.transcription_runtime._job, text, is_final)
 
     def _on_recording_state_changed(self, is_recording: bool) -> None:
         if is_recording:
@@ -2742,6 +2872,13 @@ class ApplicationController(QObject):
             self.command_runtime.cleanup()
         except Exception as exc:
             logger.debug(f"Error during command runtime cleanup: {exc}")
+        try:
+            self.action_runtime.close()
+            from services.automation import service as automation_service
+
+            automation_service.stop()
+        except Exception as exc:
+            logger.debug(f"Error stopping automation: {exc}")
         try:
             from services import audio_player, focus_context
 

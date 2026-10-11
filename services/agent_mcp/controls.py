@@ -10,6 +10,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, select, update
 from sqlalchemy.pool import NullPool
 
+from services.automation import permissions
 from services.models import MeetingSession, TranscriptionHistory
 from services.titles import normalize_title
 from services.settings import (
@@ -22,6 +23,7 @@ from services.settings import (
     UiFontScale,
     RecordingOverlayLook,
     UiTheme,
+    resolve_mcp_events_enabled,
     resolve_ui_theme,
 )
 
@@ -186,13 +188,10 @@ SETTING_CONTROLS = (
         max_length=10,
         effect=LIVE,
     ),
-    SettingControl(
-        SettingsKey.TRANSCRIPT_CLEANUP_PROMPT,
-        "Custom cleanup prompt",
-        "Cleanup",
-        "string",
-        max_length=16000,
-    ),
+    # The custom cleanup prompt is left out on purpose: it is free-form
+    # instructions for the model that shapes what agent actions send, so an
+    # agent that could write it could steer words sent to the user's coding
+    # agents while they still read as dictated.
     SettingControl(
         SettingsKey.TRANSCRIPT_CLEANUP_REASONING,
         "Cleanup reasoning effort",
@@ -232,6 +231,19 @@ SETTING_CONTROLS = (
 CONTROLS_BY_KEY = {control.key: control for control in SETTING_CONTROLS}
 
 
+#: Capabilities that let the token holder change something, rather than read.
+#: Reading live events is read access, like reading history.
+WRITE_CAPABILITIES = (
+    "retitle_transcriptions",
+    "retitle_meetings",
+    "writable_settings",
+    permissions.PUBLIC_NAMES[permissions.RUN_ACTIONS],
+    permissions.PUBLIC_NAMES[permissions.CONTROL_RECORDING],
+    permissions.PUBLIC_NAMES[permissions.TEXT_FILTERS],
+    permissions.PUBLIC_NAMES[permissions.AGENT_PROMPTS],
+)
+
+
 def writable_settings(settings):
     granted = settings.get(SettingsKey.MCP_WRITABLE_SETTINGS, {})
     if not isinstance(granted, dict):
@@ -254,7 +266,7 @@ class AgentControls:
             raise ControlError("disabled: MCP access is turned off.")
         if self.settings is None or saved.get(permission) is not True:
             raise ControlError(
-                "permission_denied: Enable this action in Settings > MCP."
+                "permission_denied: Enable this action in Settings > API & MCP."
             )
 
     def capabilities(self):
@@ -266,6 +278,10 @@ class AgentControls:
             "retitle_meetings": saved.get(SettingsKey.MCP_RETITLE_MEETINGS) is True,
             "settings_access": access,
             "writable_settings": sorted(writable_settings(saved)) if access else [],
+            # The live API and MCP live tools: live_events, run_actions,
+            # control_recording, text_filters, agent_prompts.
+            **permissions.describe(saved),
+            "mcp_events": resolve_mcp_events_enabled(saved),
         }
 
     def get_settings(self):
@@ -309,7 +325,7 @@ class AgentControls:
             self._require(saved, SettingsKey.MCP_SETTINGS_ACCESS)
             if not set(validated).issubset(writable_settings(saved)):
                 raise ControlError(
-                    "permission_denied: Enable each setting in Settings > MCP."
+                    "permission_denied: Enable each setting in Settings > API & MCP."
                 )
             previous = {
                 key: CONTROLS_BY_KEY[key].resolve(saved) for key in validated

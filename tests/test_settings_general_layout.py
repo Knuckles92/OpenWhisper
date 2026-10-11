@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui_qt.dialogs.settings_dialog import (
+    ACTIONS,
     ADVANCED,
     APPEARANCE,
     API_KEYS,
@@ -31,6 +32,7 @@ from ui_qt.dialogs.settings_dialog import (
     DICTIONARY,
     DOWNLOADS,
     GENERAL,
+    HOOKS,
     HOTKEYS,
     MCP,
     MEETING_AFTER,
@@ -82,6 +84,9 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     CLEANUP_RULES,
                     CLEANUP_PROFILES,
                     COMMANDS,
+                    ACTIONS,
+                    HOOKS,
+                    MCP,
                     MEETING_VOICE,
                     MEETING_INTELLIGENCE,
                     MEETING_FAST,
@@ -94,7 +99,6 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     APPEARANCE,
                     HOTKEYS,
                     API_KEYS,
-                    MCP,
                     ADVANCED,
                 ),
             )
@@ -276,12 +280,13 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 for card in hotkeys.findChildren(QFrame)
                 if card.objectName() == "hotkeyShortcutCard"
             ]
-            self.assertEqual(len(shortcut_cards), 9)
+            self.assertEqual(len(shortcut_cards), 10)
             self.assertEqual(
                 set(dialog.hotkey_inputs),
                 {
                     "record_toggle",
                     "command_mode",
+                    "route_record",
                     "cancel",
                     "meeting_toggle",
                     "scratchpad_toggle",
@@ -295,6 +300,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 set(dialog.hotkey_clear_buttons),
                 {
                     "command_mode",
+                    "route_record",
                     "meeting_toggle",
                     "scratchpad_toggle",
                     "cycle_language",

@@ -63,8 +63,9 @@ def register_cuda_dll_directories() -> None:
                 bin_dirs.append(str(bin_dir))
 
     if bin_dirs:
-        existing = os.environ.get("PATH", "")
-        os.environ["PATH"] = os.pathsep.join(bin_dirs) + os.pathsep + existing
+        from services.process_env import prepend_for_app
+
+        prepend_for_app("PATH", bin_dirs)
 
 
 def preload_cuda_libraries() -> None:
@@ -145,4 +146,6 @@ def register_qt_icu_directories() -> None:
         if path not in path_parts and path not in prepend:
             prepend.append(path)
     if prepend:
-        os.environ["PATH"] = os.pathsep.join(prepend) + os.pathsep + existing
+        from services.process_env import prepend_for_app
+
+        prepend_for_app("PATH", prepend)

@@ -365,15 +365,26 @@ def _dotenv_values() -> dict[str, str | None]:
         return {}
 
 
-def _load_dotenv_into_environ() -> None:
-    try:
-        from dotenv import load_dotenv
+#: ``.env`` names already logged as impossible to load, so each is logged once.
+_refused_logged: set[str] = set()
 
-        load_dotenv(env_file_path())
-    except ImportError:
-        logger.warning("python-dotenv not installed. Skipping .env file loading.")
-    except Exception as exc:
-        logger.warning("Failed to load .env file: %s", exc)
+
+def _load_dotenv_into_environ() -> None:
+    """Copy ``.env`` into ``os.environ``, never over a variable already set.
+
+    Each variable added, or already set to the file's value, is recorded as
+    the app's own (``process_env.load_for_app``), so programs started for
+    the user never get it, whatever the file says later. An entry no
+    environment can hold is left out and logged by name, never its value;
+    the rest still load. Never raises.
+    """
+    from services.process_env import load_for_app
+
+    values = {name: value for name, value in _dotenv_values().items() if value is not None}
+    for name in load_for_app(values):
+        if name not in _refused_logged:
+            _refused_logged.add(name)
+            logger.warning("Skipped %r in .env: it can't be an environment variable", name)
 
 
 def resolve_credential(name: str) -> str | None:
@@ -403,7 +414,7 @@ def credential_source(name: str) -> str:
     env_value = os.getenv(name)
     dotenv_value = _dotenv_values().get(name) or None
     if env_value:
-        # load_dotenv copies .env into os.environ, so a matching value is
+        # Loading .env copies it into os.environ, so a matching value is
         # the file's own entry rather than a variable the user exported.
         if dotenv_value == env_value:
             return CredentialSource.DOTENV
@@ -411,20 +422,6 @@ def credential_source(name: str) -> str:
     if dotenv_value:
         return CredentialSource.DOTENV
     return CredentialSource.NONE
-
-
-def dotenv_injected_names() -> set[str]:
-    """Environment variables whose value came from OpenWhisper's ``.env``.
-
-    ``load_dotenv`` copies the file into ``os.environ``, so a program started
-    from here would inherit keys the user gave OpenWhisper alone. A variable
-    whose value differs from the file's was exported by the user and is left
-    out, as it would reach that program anyway.
-    """
-    return {
-        name for name, value in _dotenv_values().items()
-        if value and os.environ.get(name) == value
-    }
 
 
 def environment_shadowed(name: str) -> bool:

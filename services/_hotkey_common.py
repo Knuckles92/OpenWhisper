@@ -19,10 +19,11 @@ PRESS_ACTIONS: Tuple[Tuple[str, str], ...] = (
     ("scratchpad_toggle", "on_scratchpad_toggle"),
     ("cycle_language", "on_cycle_language"),
     ("paste_last_original", "on_paste_last_original"),
+    ("route_record", "on_route_record"),
 )
 
 #: Families of shortcuts registered at runtime, as "<namespace>:<id>" actions.
-DYNAMIC_NAMESPACES: Tuple[str, ...] = ("profile", "transform")
+DYNAMIC_NAMESPACES: Tuple[str, ...] = ("profile", "transform", "action")
 
 
 def is_mouse_key(main_key: Optional[str]) -> bool:

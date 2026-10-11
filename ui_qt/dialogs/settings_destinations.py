@@ -25,6 +25,10 @@ CLEANUP_RULES: Final[str] = "cleanup_rules"
 CLEANUP_PROFILES: Final[str] = "cleanup_profiles"
 COMMANDS: Final[str] = "commands"
 
+# Automate (docs/design/automation/design.md); API & MCP is MCP below.
+ACTIONS: Final[str] = "actions"
+HOOKS: Final[str] = "hooks"
+
 # Meeting Mode
 MEETING_VOICE: Final[str] = "meeting_voice"
 MEETING_INTELLIGENCE: Final[str] = "meeting_intelligence"

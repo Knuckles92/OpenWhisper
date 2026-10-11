@@ -1,0 +1,299 @@
+{
+ "date": "2026-10-11T04:47:03+00:00",
+ "provider": "typesafe",
+ "model": "jev-1.13.0",
+ "route_confidence": 0.5,
+ "route_timeout_s": 1.5,
+ "variants": {
+  "default": {
+   "cases": 146,
+   "judged": 117,
+   "gate_skipped": 29,
+   "gate": {
+    "addressed": 62,
+    "addressed_passed": 61,
+    "addressed_stopped_ids": [
+     "c19"
+    ],
+    "must_paste": 47,
+    "must_paste_stopped": 28,
+    "must_paste_sent_ids": [
+     "e29",
+     "e30",
+     "e31",
+     "e32",
+     "e33",
+     "e34",
+     "e35",
+     "e36",
+     "e38",
+     "e39",
+     "e41",
+     "e42",
+     "c14",
+     "c15",
+     "c17",
+     "c18",
+     "c20",
+     "m08",
+     "t06"
+    ]
+   },
+   "failures": 0,
+   "latency_s": {
+    "median": 0.0882,
+    "p95": 0.1185,
+    "max": 0.1509,
+    "over_route_timeout": 0
+   },
+   "input_tokens": 90131,
+   "input_tokens_per_request": 770,
+   "cost_usd": null,
+   "list_price_usd": 0.003786,
+   "at_chosen_threshold": {
+    "threshold": 0.5,
+    "accuracy": 0.8904,
+    "false_routes": 0,
+    "false_route_rate": 0.0,
+    "false_route_rate_on_paste_cases": 0.0,
+    "recall": 0.814,
+    "payload_accuracy": 1.0,
+    "payload_checked": 65
+   },
+   "at_chosen_threshold_by_route": {
+    "auto": {
+     "threshold": 0.5,
+     "accuracy": 0.8727,
+     "false_routes": 0,
+     "false_route_rate": 0.0,
+     "false_route_rate_on_paste_cases": 0.0,
+     "recall": 0.7742,
+     "payload_accuracy": 1.0,
+     "payload_checked": 45
+    },
+    "hotkey": {
+     "threshold": 0.5,
+     "accuracy": 0.9444,
+     "false_routes": 0,
+     "false_route_rate": 0.0,
+     "false_route_rate_on_paste_cases": 0.0,
+     "recall": 0.9167,
+     "payload_accuracy": 1.0,
+     "payload_checked": 20
+    }
+   },
+   "hardest_paste_cases": [
+    {
+     "id": "p13",
+     "route": "hotkey",
+     "p_action": 0.5,
+     "confidence_if_chosen": 0.4286
+    },
+    {
+     "id": "m12",
+     "route": "hotkey",
+     "p_action": 0.51,
+     "confidence_if_chosen": 0.265
+    },
+    {
+     "id": "e76",
+     "route": "hotkey",
+     "p_action": 0.14,
+     "confidence_if_chosen": -0.032
+    },
+    {
+     "id": "e74",
+     "route": "hotkey",
+     "p_action": 0.1,
+     "confidence_if_chosen": -0.08
+    }
+   ],
+   "by_threshold": {
+    "confidence": [
+     {
+      "threshold": 0.0,
+      "accuracy": 0.9521,
+      "false_routes": 2,
+      "false_route_rate": 0.0137,
+      "false_route_rate_on_paste_cases": 0.0333,
+      "recall": 0.9419,
+      "payload_accuracy": 0.9868,
+      "payload_checked": 76
+     },
+     {
+      "threshold": 0.2,
+      "accuracy": 0.9521,
+      "false_routes": 2,
+      "false_route_rate": 0.0137,
+      "false_route_rate_on_paste_cases": 0.0333,
+      "recall": 0.9419,
+      "payload_accuracy": 0.9868,
+      "payload_checked": 76
+     },
+     {
+      "threshold": 0.3,
+      "accuracy": 0.9315,
+      "false_routes": 1,
+      "false_route_rate": 0.0068,
+      "false_route_rate_on_paste_cases": 0.0167,
+      "recall": 0.8953,
+      "payload_accuracy": 1.0,
+      "payload_checked": 72
+     },
+     {
+      "threshold": 0.4,
+      "accuracy": 0.9041,
+      "false_routes": 1,
+      "false_route_rate": 0.0068,
+      "false_route_rate_on_paste_cases": 0.0167,
+      "recall": 0.8488,
+      "payload_accuracy": 1.0,
+      "payload_checked": 68
+     },
+     {
+      "threshold": 0.5,
+      "accuracy": 0.8904,
+      "false_routes": 0,
+      "false_route_rate": 0.0,
+      "false_route_rate_on_paste_cases": 0.0,
+      "recall": 0.814,
+      "payload_accuracy": 1.0,
+      "payload_checked": 65
+     },
+     {
+      "threshold": 0.6,
+      "accuracy": 0.8082,
+      "false_routes": 0,
+      "false_route_rate": 0.0,
+      "false_route_rate_on_paste_cases": 0.0,
+      "recall": 0.6744,
+      "payload_accuracy": 1.0,
+      "payload_checked": 55
+     },
+     {
+      "threshold": 0.7,
+      "accuracy": 0.7397,
+      "false_routes": 0,
+      "false_route_rate": 0.0,
+      "false_route_rate_on_paste_cases": 0.0,
+      "recall": 0.5581,
+      "payload_accuracy": 1.0,
+      "payload_checked": 46
+     },
+     {
+      "threshold": 0.8,
+      "accuracy": 0.6918,
+      "false_routes": 0,
+      "false_route_rate": 0.0,
+      "false_route_rate_on_paste_cases": 0.0,
+      "recall": 0.4767,
+      "payload_accuracy": 1.0,
+      "payload_checked": 39
+     },
+     {
+      "threshold": 0.9,
+      "accuracy": 0.6096,
+      "false_routes": 0,
+      "false_route_rate": 0.0,
+      "false_route_rate_on_paste_cases": 0.0,
+      "recall": 0.3372,
+      "payload_accuracy": 1.0,
+      "payload_checked": 28
+     }
+    ],
+    "probability": [
+     {
+      "threshold": 0.0,
+      "accuracy": 0.9521,
+      "false_routes": 2,
+      "false_route_rate": 0.0137,
+      "false_route_rate_on_paste_cases": 0.0333,
+      "recall": 0.9419,
+      "payload_accuracy": 0.9868,
+      "payload_checked": 76
+     },
+     {
+      "threshold": 0.2,
+      "accuracy": 0.9521,
+      "false_routes": 2,
+      "false_route_rate": 0.0137,
+      "false_route_rate_on_paste_cases": 0.0333,
+      "recall": 0.9419,
+      "payload_accuracy": 0.9868,
+      "payload_checked": 76
+     },
+     {
+      "threshold": 0.3,
+      "accuracy": 0.9521,
+      "false_routes": 2,
+      "false_route_rate": 0.0137,
+      "false_route_rate_on_paste_cases": 0.0333,
+      "recall": 0.9419,
+      "payload_accuracy": 0.9868,
+      "payload_checked": 76
+     },
+     {
+      "threshold": 0.4,
+      "accuracy": 0.9521,
+      "false_routes": 2,
+      "false_route_rate": 0.0137,
+      "false_route_rate_on_paste_cases": 0.0333,
+      "recall": 0.9419,
+      "payload_accuracy": 0.9868,
+      "payload_checked": 76
+     },
+     {
+      "threshold": 0.5,
+      "accuracy": 0.9521,
+      "false_routes": 2,
+      "false_route_rate": 0.0137,
+      "false_route_rate_on_paste_cases": 0.0333,
+      "recall": 0.9419,
+      "payload_accuracy": 0.9868,
+      "payload_checked": 76
+     },
+     {
+      "threshold": 0.6,
+      "accuracy": 0.9658,
+      "false_routes": 0,
+      "false_route_rate": 0.0,
+      "false_route_rate_on_paste_cases": 0.0,
+      "recall": 0.9419,
+      "payload_accuracy": 0.9868,
+      "payload_checked": 76
+     },
+     {
+      "threshold": 0.7,
+      "accuracy": 0.8973,
+      "false_routes": 0,
+      "false_route_rate": 0.0,
+      "false_route_rate_on_paste_cases": 0.0,
+      "recall": 0.8256,
+      "payload_accuracy": 1.0,
+      "payload_checked": 66
+     },
+     {
+      "threshold": 0.8,
+      "accuracy": 0.7945,
+      "false_routes": 0,
+      "false_route_rate": 0.0,
+      "false_route_rate_on_paste_cases": 0.0,
+      "recall": 0.6512,
+      "payload_accuracy": 1.0,
+      "payload_checked": 53
+     },
+     {
+      "threshold": 0.9,
+      "accuracy": 0.6644,
+      "false_routes": 0,
+      "false_route_rate": 0.0,
+      "false_route_rate_on_paste_cases": 0.0,
+      "recall": 0.4302,
+      "payload_accuracy": 1.0,
+      "payload_checked": 36
+     }
+    ]
+   }
+  }
+ }
+}

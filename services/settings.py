@@ -287,6 +287,29 @@ class SettingsKey:
     SCRATCHPAD_GEOMETRY: Final[str] = "scratchpad_geometry"
     # The dismissible "New in OpenWhisper" tile.
     FLOW_FEATURES_INTRO_SEEN: Final[str] = "flow_features_intro_seen"
+    # Automation (docs/design/automation/design.md). Saved actions: what a
+    # hotkey, a spoken name or the local API does with the words.
+    ACTIONS: Final[str] = "actions"
+    # Spoken routing asks Fast judgments which action the words name.
+    VOICE_ROUTING_ENABLED: Final[str] = "voice_routing_enabled"
+    # Also route a normal dictation that starts with an action's name.
+    VOICE_ROUTING_ON_DICTATION: Final[str] = "voice_routing_on_dictation"
+    # Live API permissions, rechecked on every request. Reading events is
+    # the same trust as reading history; the rest can act for the user.
+    API_LIVE_EVENTS: Final[str] = "api_live_events"
+    API_RUN_ACTIONS: Final[str] = "api_run_actions"
+    API_CONTROL_RECORDING: Final[str] = "api_control_recording"
+    API_TEXT_FILTERS: Final[str] = "api_text_filters"
+    # On top of running actions: let a program send words to the user's
+    # coding agent (an agent or Claude Code channel action), which acts on them.
+    API_AGENT_PROMPTS: Final[str] = "api_agent_prompts"
+    # Saved hooks: [{id, name, url, events, enabled}] and so on; secrets are
+    # in the credential store.
+    AUTOMATION_WEBHOOKS: Final[str] = "automation_webhooks"
+    AUTOMATION_PROGRAMS: Final[str] = "automation_programs"
+    AUTOMATION_FILTERS: Final[str] = "automation_filters"
+    # The MCP Events draft extension (events/subscribe with webhook delivery).
+    MCP_EVENTS_ENABLED: Final[str] = "mcp_events_enabled"
 
 
 #: Keys the single live-preview toggle replaced. Dropped whenever that toggle
@@ -690,6 +713,19 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.DICTATION_ACTIVE_LANGUAGE: "",
     SettingsKey.SCRATCHPAD_ALWAYS_ON_TOP: True,
     SettingsKey.FLOW_FEATURES_INTRO_SEEN: False,
+    # Automation: nothing runs until the user sets it up.
+    SettingsKey.ACTIONS: [],
+    SettingsKey.VOICE_ROUTING_ENABLED: False,
+    SettingsKey.VOICE_ROUTING_ON_DICTATION: False,
+    SettingsKey.API_LIVE_EVENTS: True,
+    SettingsKey.API_RUN_ACTIONS: False,
+    SettingsKey.API_CONTROL_RECORDING: False,
+    SettingsKey.API_TEXT_FILTERS: False,
+    SettingsKey.API_AGENT_PROMPTS: False,
+    SettingsKey.AUTOMATION_WEBHOOKS: [],
+    SettingsKey.AUTOMATION_PROGRAMS: [],
+    SettingsKey.AUTOMATION_FILTERS: [],
+    SettingsKey.MCP_EVENTS_ENABLED: False,
 })
 
 
@@ -1200,6 +1236,10 @@ resolve_recording_hands_free_latch = _bool_resolver(
     SettingsKey.RECORDING_HANDS_FREE_LATCH)
 resolve_scratchpad_always_on_top = _bool_resolver(SettingsKey.SCRATCHPAD_ALWAYS_ON_TOP)
 resolve_flow_features_intro_seen = _bool_resolver(SettingsKey.FLOW_FEATURES_INTRO_SEEN)
+# Automation switches.
+resolve_voice_routing_enabled = _bool_resolver(SettingsKey.VOICE_ROUTING_ENABLED)
+resolve_voice_routing_on_dictation = _bool_resolver(SettingsKey.VOICE_ROUTING_ON_DICTATION)
+resolve_mcp_events_enabled = _bool_resolver(SettingsKey.MCP_EVENTS_ENABLED)
 
 
 def resolve_max_saved_recordings(

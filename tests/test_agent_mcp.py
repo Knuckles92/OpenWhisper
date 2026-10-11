@@ -185,8 +185,25 @@ def test_official_client_discovery_retrieval_and_validation(running_server, mode
                     "update_settings",
                     "retitle_transcription",
                     "retitle_meeting",
+                    "get_live_state",
+                    "list_actions",
+                    "run_action",
+                    "start_dictation",
+                    "stop_dictation",
+                    "cancel_dictation",
+                    "recent_events",
+                    "notify_user",
                 }
-                writes = {"update_settings", "retitle_transcription", "retitle_meeting"}
+                writes = {
+                    "update_settings",
+                    "retitle_transcription",
+                    "retitle_meeting",
+                    "run_action",
+                    "start_dictation",
+                    "stop_dictation",
+                    "cancel_dictation",
+                    "notify_user",
+                }
                 assert all(
                     tool.annotations.read_only_hint == (tool.name not in writes)
                     for tool in tools
@@ -277,6 +294,12 @@ def test_control_permissions_writes_and_live_revocation(
                     "retitle_meetings": False,
                     "settings_access": False,
                     "writable_settings": [],
+                    "live_events": True,
+                    "run_actions": False,
+                    "control_recording": False,
+                    "text_filters": False,
+                    "agent_prompts": False,
+                    "mcp_events": False,
                 }
                 assert (await client.call_tool("get_status", {})).structured_content[
                     "read_only"

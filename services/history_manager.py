@@ -502,6 +502,8 @@ class HistoryManager:
         entry = db.get_history_entry_by_id(entry_id) if delete_audio_file else None
         result = db.delete_history_entry(entry_id)
         if result:
+            if not kept_on_host:
+                _forget_replayable_events()
             logger.info(f"Deleted history entry: {entry_id[:8]}...")
             if entry and entry.audio_file:
                 self._delete_recording_file(entry.audio_file)
@@ -535,6 +537,7 @@ class HistoryManager:
         """Clear all history entries (keeps recordings), here and on the host."""
         self._forget_all_dictations()
         db.clear_history()
+        _forget_replayable_events()
         _record_sync().cleared("dictation")
         logger.info("History cleared")
 
@@ -547,6 +550,7 @@ class HistoryManager:
                 logger.error(f"Failed to remove recording {rec.filename}: {e}")
         self._forget_all_dictations()
         db.clear_history()
+        _forget_replayable_events()
         _record_sync().cleared("dictation")
         logger.info("History and recordings cleared")
 
@@ -581,6 +585,16 @@ def remote_history_entry(item: dict) -> HistoryEntry:
     entry.stored_on = str(item.get("stored_on") or "the host")
     entry.remote_audio = bool(item.get("has_audio"))
     return entry
+
+
+def _forget_replayable_events() -> None:
+    """Drop the live events' replay buffer, which holds dictated text.
+
+    A deleted entry's words must not come back to a stream that reconnects.
+    """
+    from services.automation import events
+
+    events.clear()
 
 
 def _record_sync():

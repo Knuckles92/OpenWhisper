@@ -103,13 +103,14 @@ class FakeRuntime:
         self.begin_ok = True
         self.events = []
 
-    def start_recording(self, profile_id="", mode=JobMode.DICTATION, *, selection=None):
+    def start_recording(self, profile_id="", mode=JobMode.DICTATION, *, selection=None,
+                        source="hotkey"):
         self.events.append(("start", mode))
         if not self.start_ok:
             return False
         self.controller.recorder.is_recording = True
         self._job = dictation_pipeline.begin_job(
-            mode, self.settings.load_all_settings(), selection=selection)
+            mode, self.settings.load_all_settings(), selection=selection, source=source)
         return True
 
     def begin_rewrite_job(self, job, *, source_name):
@@ -471,6 +472,7 @@ def test_a_transform_rewrites_the_selection(h):
 
     (_begin, job, source), = _begun(h)
     assert job.mode == JobMode.TRANSFORM and source == "Transform · Polish"
+    assert job.source == "hotkey"  # only its shortcut starts a transform
     assert job.snapshot().identity == NOTEPAD
     assert _statuses(h) == ["Rewriting · Polish..."]
     _settle(lambda: h.runtime.events[-1][0] == "submit")

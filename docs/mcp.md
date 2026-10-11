@@ -1,6 +1,6 @@
 # Connect an agent to OpenWhisper
 
-Open **Advanced Settings → App → MCP** (the **Connect your AI assistant** page)
+Open **Advanced Settings → Automate → API & MCP**
 and turn on **Enable MCP**. When the status changes to **Running**, copy the setup
 prompt into your agent, or choose a manual setup option. OpenWhisper includes the
 MCP server; users of the installed desktop app
@@ -46,7 +46,7 @@ to request remote setup instead of enabling an unrelated local instance.
 
 On the computer running OpenWhisper, turn MCP off, expand **Advanced connection**,
 enable **Allow agents over Tailscale**, then turn MCP on again. Choose
-**Another computer** in Settings → MCP to copy its remote URL, prompt, or manual
+**Another computer** in Settings → API & MCP to copy its remote URL, prompt, or manual
 configuration. Both computers must be connected to the same Tailscale network. Host mode displays
 the Tailscale URL and its copy-prompt button uses that URL when enabled.
 
@@ -98,16 +98,29 @@ of an incorrect Running status.
 | `update_settings` | Atomically change individually permitted preferences |
 | `retitle_transcription` | Set a local transcription's display title |
 | `retitle_meeting` | Set a finished local meeting's title |
+| `get_live_state` | Whether OpenWhisper is recording or busy, and the live permissions |
+| `list_actions` | Your saved [actions](automation.md#actions) (no links, paths or folders) |
+| `recent_events` | Recent [live events](automation.md#events), with a gap flag; needs **Follow live events** |
+| `run_action` | Run an action on text; needs **Run actions** |
+| `notify_user` | Show a short notice near the pointer; needs **Run actions** |
+| `start_dictation`, `stop_dictation`, `cancel_dictation` | Record for dictation or an action; needs **Start recordings** |
 
 History retrieval tools remain read-only. They reuse the [History API](agent-api.md), including
 bounded cursor pagination, literal search, date filters, sanitized response
 schemas, and exclusion of paired-computer records unless `include_remote=true`.
-No tool starts recording, deletes history, edits transcript text, or exposes audio files. Any authorized
+No tool deletes history, edits transcript text, or exposes audio files.
+`recent_events` follows **Follow live events**, which is on by default like
+reading history: it returns recent dictations, actions and meeting lines.
+Running actions and showing notices need **Run actions**, recording needs
+**Start recordings**, and running an Agent hotkey or Claude Code session
+action, or a recording routed to one, with a program's words (sent, or
+changed by its text filter) also needs **Send words to my coding agents**; all three are off by
+default (see [Actions, live events and hooks](automation.md#live-api)). Any authorized
 client can opt into remote records already saved in this database.
 
 ## Query paired clients directly
 
-On each client, enable **Settings → MCP → Share this computer's history through
+On each client, enable **Settings → API & MCP → Share this computer's history through
 the paired host's MCP**. This control stays available on either MCP tab, including
 when remote MCP administration is disabled. It is off by default and is independent
 of the storage choice and **Allow paired computers to manage MCP**. Existing history
@@ -144,7 +157,7 @@ filters, and page size for ten minutes; restart the query after they expire.
 
 ## Optional changes
 
-All new permissions are **off by default**. Configure them in Settings → MCP,
+These permissions are **off by default**. Configure them in Settings → API & MCP,
 even while the server is off. The server checks the saved permissions on every
 call, so changing them does not require restarting or reconnecting. Revoking a
 permission blocks subsequent calls; a change already in progress may finish.

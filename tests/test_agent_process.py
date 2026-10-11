@@ -27,10 +27,15 @@ def _alive(pid):
             return bool(api.GetExitCodeProcess(handle, c.byref(code))) and code.value == 259
         finally:
             api.CloseHandle(handle)
-    # An exited child can remain a zombie until init reaps it.
+    # An exited child can remain a zombie until init reaps it (Linux; macOS has
+    # no /proc), and can be reaped between finding its stat file and reading it.
     stat = Path(f"/proc/{pid}/stat")
-    if stat.exists() and stat.read_text().split(") ", 1)[1].startswith("Z"):
-        return False
+    if stat.exists():
+        try:
+            if stat.read_text().split(") ", 1)[1].startswith("Z"):
+                return False
+        except (FileNotFoundError, ProcessLookupError):
+            return False
     try:
         os.kill(pid, 0)
         return True

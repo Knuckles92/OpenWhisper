@@ -157,6 +157,10 @@ class UIController(QObject):
         # A Settings page module changed something the app caches, by kind
         # ("transforms", "hotkeys", "dictionary", ...). Always callable.
         self.on_settings_changed: Callable[[str], None] = _ignore_settings_change
+        # (action, sample_text, done): ActionRuntime.test, set by the controller.
+        self.on_try_action: Optional[Callable] = None
+        # (): cancels Settings' "Try it" runs (ActionRuntime.cancel), set by the controller.
+        self.on_cancel_try_runs: Optional[Callable[[], None]] = None
         # RemoteEngineService, set by the application controller.
         self._remote_engine = None
         self.on_model_download_requested: Optional[Callable] = None
@@ -463,11 +467,16 @@ class UIController(QObject):
         # the minimize-to-tray closeEvent, which only hid the window again.
         self.main_window.request_quit()
 
-    def _on_tray_toggle_recording(self):
+    def _on_tray_toggle_recording(self, source: str = "ui"):
+        """The tray's record item; its recording's events say ``source``."""
         if self.is_recording:
             self.stop_recording()
         else:
-            self.start_recording()
+            self.start_recording(source=source)
+
+    def _on_shell_toggle_recording(self):
+        """The desktop shell's record button (Omarchy, over D-Bus)."""
+        self._on_tray_toggle_recording(source="dbus")
 
     def _on_overlay_state_changed(self, state: str):
         logger.debug(f"Overlay state changed to: {state}")
@@ -517,15 +526,19 @@ class UIController(QObject):
     def _apply_audio_levels_to_overlay(self, levels: List[float]):
         self.overlay.update_audio_levels(levels)
 
-    def start_recording(self, profile_id: str = ""):
-        """Request a recording start; UI flips only after the stream opens."""
+    def start_recording(self, profile_id: str = "", *, source: str = "ui"):
+        """Request a recording start; UI flips only after the stream opens.
+
+        ``source`` is who asked, for the recording's events: the window and
+        tray ("ui") or the desktop shell ("dbus").
+        """
         self._transcription_source_tab = TabbedContentWidget.TAB_QUICK_RECORD
         if profile_id and self.on_profile_record_start:
-            if self.on_profile_record_start(profile_id) is False:
+            if self.on_profile_record_start(profile_id, source=source) is False:
                 self._revert_refused_record_start()
                 return False
         elif self.on_record_start:
-            if self.on_record_start() is False:
+            if self.on_record_start(source=source) is False:
                 self._revert_refused_record_start()
                 return False
         else:
@@ -859,6 +872,12 @@ class UIController(QObject):
 
         return scratchpad.insert(self, text) is True
 
+    def show_in_scratchpad(self, text: str) -> None:
+        """Open the Scratchpad with ``text`` added at the end (an action's answer)."""
+        from ui_qt.widgets import scratchpad
+
+        scratchpad.show_text(self, text)
+
     def cycle_dictation_language(self) -> None:
         from ui_qt.widgets import language_menu
 
@@ -911,6 +930,20 @@ class UIController(QObject):
         # Read at call time: the application controller assigns its handler
         # after Settings may already exist.
         self.on_settings_changed(kind)
+
+    def _try_action(self, action, sample_text: str, done) -> None:
+        # Read at call time, like on_settings_changed.
+        if self.on_try_action is None:
+            from services.actions.runtime import ActionResult
+
+            done(ActionResult(False, "Actions aren't ready yet."))
+            return
+        self.on_try_action(action, sample_text, done)
+
+    def _cancel_try_runs(self) -> None:
+        # Read at call time, like on_try_action.
+        if self.on_cancel_try_runs is not None:
+            self.on_cancel_try_runs()
 
     def show_streaming_overlay(self):
         self.streaming_flow_active = True
@@ -1045,6 +1078,8 @@ class UIController(QObject):
             self._on_settings_recording_trigger_mode_changed
         )
         dialog.on_settings_changed = self._on_settings_page_changed
+        dialog.on_try_action = self._try_action
+        dialog.on_cancel_try_runs = self._cancel_try_runs
         dialog.remote_section.bind(self.remote_engine, self.select_transcription_backend)
         dialog.bind_remote_service(self.remote_engine)
         models = dialog.models

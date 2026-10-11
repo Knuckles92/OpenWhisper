@@ -127,7 +127,9 @@ class AxTextReader:
                 return None
             start, length = int(selection.location), int(selection.length)
             selected = ""
-            if include_selection or include_text:
+            # The selection's range places the text around it; its words go
+            # only to a caller that asked for them.
+            if include_selection:
                 if length > MAX_SELECTION_CHARS:
                     return TextContext(source=self.source)
                 selected = self._string_for(focused, start, length)
@@ -141,7 +143,7 @@ class AxTextReader:
                     after = self._string_for(
                         focused, end, min(config.CONTEXT_AFTER_CHARS, int(total) - end))
             return TextContext(before, selected, after, caret_known=include_text,
-                               selection_known=True, source=self.source)
+                               selection_known=include_selection, source=self.source)
 
 
 

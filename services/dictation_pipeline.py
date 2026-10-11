@@ -11,8 +11,9 @@ here raises into the runtime.
 from __future__ import annotations
 
 import logging
+import secrets
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final, Mapping, Optional
 
 from config import config
@@ -24,6 +25,7 @@ from services import (
     focus_context,
     snippets,
 )
+from services.automation import catalog
 from services.batch_upload import compose_batch_cleanup_prompt
 from services.cleanup_profiles import compose_profile_prompt
 from services.focus_context import FocusSnapshot
@@ -46,6 +48,9 @@ class JobMode:
     DICTATION: Final[str] = "dictation"
     COMMAND: Final[str] = "command"
     TRANSFORM: Final[str] = "transform"
+    #: The words go to a saved action instead of the cursor
+    #: (docs/design/automation/design.md).
+    ACTION: Final[str] = "action"
 
 
 #: entry_kind for transcripts that were not dictated live: uploads, batches
@@ -94,6 +99,32 @@ class DictationJob:
     #: the paste check only, also with app awareness off; history, styles
     #: and prompts read ``focus`` alone.
     target: Optional[Future] = None
+    #: Names this job in events, so a listener can match its completion
+    #: and history entry to its start.
+    id: str = field(default_factory=lambda: secrets.token_hex(8))
+    #: The saved action an ACTION job runs.
+    action_id: str = ""
+    #: Who started it: hotkey, ui, api, mcp or dbus (catalog.SOURCES).
+    source: str = ""
+    #: "hotkey" when recorded with Route by voice, "auto" when a dictation
+    #: may be routed by the action name it starts with; "" never routes.
+    route: str = ""
+    #: Spoken routing turned this dictation into an ACTION job.
+    routed: bool = False
+    #: A text filter a program leased over the live API changed the words
+    #: (the user's own saved filters don't count).
+    changed_by_program: bool = False
+
+    @property
+    def program_words(self) -> bool:
+        """Whether a program supplied this job's words or changed them.
+
+        A program supplied them when it started the job: any source but the
+        user's own (catalog.USER_SOURCES), so an unknown one counts too.
+        Such words reach the user's coding agents only with "Send words to
+        my coding agents" (services.actions.runtime.program_words_allowed).
+        """
+        return self.changed_by_program or not catalog.user_started(self.source)
 
     def snapshot(self, timeout: float = 0.0) -> Optional[FocusSnapshot]:
         """The focus capture, or None when it failed or isn't ready; never raises.
@@ -134,7 +165,9 @@ class FinishedText:
     raw_text: str = ""
 
 
-def begin_job(mode: str, settings: Mapping, *, selection=None) -> DictationJob:
+def begin_job(mode: str, settings: Mapping, *, selection=None, action_id: str = "",
+              source: str = "", route: str = "",
+              include_selection: bool = False) -> DictationJob:
     """Start a job's background captures as its recording starts; never raises.
 
     Called right after the recorder opens and before the preview starts, so
@@ -145,18 +178,40 @@ def begin_job(mode: str, settings: Mapping, *, selection=None) -> DictationJob:
         settings: Settings loaded for this recording.
         selection: The text to rewrite, as a Future[str] or a str, for
             command and transform jobs.
+        action_id: The action an ACTION job runs.
+        source: Who started the job (see DictationJob.source).
+        route: See DictationJob.route.
+        include_selection: An ACTION job's action wants the selected text,
+            which the focus capture reads when app awareness is on.
+
+    Only a job the user started reads what is on screen. It reads the text
+    near the cursor when that is on, and the selection when the job uses it:
+    Command Mode's is what it rewrites, a dictation replaces it (with the
+    text near the cursor on), and an action reads it when asked. A job a
+    program started reads neither, only which app has focus, so no program
+    gets the user's on-screen text back through cleanup, an event or an
+    action.
     """
     settings = settings or {}
     focus = target = None
     try:
         if resolve_app_context_enabled(settings):
+            users = catalog.user_started(source)
+            include_text = users and resolve_app_context_read_text(settings)
+            wanted = {
+                JobMode.COMMAND: True,
+                JobMode.DICTATION: include_text,
+                JobMode.ACTION: include_selection,
+            }.get(mode, False)
             focus = focus_context.get_service().request(
-                include_text=resolve_app_context_read_text(settings),
-                include_selection=mode == JobMode.COMMAND,
+                include_text=include_text,
+                include_selection=users and wanted,
             )
-        elif mode != JobMode.DICTATION:
-            # A rewrite pastes even with auto-paste off, so it still learns
-            # where it started (see DictationJob.target).
+        elif mode != JobMode.DICTATION or route:
+            # A rewrite pastes even with auto-paste off, and an action's
+            # answer may be pasted later (a dictation may become an action
+            # once routed), so each still learns where it started (see
+            # DictationJob.target).
             target = focus_context.get_service().request(include_text=False)
     except Exception:
         logger.debug("Focus capture could not start", exc_info=True)
@@ -166,6 +221,9 @@ def begin_job(mode: str, settings: Mapping, *, selection=None) -> DictationJob:
         recognition=recognition_for(None, settings),
         selection=_as_future(selection),
         target=target,
+        action_id=action_id,
+        source=source,
+        route=route,
     )
 
 
@@ -199,7 +257,7 @@ def prepare_text(raw: str, job: Optional[DictationJob], settings: Mapping) -> Pr
     plan = SnippetPlan(text)
     if (
         job is not None
-        and job.mode == JobMode.DICTATION
+        and job.mode in (JobMode.DICTATION, JobMode.ACTION)
         and resolve_snippets_enabled(settings)
     ):
         try:

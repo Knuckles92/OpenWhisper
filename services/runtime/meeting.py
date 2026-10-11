@@ -1873,6 +1873,19 @@ class MeetingRuntime:
                 self.controller.meeting_status_update.emit(str(payload["message"]))
             elif engine is self._engine:
                 self._on_engine_event(kind, payload)
+                self._forward_public_event(engine, kind, payload)
+
+    @staticmethod
+    def _forward_public_event(engine: Any, kind: str, payload: Dict[str, Any]) -> None:
+        """Publish the live API's meeting.* event for one engine event; never raises."""
+        try:
+            from services.automation import meeting_events
+
+            meeting_events.forward(
+                kind, payload, meeting_id=str(getattr(engine, "meeting_id", "") or "")
+            )
+        except Exception:
+            logger.debug("Could not publish a meeting event", exc_info=True)
 
     def _on_engine_event(self, kind: str, payload: Dict[str, Any]) -> None:
         """Bridge one engine listener event to controller signals.
