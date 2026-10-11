@@ -664,3 +664,30 @@ def test_a_preset_leaves_what_its_for_to_you(make_dialog, preset):
     editor.url_edit.setText("https://example.com/hook")
     assert editor.save()
     assert stored(store, editor.action_id).description == ""
+
+
+# ---- 13. The agent you pick before setting up stays picked ----
+
+
+def test_the_agent_you_pick_before_setup_stays_picked(make_dialog, agents):
+    dialog, store = make_dialog({SettingsKey.ACTIONS: [ASK_CLAUDE]})
+    card, panel = dialog.actions_agent_card, dialog.actions_panel
+    card.fields.chooser.choices["codex"].click()
+    panel.set_enabled("a1", False)
+    assert card.fields.chooser.current() == "codex"
+    card.look_again.click()
+    assert wait_for(lambda: card.fields.chooser.available() is not None)
+    assert card.fields.chooser.current() == "codex"
+    card.setup_button.click()
+    card.cancel_capture()
+    assert stored(store, AGENT_ACTION_ID).param("agent") == "codex"
+
+
+def test_a_picked_agent_that_goes_missing_gives_way(make_dialog, agents):
+    dialog, _store = make_dialog()
+    card = dialog.actions_agent_card
+    card.fields.chooser.choices["codex"].click()
+    agents.found = {"claude_code": True, "codex": False, "opencode_cli": False}
+    card.look_again.click()
+    assert wait_for(lambda: card.fields.chooser.available() is not None)
+    assert card.fields.chooser.current() == "claude_code"

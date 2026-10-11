@@ -87,6 +87,8 @@ class AgentHotkeyCard(InfoTile):
         self.manager = manager
         self._try_action = try_action
         self._action: Optional[Action] = None
+        #: The agent you picked before setting it up.
+        self._picked = ""
         self._scan_token = 0
         self._try_token = 0
         self._scanned = False
@@ -185,12 +187,16 @@ class AgentHotkeyCard(InfoTile):
             set_style_property(self, "checked", action.enabled)
             self.set_description(summary(action) + ".")
         else:
-            self.fields.set_params({"agent": self._preferred_agent()})
+            self.fields.set_params({"agent": self._unset_agent()})
             set_style_property(self, "checked", False)
             self.set_description(INVITE)
         self._sync_status()
 
-    def _preferred_agent(self) -> str:
+    def _unset_agent(self) -> str:
+        """The agent to offer before setup: the one you picked, unless a scan didn't find it."""
+        available = self.fields.chooser.available()
+        if self._picked and (available is None or available.get(self._picked)):
+            return self._picked
         found = self.fields.chooser.found()
         return found[0] if found else AGENTS[0]
 
@@ -233,7 +239,7 @@ class AgentHotkeyCard(InfoTile):
         self.fields.set_available(available if (available or self._scanned) else None,
                                   animate=animate)
         if self._action is None:
-            self.fields.chooser.set_current(self._preferred_agent())
+            self.fields.chooser.set_current(self._unset_agent())
         self._sync_status()
 
     # ---- changes ----
@@ -271,6 +277,8 @@ class AgentHotkeyCard(InfoTile):
 
     def _on_fields_changed(self) -> None:
         if self._action is None:
+            # Before setup only the agent can change; remember it until then.
+            self._picked = self.fields.chooser.current()
             return
         params = self.fields.params()
         action = replace(self._action, params=params)
@@ -325,6 +333,7 @@ class AgentHotkeyCard(InfoTile):
             self.show_message(f"Couldn't remove the agent hotkey: {exc}", "error")
             return
         self.shortcut.cancel_capture()
+        self._picked = self._action.param("agent")
         self._action = None
         self._render()
         self.show_message("", "")
