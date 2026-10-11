@@ -50,7 +50,10 @@ switched apps meanwhile, the answer is copied and a notice says so. A notice
 shows the start of a long answer and copies all of it. If an action you
 started fails, your words are copied so nothing is lost, and the notice says
 why; if its transform can't run, it gets your cleaned-up words instead and
-says so. Actions a program starts over the API never touch your clipboard.
+says so. Actions a program starts over the API never touch your clipboard or
+type into your apps: an answer they would paste or copy goes to the
+Scratchpad, a notice doesn't copy the rest of a long answer, and **Copy
+only** puts the words in the Scratchpad.
 
 Actions that take a while (an agent's answer, a webhook, a program) keep
 running after the dictation is saved, 4 at a time with up to 4 more waiting.
@@ -58,8 +61,9 @@ running after the dictation is saved, 4 at a time with up to 4 more waiting.
 that. Press it with nothing recording to cancel the actions still running:
 those still waiting never start, and a Quick answer or a program is stopped.
 One that has already started and can't be stopped (opening a link, posting
-to a webhook, opening a session) finishes, but its answer is dropped, and
-the notice says it was too late to stop it.
+to a webhook, opening a session), or that had already finished, reports what
+happened, but its answer is dropped, and the notice says it was too late to
+stop it.
 
 The **Agent hotkey** card at the top of the page sets up the action for your
 installed agent in one place. **Try it** runs an action with sample words
@@ -251,7 +255,8 @@ data: {"id":"evt_…","seq":42,"type":"transcription.completed","time":"2026-10-
 `seq` keeps counting up, across app restarts too. Reconnect with
 `Last-Event-ID` (or `?since=<seq>`; `since=0` for everything since OpenWhisper
 started) to replay what you missed while the app still holds it (the last
-500 events). When you may have missed some, the stream first sends an
+500 events). When you may have missed some of the types you asked for, the
+stream first sends an
 `events.gap` event (no `id:`) with `missed_from_seq` and a `reason`:
 `evicted` (the app no longer holds them; fetch [history](agent-api.md) to
 catch up) or `restarted` (your position is from before OpenWhisper restarted;
@@ -272,7 +277,9 @@ with httpx.stream("GET", "http://127.0.0.1:8767/v1/events?types=transcription.co
             print(event["data"]["text"])
 ```
 
-`events.gap` can arrive whatever `types` asks for. `seq` keeps growing across
+`events.gap` can arrive whatever `types` asks for; reason `evicted` means an
+event of one of those types is gone (pushed out of the last 500, or forgotten
+when you deleted history or a meeting). `seq` keeps growing across
 app restarts, so a position from before a restart never matches a new event:
 the stream sends an `events.gap` with reason `restarted` and replays
 everything since the restart.
@@ -293,7 +300,7 @@ file paths or audio.
 | `transcription.completed` | `job_id`, `mode` (also `file`, one per file of a multi-file upload), `action_id`, `source`, `routed`, `text`, `raw_text` (before AI cleanup, or null; always null for Command Mode and transforms, so the text you had selected never leaves), `language`, `app` (`id`, `name`, `category`) or null, `cleanup` (`provider`, `model`, `level`) or null, `audio_s` |
 | `transcription.failed` | `job_id`, `error` (`canceled`, `no_speech`, `refused` or `failed`), `message` (what OpenWhisper told you, for a refusal; otherwise null) |
 | `history.saved` | `job_id`, `record_id` (fetch it from the [History API](agent-api.md)), `kind` |
-| `action.ran` | `job_id`, `source`, `action_id`, `name`, `kind`, `ok`, `message`, `output` (where an answer went), and `text` for Send to my scripts; a run canceled too late to stop reports what really happened, with `output` `none` |
+| `action.ran` | `job_id`, `source`, `action_id`, `name`, `kind`, `ok`, `message`, `output` (where an answer went), and `text` for Send to my scripts; a run canceled too late to stop (or already finished) reports what really happened, with `output` `none` |
 | `channel.message` | `job_id`, `source`, `origin` (`dictated`, or `program` when a program sent or changed the words), `action_id`, `text`, `app` |
 | `route.decided` | `job_id`, `action_id` or null, `confidence`, `fallback` |
 | `filter.failed` | `filter_id`, `name`, `stage`, `reason` |

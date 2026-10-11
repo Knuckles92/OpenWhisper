@@ -229,7 +229,8 @@ class EventBus:
                   types: Optional[Iterable[str]] = None,
                   label: str = "") -> Subscription   # callback on the dispatch thread
     def since(self, seq: int, *, types=None) -> tuple[list[Event], Optional[str]]
-        # (events after seq, None | "evicted" | "restarted"); 0 = from this run's start
+        # (events after seq, None | "evicted" | "restarted"); 0 = from this run's start;
+        # only dropped events of `types` count
     def recent(self, limit: int = 50, *, types=None) -> list[Event]
     def subscribers(self, label: str = "") -> int  # live subscriptions, optionally by label
     def last_seq(self) -> int
@@ -847,3 +848,19 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   follows ("chat gpt what's…", "to do buy milk", not "to do that…"), and a
   shortened name counts after lead-ins when it is typed or heard as a name
   (`_written_as_name`), so lowercase-typed names work. Benchmark: 146 cases.
+
+### After review round 3
+
+- **Program runs and the clipboard**: `runtime._output_of(run)` is the one
+  rule. A run whose job isn't `catalog.user_started` sends Paste and
+  Clipboard answers to the Scratchpad, and a Notice doesn't copy the full
+  answer. A program's Copy only run puts the words in the Scratchpad (message
+  "Put in the Scratchpad", `output` none).
+- **Cancel**: `_Run.finished` is set by the worker when its work returns,
+  before the result is sent. `_stoppable(run)` is False from then on, so a
+  run that already finished is "too late to stop": its real outcome with
+  `output` none, no answer.
+- **Event bus**: dropped events (evicted or cleared) are tracked per type.
+  `since(seq, types=…)` says `evicted` only when a wanted type was dropped
+  after `seq`; a clear counts what it held as dropped. The SSE stream, MCP
+  `recent_events` and the channel bridge get this through `since(types=…)`.
