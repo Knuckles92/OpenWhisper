@@ -32,7 +32,13 @@ from services.actions.model import (
 )
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.restyle import set_style_property
-from ui_qt.widgets.action_copy import MODE_LABELS, OUTPUT_LABELS, SURFACE_HINTS, SURFACE_LABELS
+from ui_qt.widgets.action_copy import (
+    MODE_LABELS,
+    NO_APP_HINT,
+    OUTPUT_LABELS,
+    SURFACE_HINTS,
+    SURFACE_LABELS,
+)
 from ui_qt.widgets.button_row import ButtonRow
 from ui_qt.widgets.buttons import Button, fit_compact_button, neutral_button
 from ui_qt.widgets.command_settings import CommandShortcutField
@@ -835,8 +841,9 @@ class AgentFields(QWidget):
     def _sync(self) -> None:
         handoff = self.mode_bar.currentIndex() != AgentMode.ALL.index(AgentMode.ASK)
         name = AGENT_NAMES.get(self.chooser.current(), "the agent")
+        # Whether the agent waits for you depends on where it opens; Opens in says.
         self.mode_hint.setText(
-            f"{name} opens with your words, ready for you to send." if handoff
+            f"{name} opens in a new session with your words." if handoff
             else f"{name} answers with no tools, so nothing on this computer changes.")
         self.session_box.setVisible(handoff)
         self.answer_box.setVisible(not handoff)
@@ -846,8 +853,7 @@ class AgentFields(QWidget):
         app_button.setEnabled(has_app)
         app_button.setToolTip("" if has_app else f"{name} has no app; it opens in a terminal.")
         self.surface_hint.setText(
-            SURFACE_HINTS[surface] if has_app
-            else f"{name} has no app to open, so it opens in a new terminal.")
+            SURFACE_HINTS[surface] if has_app else NO_APP_HINT.format(name=name))
         self.selection_note.setVisible(
             self.selection_row.switch.isChecked() and not self._app_awareness)
         available = self.chooser.available()

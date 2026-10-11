@@ -536,3 +536,22 @@ def test_the_working_folder_shows_only_for_a_session(make_dialog):
     panel.add_action()
     panel.start_from_preset(panel.gallery.tile("quick-answer").preset)
     assert not panel.editor.agent_fields.folder.isVisible()
+
+
+# ---- 14. Where a session opens says whether the agent waits ----
+
+
+def test_opens_in_says_a_terminal_starts_right_away_and_an_app_waits(make_dialog):
+    dialog, _store = make_dialog({SettingsKey.ACTIONS: [AGENT]})
+    fields = dialog.actions_agent_card.fields
+    assert fields.mode_hint.text() == "Claude Code opens in a new session with your words."
+    hints = []
+    for button in fields.surface_bar.buttons:
+        button.click()
+        hints.append(fields.surface_hint.text())
+    assert hints == [
+        "The agent's app when it's installed, with your words filled in for you to send; "
+        "otherwise a new terminal, where the agent starts on them right away.",
+        "The agent's app opens with your words filled in, ready for you to send.",
+        "A new terminal opens, and the agent starts on your words right away.",
+    ]

@@ -704,7 +704,8 @@ def test_opencode_sessions_open_in_a_terminal(make_dialog, agents):
     saved = find_action(store.load_all_settings(), AGENT_ACTION_ID)
     assert (saved.param("agent"), saved.param("surface")) == ("opencode_cli", "auto")
     assert not app.isEnabled()
-    assert fields.surface_hint.text() == "OpenCode has no app to open, so it opens in a new terminal."
+    assert fields.surface_hint.text() == (
+        "OpenCode has no app, so it opens in a new terminal and starts on your words right away.")
 
 
 def test_more_options_opens_the_full_editor_on_the_agent_action(make_dialog):
