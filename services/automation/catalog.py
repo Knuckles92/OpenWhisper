@@ -52,6 +52,9 @@ PUBLIC_TYPES: tuple[str, ...] = tuple(t for t in EVENT_TYPES if t != EVENTS_GAP)
 SOURCES = ("hotkey", "ui", "api", "mcp", "dbus", "routing")
 #: ``mode`` of a transcription read from a file rather than dictated live.
 FILE_MODE = "file"
+#: Modes whose ``raw_text`` is the words before AI cleanup. A command's or
+#: transform's original is the user's selected text, which events never carry.
+_RAW_TEXT_MODES = frozenset({"dictation", "action", FILE_MODE})
 
 
 def known_types(types: Iterable[str]) -> list[str]:
@@ -120,8 +123,12 @@ def transcription_completed(
     """Finished text; ``fields`` are the entry's ``history_fields`` (app, language).
 
     A job of None is an upload or a re-transcription (``mode`` "file").
+    ``raw_text`` is published only where it is the words before AI cleanup,
+    never for Command Mode or a transform, whose original is the selection.
     """
     base = job_fields(job)
+    if base["mode"] not in _RAW_TEXT_MODES:
+        raw_text = None
     cleanup = None
     if cleanup_info is not None:
         cleanup = {
