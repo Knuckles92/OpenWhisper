@@ -280,7 +280,7 @@ class EventStream:
         self._ready = asyncio.Event()
         events_bus = bus()
         # Subscribe before reading the buffer, so nothing falls between the
-        # replay and the live events; duplicates are dropped by seq below.
+        # replay and the live events.
         self._subscription = events_bus.subscribe(
             self._deliver, types=self.types, label=self.label
         )
@@ -288,14 +288,19 @@ class EventStream:
             yield b"retry: 2000\n\n"
             last = events_bus.last_seq()
             replay, gap = events_bus.since(self.replay_from, types=self.types)
+            from_other_session = self.replay_from > last
             if gap:
-                # A position past the newest event is from an earlier app
-                # session; this one's numbering started again at 1.
-                missed = 1 if self.replay_from > last else self.replay_from + 1
+                # A position past the newest event is from another app
+                # session, whose numbering this one doesn't continue.
+                missed = 1 if from_other_session else self.replay_from + 1
                 yield sse_frame(gap_event(missed), with_id=False)
-            replayed = set()
+            # The stream's position only rises: a live event at or below it
+            # was replayed, or came before the stream's start (the bus's
+            # dispatch can lag behind publishing), and sending it now would
+            # repeat it or put it after newer ones.
+            position = 0 if from_other_session else self.replay_from
             for event in replay:
-                replayed.add(event.seq)
+                position = max(position, event.seq)
                 yield sse_frame(event)
 
             next_ping = loop.time() + PING_INTERVAL_S
@@ -310,7 +315,7 @@ class EventStream:
                     # The client fell too far behind: say where it lost track
                     # and end, so it reconnects with Last-Event-ID and replays.
                     missed = next(
-                        (e.seq for e in self._pending if e.seq not in replayed),
+                        (e.seq for e in self._pending if e.seq > position),
                         self._overflow_seq,
                     )
                     self._pending.clear()
@@ -318,7 +323,8 @@ class EventStream:
                     return
                 if self._pending:
                     event = self._pending.popleft()
-                    if event.seq not in replayed:
+                    if event.seq > position:
+                        position = event.seq
                         yield sse_frame(event)
                     continue
                 if now >= next_ping:
