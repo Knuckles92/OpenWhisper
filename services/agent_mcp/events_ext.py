@@ -173,7 +173,7 @@ _NULLABLE_TEXT = {
 _SOURCE = {
     "type": "string",
     "description": (
-        "Who started the job: the user (hotkey, ui, routing, dbus) or a program (api, mcp)."
+        "Who started the job: the user (hotkey, ui, dbus) or a program (api, mcp)."
     ),
 }
 #: The ``data`` of each public event type (services/automation/catalog.py builders).

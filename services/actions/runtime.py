@@ -64,9 +64,6 @@ MAX_PENDING = 8
 WEBHOOK_TIMEOUT_S = 5.0
 #: How much of an answer a notice shows.
 NOTICE_MAX_CHARS = 140
-#: Job sources that are another program, not the user: a failed run of
-#: theirs never overwrites the clipboard.
-PROGRAM_SOURCES = ("api", "mcp")
 #: Kinds that hand their words to the user's coding agent, which acts on them.
 AGENT_KINDS = (ActionKind.AGENT, ActionKind.CHANNEL)
 #: The fixed frame around the selection an agent action passes as context.
@@ -388,9 +385,9 @@ def _output_of(action: Action) -> str:
 
 
 def _users_own(job) -> bool:
-    """Whether the user started the job (a hotkey, Settings, routing, the
-    desktop), rather than a program over the live API or MCP."""
-    return getattr(job, "source", "") not in PROGRAM_SOURCES
+    """Whether the user started the job, rather than a program: a failed run
+    of a program's never overwrites the clipboard."""
+    return catalog.user_started(getattr(job, "source", ""))
 
 
 def _short(text: str, limit: int = NOTICE_MAX_CHARS) -> str:

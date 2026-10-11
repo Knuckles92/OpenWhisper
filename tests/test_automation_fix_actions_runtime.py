@@ -170,7 +170,8 @@ def _refuse_links(monkeypatch):
     monkeypatch.setattr(launch, "handler_available", lambda scheme: True)
 
 
-@pytest.mark.parametrize("source", ["api", "mcp"])
+# An unknown source counts as a program's, as everywhere (catalog.user_started).
+@pytest.mark.parametrize("source", ["api", "mcp", ""])
 def test_a_failed_run_from_a_program_leaves_the_clipboard_alone(h, monkeypatch, source):
     _refuse_links(monkeypatch)
     h.add(Action("l1", "Ask Claude", ActionKind.OPEN_LINK,
@@ -194,7 +195,7 @@ def test_a_missing_action_run_from_a_program_is_not_copied(h, source):
     assert _ran(h)[-1]["message"] == runtime.MISSING_MESSAGE
 
 
-@pytest.mark.parametrize("source", ["hotkey", "routing", "ui", "dbus"])
+@pytest.mark.parametrize("source", ["hotkey", "ui", "dbus"])
 def test_a_failed_run_the_user_started_still_copies_the_words(h, monkeypatch, source):
     _refuse_links(monkeypatch)
     h.add(Action("l1", "Ask Claude", ActionKind.OPEN_LINK,

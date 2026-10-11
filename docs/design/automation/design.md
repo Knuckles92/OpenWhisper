@@ -273,7 +273,7 @@ return the `data` dict, so every publisher produces the same shape.
 
 `mode` is `dictation | command | transform | action | file`. `app` is
 `{"id","name","category"}` or null. `cleanup` is `{"provider","model","level"}`
-or null. `source` is `hotkey | ui | api | mcp | dbus | routing`. `raw_text`
+or null. `source` is `hotkey | ui | api | mcp | dbus`. `raw_text`
 is null when cleanup did not change the text. `EVENT_TYPES: dict[str, str]`
 maps every type to a one-line description (UI checklists, docs, events/list).
 `PUBLIC_TYPES` excludes `events.gap`.

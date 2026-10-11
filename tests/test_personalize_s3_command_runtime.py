@@ -472,6 +472,7 @@ def test_a_transform_rewrites_the_selection(h):
 
     (_begin, job, source), = _begun(h)
     assert job.mode == JobMode.TRANSFORM and source == "Transform · Polish"
+    assert job.source == "hotkey"  # only its shortcut starts a transform
     assert job.snapshot().identity == NOTEPAD
     assert _statuses(h) == ["Rewriting · Polish..."]
     _settle(lambda: h.runtime.events[-1][0] == "submit")

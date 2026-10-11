@@ -104,7 +104,7 @@ class DictationJob:
     id: str = field(default_factory=lambda: secrets.token_hex(8))
     #: The saved action an ACTION job runs.
     action_id: str = ""
-    #: Who started it: hotkey, ui, api, mcp, dbus or routing.
+    #: Who started it: hotkey, ui, api, mcp or dbus (catalog.SOURCES).
     source: str = ""
     #: "hotkey" when recorded with Route by voice, "auto" when a dictation
     #: may be routed by the action name it starts with; "" never routes.

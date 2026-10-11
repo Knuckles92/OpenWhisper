@@ -350,6 +350,8 @@ class CommandRuntime:
             focus=focus if resolve_app_context_enabled(settings) else None,
             selection=selection,
             target=focus,
+            # Transforms run only from their shortcuts.
+            source="hotkey",
         )
         runtime = self.controller.transcription_runtime
         if not runtime.begin_rewrite_job(job, source_name=f"Transform · {transform.name}"):

@@ -49,7 +49,7 @@ EVENT_TYPES: dict[str, str] = {
 PUBLIC_TYPES: tuple[str, ...] = tuple(t for t in EVENT_TYPES if t != EVENTS_GAP)
 
 #: Values of ``source``: who started the job.
-SOURCES = ("hotkey", "ui", "api", "mcp", "dbus", "routing")
+SOURCES = ("hotkey", "ui", "api", "mcp", "dbus")
 #: Sources where the user started the job; any other is a program's request.
 USER_SOURCES = frozenset({"hotkey", "ui", "dbus"})
 #: ``channel.message`` ``origin``: the user's own words, or words a program
