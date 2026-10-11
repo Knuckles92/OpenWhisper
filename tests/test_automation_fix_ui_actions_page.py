@@ -518,3 +518,21 @@ def test_an_editor_opens_with_its_name_field_in_view(make_dialog, opened):
     assert editor.height() > area.viewport().height()  # Too tall to show whole.
     assert _in_view(dialog, editor.title_label)
     assert _in_view(dialog, editor.name_edit)
+
+
+# ---- 9. The working folder is for sessions only ----
+
+
+def test_the_working_folder_shows_only_for_a_session(make_dialog):
+    agent = {**AGENT, "params": {"agent": "claude_code", "folder": os.getcwd()}}
+    dialog, store = make_dialog({SettingsKey.ACTIONS: [agent]})
+    fields = dialog.actions_agent_card.fields
+    assert fields.folder.isVisible()
+    fields.mode_bar.buttons[1].click()
+    assert not fields.folder.isVisible()
+    # Kept for when you switch back to a session.
+    assert stored(store, AGENT_ACTION_ID).param("folder") == os.getcwd()
+    panel = dialog.actions_panel
+    panel.add_action()
+    panel.start_from_preset(panel.gallery.tile("quick-answer").preset)
+    assert not panel.editor.agent_fields.folder.isVisible()

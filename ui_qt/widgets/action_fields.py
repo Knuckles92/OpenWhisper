@@ -712,6 +712,13 @@ class AgentFields(QWidget):
         session.addWidget(self.surface_bar)
         self.surface_hint = hint_label("")
         session.addWidget(self.surface_hint)
+        # Only a session starts somewhere: a quick answer runs with no files.
+        session.addSpacing(4)
+        session.addWidget(field_label("Working folder"))
+        self.folder = PathField("Working folder", folder=True,
+                                placeholder="Optional · where the agent starts")
+        self.folder.changed.connect(self._emit_changed)
+        session.addWidget(self.folder)
         layout.addWidget(self.session_box)
 
         self.answer_box = QWidget()
@@ -737,13 +744,6 @@ class AgentFields(QWidget):
         model_column.addWidget(self.model_edit)
         answer.addLayout(model_column, 1)
         layout.addWidget(self.answer_box)
-
-        layout.addSpacing(4)
-        layout.addWidget(field_label("Working folder"))
-        self.folder = PathField("Working folder", folder=True,
-                                placeholder="Optional · where the agent starts")
-        self.folder.changed.connect(self._emit_changed)
-        layout.addWidget(self.folder)
 
         layout.addSpacing(4)
         self.selection_row = SwitchRow(
