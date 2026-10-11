@@ -38,6 +38,7 @@ class Signal:
 class FakeUI:
     def __init__(self):
         self.stages, self.notices, self.statuses, self.copied = [], [], [], []
+        self.scratchpad = []
         self.main_window = SimpleNamespace(clear_partial_transcription=lambda: None)
 
     def set_transcript(self, text, raw=None):
@@ -73,7 +74,7 @@ class FakeUI:
         return True
 
     def show_in_scratchpad(self, text):
-        pass
+        self.scratchpad.append(text)
 
 
 class FakeService(ContextCaptureService):
@@ -180,7 +181,8 @@ def test_a_quick_answer_pastes_while_the_job_still_saves_its_history(h, monkeypa
 
     monkeypatch.setattr(programs, "run_once", run_once)
 
-    job_id = h.runtime.run_action_text("fix", "fix my grammer", source="api")
+    # The user's run: only theirs paste.
+    job_id = h.runtime.run_action_text("fix", "fix my grammer", source="ui")
     _run(h.jobs)  # shaping on the transcription executor, then delivery
 
     _wait(lambda: h.bus.recent(types=[catalog.ACTION_RAN]))
@@ -207,7 +209,7 @@ def test_the_job_slot_frees_while_a_slow_action_still_runs(h, monkeypatch):
 
     monkeypatch.setattr(programs, "run_once", run_once)
 
-    h.runtime.run_action_text("fix", "words", source="api")
+    h.runtime.run_action_text("fix", "words", source="ui")
     _run(h.jobs)
     _run(h.saves)
 
@@ -215,3 +217,17 @@ def test_the_job_slot_frees_while_a_slow_action_still_runs(h, monkeypatch):
     assert h.ui.statuses[-1] == "Fix grammar · working…"
     release.set()
     _wait(lambda: h.ui.stages == ["late answer"])
+
+
+def test_a_programs_answer_is_shown_in_the_scratchpad_never_pasted(h, monkeypatch):
+    monkeypatch.setattr(programs, "run_once", lambda *a, **k: (0, b"Fixed my grammar.", ""))
+
+    h.runtime.run_action_text("fix", "fix my grammer", source="api")
+    _run(h.jobs)
+    _wait(lambda: h.bus.recent(types=[catalog.ACTION_RAN]))
+
+    assert h.ui.stages == [] and h.ui.copied == []
+    h.paste.assert_not_called()
+    assert h.ui.scratchpad == ["Fixed my grammar."]
+    assert h.bus.recent(types=[catalog.ACTION_RAN])[0].data["output"] == "scratchpad"
+    _run(h.saves)

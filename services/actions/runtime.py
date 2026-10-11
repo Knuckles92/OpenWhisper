@@ -15,9 +15,11 @@ what they started); a run it is too late to stop finishes, reports what
 happened, and its answer goes nowhere.
 
 A run the user started that fails leaves the words on the clipboard, so
-nothing said is lost; one a program started over the live API or MCP only
-reports the failure (status, notice and ``action.ran``). Dictated text, links, program paths and arguments, selections, secrets and
-replies are never logged.
+nothing said is lost. One a program started over the live API or MCP never
+touches the clipboard or types into an app: an answer it would paste or copy
+goes to the Scratchpad, and a failure is only reported (status, notice and
+``action.ran``). Dictated text, links, program paths and arguments,
+selections, secrets and replies are never logged.
 """
 
 from __future__ import annotations
@@ -375,19 +377,29 @@ def _runs(runs: list) -> str:
     return runs[0].action.name if len(runs) == 1 else f"{len(runs)} actions"
 
 
-def _output_of(action: Action) -> str:
-    """Where an action's answer goes: an Output value."""
+def _users_own(job) -> bool:
+    """Whether the user started the job, rather than a program (the live API
+    or MCP): only the user's runs copy to the clipboard or paste into an app."""
+    return catalog.user_started(getattr(job, "source", ""))
+
+
+def _output_of(run: _Run) -> str:
+    """Where a run's answer goes: an Output value.
+
+    A program's run never copies or pastes: an answer it would put on the
+    clipboard or paste into the user's app goes to the Scratchpad, which
+    shows it without acting on it.
+    """
+    action = run.action
     answers = action.kind in (ActionKind.WEBHOOK, ActionKind.PROGRAM) or (
         action.kind == ActionKind.AGENT and action.param("mode") == AgentMode.ASK
     )
     output = action.param("output") if answers else Output.NONE
-    return output if output in Output.ALL else Output.NONE
-
-
-def _users_own(job) -> bool:
-    """Whether the user started the job, rather than a program: a failed run
-    of a program's never overwrites the clipboard."""
-    return catalog.user_started(getattr(job, "source", ""))
+    if output not in Output.ALL:
+        return Output.NONE
+    if output in (Output.PASTE, Output.CLIPBOARD) and not _users_own(run.job):
+        return Output.SCRATCHPAD
+    return output
 
 
 def _short(text: str, limit: int = NOTICE_MAX_CHARS) -> str:
@@ -570,7 +582,11 @@ class ActionRuntime:
 
     def _start(self, run: _Run) -> None:
         action, kind = run.action, run.action.kind
-        if kind == ActionKind.CLIPBOARD:
+        if kind == ActionKind.CLIPBOARD and not _users_own(run.job):
+            # Like an answer a program's run would copy (_output_of).
+            self.controller.ui_controller.show_in_scratchpad(run.text)
+            self._finish(run, ActionResult(True, "Put in the Scratchpad"))
+        elif kind == ActionKind.CLIPBOARD:
             copied = self._copy(run.text, run.html)
             self._finish(run, ActionResult(copied, "Copied" if copied else "Couldn't copy the words"))
         elif kind == ActionKind.SCRIPTS:
@@ -689,7 +705,7 @@ class ActionRuntime:
     def _route(self, run: _Run, result: ActionResult) -> tuple[bool, str, str]:
         """Put the answer where the action sends it; ``(ok, message, where it went)``."""
         name = run.action.name
-        output = _output_of(run.action)
+        output = _output_of(run)
         answer = (result.output or "").strip()
         if output == Output.NONE or not answer:
             message = result.message or f"Sent to {name}"
@@ -707,8 +723,9 @@ class ActionRuntime:
         if output == Output.NOTICE:
             shown, message = _short(answer), f"Showed {name}'s answer"
             # A notice holds only the start of a long answer; the clipboard
-            # keeps all of it.
-            if len(" ".join(answer.split())) > NOTICE_MAX_CHARS and self._copy(answer):
+            # keeps all of it, for the user's own runs.
+            if (len(" ".join(answer.split())) > NOTICE_MAX_CHARS and _users_own(run.job)
+                    and self._copy(answer)):
                 shown, message = shown + FULL_ANSWER_COPIED, message + FULL_ANSWER_COPIED
             self._say(run, shown, ok=True)
             return True, message, Output.NOTICE
@@ -721,7 +738,10 @@ class ActionRuntime:
         return False, message, Output.NONE
 
     def _paste(self, run: _Run, answer: str) -> tuple[bool, str, str]:
-        """Paste ``answer`` only into the app the job started in, else copy it."""
+        """Paste ``answer`` only into the app the job started in, else copy it.
+
+        Only the user's runs get here (``_output_of``).
+        """
         from services.dictation_pipeline import PasteTarget, paste_target
 
         name = run.action.name
