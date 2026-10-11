@@ -179,10 +179,11 @@ def begin_job(mode: str, settings: Mapping, *, selection=None, action_id: str = 
                     mode == JobMode.ACTION and include_selection
                 ),
             )
-        elif mode != JobMode.DICTATION:
+        elif mode != JobMode.DICTATION or route:
             # A rewrite pastes even with auto-paste off, and an action's
-            # answer may be pasted later, so each still learns where it
-            # started (see DictationJob.target).
+            # answer may be pasted later (a dictation may become an action
+            # once routed), so each still learns where it started (see
+            # DictationJob.target).
             target = focus_context.get_service().request(include_text=False)
     except Exception:
         logger.debug("Focus capture could not start", exc_info=True)

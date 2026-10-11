@@ -367,3 +367,22 @@ def test_failures_are_published(h):
     h.runtime.on_transcription_error("engine exploded")
     failed, = _events(h, "transcription.failed")
     assert failed.data == {"job_id": job.id, "error": "engine exploded"}
+
+
+def test_a_dictation_that_may_be_routed_learns_its_app_without_app_awareness(monkeypatch):
+    from services import dictation_pipeline
+    from services.settings import SettingsKey as Key
+
+    requests = []
+
+    class Service(FakeService):
+        def request(self, *, include_text, include_selection=False):
+            requests.append(include_text)
+            return super().request(include_text=include_text)
+
+    focus_context.set_service(Service())
+    off = {Key.APP_CONTEXT_ENABLED: False}
+    plain = dictation_pipeline.begin_job(JobMode.DICTATION, off)
+    assert plain.target is None and requests == []
+    routed = dictation_pipeline.begin_job(JobMode.DICTATION, off, route="hotkey")
+    assert routed.target is not None and routed.focus is None and requests == [False]
