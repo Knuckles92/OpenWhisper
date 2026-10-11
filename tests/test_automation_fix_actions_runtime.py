@@ -384,6 +384,46 @@ def test_ordinary_markup_in_a_selection_is_left_alone():
     assert f"<selected_text>\n{code}\n</selected_text>" in _prompt(code)
 
 
+# -- finding 12: open-a-link actions respect the link limits ----------------------------------
+
+
+def test_words_too_long_for_the_claude_app_are_not_sent_cut_short(h, monkeypatch):
+    from services.actions import launch
+
+    opened = []
+    monkeypatch.setattr(launch, "open_uri", opened.append)
+    h.add(Action("l1", "Ask Claude", ActionKind.OPEN_LINK,
+                 {"template": "claude://claude.ai/new?q={text}"}))
+
+    h.rt.deliver(_job("l1"), "a " * (launch.CLAUDE_APP_TEXT_MAX // 2) + "b",
+                 raw_text=None, html="")
+    ran = base._finished(h)
+
+    assert opened == []
+    assert ran["message"] == ("Ask Claude: That's too long for the Claude app "
+                              "(14,000 characters at most) — copied instead")
+
+    h.rt.deliver(_job("l1"), "a " * (launch.CLAUDE_APP_TEXT_MAX // 2), raw_text=None, html="")
+    base._finished(h, 2)
+    assert len(opened) == 1
+
+
+def test_a_missing_app_is_named_when_an_action_opens_a_link(h, monkeypatch):
+    from services.actions import launch
+
+    monkeypatch.setattr(launch, "handler_available", lambda scheme: False)
+    monkeypatch.setattr(launch, "_open_with", lambda command: pytest.fail("opened"))
+    monkeypatch.setattr(launch.os, "startfile", lambda uri: pytest.fail("opened"), raising=False)
+    h.add(Action("l1", "ChatGPT app", ActionKind.OPEN_LINK,
+                 {"template": "codex://new?prompt={text}"}))
+
+    h.rt.deliver(_job("l1"), "hello", raw_text=None, html="")
+    ran = base._finished(h)
+
+    assert ran["message"] == ("ChatGPT app: No app on this computer opens codex: links. "
+                              "Install the ChatGPT app — copied instead")
+
+
 def test_only_scripts_carry_the_words_in_action_ran(h):
     h.add(Action("c1", "Copy only", ActionKind.CLIPBOARD))
     h.rt.deliver(_job("c1"), "secret words", raw_text=None, html="")

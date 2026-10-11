@@ -40,11 +40,11 @@ logger = logging.getLogger(__name__)
 #: The whole system prompt of an ask.
 ASK_INSTRUCTION = "Answer briefly in plain text. You can't use tools or files."
 #: Claude Desktop cuts ``q`` near 14,000 characters; longer words go elsewhere.
-CLAUDE_APP_TEXT_MAX = 14_000
+CLAUDE_APP_TEXT_MAX = launch.CLAUDE_APP_TEXT_MAX
 #: Claude Code's own ``claude-cli://open`` handler takes at most 5,000.
 CLAUDE_CLI_TEXT_MAX = 5_000
 #: A link travels on the handler's command line (32,767 on Windows).
-LINK_MAX_CHARS = 30_000
+LINK_MAX_CHARS = launch.LINK_MAX_CHARS
 
 _MODEL_RE = re.compile(r"[\w.:/@\[\]+-]{1,200}")
 _HELP_TIMEOUT_S = 15.0

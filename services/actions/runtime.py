@@ -162,9 +162,13 @@ def _result_relay() -> _ResultRelay:
 
 # -- blocking work (worker threads; never touches the runtime or Qt) ------------
 
-def _open_link(uri: str) -> ActionResult:
-    from services.actions.launch import LaunchError, open_uri
+def _open_link(uri: str, words: str) -> ActionResult:
+    from services.actions.launch import CLAUDE_APP_TEXT_MAX, LaunchError, open_uri
 
+    # The Claude app quietly cuts longer words short.
+    if uri.split(":", 1)[0].lower() == "claude" and len(words) > CLAUDE_APP_TEXT_MAX:
+        return ActionResult(False, "That's too long for the Claude app "
+                                   f"({CLAUDE_APP_TEXT_MAX:,} characters at most)")
     try:
         open_uri(uri)
     except LaunchError as exc:
@@ -516,7 +520,7 @@ class ActionRuntime:
             except ValueError as exc:
                 self._finish(run, ActionResult(False, str(exc)))
                 return
-            self._submit(run, partial(_open_link, uri))
+            self._submit(run, partial(_open_link, uri, run.text))
         elif kind == ActionKind.WEBHOOK:
             self._submit(run, partial(
                 _webhook, action.param("url") or "", self._webhook_payload(run), action.id))
