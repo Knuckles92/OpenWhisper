@@ -466,6 +466,23 @@ def test_without_settings_the_defaults_apply(tmp_path, control, bus):
         assert denied.status_code == 403
 
 
+def test_the_contract_lists_the_live_routes(client):
+    schema = client.get("/openapi.json", headers=AUTH).json()
+    operations = {
+        operation["operationId"]
+        for path in schema["paths"].values()
+        for operation in path.values()
+    }
+    assert {
+        "get_live_state", "stream_events", "list_actions", "run_action", "start_recording",
+        "stop_recording", "cancel_recording", "create_filter_lease", "renew_filter_lease",
+        "delete_filter_lease", "notify_user",
+    } <= operations
+    run = schema["paths"]["/v1/actions/{action_id}/run"]["post"]["requestBody"]
+    text = run["content"]["application/json"]["schema"]["properties"]["text"]
+    assert (run["required"], text["maxLength"]) == (True, api.MAX_ACTION_TEXT)
+
+
 def test_types_and_resume_positions_parse():
     assert api.parse_types(None) is None
     assert api.parse_types(" , ") is None

@@ -189,6 +189,19 @@ def _string(body: Mapping[str, Any], key: str, *, required: bool, max_chars: int
     return value
 
 
+def _json_body(properties: Mapping[str, dict], *required: str) -> dict:
+    """``openapi_extra`` describing a body that ``read_json_body`` reads."""
+    schema = {"type": "object", "properties": dict(properties), "required": list(required)}
+    return {"requestBody": {
+        "required": bool(required),
+        "content": {"application/json": {"schema": schema}},
+    }}
+
+
+def _text_field(max_chars: int, description: str) -> dict:
+    return {"type": "string", "minLength": 1, "maxLength": max_chars, "description": description}
+
+
 def _lease_dict(lease) -> dict:
     from services.automation import filters
 
@@ -414,7 +427,13 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
             "actions", lambda: {"actions": require_app_control().list_actions()}, status=200
         )
 
-    @router.post("/v1/actions/{action_id}/run", status_code=202, operation_id="run_action")
+    @router.post(
+        "/v1/actions/{action_id}/run", status_code=202, operation_id="run_action",
+        openapi_extra=_json_body(
+            {"text": _text_field(MAX_ACTION_TEXT, "The words, as if the user had said them.")},
+            "text",
+        ),
+    )
     async def run_action(action_id: Id, request: Request):
         """Run an action on text, as if the user had said it. Body: ``{"text"}``."""
         try:
@@ -429,7 +448,12 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
 
         return await respond("run", work)
 
-    @router.post("/v1/recording/start", status_code=202, operation_id="start_recording")
+    @router.post(
+        "/v1/recording/start", status_code=202, operation_id="start_recording",
+        openapi_extra=_json_body({"action_id": _text_field(
+            MAX_ID_CHARS, "Record words for this action; leave out for a dictation."
+        )}),
+    )
     async def start_recording(request: Request):
         """Start recording a dictation, or words for ``{"action_id"}``."""
         try:
@@ -467,7 +491,17 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
 
         return await respond("cancel", work)
 
-    @router.post("/v1/filters", status_code=201, operation_id="create_filter_lease")
+    @router.post(
+        "/v1/filters", status_code=201, operation_id="create_filter_lease",
+        openapi_extra=_json_body(
+            {
+                "url": _text_field(MAX_URL_CHARS, "Your filter's address on this computer."),
+                "stage": {"type": "string", "enum": ["before_cleanup", "after_cleanup"]},
+                "timeout_ms": {"type": "integer", "description": "How long to wait for a reply."},
+            },
+            "url", "stage",
+        ),
+    )
     async def create_filter(request: Request):
         """Lease a text filter: ``{"url", "stage", "timeout_ms"?}``; renew within 60 s."""
         try:
@@ -518,7 +552,16 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
 
         return await respond("filters", work, status=204)
 
-    @router.post("/v1/notify", status_code=202, operation_id="notify_user")
+    @router.post(
+        "/v1/notify", status_code=202, operation_id="notify_user",
+        openapi_extra=_json_body(
+            {
+                "text": _text_field(MAX_NOTICE_TEXT, "The message."),
+                "title": _text_field(MAX_NOTICE_TITLE, "Shown before the message."),
+            },
+            "text",
+        ),
+    )
     async def notify(request: Request):
         """Show a short message near the pointer: ``{"text", "title"?}``."""
         try:
