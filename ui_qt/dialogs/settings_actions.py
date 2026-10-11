@@ -111,7 +111,7 @@ def build(dialog, layout) -> None:
     dialog.actions_routing_dictation_tile.checkbox.toggled.connect(
         lambda on: _on_routing_toggled(dialog, "voice_routing_on_dictation", on))
     dialog._tile_group(layout, "", [dialog.actions_routing_tile, dialog.actions_routing_dictation_tile])
-    # Spoken routing's own words for where it stands: off, what it still
+    # Route by voice's own words for where it stands: off, what it still
     # needs, or ready (services/actions/routing.py).
     status = dialog.actions_routing_status = StatusLine(
         "Fast judgments", "Open Settings → Meeting Mode → Fast judgments")
