@@ -122,6 +122,8 @@ class SettingsKey:
     UI_THEME: Final[str] = "ui_theme"
     # Presentation of the same settings: a curated Basic view or the full rail.
     SETTINGS_VIEW: Final[str] = "settings_view"
+    # Optional dictation onboarding; absence on an established install is not new.
+    GUIDED_SETUP_STATE: Final[str] = "guided_setup_state"
     # Legacy keys kept for reading/migrating older settings files
     STREAMING_OVERLAY_ENABLED: Final[str] = "streaming_overlay_enabled"
     STREAMING_PASTE_ENABLED: Final[str] = "streaming_paste_enabled"

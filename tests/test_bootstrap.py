@@ -41,10 +41,14 @@ class _FakeUIController:
         self.device_info = None
         self.cleaned_up = False
         self.apply_error_checked = False
+        self.guided_setup_offered = False
         self.agent_data_changed = SimpleNamespace(emit=lambda *_args: None)
 
     def show_main_window(self):
         self.show_main_window_called = True
+
+    def offer_guided_setup(self):
+        self.guided_setup_offered = True
 
     def set_device_info(self, device_info, ready=None):
         self.device_info = device_info
@@ -148,6 +152,7 @@ class TestBootstrap:
 
         assert result == 123
         assert loading_screen.destroyed
+        assert ui_controller.guided_setup_offered
         assert ui_controller.show_main_window_called
         # Device info is filled in after the background Whisper load, not
         # before the window appears.

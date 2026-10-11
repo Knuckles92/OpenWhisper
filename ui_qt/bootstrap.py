@@ -281,8 +281,10 @@ def main() -> int:
         process_qt_events()
 
         # Before the main window shows the engine an existing install uses.
+        from services.guided_setup import initialize as initialize_guided_setup
         from services.settings import keep_unchosen_engine
 
+        initialize_guided_setup()
         keep_unchosen_engine()
         ui_controller = UIController()
         profiler.mark("ui_controller_created")
@@ -321,6 +323,8 @@ def main() -> int:
         # run after the window is visible — never on the splash path.
         app_controller.setup_backup()
         app_controller.notify_main_ui_ready()
+        if not health_token:
+            ui_controller.offer_guided_setup()
         from services.agent_mcp.runtime import runtime as mcp_runtime
         from services.settings import settings_manager
 
