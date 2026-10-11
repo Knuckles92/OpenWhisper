@@ -183,6 +183,16 @@ def subscribe_params(name, url, secret, **extra):
     }
 
 
+def status_eventually(client, params, predicate, timeout=5.0):
+    """deliveryStatus from refreshing, once the delivery worker has recorded what we expect."""
+    deadline = time.monotonic() + timeout
+    while True:
+        status = result_of(rpc(client, "events/subscribe", params))["deliveryStatus"]
+        if predicate(status) or time.monotonic() > deadline:
+            return status
+        time.sleep(0.02)
+
+
 def discover_capabilities(client):
     return result_of(rpc(client, "server/discover"))["capabilities"]
 
@@ -335,13 +345,15 @@ def test_subscribe_verifies_then_delivers_signed_filtered_events(client, bus, re
     assert credentials.store().get(events_ext.secret_name(sub_id)) == secret
     assert events_ext.subscription_count() == 1
 
+    status = status_eventually(client, params, lambda status: "lastDeliveryAt" in status)
+    assert status["lastDeliveryAt"] and "lastError" not in status
+
     # Subscribing again is a refresh: same id, argument order ignored, the
     # verified URL is not challenged again, and the lifetime is clamped.
     refreshed = result_of(rpc(client, "events/subscribe", {
         **params, "arguments": {"modes": ["dictation"]}, "ttlMs": 1000,
     }))
     assert refreshed["id"] == sub_id
-    assert refreshed["deliveryStatus"]["lastDeliveryAt"]
     assert events_ext._parse_iso(refreshed["refreshBefore"]) <= time.time() + 61
     assert len(receiver.challenges()) == 1
     assert events_ext.subscription_count() == 1
@@ -374,7 +386,7 @@ def test_retries_transient_failures_then_stops_on_gone(client, bus, receiver, mo
     receiver.wait_for_deliveries(9)
     time.sleep(0.3)
     assert len(receiver.deliveries()) == 9
-    status = result_of(rpc(client, "events/subscribe", params))["deliveryStatus"]
+    status = status_eventually(client, params, lambda status: status.get("lastError") == "http_5xx")
     assert status["lastError"] == "http_5xx"
     assert status["failedSince"]
 
@@ -532,11 +544,12 @@ def test_limits_on_subscriptions_and_payload_size(client, bus, receiver, monkeyp
     assert "result" in rpc(client, "events/subscribe", first)
 
     publish_completed(bus, "x" * (events_ext.MAX_PAYLOAD_BYTES + 1))
+    status = status_eventually(client, first, lambda status: "lastError" in status)
+    assert status["lastError"] == "payload_too_large"
     small = publish_completed(bus, "fits")
     [(_, _, _, payload)] = receiver.wait_for_deliveries(1)
     assert payload["eventId"] == small.id
-    status = result_of(rpc(client, "events/subscribe", first))["deliveryStatus"]
-    # The small one succeeded after the large one was refused.
+    status = status_eventually(client, first, lambda status: "lastError" not in status)
     assert "lastError" not in status and status["lastDeliveryAt"]
 
 
