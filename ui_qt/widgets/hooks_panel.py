@@ -188,6 +188,10 @@ class _Requests:
         if callback is not None:
             callback(result, error)
 
+    def forget(self) -> None:
+        """Drop the answers still on their way; they arrive to nothing."""
+        self._waiting.clear()
+
     def in_background(self, call: Callable[[], object], name: str,
                       callback: Callable[[object, Optional[str]], None]) -> None:
         """Run ``call()`` on a worker; ``callback(result, error)`` runs on the Qt thread."""
@@ -553,6 +557,7 @@ class _Editor(QFrame):
         raise NotImplementedError
 
     def show_item(self, item, *, saved: bool) -> None:
+        self._start_over()
         self.source = item
         self.saved = saved
         self.name_edit.setText(item.name)
@@ -570,8 +575,19 @@ class _Editor(QFrame):
             self.baseline = replace(self.baseline, enabled=enabled)
 
     def clear(self) -> None:
+        self._start_over()
         self.source = self.baseline = None
         self.saved = False
+
+    def _start_over(self) -> None:
+        """One editor serves every item, and a test or secret still on its way
+        was asked for what it showed before (or before a save changed it), so
+        its answer is dropped rather than shown, or copied, here."""
+        self._requests.forget()
+        self._show_idle()
+
+    def _show_idle(self) -> None:
+        """Buttons and results as they are with nothing on its way."""
 
     def item_id(self) -> str:
         return self.source.id if self.source is not None else ""
@@ -665,9 +681,13 @@ class WebhookEditor(_Editor):
         self.url_edit.setText(hook.url)
         self.events.set_events(hook.events)
         self.extras.setVisible(self.saved)
+        self._update_note()
+
+    def _show_idle(self) -> None:
+        for button in (self.copy_secret, self.rotate_secret, self.test_button):
+            button.setEnabled(True)
         self.secret_chip.show_result("", "muted")
         self.test_chip.show_result("", "muted")
-        self._update_note()
 
     def draft(self) -> models.Webhook:
         return models.Webhook(
@@ -839,6 +859,9 @@ class ProgramEditor(_ProgramFields, _Editor):
         self.events.set_events(program.events)
         self.timeout.setValue(int(program.timeout_s))
         self.extras.setVisible(self.saved)
+
+    def _show_idle(self) -> None:
+        self.test_button.setEnabled(True)
         self.test_chip.show_result("", "muted")
 
     def draft(self) -> models.Program:
