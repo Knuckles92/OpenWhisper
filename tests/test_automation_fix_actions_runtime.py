@@ -152,3 +152,64 @@ def test_cancel_can_spare_the_users_own_runs(h, blocked):
     assert not mine.is_set()
     blocked.release.set()
     _wait(lambda: ("the answer: mine", True) in h.ui.notices)
+
+
+# -- finding 3: a failure copies the words only for the user's own runs ----------------------
+
+
+def _refuse_links(monkeypatch):
+    from services.actions import launch
+
+    def refuse(uri):
+        raise launch.LaunchError("No app on this computer opens that link.")
+
+    monkeypatch.setattr(launch, "open_uri", refuse)
+    monkeypatch.setattr(launch, "handler_available", lambda scheme: True)
+
+
+@pytest.mark.parametrize("source", ["api", "mcp"])
+def test_a_failed_run_from_a_program_leaves_the_clipboard_alone(h, monkeypatch, source):
+    _refuse_links(monkeypatch)
+    h.add(Action("l1", "Ask Claude", ActionKind.OPEN_LINK,
+                 {"template": "claude://claude.ai/new?q={text}"}))
+
+    h.rt.deliver(_source_job("l1", source), "words from a script", raw_text=None, html="")
+    ran = base._finished(h)
+
+    assert h.ui.copied == []
+    message = "Ask Claude: No app on this computer opens that link"
+    assert h.ui.statuses[-1] == message
+    assert (ran["ok"], ran["message"], ran["output"], ran["source"]) == (
+        False, message, "none", source)
+
+
+@pytest.mark.parametrize("source", ["api", "mcp"])
+def test_a_missing_action_run_from_a_program_is_not_copied(h, source):
+    h.rt.deliver(_source_job("gone", source), "words", raw_text=None, html="")
+
+    assert h.ui.copied == []
+    assert _ran(h)[-1]["message"] == runtime.MISSING_MESSAGE
+
+
+@pytest.mark.parametrize("source", ["hotkey", "routing", "ui", "dbus"])
+def test_a_failed_run_the_user_started_still_copies_the_words(h, monkeypatch, source):
+    _refuse_links(monkeypatch)
+    h.add(Action("l1", "Ask Claude", ActionKind.OPEN_LINK,
+                 {"template": "claude://claude.ai/new?q={text}"}))
+
+    h.rt.deliver(_source_job("l1", source), "my words", raw_text=None, html="")
+    ran = base._finished(h)
+
+    assert h.ui.copied == [("my words", "")]
+    assert ran["output"] == "clipboard" and ran["message"].endswith(runtime.COPIED_INSTEAD)
+
+
+def test_a_refusal_at_the_cap_from_the_api_is_not_copied(h, blocked):
+    for n in range(runtime.MAX_PENDING):
+        h.rt.deliver(_job("q1"), f"question {n}", raw_text=None, html="")
+    copied = list(h.ui.copied)
+
+    h.rt.deliver(_source_job("q1", "api"), "one too many", raw_text=None, html="")
+
+    assert h.ui.copied == copied
+    assert _ran(h)[-1]["message"] == runtime.BUSY_MESSAGE

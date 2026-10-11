@@ -13,8 +13,9 @@ the session; a worker only ever emits a token and a result. At most
 ``cancel`` stops them all (agents and programs are killed, late results
 dropped).
 
-A run that fails leaves the words on the clipboard, so nothing said is lost.
-Dictated text, links, program paths and arguments, selections, secrets and
+A run the user started that fails leaves the words on the clipboard, so
+nothing said is lost; one a program started over the live API or MCP only
+reports the failure (status, notice and ``action.ran``). Dictated text, links, program paths and arguments, selections, secrets and
 replies are never logged.
 """
 
@@ -57,6 +58,9 @@ MAX_PENDING = 8
 WEBHOOK_TIMEOUT_S = 5.0
 #: How much of an answer a notice shows.
 NOTICE_MAX_CHARS = 140
+#: Job sources that are another program, not the user: a failed run of
+#: theirs never overwrites the clipboard.
+PROGRAM_SOURCES = ("api", "mcp")
 #: The fixed frame around the selection an agent action passes as context.
 CONTEXT_OPEN = '<context source="OpenWhisper">'
 CONTEXT_CLOSE = "</context>"
@@ -323,6 +327,12 @@ def _output_of(action: Action) -> str:
     return output if output in Output.ALL else Output.NONE
 
 
+def _users_own(job) -> bool:
+    """Whether the user started the job (a hotkey, Settings, routing, the
+    desktop), rather than a program over the live API or MCP."""
+    return getattr(job, "source", "") not in PROGRAM_SOURCES
+
+
 def _short(text: str, limit: int = NOTICE_MAX_CHARS) -> str:
     flat = " ".join(text.split())
     return flat if len(flat) <= limit else flat[:limit - 1].rstrip() + "…"
@@ -541,8 +551,11 @@ class ActionRuntime:
             return
         if not result.ok:
             message, where = result.message.rstrip("."), Output.NONE
-            # A copy action's failure is the copy itself.
-            if run.action.kind != ActionKind.CLIPBOARD and self._copy(run.text, run.html):
+            # Words the user spoke or typed are kept on the clipboard; a
+            # program's are not its to overwrite the clipboard with. A copy
+            # action's failure is the copy itself.
+            if (run.action.kind != ActionKind.CLIPBOARD and _users_own(run.job)
+                    and self._copy(run.text, run.html)):
                 message, where = message + COPIED_INSTEAD, Output.CLIPBOARD
             self._say(message, ok=False)
             self._publish_ran(run, False, message, where)
