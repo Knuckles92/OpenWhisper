@@ -952,7 +952,7 @@ LIVE_ENDPOINTS = (
     ("GET", "/v1/actions", "Your saved actions"),
     ("POST", "/v1/actions/{id}/run", "Run an action with text"),
     ("POST", "/v1/recording/start", "Start dictating; also /stop and /cancel"),
-    ("POST", "/v1/filters", "Change the words for a minute at a time"),
+    ("POST", "/v1/filters", "Change the words for a minute; renew or DELETE /v1/filters/{id}"),
     ("POST", "/v1/notify", "Show a short notice"),
 )
 
@@ -1169,9 +1169,16 @@ class LiveAutomationSection(QWidget):
             chip="Research preview",
         )
         self.sessions_dot, self.sessions_label = self._status_line(
-            layout, "Claude Code sessions listening"
+            layout, "Claude Code sessions connected to the channel"
         )
-        layout.addWidget(McpSettingsPage._label("1. Add OpenWhisper to your project's .mcp.json", "mcpSectionLabel"))
+        layout.addWidget(McpSettingsPage._label("1. Add OpenWhisper to a project's .mcp.json", "mcpSectionLabel"))
+        # A session that loads the entry without the channel flag still
+        # connects (and counts) but Claude Code drops what it is sent.
+        self.channel_scope = McpSettingsPage._detail(
+            "Only in projects you start with the command below, not in your user-wide "
+            "settings. A session started without it connects but can't receive messages."
+        )
+        layout.addWidget(self.channel_scope)
         self.channel_config = QPlainTextEdit()
         self.channel_config.setObjectName("mcpChannelConfig")
         self.channel_config.setReadOnly(True)
@@ -1181,7 +1188,10 @@ class LiveAutomationSection(QWidget):
         self.channel_config.setMaximumHeight(230)
         self.copy_channel_config = self._copy_button("Copy .mcp.json entry")
         self.copy_channel_config.clicked.connect(
-            lambda: self._copy(self.channel_config.toPlainText(), "Entry copied. Merge it into .mcp.json.")
+            lambda: self._copy(
+                self.channel_config.toPlainText(),
+                "Entry copied. Merge it into that project's .mcp.json.",
+            )
         )
         self.channel_preview = _Disclosure("Preview entry", inline=True)
         self.channel_preview.body_layout.addWidget(self.channel_config)
@@ -1197,7 +1207,7 @@ class LiveAutomationSection(QWidget):
         self.channel_command.setAccessibleName("Claude Code channel command")
         self.copy_channel_command = self._copy_button("Copy command")
         self.copy_channel_command.clicked.connect(
-            lambda: self._copy(self.channel_command.text(), "Command copied. Run it in your project.")
+            lambda: self._copy(self.channel_command.text(), "Command copied. Run it in that project's folder.")
         )
         # Full width, so the command wraps between words rather than inside them.
         layout.addWidget(self.channel_command)
@@ -1287,7 +1297,9 @@ class LiveAutomationSection(QWidget):
         )
         self._show_count(
             self.sessions_dot, self.sessions_label, running, sessions,
-            _plural(sessions, "session") + " listening" if sessions else "No sessions listening",
+            # "Connected", not "listening": a session started without the
+            # channel flag connects too, and can't receive anything.
+            _plural(sessions, "session") + " connected" if sessions else "No sessions connected",
             "Needs MCP on",
         )
         try:

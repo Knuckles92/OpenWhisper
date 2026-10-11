@@ -470,10 +470,20 @@ class TestWebhooks:
         try:
             section.open_editor("hook01")
             editor = section.editor
-            # The engine before it lands: its own words, no fake success.
+            # An engine that can't send says why in its own words; no fake success.
+            monkeypatch.setattr(webhooks, "send_test", lambda hook_id: resolved(
+                error=RuntimeError("Webhooks aren't available yet.")))
             editor.test_button.click()
             assert editor.test_chip.text() == "Webhooks aren't available yet."
             assert editor.test_chip.property("tone") == "error"
+
+            def refuse(hook_id):
+                raise RuntimeError("Saved webhooks changed; try again.")
+
+            monkeypatch.setattr(webhooks, "send_test", refuse)
+            editor.test_button.click()
+            assert editor.test_chip.text() == "Saved webhooks changed; try again."
+            assert editor.test_button.isEnabled()
             monkeypatch.setattr(webhooks, "send_test", lambda hook_id: resolved(
                 record(None, 5000, ok=False, error="Timed out")))
             editor.test_button.click()
@@ -536,14 +546,20 @@ class TestWebhooks:
         finally:
             close(section)
 
-    def test_secret_errors_show_in_the_chip(self, store):
+    def test_secret_errors_show_in_the_chip(self, store, monkeypatch):
         store.mutate_settings(lambda s: s.__setitem__(SettingsKey.AUTOMATION_WEBHOOKS, [HOOK]))
+
+        def unavailable(hook_id):
+            # The engine's SecretUnavailable is a RuntimeError with user-facing copy.
+            raise RuntimeError("Your system's credential store is locked.")
+
+        monkeypatch.setattr(webhooks, "ensure_secret", unavailable)
         section, _changes = section_of("webhook", store)
         try:
             section.open_editor("hook01")
             section.editor.copy_secret.click()
             wait_for(lambda: section.editor.secret_chip.property("tone") == "error")
-            assert section.editor.secret_chip.text() == "Webhooks aren't available yet."
+            assert section.editor.secret_chip.text() == "Your system's credential store is locked."
             assert section.editor.copy_secret.isEnabled()
         finally:
             close(section)

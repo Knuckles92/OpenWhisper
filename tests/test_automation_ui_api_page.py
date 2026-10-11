@@ -53,6 +53,13 @@ def bus():
     events.set_bus(previous)
 
 
+@pytest.fixture(autouse=True)
+def no_subscriptions(monkeypatch):
+    """MCP Events with nothing saved; tests that need subscriptions patch over this."""
+    monkeypatch.setattr(events_ext, "subscription_count", lambda: 0)
+    monkeypatch.setattr(events_ext, "clear_subscriptions", lambda: 0)
+
+
 @pytest.fixture
 def view(tmp_path):
     view = make_view(tmp_path)
@@ -220,16 +227,24 @@ class TestChannel:
         assert QApplication.clipboard().text() == setup.claude_channel_command()
         assert live.channel_command.text() == setup.claude_channel_command()
         # The entry is a preview that opens on request.
-        assert live.channel_config.isHidden() or not live.channel_preview.body.isVisible()
+        assert live.channel_preview.body.isHidden()
+        live.channel_preview.toggle.click()
+        assert not live.channel_preview.body.isHidden()
 
-    def test_listening_sessions_are_counted(self, view, bus):
+    def test_the_card_keeps_the_entry_to_projects_started_with_the_flag(self, view):
+        scope = view.live.channel_scope.text()
+        assert "user-wide" in scope and "can't receive messages" in scope
+        assert "--dangerously-load-development-channels" in setup.claude_channel_command()
+
+    def test_connected_sessions_are_counted(self, view, bus):
         live = view.live
         assert live.sessions_label.text() == "Needs MCP on"
         running(view)
-        assert live.sessions_label.text() == "No sessions listening"
+        assert live.sessions_label.text() == "No sessions connected"
         bus.subscribe(lambda event: None, label=settings_mcp.CHANNEL_LISTENER_LABEL)
         live.refresh_live()
-        assert live.sessions_label.text() == "1 session listening"
+        # "Connected", not "listening": one started without the flag counts too.
+        assert live.sessions_label.text() == "1 session connected"
         assert live.sessions_dot.status() == EngineStatus.READY
         # A channel session is not a plain event-stream program.
         assert live.listeners_label.text() == "No programs listening yet"
