@@ -394,9 +394,17 @@ Team or Enterprise organisations must allow channels.
   cursor or the text you have selected; they only learn which app you're in.
 - Programs, terminals and agents start with your own environment, without
   the API keys OpenWhisper loaded from its `.env` (however the file spells
-  them, and even after you change or remove them there) or the folders it
-  adds to `PATH` for itself. On Windows, links open through Explorer, so
-  their apps start as they would from a link you click.
+  them, and even after you change or remove them there; a variable already
+  set to the file's value when OpenWhisper starts counts as loaded from it,
+  so only a value of your own is passed on) or the folders it adds to `PATH`
+  for itself. On Windows, links open through Explorer, so their apps start
+  as they would from a link you click. If Windows doesn't answer within 30
+  seconds, the action says so and the link isn't opened.
+- On Windows, OpenWhisper can't tell whether a link's app started: Explorer
+  reports no errors back. An action reports the link as opened once Windows
+  has taken it, even if the app then fails or you decline its elevation
+  prompt; only a link no app is registered for is reported as missing, and
+  web links always count as opened.
 - Restoring a backup turns every webhook, program, filter, and webhook,
   program and agent action off, along with every permission except following
   live events, and MCP Events. Secrets live in your system's credential store, never in

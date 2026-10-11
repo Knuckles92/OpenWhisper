@@ -692,10 +692,15 @@ Deviations the streams made, and why; the code is the reference.
   folder view's top-level browser), so the app starts with Explorer's
   environment and ShellExecute treats the handler as it always does
   (rundll32 and DDE handlers, unquoted program paths, the elevation prompt).
-  OpenWhisper passes its right to bring a window forward to Explorer. Only
-  without Explorer's desktop does the link open from OpenWhisper
+  OpenWhisper passes its right to bring a window forward to Explorer.
+  Explorer is asked from a short-lived thread with COM and given 30 s; if it
+  doesn't answer, the link is reported as not opened ("Windows didn't
+  answer. Try again.") and nothing else opens it. Only without Explorer's
+  desktop, or without pywin32, does the link open from OpenWhisper
   (`os.startfile`). Explorer reports no errors back, so the association
-  lookup still names a missing app first. (Round 2 filled the handler's
+  lookup still names a missing app first, and "Opened" means Windows took
+  the link (a failing handler, a declined UAC prompt, or a web link with no
+  browser still read as opened). (Round 2 filled the handler's
   command itself and started it with CreateProcess; round 3 found that
   broke rundll32, unquoted-path, elevation and DDE handlers.) Linux terminals run
   `/bin/sh <one-shot script>`, so a noexec temp folder doesn't matter.
@@ -796,7 +801,7 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   build on it, so links, terminals, agents, hooks and actions start in the
   user's environment. On Windows, apps opened through links start from
   Explorer instead (round 3). Loading `.env` records each variable it adds
-  (`set_for_app(..., keep_existing=True)`), so `external_env()` drops those
+  (`process_env.load_for_app`, since round 4), so `external_env()` drops those
   whatever the file says later; `credentials.dotenv_injected_names` is gone.
   `process_env.drop(env, names)` removes variables matching names the way
   the system does (case-insensitively on Windows).
@@ -897,5 +902,26 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   deadline (2 s after a kill, `OUTPUT_GRACE_S` after a clean exit);
   `_cancel_io` cancels a blocked read or write on Windows; POSIX writes are
   non-blocking chunks under `poll(POLLOUT)`.
-- **`.env` keys**: loaded through `process_env.set_for_app(..., keep_existing=True)`.
+- **`.env` keys**: loaded through `process_env.load_for_app` (round 4).
 - **MCP settings**: `TRANSCRIPT_CLEANUP_PROMPT` is no longer an MCP control (read or write): it shapes what agent actions send, so an agent writing it could steer words to coding agents while they read as dictated. Saved grants for it are ignored (`writable_settings` filters by `CONTROLS_BY_KEY`).
+
+### After review round 4
+
+- **`.env` keys**: loaded through `process_env.load_for_app(values)`, which
+  returns the names no environment can hold (an `=` in the name, a NUL, a
+  value over Windows' 32,767 characters); credentials leaves those out, logs
+  each once by name only, and loads the rest, so a credential lookup never
+  raises. A variable already set to the file's value counts as loaded from
+  `.env` (recorded, so children don't get it; VS Code's `python.envFile`
+  loads the same file into a source run); only a different value is the
+  user's export. `set_for_app` records a variable only once it is set.
+- **Windows links**: `launch._ask_explorer` runs `_explorer_open` on a
+  short-lived `explorer-open` thread with COM (pywin32's first `pythoncom`
+  import, which initialises COM for good, happens there) and waits
+  `EXPLORER_WAIT_S` (30 s); one call reaches Explorer at a time
+  (`_explorer_turn`). No answer raises `launch.NoAnswer` (a `LaunchError`),
+  and nothing else opens the link: `agents.handoff` returns at once instead
+  of trying the next link or a terminal. pywin32 is declared for win32 in
+  `requirements.txt`; without it links open through `os.startfile`.
+- **Tests**: the checks that drive the real Windows shell need
+  `OPENWHISPER_TEST_REAL_SHELL=1`.
