@@ -679,6 +679,19 @@ class _Registry:
         except CredentialStoreError:
             logger.warning("Could not remove the secret of MCP Events subscription %s", sub_id)
 
+    @classmethod
+    def _restore_secret(cls, sub_id: str, value: Optional[str]) -> None:
+        """Put back the secret a failed save replaced; None when there was none."""
+        from services.credentials import CredentialStoreError, store
+
+        if value is None:
+            cls._delete_secret(sub_id)
+            return
+        try:
+            store().set(secret_name(sub_id), value)
+        except CredentialStoreError:
+            logger.warning("Could not restore the secret of MCP Events subscription %s", sub_id)
+
     # -- reading: any thread, never blocks ---------------------------------
 
     def get(self, sub_id: str) -> Optional[EventSubscription]:
@@ -699,7 +712,12 @@ class _Registry:
     # -- changing ------------------------------------------------------------
 
     def upsert(self, subscription: EventSubscription, secret: str) -> bool:
-        """Save a new or refreshed subscription; True when it is new."""
+        """Save a new or refreshed subscription; True when it is new.
+
+        When the file can't be written, the OSError is raised with everything
+        as it was, secret and rotation included: the agent hears the refresh
+        failed and keeps checking signatures with the secret it had.
+        """
         from services.credentials import store
 
         with self._io_lock:
@@ -714,6 +732,7 @@ class _Registry:
             if current != secret:
                 credentials.set(name, secret)
             with self._lock:
+                rotation = self._previous.get(subscription.id)
                 if current and current != secret and not created:
                     self._previous[subscription.id] = (
                         current, time.monotonic() + ROTATION_WINDOW_S
@@ -729,9 +748,15 @@ class _Registry:
                         self._drop(subscription.id)
                     else:
                         self._subs[subscription.id] = existing
+                        if rotation is None:
+                            self._previous.pop(subscription.id, None)
+                        else:
+                            self._previous[subscription.id] = rotation
                     self._commit()
                 if created:
                     self._delete_secret(subscription.id)
+                elif current != secret:
+                    self._restore_secret(subscription.id, current)
                 raise
             return created
 
