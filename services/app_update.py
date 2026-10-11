@@ -1,6 +1,7 @@
 """Application update checks and verified platform handoff.
 
-Qt-free. GitHub Releases is the production network source of truth — nothing
+Qt-free. GitHub Releases is the production network source of truth, with an
+API-free fallback through its release redirect and checksum asset. Nothing
 is fetched from the project website. ``_version.__version__`` is compared as
 semver against the latest stable tag; git commit distance is ignored.
 
@@ -25,8 +26,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from functools import partial
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, Final, List, Optional, Tuple
 
 from _version import __version__
@@ -61,6 +61,7 @@ from services.verified_download import (
     describe_network_error,
     download_verified,
     open_url,
+    response_header,
 )
 from services.verified_files import NotARegularFile, sha256_file
 
@@ -71,7 +72,10 @@ LATEST_RELEASE_URL: Final[str] = (
     f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 )
 RELEASES_PAGE_URL: Final[str] = f"https://github.com/{GITHUB_REPO}/releases"
+LATEST_RELEASE_PAGE_URL: Final[str] = f"{RELEASES_PAGE_URL}/latest"
 UPDATE_FEED_ENV: Final[str] = "OPENWHISPER_UPDATE_FEED_URL"
+_FAILED_CHECK_INTERVAL_S: Final[int] = 60 * 60
+_MAX_CHECKSUM_BYTES: Final[int] = 64 * 1024
 _RATE_LIMIT_STATUS: Final[str] = (
     "Could not check for updates (GitHub rate limit)."
 )
@@ -279,7 +283,7 @@ def should_auto_check(
 
     Returns:
         ``False`` when the user disabled checks, when the last check is
-        newer than ``interval_s``, or when ``now`` cannot be compared.
+        newer than ``interval_s``, or a failed check is less than an hour old.
     """
     if settings is None:
         settings = settings_manager.load_all_settings()
@@ -287,13 +291,21 @@ def should_auto_check(
         return False
     if interval_s is None:
         interval_s = config.UPDATE_CHECK_INTERVAL_S
-    last = parse_last_check_at(settings.get(SettingsKey.UPDATE_LAST_CHECK_AT))
-    if last is None:
-        return True
     if now is None:
         now = datetime.now(timezone.utc)
     elif now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
+    failed = parse_last_check_at(
+        settings.get(SettingsKey.UPDATE_LAST_FAILED_CHECK_AT)
+    )
+    if (
+        failed is not None
+        and 0 <= (now - failed).total_seconds() < _FAILED_CHECK_INTERVAL_S
+    ):
+        return False
+    last = parse_last_check_at(settings.get(SettingsKey.UPDATE_LAST_CHECK_AT))
+    if last is None:
+        return True
     if last > now:
         return True
     return (now - last).total_seconds() >= interval_s
@@ -601,18 +613,30 @@ def latest_release_url() -> str:
 
 
 def fetch_latest_release() -> ReleaseInfo:
-    """Fetch and parse GitHub ``/releases/latest`` (or its configured stand-in).
+    """Fetch GitHub metadata, using the public release when the API is limited.
+
+    The fallback gets the stable tag from GitHub's latest-release redirect,
+    and trusts only that release's SHA256SUMS.txt and exact asset URLs. It
+    never scrapes HTML or infers a package digest. The loopback test feed
+    stays independent of production fallback and API cooldown state.
 
     Raises:
         AppUpdateError: Network, HTTP, or payload failure.
     """
+    url = latest_release_url()
+    if url == LATEST_RELEASE_URL and _api_retry_pending():
+        return _fetch_latest_release_from_web()
     try:
         with _open(
-            latest_release_url(),
+            url,
             extra_headers={"Accept": "application/vnd.github+json"},
         ) as response:
             raw = response.read()
     except Exception as exc:
+        if url == LATEST_RELEASE_URL and _is_rate_limited(exc):
+            _remember_api_rate_limit(exc)
+            logger.info("GitHub API rate-limited; checking the public release instead")
+            return _fetch_latest_release_from_web()
         raise AppUpdateError(_describe_update_error(exc)) from exc
     try:
         payload = json.loads(raw.decode("utf-8"))
@@ -625,12 +649,132 @@ def fetch_latest_release() -> ReleaseInfo:
     return parse_release_payload(payload)
 
 
+def _api_retry_pending() -> bool:
+    try:
+        settings = settings_manager.load_all_settings()
+        retry_at = parse_last_check_at(settings.get(SettingsKey.UPDATE_API_RETRY_AT))
+        return retry_at is not None and retry_at > datetime.now(timezone.utc)
+    except Exception as exc:
+        logger.debug("Could not load GitHub API cooldown: %s", exc)
+        return False
+
+
+def _is_rate_limited(exc: BaseException) -> bool:
+    if not isinstance(exc, urllib.error.HTTPError):
+        return False
+    return exc.code == 429 or (
+        exc.code == 403 and (
+            response_header(exc, "X-RateLimit-Remaining") == "0"
+            or response_header(exc, "Retry-After") is not None
+        )
+    )
+
+
+def _remember_api_rate_limit(exc: urllib.error.HTTPError) -> None:
+    now = datetime.now(timezone.utc)
+    retry_at = now + timedelta(seconds=60)
+    # Honor both GitHub's primary reset and secondary Retry-After. A bad
+    # header must not prevent the public-release fallback from running.
+    for name, relative in (("X-RateLimit-Reset", False), ("Retry-After", True)):
+        try:
+            seconds = int(response_header(exc, name) or "")
+            candidate = (
+                now + timedelta(seconds=seconds)
+                if relative
+                else datetime.fromtimestamp(seconds, timezone.utc)
+            )
+            retry_at = max(retry_at, candidate)
+        except (ValueError, OverflowError, OSError):
+            continue
+    _save_check_timestamp(SettingsKey.UPDATE_API_RETRY_AT, retry_at)
+
+
+def _fetch_latest_release_from_web() -> ReleaseInfo:
+    """Use GitHub's API-free endpoints; missing hashes permit notification only."""
+    try:
+        with _open(LATEST_RELEASE_PAGE_URL, method="HEAD") as response:
+            release_url = response.geturl()
+        match = re.fullmatch(
+            re.escape(f"{RELEASES_PAGE_URL}/tag/") + r"(v?\d+\.\d+\.\d+)",
+            release_url,
+        )
+        if match is None:
+            raise AppUpdateError("GitHub did not report a stable release version.")
+    except AppUpdateError:
+        raise
+    except Exception as exc:
+        raise AppUpdateError(_describe_update_error(exc)) from exc
+    tag = match.group(1)
+    version = normalize_version(tag)
+    assets = []
+    try:
+        with _open(_expected_asset_url(tag, "SHA256SUMS.txt")) as response:
+            raw = response.read(_MAX_CHECKSUM_BYTES + 1)
+        if len(raw) > _MAX_CHECKSUM_BYTES:
+            raise ValueError("Release checksums exceed the size limit")
+        hashes = {}
+        for line in raw.decode("utf-8").splitlines():
+            entry = re.fullmatch(
+                r"([a-fA-F0-9]{64}) [ *]([A-Za-z0-9_.-]+)", line
+            )
+            if entry is None or entry[2] in hashes:
+                raise ValueError("Release checksums are invalid or duplicated")
+            hashes[entry[2]] = entry[1].lower()
+        names = (
+            setup_asset_name(version),
+            archive_asset_name(version),
+            f"OpenWhisper-{version}-macos-arm64.dmg",
+        )
+        for name in names:
+            if name not in hashes:
+                continue
+            asset = _release_asset_from_checksum(tag, name, hashes[name])
+            if asset is not None:
+                assets.append(asset)
+    except Exception as exc:
+        # The tag still supports an accurate version comparison. No checksum
+        # or unreadable checksum means no automatic installation offer.
+        logger.info(
+            "Public release checksums unavailable: %s", _describe_update_error(exc)
+        )
+    return parse_release_payload({
+        "tag_name": tag,
+        "html_url": release_url,
+        "body": f"[Read the release notes on GitHub]({release_url}).",
+        "assets": assets,
+    })
+
+
+def _release_asset_from_checksum(tag: str, name: str, digest: str) -> dict | None:
+    url = _expected_asset_url(tag, name)
+    try:
+        with _open(url, method="HEAD") as response:
+            size = int(response_header(response, "Content-Length") or "0")
+            if (
+                getattr(response, "status", None) != 200
+                or not 0 < size <= _MAX_ASSET_BYTES
+            ):
+                return None
+    except Exception as exc:
+        logger.info(
+            "Public release asset metadata unavailable: %s",
+            _describe_update_error(exc),
+        )
+        return None
+    return {
+        "name": name,
+        "size": size,
+        "digest": f"sha256:{digest}",
+        "browser_download_url": url,
+    }
+
+
 def check_for_update(*, persist: bool = True) -> UpdateCheckResult:
     """Compare the running version to GitHub's latest stable release.
 
     Args:
-        persist: When True, store ``update_last_check_at`` after a completed
-            fetch (success only).
+        persist: Store the last successful or failed check for auto-check
+            throttling. Failed checks never advance the success timestamp.
 
     Returns:
         Structured comparison. ``can_apply`` is True only for a frozen
@@ -640,7 +784,12 @@ def check_for_update(*, persist: bool = True) -> UpdateCheckResult:
         AppUpdateError: The GitHub request failed.
     """
     channel = detect_channel()
-    release = fetch_latest_release()
+    try:
+        release = fetch_latest_release()
+    except AppUpdateError:
+        if persist:
+            _save_check_timestamp(SettingsKey.UPDATE_LAST_FAILED_CHECK_AT)
+        raise
     status = compare_versions(__version__, release.version)
     if persist:
         mark_check_completed()
@@ -659,13 +808,17 @@ def check_for_update(*, persist: bool = True) -> UpdateCheckResult:
 
 def mark_check_completed(now: Optional[datetime] = None) -> None:
     """Persist ``update_last_check_at`` as an ISO-8601 UTC timestamp."""
+    _save_check_timestamp(SettingsKey.UPDATE_LAST_CHECK_AT, now)
+
+
+def _save_check_timestamp(key: str, now: Optional[datetime] = None) -> None:
     if now is None:
         now = datetime.now(timezone.utc)
     elif now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     try:
         settings_manager.save_setting(
-            SettingsKey.UPDATE_LAST_CHECK_AT, now.isoformat()
+            key, now.isoformat()
         )
     except Exception as exc:
         logger.warning("Could not persist update check timestamp: %s", exc)
@@ -957,10 +1110,15 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
             or not _redirect_url_allowed(self._initial_url, newurl)
         ):
             raise urllib.error.URLError("The update server redirected to an unsafe URL.")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None and req.get_method() == "HEAD":
+            redirected.method = "HEAD"
+        return redirected
 
 
-def _open(url: str, extra_headers: Optional[Dict[str, str]] = None):
+def _open(
+    url: str, extra_headers: Optional[Dict[str, str]] = None, *, method: str = "GET"
+):
     from services.http_tls import verified_context
 
     if not _redirect_url_allowed(url, url):
@@ -970,6 +1128,7 @@ def _open(url: str, extra_headers: Optional[Dict[str, str]] = None):
         extra_headers,
         context=verified_context(),
         handlers=(_SafeRedirectHandler(url),),
+        method=method,
     )
     final_url = response.geturl()
     if not _redirect_url_allowed(url, final_url):
@@ -986,12 +1145,10 @@ def update_check_failure_status(error: str) -> str:
     return "Could not check for updates."
 
 
-_describe_update_error: Final[Callable[[BaseException], str]] = partial(
-    describe_network_error,
-    server="update server",
-    hosts=_UPDATE_HOSTS,
-    http_messages={403: _RATE_LIMIT_MESSAGE, 429: _RATE_LIMIT_MESSAGE},
-)
+def _describe_update_error(exc: BaseException) -> str:
+    if _is_rate_limited(exc):
+        return _RATE_LIMIT_MESSAGE
+    return describe_network_error(exc, server="update server", hosts=_UPDATE_HOSTS)
 
 
 def _file_sha256(path: str) -> str:

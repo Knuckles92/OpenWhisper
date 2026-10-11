@@ -7,6 +7,8 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-10-11
+
 ### Added
 - **Choose whether the clipboard comes back after a paste** — **Settings → General → Output** has a new **Restore the clipboard after pasting** switch. It's on by default, which is how pasting already worked: what you had copied is put back once the transcript lands. Turn it off to keep the pasted text on the clipboard so you can paste it again. It covers dictation and Command Mode rewrites, and with it off OpenWhisper no longer copies your clipboard while you speak.
 
@@ -16,6 +18,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 - **One place for how OpenWhisper looks** — **Settings → App → Appearance** now holds the theme, the window font size, the recording overlay's look (with its live preview and label switches), and the live preview's text size. They used to be split between General and Recording. In Basic settings, the App tab links to it.
 
 ### Fixed
+- **Update checks keep working when GitHub's API is rate-limited** — OpenWhisper now checks GitHub's regular release page and checksum file when the API quota is exhausted. Verified downloads remain available, and the checker remembers GitHub's retry time. Failed checks also wait an hour before another automatic attempt.
 - **A crash at startup on Windows when WMI is unhealthy** — OpenWhisper asked Windows Management Instrumentation (WMI) for the CPU type while loading its settings, and when the WMI service was failing, the app could close before its window appeared. It now gets the CPU type from Windows directly and asks only where the answer matters.
 - **Turning sharing off tells a waiting computer why** — a computer waiting for you to allow its pairing request sometimes heard only "The host closed the connection before answering." Now the host waits up to two seconds for the request to say it stopped sharing before closing connections.
 - **No keyring password prompts on Linux when no key is saved** — on a desktop with no "Default" keyring yet (common outside GNOME), every launch, and every Start or Stop Recording, asked to "Choose password for new keyring", even with no API key ever saved, and startup could take 80 seconds or more while the prompts came and went. Looking up a key no longer creates a keyring; only saving one does. If you decline to unlock a keyring that holds a saved key, OpenWhisper doesn't ask again until you save or remove that key in Settings.
