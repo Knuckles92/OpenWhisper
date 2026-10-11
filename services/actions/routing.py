@@ -45,8 +45,8 @@ ROUTE_TIMEOUT_S = 1.5
 #: high. Measured on synthetic utterances (benchmarks/voice_routing,
 #: jev-1.13.0, October 10, 2026): on the first 104, no false route at 0.4 or
 #: above in any run and the words that must be pasted never got above 0.33
-#: for an action; on all 133, no false route at 0.5 or above, the closest
-#: being 0.41 ("Use the webhook from the staging config." with Route by
+#: for an action; on all 146, no false route at 0.5 or above, the closest
+#: being 0.43 ("Use the webhook from the staging config." with Route by
 #: voice). 0.5 keeps a margin for messier real speech; 0.6 would lose a
 #: further tenth of the routes people meant without avoiding any measured
 #: false route.
