@@ -1,7 +1,9 @@
-"""Settings destination for the app-owned MCP server and agent onboarding."""
+"""Settings → Automate → API & MCP: the app-owned MCP server, agent onboarding,
+and this computer's live API, MCP Events and Claude Code channel."""
 
 import html
 import itertools
+import threading
 from typing import Optional
 
 from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
@@ -15,6 +17,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QPushButton,
     QSizePolicy,
     QToolButton,
     QVBoxLayout,
@@ -567,7 +570,7 @@ class McpSettingsPage(QWidget):
         self.preferences.body_layout.addWidget(self.settings_permissions)
         permissions_layout.addWidget(self.preferences)
         limits = self._detail(
-            "Never allowed: recording, deletion, transcript edits, audio access or permission changes. A cloud-powered assistant may send saved text to its provider."
+            "Never allowed: deletion, transcript edits, audio access or permission changes. A cloud-powered assistant may send saved text to its provider."
         )
         limits.setObjectName("mcpNote")
         permissions_layout.addWidget(limits)
@@ -916,6 +919,498 @@ class McpSettingsPage(QWidget):
         super().hideEvent(event)
 
 
+class _LiveRelay(QObject):
+    """Brings background answers (clearing subscriptions) to the Qt thread.
+
+    Session-lived like ``_ServiceRelay``: the worker never holds or emits on
+    a view, and Qt drops a deleted view's connection.
+    """
+
+    answered = pyqtSignal(int, object, object)  # token, result, error text or None
+
+
+_live_relay: Optional[_LiveRelay] = None
+
+
+def _live_answers() -> _LiveRelay:
+    global _live_relay
+    if _live_relay is None:
+        _live_relay = _LiveRelay()
+    return _live_relay
+
+
+#: Event-stream listeners by kind (``events.bus().subscribers(label)``). The
+#: live API labels a plain SSE client "sse" and a Claude Code channel session
+#: "claude-channel" (docs/design/automation/design.md, the API contract).
+SSE_LISTENER_LABEL = "sse"
+CHANNEL_LISTENER_LABEL = "claude-channel"
+
+#: What the live API offers, for the endpoint list: (method, path, what it does).
+LIVE_ENDPOINTS = (
+    ("GET", "/v1/events", "Live events as they happen"),
+    ("GET", "/v1/live/state", "What's happening right now"),
+    ("GET", "/v1/actions", "Your saved actions"),
+    ("POST", "/v1/actions/{id}/run", "Run an action with text"),
+    ("POST", "/v1/recording/start", "Start dictating; also /stop and /cancel"),
+    ("POST", "/v1/filters", "Change the words for a minute at a time"),
+    ("POST", "/v1/notify", "Show a short notice"),
+)
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+class LiveAutomationSection(QWidget):
+    """Live API, MCP Events and the Claude Code channel, for this computer only.
+
+    They share the MCP listener, so their addresses come from ``page``'s
+    server. ``refresh_live`` reads counters only (in memory) and runs on the
+    page's 500 ms timer; saved choices are re-read when shown and after a write.
+    """
+
+    #: A setting the app caches changed: "mcp_events".
+    settings_changed = pyqtSignal(str)
+
+    def __init__(self, settings, page, parent=None):
+        super().__init__(parent)
+        self.setObjectName("mcpLiveSection")
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.settings = settings
+        self.page = page
+        self._wide = None
+        self._waiting = {}
+        _live_answers().answered.connect(self._on_answer)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setSpacing(14)
+        heading = QLabel("Live events and automation")
+        heading.setObjectName("settingsTileGroupTitle")
+        layout.addWidget(heading)
+        self.columns = QGridLayout()
+        self.columns.setContentsMargins(0, 0, 0, 0)
+        self.columns.setSpacing(14)
+        layout.addLayout(self.columns)
+        self._build_live_api()
+        self._build_mcp_events()
+        self._build_channel()
+        self.notice = WrappedLabel("")
+        self.notice.setObjectName("mcpNotice")
+        self.notice.setTextFormat(Qt.TextFormat.PlainText)
+        self.notice.hide()
+        layout.addWidget(self.notice)
+        self._arrange_columns()
+        self.refresh()
+
+    # ---- building ----
+
+    def _card(self, title, description, icon, chip=""):
+        card, layout = McpSettingsPage._card(title, description, icon)
+        if chip:
+            badge = QLabel(chip)
+            badge.setObjectName("mcpPreviewChip")
+            layout.itemAt(0).layout().addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
+        return card, layout
+
+    def _status_line(self, layout, accessible_name):
+        row = QWidget()
+        row.setObjectName("mcpLiveRow")
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(8)
+        dot = StatusDot(diameter=8)
+        line.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
+        label = WrappedLabel("")
+        label.setObjectName("mcpLiveStatus")
+        label.setAccessibleName(accessible_name)
+        line.addWidget(label, 1)
+        layout.addWidget(row)
+        return dot, label
+
+    def _copy_button(self, text):
+        button = _ActionButton(text)
+        button.setObjectName("mcpCopyButton")
+        button.set_base_minimum_size(0, 38)
+        button.setAccessibleName(text)
+        return button
+
+    def _build_live_api(self):
+        self.live_api_card, layout = self._card(
+            "Live API",
+            "Your own programs can follow along as you dictate and, if you allow it, act for you.",
+            "broadcast-green.svg",
+        )
+        self.listeners_dot, self.listeners_label = self._status_line(
+            layout, "Programs listening to live events"
+        )
+        self.api_permission_checks = {}
+        for key, title, description, icon in (
+            (
+                SettingsKey.API_LIVE_EVENTS,
+                "Follow live events",
+                "Watch recordings, dictations and meetings as they happen, like reading history.",
+                "file-music-blue.svg",
+            ),
+            (
+                SettingsKey.API_RUN_ACTIONS,
+                "Run actions",
+                "Start your saved actions with text a program sends, and show its notices.",
+                "bolt-green.svg",
+            ),
+            (
+                SettingsKey.API_CONTROL_RECORDING,
+                "Start recordings",
+                "Turn on the microphone to dictate, and stop or cancel a recording.",
+                "microphone-blue.svg",
+            ),
+            (
+                SettingsKey.API_TEXT_FILTERS,
+                "Change dictated text",
+                "Let a program on this computer rewrite or hold back words before they're pasted.",
+                "filter-purple.svg",
+            ),
+        ):
+            row = _PermissionRow(title, description, icon)
+            row.checkbox.toggled.connect(
+                lambda checked, key=key: self._save(key, checked)
+            )
+            self.api_permission_checks[key] = row.checkbox
+            layout.addWidget(row)
+        layout.addWidget(McpSettingsPage._detail(
+            "These also apply to assistants connected over MCP. Each is checked on every request."
+        ))
+        address_layout = QVBoxLayout()
+        address_layout.setSpacing(4)
+        address_layout.addWidget(McpSettingsPage._label("Live API address", "mcpFieldLabel"))
+        self.api_url = QLineEdit()
+        self.api_url.setReadOnly(True)
+        self.api_url.setAccessibleName("Live API address")
+        self.copy_api_url = self._copy_button("Copy address")
+        self.copy_api_url.clicked.connect(lambda: self._copy(self.api_url.text(), "Address copied."))
+        address_layout.addWidget(_CopyField(self.api_url, self.copy_api_url))
+        layout.addLayout(address_layout)
+
+        self.endpoints = _Disclosure("Endpoints")
+        self.endpoints.body_layout.addWidget(McpSettingsPage._detail(
+            "Send the MCP access token as a Bearer header. Click an address to copy it."
+        ))
+        grid_host = QWidget()
+        grid_host.setObjectName("mcpEndpoints")
+        grid = QGridLayout(grid_host)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(4)
+        self.endpoint_buttons = []
+        for row_index, (method, path, what) in enumerate(LIVE_ENDPOINTS):
+            button = QPushButton(f"{method}  {path}")
+            button.setObjectName("mcpEndpoint")
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setToolTip("Copy this address")
+            button.setAccessibleName(f"Copy the {path} address")
+            button.clicked.connect(lambda _checked=False, path=path: self._copy_endpoint(path))
+            grid.addWidget(button, row_index, 0, Qt.AlignmentFlag.AlignLeft)
+            label = WrappedLabel(what)
+            label.setObjectName("settingsTileDescription")
+            grid.addWidget(label, row_index, 1)
+            self.endpoint_buttons.append(button)
+        grid.setColumnStretch(1, 1)
+        self.endpoints.body_layout.addWidget(grid_host)
+        self.copy_example = self._copy_button("Copy a curl example")
+        self.copy_example.setToolTip(
+            "Includes the access token. Paste it into a terminal to watch events live."
+        )
+        self.copy_example.clicked.connect(self._copy_example)
+        self.endpoints.body_layout.addWidget(self.copy_example, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self.endpoints)
+        layout.addStretch()
+
+    def _build_mcp_events(self):
+        self.mcp_events_card, layout = self._card(
+            "MCP Events",
+            "Agents subscribe to events over MCP, and OpenWhisper sends them signed webhooks.",
+            "bell-amber.svg",
+            chip="Preview",
+        )
+        row = _PermissionRow(
+            "Let agents subscribe",
+            "An assistant connected over MCP can ask to be told when things happen.",
+            "key-blue.svg",
+        )
+        self.mcp_events_switch = row.checkbox
+        self.mcp_events_switch.toggled.connect(self._save_mcp_events)
+        layout.addWidget(row)
+        line = QWidget()
+        line.setObjectName("mcpLiveRow")
+        count_row = QHBoxLayout(line)
+        count_row.setContentsMargins(0, 0, 0, 0)
+        count_row.setSpacing(10)
+        self.subscriptions_label = WrappedLabel("")
+        self.subscriptions_label.setObjectName("mcpLiveStatus")
+        self.subscriptions_label.setAccessibleName("MCP event subscriptions")
+        count_row.addWidget(self.subscriptions_label, 1)
+        self.clear_subscriptions = _ActionButton("Clear")
+        self.clear_subscriptions.setObjectName("mcpCopyButton")
+        self.clear_subscriptions.set_base_minimum_size(0, 34)
+        self.clear_subscriptions.setAccessibleName("Clear MCP event subscriptions")
+        self.clear_subscriptions.setToolTip("Forget every subscription and its signing secret")
+        self.clear_subscriptions.clicked.connect(self._clear_subscriptions)
+        count_row.addWidget(self.clear_subscriptions, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(line)
+        layout.addStretch()
+
+    def _build_channel(self):
+        from services.agent_mcp.setup import claude_channel_command, claude_channel_config
+
+        self.channel_card, layout = self._card(
+            "Claude Code channel",
+            "Send words into a running Claude Code session with a “Tell my Claude Code "
+            "session” action.",
+            "send-purple.svg",
+            chip="Research preview",
+        )
+        self.sessions_dot, self.sessions_label = self._status_line(
+            layout, "Claude Code sessions listening"
+        )
+        layout.addWidget(McpSettingsPage._label("1. Add OpenWhisper to your project's .mcp.json", "mcpSectionLabel"))
+        self.channel_config = QPlainTextEdit()
+        self.channel_config.setObjectName("mcpChannelConfig")
+        self.channel_config.setReadOnly(True)
+        self.channel_config.setAccessibleName("Claude Code channel .mcp.json entry")
+        self.channel_config.setPlainText(claude_channel_config())
+        self.channel_config.setMinimumHeight(160)
+        self.channel_config.setMaximumHeight(230)
+        self.copy_channel_config = self._copy_button("Copy .mcp.json entry")
+        self.copy_channel_config.clicked.connect(
+            lambda: self._copy(self.channel_config.toPlainText(), "Entry copied. Merge it into .mcp.json.")
+        )
+        self.channel_preview = _Disclosure("Preview entry", inline=True)
+        self.channel_preview.body_layout.addWidget(self.channel_config)
+        layout.addWidget(_AdaptiveRow(
+            [(self.copy_channel_config, 0), None, (self.channel_preview.toggle, 0)], spacing=10
+        ))
+        layout.addWidget(self.channel_preview)
+        layout.addWidget(McpSettingsPage._label("2. Start Claude Code with the channel", "mcpSectionLabel"))
+        self.channel_command = WrappedLabel(claude_channel_command(), break_long_words=True)
+        self.channel_command.setObjectName("mcpCommandBox")
+        self.channel_command.setTextFormat(Qt.TextFormat.PlainText)
+        self.channel_command.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.channel_command.setAccessibleName("Claude Code channel command")
+        self.copy_channel_command = self._copy_button("Copy command")
+        self.copy_channel_command.clicked.connect(
+            lambda: self._copy(self.channel_command.text(), "Command copied. Run it in your project.")
+        )
+        # Full width, so the command wraps between words rather than inside them.
+        layout.addWidget(self.channel_command)
+        layout.addWidget(self.copy_channel_command, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addStretch()
+
+    # ---- layout ----
+
+    def _arrange_columns(self):
+        wide = self.width() >= round(740 * current_ui_font_scale())
+        if self._wide == wide:
+            return
+        self._wide = wide
+        for card in (self.live_api_card, self.mcp_events_card, self.channel_card):
+            self.columns.removeWidget(card)
+        top = Qt.AlignmentFlag.AlignTop
+        if wide:
+            self.columns.addWidget(self.live_api_card, 0, 0, 2, 1, alignment=top)
+            self.columns.addWidget(self.mcp_events_card, 0, 1, alignment=top)
+            self.columns.addWidget(self.channel_card, 1, 1, alignment=top)
+            self.columns.setRowStretch(1, 1)
+        else:
+            for row, card in enumerate((self.live_api_card, self.mcp_events_card, self.channel_card)):
+                self.columns.addWidget(card, row, 0, alignment=top)
+            self.columns.setRowStretch(1, 0)
+        self.columns.setColumnStretch(0, 6 if wide else 1)
+        self.columns.setColumnStretch(1, 5 if wide else 0)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._arrange_columns()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (
+            QEvent.Type.FontChange,
+            QEvent.Type.StyleChange,
+        ) and hasattr(self, "channel_card"):
+            self._arrange_columns()
+
+    # ---- state ----
+
+    def _base_url(self):
+        status = self.page.server.status()
+        if status.state != "running":
+            return ""
+        return status.url.rsplit("/mcp", 1)[0]
+
+    def refresh(self):
+        """Re-read saved choices, then the live counters."""
+        try:
+            preferences = self.settings.load_all_settings()
+        except Exception:
+            preferences = {}
+        from services.automation import permissions
+
+        for key, check in self.api_permission_checks.items():
+            blocked = check.blockSignals(True)
+            check.setChecked(permissions.granted(preferences, key))
+            check.blockSignals(blocked)
+        blocked = self.mcp_events_switch.blockSignals(True)
+        self.mcp_events_switch.setChecked(
+            preferences.get(SettingsKey.MCP_EVENTS_ENABLED) is True
+        )
+        self.mcp_events_switch.blockSignals(blocked)
+        self.refresh_live()
+
+    def refresh_live(self):
+        """Counters and the address; cheap enough for the page's 500 ms timer."""
+        from services.agent_mcp import events_ext
+        from services.automation import events
+
+        url = self._base_url()
+        running = bool(url)
+        if self.api_url.text() != (url or "Turn on MCP above to start the live API"):
+            self.api_url.setText(url or "Turn on MCP above to start the live API")
+            self.api_url.setCursorPosition(0)
+        for widget in (self.api_url, self.copy_api_url, self.copy_example, *self.endpoint_buttons):
+            widget.setEnabled(running)
+        bus = events.bus()
+        listeners = bus.subscribers(SSE_LISTENER_LABEL)
+        sessions = bus.subscribers(CHANNEL_LISTENER_LABEL)
+        self._show_count(
+            self.listeners_dot, self.listeners_label, running, listeners,
+            _plural(listeners, "program") + " listening" if listeners else "No programs listening yet",
+            "Off while MCP is off",
+        )
+        self._show_count(
+            self.sessions_dot, self.sessions_label, running, sessions,
+            _plural(sessions, "session") + " listening" if sessions else "No sessions listening",
+            "Needs MCP on",
+        )
+        try:
+            count = int(events_ext.subscription_count())
+        except Exception:
+            count = 0
+        enabled = self.mcp_events_switch.isChecked()
+        text = (
+            _plural(count, "subscription") if count
+            else "No subscriptions yet" if enabled
+            else "Off. Agents can't subscribe."
+        )
+        if self.subscriptions_label.text() != text:
+            self.subscriptions_label.setText(text)
+        # A Clear with nothing to clear is only noise.
+        self.clear_subscriptions.setVisible(count > 0)
+        self.clear_subscriptions.setEnabled("clear" not in self._waiting.values())
+
+    @staticmethod
+    def _show_count(dot, label, running, count, text, off_text):
+        text = text if running else off_text
+        if label.text() != text:
+            label.setText(text)
+        status = (
+            EngineStatus.READY if running and count
+            else EngineStatus.UNKNOWN
+        )
+        if dot.status() != status:
+            dot.set_status(status)
+
+    # ---- writes ----
+
+    def _write(self, key, value):
+        def commit(saved):
+            saved[key] = value
+
+        self.settings.mutate_settings(commit)
+
+    def _save(self, key, checked):
+        try:
+            self._write(key, bool(checked))
+        except Exception:
+            self._show_notice("Couldn't save that permission. Try again.")
+            self.refresh()
+            return
+        self._show_notice("")
+
+    def _save_mcp_events(self, checked):
+        try:
+            self._write(SettingsKey.MCP_EVENTS_ENABLED, bool(checked))
+        except Exception:
+            self._show_notice("Couldn't save MCP Events. Try again.")
+            self.refresh()
+            return
+        self._show_notice("")
+        self.settings_changed.emit("mcp_events")
+        self.refresh_live()
+
+    def _clear_subscriptions(self):
+        from services.agent_mcp import events_ext
+
+        token = next(_tokens)
+        self._waiting[token] = "clear"
+        self.clear_subscriptions.setEnabled(False)
+        answered = _live_answers().answered
+        clear = events_ext.clear_subscriptions
+
+        def worker():
+            # Forgetting secrets touches the credential store, which can be slow.
+            try:
+                result = clear()
+            except Exception as exc:
+                answered.emit(token, None, str(exc) or type(exc).__name__)
+            else:
+                answered.emit(token, result, None)
+
+        threading.Thread(target=worker, name="settings-mcp-events-clear", daemon=True).start()
+
+    def _on_answer(self, token, result, error):
+        if self._waiting.pop(token, None) != "clear":
+            return
+        if error:
+            self._show_notice(f"Couldn't clear subscriptions: {error}")
+        else:
+            count = int(result or 0)
+            self._show_notice(
+                f"Cleared {_plural(count, 'subscription')}." if count else "Nothing to clear."
+            )
+        self.refresh_live()
+
+    # ---- copying ----
+
+    def _show_notice(self, text):
+        self.notice.setText(text)
+        self.notice.setVisible(bool(text))
+
+    def _copy(self, text, done):
+        if not text:
+            return
+        QApplication.clipboard().setText(text)
+        self._show_notice(done)
+
+    def _copy_endpoint(self, path):
+        base = self._base_url()
+        if base:
+            self._copy(base + path, f"Copied {base + path}")
+
+    def _copy_example(self):
+        base = self._base_url()
+        token = self.page.server.token()
+        if not base or not token:
+            return
+        # Built at click time, so the token is never on screen.
+        self._copy(
+            f'curl -N -H "Authorization: Bearer {token}" {base}/v1/events',
+            "Copied. Paste it into a terminal to watch events live.",
+        )
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refresh()
+
+
 class _HostGate(QFrame):
     """Stands in for the host's controls while it can't be managed from here."""
 
@@ -954,7 +1449,13 @@ class McpSettingsView(QWidget):
     should connect, and where their records live if they keep them there. The
     tabs show up only while paired, and open on the host's when its MCP is
     already running and this computer's is not.
+
+    The live API, MCP Events and the Claude Code channel (``live``) belong to
+    this computer only: the host tab hides them and says where to find them.
     """
+
+    #: A setting the app caches changed (``SettingsDialog.notify_changed`` kinds).
+    settings_changed = pyqtSignal(str)
 
     def __init__(self, settings, *, parent=None):
         super().__init__(parent)
@@ -982,6 +1483,11 @@ class McpSettingsView(QWidget):
         # tab is selected or the host has denied remote MCP administration.
         self._layout.addWidget(self.share_history_tile)
         self._layout.addWidget(self.local)
+        self.live = LiveAutomationSection(settings, self.local)
+        self.live.settings_changed.connect(self.settings_changed)
+        # Counters refresh on this computer's page timer, which runs while it shows.
+        self.local.timer.timeout.connect(self.live.refresh_live)
+        self._layout.addWidget(self.live)
         self.host_area = QWidget()
         self.host_area.setObjectName("mcpHostArea")
         self.host_layout = QVBoxLayout(self.host_area)
@@ -989,6 +1495,10 @@ class McpSettingsView(QWidget):
         self.gate = _HostGate()
         self.gate.retry.connect(self._retry)
         self.host_layout.addWidget(self.gate)
+        self.host_note = WrappedLabel("")
+        self.host_note.setObjectName("mcpNotice")
+        self.host_note.setTextFormat(Qt.TextFormat.PlainText)
+        self.host_layout.addWidget(self.host_note)
         self.host_area.hide()
         self._layout.addWidget(self.host_area)
         self._timer = QTimer(self)
@@ -1094,8 +1604,14 @@ class McpSettingsView(QWidget):
     def _show_tab(self, index):
         host = index == 1 and self._link is not None
         self.local.setVisible(not host)
+        self.live.setVisible(not host)
         self.host_area.setVisible(host)
         if host:
+            self.host_note.setText(
+                "The live API, MCP Events and the Claude Code channel are set on each "
+                f"computer. Change this computer's under This computer, and {self._host_name()}'s "
+                f"in Settings on {self._host_name()}."
+            )
             self._link.refresh_now()
             self._ensure_host_page()
         self._sync()
@@ -1111,7 +1627,8 @@ class McpSettingsView(QWidget):
             host_name=self._host_name(),
             link=self._link,
         )
-        self.host_layout.addWidget(self.host_page)
+        # Above the note that says where this computer's live controls are.
+        self.host_layout.insertWidget(self.host_layout.indexOf(self.host_note), self.host_page)
         self.host_page.hide()
 
     def _retry(self):
