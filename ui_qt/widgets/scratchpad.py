@@ -666,6 +666,13 @@ class ScratchpadWindow(QWidget):
         if not text.strip():
             self._notice("Write or dictate something to transform")
             return
+        # The result replaces exactly the text read here. Anchored at its
+        # start and keeping its end, the cursor leaves out text added at
+        # either edge meanwhile, such as an action's answer (show_text).
+        start, end = cursor.selectionStart(), cursor.selectionEnd()
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        cursor.setKeepPositionOnInsert(True)
         self._transform_generation = generation = next(_tokens)
         self._transform_cursor = cursor
         self.editor.setReadOnly(True)
@@ -704,6 +711,7 @@ class ScratchpadWindow(QWidget):
             self._notice(error or "The transform returned nothing")
             return
         if cursor is not None:
+            cursor.setKeepPositionOnInsert(False)  # so it ends after the result
             cursor.insertText(result)
             self.editor.setTextCursor(cursor)
         undo = QKeySequence(QKeySequence.StandardKey.Undo).toString(QKeySequence.SequenceFormat.NativeText)
