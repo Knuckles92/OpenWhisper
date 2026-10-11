@@ -510,6 +510,7 @@ class ApplicationController(QObject):
             self.meeting_runtime.start_new_meeting
         )
         self.ui_controller.on_settings_changed = self.on_settings_changed
+        self.ui_controller.on_try_action = self.action_runtime.test
 
     def command_key_pressed(self, at: float) -> None:
         """The Command Mode shortcut went down; hotkey dispatcher thread."""

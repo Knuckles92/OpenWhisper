@@ -40,6 +40,35 @@ def chatgpt_config(url: str, token: str = TOKEN_PLACEHOLDER) -> str:
     )
 
 
+def channel_command_line() -> list[str]:
+    """How Claude Code starts OpenWhisper's channel: this app with ``--channel``.
+
+    Stream E owns this (docs/design/automation/design.md, decision 11).
+    """
+    import sys
+    from pathlib import Path
+
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--channel"]
+    main = Path(__file__).resolve().parents[2] / "main.py"
+    return [sys.executable, str(main), "--channel"]
+
+
+def claude_channel_config() -> str:
+    """The ``.mcp.json`` entry that lets Claude Code start the channel."""
+    command, *args = channel_command_line()
+    return json.dumps(
+        {"mcpServers": {"openwhisper": {"command": command, "args": args}}},
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+def claude_channel_command() -> str:
+    """Start Claude Code with the channel loaded (research preview flag)."""
+    return "claude --dangerously-load-development-channels server:openwhisper"
+
+
 def agent_prompt(url: str, host_name: str | None = None, token: str = "") -> str:
     """``host_name`` names the computer running OpenWhisper when it isn't this one.
 

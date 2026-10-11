@@ -427,6 +427,9 @@ class SettingsDialog(QDialog):
     on_recording_trigger_mode_changed: Optional[Callable[[str], None]] = None
     on_dictation_transcribe: Optional[Callable[[str], str]] = None
     on_settings_changed: Optional[Callable[[str], None]] = None
+    # (action, sample_text, done): try a saved action from the Actions page;
+    # done(ActionResult) runs on the Qt thread.
+    on_try_action: Optional[Callable] = None
     get_meeting_active: Optional[Callable[[], bool]] = None
 
     def __init__(

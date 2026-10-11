@@ -157,6 +157,8 @@ class UIController(QObject):
         # A Settings page module changed something the app caches, by kind
         # ("transforms", "hotkeys", "dictionary", ...). Always callable.
         self.on_settings_changed: Callable[[str], None] = _ignore_settings_change
+        # (action, sample_text, done): ActionRuntime.test, set by the controller.
+        self.on_try_action: Optional[Callable] = None
         # RemoteEngineService, set by the application controller.
         self._remote_engine = None
         self.on_model_download_requested: Optional[Callable] = None
@@ -918,6 +920,15 @@ class UIController(QObject):
         # after Settings may already exist.
         self.on_settings_changed(kind)
 
+    def _try_action(self, action, sample_text: str, done) -> None:
+        # Read at call time, like on_settings_changed.
+        if self.on_try_action is None:
+            from services.actions.runtime import ActionResult
+
+            done(ActionResult(False, "Actions aren't ready yet."))
+            return
+        self.on_try_action(action, sample_text, done)
+
     def show_streaming_overlay(self):
         self.streaming_flow_active = True
         self.overlay.clear_streaming_text()
@@ -1051,6 +1062,7 @@ class UIController(QObject):
             self._on_settings_recording_trigger_mode_changed
         )
         dialog.on_settings_changed = self._on_settings_page_changed
+        dialog.on_try_action = self._try_action
         dialog.remote_section.bind(self.remote_engine, self.select_transcription_backend)
         dialog.bind_remote_service(self.remote_engine)
         models = dialog.models

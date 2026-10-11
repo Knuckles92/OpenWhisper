@@ -423,6 +423,14 @@ carry private `_`-prefixed keys; never forward them.
 ### `services/automation/channel_bridge.py` (STUB → E)
 
 `main(argv: list[str]) -> int` — the `--channel` entry point (runs before Qt).
+`services/agent_mcp/setup.py` (E) also provides `channel_command_line() -> list[str]`,
+`claude_channel_config() -> str` (the `.mcp.json` entry) and
+`claude_channel_command() -> str`; the foundation has working first versions.
+
+### `services/agent_mcp/events_ext.py` (STUB → D)
+
+`start_delivery()`, `stop_delivery()`, `reload()`, `subscription_count() -> int`,
+`clear_subscriptions() -> int` (Settings shows the count and a Clear button).
 
 ### `services/actions/model.py` (FULL, light: settings and cleanup_profiles)
 
@@ -546,6 +554,10 @@ ROUTE_TIMEOUT_S = 1.5
 - History `entry_kind` gains `action`; `source_name` is `Action · <name>`.
 
 ### Settings page modules (protocol from the personalize design)
+
+The Actions page tries an action with `dialog.on_try_action(action, sample_text,
+done)` (set by UIController from `ActionRuntime.test`; `done(ActionResult)` runs on
+the Qt thread).
 
 `ui_qt/dialogs/settings_actions.py` (G) and `ui_qt/dialogs/settings_hooks.py`
 (H) implement TITLE, SUBTITLE, SEARCH_FIELDS, CONTROL_ATTRS, build, load,

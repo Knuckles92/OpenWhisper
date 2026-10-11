@@ -16,3 +16,13 @@ def stop_delivery() -> None:
 
 def reload() -> None:
     """The MCP Events switch changed."""
+
+
+def subscription_count() -> int:
+    """Active subscriptions agents made (Settings shows it)."""
+    return 0
+
+
+def clear_subscriptions() -> int:
+    """Forget every subscription and its secret; returns how many there were."""
+    return 0
