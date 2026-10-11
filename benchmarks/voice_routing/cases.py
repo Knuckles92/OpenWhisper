@@ -1,4 +1,4 @@
-"""Labelled utterances for spoken routing, over three realistic sets of actions.
+"""Labelled utterances for Route by voice, over four realistic sets of actions.
 
 Every utterance is synthetic: written for this benchmark, never taken from
 history or a real dictation. Ids are hex like the ones Settings creates, so
@@ -7,7 +7,8 @@ the judge sees the same opaque option names it sees in the app.
 ``expect`` lists the acceptable outcomes, the preferred one first; None means
 "paste it as a normal dictation". ``payloads`` lists acceptable payloads for
 a correct route (compared without case or punctuation); empty means the
-payload isn't checked.
+payload isn't checked. Plain dictations tagged ``gate-stop`` must stop at the
+code gate: they don't address an action, so they are never sent to the judge.
 """
 
 from __future__ import annotations
@@ -72,6 +73,33 @@ ACTION_SETS: dict[str, dict[str, Action]] = {
                          "Save a quick note to Obsidian."),
         "codex": _action("d2f6a0b8e5c3", "Codex", "agent", {"agent": "codex"}, ("codex",),
                          enabled=False),
+    },
+    # Presets added from the gallery as they come: preset names and
+    # descriptions, no spoken names.
+    "presets": {
+        "claude": _action("5e1c7a9f02b4", "Ask Claude", "open_link",
+                          {"template": "claude://claude.ai/new?q={text}"},
+                          description="Open a new Claude Desktop chat with your words ready "
+                                      "to send."),
+        "chatgpt": _action("8b3f0d6e2a71", "ChatGPT app", "open_link",
+                           {"template": "codex://new?prompt={text}"},
+                           description="Open a new chat in the ChatGPT desktop app with your "
+                                       "words ready to send."),
+        "quick": _action("0f9a4c2e7d15", "Quick answer", "agent",
+                         {"agent": "claude_code", "mode": "ask", "output": "scratchpad"},
+                         description="Ask your agent a question and read the answer in the "
+                                     "Scratchpad."),
+        "session": _action("c7d2e8b1f346", "Tell my Claude Code session", "channel", {},
+                           description="Send your words into the Claude Code session running "
+                                       "the OpenWhisper channel."),
+        "webhook": _action("3a6b9e0c4f82", "Webhook", "webhook",
+                           {"url": "http://127.0.0.1:5678/webhook/x"},
+                           description="Send your words to a web address, such as n8n or Home "
+                                       "Assistant."),
+        "copy": _action("e4f1a7c3b950", "Copy only", "clipboard", {},
+                        description="Copy your words without pasting them."),
+        "scripts": _action("91c5d3f8a0e6", "Send to my scripts", "scripts", {},
+                           description="Only tell programs listening to OpenWhisper's events."),
     },
 }
 
@@ -345,4 +373,67 @@ CASES: tuple[Case, ...] = (
        tags=("disabled", "hard")),
     _c("m13", "minimal", HOTKEY, "Okay Claude, um, what rhymes with orange?", "claude",
        "what rhymes with orange?", ("name", "filler")),
+    # -- everyday: ordinary words that sound or read like a name ----------------
+    # Common words with Claude's consonants, "to do" as a verb, and an action's
+    # name used as an ordinary noun after a verb.
+    _c("e62", "everyday", AUTO, "Could you send me the report by Friday?", None,
+       tags=("soundalike", "gate-stop")),
+    _c("e63", "everyday", AUTO, "Could we move the meeting to three?", None,
+       tags=("soundalike", "gate-stop")),
+    _c("e64", "everyday", AUTO, "Called the bank this morning, they said it's fine.", None,
+       tags=("soundalike", "gate-stop")),
+    _c("e65", "everyday", AUTO, "Cold brew is cheaper if you make it at home.", None,
+       tags=("soundalike", "gate-stop")),
+    _c("e66", "everyday", AUTO, "Child care pickup is at five today.", None,
+       tags=("soundalike", "gate-stop")),
+    _c("e67", "everyday", AUTO, "Cloudy skies all week, bring a jacket.", None,
+       tags=("soundalike", "gate-stop")),
+    _c("e68", "everyday", AUTO, "Clued in the team about the outage.", None,
+       tags=("soundalike", "gate-stop")),
+    _c("e69", "everyday", AUTO, "Killed the stale jobs on the build box.", None,
+       tags=("soundalike", "gate-stop")),
+    _c("e70", "everyday", AUTO, "Okay so could you take a look at the PR?", None,
+       tags=("soundalike", "filler", "gate-stop")),
+    _c("e71", "everyday", AUTO, "So to do that we need a new index.", None,
+       tags=("split", "gate-stop")),
+    _c("e72", "everyday", AUTO, "Now to do this properly we should refactor first.", None,
+       tags=("split", "gate-stop")),
+    _c("e73", "everyday", AUTO, "Send the scripts to Bob by Friday.", None,
+       tags=("lead-in", "gate-stop")),
+    _c("e74", "everyday", HOTKEY, "Called the bank this morning, they said it's fine.", None,
+       tags=("soundalike", "ordinary")),
+    _c("e75", "everyday", HOTKEY, "Cold brew is cheaper if you make it at home.", None,
+       tags=("soundalike", "ordinary")),
+    _c("e76", "everyday", HOTKEY, "So to do that we need a new index.", None,
+       tags=("split", "ordinary")),
+    _c("e77", "everyday", AUTO, "Hey cloud, suggest a name for my new plant.", "claude",
+       "suggest a name for my new plant.", "asr"),
+    # -- presets: names only -----------------------------------------------------
+    _c("p01", "presets", AUTO, "Tell Claude to summarize this thread in two lines.", "claude",
+       ("summarize this thread in two lines.", "to summarize this thread in two lines."),
+       "lead-in"),
+    _c("p02", "presets", AUTO, "Ask Claude why the sky is blue.", "claude",
+       "why the sky is blue.", "name"),
+    _c("p03", "presets", AUTO, "Webhook, the build finished with two warnings.", "webhook",
+       "the build finished with two warnings.", "name"),
+    _c("p04", "presets", AUTO, "Send this to my scripts: restart the media server.", "scripts",
+       "restart the media server.", "lead-in"),
+    _c("p05", "presets", AUTO, "Hey Claude Code, run the formatter.", "session",
+       "run the formatter.", ("name", "filler")),
+    _c("p06", "presets", AUTO, "Quick answer: how many ounces are in a pound?", "quick",
+       "how many ounces are in a pound?", "name"),
+    _c("p07", "presets", AUTO, "Can you ask ChatGPT for a packing list for Iceland?", "chatgpt",
+       tags="lead-in"),
+    _c("p08", "presets", AUTO, "Use the webhook from the staging config.", None,
+       tags=("mention", "gate-stop")),
+    _c("p09", "presets", AUTO, "Send my scripts to Bob by Friday.", None,
+       tags=("lead-in", "gate-stop")),
+    _c("p10", "presets", AUTO, "Send the scripts to Bob by Friday.", None,
+       tags=("lead-in", "gate-stop")),
+    _c("p11", "presets", AUTO, "Could you send me the report by Friday?", None,
+       tags=("soundalike", "gate-stop")),
+    _c("p12", "presets", AUTO, "Open the webhook settings and copy the address.", None,
+       tags=("mention", "gate-stop")),
+    _c("p13", "presets", HOTKEY, "Use the webhook from the staging config.", None,
+       tags=("mention", "ordinary")),
 )

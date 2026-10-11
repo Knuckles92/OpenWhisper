@@ -1,4 +1,4 @@
-"""Measure spoken routing (services.actions.routing) against labelled utterances.
+"""Measure Route by voice (services.actions.routing) against labelled utterances.
 
     python -m benchmarks.voice_routing.run                 # offline: the gate only
     python -m benchmarks.voice_routing.run --live          # ask Jev
@@ -20,6 +20,10 @@ and on the chosen option's probability:
   than misses: a miss only pastes the words);
 - recall: cases meant for an action that reached it;
 - payload: correctly routed cases whose words are an acceptable payload.
+
+The gate (offline and live): of the plain dictations, how many meant for an
+action reach the judge, and how many that must be pasted are stopped before
+anything is sent.
 """
 
 from __future__ import annotations
@@ -205,6 +209,21 @@ def hardest_paste_cases(records: list[dict], count: int = 4) -> list[dict]:
     return sorted(rows, key=lambda row: -row["confidence_if_chosen"])[:count]
 
 
+def gate_summary(records: list[dict]) -> dict:
+    """What the code gate lets through on plain dictations (Route by voice skips it)."""
+    plain = [r for r in records if r["route"] == routing.ROUTE_AUTO]
+    addressed = [r for r in plain if None not in r["expect"]]
+    paste = [r for r in plain if set(r["expect"]) == {None}]
+    return {
+        "addressed": len(addressed),
+        "addressed_passed": sum(r["gate"] for r in addressed),
+        "addressed_stopped_ids": [r["id"] for r in addressed if not r["gate"]],
+        "must_paste": len(paste),
+        "must_paste_stopped": sum(not r["gate"] for r in paste),
+        "must_paste_sent_ids": [r["id"] for r in paste if r["gate"]],
+    }
+
+
 def summarize(records: list[dict]) -> dict:
     asked = [r for r in records if "latency_s" in r]
     latencies = [r["latency_s"] for r in asked]
@@ -223,6 +242,7 @@ def summarize(records: list[dict]) -> dict:
         "cases": len(records),
         "judged": len(asked),
         "gate_skipped": sum(not r["gate"] for r in records),
+        "gate": gate_summary(records),
         "failures": sum(bool(r.get("failed")) for r in asked),
         "latency_s": {
             "median": round(statistics.median(latencies), 4) if latencies else None,
@@ -243,8 +263,13 @@ def summarize(records: list[dict]) -> dict:
 
 def _print_summary(variant: str, summary: dict) -> None:
     lat = summary["latency_s"]
+    gate = summary["gate"]
     print(f"\n== {variant}: {summary['cases']} cases, {summary['judged']} judged, "
           f"{summary['gate_skipped']} stopped by the gate, {summary['failures']} failed")
+    print(f"   gate [auto]: {gate['addressed_passed']}/{gate['addressed']} meant for an action "
+          f"reach the judge (stopped: {', '.join(gate['addressed_stopped_ids']) or 'none'}); "
+          f"{gate['must_paste_stopped']}/{gate['must_paste']} that must be pasted are stopped "
+          f"(sent: {', '.join(gate['must_paste_sent_ids']) or 'none'})")
     if lat["median"] is not None:
         print(f"   latency median {lat['median'] * 1000:.0f} ms, p95 {lat['p95'] * 1000:.0f} ms, "
               f"max {lat['max'] * 1000:.0f} ms, {lat['over_route_timeout']} over "

@@ -1,4 +1,4 @@
-"""Spoken routing: which saved action the words name, decided by Jev (stream F).
+"""Route by voice: which saved action the words name, decided by Jev (stream F).
 
 Two gates, as with the meeting note taker's voice commands
 (meeting/voice_commands.py):
@@ -30,6 +30,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
 
@@ -40,11 +42,14 @@ logger = logging.getLogger(__name__)
 
 ROUTE_TIMEOUT_S = 1.5
 #: A route needs the judge's confidence in its chosen action at least this
-#: high. Measured on 104 synthetic utterances (benchmarks/voice_routing,
-#: October 10, 2026, jev-1.13.0): no false route at 0.4 or above in any run,
-#: and the words that must be pasted never got above 0.33 for an action, so
-#: 0.5 keeps a margin for messier real speech; 0.6 would lose a further tenth
-#: of the routes people meant without avoiding any measured false route.
+#: high. Measured on synthetic utterances (benchmarks/voice_routing,
+#: jev-1.13.0, October 10, 2026): on the first 104, no false route at 0.4 or
+#: above in any run and the words that must be pasted never got above 0.33
+#: for an action; on all 133, no false route at 0.5 or above, the closest
+#: being 0.41 ("Use the webhook from the staging config." with Route by
+#: voice). 0.5 keeps a margin for messier real speech; 0.6 would lose a
+#: further tenth of the routes people meant without avoiding any measured
+#: false route.
 ROUTE_CONFIDENCE = 0.5
 
 #: ``DictationJob.route`` values.
@@ -57,7 +62,10 @@ NONE = "none"
 
 # -- words -------------------------------------------------------------------
 
-_WORD = re.compile(r"[^\W_]+(?:['’][^\W_]+)*")
+#: A word, with apostrophes and hyphens inside it ("don't", "to-do").
+_WORD = re.compile(r"[^\W_]+(?:['’\-‐][^\W_]+)*")
+#: Punctuation between two words that marks a pause ("To do, email …").
+_PAUSE = re.compile(r"[,.;:!?…—–-]")
 
 
 @dataclass(frozen=True)
@@ -65,13 +73,25 @@ class _Word:
     norm: str
     start: int
     end: int
+    #: Punctuation, or the end of the text, follows the word.
+    pause: bool = False
+
+
+_JOINERS = str.maketrans("", "", "'’-‐")
+
+
+def _norm(token: str) -> str:
+    return token.casefold().translate(_JOINERS)
 
 
 def _words(text: str) -> list[_Word]:
-    """Words of ``text``, casefolded and without apostrophes, with their offsets."""
+    """Words of ``text``, casefolded and without apostrophes or hyphens, with their offsets."""
+    text = text or ""
+    found = list(_WORD.finditer(text))
     return [
-        _Word(m.group().casefold().replace("'", "").replace("’", ""), m.start(), m.end())
-        for m in _WORD.finditer(text or "")
+        _Word(_norm(m.group()), m.start(), m.end(),
+              pause=i + 1 == len(found) or bool(_PAUSE.search(text, m.end(), found[i + 1].start())))
+        for i, m in enumerate(found)
     ]
 
 
@@ -85,11 +105,12 @@ _FILLER_PHRASES = (("all", "right"),)
 
 #: Words that may come between the fillers and an action's name ("can you
 #: ask Claude", "send this to my scripts"), and between a request and a name
-#: said last ("…, add it to my todo list").
+#: said last ("…, add it to my todo list"). Never "the": a name after it is
+#: an ordinary noun ("send the scripts to Bob", "use the webhook from …").
 _LEAD_INS = frozenset({
     "ask", "tell", "send", "message", "ping", "use", "open", "start", "add", "put",
     "save", "post", "note", "have", "let", "lets", "can", "could", "would", "will",
-    "you", "this", "that", "it", "to", "into", "for", "the", "my", "a", "an", "new",
+    "you", "this", "that", "it", "to", "into", "for", "my", "a", "an", "new",
     "with", "via", "using", "in", "on", "hey", "please", "go", "and",
 })
 _MAX_LEAD_INS = 4
@@ -126,62 +147,155 @@ def _skip_fillers(words: Sequence[_Word]) -> int:
     return i
 
 
-def _skeleton(word: str) -> str:
-    """Roughly how a word sounds: its first letter and its consonants."""
+# -- how a word sounds -------------------------------------------------------------
+
+#: Vowel sounds by spelling, longest spellings first. Claude's "au", cloud's
+#: "ou", clod's "o" and clawed's "aw" are one open sound; clued's "ue" isn't.
+_VOWEL_SOUNDS = (
+    (("ai", "ay", "ei", "ey"), "ay"),
+    (("oi", "oy"), "oy"),
+    (("oo", "ew", "eu", "ue", "ui", "u"), "u"),
+    (("a", "o"), "o"),
+    (("e", "i", "y"), "e"),
+)
+
+
+def _sound(word: str) -> Optional[tuple[str, str, str, int]]:
+    """Roughly how a word sounds; None when it has no vowel.
+
+    ``(consonants before the first vowel, that vowel's sound, the consonants
+    after it, syllables)``: "claude", "cloud", "clod" and "clawed" all sound
+    ``("kl", "o", "d", 1)``; "could" (no "l" before the vowel), "cloudy" (two
+    syllables) and "clued" (another vowel) don't.
+    """
     w = (word.replace("ph", "f").replace("ck", "k").replace("x", "ks")
          .replace("q", "k").replace("c", "k").replace("z", "s"))
-    out = w[:1]
-    for ch in w[1:]:
-        if ch in "aeiouyhw" or ch == out[-1]:
+    if len(w) > 3 and w.endswith("e") and w[-2] not in "aeiouy":
+        w = w[:-1]                    # a silent final e: "claude", "code"
+    elif len(w) > 4 and w.endswith("ed") and w[-3] not in "td":
+        w = w[:-2] + "d"              # "clawed", "called": no syllable of its own
+    groups: list[tuple[int, int]] = []
+    i = 0
+    while i < len(w):
+        if w[i] in "aeiou" or (w[i] == "y" and i > 0):
+            j = i + 1
+            while j < len(w) and w[j] in "aeiouwy":
+                j += 1
+            groups.append((i, j))
+            i = j
+        else:
+            i += 1
+    if not groups:
+        return None
+    first, after = groups[0]
+    nucleus = w[first:after]
+    vowel = next((sound for spellings, sound in _VOWEL_SOUNDS if nucleus.startswith(spellings)),
+                 nucleus)
+    tail = ""
+    for ch in w[after:]:
+        if ch in "aeiouyhw" or (tail and ch == tail[-1]):
             continue
-        out += ch
-    return out
+        tail += ch
+    return w[:first], vowel, tail, len(groups)
 
 
 def _alike(heard: str, name: str) -> bool:
-    """True when ``heard`` is ``name`` or plausibly a mishearing of it ("cloud", "Claude")."""
+    """True when ``heard`` is ``name`` or plausibly a mishearing of it ("cloud", "Claude").
+
+    A mishearing keeps the name's consonants around its first vowel, that
+    vowel's sound and its syllables; short names ("todo") must be heard exactly.
+    """
     if heard == name:
         return True
     if len(heard) < 4 or len(name) < 4 or abs(len(heard) - len(name)) > 2:
         return False
-    sound = _skeleton(name)
-    return len(sound) >= 3 and _skeleton(heard) == sound
+    sound = _sound(name)
+    return (sound is not None and len(sound[0]) + len(sound[2]) >= 3
+            and _sound(heard) == sound)
 
 
-def _name_variants(action: Action) -> list[tuple[str, ...]]:
-    """Word sequences that name ``action``: each name, without lead-ins and generic tails."""
-    variants: list[tuple[str, ...]] = []
+# -- names -------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class _Variant:
+    """Words that name an action, and what may come before them."""
+
+    words: tuple[str, ...]
+    #: The name's own leading words dropped to make this form ("send to my"
+    #: from "Send to my scripts"); said before it, they still name the action.
+    dropped: tuple[str, ...] = ()
+    #: Whether any lead-in words may come before it ("can you ask Claude").
+    after_lead_ins: bool = True
+
+    def follows(self, said: Sequence[str]) -> bool:
+        """Whether the lead-in words ``said`` just before it leave it naming the action."""
+        if not said or self.after_lead_ins:
+            return True
+        rest = iter(said)
+        return bool(self.dropped) and all(word in rest for word in self.dropped)
+
+
+def _proper(token: str, index: int) -> bool:
+    """Whether a word of a name, as typed, looks like a proper noun:
+    capitalized after the name's first word ("Ask Claude") or with capitals
+    inside ("ChatGPT")."""
+    return any(ch.isupper() for ch in token[1:]) or (index > 0 and token[:1].isupper())
+
+
+def _name_variants(action: Action) -> list[_Variant]:
+    """What names ``action``: each name as given, then without lead-ins and generic tails.
+
+    A name as given may follow lead-in words ("can you ask Claude") unless
+    it is only generic words ("Webhook"). A shortened form may follow them
+    only when it holds a proper noun ("tell Claude" for "Ask Claude") or
+    after the words it dropped ("send this to my scripts"); else only at the
+    start ("Scripts, …"), so "send my scripts to Bob" names nothing.
+    """
+    variants: list[_Variant] = []
+    seen: set[tuple[str, ...]] = set()
+
+    def add(form: tuple[str, ...], dropped: tuple[str, ...], after_lead_ins: bool) -> None:
+        if form and form not in seen:
+            seen.add(form)
+            variants.append(_Variant(form, dropped, after_lead_ins))
+
     for phrase in (action.name, *action.spoken_names):
-        words = tuple(w.norm for w in _words(phrase))
+        tokens = [m.group() for m in _WORD.finditer(phrase)]
+        words = tuple(_norm(t) for t in tokens)
         if not words:
             continue
-        core = words
-        while len(core) > 1 and core[0] in _LEAD_INS:
-            core = core[1:]
-        forms = [words]
-        for form in (words, core):
-            short = form
-            while len(short) > 1 and short[-1] in _NAME_TAILS:
-                short = short[:-1]
-            forms.extend((form, short))
-        for i, form in enumerate(forms):
-            # A shortened form must still be distinctive; the name itself always counts.
-            if form not in variants and (i == 0 or len("".join(form)) >= 3):
-                variants.append(form)
+        proper = [_proper(t, i) for i, t in enumerate(tokens)]
+        add(words, (), not all(w in _NAME_TAILS for w in words))
+        core = 0
+        while core < len(words) - 1 and words[core] in _LEAD_INS:
+            core += 1
+        for start in (0, core):
+            end = len(words)
+            while end - start > 1 and words[end - 1] in _NAME_TAILS:
+                end -= 1
+            for stop in (len(words), end):
+                form = words[start:stop]
+                # A shortened form must still be distinctive.
+                if len("".join(form)) >= 3:
+                    add(form, words[:start], any(proper[start:stop]))
     return variants
 
 
 def _match_len(words: Sequence[_Word], at: int, variant: Sequence[str]) -> int:
     """How many words from ``at`` say ``variant``; 0 when they don't.
 
-    Spacing is ignored ("chat GPT" says "ChatGPT", "to do" says "todo"), and
-    each word may be a near-homophone of the name's word.
+    Spacing is ignored ("chat GPT" says "ChatGPT", "To do," says "Todo"),
+    though a name word heard as several words names it only before a pause
+    ("to do that" doesn't), and each word may be a near-homophone of the
+    name's word.
     """
     target = "".join(variant)
     joined = ""
     for k in range(at, len(words)):
         joined += words[k].norm
         if joined == target:
+            if k - at + 1 > len(variant) and not words[k].pause:
+                break
             return k - at + 1
         if not target.startswith(joined):
             break
@@ -207,14 +321,16 @@ class GateMatch:
     leading: bool
 
 
-def _leading_match(words: Sequence[_Word], variants: Sequence[Sequence[str]]
+def _leading_match(words: Sequence[_Word], variants: Sequence[_Variant]
                    ) -> Optional[tuple[int, int, int]]:
     start = _skip_fillers(words)
     for skip in range(_MAX_LEAD_INS + 1):
         at = start + skip
         if at >= len(words) or (skip and words[at - 1].norm not in _LEAD_INS):
             return None
-        best = max((_match_len(words, at, v) for v in variants), default=0)
+        said = [w.norm for w in words[start:at]]
+        best = max((_match_len(words, at, v.words) for v in variants if v.follows(said)),
+                   default=0)
         if best:
             return start, at, at + best
     return None
@@ -227,18 +343,23 @@ def _polite_tail(words: Sequence[_Word]) -> int:
     return 2 if norms == ["thank", "you"] else 0
 
 
-def _trailing_match(words: Sequence[_Word], variants: Sequence[Sequence[str]]
+def _trailing_match(words: Sequence[_Word], variants: Sequence[_Variant]
                     ) -> Optional[tuple[int, int, int]]:
     end = len(words) - _polite_tail(words)
     for variant in variants:
-        for at in range(max(0, end - len(variant) - 2), end):
-            if _match_len(words, at, variant) != end - at:
+        for at in range(max(0, end - len(variant.words) - 2), end):
+            if at == 0 or _match_len(words, at, variant.words) != end - at:
                 continue
             first = at
             while first > 0 and at - first < _MAX_LEAD_INS and words[first - 1].norm in _LEAD_INS:
                 first -= 1
-            if first > 0:
-                return first, at, end
+            if first < at and not variant.follows([w.norm for w in words[first:at]]):
+                first = at
+            # Said last on its own, a name is set off by a pause ("Lock the
+            # front door, home."), not the end of a sentence about it.
+            if first == 0 or (first == at and not words[at - 1].pause):
+                continue
+            return first, at, end
     return None
 
 
@@ -543,23 +664,94 @@ class RoutingStatus:
     enabled: bool
     ready: bool
     message: str
+    #: What is missing: ``FIX_FAST_JUDGMENTS``, ``FIX_ACTIONS`` or
+    #: ``FIX_TRIGGER``; "" when ready or off.
+    fix: str = ""
 
 
-def decide(text: str, job, settings: Mapping, *, judge=None) -> Optional[RouteDecision]:
-    """The action ``text`` names, or None to paste it; worker thread, never raises.
+#: Fast judgments are off, or the chosen route has no key.
+FIX_FAST_JUDGMENTS = "fast_judgments"
+#: No actions, or every action is turned off.
+FIX_ACTIONS = "actions"
+#: Nothing starts it: no Route by voice shortcut, and normal dictations aren't listened to.
+FIX_TRIGGER = "trigger"
 
-    Publishes ``route.decided`` whenever the judge was asked: with the action
-    when the words were routed, else ``fallback`` true (and the judge's
-    confidence in its choice, when it answered).
+
+#: ``RouteDecision.failure``: no answer within ``ROUTE_TIMEOUT_S``.
+FAILURE_TIMEOUT = "timeout"
+#: ``RouteDecision.failure``: no usable answer (Fast judgments off or without
+#: a key at that moment, a network or HTTP error, a malformed answer).
+FAILURE_UNREACHABLE = "unreachable"
+#: How often the wait for the judge looks at whether the dictation was canceled.
+_CANCEL_POLL_S = 0.02
+_CANCELED = "canceled"
+
+
+def decide(text: str, job, settings: Mapping, *, judge=None,
+           cancel: Optional[threading.Event] = None) -> Optional[RouteDecision]:
+    """Where ``text`` goes; worker thread, never raises.
+
+    Returns:
+        The action the words are for; None to paste them as a dictation (they
+        don't name an action, the judge chose none or wasn't confident
+        enough, or ``cancel`` was set); or ``RouteDecision("", "", 0.0,
+        failure=…)`` when the judge couldn't answer: "timeout" after
+        ``ROUTE_TIMEOUT_S`` of wall-clock time, else "unreachable".
+
+    The judge is asked on a helper thread, so neither a slow answer nor
+    reading its key holds the dictation past ``ROUTE_TIMEOUT_S``; a set
+    ``cancel`` ends the wait at once and nothing is sent once it is set.
+    Publishes ``route.decided`` whenever the words were to be judged and the
+    dictation wasn't canceled: with the action when they were routed, else
+    ``fallback`` true (and the judge's confidence in its choice, when it
+    answered).
     """
     try:
-        return _decide(text, job, settings or {}, judge)
+        return _decide(text, job, settings or {}, judge, cancel)
     except Exception as exc:
-        logger.warning("Spoken routing failed (%s); pasting the dictation", type(exc).__name__)
+        logger.warning("Route by voice failed (%s); pasting the dictation", type(exc).__name__)
         return None
 
 
-def _decide(text: str, job, settings: Mapping, judge) -> Optional[RouteDecision]:
+def _ask(request: RoutePlan, settings: Mapping, judge,
+         cancel: Optional[threading.Event]) -> tuple[Optional[Mapping], str]:
+    """``(answers, "")``, or ``(None, failure)`` with a ``FAILURE_*`` or ``_CANCELED``."""
+    done = threading.Event()
+    outcome: dict[str, Any] = {}
+
+    def work() -> None:
+        try:
+            asking = judge
+            if asking is None:
+                from services.typesafe import judge_from_settings
+
+                asking = judge_from_settings(dict(settings))
+            if asking is None:
+                logger.debug("Route by voice couldn't ask: Fast judgments aren't set up")
+            else:
+                outcome["answers"] = asking.ask(request.state, request.questions,
+                                                timeout_s=ROUTE_TIMEOUT_S)
+        except Exception as exc:
+            logger.warning("Route by voice judgment failed (%s)", type(exc).__name__)
+        finally:
+            done.set()
+
+    threading.Thread(target=work, name="route-by-voice", daemon=True).start()
+    deadline = time.monotonic() + ROUTE_TIMEOUT_S
+    while True:
+        if cancel is not None and cancel.is_set():
+            return None, _CANCELED
+        left = deadline - time.monotonic()
+        if left <= 0 and not done.is_set():
+            return None, FAILURE_TIMEOUT
+        if done.is_set() or done.wait(left if cancel is None else min(left, _CANCEL_POLL_S)):
+            break
+    answers = outcome.get("answers")
+    return (answers, "") if answers is not None else (None, FAILURE_UNREACHABLE)
+
+
+def _decide(text: str, job, settings: Mapping, judge,
+            cancel: Optional[threading.Event]) -> Optional[RouteDecision]:
     from services.settings import (
         resolve_voice_routing_enabled,
         resolve_voice_routing_on_dictation,
@@ -571,27 +763,20 @@ def _decide(text: str, job, settings: Mapping, judge) -> Optional[RouteDecision]
     if route == ROUTE_AUTO and not resolve_voice_routing_on_dictation(settings):
         return None
     request = plan(text, route, [a for a in load_actions(settings) if a.enabled])
-    if request is None:
+    if request is None or (cancel is not None and cancel.is_set()):
         return None
-    if judge is None:
-        from services.typesafe import judge_from_settings
-
-        judge = judge_from_settings(dict(settings))
-        if judge is None:
-            logger.debug("Spoken routing skipped: Fast judgments aren't set up")
-            return None
-    try:
-        answers = judge.ask(request.state, request.questions, timeout_s=ROUTE_TIMEOUT_S)
-    except Exception as exc:
-        logger.warning("Spoken routing judgment failed (%s)", type(exc).__name__)
-        answers = None
-    judgment = request.read(answers)
+    answers, failure = _ask(request, settings, judge, cancel)
+    if failure == _CANCELED:
+        return None
+    judgment = request.read(answers) if not failure else None
+    if judgment is None and not failure:
+        failure = FAILURE_UNREACHABLE  # it answered, but not the route question
     routed = (judgment is not None and judgment.action_id is not None
               and judgment.confidence >= ROUTE_CONFIDENCE)
     logger.debug(
-        "Spoken routing (%s, %d candidates): %s at %s",
+        "Route by voice (%s, %d candidates): %s at %s",
         route, len(request.candidates),
-        "no answer" if judgment is None else (judgment.action_id or NONE),
+        failure or (judgment.action_id or NONE),
         "-" if judgment is None else f"{judgment.confidence:.2f}",
     )
     events.publish(catalog.ROUTE_DECIDED, catalog.route_decided(
@@ -600,22 +785,33 @@ def _decide(text: str, job, settings: Mapping, judge) -> Optional[RouteDecision]
         judgment.confidence if judgment is not None else None,
         fallback=not routed,
     ))
+    if failure:
+        return RouteDecision("", "", 0.0, failure=failure)
     if not routed:
         return None
     return RouteDecision(judgment.action_id, judgment.payload, judgment.confidence)
 
 
-_WHERE_ACTIONS = "Settings → Actions"
+#: The status shows on the Actions page, below the actions and the Route by
+#: voice switch and above its shortcut; Fast judgments live on another page.
 _WHERE_FAST = "Settings → Meeting Mode → Fast judgments"
+#: ``hotkeys`` entry of the Route by voice shortcut.
+ROUTE_HOTKEY_NAME = "route_record"
+
+
+def _route_shortcut(settings: Mapping) -> str:
+    hotkeys = settings.get("hotkeys")
+    value = hotkeys.get(ROUTE_HOTKEY_NAME) if isinstance(hotkeys, Mapping) else ""
+    return value.strip() if isinstance(value, str) else ""
 
 
 def status(settings: Mapping) -> RoutingStatus:
-    """Whether spoken routing can run, and what to tell the user; never raises."""
+    """Whether Route by voice can run, what it still needs, and what it sends; never raises."""
     try:
         return _status(settings or {})
     except Exception as exc:
-        logger.debug("Spoken routing status unavailable: %s", type(exc).__name__)
-        return RoutingStatus(False, False, "Spoken routing isn't available right now.")
+        logger.debug("Route by voice status unavailable: %s", type(exc).__name__)
+        return RoutingStatus(False, False, "Route by voice isn't available right now.")
 
 
 def _status(settings: Mapping) -> RoutingStatus:
@@ -627,26 +823,36 @@ def _status(settings: Mapping) -> RoutingStatus:
     )
 
     if not resolve_voice_routing_enabled(settings):
-        return RoutingStatus(False, False, f"Spoken routing is off. Turn it on in {_WHERE_ACTIONS}.")
+        return RoutingStatus(False, False, "Route by voice is off. Turn it on above.")
     judge_route = typesafe.route_from_settings(dict(settings))
     if not resolve_typesafe_enabled(settings):
         return RoutingStatus(True, False, (
-            f"Spoken routing needs Fast judgments. Turn them on in {_WHERE_FAST}."))
+            f"Route by voice needs Fast judgments. Turn them on in {_WHERE_FAST}."),
+            FIX_FAST_JUDGMENTS)
     if not typesafe.key_present(dict(settings), route=judge_route):
         return RoutingStatus(True, False, (
-            f"Spoken routing needs {judge_route.key_phrase}. Add one in {_WHERE_FAST}."))
+            f"Route by voice needs {judge_route.key_phrase}. Add one in {_WHERE_FAST}."),
+            FIX_FAST_JUDGMENTS)
     actions = load_actions(settings)
     if not actions:
         return RoutingStatus(True, False, (
-            f"Spoken routing is on, but there are no actions yet. Add one in {_WHERE_ACTIONS}."))
+            "Route by voice is on, but there are no actions yet. Add one above."), FIX_ACTIONS)
     if not any(a.enabled for a in actions):
         return RoutingStatus(True, False, (
-            f"Spoken routing is on, but every action is turned off. Turn one on in "
-            f"{_WHERE_ACTIONS}."))
-    if resolve_voice_routing_on_dictation(settings):
-        sent = ("What you record with Route by voice, and dictations that start with an "
-                f"action's name, are sent to {judge_route.name} to choose the action.")
+            "Route by voice is on, but every action is turned off. Turn one on above."),
+            FIX_ACTIONS)
+    shortcut = bool(_route_shortcut(settings))
+    on_dictation = resolve_voice_routing_on_dictation(settings)
+    if not (shortcut or on_dictation):
+        return RoutingStatus(True, False, (
+            "Route by voice is on, but has nothing to listen to yet. Set a Route by voice "
+            "shortcut below, or turn on Also listen to normal dictations."), FIX_TRIGGER)
+    to = f"to {judge_route.name} to choose the action."
+    if shortcut and on_dictation:
+        sent = ("Everything you record with the Route by voice shortcut, and dictations "
+                f"that start with an action's name, are sent {to}")
+    elif shortcut:
+        sent = f"Everything you record with the Route by voice shortcut is sent {to}"
     else:
-        sent = (f"What you record with Route by voice is sent to {judge_route.name} to "
-                "choose the action.")
-    return RoutingStatus(True, True, f"Spoken routing is on. {sent}")
+        sent = f"Dictations that start with an action's name are sent {to}"
+    return RoutingStatus(True, True, f"Route by voice is on. {sent}")
