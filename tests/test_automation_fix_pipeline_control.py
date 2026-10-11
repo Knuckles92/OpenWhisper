@@ -225,9 +225,14 @@ def test_a_program_run_cannot_take_the_slot_from_a_recording_being_stopped(h):
 
 # -- Route by voice says when the judge couldn't answer (behaviour #7) -----------
 
-@pytest.mark.parametrize("route", ["hotkey", "auto"])
+@pytest.mark.parametrize("route, notices", [
+    ("hotkey", ["Couldn't reach Fast judgments — pasted instead"]),
+    # Any dictation may be routed; it stays as quiet as a plain paste.
+    ("auto", []),
+])
 @pytest.mark.parametrize("failure", ["timeout", "unreachable"])
-def test_a_judge_failure_pastes_and_says_so(h, monkeypatch, route, failure):
+def test_a_judge_failure_pastes_and_route_by_voice_says_so(h, monkeypatch, route, notices,
+                                                           failure):
     monkeypatch.setattr(routing, "decide", lambda *a, **k: routing.RouteDecision(
         "", "", 0.0, failure=failure))
     h.controller._pending_audio_path = h.audio  # a live recording
@@ -236,9 +241,52 @@ def test_a_judge_failure_pastes_and_says_so(h, monkeypatch, route, failure):
 
     h.paste.assert_called_once_with()
     h.controller.action_runtime.deliver.assert_not_called()
-    assert h.ui.notices == ["Couldn't reach Fast judgments — pasted instead"]
+    assert h.ui.notices == notices
     entry, = h.history.entries
     assert entry["entry_kind"] == "dictation"
+
+
+# -- an empty transcript is not a filter's cancel (pipeline #10A) -----------------
+
+def _keeping_filter(monkeypatch, replies=None):
+    def apply(stage, text, job, settings=None, *, cancel=None):
+        return FilterOutcome((replies or {}).get(stage, text))
+
+    monkeypatch.setattr(filters, "apply", apply)
+
+
+def test_an_empty_transcript_is_not_taken_for_a_filter_cancel(h, monkeypatch):
+    _keeping_filter(monkeypatch)
+    job = DictationJob(mode=JobMode.DICTATION)
+    assert h.runtime._claim_job(job)
+    assert h.runtime._run_filters("before_cleanup", "   ", job, {}) == "   "
+    assert not h.runtime._filter_canceled
+
+
+def test_a_filter_that_empties_the_words_or_cancels_takes_delivery(h, monkeypatch):
+    _keeping_filter(monkeypatch, {"before_cleanup": "  "})
+    job = DictationJob(mode=JobMode.DICTATION)
+    assert h.runtime._claim_job(job)
+    assert h.runtime._run_filters("before_cleanup", "hello", job, {}) is None
+    assert h.runtime._filter_canceled
+
+    h.runtime._finish_job()
+    monkeypatch.setattr(filters, "apply", lambda stage, text, job, settings=None, **k:
+                        FilterOutcome(text, canceled=True))
+    assert h.runtime._claim_job(job)
+    assert h.runtime._run_filters("before_cleanup", "hello", job, {}) is None
+    assert h.runtime._filter_canceled
+
+
+def test_an_empty_dictation_with_filters_reports_no_speech(h, monkeypatch):
+    _keeping_filter(monkeypatch)
+    h.controller.current_backend.transcribe = lambda path: ""
+    assert h.runtime._claim_job(DictationJob(mode=JobMode.DICTATION))
+    h.runtime.transcribe_audio_file(h.audio)
+
+    assert h.ui.statuses[-1] == "No speech detected (empty after VAD)"
+    failed, = _events(h, "transcription.failed")
+    assert failed.data["error"] == "no_speech"
 
 
 def test_a_real_no_match_still_says_no_action_matched(h, monkeypatch):

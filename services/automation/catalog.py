@@ -38,7 +38,7 @@ EVENT_TYPES: dict[str, str] = {
     HISTORY_SAVED: "A finished transcription was saved to history.",
     ACTION_RAN: "An action ran, with whether it worked.",
     CHANNEL_MESSAGE: "Words sent to Claude Code sessions listening on the channel.",
-    ROUTE_DECIDED: "Spoken routing chose an action, or fell back to pasting.",
+    ROUTE_DECIDED: "Route by voice chose an action, or fell back to pasting.",
     FILTER_FAILED: "A text filter timed out or answered badly; the text was kept.",
     MEETING_STARTED: "A meeting started.",
     MEETING_ENDED: "A meeting ended.",
