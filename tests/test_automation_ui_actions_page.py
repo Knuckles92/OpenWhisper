@@ -290,7 +290,7 @@ def test_a_taken_shortcut_is_refused_with_its_owner(make_dialog):
     assert editor.message.text() == "That shortcut is already used by Ask Claude. Choose another."
     assert editor.shortcut.hotkey == "ctrl+alt+k"
     editor.shortcut.captured.emit("ctrl+alt+m")
-    assert editor.message.text() == "That shortcut is already used by minimize tray. Choose another."
+    assert editor.message.text() == "That shortcut is already used by Minimize to tray. Choose another."
     editor.shortcut.captured.emit("ctrl+alt+j")
     assert editor.message.text() == ""
     assert editor.save()

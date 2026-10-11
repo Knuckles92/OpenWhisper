@@ -36,8 +36,10 @@ def test_the_window_button_records_with_source_ui():
 
 def test_the_tray_records_with_source_ui_and_the_shell_with_dbus():
     UIController, fake, calls = _ui()
+    fake._on_tray_toggle_recording = (
+        lambda **k: UIController._on_tray_toggle_recording(fake, **k))
     UIController._on_tray_toggle_recording(fake)
-    UIController._on_tray_toggle_recording(fake, source="dbus")
+    UIController._on_shell_toggle_recording(fake)
     assert calls == [("record", {"source": "ui"}), ("record", {"source": "dbus"})]
 
 
@@ -48,7 +50,7 @@ def test_an_omarchy_shell_click_records_with_source_dbus():
     native = OmarchyControls(SimpleNamespace(
         ui_controller=ui, hotkey_manager=SimpleNamespace(program_enabled=True)))
     assert native.Button("record")
-    ui._on_tray_toggle_recording.assert_called_once_with(source="dbus")
+    ui._on_shell_toggle_recording.assert_called_once_with()
 
 
 @pytest.mark.parametrize("source", ["ui", "dbus", "hotkey"])

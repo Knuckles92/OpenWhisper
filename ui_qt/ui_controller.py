@@ -466,11 +466,15 @@ class UIController(QObject):
         self.main_window.request_quit()
 
     def _on_tray_toggle_recording(self, source: str = "ui"):
-        """The tray's record item, or the desktop shell's button (``source`` "dbus")."""
+        """The tray's record item; its recording's events say ``source``."""
         if self.is_recording:
             self.stop_recording()
         else:
             self.start_recording(source=source)
+
+    def _on_shell_toggle_recording(self):
+        """The desktop shell's record button (Omarchy, over D-Bus)."""
+        self._on_tray_toggle_recording(source="dbus")
 
     def _on_overlay_state_changed(self, state: str):
         logger.debug(f"Overlay state changed to: {state}")

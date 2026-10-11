@@ -141,7 +141,7 @@ def test_shell_clicks_use_app_actions_even_with_shortcuts_paused():
     assert native.Button("meeting")
     assert native.Button("show")
     assert not native.Button("run-shell-command")
-    assert ui._on_tray_toggle_recording.call_count == 2
+    assert ui._on_shell_toggle_recording.call_count == 2
     ui.cancel_recording.assert_called_once_with()
     ui._on_tray_meeting_toggle.assert_called_once_with()
     ui.main_window.restore_from_tray.assert_called_once_with()
