@@ -58,7 +58,8 @@ only** puts the words in the Scratchpad.
 Actions that take a while (an agent's answer, a webhook, a program) keep
 running after the dictation is saved, 4 at a time with up to 4 more waiting.
 **Cancel** while a recording or transcription is in progress cancels only
-that. Press it with nothing recording to cancel the actions still running:
+that. Press it once your words have gone to the action, or with nothing
+recording, to cancel the actions still running:
 those still waiting never start, and a Quick answer or a program is stopped.
 One that has already started and can't be stopped (opening a link, posting
 to a webhook, opening a session), or that had already finished, reports what
@@ -159,6 +160,9 @@ A filter registered over the API never sees words going to an Agent hotkey or
 Claude Code session action unless you also allow **Send words to my coding
 agents**. Words it changes count as a program's: they reach a coding agent
 only with that permission, and Claude Code sees them as `origin="program"`.
+With Route by voice, your saved filters run before the words are routed and
+filters registered over the API after, so they see the action the words go
+to (`mode` `action`, its `action_id`) and can't change which one it is.
 
 Request:
 
@@ -224,12 +228,12 @@ the read-only [History API](agent-api.md), not these routes.
 
 | Route | Permission | Result |
 | --- | --- | --- |
-| `GET /v1/live/state` | token | `recording`, `busy`, `meeting`, `mode`, `action_id`, `job_id`, `version`, `permissions`, `listeners` |
+| `GET /v1/live/state` | token | `recording`, `busy` (until the job is saved in History), `meeting`, `mode` and `action_id` (the action Route by voice chose, once it chose one), `job_id`, `version`, `permissions`, `listeners` |
 | `GET /v1/events?types=a,b&since=<seq>` | live events | Server-Sent Events, below |
 | `GET /v1/actions` | token | `{"actions": [{id, name, kind, description, spoken_names, hotkey, shaping, enabled}]}` (never links, paths or folders) |
 | `POST /v1/actions/{id}/run` `{"text": "…"}` | run actions (+ coding agents for agent and channel actions) | 202 `{"job_id"}`: the words take a dictation's path without recording; 409 `busy` while too many actions are still running |
 | `POST /v1/recording/start` `{"action_id"?}` | start recordings | 202 `{"job_id"}`; the dictation isn't cleaned up with the text near your cursor, even when that's on |
-| `POST /v1/recording/stop`, `/cancel` | start recordings | 202 `{}`; `/cancel` cancels the recording or transcription in progress, never actions you started (422 `refused` when there is none) |
+| `POST /v1/recording/stop`, `/cancel` | start recordings | 202 `{}`; `/cancel` cancels the recording or transcription in progress, never actions you started (422 `refused` when there is none, including once a dictation's words have gone to its action) |
 | `POST /v1/filters` `{"url", "stage", "timeout_ms"?}` | change text | 201 lease `{id, url, stage, timeout_ms, modes, expires_at, ttl_s}` |
 | `POST /v1/filters/{id}/renew`, `DELETE /v1/filters/{id}` | change text | 200 lease / 204 |
 | `POST /v1/notify` `{"text", "title"?}` | run actions | 202: a short notice near the pointer |
@@ -315,7 +319,8 @@ Agents connected over [MCP](mcp.md) get these tools as well, gated by the same
 permissions: `get_live_state`, `list_actions`, `run_action`,
 `start_dictation`, `stop_dictation`, `cancel_dictation`, `recent_events` and
 `notify_user`. `cancel_dictation` cancels only a recording or transcription
-in progress, never your running actions.
+in progress (not once its words have gone to an action), never your running
+actions.
 
 **MCP Events** (preview, off by default; API & MCP page) implements the
 [MCP Events draft](https://github.com/modelcontextprotocol/experimental-ext-triggers-events)

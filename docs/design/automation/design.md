@@ -181,7 +181,8 @@ API POST /v1/actions/{id}/run {text} ─► AppControl.run_action ─► Qt thre
 worker after ASR (transcribe_audio_file):
    mode COMMAND/TRANSFORM → command_runtime.complete_recording   (unchanged)
    else → _complete_live(raw, job):
-        text = filters.apply(BEFORE_CLEANUP, raw, job)        (stub: unchanged)
+        text = filters.apply(BEFORE_CLEANUP, raw, job)        (since round 3: saved
+               filters, then routing, then API leases on the routed job)
         canceled → CommandRefused-like quiet end ("Filter canceled delivery")
         if job.route or (DICTATION and voice_routing_on_dictation):
             decision = routing.decide(text, job, settings)    (stub: None)
@@ -851,6 +852,21 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
 
 ### After review round 3
 
+- **Cancel window**: `_settle`/`_saving` are set by `on_transcription_complete`
+  (with the cancel check, under `_job_lock`), `on_transcription_error` and
+  `on_batch_complete`. Until `_finish_job`, `cancel()` publishes nothing and
+  returns False, and `cancelable` is False; `app_control._cancel` refuses
+  unless `cancelable`. `has_active_job` still means "the slot is held".
+- **Filters and routing**: `filters.StageRun(stage, settings, cancel=)` with
+  `.saved(text, job)` and `.leased(text, job)` sharing `STAGE_BUDGET_S`;
+  `TranscriptionRuntime._filter_and_route` runs saved before-cleanup filters,
+  then routing, then leases on the routed job, so a lease sees the action and
+  can't steer routing; `_filtered(run, text, job)`.
+- **Live state**: `TranscriptionRuntime.current_job` (the slot's job once
+  claimed, else the recording's), used by `QtAppControl.state` and `_start`.
+- **Busy refusals**: `begin_rewrite_job` tells the user only for
+  `catalog.user_started(job.source)` (`_refuse_rewrite`); a program's refused
+  run is answered by the API alone.
 - **Program runs and the clipboard**: `runtime._output_of(run)` is the one
   rule. A run whose job isn't `catalog.user_started` sends Paste and
   Clipboard answers to the Scratchpad, and a Notice doesn't copy the full
