@@ -470,27 +470,30 @@ class TestWebhooks:
         try:
             section.open_editor("hook01")
             editor = section.editor
-            # An engine that can't send says why in its own words; no fake success.
+            # An engine that can't send says why in its own words, on the line
+            # under the button (an error is too long for the chip); no fake success.
+            error_line = editor.test_chip.error_line
             monkeypatch.setattr(webhooks, "send_test", lambda hook_id: resolved(
                 error=RuntimeError("Webhooks aren't available yet.")))
             editor.test_button.click()
-            assert editor.test_chip.text() == "Webhooks aren't available yet."
-            assert editor.test_chip.property("tone") == "error"
+            assert error_line.text() == "Webhooks aren't available yet."
+            assert error_line.property("tone") == "error" and editor.test_chip.isHidden()
 
             def refuse(hook_id):
                 raise RuntimeError("Saved webhooks changed; try again.")
 
             monkeypatch.setattr(webhooks, "send_test", refuse)
             editor.test_button.click()
-            assert editor.test_chip.text() == "Saved webhooks changed; try again."
+            assert error_line.text() == "Saved webhooks changed; try again."
             assert editor.test_button.isEnabled()
             monkeypatch.setattr(webhooks, "send_test", lambda hook_id: resolved(
                 record(None, 5000, ok=False, error="Timed out")))
             editor.test_button.click()
-            assert (editor.test_chip.text(), editor.test_chip.property("tone")) == ("Timed out", "error")
+            assert error_line.text() == "Timed out" and not error_line.isHidden()
             monkeypatch.setattr(webhooks, "send_test", lambda hook_id: resolved(record(404, 80, ok=False)))
             editor.test_button.click()
-            assert editor.test_chip.text() == "404 · 80 ms"
+            assert (editor.test_chip.text(), editor.test_chip.property("tone")) == ("404 · 80 ms", "error")
+            assert error_line.isHidden()
             pending = Future()
             monkeypatch.setattr(webhooks, "send_test", lambda hook_id: pending)
             editor.test_button.click()
@@ -546,7 +549,7 @@ class TestWebhooks:
         finally:
             close(section)
 
-    def test_secret_errors_show_in_the_chip(self, store, monkeypatch):
+    def test_secret_errors_show_under_the_buttons(self, store, monkeypatch):
         store.mutate_settings(lambda s: s.__setitem__(SettingsKey.AUTOMATION_WEBHOOKS, [HOOK]))
 
         def unavailable(hook_id):
@@ -558,8 +561,10 @@ class TestWebhooks:
         try:
             section.open_editor("hook01")
             section.editor.copy_secret.click()
-            wait_for(lambda: section.editor.secret_chip.property("tone") == "error")
-            assert section.editor.secret_chip.text() == "Your system's credential store is locked."
+            error_line = section.editor.secret_chip.error_line
+            wait_for(lambda: not error_line.isHidden())
+            assert error_line.text() == "Your system's credential store is locked."
+            assert section.editor.secret_chip.isHidden()
             assert section.editor.copy_secret.isEnabled()
         finally:
             close(section)
@@ -639,7 +644,7 @@ class TestPrograms:
             monkeypatch.setattr(programs, "run_test", lambda program_id: resolved(
                 error=RuntimeError("Programs aren't available yet.")))
             editor.test_button.click()
-            assert editor.test_chip.text() == "Programs aren't available yet."
+            assert editor.test_chip.error_line.text() == "Programs aren't available yet."
         finally:
             close(section)
 

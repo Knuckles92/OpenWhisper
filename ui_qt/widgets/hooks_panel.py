@@ -345,19 +345,36 @@ class EventChooser(QWidget):
 
 
 class StatusChip(QLabel):
-    """A short, honest result: "Sending…", "200 · 120 ms", or the error."""
+    """A short, honest result beside its button: "Sending…", "200 · 120 ms".
+
+    An error is a sentence, too long for a chip, so it goes in
+    ``error_line``, which wraps; the editor places it under the buttons.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("hooksChip")
         self.setTextFormat(Qt.TextFormat.PlainText)
+        # A chip keeps its own width, even when its buttons stack.
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self.hide()
+        self.error_line = _hint()
+        set_style_property(self.error_line, "tone", "error")
+        self.error_line.hide()
 
     def show_result(self, text: str, tone: str) -> None:
+        self.error_line.setText("")
+        self.error_line.hide()
         self.setText(text)
         self.setToolTip(text)
         set_style_property(self, "tone", tone)
         self.setVisible(bool(text))
+
+    def show_error(self, text: str) -> None:
+        self.setText("")
+        self.hide()
+        self.error_line.setText(text)
+        self.error_line.setVisible(bool(text))
 
 
 class RecentList(QWidget):
@@ -660,6 +677,7 @@ class WebhookEditor(_Editor):
         extras.addWidget(_AdaptiveButtons(
             [self.copy_secret, self.rotate_secret, self.secret_chip, None]
         ))
+        extras.addWidget(self.secret_chip.error_line)
         extras.addSpacing(4)
         extras.addWidget(self._divider())
         extras.addWidget(self._section_label("Test and recent deliveries"))
@@ -668,6 +686,7 @@ class WebhookEditor(_Editor):
         self.test_button.clicked.connect(self.send_test)
         self.test_chip = StatusChip()
         extras.addWidget(_AdaptiveButtons([self.test_button, self.test_chip, None]))
+        extras.addWidget(self.test_chip.error_line)
         self.recent = RecentList("No deliveries yet.")
         extras.addWidget(self.recent)
         layout.addWidget(self.extras)
@@ -719,7 +738,7 @@ class WebhookEditor(_Editor):
         def done(secret, error) -> None:
             self.copy_secret.setEnabled(True)
             if error or not secret:
-                self.secret_chip.show_result(error or "No secret yet.", "error")
+                self.secret_chip.show_error(error or "No secret yet.")
                 return
             QApplication.clipboard().setText(secret)
             self.secret_chip.show_result("Copied", "ok")
@@ -745,7 +764,7 @@ class WebhookEditor(_Editor):
         def done(secret, error) -> None:
             self.rotate_secret.setEnabled(True)
             if error or not secret:
-                self.secret_chip.show_result(error or "Couldn't make a new secret.", "error")
+                self.secret_chip.show_error(error or "Couldn't make a new secret.")
                 return
             QApplication.clipboard().setText(secret)
             self.secret_chip.show_result("New secret copied", "ok")
@@ -764,10 +783,14 @@ class WebhookEditor(_Editor):
         def done(record, error) -> None:
             self.test_button.setEnabled(True)
             if error:
-                self.test_chip.show_result(error, "error")
+                self.test_chip.show_error(error)
             else:
                 text, ok = delivery_result(record)
-                self.test_chip.show_result(text, "ok" if ok else "error")
+                # A status code fits the chip; no status means a sentence saying why.
+                if record.status is None:
+                    self.test_chip.show_error(text)
+                else:
+                    self.test_chip.show_result(text, "ok" if ok else "error")
             self.refresh_live()
 
         self._requests.when_done(lambda: webhook_engine.send_test(hook_id), done)
@@ -849,6 +872,7 @@ class ProgramEditor(_ProgramFields, _Editor):
         self.test_button.clicked.connect(self.run_test)
         self.test_chip = StatusChip()
         extras.addWidget(_AdaptiveButtons([self.test_button, self.test_chip, None]))
+        extras.addWidget(self.test_chip.error_line)
         self.recent = RecentList("No runs yet.")
         extras.addWidget(self.recent)
         layout.addWidget(self.extras)
@@ -898,10 +922,14 @@ class ProgramEditor(_ProgramFields, _Editor):
         def done(record, error) -> None:
             self.test_button.setEnabled(True)
             if error:
-                self.test_chip.show_result(error, "error")
+                self.test_chip.show_error(error)
             else:
                 text, ok = run_result(record)
-                self.test_chip.show_result(text, "ok" if ok else "error")
+                # An exit code fits the chip; no exit code means a sentence saying why.
+                if record.exit_code is None:
+                    self.test_chip.show_error(text)
+                else:
+                    self.test_chip.show_result(text, "ok" if ok else "error")
             self.refresh_live()
 
         self._requests.when_done(lambda: program_engine.run_test(program_id), done)
