@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import fields, replace
 from typing import Callable, Mapping, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -76,6 +76,23 @@ _KIND_NOTES = {
 def copy_text(text: str) -> None:
     """Put ``text`` on the clipboard (patched by tests)."""
     QApplication.clipboard().setText(text)
+
+
+def onto_saved(saved: Action, baseline: Action, draft: Action) -> Action:
+    """``draft``'s edits since ``baseline``, made to ``saved``, the action as it is saved now.
+
+    The Agent hotkey card saves the same action as you change it, so the
+    editor writes only what you changed in it: everything else, such as the
+    on/off switch, stays as saved.
+    """
+    edits = {
+        field.name: getattr(draft, field.name) for field in fields(Action)
+        if field.name != "params" and getattr(draft, field.name) != getattr(baseline, field.name)
+    }
+    params = dict(saved.params)
+    params.update({key: value for key, value in draft.params.items()
+                   if key not in baseline.params or baseline.params[key] != value})
+    return replace(saved, params=params, **edits)
 
 
 class ActionEditor(InfoTile):
@@ -262,6 +279,11 @@ class ActionEditor(InfoTile):
     def is_new(self) -> bool:
         return self._is_new
 
+    @property
+    def saved_action(self) -> Optional[Action]:
+        """The action as saved when the editor last read it; None for a new one."""
+        return None if self._is_new else self._action
+
     def open(self, action: Action, *, is_new: bool, note: str = "") -> None:
         """Show ``action``; a new one is only saved once you save it."""
         self.shortcut.cancel_capture()
@@ -270,10 +292,34 @@ class ActionEditor(InfoTile):
         self._secret_made = False
         self._secret_token = 0
         self._set_secret_busy(False)
-        settings = self._settings()
         self.title_label.setText("New action" if is_new else f"Edit {action.name}")
         self.set_description(KIND_BLURBS.get(action.kind, ""))
         tint_icon(self, KIND_ICONS[action.kind], indent_body=False)
+        self.preset_note.setText(note)
+        self.preset_note.setVisible(bool(note))
+        self._fill(action)
+        for edit in (self.name_edit, self.template_edit, self.url_edit, self.spoken_edit,
+                     self.description_edit, self.sample_edit):
+            edit.setCursorPosition(0)
+        self.try_result.hide()
+        self.try_button.setEnabled(True)
+        self._try_token = 0
+        self.show_message("")
+        # The draft as opened: untouched, there is nothing to keep.
+        self._baseline = self.draft()
+
+    def follow(self, saved: Action) -> None:
+        """``saved`` changed elsewhere (the Agent hotkey card): show it, keeping your edits."""
+        edited = onto_saved(saved, self._baseline, self.draft())
+        self._action = saved
+        self._fill(saved)
+        self._baseline = self.draft()
+        if edited != saved:
+            self._fill(edited)
+
+    def _fill(self, action: Action) -> None:
+        """Put ``action``'s values in the fields."""
+        settings = self._settings()
         self.name_edit.setText(action.name)
         kind = action.kind
         # Every kind's fields are filled, with the kind's defaults where they
@@ -283,8 +329,6 @@ class ActionEditor(InfoTile):
             for other in (ActionKind.OPEN_LINK, ActionKind.WEBHOOK, ActionKind.PROGRAM)
         )
         self.template_edit.setText(link.param("template") or "")
-        self.preset_note.setText(note)
-        self.preset_note.setVisible(bool(note))
         self.agent_fields.set_params(action.params if kind == ActionKind.AGENT else {})
         from services.settings import resolve_app_context_enabled
         from ui_qt.widgets.action_agent_card import available_agents
@@ -304,14 +348,7 @@ class ActionEditor(InfoTile):
         self.shaping.set_value(action.shaping)
         self.spoken_edit.setText(", ".join(action.spoken_names))
         self.description_edit.setText(action.description)
-        for edit in (self.name_edit, self.template_edit, self.url_edit, self.spoken_edit,
-                     self.description_edit, self.sample_edit):
-            edit.setCursorPosition(0)
         self.shortcut.set_hotkey(action.hotkey)
-        self.try_result.hide()
-        self.try_button.setEnabled(True)
-        self._try_token = 0
-        self.show_message("")
         for kind, box in (
             (ActionKind.OPEN_LINK, self.link_box),
             (ActionKind.AGENT, self.agent_box),
@@ -322,8 +359,6 @@ class ActionEditor(InfoTile):
         self.note_box.setVisible(action.kind in _KIND_NOTES)
         self._update_preview()
         self._update_url_note()
-        # The draft as opened: untouched, there is nothing to keep.
-        self._baseline = self.draft()
 
     def _show_agents(self, found: dict) -> None:
         """What the last scan found, or look once when nothing has been scanned yet."""
@@ -528,9 +563,22 @@ class ActionEditor(InfoTile):
         if self._action is None:
             return True
         self.shortcut.cancel_capture()
-        action = self.draft()
+        draft, baseline, is_new = self.draft(), self._baseline, self._is_new
+
+        def write(settings) -> Action:
+            action = draft
+            if not is_new:
+                # Your edits, made to the action as saved now, not as it was opened.
+                saved = find_action(settings, draft.id)
+                if saved is None:
+                    raise ValueError(f"{baseline.name} no longer exists, so there's nothing "
+                                     "to save these changes to.")
+                action = onto_saved(saved, baseline, draft)
+            save_action(settings, action)
+            return action
+
         try:
-            self.manager.mutate_settings(lambda settings: save_action(settings, action))
+            written = self.manager.mutate_settings(write)
         except ValueError as exc:
             self.show_message(str(exc))
             return False
@@ -539,17 +587,21 @@ class ActionEditor(InfoTile):
             return False
         self._secret_made = False
         self._is_new = False
-        self._action = find_action(self._settings(), action.id) or action
+        self._action = find_action(self._settings(), draft.id) or written
         self._baseline = self.draft()
         self.saved.emit(self._action)
         return True
 
     def cancel(self) -> None:
+        self.discard()
+        self.cancelled.emit()
+
+    def discard(self) -> None:
+        """Let the draft go unsaved, and a new action's signing secret with it."""
         self.shortcut.cancel_capture()
         self._drop_unsaved_secret()
         self._action = None
         self._baseline = None
-        self.cancelled.emit()
 
     def save_draft(self, *, ask: bool = False) -> bool:
         """Save an unsaved edit when Settings leaves the page (TransformsPanel's rule).

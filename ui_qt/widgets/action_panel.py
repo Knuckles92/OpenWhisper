@@ -125,14 +125,28 @@ class ActionsPanel(QWidget):
         settings = self._settings() if settings is None else settings
         actions = [a for a in load_actions(settings) if a.id != AGENT_ACTION_ID]
         self.list.set_actions(actions)
+        if self.mode == EDITOR:
+            self.editor.refresh_choices(settings)
+            self._follow_saved(settings)
         self.add_button.setEnabled(len(load_actions(settings)) < MAX_ACTIONS)
         # With no actions the empty card's own button invites the first one.
         self.add_button.setVisible(self.mode == LIST and bool(actions))
         self.add_button.setToolTip(
             "" if self.add_button.isEnabled()
             else f"You can keep up to {MAX_ACTIONS} actions. Delete one to add another.")
-        if self.mode == EDITOR:
-            self.editor.refresh_choices(settings)
+
+    def _follow_saved(self, settings: Mapping) -> None:
+        """The action being edited changed or went away elsewhere, such as on the agent card."""
+        before = self.editor.saved_action
+        if before is None:
+            return
+        saved = find_action(settings, before.id)
+        if saved is None:
+            self.editor.discard()
+            self._show(LIST)
+            self.show_notice(f"{before.name} was removed.")
+        elif saved != before:
+            self.editor.follow(saved)
 
     def _show(self, mode: str) -> None:
         self.mode = mode

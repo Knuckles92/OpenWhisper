@@ -76,7 +76,7 @@ def build(dialog, layout) -> None:
     destinations = {"styles": STYLES, "mcp": MCP}
 
     card = dialog.actions_agent_card = AgentHotkeyCard(manager=_manager(), try_action=try_action)
-    card.changed.connect(lambda: dialog.notify_changed("actions"))
+    card.changed.connect(lambda: _on_card_changed(dialog))
     card.capture_changed.connect(dialog.set_hotkey_capture_suspended)
     card.styles_requested.connect(lambda: dialog.select_destination(STYLES))
     layout.addWidget(card)
@@ -121,9 +121,13 @@ def build(dialog, layout) -> None:
 
 def _on_actions_changed(dialog) -> None:
     dialog.notify_changed("actions")
-    card = dialog.__dict__.get("actions_agent_card")
-    if card is not None:
-        card.load(dialog._settings_snapshot())
+    dialog.actions_agent_card.load(dialog._settings_snapshot())
+
+
+def _on_card_changed(dialog) -> None:
+    # The full editor may be open on the same action.
+    dialog.notify_changed("actions")
+    dialog.actions_panel.refresh(dialog._settings_snapshot())
 
 
 def _on_routing_toggled(dialog, key: str, on: bool) -> None:
