@@ -38,6 +38,24 @@ def _with_actions(h, *actions, **values):
 
 # -- Cancel stops filters and routing (concurrency #3) ---------------------------
 
+def _fake_filters(monkeypatch, apply):
+    """``apply`` stands in for filters.apply and both parts of a StageRun,
+    which a dictation that may be routed runs around routing."""
+
+    class StageRun:
+        def __init__(self, stage, settings=None, *, cancel=None):
+            self.stage, self.settings, self.cancel = stage, settings, cancel
+
+        def saved(self, text, job):
+            return apply(f"{self.stage} saved", text, job, self.settings, cancel=self.cancel)
+
+        def leased(self, text, job):
+            return apply(f"{self.stage} leased", text, job, self.settings, cancel=self.cancel)
+
+    monkeypatch.setattr(filters, "apply", apply)
+    monkeypatch.setattr(filters, "StageRun", StageRun)
+
+
 def test_filters_and_routing_get_the_cancel(h, monkeypatch):
     seen = []
 
@@ -49,16 +67,18 @@ def test_filters_and_routing_get_the_cancel(h, monkeypatch):
         seen.append(("route", cancel))
         return None
 
-    monkeypatch.setattr(filters, "apply", apply)
+    _fake_filters(monkeypatch, apply)
     monkeypatch.setattr(routing, "decide", decide)
     assert h.runtime._claim_job(DictationJob(mode=JobMode.DICTATION, route="hotkey"))
     h.runtime.transcribe_audio_file(h.audio)
 
-    assert [stage for stage, _ in seen] == ["before_cleanup", "route", "after_cleanup"]
+    assert [stage for stage, _ in seen] == [
+        "before_cleanup saved", "route", "before_cleanup leased", "after_cleanup"]
     assert all(cancel is h.runtime._cancel_requested for _, cancel in seen)
 
 
-@pytest.mark.parametrize("cancel_at", ["before_cleanup", "route"])
+@pytest.mark.parametrize(
+    "cancel_at", ["before_cleanup saved", "route", "before_cleanup leased"])
 def test_canceled_words_reach_no_later_stage(h, monkeypatch, cancel_at):
     reached = []
 
@@ -75,7 +95,7 @@ def test_canceled_words_reach_no_later_stage(h, monkeypatch, cancel_at):
         return None
 
     h.controller.current_backend.is_transcribing = False
-    monkeypatch.setattr(filters, "apply", apply)
+    _fake_filters(monkeypatch, apply)
     monkeypatch.setattr(routing, "decide", decide)
     assert h.runtime._claim_job(DictationJob(mode=JobMode.DICTATION, route="hotkey"))
     h.runtime.transcribe_audio_file(h.audio)

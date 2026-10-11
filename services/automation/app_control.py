@@ -179,7 +179,7 @@ def _start(controller, action_id: str, source: str) -> str:
     started, statuses = _get_relay().with_statuses(controller.status_update, start)
     if started is False:
         raise ControlError(REFUSED, statuses[-1] if statuses else "OpenWhisper couldn't start recording.")
-    job = runtime._job
+    job = runtime.current_job
     return job.id if job is not None else ""
 
 
@@ -190,10 +190,12 @@ def _stop(controller) -> None:
 
 
 def _cancel(controller) -> None:
-    # Recordings and jobs only: the actions the user started are theirs to stop.
-    if not (controller.recorder.is_recording or controller.transcription_runtime.has_active_job):
+    # Recordings and jobs still working only: the actions the user started
+    # are theirs to stop, including those a delivered job (only being
+    # saved) handed its words to.
+    runtime = controller.transcription_runtime
+    if not runtime.cancelable or not runtime.cancel():
         raise ControlError(REFUSED, "Nothing is recording or transcribing.")
-    controller.transcription_runtime.cancel()
 
 
 def _notify(controller, text: str, title: str) -> None:
@@ -228,9 +230,10 @@ class QtAppControl:
         controller = self._require()
         runtime = controller.transcription_runtime
         recording = bool(controller.recorder.is_recording)
+        # Until its history is saved: a start is busy until then.
         busy = bool(runtime.has_active_job)
-        # The recording's job until a stop hands it to the worker slot.
-        job = (runtime._job or runtime._active_job) if (recording or busy) else None
+        # As it is now: the action routing chose, once it did.
+        job = runtime.current_job if (recording or busy) else None
         return LiveState(
             recording=recording,
             busy=busy,
