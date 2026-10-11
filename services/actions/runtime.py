@@ -25,6 +25,7 @@ import itertools
 import json
 import logging
 import os
+import re
 import threading
 import traceback
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -279,9 +280,19 @@ def prompt_with_context(text: str, snapshot) -> str:
     app = identity.name if identity is not None and identity.name else ""
     lines = [CONTEXT_OPEN]
     if app:
-        lines.append(f"<app>{app}</app>")
-    lines += ["<selected_text>", selected, "</selected_text>", CONTEXT_CLOSE]
+        lines.append(f"<app>{_inside_frame(app)}</app>")
+    lines += ["<selected_text>", _inside_frame(selected), "</selected_text>", CONTEXT_CLOSE]
     return text + "\n\n" + "\n".join(lines)
+
+
+#: The "<" of a tag naming one of the frame's own elements, open or close.
+_FRAME_TAG = re.compile(r"<(?=\s*/?\s*(?:selected_text|context|app)\b)", re.IGNORECASE)
+
+
+def _inside_frame(value: str) -> str:
+    """``value`` with the frame's own tags made inert, so a selection or app
+    name can't end the frame early and pose as the request after it."""
+    return _FRAME_TAG.sub("&lt;", value)
 
 
 def _agent(params: dict, text: str, job, cancel: threading.Event) -> ActionResult:
