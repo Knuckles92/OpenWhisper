@@ -555,3 +555,40 @@ def test_opens_in_says_a_terminal_starts_right_away_and_an_app_waits(make_dialog
         "The agent's app opens with your words filled in, ready for you to send.",
         "A new terminal opens, and the agent starts on your words right away.",
     ]
+
+
+# ---- 10. Tab goes through the page as it reads ----
+
+
+def _tab_order(start, page, count):
+    """The next ``count`` widgets Tab would reach on ``page`` after ``start``."""
+    from PyQt6.QtCore import Qt
+
+    order, widget = [], start
+    while len(order) < count:
+        widget = widget.nextInFocusChain()
+        if widget is start:
+            break
+        if (page.isAncestorOf(widget) and widget.isVisible() and widget.isEnabled()
+                and widget.focusPolicy() & Qt.FocusPolicy.TabFocus):
+            order.append(widget)
+    return order
+
+
+def test_tab_reaches_the_action_cards_where_they_sit(make_dialog):
+    hook = {"id": "h1", "name": "Home Assistant", "kind": "webhook",
+            "params": {"url": "https://example.com/hook"}}
+    dialog, _store = make_dialog({SettingsKey.ACTIONS: [ASK_CLAUDE, hook]})
+    panel = dialog.actions_panel
+
+    def expected():
+        cards = [panel.list.card("a1"), panel.list.card("h1")]
+        return [w for card in cards for w in (card.switch, card.edit_link, card.delete_link)] + [
+            dialog.actions_routing_tile.checkbox]
+
+    page = dialog._pages[ACTIONS]
+    assert _tab_order(panel.add_button, page, 7) == expected()
+    # Cards made again, after a save, still come where they sit.
+    panel.refresh()
+    pump()
+    assert _tab_order(panel.add_button, page, 7) == expected()

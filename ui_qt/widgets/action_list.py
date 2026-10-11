@@ -115,6 +115,10 @@ class ActionCard(InfoTile):
             self.switch.setChecked(on)
         set_style_property(self, "off", not on)
 
+    def focus_order(self) -> tuple[QWidget, ...]:
+        """Its controls in the order they read: the switch at the top, then Edit and Delete."""
+        return (self.switch, self.edit_link, self.delete_link)
+
 
 class ActionList(QWidget):
     """The cards, two to a row when there's room, or an invitation to add one."""
@@ -185,6 +189,19 @@ class ActionList(QWidget):
         self.grid_box.setVisible(bool(self.cards))
         self._columns = 0
         self._arrange()
+        self._chain_focus()
+
+    def _chain_focus(self) -> None:
+        """Tab reaches the cards in reading order, right after what comes before the list.
+
+        Cards are made after the rest of the page, so Tab would otherwise
+        reach them last, after Route by voice.
+        """
+        previous = self.empty_add
+        for card in self.cards:
+            for widget in card.focus_order():
+                QWidget.setTabOrder(previous, widget)
+                previous = widget
 
     def _arrange(self) -> None:
         columns = 2 if self.width() >= round(TWO_COLUMNS_FROM * current_ui_font_scale()) else 1
