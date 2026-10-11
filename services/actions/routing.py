@@ -42,11 +42,14 @@ logger = logging.getLogger(__name__)
 
 ROUTE_TIMEOUT_S = 1.5
 #: A route needs the judge's confidence in its chosen action at least this
-#: high. Measured on 104 synthetic utterances (benchmarks/voice_routing,
-#: October 10, 2026, jev-1.13.0): no false route at 0.4 or above in any run,
-#: and the words that must be pasted never got above 0.33 for an action, so
-#: 0.5 keeps a margin for messier real speech; 0.6 would lose a further tenth
-#: of the routes people meant without avoiding any measured false route.
+#: high. Measured on synthetic utterances (benchmarks/voice_routing,
+#: jev-1.13.0, October 10, 2026): on the first 104, no false route at 0.4 or
+#: above in any run and the words that must be pasted never got above 0.33
+#: for an action; on all 133, no false route at 0.5 or above, the closest
+#: being 0.41 ("Use the webhook from the staging config." with Route by
+#: voice). 0.5 keeps a margin for messier real speech; 0.6 would lose a
+#: further tenth of the routes people meant without avoiding any measured
+#: false route.
 ROUTE_CONFIDENCE = 0.5
 
 #: ``DictationJob.route`` values.
