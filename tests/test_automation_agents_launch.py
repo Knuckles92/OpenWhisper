@@ -68,18 +68,19 @@ def test_windows_classic_handler_counts_only_while_its_program_exists(monkeypatc
 
 def test_windows_packaged_app_protocol_counts(monkeypatch):
     # MSIX apps (the ChatGPT app's codex://) leave only a bare "URL Protocol"
-    # key; the association resolves to their AppX id.
+    # key; the association resolves to the AppX protocol handler, a COM object.
     monkeypatch.setattr(launch, "_assoc_query", FakeAssoc({
-        ("codex", launch._ASSOCSTR_PROGID): (0, "AppXpphkyfg606fzrg1c0jchv5hg0k0y69e5"),
+        ("codex", launch._ASSOCSTR_DELEGATEEXECUTE): (0, "{A56A841F-E974-45C1-8001-7E3F8A085917}"),
     }))
     assert launch._windows_handler("codex") is True
 
 
 @pytest.mark.parametrize("table, expected", [
-    ({}, False),                                                     # unknown scheme
-    ({("stale", launch._ASSOCSTR_PROGID): (0, "stale")}, False),      # key, no handler
+    ({}, False),                                                         # unknown scheme
+    ({("stale", launch._ASSOCSTR_COMMAND): (NO_ASSOCIATION, ""),
+      ("stale", launch._ASSOCSTR_DELEGATEEXECUTE): (0x80070490, "")}, False),  # key, no handler
     ({("stale", launch._ASSOCSTR_COMMAND): (0x80004005, ""),
-      ("stale", launch._ASSOCSTR_PROGID): (0x80004005, "")}, None),   # lookup failed
+      ("stale", launch._ASSOCSTR_DELEGATEEXECUTE): (0x80004005, "")}, None),   # lookup failed
 ])
 def test_windows_without_a_handler(monkeypatch, table, expected):
     monkeypatch.setattr(launch, "_assoc_query", FakeAssoc(table))

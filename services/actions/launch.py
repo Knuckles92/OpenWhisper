@@ -9,6 +9,7 @@ environment without OpenWhisper's own keys (``agent_child_env``).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -19,7 +20,7 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -142,18 +143,39 @@ def forget_handlers() -> None:
         _handler_cache.clear()
 
 
-# AssocQueryStringW: the lookup ShellExecute itself uses, so it also sees
-# protocols that packaged (Microsoft Store / MSIX) apps declare in their
-# manifest, which leave only a bare "URL Protocol" key in the registry.
+# AssocQueryStringW: the lookup ShellExecute itself uses. A protocol's handler
+# is a command line, or a COM object named by DelegateExecute: every packaged
+# (Microsoft Store / MSIX) app's protocol, declared in its manifest, and
+# Windows' own pages such as ms-settings:. ShellExecute prefers the COM object.
 _ASSOCF_NOTRUNCATE = 0x20
 _ASSOCF_INIT_IGNOREUNKNOWN = 0x400
 _ASSOCF_IS_PROTOCOL = 0x1000
 _ASSOCSTR_COMMAND = 1
 _ASSOCSTR_EXECUTABLE = 2
-_ASSOCSTR_PROGID = 20
+_ASSOCSTR_DELEGATEEXECUTE = 18
 _S_OK = 0
 #: HRESULT_FROM_WIN32(ERROR_NO_ASSOCIATION) and (ERROR_NOT_FOUND).
 _NO_HANDLER = (0x80070483, 0x80070490)
+_COINIT_APARTMENTTHREADED = 0x2
+_COINIT_DISABLE_OLE1DDE = 0x4
+
+
+@contextlib.contextmanager
+def _com() -> Iterator[None]:
+    """COM on this thread while the shell looks a link up or opens it.
+
+    Windows reads some packaged apps' protocols (ms-actioncenter:) only
+    through COM; without it, AssocQueryStringW says they have no handler.
+    """
+    import ctypes
+
+    ole32 = ctypes.WinDLL("ole32")
+    result = ole32.CoInitializeEx(None, _COINIT_APARTMENTTHREADED | _COINIT_DISABLE_OLE1DDE)
+    try:
+        yield
+    finally:
+        if result >= 0:  # S_OK or S_FALSE; a thread already in another apartment keeps it
+            ole32.CoUninitialize()
 
 
 def _assoc_query(scheme: str, what: int) -> Tuple[int, str]:
@@ -168,11 +190,15 @@ def _assoc_query(scheme: str, what: int) -> Tuple[int, str]:
     size = wintypes.DWORD(2048)
     buffer = ctypes.create_unicode_buffer(size.value)
     flags = _ASSOCF_IS_PROTOCOL | _ASSOCF_INIT_IGNOREUNKNOWN | _ASSOCF_NOTRUNCATE
-    result = query(flags, what, scheme, None, buffer, ctypes.byref(size))
+    with _com():
+        result = query(flags, what, scheme, None, buffer, ctypes.byref(size))
     return result & 0xFFFFFFFF, buffer.value
 
 
 def _windows_handler(scheme: str) -> Optional[bool]:
+    delegate_result, delegate = _assoc_query(scheme, _ASSOCSTR_DELEGATEEXECUTE)
+    if delegate_result == _S_OK and delegate:
+        return True
     result, command = _assoc_query(scheme, _ASSOCSTR_COMMAND)
     if result == _S_OK and command:
         # A classic handler; one left behind by an uninstalled app opens nothing.
@@ -180,10 +206,7 @@ def _windows_handler(scheme: str) -> Optional[bool]:
         if found == _S_OK and os.path.isabs(program):
             return os.path.isfile(program)
         return True
-    progid_result, progid = _assoc_query(scheme, _ASSOCSTR_PROGID)
-    if progid_result == _S_OK and progid.startswith("AppX"):
-        return True  # a packaged app declares the protocol
-    if result in _NO_HANDLER or progid_result in _NO_HANDLER or progid_result == _S_OK:
+    if result in _NO_HANDLER and delegate_result in _NO_HANDLER:
         return False
     return None
 

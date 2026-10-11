@@ -289,9 +289,9 @@ def test_the_limits_are_the_ones_agent_links_use():
     assert agents.CLAUDE_APP_TEXT_MAX == launch.CLAUDE_APP_TEXT_MAX == 14_000
 
 
-# -- item 2: the association string is a ProgID ---------------------------------------------------
+# -- item 2: the association strings it asks for ---------------------------------------------------
 
 
-def test_the_packaged_app_lookup_asks_for_the_progid():
-    assert launch._ASSOCSTR_PROGID == 20  # ASSOCSTR_APPID is 21
+def test_the_handler_lookup_asks_for_the_delegate_execute_handler():
+    assert launch._ASSOCSTR_DELEGATEEXECUTE == 18  # ASSOCSTR_SUPPORTED_URI_PROTOCOLS is 19
     assert not hasattr(launch, "_ASSOCSTR_APPID")
