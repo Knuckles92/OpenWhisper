@@ -663,7 +663,8 @@ def test_a_long_answer_is_shortened_for_a_notice(h, monkeypatch):
     _finished(h)
 
     (shown, done), = h.ui.notices
-    assert len(shown) == runtime.NOTICE_MAX_CHARS and shown.endswith("…") and done
+    start = shown.removesuffix(runtime.FULL_ANSWER_COPIED)  # all of it is on the clipboard
+    assert len(start) == runtime.NOTICE_MAX_CHARS and start.endswith("…") and done
 
 
 # -- Settings "Try it" ------------------------------------------------------------------

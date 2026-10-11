@@ -77,6 +77,7 @@ CLOSING_MESSAGE = "OpenWhisper is closing"
 BUSY_MESSAGE = "Too many actions are still running"
 CANCELED_MESSAGE = "Canceled"
 COPIED_INSTEAD = " — copied instead"
+FULL_ANSWER_COPIED = " — full answer copied"
 
 
 @dataclass(frozen=True)
@@ -616,8 +617,13 @@ class ActionRuntime:
             self._say(message, ok=True)
             return True, message, Output.SCRATCHPAD
         if output == Output.NOTICE:
-            self._say(_short(answer), ok=True)
-            return True, f"Showed {name}'s answer", Output.NOTICE
+            shown, message = _short(answer), f"Showed {name}'s answer"
+            # A notice holds only the start of a long answer; the clipboard
+            # keeps all of it.
+            if len(" ".join(answer.split())) > NOTICE_MAX_CHARS and self._copy(answer):
+                shown, message = shown + FULL_ANSWER_COPIED, message + FULL_ANSWER_COPIED
+            self._say(shown, ok=True)
+            return True, message, Output.NOTICE
         if self._copy(answer):
             message = f"Copied {name}'s answer"
             self._say(message, ok=True)

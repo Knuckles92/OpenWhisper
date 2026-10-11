@@ -308,6 +308,42 @@ def test_scripts_from_the_api_with_nothing_listening_are_not_copied(h):
     assert _ran(h)[-1]["message"] == "Nothing is listening for your scripts"
 
 
+def _notice_answer(h, monkeypatch, answer):
+    h.add(Action("p1", "Explain", ActionKind.PROGRAM,
+                 {"program": "C:\\x.exe", "output": "notice"}))
+    monkeypatch.setattr(programs, "run_once", lambda *a, **k: (0, answer.encode(), ""))
+    h.rt.deliver(_job("p1"), "x", raw_text=None, html="")
+    return base._finished(h)
+
+
+# -- finding 7: a shortened notice keeps the whole answer on the clipboard ------------------
+
+
+def test_a_shortened_answer_is_copied_whole_and_the_notice_says_so(h, monkeypatch):
+    answer = "word " * 100
+    ran = _notice_answer(h, monkeypatch, answer)
+
+    ((shown, done),) = h.ui.notices
+    suffix = " — full answer copied"
+    assert done and shown.endswith("…" + suffix)
+    assert len(shown) == runtime.NOTICE_MAX_CHARS + len(suffix)
+    assert h.ui.copied == [(answer.strip(), "")]
+    assert (ran["ok"], ran["output"], ran["message"]) == (
+        True, "notice", "Showed Explain's answer — full answer copied")
+
+
+def test_a_short_answer_is_shown_without_copying(h, monkeypatch):
+    _notice_answer(h, monkeypatch, "Forty-two.\n")
+    assert h.ui.notices == [("Forty-two.", True)] and h.ui.copied == []
+
+
+def test_a_shortened_answer_that_cannot_be_copied_is_still_shown(h, monkeypatch):
+    h.ui.copy_ok = False
+    ran = _notice_answer(h, monkeypatch, "word " * 100)
+    ((shown, _done),) = h.ui.notices
+    assert shown.endswith("…") and ran["message"] == "Showed Explain's answer"
+
+
 def test_only_scripts_carry_the_words_in_action_ran(h):
     h.add(Action("c1", "Copy only", ActionKind.CLIPBOARD))
     h.rt.deliver(_job("c1"), "secret words", raw_text=None, html="")
