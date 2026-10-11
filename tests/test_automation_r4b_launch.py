@@ -4,6 +4,7 @@ pywin32's ``pythoncom`` initialises COM on the thread that first imports it
 and never undoes it, so the action worker that opened the first link stayed
 a single-threaded apartment for good. And the calls into Explorer's desktop
 had no time limit: a hung Explorer held an action's worker indefinitely.
+Without pywin32 (declared since), links open as without Explorer's desktop.
 
 Nothing here reaches the real shell: Explorer is faked (``_explorer_open``,
 or ``_desktop_application`` with in-process objects) and ``os.startfile``
@@ -15,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -93,6 +95,22 @@ def test_explorer_answering_in_time_opens_the_link_once(explorer):
     fake.answer.set()
     launch._windows_open("s:x")
     assert fake.asked == ["s:x"] and here == []
+
+
+def test_without_pywin32_a_link_opens_from_here(monkeypatch):
+    here = []
+    monkeypatch.setitem(sys.modules, "pythoncom", None)  # importing it fails
+    monkeypatch.setattr(launch, "_com", contextlib.nullcontext)
+    monkeypatch.setattr(launch, "_desktop_application", lambda: pytest.fail("asked Explorer"))
+    monkeypatch.setattr(launch.os, "startfile", here.append, raising=False)
+    launch._windows_open("s:x")
+    assert here == ["s:x"]
+
+
+def test_pywin32_is_a_declared_windows_dependency():
+    lines = [line.partition("#")[0].strip()
+             for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()]
+    assert any(re.fullmatch(r'pywin32>=[\d.]+ ; sys_platform == "win32"', line) for line in lines)
 
 
 def test_a_failure_while_asking_explorer_reaches_the_caller(explorer, monkeypatch):

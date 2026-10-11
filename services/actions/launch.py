@@ -243,9 +243,9 @@ def _windows_open(uri: str) -> None:
     """
     if _ask_explorer(uri):
         return
-    # Explorer's desktop isn't there (Explorer is restarting, or another
-    # shell runs): only then does the link open from this process, and its
-    # app get OpenWhisper's environment.
+    # Explorer's desktop isn't there (Explorer is restarting, another shell
+    # runs, pywin32 is missing): only then does the link open from this
+    # process, and its app get OpenWhisper's environment.
     with _com():
         try:
             os.startfile(uri)  # type: ignore[attr-defined]
@@ -300,9 +300,13 @@ def _explorer_open(uri: str) -> bool:
     """ShellExecute ``uri`` in Explorer; False when Explorer's desktop can't be asked.
 
     Needs COM on this thread; every COM object is released by the time this
-    returns.
+    returns. Without pywin32 Explorer can't be asked either.
     """
-    import pythoncom
+    try:
+        import pythoncom
+    except ImportError:
+        logger.warning("pywin32 isn't installed, so links open from OpenWhisper")
+        return False
 
     try:
         application, hwnd = _desktop_application()
