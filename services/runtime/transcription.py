@@ -457,6 +457,10 @@ class TranscriptionRuntime:
         # late claim would let it take the slot and could make this path clear
         # or overwrite that upload's metadata on an error.
         if not self._claim_job(self._job):
+            # Nothing will transcribe it, so for listeners it ends here.
+            publish_event(
+                event_catalog.RECORDING_CANCELED, event_catalog.recording_canceled(self._job)
+            )
             self._forget_recording()
             self._report_busy("processing this recording")
             self.controller.overlay_state_update.emit(OverlayState.NONE)
@@ -999,6 +1003,10 @@ class TranscriptionRuntime:
 
         if is_empty:
             logger.info("Empty batch result; skipping history")
+            publish_event(
+                event_catalog.TRANSCRIPTION_FAILED,
+                event_catalog.transcription_failed(None, event_catalog.FAILURE_NO_SPEECH),
+            )
             ui.set_status(EMPTY_ASR_MESSAGE)
             self._finish_job()
             return
@@ -1037,6 +1045,18 @@ class TranscriptionRuntime:
         context = self._history_context(None, None, live=False)
         for entry in entries:
             entry.update(context)
+            # One completion per saved file, as a single upload publishes.
+            cleanup = (
+                CleanupInfo(entry["cleanup_provider"], entry["cleanup_model"] or "")
+                if entry.get("cleanup_provider") else None
+            )
+            publish_event(
+                event_catalog.TRANSCRIPTION_COMPLETED,
+                event_catalog.transcription_completed(
+                    None, text=entry["text"], raw_text=entry.get("raw_text"), fields=context,
+                    cleanup_info=cleanup, audio_s=entry.get("audio_duration"),
+                ),
+            )
 
         if result.canceled:
             ui.set_status(
@@ -1571,6 +1591,11 @@ class TranscriptionRuntime:
             logger.info(
                 "Empty ASR result; skipping history, clipboard, and paste"
             )
+            # Listeners saw the recording start; this is how it ended.
+            publish_event(
+                event_catalog.TRANSCRIPTION_FAILED,
+                event_catalog.transcription_failed(job, event_catalog.FAILURE_NO_SPEECH),
+            )
             self.controller.ui_controller.set_status(
                 EMPTY_PREVIEW_FALLBACK_MESSAGE if preview else EMPTY_ASR_MESSAGE
             )
@@ -2037,9 +2062,15 @@ class TranscriptionRuntime:
         job = self._active_job
         with self._job_lock:
             refused, self._refused = self._refused, False
+        if refused:
+            category = event_catalog.FAILURE_REFUSED
+        elif self._cancel_requested.is_set():
+            category = event_catalog.FAILURE_CANCELED
+        else:
+            category = event_catalog.FAILURE_FAILED
         publish_event(
             event_catalog.TRANSCRIPTION_FAILED,
-            event_catalog.transcription_failed(job, error_message),
+            event_catalog.transcription_failed(job, category, message=error_message),
         )
         pending_audio = self.controller._pending_audio_path
         status = error_message if refused else f"Error: {error_message}"

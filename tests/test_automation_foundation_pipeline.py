@@ -366,7 +366,8 @@ def test_failures_are_published(h):
     assert h.runtime._claim_job(job)
     h.runtime.on_transcription_error("engine exploded")
     failed, = _events(h, "transcription.failed")
-    assert failed.data == {"job_id": job.id, "error": "engine exploded"}
+    # A category, never the exception's text (it can name files).
+    assert failed.data == {"job_id": job.id, "error": "failed", "message": None}
 
 
 def test_a_dictation_that_may_be_routed_learns_its_app_without_app_awareness(monkeypatch):

@@ -99,6 +99,52 @@ class _ClientModelSwitch:
     done: threading.Event = field(default_factory=threading.Event)
 
 
+class PreviewEvents:
+    """Live preview text as ``transcription.preview``, at most four a second; Qt thread.
+
+    Text that arrives too soon is held and sent when the quarter second is
+    up (only the newest), so listeners always end on the latest preview
+    rather than a stale one. A final preview goes out at once. Previews are
+    delivered live only; they never fill the replay buffer.
+    """
+
+    INTERVAL_S = 0.25
+
+    def __init__(self) -> None:
+        # Created on the Qt thread, like the controller's other timers.
+        self._timer = QTimer()
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._flush)
+        self._sent_at: Optional[float] = None
+        self._held: Optional[tuple] = None
+
+    def offer(self, job, text: str, final: bool) -> None:
+        wait = 0.0 if self._sent_at is None else (
+            self._sent_at + self.INTERVAL_S - time.monotonic()
+        )
+        if final or wait <= 0:
+            self._timer.stop()
+            self._held = None
+            self._send(job, text, final)
+            return
+        self._held = (job, text, final)
+        if not self._timer.isActive():
+            self._timer.start(max(1, int(wait * 1000) + 1))
+
+    def _flush(self) -> None:
+        held, self._held = self._held, None
+        if held is not None:
+            self._send(*held)
+
+    def _send(self, job, text: str, final: bool) -> None:
+        self._sent_at = time.monotonic()
+        publish_event(
+            event_catalog.TRANSCRIPTION_PREVIEW,
+            event_catalog.transcription_preview(job, text, final),
+            replay=False,
+        )
+
+
 class ApplicationController(QObject):
     """Main application controller integrating UI and logic."""
 
@@ -347,8 +393,7 @@ class ApplicationController(QObject):
         self.transcription_runtime = TranscriptionRuntime(self)
         self.command_runtime = CommandRuntime(self)
         self.action_runtime = ActionRuntime(self)
-        # transcription.preview is sent at most four times a second.
-        self._last_preview_event = 0.0
+        self._preview_events = PreviewEvents()
         self.meeting_runtime = MeetingRuntime(self)
 
         self._setup_transcription_backends(local_backend=local_backend)
@@ -2769,21 +2814,8 @@ class ApplicationController(QObject):
         self.streaming_overlay_hide.connect(self.ui_controller.hide_streaming_overlay)
 
     def _publish_preview(self, text: str, is_final: bool) -> None:
-        """Live preview text as transcription.preview, at most four a second; Qt thread.
-
-        Previews are delivered live only; they never fill the replay buffer.
-        """
-        now = time.monotonic()
-        if not is_final and now - self._last_preview_event < 0.25:
-            return
-        self._last_preview_event = now
-        publish_event(
-            event_catalog.TRANSCRIPTION_PREVIEW,
-            event_catalog.transcription_preview(
-                self.transcription_runtime._job, text, is_final
-            ),
-            replay=False,
-        )
+        """Live preview text as transcription.preview; Qt thread."""
+        self._preview_events.offer(self.transcription_runtime._job, text, is_final)
 
     def _on_recording_state_changed(self, is_recording: bool) -> None:
         if is_recording:
