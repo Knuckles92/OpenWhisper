@@ -1140,7 +1140,8 @@ class LiveAutomationSection(QWidget):
         )
         row = _PermissionRow(
             "Let agents subscribe",
-            "An assistant connected over MCP can ask to be told when things happen.",
+            "An assistant over MCP chooses the web address, and it receives what you dictate "
+            "(the events it subscribes to).",
             "key-blue.svg",
         )
         self.mcp_events_switch = row.checkbox
