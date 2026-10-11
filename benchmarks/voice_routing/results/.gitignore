@@ -1,0 +1,4 @@
+# Raw runs stay local; the committed summary carries the metrics.
+*
+!.gitignore
+!summary.json
