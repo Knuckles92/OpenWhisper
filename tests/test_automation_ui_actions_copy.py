@@ -1,5 +1,7 @@
 """How the Actions page phrases an action, in one line, without Qt."""
 
+import os
+
 import pytest
 
 from services.actions.model import PRESETS, Action, ActionKind
@@ -39,7 +41,8 @@ def _action(kind, **params):
      "Sends your words to homeassistant.local, then shows the reply in a notice"),
     (_action(ActionKind.WEBHOOK, url="https://n8n.example.com/hook", output="none"),
      "Sends your words to n8n.example.com"),
-    (_action(ActionKind.PROGRAM, program="C:\\Tools\\journal.exe", output="clipboard"),
+    # A path as this system writes it: summaries name the program by its file name.
+    (_action(ActionKind.PROGRAM, program=os.path.join("tools", "journal.exe"), output="clipboard"),
      "Runs journal.exe with your words, then copies its output"),
     (_action(ActionKind.CLIPBOARD), "Copies your words without pasting them"),
     (_action(ActionKind.SCRIPTS), "Tells the programs listening to OpenWhisper"),
