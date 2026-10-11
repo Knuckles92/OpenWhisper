@@ -1,4 +1,4 @@
-"""Labelled utterances for Route by voice, over four realistic sets of actions.
+"""Labelled utterances for Route by voice, over five realistic sets of actions.
 
 Every utterance is synthetic: written for this benchmark, never taken from
 history or a real dictation. Ids are hex like the ones Settings creates, so
@@ -100,6 +100,17 @@ ACTION_SETS: dict[str, dict[str, Action]] = {
                         description="Copy your words without pasting them."),
         "scripts": _action("91c5d3f8a0e6", "Send to my scripts", "scripts", {},
                            description="Only tell programs listening to OpenWhisper's events."),
+    },
+    # Names someone typed in lowercase, without spoken names: whether "claude"
+    # is a name can only come from how it was heard.
+    "typed": {
+        "claude": _action("6d2a9c4e1f80", "ask claude", "open_link",
+                          {"template": "claude://claude.ai/new?q={text}"},
+                          description="questions for claude"),
+        "code": _action("a3f7e0b5c921", "tell my claude code session", "channel", {},
+                        description="tasks for the claude code session I'm running"),
+        "scripts": _action("2e8c1d6a9b47", "send to my scripts", "scripts", {},
+                           description="my own automations"),
     },
 }
 
@@ -436,4 +447,34 @@ CASES: tuple[Case, ...] = (
        tags=("mention", "gate-stop")),
     _c("p13", "presets", HOTKEY, "Use the webhook from the staging config.", None,
        tags=("mention", "ordinary")),
+    # -- a name heard as several words, with no pause before the request --------
+    # The request starts right after it ("to do buy milk"); words that go on
+    # with an ordinary phrase ("to do that", "chat about") are just words.
+    _c("e78", "everyday", AUTO, "To do buy milk and eggs", "todo", "buy milk and eggs",
+       ("split", "asr")),
+    _c("e79", "everyday", AUTO, "To do that later we'd need a second server.", None,
+       tags=("split", "gate-stop")),
+    _c("e80", "everyday", AUTO, "To do it right we need more time.", None,
+       tags=("split", "gate-stop")),
+    _c("e81", "everyday", HOTKEY, "To do call the vet about Rex", "todo",
+       "call the vet about Rex", ("split", "asr")),
+    _c("p14", "presets", AUTO, "chat gpt what's 15 percent of 80", "chatgpt",
+       "what's 15 percent of 80", ("split", "asr")),
+    _c("p15", "presets", AUTO, "Chat about it with the team tomorrow.", None,
+       tags=("split", "gate-stop")),
+    _c("p16", "presets", HOTKEY, "chat gpt give me a packing list for Iceland", "chatgpt",
+       "give me a packing list for Iceland", ("split", "asr")),
+    # -- names typed in lowercase ------------------------------------------------
+    _c("t01", "typed", AUTO, "Tell Claude to write a haiku about rain.", "claude",
+       ("write a haiku about rain.", "to write a haiku about rain."), ("lead-in", "lowercase")),
+    _c("t02", "typed", AUTO, "Tell Claude Code to fix the failing test.", "code",
+       ("fix the failing test.", "to fix the failing test."), ("lead-in", "lowercase")),
+    _c("t03", "typed", AUTO, "Can you ask Claude what the capital of Peru is?", "claude",
+       "what the capital of Peru is?", ("lead-in", "lowercase")),
+    _c("t04", "typed", AUTO, "Send this to my scripts: restart the media server.", "scripts",
+       "restart the media server.", ("lead-in", "lowercase")),
+    _c("t05", "typed", AUTO, "Send my scripts to Bob by Friday.", None,
+       tags=("lead-in", "lowercase", "gate-stop")),
+    _c("t06", "typed", AUTO, "Claude said the build is green.", None,
+       tags=("mention", "lowercase")),
 )

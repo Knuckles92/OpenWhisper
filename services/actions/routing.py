@@ -66,6 +66,8 @@ NONE = "none"
 _WORD = re.compile(r"[^\W_]+(?:['’\-‐][^\W_]+)*")
 #: Punctuation between two words that marks a pause ("To do, email …").
 _PAUSE = re.compile(r"[,.;:!?…—–-]")
+#: Punctuation that ends a sentence, so the next word's capital says nothing.
+_SENTENCE_END = re.compile(r"[.!?…]")
 
 
 @dataclass(frozen=True)
@@ -75,6 +77,8 @@ class _Word:
     end: int
     #: Punctuation, or the end of the text, follows the word.
     pause: bool = False
+    #: Written as a name (see ``_written_as_name``).
+    name: bool = False
 
 
 _JOINERS = str.maketrans("", "", "'’-‐")
@@ -84,13 +88,22 @@ def _norm(token: str) -> str:
     return token.casefold().translate(_JOINERS)
 
 
+def _written_as_name(token: str, sentence_start: bool) -> bool:
+    """Whether ``token`` is written like a proper noun: with capitals inside
+    it ("ChatGPT"), or capitalized where no sentence starts ("Ask Claude",
+    "tell Claude to …"). Speech recognition writes names this way too."""
+    return any(ch.isupper() for ch in token[1:]) or (not sentence_start and token[:1].isupper())
+
+
 def _words(text: str) -> list[_Word]:
     """Words of ``text``, casefolded and without apostrophes or hyphens, with their offsets."""
     text = text or ""
     found = list(_WORD.finditer(text))
     return [
         _Word(_norm(m.group()), m.start(), m.end(),
-              pause=i + 1 == len(found) or bool(_PAUSE.search(text, m.end(), found[i + 1].start())))
+              pause=i + 1 == len(found) or bool(_PAUSE.search(text, m.end(), found[i + 1].start())),
+              name=_written_as_name(m.group(), sentence_start=i == 0 or bool(
+                  _SENTENCE_END.search(text, found[i - 1].end(), m.start()))))
         for i, m in enumerate(found)
     ]
 
@@ -120,6 +133,25 @@ _MAX_LEAD_INS = 4
 _NAME_TAILS = frozenset({
     "session", "sessions", "chat", "app", "action", "hotkey", "hook", "webhook",
     "list", "window", "tab", "please",
+})
+
+#: Words that carry an ordinary phrase on ("to do that", "to do it with
+#: …"): pronouns, determiners, prepositions, conjunctions and a few adverbs.
+#: Before one of them, a name heard as several words ("to do" for Todo) is
+#: just those words. Not question words, "can", "please" or a verb: they
+#: start the request ("chat GPT what's …", "to do buy milk").
+_PHRASE_GOES_ON = frozenset({
+    "it", "its", "this", "that", "thats", "these", "those", "them", "him", "her", "me", "us",
+    "so", "something", "anything", "everything", "nothing", "one", "all", "both", "each",
+    "either", "some", "any", "more", "most", "less", "much", "many", "enough", "such",
+    "other", "another", "else", "the", "a", "an", "my", "your", "our", "their", "his", "no",
+    "every", "about", "with", "without", "for", "from", "in", "on", "at", "by", "to", "of",
+    "into", "onto", "after", "before", "over", "under", "around", "through", "during", "like",
+    "than", "as", "between", "against", "up", "down", "out", "off", "away", "back", "and",
+    "or", "but", "if", "because", "then", "while", "unless", "until", "though", "although",
+    "since", "whether", "well", "better", "right", "now", "later", "again", "too", "also",
+    "just", "only", "even", "here", "there", "today", "tonight", "tomorrow", "first", "next",
+    "already", "anyway", "instead", "together", "properly", "differently", "otherwise",
 })
 
 #: Words that only link a name to the request ("Claude, um, can you …",
@@ -226,20 +258,19 @@ class _Variant:
     dropped: tuple[str, ...] = ()
     #: Whether any lead-in words may come before it ("can you ask Claude").
     after_lead_ins: bool = True
+    #: Whether they may anyway when a word of it is heard written as a name
+    #: ("tell Claude to …" for an action typed "ask claude").
+    after_lead_ins_as_name: bool = False
 
-    def follows(self, said: Sequence[str]) -> bool:
-        """Whether the lead-in words ``said`` just before it leave it naming the action."""
+    def follows(self, said: Sequence[str], heard: Sequence[_Word]) -> bool:
+        """Whether the lead-in words ``said`` just before it, heard as ``heard``,
+        leave it naming the action."""
         if not said or self.after_lead_ins:
             return True
         rest = iter(said)
-        return bool(self.dropped) and all(word in rest for word in self.dropped)
-
-
-def _proper(token: str, index: int) -> bool:
-    """Whether a word of a name, as typed, looks like a proper noun:
-    capitalized after the name's first word ("Ask Claude") or with capitals
-    inside ("ChatGPT")."""
-    return any(ch.isupper() for ch in token[1:]) or (index > 0 and token[:1].isupper())
+        if self.dropped and all(word in rest for word in self.dropped):
+            return True
+        return self.after_lead_ins_as_name and any(word.name for word in heard)
 
 
 def _name_variants(action: Action) -> list[_Variant]:
@@ -247,24 +278,27 @@ def _name_variants(action: Action) -> list[_Variant]:
 
     A name as given may follow lead-in words ("can you ask Claude") unless
     it is only generic words ("Webhook"). A shortened form may follow them
-    only when it holds a proper noun ("tell Claude" for "Ask Claude") or
-    after the words it dropped ("send this to my scripts"); else only at the
-    start ("Scripts, …"), so "send my scripts to Bob" names nothing.
+    only when it holds a proper noun, typed as one in the name ("tell
+    Claude" for "Ask Claude") or heard as one ("tell Claude" for "ask
+    claude"), or after the words it dropped ("send this to my scripts");
+    else only at the start ("Scripts, …"), so "send my scripts to Bob" names
+    nothing.
     """
     variants: list[_Variant] = []
     seen: set[tuple[str, ...]] = set()
 
-    def add(form: tuple[str, ...], dropped: tuple[str, ...], after_lead_ins: bool) -> None:
+    def add(form: tuple[str, ...], dropped: tuple[str, ...], after_lead_ins: bool,
+            as_name: bool = False) -> None:
         if form and form not in seen:
             seen.add(form)
-            variants.append(_Variant(form, dropped, after_lead_ins))
+            variants.append(_Variant(form, dropped, after_lead_ins, as_name))
 
     for phrase in (action.name, *action.spoken_names):
         tokens = [m.group() for m in _WORD.finditer(phrase)]
         words = tuple(_norm(t) for t in tokens)
         if not words:
             continue
-        proper = [_proper(t, i) for i, t in enumerate(tokens)]
+        typed_as_name = [_written_as_name(t, sentence_start=i == 0) for i, t in enumerate(tokens)]
         add(words, (), not all(w in _NAME_TAILS for w in words))
         core = 0
         while core < len(words) - 1 and words[core] in _LEAD_INS:
@@ -277,24 +311,26 @@ def _name_variants(action: Action) -> list[_Variant]:
                 form = words[start:stop]
                 # A shortened form must still be distinctive.
                 if len("".join(form)) >= 3:
-                    add(form, words[:start], any(proper[start:stop]))
+                    add(form, words[:start], any(typed_as_name[start:stop]),
+                        not all(w in _NAME_TAILS for w in form))
     return variants
 
 
 def _match_len(words: Sequence[_Word], at: int, variant: Sequence[str]) -> int:
     """How many words from ``at`` say ``variant``; 0 when they don't.
 
-    Spacing is ignored ("chat GPT" says "ChatGPT", "To do," says "Todo"),
-    though a name word heard as several words names it only before a pause
-    ("to do that" doesn't), and each word may be a near-homophone of the
-    name's word.
+    Spacing is ignored ("chat gpt" says "ChatGPT", "to do buy milk" says
+    "Todo"), though a name heard as more words than it has isn't named when
+    the words go on as an ordinary phrase without a pause ("to do that"),
+    and each word may be a near-homophone of the name's word.
     """
     target = "".join(variant)
     joined = ""
     for k in range(at, len(words)):
         joined += words[k].norm
         if joined == target:
-            if k - at + 1 > len(variant) and not words[k].pause:
+            if (k - at + 1 > len(variant) and not words[k].pause
+                    and words[k + 1].norm in _PHRASE_GOES_ON):
                 break
             return k - at + 1
         if not target.startswith(joined):
@@ -329,8 +365,11 @@ def _leading_match(words: Sequence[_Word], variants: Sequence[_Variant]
         if at >= len(words) or (skip and words[at - 1].norm not in _LEAD_INS):
             return None
         said = [w.norm for w in words[start:at]]
-        best = max((_match_len(words, at, v.words) for v in variants if v.follows(said)),
-                   default=0)
+        best = 0
+        for variant in variants:
+            n = _match_len(words, at, variant.words)
+            if n > best and variant.follows(said, words[at:at + n]):
+                best = n
         if best:
             return start, at, at + best
     return None
@@ -353,7 +392,8 @@ def _trailing_match(words: Sequence[_Word], variants: Sequence[_Variant]
             first = at
             while first > 0 and at - first < _MAX_LEAD_INS and words[first - 1].norm in _LEAD_INS:
                 first -= 1
-            if first < at and not variant.follows([w.norm for w in words[first:at]]):
+            if first < at and not variant.follows([w.norm for w in words[first:at]],
+                                                  words[at:end]):
                 first = at
             # Said last on its own, a name is set off by a pause ("Lock the
             # front door, home."), not the end of a sentence about it.
