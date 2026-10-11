@@ -7,7 +7,9 @@ from types import SimpleNamespace
 import pytest
 from PyQt6.QtTest import QTest
 
+from services.automation import filters
 from services.automation.control import ControlError
+from services.automation.filters import FilterOutcome
 from services.dictation_pipeline import DictationJob, JobMode
 from services.runtime import transcription
 from tests import test_automation_foundation_pipeline as foundation
@@ -176,3 +178,31 @@ def test_a_transform_is_refused_at_once_while_a_recording_starts(h):
     # Once the start is over, a rewrite gets the slot as before.
     assert h.runtime.begin_rewrite_job(
         DictationJob(mode=JobMode.TRANSFORM), source_name="Transform · Polish")
+
+
+# -- finding 11: the next job never un-cancels the last one ---------------------------
+
+
+def test_a_canceled_jobs_filters_stay_canceled_after_the_next_job_claims_the_slot(
+    h, monkeypatch
+):
+    handed = []
+
+    def apply(stage, text, job, settings=None, *, cancel=None):
+        handed.append(cancel)
+        h.runtime.cancel()  # Cancel pressed while a program filter ran
+        return FilterOutcome(text)
+
+    monkeypatch.setattr(filters, "apply", apply)
+    h.controller.current_backend.is_transcribing = False
+    assert h.runtime._claim_job(DictationJob())
+    h.runtime.transcribe_audio_file(h.audio)
+    assert not h.runtime.has_active_job
+
+    # An API client's next run, sooner than the abandoned filter looks again.
+    assert h.runtime.run_action_text("a1", "hello", source="api")
+
+    canceled, = handed
+    assert canceled.is_set()  # the first job's filter is still told to stop
+    assert not h.runtime._cancel_requested.is_set()  # the new job runs
+    assert h.runtime._transcript_cleanup.cancel_event is h.runtime._cancel_requested

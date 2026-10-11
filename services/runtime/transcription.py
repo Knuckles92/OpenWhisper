@@ -94,10 +94,12 @@ class TranscriptionRuntime:
         self._job_active = False
         # Backends reset their own cancel flag on every transcribe() call, so
         # a cancel that lands between files of a batch would be lost; this
-        # event outlives the individual calls.
+        # event outlives the individual calls. Each job gets its own
+        # (_claim_job), so the next job never un-cancels one whose filters
+        # or routing are still being stopped.
         self._cancel_requested = threading.Event()
-        # The same event ends a cleanup request's wait, so a Cancel during
-        # "Cleaning up..." frees the job instead of waiting on the provider.
+        # The job's event also ends a cleanup request's wait, so a Cancel
+        # during "Cleaning up..." frees the job instead of waiting on the provider.
         self._transcript_cleanup = TranscriptCleanup(
             cancel_event=self._cancel_requested, defer_client=True
         )
@@ -169,7 +171,11 @@ class TranscriptionRuntime:
                 return False
             self._job_active = True
             self._active_job = job
-            self._cancel_requested.clear()
+            # A new event rather than a cleared one: a program filter the
+            # last job abandoned on its cancel looks again only every 50 ms,
+            # and must still see that cancel to be stopped.
+            self._cancel_requested = threading.Event()
+            self._transcript_cleanup.cancel_event = self._cancel_requested
         self._rearm_remote_engine()
         return True
 
