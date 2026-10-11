@@ -63,8 +63,12 @@ def set_for_app(name: str, value: str, *, keep_existing: bool = False) -> None:
 def load_for_app(values: Mapping[str, str]) -> list[str]:
     """Add OpenWhisper's own variables (its ``.env``), never over the user's.
 
-    Each one added is recorded like ``set_for_app``'s, so programs started
-    for the user never get it, whatever the file says later.
+    Each one is recorded as the app's (unset for the user), so programs
+    started for the user never get it, whatever the file says later. That
+    includes one already set to the file's value: it came from the file too
+    (an editor that started OpenWhisper, such as VS Code with its default
+    ``python.envFile``, loads the same ``.env``). One set to anything else
+    is the user's own and stays, for those programs too.
 
     Returns:
         The names no environment can hold, with their values (see
@@ -73,9 +77,15 @@ def load_for_app(values: Mapping[str, str]) -> list[str]:
     refused = []
     for name, value in values.items():
         try:
-            set_for_app(name, value, keep_existing=True)
+            current = os.environ.get(name)
+            if current is None:
+                os.environ[name] = value
+            elif current != value:
+                continue
         except (ValueError, OSError):
             refused.append(name)
+            continue
+        _remember(name, None)
     return refused
 
 

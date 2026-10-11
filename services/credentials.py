@@ -372,10 +372,11 @@ _refused_logged: set[str] = set()
 def _load_dotenv_into_environ() -> None:
     """Copy ``.env`` into ``os.environ``, never over a variable already set.
 
-    Each variable added is recorded as the app's own (``process_env``), so
-    programs started for the user never get it, whatever the file says later.
-    An entry no environment can hold is left out and logged by name, never
-    its value; the rest still load. Never raises.
+    Each variable added, or already set to the file's value, is recorded as
+    the app's own (``process_env.load_for_app``), so programs started for
+    the user never get it, whatever the file says later. An entry no
+    environment can hold is left out and logged by name, never its value;
+    the rest still load. Never raises.
     """
     from services.process_env import load_for_app
 
