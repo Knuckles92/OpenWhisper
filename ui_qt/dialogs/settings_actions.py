@@ -66,6 +66,13 @@ def _try_action(dialog, action, sample_text: str, done) -> None:
         done(ActionResult(False, f"Couldn't try it: {exc}"))
 
 
+def _cancel_try_runs(dialog) -> None:
+    """Cancel the page's Try it runs through the app (ActionRuntime.cancel)."""
+    handler = dialog.on_cancel_try_runs
+    if handler is not None:  # Outside the running app nothing was started.
+        handler()
+
+
 def build(dialog, layout) -> None:
     from ui_qt.dialogs.settings_destinations import MCP, MEETING_FAST, STYLES
     from ui_qt.dialogs.settings_fields import settings_caption
@@ -78,6 +85,8 @@ def build(dialog, layout) -> None:
     def try_action(action, sample_text, done):
         _try_action(dialog, action, sample_text, done)
 
+    # Closing Settings stops the Try it runs still going: nothing is left to show them.
+    dialog.finished.connect(lambda _result: _cancel_try_runs(dialog))
     destinations = {"styles": STYLES, "mcp": MCP}
 
     card = dialog.actions_agent_card = AgentHotkeyCard(manager=_manager(), try_action=try_action)

@@ -443,6 +443,35 @@ def test_the_app_passes_settings_a_way_to_cancel_try_runs():
     controller.on_cancel_try_runs.assert_called_once_with()
 
 
+def test_closing_settings_cancels_try_runs_still_going(make_dialog):
+    from services.actions.runtime import ActionResult
+
+    agent = {**AGENT, "params": {"agent": "claude_code", "mode": "ask"}}
+    dialog, _store = make_dialog({SettingsKey.ACTIONS: [agent]})
+    running = []
+    dialog.on_try_action = lambda _action, _text, done: running.append(done)
+
+    def cancel():
+        # As ActionRuntime.cancel(tests_only=True) does: each run ends "Canceled".
+        while running:
+            running.pop()(ActionResult(False, "Canceled"))
+
+    dialog.on_cancel_try_runs = MagicMock(side_effect=cancel)
+    card = dialog.actions_agent_card
+    card.try_button.click()
+    assert not card.try_button.isEnabled() and running
+    dialog.close()
+    dialog.on_cancel_try_runs.assert_called_once_with()
+    assert card.try_button.isEnabled()
+    assert card.message.text() == "Canceled"
+
+
+def test_closing_settings_without_the_app_is_quiet(make_dialog):
+    dialog, _store = make_dialog()
+    assert dialog.on_cancel_try_runs is None
+    dialog.close()
+
+
 # ---- 4/5. Route by voice's status, links and privacy line ----
 
 
