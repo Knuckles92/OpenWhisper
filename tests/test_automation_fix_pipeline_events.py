@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from services.automation import events
+from services.automation import catalog, events
 from services.automation.events import EventBus
 
 
@@ -45,7 +45,7 @@ def test_the_app_bus_numbers_from_a_base_that_grows_across_runs(fresh_bus, monke
     assert second.seq > first.seq
 
 
-def test_a_position_from_an_earlier_run_reads_as_a_gap(fresh_bus, monkeypatch):
+def test_a_position_from_an_earlier_run_reads_as_a_restart(fresh_bus, monkeypatch):
     monkeypatch.setattr(events.time, "time", lambda: 1_790_000_000.0)
     bus = events.bus()
     base = bus.last_seq()
@@ -53,19 +53,19 @@ def test_a_position_from_an_earlier_run_reads_as_a_gap(fresh_bus, monkeypatch):
 
     # The earlier run's last event had a smaller number than this run's base.
     replay, gap = bus.since(base - 5)
-    assert [e.seq for e in replay] == [one.seq] and gap
-    replay, gap = bus.since(0)
-    assert [e.seq for e in replay] == [one.seq] and gap
+    assert [e.seq for e in replay] == [one.seq] and gap == catalog.GAP_RESTARTED
+    # 0 asks for everything since this run started, none of which is missing.
+    assert bus.since(0) == ([one], None)
     # From this run's own positions, nothing was missed.
     replay, gap = bus.since(base)
-    assert [e.seq for e in replay] == [one.seq] and not gap
-    assert bus.since(one.seq) == ([], False)
+    assert [e.seq for e in replay] == [one.seq] and gap is None
+    assert bus.since(one.seq) == ([], None)
 
 
 def test_a_bus_made_directly_still_counts_from_one():
     bus = EventBus()
     assert bus.publish("recording.started", {}).seq == 1
-    assert bus.since(0) == (bus.recent(), False)
+    assert bus.since(0) == (bus.recent(), None)
 
 
 # -- a subscription only sees what came after it (concurrency #2) ----------------

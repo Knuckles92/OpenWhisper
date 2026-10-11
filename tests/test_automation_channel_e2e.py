@@ -186,10 +186,10 @@ class FakeApp:
                 frames.put(frame)
             return self._seq
 
-    def send_gap(self, missed_from_seq: int) -> None:
+    def send_gap(self, missed_from_seq: int, reason: str = "evicted") -> None:
         """``events.gap`` as the live API sends it: no ``id:`` line, seq 0."""
         event = {"id": "", "seq": 0, "type": "events.gap", "time": "2026-10-10T12:00:00.000Z", "v": 1,
-                 "data": {"missed_from_seq": missed_from_seq}}
+                 "data": {"missed_from_seq": missed_from_seq, "reason": reason}}
         with self.cond:
             for frames in self.streams:
                 frames.put(f"event: events.gap\r\ndata: {json.dumps(event)}\r\n\r\n")

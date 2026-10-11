@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping, Optional
 
+from services.automation.catalog import GAP_EVICTED, GAP_RESTARTED
+
 logger = logging.getLogger(__name__)
 
 #: The ``v`` every event carries; bumped only for incompatible payload changes.
@@ -104,7 +106,7 @@ class EventBus:
             seq_base: Numbering continues after this. The app's bus starts
                 each run above the last one's (see ``bus()``), so a client's
                 position from an earlier run is always behind this run's
-                first event and reads as a gap, never as a recent event.
+                first event and never matches a recent one.
         """
         self._lock = threading.Condition()
         self._buffer: deque[Event] = deque(maxlen=max(1, int(buffer_size)))
@@ -112,10 +114,11 @@ class EventBus:
         self._pending: deque[tuple[Event, list[Subscription]]] = deque()
         self._subscriptions: list[Subscription] = []
         base = max(0, int(seq_base))
+        self._base = base
         self._seq = itertools.count(base + 1)
         self._last_seq = base
-        # The newest event no longer in the buffer (evicted or cleared);
-        # everything up to the base belongs to earlier runs.
+        # The newest event no longer in the buffer (evicted or cleared); the
+        # base while this run has dropped none.
         self._evicted_seq = base
         self._thread: Optional[threading.Thread] = None
         self._closed = False
@@ -207,20 +210,32 @@ class EventBus:
     # -- replay -------------------------------------------------------------
 
     def since(self, seq: int, *, types: Optional[Iterable[str]] = None
-              ) -> tuple[list[Event], bool]:
-        """Buffered events after ``seq``, and whether some were already dropped."""
+              ) -> tuple[list[Event], Optional[str]]:
+        """Buffered events after ``seq``, and why some may be missing.
+
+        Returns:
+            The events, and None when the client can't have missed any;
+            ``GAP_EVICTED`` when this run no longer holds some it published
+            after ``seq``; ``GAP_RESTARTED`` when ``seq`` is from another run,
+            whose events can't be replayed (every one this run published
+            is). ``seq`` 0 asks for everything from this run's start.
+        """
         wanted = _types(types)
         with self._lock:
             buffered = list(self._buffer)
             last = self._last_seq
             evicted = self._evicted_seq
-        if seq > last:
-            # Not a position this run gave out (a bus counting from 1, or a
-            # clock set back since an earlier run): everything buffered is
-            # new to this client.
-            seq, gap = 0, True
+        if 0 < seq and self._base <= seq <= last:
+            gap = GAP_EVICTED if seq < evicted else None
         else:
-            gap = seq < evicted
+            # 0, or a position this run never gave out (an earlier run's, or
+            # a later one's after the clock was set back): every event of
+            # this run is new to the client, and any this run dropped is lost.
+            if evicted > self._base:
+                gap = GAP_EVICTED
+            else:
+                gap = GAP_RESTARTED if seq else None
+            seq = 0
         events = [
             e for e in buffered
             if e.seq > seq and (wanted is None or e.type in wanted)
@@ -302,8 +317,10 @@ def _run_seq_base() -> int:
     """Where this run's numbering starts: milliseconds since 1970.
 
     It only grows from one app run to the next, so a stream that reconnects
-    with a position from an earlier run is behind this run's first event and
-    learns it missed events. Thirteen digits, safe as a JavaScript number.
+    with a position from an earlier run is behind this run's first event:
+    it is told so and gets all of this run's events, never a recent event
+    that happens to carry its old number. Thirteen digits, safe as a
+    JavaScript number.
     """
     return int(time.time() * 1000)
 

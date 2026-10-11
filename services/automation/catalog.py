@@ -244,5 +244,18 @@ def meeting_voice_command(meeting_id: str, command: str) -> dict:
     return {"meeting_id": meeting_id or "", "command": command or ""}
 
 
-def events_gap(missed_from_seq: int) -> dict:
-    return {"missed_from_seq": int(missed_from_seq)}
+#: ``events.gap`` ``reason``: OpenWhisper no longer holds events published
+#: after the stream's position (more came than it keeps, or history was
+#: deleted); fetch history to catch up.
+GAP_EVICTED = "evicted"
+#: The position is from before OpenWhisper restarted: what the earlier run
+#: published after it can't be replayed; everything since the restart is.
+GAP_RESTARTED = "restarted"
+#: The stream fell too far behind and ends; reconnecting with Last-Event-ID
+#: replays the rest.
+GAP_SLOW = "slow"
+
+
+def events_gap(missed_from_seq: int, reason: str) -> dict:
+    """``reason`` is GAP_EVICTED, GAP_RESTARTED or GAP_SLOW."""
+    return {"missed_from_seq": int(missed_from_seq), "reason": reason}

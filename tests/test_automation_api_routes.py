@@ -514,9 +514,9 @@ def test_frames_are_one_line_of_json_per_event():
     assert json.loads(lines[2][len("data: "):]) == event.to_dict()
     # ASCII JSON: the words arrive as escapes and decode to the same text.
     assert frame.isascii()
-    gap = api.sse_frame(api.gap_event(7), with_id=False).decode("utf-8")
+    gap = api.sse_frame(api.gap_event(7, "evicted"), with_id=False).decode("utf-8")
     assert gap.startswith("event: events.gap\ndata: ")
-    assert '"missed_from_seq":7' in gap and '"seq":0' in gap
+    assert '"missed_from_seq":7,"reason":"evicted"' in gap and '"seq":0' in gap
 
 
 def test_stopping_the_listener_drops_leased_filters(tmp_path):

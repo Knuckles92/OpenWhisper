@@ -25,8 +25,8 @@ developers.openai.com/plugins/build/mcp-events:
   included) fail that delivery only and show as ``lastError``. Bodies over
   256 KiB are not sent.
 
-Events are not replayable: they live in a short in-memory buffer whose
-numbering restarts with the app, so ``cursor`` is always null.
+Deliveries can't be replayed: events live only in a short in-memory buffer,
+so ``cursor`` is always null.
 
 The bearer token is the only principal: everyone holding it is the user's
 own agent. Subscriptions persist in ``config.MCP_EVENT_SUBSCRIPTIONS_FILE``
@@ -1514,7 +1514,7 @@ def subscribe(params: Mapping[str, Any], saved: Mapping[str, Any], origin: str) 
     return {
         "id": sub_id,
         "refreshBefore": _iso(subscription.refresh_before),
-        # Not replayable: numbering restarts with the app.
+        # Not replayable: events live only in a short in-memory buffer.
         "cursor": None,
         "truncated": False,
         "deliveryStatus": registry.delivery_status(
