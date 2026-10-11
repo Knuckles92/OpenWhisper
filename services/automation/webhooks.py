@@ -5,11 +5,13 @@ Each enabled webhook receives the events it chose as the event's wire JSON
 per-webhook secret kept in the credential store.
 
 One bus subscription covers every enabled webhook; its callback only
-enqueues. One worker thread delivers from a bounded queue in event order per
-webhook. A failed attempt that is worth retrying (a network error, 408, 429,
-5xx) waits at the head of its webhook's queue until its backoff passes, so
-later events for that webhook stay behind it while other webhooks keep
-flowing; the worker never sleeps on a retry. Redirects are never followed.
+enqueues. Each webhook has its own delivery lane: a bounded queue and a
+thread that delivers it in event order, so a slow or unreachable receiver
+only ever delays its own events. A failed attempt that is worth retrying (a
+network error, 408, 429, 5xx) waits at the head of its webhook's queue until
+its backoff passes, so later events for that webhook stay behind it. A lane's
+thread ends after a while with nothing to send and starts again with the next
+event. Redirects are never followed.
 
 Requests to loopback and private addresses ignore proxy settings, so local
 traffic never reaches a system proxy. Event data, URLs and secrets are never
@@ -47,8 +49,10 @@ TIMEOUT_S = 5.0
 RETRY_DELAYS_S: tuple[float, ...] = (1.0, 5.0, 25.0)
 #: The longest a ``Retry-After`` answer may hold a webhook back.
 RETRY_AFTER_MAX_S = 60.0
-#: Deliveries waiting across all webhooks; the oldest is dropped beyond this.
+#: Deliveries waiting for one webhook; its oldest is dropped beyond this.
 MAX_QUEUED = 500
+#: How long a webhook's delivery thread waits for another event before ending.
+LANE_IDLE_S = 30.0
 #: Recent deliveries kept per webhook (memory only).
 MAX_RECORDS = 50
 #: Most of a reply ``post_signed_reply`` reads.
@@ -505,28 +509,36 @@ def _deliver(hook: Webhook, event: Event, attempt: int,
 @dataclass
 class _Item:
     event: Event
-    serial: int
     attempt: int = 1
     not_before: float = 0.0
 
 
+class _Lane:
+    """One webhook's waiting deliveries and the thread sending them.
+
+    Touched only with the engine's lock held; ``wake`` shares that lock.
+    """
+
+    def __init__(self, lock: threading.Lock) -> None:
+        self.queue: deque[_Item] = deque()
+        self.wake = threading.Condition(lock)
+        self.thread: Optional[threading.Thread] = None
+
+
 class _Engine:
-    """The subscription, the queue and the delivery worker."""
+    """The subscription, and one delivery lane per webhook."""
 
     def __init__(self) -> None:
-        self._cond = threading.Condition()
+        self._lock = threading.Lock()
         self._configure_lock = threading.Lock()
         self._hooks: dict[str, Webhook] = {}
-        self._queues: dict[str, deque] = {}
-        self._queued = 0
-        self._serial = 0
+        self._lanes: dict[str, _Lane] = {}
         self._dropped = 0
         self._bus: Optional[EventBus] = None
         self._subscription: Optional[Subscription] = None
         self._types: frozenset = frozenset()
         self._last_seq = 0
         self._stopping = False
-        self._thread: Optional[threading.Thread] = None
 
     # -- configuration (any thread) ------------------------------------------
 
@@ -534,19 +546,20 @@ class _Engine:
         enabled = {h.id: h for h in hooks if h.enabled and h.events}
         types = frozenset(t for h in enabled.values() for t in h.events)
         with self._configure_lock:
-            with self._cond:
+            with self._lock:
                 if self._stopping:
                     return
                 self._hooks = enabled
-                for hook_id in list(self._queues):
+                for hook_id, lane in list(self._lanes.items()):
                     hook = enabled.get(hook_id)
-                    queue = self._queues[hook_id]
-                    kept = deque(i for i in queue if hook is not None and i.event.type in hook.events)
-                    self._queued -= len(queue) - len(kept)
-                    if kept:
-                        self._queues[hook_id] = kept
-                    else:
-                        del self._queues[hook_id]
+                    if hook is None:
+                        # Deleted or turned off: what waits is dropped and the
+                        # lane's thread ends (an attempt in flight finishes).
+                        del self._lanes[hook_id]
+                        lane.queue.clear()
+                        lane.wake.notify_all()
+                    elif any(i.event.type not in hook.events for i in lane.queue):
+                        lane.queue = deque(i for i in lane.queue if i.event.type in hook.events)
                 if bus is self._bus and types == self._types:
                     return
                 old = self._subscription
@@ -557,64 +570,64 @@ class _Engine:
             # them; one delivered to both is dropped by its sequence number.
             new = (bus.subscribe(functools.partial(self._on_event, bus), types=types,
                                  label=SUBSCRIPTION_LABEL) if types else None)
-            with self._cond:
+            with self._lock:
                 self._subscription = new
             if old is not None:
                 old.close()
 
     def stop(self) -> None:
         with self._configure_lock:
-            with self._cond:
+            with self._lock:
                 self._stopping = True
-                self._queues.clear()
-                self._queued = 0
+                threads = []
+                for lane in self._lanes.values():
+                    lane.queue.clear()
+                    lane.wake.notify_all()
+                    if lane.thread is not None:
+                        threads.append(lane.thread)
+                self._lanes.clear()
                 subscription, self._subscription = self._subscription, None
-                thread = self._thread
-                self._cond.notify_all()
             if subscription is not None:
                 subscription.close()
-        if thread is not None and thread is not threading.current_thread():
-            # An attempt in flight finishes on its own (daemon thread).
-            thread.join(timeout=1.0)
+        # Attempts in flight finish on their own (daemon threads).
+        deadline = time.monotonic() + 1.0
+        for thread in threads:
+            if thread is not threading.current_thread():
+                thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
     # -- the bus callback (dispatch thread; only enqueues) ---------------------
 
     def _on_event(self, bus: EventBus, event: Event) -> None:
-        with self._cond:
+        with self._lock:
             if self._stopping or bus is not self._bus or event.seq <= self._last_seq:
                 return
             self._last_seq = event.seq
             for hook in self._hooks.values():
                 if event.type in hook.events:
-                    self._serial += 1
-                    self._enqueue(hook.id, _Item(event, self._serial))
+                    self._enqueue(hook.id, _Item(event))
 
     def _enqueue(self, hook_id: str, item: _Item, *, front: bool = False) -> None:
-        # Caller holds the condition.
-        queue = self._queues.setdefault(hook_id, deque())
+        # Caller holds the lock.
+        lane = self._lanes.get(hook_id)
+        if lane is None:
+            lane = self._lanes[hook_id] = _Lane(self._lock)
         if front:
-            queue.appendleft(item)
+            lane.queue.appendleft(item)
         else:
-            queue.append(item)
-        self._queued += 1
-        while self._queued > MAX_QUEUED:
-            self._drop_oldest()
-        if self._thread is None or not self._thread.is_alive():
-            self._thread = threading.Thread(
-                target=self._run, name="automation-webhooks", daemon=True
+            lane.queue.append(item)
+        while len(lane.queue) > MAX_QUEUED:
+            self._drop_oldest(hook_id, lane)
+        if lane.thread is None or not lane.thread.is_alive():
+            lane.thread = threading.Thread(
+                target=self._run, args=(hook_id, lane),
+                name=f"automation-webhooks-{hook_id}", daemon=True,
             )
-            self._thread.start()
-        self._cond.notify()
+            lane.thread.start()
+        lane.wake.notify()
 
-    def _drop_oldest(self) -> None:
-        hook_id = min(
-            (h for h, q in self._queues.items() if q),
-            key=lambda h: self._queues[h][0].serial,
-        )
-        item = self._queues[hook_id].popleft()
-        if not self._queues[hook_id]:
-            del self._queues[hook_id]
-        self._queued -= 1
+    def _drop_oldest(self, hook_id: str, lane: _Lane) -> None:
+        # Caller holds the lock.
+        item = lane.queue.popleft()
         self._dropped += 1
         if self._dropped == 1 or self._dropped % 100 == 0:
             logger.warning(
@@ -626,34 +639,33 @@ class _Engine:
             "Dropped: too many deliveries were waiting.", item.attempt,
         ))
 
-    # -- the worker -----------------------------------------------------------
+    # -- a lane's thread --------------------------------------------------------
 
-    def _next(self) -> Optional[tuple[Webhook, _Item]]:
-        """The oldest delivery that is due, waiting as needed; None when stopping."""
-        with self._cond:
-            while not self._stopping:
+    def _next(self, hook_id: str, lane: _Lane) -> Optional[tuple[Webhook, _Item]]:
+        """The lane's next delivery once it is due; None when the lane should end."""
+        with self._lock:
+            idle_until: Optional[float] = None
+            while not self._stopping and self._lanes.get(hook_id) is lane:
                 now = time.monotonic()
-                due, wake = None, None
-                for hook_id, queue in self._queues.items():
-                    head = queue[0]
+                if lane.queue:
+                    idle_until = None
+                    head = lane.queue[0]
                     if head.not_before <= now:
-                        if due is None or head.serial < due[1].serial:
-                            due = (hook_id, head)
-                    else:
-                        wait = head.not_before - now
-                        wake = wait if wake is None else min(wake, wait)
-                if due is not None:
-                    hook_id, item = due
-                    queue = self._queues[hook_id]
-                    queue.popleft()
-                    if not queue:
-                        del self._queues[hook_id]
-                    self._queued -= 1
-                    return self._hooks[hook_id], item
-                self._cond.wait(timeout=wake)
+                        lane.queue.popleft()
+                        return self._hooks[hook_id], head
+                    lane.wake.wait(head.not_before - now)
+                    continue
+                if idle_until is None:
+                    idle_until = now + LANE_IDLE_S
+                elif now >= idle_until:
+                    break
+                lane.wake.wait(idle_until - now)
+            # The next event starts a new thread (see _enqueue).
+            if lane.thread is threading.current_thread():
+                lane.thread = None
             return None
 
-    def _run(self) -> None:
+    def _run(self, hook_id: str, lane: _Lane) -> None:
         clients: dict[bool, httpx.Client] = {}
 
         def client_for(private: bool) -> httpx.Client:
@@ -663,7 +675,7 @@ class _Engine:
 
         try:
             while True:
-                picked = self._next()
+                picked = self._next(hook_id, lane)
                 if picked is None:
                     return
                 hook, item = picked
@@ -678,14 +690,18 @@ class _Engine:
                 _remember(hook.id, record)
                 if delay is None:
                     continue
-                with self._cond:
+                with self._lock:
                     current = self._hooks.get(hook.id)
-                    if self._stopping or current is None or item.event.type not in current.events:
+                    if (self._stopping or self._lanes.get(hook.id) is not lane
+                            or current is None or item.event.type not in current.events):
                         continue
                     item.attempt += 1
                     item.not_before = time.monotonic() + delay
                     self._enqueue(hook.id, item, front=True)
         finally:
+            with self._lock:
+                if lane.thread is threading.current_thread():
+                    lane.thread = None
             for client in clients.values():
                 try:
                     client.close()
