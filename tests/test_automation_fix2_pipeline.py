@@ -169,7 +169,7 @@ def test_a_transform_is_refused_at_once_while_a_recording_starts(h):
     starter = _hold_capture_lock(h, 1.0)
     began = time.monotonic()
     began_job = h.runtime.begin_rewrite_job(
-        DictationJob(mode=JobMode.TRANSFORM), source_name="Transform · Polish")
+        DictationJob(mode=JobMode.TRANSFORM, source="hotkey"), source_name="Transform · Polish")
     waited = time.monotonic() - began
     starter.join(5)
 

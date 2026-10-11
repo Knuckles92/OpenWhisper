@@ -2098,7 +2098,7 @@ class TranscriptionRuntime:
         # Never waited for: a start holds it while the audio device opens,
         # seconds for Bluetooth, and the Qt thread must not stall on that.
         if not self._capture_lock.acquire(blocking=False):
-            self._notify(self._report_busy("rewriting text"))
+            self._refuse_rewrite(job)
             return False
         try:
             return self._begin_rewrite_job(job, source_name=source_name)
@@ -2106,12 +2106,8 @@ class TranscriptionRuntime:
             self._capture_lock.release()
 
     def _begin_rewrite_job(self, job, *, source_name: str) -> bool:
-        # Rewrites run from other apps, so a refusal also shows by the pointer.
-        if self.controller.recorder.is_recording:
-            self._notify(self._report_busy("rewriting text"))
-            return False
-        if not self._claim_job(job):
-            self._notify(self._report_busy("rewriting text"))
+        if self.controller.recorder.is_recording or not self._claim_job(job):
+            self._refuse_rewrite(job)
             return False
         self._forget_recording()
         with self._job_lock:
@@ -2122,6 +2118,18 @@ class TranscriptionRuntime:
         self.controller.overlay_state_update.emit(OverlayState.REWRITING)
         self.controller.status_update.emit("Rewriting...")
         return True
+
+    def _refuse_rewrite(self, job) -> None:
+        """Say a rewrite can't start now; Qt thread.
+
+        The user's rewrites run from other apps, so theirs also shows by the
+        pointer. A program's says nothing: its API answer is the report, and
+        the user's own status (Recording...) stays.
+        """
+        if event_catalog.user_started(job.source):
+            self._notify(self._report_busy("rewriting text"))
+        else:
+            logger.info("A program's action run was refused: OpenWhisper is busy")
 
     def submit_rewrite(self, work) -> None:
         """Run ``work() -> (text, raw_text, info)`` on the executor; Qt thread.
