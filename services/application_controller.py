@@ -174,6 +174,9 @@ class ApplicationController(QObject):
     # An action's shortcut, emitted from the hotkey dispatcher thread with
     # the action's id (docs/design/automation/design.md).
     action_record_requested = pyqtSignal(str)
+    # The user's Cancel reached the actions still running; emitted from the
+    # hotkey dispatcher thread too, and ActionRuntime works on the Qt thread.
+    actions_cancel_requested = pyqtSignal()
     partial_transcription = pyqtSignal(str, bool)
     streaming_text_update = pyqtSignal(str, bool)
     streaming_overlay_show = pyqtSignal()
@@ -2554,12 +2557,18 @@ class ApplicationController(QObject):
         return True
 
     def cancel(self) -> None:
-        """The user's Cancel (shortcut, buttons, tray, D-Bus, API, MCP).
+        """The user's Cancel (shortcut, buttons, tray, D-Bus).
 
-        Stops the recording or transcription, and any action still running:
-        an agent still thinking must not paste its answer after "Canceled".
+        Cancels the recording or transcription in progress, and only that:
+        a Quick answer still thinking from before keeps going. With neither,
+        it cancels the actions still running, which is how a long Quick
+        answer is stopped. Either way the status says what was canceled.
         """
-        self.transcription_runtime.cancel()
+        if not self.transcription_runtime.cancel():
+            self.actions_cancel_requested.emit()
+
+    def _cancel_actions(self) -> None:
+        """The user's Cancel for the actions still running; Qt thread."""
         self.action_runtime.cancel()
 
     def minimize_to_tray(self) -> None:
@@ -2693,6 +2702,7 @@ class ApplicationController(QObject):
         self.startup_database_ready.connect(self._on_startup_database_ready)
         self.profile_record_requested.connect(self.toggle_profile_recording)
         self.action_record_requested.connect(self.toggle_action_recording)
+        self.actions_cancel_requested.connect(self._cancel_actions)
         self.transcription_completed.connect(self._on_transcription_complete)
         self.transcription_failed.connect(self._on_transcription_error)
         self.batch_completed.connect(self._on_batch_complete)

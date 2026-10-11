@@ -99,7 +99,9 @@ def test_cancel_stops_running_and_waiting_runs_and_shows_nothing(h, blocked):
 
     QCoreApplication.processEvents()
     assert len(blocked.calls) == runtime.MAX_WORKERS  # the waiting ones never start
-    assert h.ui.notices == notices_before and h.ui.copied == [] and h.ui.scratchpad == []
+    # Only the cancel says anything: no run shows, copies or keeps an answer.
+    assert h.ui.notices == notices_before + [(f"Canceled {total} actions", False)]
+    assert h.ui.copied == [] and h.ui.scratchpad == []
     ran = _ran(h)
     assert len(ran) == total
     assert {(r["ok"], r["message"], r["output"]) for r in ran} == {

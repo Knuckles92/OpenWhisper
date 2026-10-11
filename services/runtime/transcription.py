@@ -597,12 +597,17 @@ class TranscriptionRuntime:
         else:
             self.stop_recording()
 
-    def cancel(self) -> None:
-        """Cancel an active recording or transcription, depending on state."""
-        with self._capture_lock:
-            self._cancel()
+    def cancel(self) -> bool:
+        """Cancel an active recording or transcription, depending on state.
 
-    def _cancel(self) -> None:
+        Returns:
+            False when there was neither a recording, a job nor a
+            transcription to cancel.
+        """
+        with self._capture_lock:
+            return self._cancel()
+
+    def _cancel(self) -> bool:
         logger.info(f"Cancel called. Recording: {self.controller.recorder.is_recording}")
         self._cancel_started_at = time.monotonic() if (
             self.controller.recorder.is_recording or self.has_active_job
@@ -615,14 +620,17 @@ class TranscriptionRuntime:
 
         if self.controller.recorder.is_recording:
             self._cancel_recording()
-        elif self.controller.current_backend and self.controller.current_backend.is_transcribing:
+            return True
+        if self.controller.current_backend and self.controller.current_backend.is_transcribing:
             self._cancel_requested.set()
             self._cancel_transcription()
-        else:
-            if self.has_active_job:
-                self._cancel_requested.set()
-            self.controller.overlay_state_update.emit(OverlayState.CANCELING)
-            self.controller.status_update.emit("Canceled")
+            return True
+        canceled = self.has_active_job
+        if canceled:
+            self._cancel_requested.set()
+        self.controller.overlay_state_update.emit(OverlayState.CANCELING)
+        self.controller.status_update.emit("Canceled")
+        return canceled
 
     def _cancel_recording(self) -> None:
         if self.has_active_job:

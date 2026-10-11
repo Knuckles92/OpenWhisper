@@ -465,11 +465,6 @@ class ActionRuntime:
             return
         self._start(run)
 
-    def running(self) -> int:
-        """How many blocking runs are running or waiting; any thread."""
-        with self._lock:
-            return len(self._pending)
-
     def accepting(self) -> bool:
         """Whether another blocking run would be taken now; any thread.
 
@@ -488,7 +483,8 @@ class ActionRuntime:
         already under way that can't be stopped (a link opening, a webhook
         posting, a session being handed off) finishes, and ``action.ran``
         reports what really happened; only its answer is dropped, so nothing
-        is pasted, copied, shown or put in the Scratchpad for it.
+        is pasted, copied, shown or put in the Scratchpad for it. Unless
+        ``tests_only``, the status line and a notice say what was canceled.
 
         Args:
             tests_only: Only Settings' "Try it" runs (its page went away).
@@ -520,7 +516,20 @@ class ActionRuntime:
         if stopped or late:
             logger.info("Canceled %d action run(s); %d too far along to stop",
                         len(stopped), len(late))
+            if not tests_only:
+                self._say_canceled([pending.run for _token, pending in stopped], late)
         return len(stopped) + len(late)
+
+    def _say_canceled(self, stopped: list, late: list) -> None:
+        """What the user's Cancel did: the runs it stopped, and those too far along."""
+        parts = [f"Canceled {_runs(stopped)}"] if stopped else []
+        if late:
+            parts.append(f"too late to stop {_runs(late)}")
+        message = " — ".join(parts)
+        message = message[:1].upper() + message[1:]
+        ui = self.controller.ui_controller
+        ui.set_status(message)
+        ui.show_notice(message)
 
     def close(self) -> None:
         """Stop work in progress at quit: cancel agents, drop late results."""

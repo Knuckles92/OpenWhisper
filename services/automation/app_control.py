@@ -189,11 +189,10 @@ def _stop(controller) -> None:
 
 
 def _cancel(controller) -> None:
-    if not (controller.recorder.is_recording
-            or controller.transcription_runtime.has_active_job
-            or controller.action_runtime.running()):
-        raise ControlError(REFUSED, "Nothing is recording, transcribing or running.")
-    controller.cancel()
+    # Recordings and jobs only: the actions the user started are theirs to stop.
+    if not (controller.recorder.is_recording or controller.transcription_runtime.has_active_job):
+        raise ControlError(REFUSED, "Nothing is recording or transcribing.")
+    controller.transcription_runtime.cancel()
 
 
 def _notify(controller, text: str, title: str) -> None:
