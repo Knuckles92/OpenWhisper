@@ -115,7 +115,7 @@ def parse_last_event_id(raw: Optional[str]) -> Optional[int]:
 #: Characters str.splitlines() breaks on that JSON leaves unescaped. Readers
 #: built on it (httpx's iter_lines) would cut an event's data line in two;
 #: as JSON escapes they decode to the same text.
-_LINE_BREAKS = str.maketrans({" ": "\\u2028", " ": "\\u2029", "\u0085": "\\u0085"})
+_LINE_BREAKS = str.maketrans({"\u2028": "\\u2028", "\u2029": "\\u2029", "\u0085": "\\u0085"})
 
 
 def sse_frame(event, *, with_id: bool = True) -> bytes:

@@ -187,7 +187,7 @@ def test_events_published_as_the_stream_opens_are_not_missed(client, bus):
 
 
 def test_line_break_characters_in_text_survive_line_readers(client, bus):
-    text = "one two three\u0085four\nfive"
+    text = "one\u2028two\u2029three\u0085four\nfive"
     with open_stream(client) as response:
         reader = Reader(response)
         bus.publish(catalog.TRANSCRIPTION_COMPLETED, {"job_id": "j", "text": text})

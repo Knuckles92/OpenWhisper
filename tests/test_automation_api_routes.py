@@ -499,7 +499,7 @@ def test_types_and_resume_positions_parse():
 
 
 def test_frames_are_one_line_of_json_per_event():
-    text = "two\nlines\r\nand   more   and \u0085 \x0b \x1c café \U0001f600"
+    text = "two\nlines\r\nand \u2028 more \u2029 and \u0085 \x0b \x1c café \U0001f600"
     event = events.EventBus().publish("transcription.completed", {"text": text})
     frame = api.sse_frame(event).decode("utf-8")
     # Readers that split like str.splitlines() still see three lines.
