@@ -181,8 +181,11 @@ class OmarchyControls(QObject):
         if action == "show":
             ui.main_window.restore_from_tray()
             return True
+        if action == "record":
+            # The recording's events say the shell started it.
+            ui._on_tray_toggle_recording(source="dbus")
+            return True
         method = {
-            "record": "_on_tray_toggle_recording",
             "cancel": "cancel_recording",
             "meeting": "_on_tray_meeting_toggle",
             "scratchpad": "toggle_scratchpad",

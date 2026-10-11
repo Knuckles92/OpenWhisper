@@ -2421,8 +2421,12 @@ class ApplicationController(QObject):
     def reconfigure_streaming(self) -> None:
         self.streaming_runtime.reconfigure_streaming()
 
-    def start_recording(self) -> bool:
-        """Start audio recording (UI callback target).
+    def start_recording(self, *, source: str = "hotkey") -> bool:
+        """Start audio recording (UI callback and push-and-hold target).
+
+        Args:
+            source: Who asked, for the recording's events: "hotkey", or
+                "ui" / "dbus" from the window, tray and desktop shell.
 
         Returns:
             False when the start was refused (Meeting Mode is active, or the
@@ -2435,12 +2439,12 @@ class ApplicationController(QObject):
         if unavailable:
             self.status_update.emit(unavailable)
             return False
-        return self.transcription_runtime.start_recording() is not False
+        return self.transcription_runtime.start_recording(source=source) is not False
 
-    def start_profile_recording(self, profile_id: str) -> bool:
+    def start_profile_recording(self, profile_id: str, *, source: str = "hotkey") -> bool:
         if self._refuse_dictation_during_meeting():
             return False
-        return self.transcription_runtime.start_recording(profile_id) is not False
+        return self.transcription_runtime.start_recording(profile_id, source=source) is not False
 
     def toggle_profile_recording(self, profile_id: str) -> None:
         # A shortcut pressed during capture only stops that capture. Its
