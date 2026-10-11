@@ -400,6 +400,16 @@ def test_a_webhook_whose_secret_cannot_be_kept_is_not_sent(h, monkeypatch):
     assert h.ui.notices[0][0].startswith("Translate: couldn't keep its signing secret (")
 
 
+def test_an_action_secret_is_made_once_and_can_be_forgotten():
+    secret = runtime.ensure_action_secret("w1")
+
+    assert runtime.ensure_action_secret("w1") == secret
+    assert runtime.ensure_action_secret("w2") != secret
+    runtime.delete_action_secret("w1")
+    assert credentials.store().get(action_secret_name("w1")) is None
+    assert runtime.ensure_action_secret("w1") != secret
+
+
 @pytest.mark.parametrize("body, text", [
     (b'{"text": "hi"}', "hi"), (b'{"text": 3}', None), (b"[1]", None), (b"not json", None),
     (b"", None), (None, None), ('{"text": "str"}', "str"),
@@ -737,6 +747,8 @@ def test_words_links_arguments_and_replies_are_never_logged(h, monkeypatch, capl
         h.rt.deliver(_job(action_id), "my private words", raw_text=None, html="")
     _finished(h, 3)
 
+    assert "A open_link action failed: RuntimeError at test_automation_actions_runtime.py:" in (
+        caplog.text)
     for secret in ("my private words", "my%20private", "example.com", "secret-tool",
                    "--token-arg", "private-path", "private-reply", "private-answer"):
         assert secret not in caplog.text

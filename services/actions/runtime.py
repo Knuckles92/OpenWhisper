@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import threading
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import partial
@@ -69,6 +70,17 @@ class ActionResult:
     output: Optional[str] = None
 
 
+def _described(exc: BaseException) -> str:
+    """An exception's type and where it was raised, never its message.
+
+    Messages can carry the words, a link or a reply.
+    """
+    frames = traceback.extract_tb(exc.__traceback__)
+    if not frames:
+        return type(exc).__name__
+    return f"{type(exc).__name__} at {os.path.basename(frames[-1].filename)}:{frames[-1].lineno}"
+
+
 # -- the Qt-thread relay --------------------------------------------------------
 
 class _ResultRelay(QObject):
@@ -106,8 +118,8 @@ class _ResultRelay(QObject):
             return
         try:
             callback(result)
-        except Exception:
-            logger.exception("An action's outcome could not be shown")
+        except Exception as exc:
+            logger.error("An action's outcome could not be shown: %s", _described(exc))
 
 
 _relay: Optional[_ResultRelay] = None
@@ -162,6 +174,18 @@ def ensure_action_secret(action_id: str) -> str:
             secret = signing.new_secret()
             store.set(name, secret)
     return secret
+
+
+def delete_action_secret(action_id: str) -> None:
+    """Forget a deleted webhook action's secret; blocking.
+
+    Raises:
+        services.credentials.CredentialStoreError: The store refused.
+    """
+    from services import credentials
+
+    with _secret_lock:
+        credentials.store().delete(action_secret_name(action_id))
 
 
 def _post_webhook(url: str, payload: dict, secret: str):
@@ -424,7 +448,7 @@ class ActionRuntime:
             try:
                 result = work()
             except Exception as exc:
-                logger.warning("A %s action failed: %s", kind, type(exc).__name__)
+                logger.warning("A %s action failed: %s", kind, _described(exc))
                 result = ActionResult(False, "something went wrong")
             emit(token, result)
 
