@@ -378,7 +378,7 @@ _KIND_PHRASES = {
 
 def _kind_phrase(action: Action) -> str:
     if action.kind == ActionKind.AGENT:
-        agent = AGENT_NAMES.get(action.param("agent"), "a coding agent")
+        agent = AGENT_NAMES.get(action.param("agent"), "coding agent")
         if action.param("mode") == AgentMode.ASK:
             return f"Asks {agent} the words as a question and shows the answer."
         return f"Starts a {agent} session with the words as the task."
