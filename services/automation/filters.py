@@ -15,8 +15,10 @@ isn't a JSON object or has the wrong types) keeps the text and publishes
 ``filter.failed`` without the text.
 
 A filter has its own time limit and a stage has ``STAGE_BUDGET_S`` in all;
-filters left when the budget is spent are skipped. Dictated text is never
-logged. Contract: docs/design/automation/design.md.
+filters left when the budget is spent are skipped. A canceled dictation
+stops waiting on its filters at once. A reply whose text can't be encoded
+(a lone UTF-16 surrogate escaped in the JSON) is a bad reply. Dictated text
+is never logged. Contract: docs/design/automation/design.md.
 """
 
 from __future__ import annotations
@@ -26,9 +28,7 @@ import logging
 import secrets
 import threading
 import time
-from collections.abc import Mapping, Sequence
-from concurrent.futures import Future
-from concurrent.futures import TimeoutError as FutureTimeout
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 from urllib.parse import urlsplit
@@ -285,26 +285,57 @@ def _post(url: str, body: bytes, timeout_s: float) -> _Verdict:
     return _interpret(result.body)
 
 
-def _run_http(url: str, body: bytes, timeout_s: float) -> _Verdict:
-    """POST on a helper thread, waiting no longer than ``timeout_s``."""
-    future: Future = Future()
+#: How often a wait on a filter looks at whether the dictation was canceled.
+_CANCEL_POLL_S = 0.02
+#: What a wait returns when the dictation was canceled.
+_CANCELED = _Verdict("canceled")
 
-    def work() -> None:
+
+def _await(work: Callable[[], _Verdict], timeout_s: Optional[float],
+           cancel: Optional[threading.Event], failed_copy: str) -> _Verdict:
+    """``work()`` on a helper thread, waited on until it answers, ``timeout_s``
+    passes, or ``cancel`` is set (``_CANCELED``); never raises.
+
+    An abandoned ``work`` finishes on its own: a request ends at its own
+    timeout and a program is stopped at its time limit.
+    """
+    done = threading.Event()
+    answer: list[_Verdict] = []
+
+    def run() -> None:
         try:
-            future.set_result(_post(url, body, timeout_s))
+            answer.append(work())
         except Exception as exc:
-            future.set_result(_Verdict(_FAILED, reason=f"The request failed ({type(exc).__name__})"))
+            answer.append(_Verdict(_FAILED, reason=f"{failed_copy} ({type(exc).__name__})"))
+        finally:
+            done.set()
 
-    threading.Thread(target=work, name="text-filter", daemon=True).start()
-    try:
-        return future.result(timeout=timeout_s)
-    except FutureTimeout:
-        from services.automation.webhooks import no_answer_copy
+    threading.Thread(target=run, name="text-filter", daemon=True).start()
+    deadline = None if timeout_s is None else time.monotonic() + timeout_s
+    while True:
+        if cancel is not None and cancel.is_set():
+            return _CANCELED
+        wait = None if deadline is None else deadline - time.monotonic()
+        if wait is not None and wait <= 0:
+            if done.is_set():
+                return answer[0]
+            from services.automation.webhooks import no_answer_copy
 
-        return _Verdict(_FAILED, reason=no_answer_copy(timeout_s))
+            return _Verdict(_FAILED, reason=no_answer_copy(timeout_s))
+        if cancel is not None:
+            wait = _CANCEL_POLL_S if wait is None else min(wait, _CANCEL_POLL_S)
+        if done.wait(wait):
+            return answer[0]
 
 
-def _run_program(argv: Sequence[str], body: bytes, timeout_s: float) -> _Verdict:
+def _run_http(url: str, body: bytes, timeout_s: float,
+              cancel: Optional[threading.Event]) -> _Verdict:
+    """POST, waiting no longer than ``timeout_s`` or until ``cancel``."""
+    return _await(lambda: _post(url, body, timeout_s), timeout_s, cancel,
+                  "The request failed")
+
+
+def _program_verdict(argv: Sequence[str], body: bytes, timeout_s: float) -> _Verdict:
     from services.automation.programs import run_once
 
     code, stdout, error = run_once(argv, body + b"\n", timeout_s=timeout_s)
@@ -315,12 +346,20 @@ def _run_program(argv: Sequence[str], body: bytes, timeout_s: float) -> _Verdict
     return _interpret(stdout)
 
 
-def _run_step(step: _Step, body: bytes, timeout_s: float) -> _Verdict:
+def _run_program(argv: Sequence[str], body: bytes, timeout_s: float,
+                 cancel: Optional[threading.Event]) -> _Verdict:
+    """Run the program; ``run_once`` stops it at ``timeout_s``, ``cancel`` stops the wait."""
+    return _await(lambda: _program_verdict(argv, body, timeout_s), None, cancel,
+                  "The filter couldn't run")
+
+
+def _run_step(step: _Step, body: bytes, timeout_s: float,
+              cancel: Optional[threading.Event]) -> _Verdict:
     from services.automation.models import FILTER_HTTP
 
     if step.kind == FILTER_HTTP:
-        return _run_http(step.url, body, timeout_s)
-    return _run_program(step.argv, body, timeout_s)
+        return _run_http(step.url, body, timeout_s, cancel)
+    return _run_program(step.argv, body, timeout_s, cancel)
 
 
 def _failed(step: _Step, stage: str, reason: str) -> None:
@@ -376,17 +415,24 @@ def _load_settings() -> Mapping:
     return settings.settings_manager.load_all_settings() or {}
 
 
-def apply(stage: str, text: str, job, settings: Optional[Mapping] = None) -> FilterOutcome:
+def apply(stage: str, text: str, job, settings: Optional[Mapping] = None, *,
+          cancel: Optional[threading.Event] = None) -> FilterOutcome:
     """Run the filters for ``stage`` on a live dictation or action; worker thread.
 
     Returns ``FilterOutcome(text)`` at once when none apply: a job of None,
-    Command Mode, transforms, no words (silence), no enabled saved filter for
-    the stage and no live lease (leases also need the text filters
-    permission). Never raises for a filter's sake: a failing filter keeps the
-    text.
+    Command Mode, transforms, no words (silence: never a cancel), no enabled
+    saved filter for the stage and no live lease (leases also need the text
+    filters permission). Never raises for a filter's sake: a failing filter
+    keeps the text.
+
+    ``canceled`` is True only when a filter answered cancel, or turned the
+    words into none. When ``cancel`` is set (the dictation was canceled), the
+    wait on the current filter ends at once, the rest are skipped, and
+    ``FilterOutcome(text)`` comes back unchanged, without ``filter.failed``.
     """
     mode = getattr(job, "mode", None) if job is not None else None
-    if mode not in MODES or not isinstance(text, str) or not text.strip():
+    if (mode not in MODES or not isinstance(text, str) or not text.strip()
+            or (cancel is not None and cancel.is_set())):
         return FilterOutcome(text)
     if settings is None:
         settings = _load_settings()
@@ -408,6 +454,8 @@ def apply(stage: str, text: str, job, settings: Optional[Mapping] = None) -> Fil
     }
     current = text
     for index, step in enumerate(steps):
+        if cancel is not None and cancel.is_set():
+            return FilterOutcome(text)
         remaining = deadline - time.monotonic()
         if remaining < MIN_SLICE_S:
             for skipped in steps[index:]:
@@ -417,13 +465,17 @@ def apply(stage: str, text: str, job, settings: Optional[Mapping] = None) -> Fil
         request["text"] = current
         body = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         try:
-            verdict = _run_step(step, body, min(step.timeout_s, remaining))
+            verdict = _run_step(step, body, min(step.timeout_s, remaining), cancel)
         except Exception as exc:
             verdict = _Verdict(_FAILED, reason=f"The filter couldn't run ({type(exc).__name__})")
+        if verdict is _CANCELED:
+            return FilterOutcome(text)
         if verdict.kind == _FAILED:
             _failed(step, stage, verdict.reason)
         elif verdict.kind == _CANCEL or (verdict.kind == _REPLACE and not verdict.text.strip()):
             return FilterOutcome(current, canceled=True, changed=current != text)
         elif verdict.kind == _REPLACE:
             current = verdict.text
+    if cancel is not None and cancel.is_set():
+        return FilterOutcome(text)
     return FilterOutcome(current, changed=current != text)
