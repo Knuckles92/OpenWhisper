@@ -234,7 +234,11 @@ def _read_settings(path: Path) -> dict[str, Any]:
 
 #: Settings whose text is the user's own content, where a URL is something
 #: they typed to paste later rather than an endpoint that may hold a secret.
-_URL_SCRUB_EXEMPT = frozenset({"dictation_snippets"})
+_URL_SCRUB_EXEMPT = frozenset({"dictation_snippets", "actions"})
+#: Saved hooks that run or send something; restored switched off.
+_AUTOMATION_LISTS = ("automation_webhooks", "automation_programs", "automation_filters")
+#: Action kinds that run a program, call a URL or start an agent.
+_ACTIVE_ACTION_KINDS = frozenset({"webhook", "program", "agent"})
 
 
 def _sanitize_settings(settings: dict[str, Any]) -> dict[str, Any]:
@@ -257,7 +261,26 @@ def _sanitize_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "meeting_server_bind": "localhost",
         "meeting_context_folder_enabled": False,
         "meeting_context_folder_path": "",
+        # Automation that can act for the user comes back off: a restored
+        # backup never starts programs, posts to URLs or lets agents record.
+        "api_run_actions": False,
+        "api_control_recording": False,
+        "api_text_filters": False,
+        "mcp_events_enabled": False,
     })
+    for key in _AUTOMATION_LISTS:
+        if isinstance(cleaned.get(key), list):
+            cleaned[key] = [
+                {**item, "enabled": False} if isinstance(item, dict) else item
+                for item in cleaned[key]
+            ]
+    if isinstance(cleaned.get("actions"), list):
+        cleaned["actions"] = [
+            {**item, "enabled": False}
+            if isinstance(item, dict) and item.get("kind") in _ACTIVE_ACTION_KINDS
+            else item
+            for item in cleaned["actions"]
+        ]
     # Defense in depth for older/extension settings that may store a secret.
     def scrub(value: Any, keep_urls: bool = False) -> Any:
         if isinstance(value, dict):

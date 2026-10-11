@@ -46,6 +46,10 @@ QUICK_RECORD = "Quick Record"
 COMMAND_KIND = "command"
 TRANSFORM_KIND = "transform"
 TRANSFORM_PREFIX = "Transform · "
+#: A dictation sent to a saved action; its ``source_name`` is
+#: ``Action · <name>`` (docs/design/automation/design.md).
+ACTION_KIND = "action"
+ACTION_PREFIX = "Action · "
 
 MonthKey = Tuple[int, int]
 
@@ -90,6 +94,9 @@ def classify_source(source_name: Optional[str],
     if kind == TRANSFORM_KIND:
         transform = name.removeprefix(TRANSFORM_PREFIX).strip()
         return DICTATION, f"{TRANSFORM_PREFIX}{transform}" if transform else "Transform"
+    if kind == ACTION_KIND:
+        action = name.removeprefix(ACTION_PREFIX).strip()
+        return DICTATION, f"{ACTION_PREFIX}{action}" if action else "Action"
     if kind == FILE:
         return FILE, name
     if not name:

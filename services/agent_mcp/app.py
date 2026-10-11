@@ -346,6 +346,11 @@ def create_app(
             yield
 
     app.router.lifespan_context = lifespan
+    # The live API (events, actions, recording) exists only here, where a
+    # running app is behind it; the headless --api never serves it.
+    from services.automation.api import create_live_router
+
+    app.include_router(create_live_router(settings))
     app.mount("/", http_app)
     if allowed_hosts:
 

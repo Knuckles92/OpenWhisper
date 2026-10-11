@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Optional
 
 from config import config
 from services import audio_player, dictation_pipeline, recognition_context
+from services.automation import catalog as event_catalog
+from services.automation.events import publish as publish_event
 from services.dictation_pipeline import JobMode
 from services.hotkey_manager import is_accessibility_trusted, send_paste
 from services.runtime.command import CommandRefused
@@ -59,6 +61,10 @@ def _start_failure_message(exc: Exception) -> str:
     if isinstance(exc, EngineNotReadyError):
         return str(exc)
     return f"Failed to process audio: {exc}"
+#: ``_maybe_cleanup_transcript``'s default: the profile the recording started with.
+_RECORDING_PROFILE = object()
+#: Status when a text filter answered that it handled the words itself.
+FILTER_CANCELED_MESSAGE = "Not pasted — a text filter handled it"
 #: Shown when the full pass found nothing but the streaming preview did. Names
 #: the source, because the text on screen is the preview's and is not saved.
 EMPTY_PREVIEW_FALLBACK_MESSAGE = (
@@ -112,6 +118,9 @@ class TranscriptionRuntime:
         # The failure being reported is a CommandRefused; set by the worker
         # just before transcription_failed, read by on_transcription_error.
         self._refused = False
+        # A text filter answered that it handled the words: save them, but
+        # deliver nothing. Set by the worker, read by on_transcription_complete.
+        self._filter_canceled = False
         # Decodes a long dictation's completed windows while it is recorded.
         self._incremental = IncrementalDictation()
         self._stop_started_at = 0.0
@@ -173,6 +182,7 @@ class TranscriptionRuntime:
             self._spoken_text = ""
             self._rewrite_pending = False
             self._refused = False
+            self._filter_canceled = False
             self._job_active = False
             self._deliver_to_clipboard = True
 
@@ -214,30 +224,71 @@ class TranscriptionRuntime:
         mode: str = JobMode.DICTATION,
         *,
         selection=None,
+        action_id: str = "",
+        source: str = "hotkey",
+        route: str = "",
     ) -> bool:
         """Start a recording; False when it was refused or could not start.
 
         Args:
-            profile_id: Cleanup profile to format this dictation with.
-            mode: A JobMode; Command Mode records an instruction.
+            profile_id: Cleanup profile to format this dictation with. An
+                ACTION job takes its profile from the action instead.
+            mode: A JobMode; Command Mode records an instruction, an ACTION
+                recording's words go to ``action_id``.
             selection: For Command Mode, the selected text to rewrite, as a
                 str or a Future[str].
+            action_id: The saved action an ACTION recording runs.
+            source: Who asked (see DictationJob.source).
+            route: "hotkey" to route the words by voice; a DICTATION gets
+                "auto" itself when routing applies to every dictation.
         """
         with self._capture_lock:
-            return self._start_recording(profile_id, mode, selection)
+            return self._start_recording(
+                profile_id, mode, selection,
+                action_id=action_id, source=source, route=route,
+            )
 
-    def _begin_job(self, mode: str, settings, selection) -> dictation_pipeline.DictationJob:
+    def _begin_job(self, mode: str, settings, selection, **context) -> dictation_pipeline.DictationJob:
         """The job for a recording that just started; never raises."""
         try:
             if settings is None:
                 settings = settings_manager.load_all_settings()
-            return dictation_pipeline.begin_job(mode, settings, selection=selection)
+            return dictation_pipeline.begin_job(mode, settings, selection=selection, **context)
         except Exception:
             logger.debug("Dictation job context unavailable", exc_info=True)
-            return dictation_pipeline.DictationJob(mode=mode)
+            return dictation_pipeline.DictationJob(
+                mode=mode,
+                **{k: v for k, v in context.items() if k != "include_selection"},
+            )
+
+    def _action_for_recording(self, action_id: str):
+        """``(action, settings)`` for an ACTION recording, or ``(None, settings)``."""
+        from services.actions.model import find_action
+
+        settings = settings_manager.load_all_settings()
+        action = find_action(settings, action_id) if action_id else None
+        return (action if action is not None and action.enabled else None), settings
+
+    @staticmethod
+    def _dictation_route() -> str:
+        """"auto" when spoken routing also listens to plain dictations; never raises."""
+        try:
+            from services.settings import (
+                resolve_voice_routing_enabled,
+                resolve_voice_routing_on_dictation,
+            )
+
+            settings = settings_manager.load_all_settings()
+            if (resolve_voice_routing_enabled(settings)
+                    and resolve_voice_routing_on_dictation(settings)):
+                return "auto"
+        except Exception:
+            logger.debug("Routing setting unavailable", exc_info=True)
+        return ""
 
     def _start_recording(self, profile_id: str, mode: str = JobMode.DICTATION,
-                         selection=None) -> bool:
+                         selection=None, *, action_id: str = "", source: str = "hotkey",
+                         route: str = "") -> bool:
         if getattr(self.controller, "_backup_in_progress", False) is True:
             self.controller.status_update.emit("Wait for backup or restore preparation to finish")
             return False
@@ -258,7 +309,19 @@ class TranscriptionRuntime:
             return False
         # Before the preview and early decoding look at the engine.
         self._rearm_remote_engine()
-        settings = settings_manager.load_all_settings() if profile_id else None
+        action = None
+        settings = None
+        if mode == JobMode.ACTION:
+            action, settings = self._action_for_recording(action_id)
+            if action is None:
+                self.controller.status_update.emit("That action no longer exists")
+                return False
+            # The action's own shaping decides the format.
+            profile_id = action.profile_id()
+        elif mode == JobMode.DICTATION and not profile_id and not route:
+            route = self._dictation_route()
+        if profile_id and settings is None:
+            settings = settings_manager.load_all_settings()
         profile = find_cleanup_profile(settings, profile_id) if profile_id else None
         if profile_id and profile is None:
             self.controller.status_update.emit("Cleanup profile no longer exists")
@@ -272,20 +335,34 @@ class TranscriptionRuntime:
             # Snapshot before publishing Recording: edits and other shortcuts
             # cannot replace the format of a recording already in progress.
             self._recording_profile = profile
-            self._profile_settings = settings
+            self._profile_settings = settings if profile else None
             # Before the preview and early decoding, which read its
             # recognition context, and so the focus capture runs while the
             # user speaks.
-            self._job = self._begin_job(mode, settings, selection)
+            self._job = self._begin_job(
+                mode, settings, selection,
+                action_id=action.id if action is not None else "",
+                source=source,
+                route=route,
+                include_selection=bool(
+                    action is not None and action.param("include_selection") is True
+                ),
+            )
             logger.info("Recording started")
             self.controller.ui_controller.clear_transcription_stats()
             self.controller.ui_controller.main_window.clear_partial_transcription()
             self.controller.streaming_runtime.start_streaming_session()
             self._incremental.start(self.controller, recognition=self._job.recognition)
             self.controller.recording_state_changed.emit(True)
+            publish_event(
+                event_catalog.RECORDING_STARTED, event_catalog.recording_started(self._job)
+            )
             if mode == JobMode.COMMAND:
                 self.controller.overlay_state_update.emit(OverlayState.COMMAND_LISTENING)
                 self.controller.status_update.emit("Command Mode · Listening...")
+            elif action is not None:
+                self.controller.overlay_state_update.emit(OverlayState.RECORDING)
+                self.controller.status_update.emit(f"{action.name} · Listening...")
             else:
                 self.controller.overlay_state_update.emit(OverlayState.RECORDING)
                 self.controller.status_update.emit(
@@ -344,6 +421,14 @@ class TranscriptionRuntime:
         self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
         self.controller.status_update.emit("Processing...")
         self._stop_started_at = time.monotonic()
+        try:
+            duration = self.controller.recorder.get_recording_duration()
+        except Exception:
+            duration = None
+        publish_event(
+            event_catalog.RECORDING_STOPPED,
+            event_catalog.recording_stopped(self._job, duration),
+        )
 
         # Reserve the workflow before post-roll/save work.  Once the recorder
         # flips to inactive, an upload can arrive from another UI thread; a
@@ -441,6 +526,8 @@ class TranscriptionRuntime:
             job = self._active_job
             self.controller._pending_source_name = (
                 "Command Mode" if job is not None and job.mode == JobMode.COMMAND
+                else self._action_source_name(job)
+                if job is not None and job.mode == JobMode.ACTION
                 else f"Quick Record · {self._recording_profile.name}"
                 if self._recording_profile else "Quick Record"
             )
@@ -494,6 +581,11 @@ class TranscriptionRuntime:
         self._cancel_started_at = time.monotonic() if (
             self.controller.recorder.is_recording or self.has_active_job
         ) else 0.0
+        if self._cancel_started_at:
+            job = self._job or self._active_job
+            publish_event(
+                event_catalog.RECORDING_CANCELED, event_catalog.recording_canceled(job)
+            )
 
         if self.controller.recorder.is_recording:
             self._cancel_recording()
@@ -946,6 +1038,8 @@ class TranscriptionRuntime:
         raw: str,
         batch_context: Optional[str] = None,
         timeout_s: Optional[float] = None,
+        *,
+        profile=_RECORDING_PROFILE,
     ) -> tuple[str, Optional[str], Optional[CleanupInfo]]:
         """Return fixed text, distinct raw text, and successful cleanup metadata.
 
@@ -955,13 +1049,19 @@ class TranscriptionRuntime:
                 fits together, appended to the prompt after the learned rules.
             timeout_s: Per-request timeout override for text far longer than
                 a dictation.
+            profile: The cleanup profile to format with, or None for none;
+                by default the one the recording started with. Routed and
+                API-run actions choose theirs after the recording.
         """
         self._last_cleanup_failure = None
         self._delivery_html = ""
         self._spoken_text = ""
         job = self._active_job
-        profile = self._recording_profile
-        settings = self._profile_settings if profile else settings_manager.load_all_settings()
+        if profile is _RECORDING_PROFILE:
+            profile = self._recording_profile
+            settings = self._profile_settings if profile else settings_manager.load_all_settings()
+        else:
+            settings = settings_manager.load_all_settings()
         if not raw or not raw.strip():
             return raw, None, None
         # Before the switch below: the dictionary applies with cleanup off,
@@ -1077,8 +1177,10 @@ class TranscriptionRuntime:
                 self.controller._remote_timing = backend.timing_since(mark)
             self._complete_preview_fallback(audio_path, raw)
             self._raise_if_canceled()
-            if job is not None and job.mode != JobMode.DICTATION:
+            if job is not None and job.mode in (JobMode.COMMAND, JobMode.TRANSFORM):
                 fixed, raw_text, cleanup_info = self._complete_command(raw, job)
+            elif job is not None:
+                fixed, raw_text, cleanup_info = self._complete_live(raw, job)
             else:
                 fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(raw)
             self._raise_if_canceled()
@@ -1112,6 +1214,164 @@ class TranscriptionRuntime:
         if complete is None:
             raise RuntimeError("Command Mode isn't available")
         return complete(raw, job)
+
+    def _complete_live(self, raw: str, job):
+        """Text filters, spoken routing and shaping for a dictation or action; worker.
+
+        Returns ``(text, raw_text, info)`` like ``_maybe_cleanup_transcript``.
+        With no filters, no routing and no action this is exactly a
+        dictation's cleanup.
+        """
+        from services.automation.models import AFTER_CLEANUP, BEFORE_CLEANUP
+
+        settings = settings_manager.load_all_settings()
+        text = self._run_filters(BEFORE_CLEANUP, raw, job, settings)
+        if text is None:
+            return raw, None, None
+        if job.mode == JobMode.DICTATION and job.route:
+            job, text = self._route(text, job, settings)
+        if job.mode == JobMode.ACTION:
+            fixed, raw_text, info = self._shape_action(text, job, settings)
+        else:
+            fixed, raw_text, info = self._maybe_cleanup_transcript(text)
+        if not (fixed or "").strip():
+            return fixed, raw_text, info
+        final = self._run_filters(AFTER_CLEANUP, fixed, job, settings)
+        if final is None or final == fixed:
+            return fixed, raw_text, info
+        # The rich-text version no longer matches the words.
+        self._delivery_html = ""
+        return final, (raw_text if raw_text is not None else fixed), info
+
+    def _run_filters(self, stage: str, text: str, job, settings) -> Optional[str]:
+        """``text`` after ``stage``'s text filters; None when one took over delivery.
+
+        Never raises: a failing filter keeps the text (services.automation.filters).
+        """
+        from services.automation import filters
+
+        try:
+            outcome = filters.apply(stage, text, job, settings)
+        except Exception:
+            logger.warning("Text filters failed; keeping the text")
+            return text
+        filtered = outcome.text if isinstance(outcome.text, str) else text
+        if outcome.canceled or not filtered.strip():
+            with self._job_lock:
+                self._filter_canceled = True
+            return None
+        return filtered
+
+    def _route(self, text: str, job, settings):
+        """``(job, text)``: an ACTION job when the words name an action; worker.
+
+        Anything short of a confident answer leaves the dictation as it is.
+        """
+        from services.actions import routing
+        from services.actions.model import find_action
+
+        try:
+            decision = routing.decide(text, job, settings)
+        except Exception:
+            logger.warning("Spoken routing failed; pasting the dictation")
+            decision = None
+        action = find_action(settings, decision.action_id) if decision is not None else None
+        if action is None or not action.enabled:
+            return job, text
+        routed = dataclasses.replace(
+            job, mode=JobMode.ACTION, action_id=action.id, routed=True
+        )
+        with self._job_lock:
+            if self._active_job is job:
+                self._active_job = routed
+        self.controller._pending_source_name = f"Action · {action.name}"
+        payload = decision.payload if (decision.payload or "").strip() else text
+        return routed, payload
+
+    def _shape_action(self, text: str, job, settings):
+        """Prepare an action's words the way it asks; worker.
+
+        Raises:
+            CommandRefused: The action is gone, or its transform can't run.
+        """
+        from services.actions.model import SHAPING_RAW, find_action
+
+        action = find_action(settings, job.action_id)
+        if action is None:
+            raise CommandRefused("That action no longer exists")
+        if action.shaping == SHAPING_RAW:
+            prepared = dictation_pipeline.prepare_text(text, job, settings)
+            self._spoken_text = prepared.text
+            return self._finish_without_cleanup(prepared)
+        profile_id = action.profile_id()
+        if profile_id:
+            recorded = self._recording_profile
+            if recorded is not None and recorded.id == profile_id:
+                return self._maybe_cleanup_transcript(text)
+            return self._maybe_cleanup_transcript(
+                text, profile=find_cleanup_profile(settings, profile_id)
+            )
+        fixed, raw_text, info = self._maybe_cleanup_transcript(text, profile=None)
+        transform_id = action.transform_id()
+        if not transform_id or not (fixed or "").strip():
+            return fixed, raw_text, info
+        from services.text_transforms import find_transform
+
+        transform = find_transform(settings, transform_id)
+        if transform is None:
+            return fixed, raw_text, info
+        self.controller.overlay_state_update.emit(OverlayState.REWRITING)
+        result, _source, rewrite_info = self.controller.command_runtime.rewrite_text(
+            fixed, transform.instruction
+        )
+        self._delivery_html = ""
+        return result, (raw_text if raw_text is not None else fixed), rewrite_info or info
+
+    @staticmethod
+    def _action_source_name(job) -> str:
+        """History's source name for an action job: ``Action · <name>``."""
+        from services.actions.model import find_action
+
+        try:
+            action = find_action(settings_manager.load_all_settings(), job.action_id)
+        except Exception:
+            action = None
+        return f"Action · {action.name}" if action is not None else "Action"
+
+    def run_action_text(self, action_id: str, text: str, *, source: str) -> str:
+        """Run a saved action on ``text`` without recording; Qt thread.
+
+        The words take a dictation's path from there: text filters, the
+        action's shaping, delivery to the action, and history.
+
+        Returns:
+            The job's id, which its events carry.
+
+        Raises:
+            ControlError: ``refused``, ``not_found`` or ``busy``, with a
+                message to show.
+        """
+        from services.actions.model import find_action
+        from services.automation.control import BUSY, NOT_FOUND, REFUSED, ControlError
+
+        text = (text or "").strip()
+        if not text:
+            raise ControlError(REFUSED, "There are no words to send.")
+        if self.controller.is_meeting_active():
+            raise ControlError(BUSY, "Meeting Mode is active; end the meeting first.")
+        settings = settings_manager.load_all_settings()
+        action = find_action(settings, action_id)
+        if action is None or not action.enabled:
+            raise ControlError(NOT_FOUND, "No enabled action has that id.")
+        job = dictation_pipeline.begin_job(
+            JobMode.ACTION, settings, action_id=action.id, source=source,
+            include_selection=action.param("include_selection") is True,
+        )
+        if not self.begin_rewrite_job(job, source_name=f"Action · {action.name}"):
+            raise ControlError(BUSY, "OpenWhisper is busy with another recording.")
+        self.controller.status_update.emit(f"{action.name}...")
+        self.submit_rewrite(lambda: self._complete_live(text, job))
+        return job.id
 
     def _refuse(self, message: str) -> None:
         """Report a command or transform with nothing to paste; worker thread.
@@ -1272,6 +1532,16 @@ class TranscriptionRuntime:
         # Only a recording's own WAV is dictated live; a re-transcription is
         # delivered like one but read from a file.
         live = bool(self._deliver_to_clipboard and self.controller._pending_audio_path)
+        context = self._history_context(job, cleanup_info, live=live)
+        # Lets history.saved name the job; dropped before the entry is saved.
+        entry["job_id"] = job.id if job is not None else ""
+        publish_event(
+            event_catalog.TRANSCRIPTION_COMPLETED,
+            event_catalog.transcription_completed(
+                job, text=transcript, raw_text=raw_text, fields=context,
+                cleanup_info=cleanup_info, audio_s=entry.get("audio_duration"),
+            ),
+        )
 
         cleanup_notice = (
             f" — {self._recording_profile.name} formatting failed "
@@ -1280,7 +1550,15 @@ class TranscriptionRuntime:
         )
         if not self._deliver_to_clipboard:
             self.controller.ui_controller.set_status("Ready" + cleanup_notice)
-            entry.update(self._history_context(job, cleanup_info, live=live))
+            entry.update(context)
+            self._queue_history([entry])
+            return
+        with self._job_lock:
+            filtered_out, self._filter_canceled = self._filter_canceled, False
+        if filtered_out:
+            self.controller.ui_controller.discard_clipboard_prefetch()
+            self.controller.ui_controller.set_status(FILTER_CANCELED_MESSAGE)
+            entry.update(context)
             self._queue_history([entry])
             return
 
@@ -1289,7 +1567,7 @@ class TranscriptionRuntime:
         try:
             self._deliver(transcript, job, status_suffix=cleanup_notice, before_cleanup=raw_text)
         finally:
-            entry.update(self._history_context(job, cleanup_info, live=live))
+            entry.update(context)
             self._queue_history([entry])
 
     def _deliver(
@@ -1301,6 +1579,12 @@ class TranscriptionRuntime:
         did; dictionary learning compares the user's corrections with it.
         """
         ui = self.controller.ui_controller
+        if job is not None and job.mode == JobMode.ACTION:
+            # The words belong to the action, not to the focused app.
+            self.controller.action_runtime.deliver(
+                job, transcript, raw_text=before_cleanup, html=self._delivery_html,
+            )
+            return
         insert = getattr(ui, "insert_into_scratchpad", None)
         if callable(insert):
             try:
@@ -1383,10 +1667,20 @@ class TranscriptionRuntime:
         error = ''
         try:
             for fields in entries:
-                # spoken_text feeds Stats only; it is not a history column.
+                # spoken_text feeds Stats and job_id names the job in events;
+                # neither is a history column.
                 entry = history_manager.add_entry(
-                    **{key: value for key, value in fields.items() if key != 'spoken_text'}
+                    **{key: value for key, value in fields.items()
+                       if key not in ('spoken_text', 'job_id')}
                 )
+                record_id = getattr(entry, 'id', None)
+                if record_id is not None:
+                    publish_event(
+                        event_catalog.HISTORY_SAVED,
+                        event_catalog.history_saved(
+                            fields.get('job_id', ''), record_id, fields.get('entry_kind', ''),
+                        ),
+                    )
                 try:
                     # Stats are a side table: their failure never touches the
                     # saved entry or the status.
@@ -1639,6 +1933,10 @@ class TranscriptionRuntime:
         job = self._active_job
         with self._job_lock:
             refused, self._refused = self._refused, False
+        publish_event(
+            event_catalog.TRANSCRIPTION_FAILED,
+            event_catalog.transcription_failed(job, error_message),
+        )
         pending_audio = self.controller._pending_audio_path
         status = error_message if refused else f"Error: {error_message}"
         self.controller.ui_controller.set_status(status)

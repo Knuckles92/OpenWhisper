@@ -11,8 +11,9 @@ here raises into the runtime.
 from __future__ import annotations
 
 import logging
+import secrets
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final, Mapping, Optional
 
 from config import config
@@ -46,6 +47,9 @@ class JobMode:
     DICTATION: Final[str] = "dictation"
     COMMAND: Final[str] = "command"
     TRANSFORM: Final[str] = "transform"
+    #: The words go to a saved action instead of the cursor
+    #: (docs/design/automation/design.md).
+    ACTION: Final[str] = "action"
 
 
 #: entry_kind for transcripts that were not dictated live: uploads, batches
@@ -94,6 +98,18 @@ class DictationJob:
     #: the paste check only, also with app awareness off; history, styles
     #: and prompts read ``focus`` alone.
     target: Optional[Future] = None
+    #: Names this job in events, so a listener can match its completion
+    #: and history entry to its start.
+    id: str = field(default_factory=lambda: secrets.token_hex(8))
+    #: The saved action an ACTION job runs.
+    action_id: str = ""
+    #: Who started it: hotkey, ui, api, mcp, dbus or routing.
+    source: str = ""
+    #: "hotkey" when recorded with Route by voice, "auto" when a dictation
+    #: may be routed by the action name it starts with; "" never routes.
+    route: str = ""
+    #: Spoken routing turned this dictation into an ACTION job.
+    routed: bool = False
 
     def snapshot(self, timeout: float = 0.0) -> Optional[FocusSnapshot]:
         """The focus capture, or None when it failed or isn't ready; never raises.
@@ -134,7 +150,9 @@ class FinishedText:
     raw_text: str = ""
 
 
-def begin_job(mode: str, settings: Mapping, *, selection=None) -> DictationJob:
+def begin_job(mode: str, settings: Mapping, *, selection=None, action_id: str = "",
+              source: str = "", route: str = "",
+              include_selection: bool = False) -> DictationJob:
     """Start a job's background captures as its recording starts; never raises.
 
     Called right after the recorder opens and before the preview starts, so
@@ -145,6 +163,11 @@ def begin_job(mode: str, settings: Mapping, *, selection=None) -> DictationJob:
         settings: Settings loaded for this recording.
         selection: The text to rewrite, as a Future[str] or a str, for
             command and transform jobs.
+        action_id: The action an ACTION job runs.
+        source: Who started the job (see DictationJob.source).
+        route: See DictationJob.route.
+        include_selection: An ACTION job wants the selected text, which the
+            focus capture reads when app awareness is on.
     """
     settings = settings or {}
     focus = target = None
@@ -152,11 +175,14 @@ def begin_job(mode: str, settings: Mapping, *, selection=None) -> DictationJob:
         if resolve_app_context_enabled(settings):
             focus = focus_context.get_service().request(
                 include_text=resolve_app_context_read_text(settings),
-                include_selection=mode == JobMode.COMMAND,
+                include_selection=mode == JobMode.COMMAND or (
+                    mode == JobMode.ACTION and include_selection
+                ),
             )
         elif mode != JobMode.DICTATION:
-            # A rewrite pastes even with auto-paste off, so it still learns
-            # where it started (see DictationJob.target).
+            # A rewrite pastes even with auto-paste off, and an action's
+            # answer may be pasted later, so each still learns where it
+            # started (see DictationJob.target).
             target = focus_context.get_service().request(include_text=False)
     except Exception:
         logger.debug("Focus capture could not start", exc_info=True)
@@ -166,6 +192,9 @@ def begin_job(mode: str, settings: Mapping, *, selection=None) -> DictationJob:
         recognition=recognition_for(None, settings),
         selection=_as_future(selection),
         target=target,
+        action_id=action_id,
+        source=source,
+        route=route,
     )
 
 
@@ -199,7 +228,7 @@ def prepare_text(raw: str, job: Optional[DictationJob], settings: Mapping) -> Pr
     plan = SnippetPlan(text)
     if (
         job is not None
-        and job.mode == JobMode.DICTATION
+        and job.mode in (JobMode.DICTATION, JobMode.ACTION)
         and resolve_snippets_enabled(settings)
     ):
         try:

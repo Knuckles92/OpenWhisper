@@ -1,0 +1,213 @@
+"""Every event type OpenWhisper publishes, with one builder per type.
+
+Publishers call a builder rather than writing dicts by hand, so the payload
+of a type is the same everywhere. Payloads never carry selected text, caret
+context, window titles, file paths or audio.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Iterable, Mapping, Optional
+
+RECORDING_STARTED = "recording.started"
+RECORDING_STOPPED = "recording.stopped"
+RECORDING_CANCELED = "recording.canceled"
+TRANSCRIPTION_PREVIEW = "transcription.preview"
+TRANSCRIPTION_COMPLETED = "transcription.completed"
+TRANSCRIPTION_FAILED = "transcription.failed"
+HISTORY_SAVED = "history.saved"
+ACTION_RAN = "action.ran"
+CHANNEL_MESSAGE = "channel.message"
+ROUTE_DECIDED = "route.decided"
+FILTER_FAILED = "filter.failed"
+MEETING_STARTED = "meeting.started"
+MEETING_ENDED = "meeting.ended"
+MEETING_SEGMENTS = "meeting.segments"
+MEETING_VOICE_COMMAND = "meeting.voice_command"
+#: Synthetic, sent only on an event stream whose client missed events.
+EVENTS_GAP = "events.gap"
+
+#: One line per type, for checklists, the docs and MCP events/list.
+EVENT_TYPES: dict[str, str] = {
+    RECORDING_STARTED: "A recording started (dictation, Command Mode or an action).",
+    RECORDING_STOPPED: "A recording stopped and is being transcribed.",
+    RECORDING_CANCELED: "A recording or transcription was canceled.",
+    TRANSCRIPTION_PREVIEW: "Live preview text while recording, at most four a second.",
+    TRANSCRIPTION_COMPLETED: "Finished text of a dictation, command, action or file.",
+    TRANSCRIPTION_FAILED: "A transcription or rewrite failed.",
+    HISTORY_SAVED: "A finished transcription was saved to history.",
+    ACTION_RAN: "An action ran, with whether it worked.",
+    CHANNEL_MESSAGE: "Words sent to Claude Code sessions listening on the channel.",
+    ROUTE_DECIDED: "Spoken routing chose an action, or fell back to pasting.",
+    FILTER_FAILED: "A text filter timed out or answered badly; the text was kept.",
+    MEETING_STARTED: "A meeting started.",
+    MEETING_ENDED: "A meeting ended.",
+    MEETING_SEGMENTS: "New finished lines of a meeting transcript.",
+    MEETING_VOICE_COMMAND: "Someone gave the meeting note-taker a spoken command.",
+    EVENTS_GAP: "This stream missed events; fetch history to catch up.",
+}
+PUBLIC_TYPES: tuple[str, ...] = tuple(t for t in EVENT_TYPES if t != EVENTS_GAP)
+
+#: Values of ``source``: who started the job.
+SOURCES = ("hotkey", "ui", "api", "mcp", "dbus", "routing")
+#: ``mode`` of a transcription read from a file rather than dictated live.
+FILE_MODE = "file"
+
+
+def known_types(types: Iterable[str]) -> list[str]:
+    """``types`` filtered to public event types, order kept, duplicates dropped."""
+    seen: list[str] = []
+    for item in types:
+        if item in EVENT_TYPES and item != EVENTS_GAP and item not in seen:
+            seen.append(item)
+    return seen
+
+
+def job_fields(job: Any) -> dict:
+    """``job_id``, ``mode``, ``action_id``, ``source`` and ``route`` of a DictationJob or None."""
+    if job is None:
+        return {"job_id": "", "mode": FILE_MODE, "action_id": None, "source": "", "route": ""}
+    return {
+        "job_id": getattr(job, "id", "") or "",
+        "mode": getattr(job, "mode", "") or "",
+        "action_id": getattr(job, "action_id", "") or None,
+        "source": getattr(job, "source", "") or "",
+        "route": getattr(job, "route", "") or "",
+    }
+
+
+def app_from_fields(fields: Optional[Mapping[str, Any]]) -> Optional[dict]:
+    """The ``app`` object from history context fields (``history_fields``), or None."""
+    fields = fields or {}
+    app_id = fields.get("app_id")
+    if not app_id:
+        return None
+    return {
+        "id": app_id,
+        "name": fields.get("app_name") or "",
+        "category": fields.get("app_category") or "",
+    }
+
+
+def recording_started(job: Any) -> dict:
+    return job_fields(job)
+
+
+def recording_stopped(job: Any, duration_s: Optional[float]) -> dict:
+    return {
+        "job_id": job_fields(job)["job_id"],
+        "duration_s": round(float(duration_s), 3) if duration_s is not None else None,
+    }
+
+
+def recording_canceled(job: Any) -> dict:
+    return {"job_id": job_fields(job)["job_id"]}
+
+
+def transcription_preview(job: Any, text: str, final: bool) -> dict:
+    return {"job_id": job_fields(job)["job_id"], "text": text or "", "final": bool(final)}
+
+
+def transcription_completed(
+    job: Any,
+    *,
+    text: str,
+    raw_text: Optional[str],
+    fields: Optional[Mapping[str, Any]] = None,
+    cleanup_info: Any = None,
+    audio_s: Optional[float] = None,
+) -> dict:
+    """Finished text; ``fields`` are the entry's ``history_fields`` (app, language).
+
+    A job of None is an upload or a re-transcription (``mode`` "file").
+    """
+    base = job_fields(job)
+    cleanup = None
+    if cleanup_info is not None:
+        cleanup = {
+            "provider": getattr(cleanup_info, "provider", "") or "",
+            "model": getattr(cleanup_info, "model", "") or "",
+            "level": getattr(cleanup_info, "level", "") or "",
+        }
+    return {
+        **{k: base[k] for k in ("job_id", "mode", "action_id", "source")},
+        "routed": bool(getattr(job, "routed", False)),
+        "text": text or "",
+        "raw_text": raw_text if raw_text and raw_text != text else None,
+        "language": (fields or {}).get("language") or "",
+        "app": app_from_fields(fields),
+        "cleanup": cleanup,
+        "audio_s": round(float(audio_s), 3) if audio_s else None,
+    }
+
+
+def transcription_failed(job: Any, error: str) -> dict:
+    return {"job_id": job_fields(job)["job_id"], "error": str(error or "")[:500]}
+
+
+def history_saved(job_id: str, record_id: Any, kind: str) -> dict:
+    return {"job_id": job_id or "", "record_id": str(record_id), "kind": kind or ""}
+
+
+def action_ran(job: Any, action: Any, *, ok: bool, message: str, output: str) -> dict:
+    return {
+        "job_id": job_fields(job)["job_id"],
+        "action_id": getattr(action, "id", ""),
+        "name": getattr(action, "name", ""),
+        "kind": getattr(action, "kind", ""),
+        "ok": bool(ok),
+        "message": str(message or "")[:500],
+        "output": output or "none",
+    }
+
+
+def channel_message(job: Any, action: Any, text: str, app: Optional[Mapping]) -> dict:
+    return {
+        "job_id": job_fields(job)["job_id"],
+        "action_id": getattr(action, "id", ""),
+        "text": text or "",
+        "app": dict(app) if app else None,
+    }
+
+
+def route_decided(job: Any, action_id: Optional[str], confidence: Optional[float],
+                  fallback: bool) -> dict:
+    return {
+        "job_id": job_fields(job)["job_id"],
+        "action_id": action_id or None,
+        "confidence": round(float(confidence), 4) if confidence is not None else None,
+        "fallback": bool(fallback),
+    }
+
+
+def filter_failed(filter_id: str, name: str, stage: str, reason: str) -> dict:
+    return {"filter_id": filter_id, "name": name, "stage": stage, "reason": str(reason)[:200]}
+
+
+def meeting_started(meeting_id: str, title: str) -> dict:
+    return {"meeting_id": meeting_id or "", "title": title or ""}
+
+
+def meeting_ended(meeting_id: str, status: str) -> dict:
+    return {"meeting_id": meeting_id or "", "status": status or ""}
+
+
+def meeting_segments(meeting_id: str, items: Iterable[Mapping[str, Any]]) -> dict:
+    rows = []
+    for item in items:
+        rows.append({
+            "segment_id": str(item.get("segment_id") or item.get("id") or ""),
+            "speaker": item.get("speaker") or "",
+            "text": item.get("text") or "",
+            "start_s": item.get("start_s"),
+            "end_s": item.get("end_s"),
+        })
+    return {"meeting_id": meeting_id or "", "items": rows}
+
+
+def meeting_voice_command(meeting_id: str, command: str) -> dict:
+    return {"meeting_id": meeting_id or "", "command": command or ""}
+
+
+def events_gap(missed_from_seq: int) -> dict:
+    return {"missed_from_seq": int(missed_from_seq)}

@@ -62,6 +62,22 @@ def toggle(ui) -> None:
         pad.present()
 
 
+def show_text(ui, text: str) -> None:
+    """Show the Scratchpad with ``text`` added at the end, on a line of its own.
+
+    For answers that arrive later (an agent action's reply), not dictations:
+    the user's cursor and selection are left where they were.
+    """
+    if not text:
+        return
+    pad = getattr(ui, "_scratchpad", None)
+    if pad is None:
+        pad = ScratchpadWindow(copy_text=getattr(ui, "copy_to_clipboard", None))
+        ui._scratchpad = pad
+    pad.append_block(text)
+    pad.present()
+
+
 def insert(ui, text: str) -> bool:
     """Insert a finished dictation into the focused Scratchpad.
 
@@ -547,6 +563,17 @@ class ScratchpadWindow(QWidget):
             joined = text
         cursor.insertText(_spaced(joined, before, after))
         self.editor.setTextCursor(cursor)
+        self.editor.ensureCursorVisible()
+
+    def append_block(self, text: str) -> None:
+        """Add ``text`` after everything else, separated by a blank line."""
+        from PyQt6.QtGui import QTextCursor
+
+        existing = self.editor.toPlainText()
+        separator = "" if not existing.strip() else ("\n" if existing.endswith("\n") else "\n\n")
+        cursor = QTextCursor(self.editor.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertText(separator + text.strip())
         self.editor.ensureCursorVisible()
 
     # ---- footer actions ----

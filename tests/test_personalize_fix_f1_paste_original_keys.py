@@ -38,6 +38,7 @@ def _controller():
         cycle_language_requested=_Signal(),
         recording_state_changed=_Signal(),
         toggle_recording=lambda: None,
+        toggle_route_recording=lambda: None,
         cancel=lambda: None,
         minimize_to_tray=lambda: None,
         toggle_meeting_mode=lambda: None,

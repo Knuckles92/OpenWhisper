@@ -412,6 +412,19 @@ class CommandRuntime:
         )
         return result, (selection if selection.strip() else None), info
 
+    def rewrite_text(
+        self, text: str, instruction: str,
+    ) -> tuple[str, Optional[str], Optional[CleanupInfo]]:
+        """Rewrite ``text`` with a saved instruction; executor worker, job slot held.
+
+        An action shaped by a transform uses this on its own dictated words.
+
+        Raises:
+            CommandRefused: No AI provider, or the model refused.
+            RuntimeError: With a user-facing message when the model fails.
+        """
+        return self._rewrite(text, instruction)
+
     def complete_recording(
         self, raw: str, job,
     ) -> tuple[str, Optional[str], Optional[CleanupInfo]]:

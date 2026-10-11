@@ -48,6 +48,10 @@ from services.runtime import (
     TranscriptionRuntime,
 )
 from services.runtime.command import CommandRuntime
+from services.actions.runtime import ActionRuntime
+from services.automation import catalog as event_catalog
+from services.automation.events import publish as publish_event
+from services.dictation_pipeline import JobMode
 from services.settings import (
     SETTING_DEFAULTS,
     HuggingFaceAccessPolicy,
@@ -121,6 +125,9 @@ class ApplicationController(QObject):
     stt_state_changed = pyqtSignal(bool)
     recording_state_changed = pyqtSignal(bool)
     profile_record_requested = pyqtSignal(str)
+    # An action's shortcut, emitted from the hotkey dispatcher thread with
+    # the action's id (docs/design/automation/design.md).
+    action_record_requested = pyqtSignal(str)
     partial_transcription = pyqtSignal(str, bool)
     streaming_text_update = pyqtSignal(str, bool)
     streaming_overlay_show = pyqtSignal()
@@ -339,6 +346,9 @@ class ApplicationController(QObject):
         self.streaming_runtime = StreamingRuntime(self)
         self.transcription_runtime = TranscriptionRuntime(self)
         self.command_runtime = CommandRuntime(self)
+        self.action_runtime = ActionRuntime(self)
+        # transcription.preview is sent at most four times a second.
+        self._last_preview_event = 0.0
         self.meeting_runtime = MeetingRuntime(self)
 
         self._setup_transcription_backends(local_backend=local_backend)
@@ -511,9 +521,14 @@ class ApplicationController(QObject):
 
     def on_settings_changed(self, kind: str) -> None:
         """A Settings page saved something of ``kind`` (see notify_changed)."""
-        if kind in ("transforms", "hotkeys"):
-            # Transforms and the new actions register as global shortcuts.
+        if kind in ("transforms", "hotkeys", "actions"):
+            # Transforms, actions and the newer standard shortcuts register
+            # as global shortcuts.
             self.hotkey_runtime.refresh_profile_hotkeys()
+        if kind in ("webhooks", "programs", "filters", "mcp_events"):
+            from services.automation import service as automation_service
+
+            automation_service.reload(kind)
 
     def reload_whisper_model(self) -> None:
         """Schedule a debounced, background reload of the local whisper model.
@@ -1083,6 +1098,12 @@ class ApplicationController(QObject):
             daemon=True,
         ).start()
         self._warm_openai_sdk()
+        try:
+            from services.automation import service as automation_service
+
+            automation_service.start(self)
+        except Exception:
+            logger.exception("Could not start automation")
 
     def _initialize_startup_database(self) -> None:
         error = ""
@@ -2383,6 +2404,39 @@ class ApplicationController(QObject):
         else:
             self.start_profile_recording(profile_id)
 
+    def start_action_recording(self, action_id: str, *, source: str = "hotkey") -> bool:
+        """Record words for a saved action; False when refused."""
+        if self._refuse_dictation_during_meeting():
+            return False
+        return self.transcription_runtime.start_recording(
+            mode=JobMode.ACTION, action_id=action_id, source=source,
+        ) is not False
+
+    def toggle_action_recording(self, action_id: str) -> None:
+        """An action's shortcut: stop the recording, or record for that action."""
+        if self.recorder.is_recording:
+            self.stop_recording()
+        else:
+            self.start_action_recording(action_id)
+
+    def toggle_route_recording(self) -> None:
+        """Route by voice: stop the recording, or record words for whichever action they name.
+
+        Hotkey thread, like toggle_recording.
+        """
+        if self.recorder.is_recording:
+            self.stop_recording()
+            return
+        if self._refuse_dictation_during_meeting():
+            return
+        from services.actions import routing
+
+        status = routing.status(settings_manager.load_all_settings())
+        if not status.ready:
+            self.status_update.emit(status.message)
+            return
+        self.transcription_runtime.start_recording(route="hotkey", source="hotkey")
+
     def stop_recording(self) -> None:
         self.transcription_runtime.stop_recording()
 
@@ -2580,6 +2634,7 @@ class ApplicationController(QObject):
     def _connect_signals(self) -> None:
         self.startup_database_ready.connect(self._on_startup_database_ready)
         self.profile_record_requested.connect(self.toggle_profile_recording)
+        self.action_record_requested.connect(self.toggle_action_recording)
         self.transcription_completed.connect(self._on_transcription_complete)
         self.transcription_failed.connect(self._on_transcription_error)
         self.batch_completed.connect(self._on_batch_complete)
@@ -2702,8 +2757,26 @@ class ApplicationController(QObject):
             self.ui_controller.main_window.set_partial_transcription
         )
         self.streaming_text_update.connect(self.ui_controller.update_streaming_text)
+        self.streaming_text_update.connect(self._publish_preview)
         self.streaming_overlay_show.connect(self.ui_controller.show_streaming_overlay)
         self.streaming_overlay_hide.connect(self.ui_controller.hide_streaming_overlay)
+
+    def _publish_preview(self, text: str, is_final: bool) -> None:
+        """Live preview text as transcription.preview, at most four a second; Qt thread.
+
+        Previews are delivered live only; they never fill the replay buffer.
+        """
+        now = time.monotonic()
+        if not is_final and now - self._last_preview_event < 0.25:
+            return
+        self._last_preview_event = now
+        publish_event(
+            event_catalog.TRANSCRIPTION_PREVIEW,
+            event_catalog.transcription_preview(
+                self.transcription_runtime._job, text, is_final
+            ),
+            replay=False,
+        )
 
     def _on_recording_state_changed(self, is_recording: bool) -> None:
         if is_recording:
@@ -2742,6 +2815,13 @@ class ApplicationController(QObject):
             self.command_runtime.cleanup()
         except Exception as exc:
             logger.debug(f"Error during command runtime cleanup: {exc}")
+        try:
+            self.action_runtime.close()
+            from services.automation import service as automation_service
+
+            automation_service.stop()
+        except Exception as exc:
+            logger.debug(f"Error stopping automation: {exc}")
         try:
             from services import audio_player, focus_context
 

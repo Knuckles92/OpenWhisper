@@ -128,6 +128,7 @@ from ui_qt.dialogs.settings_metadata import (
 )
 from ui_qt.utils.list_reconcile import HistoryDelivery
 from ui_qt.dialogs.settings_destinations import (
+    ACTIONS,
     ADVANCED,
     APPEARANCE,
     BASIC_APP,
@@ -142,6 +143,7 @@ from ui_qt.dialogs.settings_destinations import (
     DICTIONARY,
     DOWNLOADS,
     GENERAL,
+    HOOKS,
     HOTKEYS,
     MCP,
     MEETING_AFTER,
@@ -252,7 +254,7 @@ _HF_POLICY_LABELS = {
 _SEARCH_ALIASES = {
     MCP: (
         "Connect an agent with MCP",
-        "App › MCP",
+        "Automate › API & MCP",
         "model context protocol agent server connection claude cursor history api",
     ),
     VOICE_MODEL: (
@@ -297,6 +299,8 @@ _PAGE_MODULES = (
     (SNIPPETS, "ui_qt.dialogs.settings_snippets", "text-plus-green.svg"),
     (STYLES, "ui_qt.dialogs.settings_styles", "palette-purple.svg"),
     (COMMANDS, "ui_qt.dialogs.settings_commands", "wand-purple.svg"),
+    (ACTIONS, "ui_qt.dialogs.settings_actions", "bolt-green.svg"),
+    (HOOKS, "ui_qt.dialogs.settings_hooks", "server-blue.svg"),
 )
 _PAGE_MODULE_ICONS = {key: icon for key, _path, icon in _PAGE_MODULES}
 
@@ -311,6 +315,7 @@ _HOTKEY_LABELS = {
     "scratchpad_toggle": "Scratchpad",
     "cycle_language": "Switch language",
     "paste_last_original": "Paste original",
+    "route_record": "Route by voice",
 }
 
 
@@ -698,6 +703,11 @@ class SettingsDialog(QDialog):
                 (CLEANUP_PROFILES, "Profiles", "typography-blue.svg"),
                 (COMMANDS, "Commands", _PAGE_MODULE_ICONS[COMMANDS]),
             )),
+            ("Automate", (
+                (ACTIONS, "Actions", _PAGE_MODULE_ICONS[ACTIONS]),
+                (HOOKS, "Hooks", _PAGE_MODULE_ICONS[HOOKS]),
+                (MCP, "API & MCP", "server-blue.svg"),
+            )),
             ("Meeting Mode", (
                 (MEETING_VOICE, "Voice & speakers", "microphone-blue.svg"),
                 (MEETING_INTELLIGENCE, "Intelligence", "stack-purple.svg"),
@@ -715,7 +725,6 @@ class SettingsDialog(QDialog):
                 (APPEARANCE, "Appearance", "palette-purple.svg"),
                 (HOTKEYS, "Hotkeys", "keyboard-green.svg"),
                 (API_KEYS, "API keys", "key-blue.svg"),
-                (MCP, "MCP", "server-blue.svg"),
                 (ADVANCED, "Developer options", "box-blue.svg"),
             )),
         ):
@@ -917,8 +926,9 @@ class SettingsDialog(QDialog):
         )
         self._add_page(
             MCP,
-            "Connect your AI assistant",
-            "MCP · Search your saved dictations and meetings.",
+            "API & MCP",
+            "Let agents and your own programs read history, follow live "
+            "events and run actions.",
             self._build_mcp_page,
         )
         self._add_page(
@@ -2847,6 +2857,15 @@ class SettingsDialog(QDialog):
         )
         layout.addWidget(
             self._hotkey_shortcut_row(
+                "route_record",
+                "Route by voice",
+                "Record, then send your words to the action they name, such as "
+                "“Ask Claude…”. Turn on spoken routing on the Actions page.",
+                optional=True,
+            )
+        )
+        layout.addWidget(
+            self._hotkey_shortcut_row(
                 "cancel",
                 "Cancel",
                 "Discard an active recording or interrupt transcription.",
@@ -2906,6 +2925,9 @@ class SettingsDialog(QDialog):
         profile_link = neutral_button(Button("Profile recording shortcuts…"))
         profile_link.clicked.connect(lambda: self.select_destination(CLEANUP_PROFILES))
         fit_compact_button(profile_link, 0)
+        actions_link = neutral_button(Button("Action shortcuts…"))
+        actions_link.clicked.connect(lambda: self.select_destination(ACTIONS))
+        fit_compact_button(actions_link, 0)
         reset_button = neutral_button(Button("Reset to defaults"))
         reset_button.setObjectName("hotkeyResetButton")
         fit_compact_button(reset_button, 150)
@@ -2916,6 +2938,7 @@ class SettingsDialog(QDialog):
         profile_row_layout = QHBoxLayout(profile_row)
         profile_row_layout.setContentsMargins(0, 0, 0, 0)
         profile_row_layout.addWidget(profile_link)
+        profile_row_layout.addWidget(actions_link)
         profile_row_layout.addStretch()
         layout.addSpacing(4)
         layout.addWidget(Reflow(profile_row, reset_button))

@@ -151,6 +151,10 @@ def _kind_label(entry: HistoryEntry) -> str:
         name = (getattr(entry, "source_name", None) or "").strip()
         name = name.removeprefix("Transform · ").strip()
         return f"Transform · {name}" if name else "Transform"
+    if kind == "action":
+        name = (getattr(entry, "source_name", None) or "").strip()
+        name = name.removeprefix("Action · ").strip()
+        return f"Action · {name}" if name else "Action"
     return ""
 
 

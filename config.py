@@ -263,6 +263,11 @@ class AppConfig:
     SCRATCHPAD_FILE: str = field(
         default_factory=lambda: user_data_path("scratchpad.txt")
     )
+    # MCP Events subscriptions agents made (their secrets are in the
+    # credential store). Not in backups: a restored computer has no agents.
+    MCP_EVENT_SUBSCRIPTIONS_FILE: str = field(
+        default_factory=lambda: user_data_path("mcp_event_subscriptions.json")
+    )
 
     # Audio settings
     CHUNK_SIZE: int = 1024
@@ -718,13 +723,15 @@ class AppConfig:
 
     def __post_init__(self):
         if self.DEFAULT_HOTKEYS is None:
-            # Command Mode, the Scratchpad, language cycling and pasting the
-            # last original have no default shortcut on any platform.
+            # Command Mode, the Scratchpad, language cycling, pasting the
+            # last original and routing by voice have no default shortcut on
+            # any platform.
             unbound = {
                 'command_mode': '',
                 'scratchpad_toggle': '',
                 'cycle_language': '',
                 'paste_last_original': '',
+                'route_record': '',
             }
             if sys.platform == "darwin":
                 # Control+Option combos avoid macOS system shortcuts (Spotlight,

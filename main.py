@@ -132,6 +132,10 @@ Options:
                           8766 by default) without opening the app. Set
                           OPENWHISPER_API_TOKEN to a random token of at least
                           32 characters first.
+  --channel               Run as a Claude Code channel (an MCP server over
+                          stdio) that forwards OpenWhisper actions into a
+                          running Claude Code session. OpenWhisper must be
+                          running with API & MCP on.
   --self-test             Check that the app's modules and bundled files load,
                           and exit.
   --workflow-smoke [REPORT.json]
@@ -162,6 +166,12 @@ def _handle_early_cli() -> None:
         raise SystemExit(diagnostics_main(sys.argv[2:]))
     if sys.argv[1:2] == ["--api"]:
         from services.agent_api.cli import main
+
+        raise SystemExit(main(sys.argv[2:]))
+    if sys.argv[1:2] == ["--channel"]:
+        # Claude Code starts this with stdio pipes; it must answer before
+        # anything loads Qt or CUDA.
+        from services.automation.channel_bridge import main
 
         raise SystemExit(main(sys.argv[2:]))
     if sys.argv[1:] == ["--local-asr-worker"]:

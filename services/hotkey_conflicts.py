@@ -16,6 +16,7 @@ from services.settings import SettingsKey
 STANDARD = "standard"
 PROFILE = "profile"
 TRANSFORM = "transform"
+ACTION = "action"
 
 
 def _signature(hotkey: str):
@@ -38,7 +39,7 @@ def hotkey_conflict(
             standard shortcuts.
         exclude: ``(kind, id)`` of the binding being edited, so it does not
             conflict with itself. ``kind`` is "standard" (id is the action),
-            "profile" or "transform".
+            "profile", "transform" or "action" (a saved action).
         standard_hotkeys: Standard shortcuts not saved yet; they replace the
             saved ones.
 
@@ -72,4 +73,11 @@ def hotkey_conflict(
             continue
         if transform.hotkey and _signature(transform.hotkey) == signature:
             return transform.name
+    from services.actions.model import load_actions
+
+    for action in load_actions(settings):
+        if exclude == (ACTION, action.id):
+            continue
+        if action.hotkey and _signature(action.hotkey) == signature:
+            return action.name
     return ""

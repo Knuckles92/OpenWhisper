@@ -859,6 +859,12 @@ class UIController(QObject):
 
         return scratchpad.insert(self, text) is True
 
+    def show_in_scratchpad(self, text: str) -> None:
+        """Open the Scratchpad with ``text`` added at the end (an action's answer)."""
+        from ui_qt.widgets import scratchpad
+
+        scratchpad.show_text(self, text)
+
     def cycle_dictation_language(self) -> None:
         from ui_qt.widgets import language_menu
 
