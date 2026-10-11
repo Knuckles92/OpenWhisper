@@ -198,6 +198,16 @@ def test_other_api_errors_do_not_start_rate_limit_fallback(network, error):
         (f"{DIGEST}  ../../update.exe\n").encode(),
         (f"{DIGEST}  OpenWhisper-Setup-2.6.0.exe\n").encode(),
     ],
+    ids=[
+        "empty",
+        "malformed",
+        "duplicate",
+        "invalid-utf8",
+        "oversized",
+        "missing",
+        "unsafe-filename",
+        "wrong-version",
+    ],
 )
 def test_missing_or_untrusted_checksums_allow_notification_only(network, checksums):
     network["checksums"] = checksums
