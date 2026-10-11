@@ -535,6 +535,12 @@ def create_app(
             device_id=device_id,
         )
 
+    # MCP Events (events/list, events/subscribe, events/unsubscribe) on the
+    # same authenticated endpoint as the tools.
+    from services.agent_mcp import events_ext
+
+    events_ext.install(mcp, settings)
+
     http_app = mcp.streamable_http_app(
         json_response=True,
         stateless_http=True,
