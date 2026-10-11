@@ -105,6 +105,10 @@ def handoff(agent_id: str, text: str, *, folder: str = "", surface: str = "auto"
                 continue
             try:
                 launch.open_uri(uri)
+            except launch.NoAnswer as exc:
+                # Windows may still open this link late; another link or a
+                # terminal now could start the agent twice.
+                return ActionResult(False, str(exc))
             except launch.LaunchError as exc:
                 failure = str(exc)
                 logger.info("Agent link for %s didn't open", agent_id)

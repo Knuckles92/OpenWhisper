@@ -129,6 +129,23 @@ def test_a_link_that_fails_to_open_falls_through(desk):
     assert [urlsplit(uri).scheme for uri in desk.opened] == ["claude-cli"]
 
 
+def test_no_answer_from_windows_tries_nothing_else(desk, monkeypatch):
+    # Windows may still open the first link late; a second link or a terminal
+    # now could start the agent twice.
+    desk.handlers.update({"claude": True, "claude-cli": True})
+
+    def no_answer(uri):
+        desk.opened.append(uri)
+        raise launch.NoAnswer("Windows didn't answer. Try again.")
+
+    monkeypatch.setattr(launch, "open_uri", no_answer)
+    result = agents.handoff("claude_code", WORDS)
+
+    assert (result.ok, result.message) == (False, "Windows didn't answer. Try again.")
+    assert [urlsplit(uri).scheme for uri in desk.opened] == ["claude"]
+    assert desk.terminals == []
+
+
 def test_unknown_handlers_are_tried_only_when_the_app_was_asked_for(desk):
     desk.handlers["claude"] = None
     agents.handoff("claude_code", WORDS)
