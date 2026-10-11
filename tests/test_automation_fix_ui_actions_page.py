@@ -489,3 +489,32 @@ def test_shortened_keeps_what_fits_as_it_is():
 
     assert shortened("  one\r\ntwo  ") == "one\ntwo"
     assert shortened("\n".join(str(n) for n in range(7))) == "0\n1\n2\n3\n4\n5…"
+
+
+# ---- 8. An editor opens with its top in view ----
+
+
+def _in_view(dialog, widget) -> bool:
+    from PyQt6.QtCore import QPoint
+
+    viewport = dialog._page_scrolls[ACTIONS].viewport()
+    top = widget.mapTo(viewport, QPoint(0, 0)).y()
+    return 0 <= top and top + widget.height() <= viewport.height()
+
+
+@pytest.mark.parametrize("opened", ["more options", "preset"])
+def test_an_editor_opens_with_its_name_field_in_view(make_dialog, opened):
+    dialog, _store = make_dialog({SettingsKey.ACTIONS: [AGENT, ASK_CLAUDE]}, size=(1100, 640))
+    panel = dialog.actions_panel
+    if opened == "more options":
+        dialog.actions_agent_card.more_button.click()
+    else:
+        panel.add_action()
+        pump()
+        panel.start_from_preset(panel.gallery.tile("webhook").preset)
+    pump(12)
+    editor = panel.editor
+    area = dialog._page_scrolls[ACTIONS]
+    assert editor.height() > area.viewport().height()  # Too tall to show whole.
+    assert _in_view(dialog, editor.title_label)
+    assert _in_view(dialog, editor.name_edit)

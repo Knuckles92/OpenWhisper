@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Callable, Mapping, Optional
 
-from PyQt6.QtCore import QTimer, pyqtSignal
+from PyQt6.QtCore import QPoint, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QLabel, QMessageBox, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from services.actions.model import (
@@ -33,6 +33,8 @@ from ui_qt.widgets.reflow import Reflow
 LIST, GALLERY, EDITOR = "list", "gallery", "editor"
 #: How long a just-saved card glows.
 FLASH_MS = 1600
+#: Room kept above and below a part of the page scrolled into view.
+REVEAL_MARGIN = 24
 
 
 def unique_name(name: str, settings: Mapping) -> str:
@@ -309,5 +311,12 @@ class ActionsPanel(QWidget):
         area = self.parentWidget()
         while area is not None and not isinstance(area, QScrollArea):
             area = area.parentWidget()
-        if area is not None:
-            area.ensureWidgetVisible(target, 0, 24)
+        if area is None:
+            return
+        if target.height() + 2 * REVEAL_MARGIN <= area.viewport().height():
+            area.ensureWidgetVisible(target, 0, REVEAL_MARGIN)
+            return
+        # Too tall to show whole (ensureWidgetVisible would centre it): its
+        # top, where the title and the first field are.
+        top = target.mapTo(area.widget(), QPoint(0, 0)).y()
+        area.verticalScrollBar().setValue(top - REVEAL_MARGIN)
