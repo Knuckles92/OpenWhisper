@@ -173,11 +173,34 @@ class ActionsPanel(QWidget):
         self._open_editor(action, is_new=True, note=preset.note)
 
     def edit(self, action_id: str) -> None:
+        if self.mode == EDITOR and not self.editor.is_new and self.editor.action_id == action_id:
+            self._scroll_to(self.editor)  # Already open, with whatever you changed.
+            return
         action = find_action(self._settings(), action_id)
         if action is None:
             self.refresh()
             return
-        self._open_editor(action, is_new=False)
+        if self._leave_editor():
+            self._open_editor(action, is_new=False)
+
+    def _leave_editor(self) -> bool:
+        """Before the editor shows another action: save this one's changes, drop them, or stay.
+
+        Returns:
+            False to keep editing this one.
+        """
+        if self.mode != EDITOR or not self.editor.has_unsaved_changes():
+            return True
+        name = self.editor.draft().name or "this action"
+        answer = QMessageBox.question(
+            self, "Unsaved action", f"Save your changes to {name}?",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if answer == QMessageBox.StandardButton.Save:
+            return self.editor.save()
+        return answer == QMessageBox.StandardButton.Discard
 
     def _open_editor(self, action: Action, *, is_new: bool, note: str = "") -> None:
         self.show_notice("")

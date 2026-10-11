@@ -287,9 +287,10 @@ class ActionEditor(InfoTile):
     def open(self, action: Action, *, is_new: bool, note: str = "") -> None:
         """Show ``action``; a new one is only saved once you save it."""
         self.shortcut.cancel_capture()
+        # A new action replaced unsaved leaves no signing secret behind.
+        self._drop_unsaved_secret()
         self._action = action
         self._is_new = is_new
-        self._secret_made = False
         self._secret_token = 0
         self._set_secret_busy(False)
         self.title_label.setText("New action" if is_new else f"Edit {action.name}")

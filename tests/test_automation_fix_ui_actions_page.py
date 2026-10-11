@@ -272,3 +272,74 @@ def test_an_edit_of_an_action_removed_elsewhere_isnt_saved_back(make_dialog):
     assert stored(store, "a1") is None
     assert editor.message.text() == (
         "Ask Claude no longer exists, so there's nothing to save these changes to.")
+
+
+# ---- 2. "More options" while another action is being edited ----
+
+
+def test_more_options_asks_before_leaving_an_unsaved_edit(make_dialog, questions):
+    dialog, store = make_dialog({SettingsKey.ACTIONS: [AGENT, ASK_CLAUDE]})
+    card, panel = dialog.actions_agent_card, dialog.actions_panel
+    editor = panel.editor
+    panel.edit("a1")
+    editor.name_edit.setText("Claude chat")
+
+    questions.answer = QMessageBox.StandardButton.Cancel
+    card.more_button.click()
+    assert questions == [("Unsaved action", "Save your changes to Claude chat?")]
+    assert (editor.action_id, editor.name_edit.text()) == ("a1", "Claude chat")
+
+    questions.answer = QMessageBox.StandardButton.Discard
+    card.more_button.click()
+    assert editor.action_id == AGENT_ACTION_ID
+    assert stored(store, "a1").name == "Ask Claude"
+
+    panel.edit("a1")
+    editor.name_edit.setText("Claude chat")
+    questions.answer = QMessageBox.StandardButton.Save
+    card.more_button.click()
+    assert stored(store, "a1").name == "Claude chat"
+    assert editor.action_id == AGENT_ACTION_ID and panel.mode == "editor"
+
+
+def test_more_options_keeps_an_edit_it_cant_save(make_dialog, questions):
+    dialog, store = make_dialog({SettingsKey.ACTIONS: [AGENT, ASK_CLAUDE]})
+    panel = dialog.actions_panel
+    panel.edit("a1")
+    panel.editor.template_edit.setText("")
+    questions.answer = QMessageBox.StandardButton.Save
+    dialog.actions_agent_card.more_button.click()
+    assert panel.editor.action_id == "a1"
+    assert panel.editor.message.text() == "Enter the link to open."
+    assert stored(store, "a1").param("template") == "claude://claude.ai/new?q={text}"
+
+
+def test_more_options_on_the_open_agent_editor_keeps_its_edits(make_dialog, questions):
+    dialog, _store = make_dialog({SettingsKey.ACTIONS: [AGENT]})
+    card, editor = dialog.actions_agent_card, dialog.actions_panel.editor
+    card.more_button.click()
+    editor.description_edit.setText("Mine")
+    card.more_button.click()
+    assert questions == []
+    assert editor.description_edit.text() == "Mine"
+
+
+def test_replacing_a_new_webhook_drops_the_secret_it_made(make_dialog, questions, secrets,
+                                                         monkeypatch):
+    from ui_qt.widgets import action_editor
+
+    copied = []
+    monkeypatch.setattr(action_editor, "copy_text", copied.append)
+    dialog, _store = make_dialog({SettingsKey.ACTIONS: [AGENT]})
+    panel = dialog.actions_panel
+    panel.add_action()
+    panel.start_from_preset(panel.gallery.tile("webhook").preset)
+    draft_id = panel.editor.action_id
+    panel.editor.copy_secret()
+    assert wait_for(lambda: copied)
+    assert draft_id in secrets.saved
+    # Copying a secret changes nothing in the draft, so nothing is asked.
+    dialog.actions_agent_card.more_button.click()
+    assert questions == []
+    assert panel.editor.action_id == AGENT_ACTION_ID
+    assert wait_for(lambda: draft_id not in secrets.saved)
