@@ -57,10 +57,16 @@ def popen(monkeypatch):
 def test_windows_classic_handler_counts_only_while_its_program_exists(monkeypatch, tmp_path):
     exe = tmp_path / "claude.exe"
     exe.write_bytes(b"")
-    monkeypatch.setattr(launch, "_assoc_query", FakeAssoc({
-        ("claude-cli", launch._ASSOCSTR_COMMAND): (0, f'"{exe}" --handle-uri "%1"'),
-        ("claude-cli", launch._ASSOCSTR_EXECUTABLE): (0, str(exe)),
-    }))
+
+    def assoc(scheme, what):
+        # AssocQueryStringW checks the program: CO_E_APPNOTFOUND once it's gone.
+        if what == launch._ASSOCSTR_COMMAND:
+            return 0, f'"{exe}" --handle-uri "%1"'
+        if what == launch._ASSOCSTR_EXECUTABLE:
+            return (0, str(exe)) if exe.exists() else (0x800401F5, "")
+        return NO_ASSOCIATION, ""
+
+    monkeypatch.setattr(launch, "_assoc_query", assoc)
     assert launch._windows_handler("claude-cli") is True
     exe.unlink()  # an uninstall that left its registration behind
     assert launch._windows_handler("claude-cli") is False

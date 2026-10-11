@@ -155,6 +155,8 @@ _ASSOCSTR_DELEGATEEXECUTE = 18
 _S_OK = 0
 #: HRESULT_FROM_WIN32(ERROR_NO_ASSOCIATION) and (ERROR_NOT_FOUND).
 _NO_HANDLER = (0x80070483, 0x80070490)
+#: The handler's program isn't there.
+_CO_E_APPNOTFOUND = 0x800401F5
 _COINIT_APARTMENTTHREADED = 0x2
 _COINIT_DISABLE_OLE1DDE = 0x4
 
@@ -210,10 +212,9 @@ def _windows_association(scheme: str) -> Tuple[Optional[bool], str, str]:
         missing = result in _NO_HANDLER and delegate_result in _NO_HANDLER
         return (False if missing else None), "", ""
     found, program = _assoc_query(scheme, _ASSOCSTR_EXECUTABLE)
-    if found != _S_OK or not os.path.isabs(program):
-        return True, command, ""
-    # One left behind by an uninstalled app opens nothing.
-    return os.path.isfile(program), command, program
+    # The lookup checks the program: one an uninstalled app left behind opens nothing.
+    return (found != _CO_E_APPNOTFOUND, command,
+            program if found == _S_OK and os.path.isabs(program) else "")
 
 
 def _windows_handler(scheme: str) -> Optional[bool]:

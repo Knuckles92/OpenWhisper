@@ -219,3 +219,17 @@ def test_the_command_is_filled_in_as_shellexecute_does(template, expected):
 def test_the_link_goes_in_as_it_is():
     link = r"s:a\1 %1 \\ $(x) & | ^ é 😀"
     assert launch._fill_command('"p.exe" "%1"', link) == f'"p.exe" "{link}"'
+
+
+def test_a_handler_whose_program_is_gone_counts_as_missing(windows, monkeypatch):
+    # An uninstalled app's registration left behind (a real one: Signal's sgnl:).
+    started, shell = windows
+    monkeypatch.setattr(launch, "_assoc_query", FakeAssoc({
+        ("sgnl", COMMAND): (0, r'"C:\gone\Signal.exe" "%1"'),
+        ("sgnl", EXECUTABLE): (0x800401F5, ""),  # CO_E_APPNOTFOUND
+    }))
+    assert launch._windows_handler("sgnl") is False
+    # Opened anyway (web links skip the check), it fails as CreateProcess does,
+    # without asking the shell, which would show its own dialog.
+    launch._windows_open("sgnl://x", "sgnl")
+    assert shell == [] and started[0][0] == r'"C:\gone\Signal.exe" "sgnl://x"'
