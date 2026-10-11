@@ -112,6 +112,13 @@ def test_only_dictation_and_action_jobs_are_filtered(receiver, the_job):
     assert receiver.requests == []
 
 
+@pytest.mark.parametrize("silence", ["", "   "])
+def test_no_words_are_never_sent_to_a_filter(receiver, silence):
+    settings = settings_with(http_filter("f", receiver.url("/f")))
+    assert filters.apply(BEFORE_CLEANUP, silence, job(), settings) == filters.FilterOutcome(silence)
+    assert receiver.requests == []
+
+
 def test_an_http_filter_gets_the_contract_request_and_replaces_the_text(receiver):
     receiver.answer("/f", Answer(reply=reply_text(str.upper)))
     the_job = job(JobMode.ACTION, action_id="claude")
@@ -249,6 +256,34 @@ def test_a_slow_filter_times_out_to_the_original_text(receiver, failures):
     assert outcome == filters.FilterOutcome(TEXT)
     assert 0.29 <= elapsed < 1.0
     assert wait_for(failures, 1)[0].data["reason"] == "No answer within 0.3 s"
+
+
+def test_setting_up_requests_is_not_charged_to_a_filters_time(receiver, failures, monkeypatch):
+    from services.automation import webhooks
+
+    real = webhooks._new_client
+
+    def slow_first_client(private):
+        time.sleep(0.5)  # importing httpx and building TLS on a cold start
+        return real(private)
+
+    monkeypatch.setattr(filters, "_clients", {})
+    monkeypatch.setattr(webhooks, "_new_client", slow_first_client)
+    receiver.answer("/f", Answer(reply=reply_text(str.upper)))
+    settings = settings_with(http_filter("f", receiver.url("/f"), timeout_ms=200))
+    assert filters.apply(BEFORE_CLEANUP, TEXT, job(), settings).text == TEXT.upper()
+    assert failures == []
+
+
+def test_registering_a_lease_prepares_requests_in_the_background(monkeypatch):
+    monkeypatch.setattr(filters, "_clients", {})
+    started = time.monotonic()
+    filters.register_lease("http://127.0.0.1:9/f", BEFORE_CLEANUP)
+    assert time.monotonic() - started < 0.1
+    wait_for_true = time.monotonic() + 5
+    while True not in filters._clients and time.monotonic() < wait_for_true:
+        time.sleep(0.01)
+    assert True in filters._clients
 
 
 def test_the_stage_budget_holds_and_skips_what_is_left(receiver, failures):

@@ -143,6 +143,8 @@ def register_lease(url: str, stage: str, *, timeout_ms: int = 1500,
                       time.time() + LEASE_TTL_S)
         _leases[lease.id] = lease
         _lease_deadlines[lease.id] = time.monotonic() + LEASE_TTL_S
+    # Ready before the next dictation, without slowing this API call.
+    _warm_in_background(True)
     return lease
 
 
@@ -239,13 +241,25 @@ _clients: dict[bool, Any] = {}
 
 
 def _client(private: bool) -> httpx.Client:
-    """A shared client per kind of address, kept for the app's lifetime."""
+    """A shared client per kind of address, kept for the app's lifetime.
+
+    The first one imports httpx and builds a TLS context (a few hundred ms),
+    so ``apply`` makes it before any filter's time starts.
+    """
     from services.automation.webhooks import _new_client
 
     with _clients_lock:
         if private not in _clients:
             _clients[private] = _new_client(private)
         return _clients[private]
+
+
+def _warm_in_background(private: bool) -> None:
+    with _clients_lock:
+        if private in _clients:
+            return
+    threading.Thread(target=_client, args=(private,), name="text-filter-warm",
+                     daemon=True).start()
 
 
 def _post(url: str, body: bytes, timeout_s: float) -> _Verdict:
@@ -338,6 +352,17 @@ def _context(job, settings: Mapping) -> tuple[Optional[str], Optional[dict]]:
     return fields.get("language") or None, app_from_fields(fields)
 
 
+def _prepare_clients(steps: list[_Step]) -> None:
+    """Make the HTTP clients the steps need, once per app session; never raises."""
+    from services.automation.models import FILTER_HTTP, url_is_private
+
+    try:
+        for private in {url_is_private(s.url) for s in steps if s.kind == FILTER_HTTP}:
+            _client(private)
+    except Exception as exc:
+        logger.warning("Could not prepare text filter requests: %s", type(exc).__name__)
+
+
 def _load_settings() -> Mapping:
     from services import settings
 
@@ -348,18 +373,20 @@ def apply(stage: str, text: str, job, settings: Optional[Mapping] = None) -> Fil
     """Run the filters for ``stage`` on a live dictation or action; worker thread.
 
     Returns ``FilterOutcome(text)`` at once when none apply: a job of None,
-    Command Mode, transforms, no enabled saved filter for the stage and no
-    live lease (leases also need the text filters permission). Never raises
-    for a filter's sake: a failing filter keeps the text.
+    Command Mode, transforms, no words (silence), no enabled saved filter for
+    the stage and no live lease (leases also need the text filters
+    permission). Never raises for a filter's sake: a failing filter keeps the
+    text.
     """
     mode = getattr(job, "mode", None) if job is not None else None
-    if mode not in MODES or not isinstance(text, str):
+    if mode not in MODES or not isinstance(text, str) or not text.strip():
         return FilterOutcome(text)
     if settings is None:
         settings = _load_settings()
     steps = _steps(stage, mode, settings)
     if not steps:
         return FilterOutcome(text)
+    _prepare_clients(steps)
     deadline = time.monotonic() + STAGE_BUDGET_S
     language, app = _context(job, settings)
     request = {
