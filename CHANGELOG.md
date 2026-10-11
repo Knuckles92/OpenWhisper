@@ -7,6 +7,8 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.7.2] - 2026-10-11
+
 ### Added
 - **Actions: send what you say somewhere other than the cursor** — **Settings → Automate → Actions** turns a shortcut into "record, then do this with my words": open a new Claude Desktop or ChatGPT chat with them ready to send, send them to a running Claude Code session, POST them to a webhook (signed), run a program with them on its input, copy them, or just tell your scripts. Words can be sent raw, cleaned up, with a cleanup profile, or rewritten by a transform first, and an answer (from a webhook, a program or an agent) can be pasted into the app you started in, shown in the Scratchpad or a notice, or copied. If an action fails, or its formatting can't run, your words still go through or are copied, and the notice says why; **Cancel** with nothing recording, or once your words have gone to the action, stops actions that are still running. Each run is saved in History as `Action · <name>`. See [Actions, live events and hooks](docs/automation.md).
 - **Agent hotkey** — the Actions page finds Claude Code, Codex or OpenCode on this computer and sets up one shortcut that opens a session with your words (in the agent's app when it's set up, otherwise a new terminal) or asks it for a quick answer with no tools or files, shown in the Scratchpad. It can include your selected text and the app's name, and start in a working folder.
@@ -21,6 +23,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 - **MCP moved to Settings → Automate → API & MCP**, next to Actions and Hooks. Restoring a backup now also switches off webhooks, programs, text filters, actions that run something, the live API's action permissions and MCP Events.
 
 ### Fixed
+- **Remote engines appear when OpenWhisper opens from Finder or the Dock on macOS** — Tailscale's app executable could start its GUI instead of returning the device list, leaving the search limited to the local network. OpenWhisper now explicitly requests Tailscale's command-line mode for discovery and pairing identity checks.
 - **Cancel says what really happened** — pressing Cancel with nothing to cancel now says "Nothing to cancel" instead of "Canceled", pressing it twice no longer reports the cancel twice, and a Cancel that lands just as an upload finishes now cancels it (a multi-file upload keeps the files already transcribed and says so).
 - **Coding agents don't get OpenWhisper's old API keys after you change `.env`** — a key you changed or removed in OpenWhisper's `.env` while it ran still reached the coding agents it started for Meeting Mode. OpenWhisper now remembers which keys it loaded and keeps all of them from the programs it starts, including keys an editor such as VS Code had already loaded from the same file. A line in `.env` that no environment can hold is skipped instead of stopping the rest from loading.
 

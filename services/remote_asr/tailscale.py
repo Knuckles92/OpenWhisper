@@ -123,6 +123,10 @@ def _run_json(args, timeout: float) -> dict:
     cli = find_cli()
     if cli is None:
         raise FileNotFoundError("tailscale")
+    # The macOS app executable also contains the CLI. Without terminal
+    # variables (Finder/Dock launches), it otherwise starts the GUI and
+    # returns no JSON. Force CLI mode for status and whois alike.
+    env = {**os.environ, "TAILSCALE_BE_CLI": "1"} if sys.platform == "darwin" else None
     try:
         completed = subprocess.run(
             [cli, *args],
@@ -130,6 +134,7 @@ def _run_json(args, timeout: float) -> dict:
             timeout=timeout,
             stdin=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            env=env,
         )
     except subprocess.TimeoutExpired as exc:
         raise TailscaleError("Tailscale didn't answer in time") from exc
