@@ -434,7 +434,7 @@ def test_program_gets_the_words_on_stdin_and_its_output_is_routed(h, monkeypatch
     }))
     runs = []
 
-    def run_once(argv, stdin, *, timeout_s, cwd="", env=None):
+    def run_once(argv, stdin, *, timeout_s, cwd="", env=None, cancel=None):
         runs.append((argv, stdin, timeout_s, env, threading.current_thread().name))
         return 0, "HÉLLO\r\n".encode(), ""
 
@@ -770,7 +770,7 @@ def test_a_program_action_never_sees_openwhisper_keys(h, monkeypatch):
     h.add(Action("p2", "Env", ActionKind.PROGRAM, {"program": "C:\tools\env.exe"}))
     seen = []
     monkeypatch.setattr(programs, "run_once",
-                        lambda argv, stdin, *, timeout_s, cwd="", env=None:
+                        lambda argv, stdin, *, timeout_s, cwd="", env=None, cancel=None:
                         seen.append(env) or (0, b"", ""))
 
     h.rt.deliver(_job("p2"), "hi", raw_text=None, html="")

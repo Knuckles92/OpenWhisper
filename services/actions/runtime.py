@@ -8,7 +8,10 @@ link, a webhook, a program and an agent block, so they run on the runtime's
 own small pool rather than the transcription executor: the dictation's job
 slot frees as soon as its history is saved, however long an agent thinks.
 Their results come back to the Qt thread through one relay that lives for
-the session; a worker only ever emits a token and a result.
+the session; a worker only ever emits a token and a result. At most
+``MAX_PENDING`` of them run or wait at once; more are refused, and
+``cancel`` stops them all (agents and programs are killed, late results
+dropped).
 
 A run that fails leaves the words on the clipboard, so nothing said is lost.
 Dictated text, links, program paths and arguments, selections, secrets and
@@ -23,7 +26,7 @@ import logging
 import os
 import threading
 import traceback
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, Callable, Optional
@@ -48,6 +51,8 @@ logger = logging.getLogger(__name__)
 CHANNEL_LISTENER_LABEL = "claude-channel"
 #: Blocking runs at once; more wait their turn.
 MAX_WORKERS = 4
+#: Blocking runs running or waiting; beyond this a run is refused.
+MAX_PENDING = 8
 #: How long a webhook action waits for its receiver.
 WEBHOOK_TIMEOUT_S = 5.0
 #: How much of an answer a notice shows.
@@ -60,6 +65,8 @@ MISSING_MESSAGE = "That action no longer exists"
 DISABLED_MESSAGE = "That action is turned off"
 NO_LISTENER_MESSAGE = "No Claude Code session is listening"
 CLOSING_MESSAGE = "OpenWhisper is closing"
+BUSY_MESSAGE = "Too many actions are still running"
+CANCELED_MESSAGE = "Canceled"
 COPIED_INSTEAD = " — copied instead"
 
 
@@ -232,10 +239,12 @@ def _program_env(extra: dict) -> dict:
     return programs.child_env(extra)
 
 
-def _program(argv: list, stdin: bytes, timeout_s: float, env: dict) -> ActionResult:
+def _program(argv: list, stdin: bytes, timeout_s: float, env: dict,
+             cancel: threading.Event) -> ActionResult:
     from services.automation import programs
 
-    code, out, error = programs.run_once(argv, stdin, timeout_s=timeout_s, env=env)
+    code, out, error = programs.run_once(argv, stdin, timeout_s=timeout_s, env=env,
+                                         cancel=cancel)
     if error:
         return ActionResult(False, error)
     if code != 0:
@@ -293,8 +302,16 @@ class _Run:
     settings: dict = field(default_factory=dict)
     #: Settings' "Try it": the outcome goes to this callback, not the user.
     done: Optional[Callable[[ActionResult], None]] = None
-    #: Ends an agent's answer early when the app closes.
-    cancel: Optional[threading.Event] = None
+    #: Stops an agent or a program early (``cancel``, or the app closing).
+    cancel: threading.Event = field(default_factory=threading.Event)
+
+
+@dataclass
+class _Pending:
+    """A run on the pool, until its result is back or it is canceled."""
+
+    run: _Run
+    future: Optional[Future] = None
 
 
 def _output_of(action: Action) -> str:
@@ -326,8 +343,8 @@ class ActionRuntime:
         self.controller = controller
         self._lock = threading.Lock()
         self._executor: Optional[ThreadPoolExecutor] = None
-        self._tokens: set[int] = set()
-        self._cancels: set[threading.Event] = set()
+        #: Runs on the pool by relay token: running, or waiting for a worker.
+        self._pending: dict[int, _Pending] = {}
         self._closed = False
 
     # -- entry points --------------------------------------------------------
@@ -369,17 +386,59 @@ class ActionRuntime:
             return
         self._start(run)
 
+    def accepting(self) -> bool:
+        """Whether another blocking run would be taken now; any thread.
+
+        False once ``MAX_PENDING`` runs are running or waiting (a new one
+        would be refused), and after ``close``.
+        """
+        with self._lock:
+            return not self._closed and len(self._pending) < MAX_PENDING
+
+    def cancel(self, *, tests_only: bool = False) -> int:
+        """Cancel every run that is running or waiting; Qt thread.
+
+        Agents and programs are stopped with what they started, and nothing
+        a canceled run would have pasted, copied or shown appears.
+        ``action.ran`` says ``Canceled``; a Settings "Try it" gets that
+        result too.
+
+        Args:
+            tests_only: Only Settings' "Try it" runs (its page went away).
+
+        Returns:
+            How many runs were canceled.
+        """
+        with self._lock:
+            tokens = [token for token, pending in self._pending.items()
+                      if not tests_only or pending.run.done is not None]
+            canceled = [self._pending.pop(token) for token in tokens]
+        if not canceled:
+            return 0
+        if _relay is not None:
+            _relay.drop(tokens)
+        for pending in canceled:
+            pending.run.cancel.set()
+            if pending.future is not None:
+                pending.future.cancel()  # still waiting: never starts
+        for pending in canceled:
+            run = pending.run
+            self._publish_ran(run, False, CANCELED_MESSAGE, Output.NONE)
+            if run.done is not None:
+                run.done(ActionResult(False, CANCELED_MESSAGE))
+        logger.info("Canceled %d action run(s)", len(canceled))
+        return len(canceled)
+
     def close(self) -> None:
         """Stop work in progress at quit: cancel agents, drop late results."""
         with self._lock:
             self._closed = True
-            tokens, self._tokens = self._tokens, set()
-            cancels, self._cancels = self._cancels, set()
+            pending, self._pending = self._pending, {}
             executor, self._executor = self._executor, None
-        for cancel in cancels:
-            cancel.set()
-        if tokens and _relay is not None:
-            _relay.drop(tokens)
+        for item in pending.values():
+            item.run.cancel.set()
+        if pending and _relay is not None:
+            _relay.drop(list(pending))
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
 
@@ -414,9 +473,9 @@ class ActionRuntime:
                 "OPENWHISPER_JOB_ID": run.job.id,
             })
             self._submit(run, partial(
-                _program, argv, run.text.encode("utf-8"), float(action.param("timeout_s")), env))
+                _program, argv, run.text.encode("utf-8"), float(action.param("timeout_s")), env,
+                run.cancel))
         elif kind == ActionKind.AGENT:
-            run.cancel = threading.Event()
             params = {key: action.param(key) for key in (
                 "agent", "mode", "surface", "folder", "include_selection", "model")}
             self._submit(run, partial(_agent, params, run.text, run.job, run.cancel))
@@ -428,26 +487,30 @@ class ActionRuntime:
         relay = _result_relay()
         token = next(_tokens)
         with self._lock:
-            executor = None
-            if not self._closed:
+            executor, refusal = None, ""
+            if self._closed:
+                refusal = CLOSING_MESSAGE
+            elif len(self._pending) >= MAX_PENDING:
+                refusal = BUSY_MESSAGE
+            else:
                 if self._executor is None:
                     self._executor = ThreadPoolExecutor(
                         max_workers=MAX_WORKERS, thread_name_prefix="action-run")
                 executor = self._executor
-                self._tokens.add(token)
+                pending = self._pending[token] = _Pending(run)
                 relay.expect(token, partial(self._finish_from_worker, token, run))
-                if run.cancel is not None:
-                    self._cancels.add(run.cancel)
         if executor is None:
-            self._finish(run, ActionResult(False, CLOSING_MESSAGE))
+            self._finish(run, ActionResult(False, refusal))
             return
         if run.done is None:
             self.controller.ui_controller.set_status(f"{run.action.name} · working…")
         kind = run.action.kind
         # Bound here: the worker never reaches back into the runtime.
-        emit = relay.finished.emit
+        emit, cancel = relay.finished.emit, run.cancel
 
         def task() -> None:
+            if cancel.is_set():
+                return  # canceled before a worker took it
             try:
                 result = work()
             except Exception as exc:
@@ -455,13 +518,14 @@ class ActionRuntime:
                 result = ActionResult(False, "something went wrong")
             emit(token, result)
 
-        executor.submit(task)
+        try:
+            pending.future = executor.submit(task)
+        except RuntimeError:
+            pass  # closed meanwhile; close() dropped the token
 
     def _finish_from_worker(self, token: int, run: _Run, result: ActionResult) -> None:
         with self._lock:
-            self._tokens.discard(token)
-            if run.cancel is not None:
-                self._cancels.discard(run.cancel)
+            self._pending.pop(token, None)
         if not result.ok and run.done is None:
             result = ActionResult(False, f"{run.action.name}: {result.message}")
         self._finish(run, result)
