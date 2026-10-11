@@ -30,6 +30,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
 
@@ -545,21 +547,81 @@ class RoutingStatus:
     message: str
 
 
-def decide(text: str, job, settings: Mapping, *, judge=None) -> Optional[RouteDecision]:
-    """The action ``text`` names, or None to paste it; worker thread, never raises.
+#: ``RouteDecision.failure``: no answer within ``ROUTE_TIMEOUT_S``.
+FAILURE_TIMEOUT = "timeout"
+#: ``RouteDecision.failure``: no usable answer (Fast judgments off or without
+#: a key at that moment, a network or HTTP error, a malformed answer).
+FAILURE_UNREACHABLE = "unreachable"
+#: How often the wait for the judge looks at whether the dictation was canceled.
+_CANCEL_POLL_S = 0.02
+_CANCELED = "canceled"
 
-    Publishes ``route.decided`` whenever the judge was asked: with the action
-    when the words were routed, else ``fallback`` true (and the judge's
-    confidence in its choice, when it answered).
+
+def decide(text: str, job, settings: Mapping, *, judge=None,
+           cancel: Optional[threading.Event] = None) -> Optional[RouteDecision]:
+    """Where ``text`` goes; worker thread, never raises.
+
+    Returns:
+        The action the words are for; None to paste them as a dictation (they
+        don't name an action, the judge chose none or wasn't confident
+        enough, or ``cancel`` was set); or ``RouteDecision("", "", 0.0,
+        failure=…)`` when the judge couldn't answer: "timeout" after
+        ``ROUTE_TIMEOUT_S`` of wall-clock time, else "unreachable".
+
+    The judge is asked on a helper thread, so neither a slow answer nor
+    reading its key holds the dictation past ``ROUTE_TIMEOUT_S``; a set
+    ``cancel`` ends the wait at once and nothing is sent once it is set.
+    Publishes ``route.decided`` whenever the words were to be judged and the
+    dictation wasn't canceled: with the action when they were routed, else
+    ``fallback`` true (and the judge's confidence in its choice, when it
+    answered).
     """
     try:
-        return _decide(text, job, settings or {}, judge)
+        return _decide(text, job, settings or {}, judge, cancel)
     except Exception as exc:
-        logger.warning("Spoken routing failed (%s); pasting the dictation", type(exc).__name__)
+        logger.warning("Route by voice failed (%s); pasting the dictation", type(exc).__name__)
         return None
 
 
-def _decide(text: str, job, settings: Mapping, judge) -> Optional[RouteDecision]:
+def _ask(request: RoutePlan, settings: Mapping, judge,
+         cancel: Optional[threading.Event]) -> tuple[Optional[Mapping], str]:
+    """``(answers, "")``, or ``(None, failure)`` with a ``FAILURE_*`` or ``_CANCELED``."""
+    done = threading.Event()
+    outcome: dict[str, Any] = {}
+
+    def work() -> None:
+        try:
+            asking = judge
+            if asking is None:
+                from services.typesafe import judge_from_settings
+
+                asking = judge_from_settings(dict(settings))
+            if asking is None:
+                logger.debug("Route by voice couldn't ask: Fast judgments aren't set up")
+            else:
+                outcome["answers"] = asking.ask(request.state, request.questions,
+                                                timeout_s=ROUTE_TIMEOUT_S)
+        except Exception as exc:
+            logger.warning("Route by voice judgment failed (%s)", type(exc).__name__)
+        finally:
+            done.set()
+
+    threading.Thread(target=work, name="route-by-voice", daemon=True).start()
+    deadline = time.monotonic() + ROUTE_TIMEOUT_S
+    while True:
+        if cancel is not None and cancel.is_set():
+            return None, _CANCELED
+        left = deadline - time.monotonic()
+        if left <= 0 and not done.is_set():
+            return None, FAILURE_TIMEOUT
+        if done.is_set() or done.wait(left if cancel is None else min(left, _CANCEL_POLL_S)):
+            break
+    answers = outcome.get("answers")
+    return (answers, "") if answers is not None else (None, FAILURE_UNREACHABLE)
+
+
+def _decide(text: str, job, settings: Mapping, judge,
+            cancel: Optional[threading.Event]) -> Optional[RouteDecision]:
     from services.settings import (
         resolve_voice_routing_enabled,
         resolve_voice_routing_on_dictation,
@@ -571,27 +633,20 @@ def _decide(text: str, job, settings: Mapping, judge) -> Optional[RouteDecision]
     if route == ROUTE_AUTO and not resolve_voice_routing_on_dictation(settings):
         return None
     request = plan(text, route, [a for a in load_actions(settings) if a.enabled])
-    if request is None:
+    if request is None or (cancel is not None and cancel.is_set()):
         return None
-    if judge is None:
-        from services.typesafe import judge_from_settings
-
-        judge = judge_from_settings(dict(settings))
-        if judge is None:
-            logger.debug("Spoken routing skipped: Fast judgments aren't set up")
-            return None
-    try:
-        answers = judge.ask(request.state, request.questions, timeout_s=ROUTE_TIMEOUT_S)
-    except Exception as exc:
-        logger.warning("Spoken routing judgment failed (%s)", type(exc).__name__)
-        answers = None
-    judgment = request.read(answers)
+    answers, failure = _ask(request, settings, judge, cancel)
+    if failure == _CANCELED:
+        return None
+    judgment = request.read(answers) if not failure else None
+    if judgment is None and not failure:
+        failure = FAILURE_UNREACHABLE  # it answered, but not the route question
     routed = (judgment is not None and judgment.action_id is not None
               and judgment.confidence >= ROUTE_CONFIDENCE)
     logger.debug(
-        "Spoken routing (%s, %d candidates): %s at %s",
+        "Route by voice (%s, %d candidates): %s at %s",
         route, len(request.candidates),
-        "no answer" if judgment is None else (judgment.action_id or NONE),
+        failure or (judgment.action_id or NONE),
         "-" if judgment is None else f"{judgment.confidence:.2f}",
     )
     events.publish(catalog.ROUTE_DECIDED, catalog.route_decided(
@@ -600,6 +655,8 @@ def _decide(text: str, job, settings: Mapping, judge) -> Optional[RouteDecision]
         judgment.confidence if judgment is not None else None,
         fallback=not routed,
     ))
+    if failure:
+        return RouteDecision("", "", 0.0, failure=failure)
     if not routed:
         return None
     return RouteDecision(judgment.action_id, judgment.payload, judgment.confidence)

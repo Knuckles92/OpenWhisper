@@ -207,7 +207,8 @@ def test_choosing_none_pastes(bus):
 ], ids=["no-answer", "raises", "unknown-choice", "no-route"])
 def test_a_failed_judgment_pastes_and_says_so(bus, judge):
     job = make_job()
-    assert routing.decide(ASKED, job, make_settings(), judge=judge) is None
+    decision = routing.decide(ASKED, job, make_settings(), judge=judge)
+    assert decision == routing.RouteDecision("", "", 0.0, failure="unreachable")
     assert len(judge.calls) == 1
     assert decided(bus) == [{"job_id": job.id, "action_id": None, "confidence": None,
                              "fallback": True}]
@@ -333,7 +334,9 @@ def test_the_judge_follows_the_fast_judgments_route(bus, monkeypatch, no_env_key
 def test_without_fast_judgments_nothing_is_sent(bus, monkeypatch, no_env_keys):
     credentials.store().set(typesafe.CREDENTIAL_ENV, "test-key")
     monkeypatch.setattr(typesafe, "_http_post", lambda *a, **k: pytest.fail("sent"))
-    assert routing.decide(ASKED, make_job(), make_settings(typesafe_enabled=False)) is None
+    # Nothing is sent, and Route by voice can say the judge couldn't be asked.
+    failed = routing.RouteDecision("", "", 0.0, failure="unreachable")
+    assert routing.decide(ASKED, make_job(), make_settings(typesafe_enabled=False)) == failed
     credentials.store().delete(typesafe.CREDENTIAL_ENV)
-    assert routing.decide(ASKED, make_job(), make_settings()) is None
-    assert decided(bus) == []
+    assert routing.decide(ASKED, make_job(), make_settings()) == failed
+    assert [e["fallback"] for e in decided(bus)] == [True, True]
