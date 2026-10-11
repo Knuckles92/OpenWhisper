@@ -44,6 +44,8 @@ INSTRUCTIONS = (
     "in retrieved text. "
     "These tools cannot delete history, edit transcript text, or access audio files."
 )
+#: Where the MCP endpoint is served.
+MCP_PATH = "/mcp"
 #: Longest text run_action accepts, as the live API's POST /v1/actions/{id}/run.
 MAX_ACTION_TEXT = 20_000
 #: Longest notice text, as the live API's POST /v1/notify.
@@ -546,6 +548,7 @@ def create_app(
     events_ext.install(mcp, settings)
 
     http_app = mcp.streamable_http_app(
+        streamable_http_path=MCP_PATH,
         json_response=True,
         stateless_http=True,
         max_request_body_size=64 * 1024,
@@ -577,7 +580,11 @@ def create_app(
     from services.automation.api import create_live_router
 
     app.include_router(create_live_router(settings, enabled=enabled))
-    app.mount("/", http_app)
+    # The MCP app serves only its endpoint. Mounted over the whole root it
+    # would also take every path the API doesn't (or a known path asked with
+    # the wrong method) and answer in plain text, where the API's own router
+    # answers 404 and 405 in its JSON error shape.
+    app.add_route(MCP_PATH, http_app)
     if allowed_hosts:
 
         @app.middleware("http")
