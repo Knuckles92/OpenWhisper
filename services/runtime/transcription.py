@@ -1912,13 +1912,19 @@ class TranscriptionRuntime:
         self._clear_pending_audio_metadata()
         self._finish_job()
 
-    def paste_text_now(self, text: str) -> bool:
+    def paste_text_now(self, text: str, *, job=None) -> bool:
         """Paste ``text`` at the caret without saving it anywhere; Qt thread.
 
         Pastes even with auto-paste off, as the user asked for exactly this.
-        Refused while recording or while a job is delivering its own text.
+        Refused while recording or while another job is delivering its own
+        text. ``job`` is the action job ``text`` answers, which may still
+        hold the slot while its history is saved.
         """
-        if self.controller.recorder.is_recording or self.has_active_job:
+        with self._job_lock:
+            busy = self._job_active and (
+                job is None or getattr(self._active_job, "id", None) != job.id
+            )
+        if self.controller.recorder.is_recording or busy:
             self._notify(self._report_busy("pasting"))
             return False
         if not text:
