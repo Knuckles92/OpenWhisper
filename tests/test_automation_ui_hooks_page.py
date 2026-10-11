@@ -691,12 +691,56 @@ class TestFilters:
             assert (url, stage) == ("http://127.0.0.1:7070/f", models.AFTER_CLEANUP)
             assert 40 <= seconds <= 42
             assert lease_list.note.isHidden() and lease_list.open_api.isHidden()
+            [line] = lease_list._lines
+            assert line.detail.text().startswith("After AI cleanup · ends in ")
+            # A renewal moves the countdown on the same row.
+            leases[0] = filters.Lease("l1", "http://127.0.0.1:7070/f", models.AFTER_CLEANUP, 1500,
+                                      ("dictation",), time.time() + 20.4)
+            section.refresh_live()
+            assert lease_list._lines == [line]
+            assert line.detail.text() == "After AI cleanup · ends in 20 s"
             leases.clear()
             section.refresh_live()
             assert lease_list._shown == ()
             assert not lease_list.note.isHidden()
         finally:
             close(section)
+
+
+def test_a_secret_worker_never_keeps_the_editor_alive(store, monkeypatch):
+    """Workers answer through the relay; deleting Settings mid-request is safe."""
+    import gc
+    import threading
+    import weakref
+
+    from PyQt6.QtCore import QCoreApplication, QEvent
+
+    store.mutate_settings(lambda s: s.__setitem__(SettingsKey.AUTOMATION_WEBHOOKS, [HOOK]))
+    release = threading.Event()
+
+    def slow_secret(hook_id):
+        assert release.wait(5)
+        return "whsec_late"
+
+    monkeypatch.setattr(webhooks, "ensure_secret", slow_secret)
+    before = set(threading.enumerate())
+    section, _changes = section_of("webhook", store)
+    section.open_editor("hook01")
+    section.editor.copy_secret.click()
+    workers = [t for t in threading.enumerate()
+               if t not in before and t.name == "settings-webhook-secret"]
+    assert len(workers) == 1
+    gone = weakref.ref(section.editor)
+    section.deleteLater()
+    del section
+    for _ in range(2):
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        QApplication.processEvents()
+    gc.collect()
+    assert gone() is None
+    release.set()
+    workers[0].join(5)
+    pump()  # the late answer finds no editor and is dropped
 
 
 # ---- helpers and layout -------------------------------------------------------

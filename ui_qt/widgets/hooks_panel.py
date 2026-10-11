@@ -1525,6 +1525,7 @@ class _LeaseList(QWidget):
         super().__init__(parent)
         self.setObjectName("hooksLeases")
         self._shown = None
+        self._lines = []
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 6, 0, 0)
         layout.setSpacing(6)
@@ -1565,23 +1566,30 @@ class _LeaseList(QWidget):
         if shown == self._shown:
             return
         self._shown = shown
-        while self._rows.count():
-            widget = self._rows.takeAt(0).widget()
-            if widget is not None:
-                widget.deleteLater()
-        for _lease_id, url, stage, seconds in shown:
-            line = QFrame()
-            line.setObjectName("hooksLeaseRow")
-            row = QHBoxLayout(line)
-            row.setContentsMargins(10, 6, 10, 6)
-            row.setSpacing(10)
-            address = ElidingLabel(url)
-            address.setObjectName("hooksRowName")
-            row.addWidget(address, 1)
-            detail = QLabel(f"{STAGE_LABELS.get(stage, stage)} · ends in {seconds} s")
-            detail.setObjectName("hooksRowDetail")
-            row.addWidget(detail)
-            self._rows.addWidget(line)
+        # Rows are rebuilt only when the leases change; the countdown updates in place.
+        if [row[:3] for row in shown] != [line.lease for line in self._lines]:
+            while self._rows.count():
+                widget = self._rows.takeAt(0).widget()
+                if widget is not None:
+                    widget.deleteLater()
+            self._lines = []
+            for lease_id, url, stage, _seconds in shown:
+                line = QFrame()
+                line.setObjectName("hooksLeaseRow")
+                line.lease = (lease_id, url, stage)
+                row = QHBoxLayout(line)
+                row.setContentsMargins(10, 6, 10, 6)
+                row.setSpacing(10)
+                address = ElidingLabel(url)
+                address.setObjectName("hooksRowName")
+                row.addWidget(address, 1)
+                line.detail = QLabel()
+                line.detail.setObjectName("hooksRowDetail")
+                row.addWidget(line.detail)
+                self._rows.addWidget(line)
+                self._lines.append(line)
+        for line, (_lease_id, _url, stage, seconds) in zip(self._lines, shown):
+            line.detail.setText(f"{STAGE_LABELS.get(stage, stage)} · ends in {seconds} s")
         self.rows.setVisible(bool(shown))
         self.note.setVisible(not shown)
         self.open_api.setVisible(not shown)
