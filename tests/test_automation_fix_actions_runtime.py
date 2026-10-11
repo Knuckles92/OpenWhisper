@@ -213,3 +213,102 @@ def test_a_refusal_at_the_cap_from_the_api_is_not_copied(h, blocked):
 
     assert h.ui.copied == copied
     assert _ran(h)[-1]["message"] == runtime.BUSY_MESSAGE
+
+
+# -- finding 6: "Send to my scripts" carries the words, and says when nothing listens ---------
+
+
+SCRIPTS = Action("s1", "Send to my scripts", ActionKind.SCRIPTS)
+
+
+def test_scripts_with_nothing_listening_copies_the_words_and_says_so(h):
+    h.add(SCRIPTS)
+    # A Claude Code channel session doesn't act on action.ran.
+    h.bus.subscribe(lambda event: None, label="claude-channel")
+
+    h.rt.deliver(_job("s1"), "buy milk", raw_text=None, html="")
+
+    message = "Nothing is listening for your scripts — copied instead"
+    assert h.ui.copied == [("buy milk", "")]
+    assert h.ui.notices == [(message, False)]
+    ran = _ran(h)[-1]
+    assert (ran["ok"], ran["message"], ran["output"], ran["text"]) == (
+        False, message, "clipboard", "buy milk")
+
+
+def test_scripts_reach_a_live_event_stream_with_the_words(h):
+    h.add(SCRIPTS)
+    h.bus.subscribe(lambda event: None, label="sse")
+
+    h.rt.deliver(_job("s1"), "buy milk", raw_text=None, html="")
+
+    assert h.ui.copied == []
+    assert h.ui.notices == [("Sent to your scripts", True)]
+    ran = _ran(h)[-1]
+    assert (ran["ok"], ran["text"], ran["source"]) == (True, "buy milk", "hotkey")
+
+
+@pytest.mark.parametrize("label, key, row", [
+    ("webhooks", "automation_webhooks",
+     {"id": "w", "name": "w", "url": "http://127.0.0.1:9/", "enabled": True}),
+    ("programs", "automation_programs",
+     {"id": "p", "name": "p", "program": "C:\\p.exe", "args": [], "enabled": True,
+      "timeout_s": 30}),
+])
+def test_a_hook_listens_only_when_it_takes_action_ran(h, label, key, row):
+    h.add(SCRIPTS)
+    h.bus.subscribe(lambda event: None, label=label)
+    h.settings.values[key] = [dict(row, events=["transcription.completed"])]
+
+    h.rt.deliver(_job("s1"), "one", raw_text=None, html="")
+    assert _ran(h)[-1]["ok"] is False
+
+    h.settings.values[key] = [dict(row, events=["action.ran"])]
+    h.rt.deliver(_job("s1"), "two", raw_text=None, html="")
+    assert _ran(h)[-1]["ok"] is True
+
+    h.settings.values[key] = [dict(row, events=["action.ran"], enabled=False)]
+    h.rt.deliver(_job("s1"), "three", raw_text=None, html="")
+    assert _ran(h)[-1]["ok"] is False
+
+
+def test_mcp_events_listen_only_with_a_subscription(h, monkeypatch):
+    from services.agent_mcp import events_ext
+
+    h.add(SCRIPTS)
+    h.bus.subscribe(lambda event: None, label="mcp-events")
+    count = [0]
+    monkeypatch.setattr(events_ext, "subscription_count", lambda: count[0])
+
+    h.rt.deliver(_job("s1"), "one", raw_text=None, html="")
+    count[0] = 1
+    h.rt.deliver(_job("s1"), "two", raw_text=None, html="")
+
+    assert [r["ok"] for r in _ran(h)] == [False, True]
+
+
+def test_trying_scripts_reports_whether_anything_listens(h):
+    results = []
+    h.rt.test(SCRIPTS, "sample words", results.append)
+    h.bus.subscribe(lambda event: None, label="sse")
+    h.rt.test(SCRIPTS, "sample words", results.append)
+
+    assert results == [ActionResult(False, "Nothing is listening for your scripts"),
+                       ActionResult(True, "Sent to your scripts")]
+    assert h.ui.copied == []
+    assert [(r["source"], r["text"]) for r in _ran(h)] == [("ui", "sample words")] * 2
+
+
+def test_scripts_from_the_api_with_nothing_listening_are_not_copied(h):
+    h.add(SCRIPTS)
+
+    h.rt.deliver(_source_job("s1", "api"), "from a script", raw_text=None, html="")
+
+    assert h.ui.copied == []
+    assert _ran(h)[-1]["message"] == "Nothing is listening for your scripts"
+
+
+def test_only_scripts_carry_the_words_in_action_ran(h):
+    h.add(Action("c1", "Copy only", ActionKind.CLIPBOARD))
+    h.rt.deliver(_job("c1"), "secret words", raw_text=None, html="")
+    assert "text" not in _ran(h)[-1]

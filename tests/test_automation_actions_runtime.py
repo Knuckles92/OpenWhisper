@@ -172,6 +172,7 @@ def test_the_action_is_read_fresh_for_every_run(h):
     h.rt.deliver(_job("a1"), "one", raw_text=None, html="")
     h.settings.values[SettingsKey.ACTIONS] = [
         Action("a1", "Tell scripts", ActionKind.SCRIPTS).to_dict()]
+    h.bus.subscribe(lambda event: None, label="sse")  # a script follows the events
 
     h.rt.deliver(_job("a1"), "two", raw_text=None, html="")
 
@@ -206,6 +207,7 @@ def test_a_failed_copy_is_not_retried_as_a_fallback(h):
 
 def test_scripts_only_announce_the_run(h):
     h.add(Action("s1", "Send to my scripts", ActionKind.SCRIPTS))
+    h.bus.subscribe(lambda event: None, label="sse")  # a script follows the events
 
     h.rt.deliver(_job("s1"), "hello", raw_text=None, html="")
 

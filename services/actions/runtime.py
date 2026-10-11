@@ -50,6 +50,10 @@ logger = logging.getLogger(__name__)
 
 #: ``EventBus.subscribers`` label of a Claude Code session's channel bridge.
 CHANNEL_LISTENER_LABEL = "claude-channel"
+#: Labels of the listeners "Send to my scripts" reaches: live event streams
+#: (services.automation.api), webhooks, programs and MCP Events.
+SSE_LABEL, WEBHOOKS_LABEL, PROGRAMS_LABEL, MCP_EVENTS_LABEL = (
+    "sse", "webhooks", "programs", "mcp-events")
 #: Blocking runs at once; more wait their turn.
 MAX_WORKERS = 4
 #: Blocking runs running or waiting; beyond this a run is refused.
@@ -68,6 +72,7 @@ CONTEXT_CLOSE = "</context>"
 MISSING_MESSAGE = "That action no longer exists"
 DISABLED_MESSAGE = "That action is turned off"
 NO_LISTENER_MESSAGE = "No Claude Code session is listening"
+NO_SCRIPTS_MESSAGE = "Nothing is listening for your scripts"
 CLOSING_MESSAGE = "OpenWhisper is closing"
 BUSY_MESSAGE = "Too many actions are still running"
 CANCELED_MESSAGE = "Canceled"
@@ -338,6 +343,32 @@ def _short(text: str, limit: int = NOTICE_MAX_CHARS) -> str:
     return flat if len(flat) <= limit else flat[:limit - 1].rstrip() + "…"
 
 
+def scripts_listening(settings) -> bool:
+    """Whether anything outside OpenWhisper would act on ``action.ran`` now.
+
+    A live event stream, an enabled webhook or program hook that takes
+    ``action.ran``, or an MCP Events subscription. Qt thread; never blocks.
+    """
+    bus = events.bus()
+    if bus.subscribers(SSE_LABEL):
+        return True
+    from services.automation import models
+
+    hooks = []
+    if bus.subscribers(WEBHOOKS_LABEL):
+        hooks += models.load_webhooks(settings)
+    if bus.subscribers(PROGRAMS_LABEL):
+        hooks += models.load_programs(settings)
+    if any(hook.enabled and catalog.ACTION_RAN in hook.events for hook in hooks):
+        return True
+    if bus.subscribers(MCP_EVENTS_LABEL):
+        # Subscribed while MCP Events is on, whether or not an agent is.
+        from services.agent_mcp import events_ext
+
+        return events_ext.subscription_count() > 0
+    return False
+
+
 def _listening(count: int) -> str:
     if count <= 0:
         return NO_LISTENER_MESSAGE
@@ -460,8 +491,11 @@ class ActionRuntime:
             copied = self._copy(run.text, run.html)
             self._finish(run, ActionResult(copied, "Copied" if copied else "Couldn't copy the words"))
         elif kind == ActionKind.SCRIPTS:
-            # transcription.completed already carried the words to listeners.
-            self._finish(run, ActionResult(True, "Sent to your scripts"))
+            # action.ran carries the words to whatever listens.
+            if scripts_listening(run.settings):
+                self._finish(run, ActionResult(True, "Sent to your scripts"))
+            else:
+                self._finish(run, ActionResult(False, NO_SCRIPTS_MESSAGE))
         elif kind == ActionKind.CHANNEL:
             self._finish(run, self._send_to_channel(run))
         elif kind == ActionKind.OPEN_LINK:
@@ -659,5 +693,7 @@ class ActionRuntime:
 
     @staticmethod
     def _publish_ran(run: _Run, ok: bool, message: str, where: str) -> None:
+        # "Send to my scripts" exists to hand its listeners the words.
+        text = run.text if run.action.kind == ActionKind.SCRIPTS else None
         events.publish(catalog.ACTION_RAN, catalog.action_ran(
-            run.job, run.action, ok=ok, message=message, output=where))
+            run.job, run.action, ok=ok, message=message, output=where, text=text))
