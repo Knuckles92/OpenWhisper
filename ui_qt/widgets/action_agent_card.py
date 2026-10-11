@@ -172,7 +172,7 @@ class AgentHotkeyCard(InfoTile):
     def _render(self) -> None:
         action = self._action
         configured = action is not None
-        self.fields.details.setVisible(configured)
+        self.fields.set_compact(not configured)
         self.shortcut_box.setVisible(configured)
         self.footer.setVisible(configured)
         self.enabled_switch.setVisible(configured)

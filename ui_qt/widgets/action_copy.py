@@ -1,13 +1,12 @@
 """What the Actions page says about an action: icons, labels, one-line summaries.
 
-Plain functions with no Qt, so the cards, the editor and the rail all phrase
+Plain functions with no Qt, so the cards and the editor phrase
 an action the same way.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Mapping
 from urllib.parse import urlsplit
 
 from services.actions.model import (
@@ -17,8 +16,6 @@ from services.actions.model import (
     AgentMode,
     AgentSurface,
     Output,
-    SHAPING_CLEANUP,
-    SHAPING_RAW,
     link_scheme,
 )
 
@@ -33,16 +30,6 @@ KIND_ICONS = {
     ActionKind.PROGRAM: "cpu-blue.svg",
     ActionKind.CLIPBOARD: "copy-gray.svg",
     ActionKind.SCRIPTS: "bolt-green.svg",
-}
-
-KIND_LABELS = {
-    ActionKind.OPEN_LINK: "Open a link",
-    ActionKind.AGENT: "Coding agent",
-    ActionKind.CHANNEL: "Claude Code session",
-    ActionKind.WEBHOOK: "Webhook",
-    ActionKind.PROGRAM: "Program",
-    ActionKind.CLIPBOARD: "Copy only",
-    ActionKind.SCRIPTS: "Send to my scripts",
 }
 
 #: What each kind does, in a line, under the editor's title.
@@ -102,7 +89,8 @@ def link_destination(template: str) -> str:
         if host == "claude.ai":
             return "Claude in your browser"
         return host or "a web page"
-    return f"a {scheme} link" if scheme else "a link"
+    # An app's own scheme, like obsidian:, names the app it opens.
+    return scheme.capitalize() if scheme else "a link"
 
 
 def _then(output: str, it: str) -> str:
@@ -143,26 +131,6 @@ def summary(action: Action) -> str:
 def spoken_hint(action: Action) -> str:
     """'Say “Claude”' for the first spoken name, or ""."""
     return f"Say “{action.spoken_names[0]}”" if action.spoken_names else ""
-
-
-def shaping_label(shaping: str, settings: Mapping) -> str:
-    """How an action prepares the words, in a few words."""
-    if shaping == SHAPING_RAW:
-        return "Exactly what you said"
-    if shaping == SHAPING_CLEANUP or not shaping:
-        return "Cleaned up"
-    probe = Action("", "", ActionKind.CLIPBOARD, shaping=shaping)
-    if probe.profile_id():
-        from services.cleanup_profiles import find_cleanup_profile
-
-        profile = find_cleanup_profile(dict(settings), probe.profile_id())
-        return f"Profile · {profile.name}" if profile else "A profile that was deleted"
-    if probe.transform_id():
-        from services.text_transforms import find_transform
-
-        transform = find_transform(settings, probe.transform_id())
-        return f"Transform · {transform.name}" if transform else "A transform that was deleted"
-    return "Cleaned up"
 
 
 def parse_spoken_names(text: str) -> tuple[str, ...]:

@@ -1,5 +1,6 @@
 """Settings → Automate → Actions: the agent card, your actions, the editor, Route by voice."""
 
+import itertools
 import os
 import tempfile
 import threading
@@ -13,11 +14,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from services import credentials
 from services.actions.model import (
     AGENT_ACTION_ID,
     ActionKind,
-    action_secret_name,
     find_action,
     load_actions,
 )
@@ -83,6 +82,29 @@ def agents(monkeypatch):
     state = MagicMock()
     state.found = {"claude_code": True, "codex": True, "opencode_cli": False}
     monkeypatch.setattr("services.actions.agents.available", lambda: dict(state.found))
+    return state
+
+
+@pytest.fixture
+def secrets(monkeypatch):
+    """The runtime's signing-secret calls over a dict, noting the thread each ran on."""
+    from services.actions import runtime
+
+    state = MagicMock()
+    state.saved = {}
+    state.threads = []
+    numbers = itertools.count(1)
+
+    def ensure(action_id):
+        state.threads.append(threading.current_thread())
+        return state.saved.setdefault(action_id, f"whsec_{next(numbers)}")
+
+    def delete(action_id):
+        state.threads.append(threading.current_thread())
+        state.saved.pop(action_id, None)
+
+    monkeypatch.setattr(runtime, "ensure_action_secret", ensure, raising=False)
+    monkeypatch.setattr(runtime, "delete_action_secret", delete, raising=False)
     return state
 
 
@@ -311,9 +333,9 @@ def test_editing_keeps_the_id_and_cancel_keeps_the_saved_action(make_dialog):
     assert [(a.id, a.name) for a in actions_in(store)] == [("a1", "Claude chat")]
 
 
-def test_deleting_asks_first_and_forgets_a_webhooks_secret(make_dialog, questions):
+def test_deleting_asks_first_and_forgets_a_webhooks_secret(make_dialog, questions, secrets):
     dialog, store = make_dialog({SettingsKey.ACTIONS: [ASK_CLAUDE, HOOK]})
-    credentials.store().set(action_secret_name("h1"), "whsec_c2VjcmV0")
+    secrets.saved["h1"] = "whsec_old"
     panel = dialog.actions_panel
     questions.answer = QMessageBox.StandardButton.Cancel
     panel.list.card("h1").delete_link.click()
@@ -321,9 +343,13 @@ def test_deleting_asks_first_and_forgets_a_webhooks_secret(make_dialog, question
     questions.answer = QMessageBox.StandardButton.Yes
     panel.list.card("h1").delete_link.click()
     assert [a.id for a in actions_in(store)] == ["a1"]
-    assert credentials.store().get(action_secret_name("h1")) is None
+    assert wait_for(lambda: "h1" not in secrets.saved)
+    assert threading.main_thread() not in secrets.threads
     assert panel.notice.text() == "Deleted Home Assistant."
     assert changes(dialog) == ["actions"]
+    panel.list.card("a1").delete_link.click()
+    pump()
+    assert len(secrets.threads) == 1  # Only a webhook has a secret to forget.
 
 
 # ---- the editor's kinds ----
@@ -349,49 +375,78 @@ def test_shaping_offers_profiles_and_transforms(make_dialog):
     assert actions_in(store)[0].shaping == "profile:p1"
 
 
-def test_a_webhook_secret_is_copied_and_dropped_with_an_unsaved_draft(make_dialog, monkeypatch):
+def test_a_webhook_secret_is_copied_and_dropped_with_an_unsaved_draft(make_dialog, monkeypatch,
+                                                                      secrets):
     copied = []
     monkeypatch.setattr(action_editor, "copy_text", copied.append)
-    dialog, store = make_dialog()
+    dialog, _store = make_dialog()
     panel = dialog.actions_panel
     panel.add_action()
     panel.start_from_preset(panel.gallery.tile("webhook").preset)
     editor = panel.editor
-    name = action_secret_name(editor.action_id)
+    draft_id = editor.action_id
     editor.copy_secret()
-    assert copied and copied[0].startswith("whsec_")
-    assert credentials.store().get(name) == copied[0]
-    editor.copy_secret()
-    assert copied[1] == copied[0]
+    assert not editor.copy_secret_button.isEnabled()
+    assert wait_for(lambda: copied)
+    assert copied == [secrets.saved[draft_id]]
+    assert editor.message.text() == "Signing secret copied. Paste it into your service."
+    assert editor.copy_secret_button.isEnabled()
+    assert threading.main_thread() not in secrets.threads
     editor.cancel()
-    assert credentials.store().get(name) is None
+    assert wait_for(lambda: draft_id not in secrets.saved)
 
     panel.add_action()
     panel.start_from_preset(panel.gallery.tile("webhook").preset)
     editor.url_edit.setText("https://example.com/hook")
-    name = action_secret_name(editor.action_id)
+    saved_id = editor.action_id
     editor.copy_secret()
+    assert wait_for(lambda: len(copied) == 2)
     assert editor.save()
-    assert credentials.store().get(name) == copied[-1]
+    pump()
+    assert secrets.saved[saved_id] == copied[-1]
 
 
-def test_a_new_secret_replaces_the_old_one_after_asking(make_dialog, monkeypatch, questions):
+def test_a_new_secret_replaces_the_old_one_after_asking(make_dialog, monkeypatch, questions,
+                                                       secrets):
     copied = []
     monkeypatch.setattr(action_editor, "copy_text", copied.append)
     dialog, _store = make_dialog({SettingsKey.ACTIONS: [HOOK]})
-    credentials.store().set(action_secret_name("h1"), "whsec_b2xk")
+    secrets.saved["h1"] = "whsec_old"
     panel = dialog.actions_panel
     panel.edit("h1")
     questions.answer = QMessageBox.StandardButton.Cancel
     panel.editor.new_secret()
-    assert credentials.store().get(action_secret_name("h1")) == "whsec_b2xk"
+    pump()
+    assert secrets.saved["h1"] == "whsec_old" and copied == []
     questions.answer = QMessageBox.StandardButton.Yes
     panel.editor.new_secret()
-    secret = credentials.store().get(action_secret_name("h1"))
-    assert secret != "whsec_b2xk" and copied == [secret]
+    assert wait_for(lambda: copied)
+    assert copied == [secrets.saved["h1"]] and copied[0] != "whsec_old"
+    assert panel.editor.message.text() == "New signing secret copied. Update your service with it."
     panel.editor.cancel()
+    pump()
     # A saved action's secret stays when its edit is cancelled.
-    assert credentials.store().get(action_secret_name("h1")) == secret
+    assert secrets.saved["h1"] == copied[0]
+
+
+def test_a_secret_the_store_cant_give_is_explained(make_dialog, monkeypatch):
+    from services.actions import runtime
+
+    def refuse(_action_id):
+        raise RuntimeError("Windows Credential Manager is locked")
+
+    monkeypatch.setattr(runtime, "ensure_action_secret", refuse, raising=False)
+    monkeypatch.setattr(runtime, "delete_action_secret", lambda _id: None, raising=False)
+    monkeypatch.setattr(action_editor, "copy_text", MagicMock())
+    dialog, _store = make_dialog()
+    panel = dialog.actions_panel
+    panel.add_action()
+    panel.start_from_preset(panel.gallery.tile("webhook").preset)
+    panel.editor.copy_secret()
+    assert wait_for(lambda: panel.editor.copy_secret_button.isEnabled())
+    assert panel.editor.message.text() == (
+        "Couldn't get the signing secret: Windows Credential Manager is locked")
+    action_editor.copy_text.assert_not_called()
 
 
 def test_a_plain_http_address_off_this_network_is_flagged(make_dialog):
@@ -626,6 +681,21 @@ def test_agent_card_looks_for_agents_then_says_none_were_found(make_dialog, agen
     assert not card.status_row.isVisible()
 
 
+def test_opencode_sessions_open_in_a_terminal(make_dialog, agents):
+    agents.found = {"claude_code": True, "codex": False, "opencode_cli": True}
+    agent = {"id": AGENT_ACTION_ID, "name": "Agent hotkey", "kind": "agent",
+             "params": {"agent": "claude_code", "surface": "app"}}
+    dialog, store = make_dialog({SettingsKey.ACTIONS: [agent]})
+    fields = dialog.actions_agent_card.fields
+    app = fields.surface_bar.buttons[1]
+    assert app.isEnabled() and app.isChecked()
+    fields.chooser.choices["opencode_cli"].click()
+    saved = find_action(store.load_all_settings(), AGENT_ACTION_ID)
+    assert (saved.param("agent"), saved.param("surface")) == ("opencode_cli", "auto")
+    assert not app.isEnabled()
+    assert fields.surface_hint.text() == "OpenCode has no app to open, so it opens in a new terminal."
+
+
 def test_more_options_opens_the_full_editor_on_the_agent_action(make_dialog):
     agent = {"id": AGENT_ACTION_ID, "name": "Agent hotkey", "kind": "agent",
              "params": {"agent": "claude_code"}}
@@ -656,23 +726,32 @@ def test_routing_switches_save_and_gate_each_other(make_dialog):
     assert not on_dictation.isEnabled()
 
 
-def test_routing_status_points_at_fast_judgments_until_ready(make_dialog, monkeypatch):
+def test_routing_status_shows_routings_own_words_and_links_until_ready(make_dialog, monkeypatch):
     from services.actions import routing
 
+    monkeypatch.setattr(routing, "status", lambda settings: routing.RoutingStatus(
+        False, False, "Route by voice is off."))
     dialog, _store = make_dialog()
     status = dialog.actions_routing_status
-    assert status.link_row.isVisible()
-    assert status.property("kind") == "notice"
-    status.open_link.click()
+    assert status.message.text() == "Route by voice is off."
+    assert status.state == "off" and status.link.isVisible()
+    assert dialog.actions_routing_privacy.isVisible()
+    monkeypatch.setattr(routing, "status", lambda settings: routing.RoutingStatus(
+        True, False, "Turn on Fast judgments to route by voice."))
+    dialog.actions_routing_tile.checkbox.click()
+    assert status.message.text() == "Turn on Fast judgments to route by voice."
+    assert status.state == "attention"
+    status.link.click()
     assert dialog.rail.current_key() == "meeting_fast"
-    monkeypatch.setattr(routing, "status",
-                        lambda settings: routing.RoutingStatus(True, True, "Jev via TypeSafe"))
+    monkeypatch.setattr(routing, "status", lambda settings: routing.RoutingStatus(
+        True, True, "Ready. Words that name an action go to TypeSafe to choose it."))
     dialog.select_destination(ACTIONS)
     settings_actions.refresh(dialog)
     pump()
-    assert not status.link_row.isVisible()
-    assert status.title_label.text() == "Ready to route"
-    assert status.description_label.text() == "Jev via TypeSafe"
+    assert status.state == "ready" and not status.link.isVisible()
+    assert status.message.text() == "Ready. Words that name an action go to TypeSafe to choose it."
+    # The ready message carries the privacy sentence itself.
+    assert not dialog.actions_routing_privacy.isVisible()
 
 
 def test_the_route_shortcut_saves_through_the_standard_hotkey_path(make_dialog):

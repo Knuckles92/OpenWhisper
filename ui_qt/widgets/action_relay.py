@@ -1,4 +1,4 @@
-"""Brings agent scans and "Try it" results back to the Actions page on the Qt thread.
+"""Brings agent scans, "Try it" results and signing secrets back to the Actions page.
 
 One relay lives for the session, created on first use on the application
 thread, so a worker or the action runtime never holds or emits on a page
@@ -25,6 +25,8 @@ class _ActionsRelay(QObject):
     scan_done = pyqtSignal(int)
     #: ``(token, ActionResult)`` for one "Try it".
     try_done = pyqtSignal(int, object)
+    #: ``(token, secret, error)``: a webhook action's signing secret, or why not.
+    secret_done = pyqtSignal(int, str, str)
 
 
 _relay: Optional[_ActionsRelay] = None
@@ -62,6 +64,46 @@ def start_agent_scan(token: int, *, refresh: bool = False) -> None:
         done.emit(token)
 
     threading.Thread(target=worker, name="settings-actions-agent-scan", daemon=True).start()
+
+
+def fetch_secret(token: int, action_id: str, *, renew: bool = False) -> None:
+    """A webhook action's signing secret, made if missing (``renew``: a new one), off the Qt thread.
+
+    The credential store can block (a keyring unlock prompt), so the runtime's
+    calls run on a worker; ``secret_done(token, secret, error)`` follows.
+    """
+    from services.actions import runtime
+
+    ensure, delete = runtime.ensure_action_secret, runtime.delete_action_secret
+    done = relay().secret_done
+
+    def worker() -> None:
+        try:
+            if renew:
+                delete(action_id)
+            secret, error = ensure(action_id), ""
+        except Exception as exc:
+            logger.warning("Reading an action's signing secret failed: %s", type(exc).__name__)
+            secret, error = "", str(exc) or type(exc).__name__
+        done.emit(token, secret, error)
+
+    threading.Thread(target=worker, name="settings-actions-secret", daemon=True).start()
+
+
+def forget_secret(action_id: str) -> None:
+    """Remove a webhook action's signing secret off the Qt thread; nothing waits for it."""
+    from services.actions import runtime
+
+    delete = runtime.delete_action_secret
+
+    def worker() -> None:
+        try:
+            delete(action_id)
+        except Exception as exc:
+            # An orphaned secret signs nothing; the next delete or restore drops it.
+            logger.warning("Removing an action's signing secret failed: %s", type(exc).__name__)
+
+    threading.Thread(target=worker, name="settings-actions-secret-delete", daemon=True).start()
 
 
 def try_callback(token: int) -> Callable[[object], None]:

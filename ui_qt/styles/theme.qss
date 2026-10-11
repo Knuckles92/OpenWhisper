@@ -5639,6 +5639,33 @@ QFrame#settingsTile[tileId="actionPreset"]:focus {
     border-color: @accent;
 }
 
+/* Route by voice: where it stands, in its own words. */
+QFrame#actionStatusLine {
+    background-color: @slate-surface;
+    border: 1px solid @slate-border-subtle;
+    border-radius: 12px;
+}
+
+QFrame#actionStatusLine[state="ready"] {
+    background-color: rgba(@success-rgb, 0.08);
+    border-color: rgba(@success-rgb, 0.30);
+}
+
+QFrame#actionStatusLine[state="attention"] {
+    background-color: @warning-tint;
+    border-color: @warning-tint-border;
+}
+
+QFrame#actionStatusLine QWidget,
+QFrame#actionStatusLine QLabel {
+    background-color: transparent;
+}
+
+QLabel#actionHint[tileId="actionStatusMessage"] {
+    color: @slate-text-2;
+    font-size: 13px;
+}
+
 /* What a link will open, for the sample words. */
 QLabel#actionLinkPreview {
     color: @slate-text-3;

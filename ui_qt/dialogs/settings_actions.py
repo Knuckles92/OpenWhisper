@@ -32,6 +32,7 @@ SEARCH_FIELDS = [
 ]
 CONTROL_ATTRS = tuple(attr for attr, _title, _copy in SEARCH_FIELDS) + (
     "actions_routing_status",
+    "actions_routing_privacy",
     "actions_route_shortcut",
 )
 
@@ -65,7 +66,7 @@ def build(dialog, layout) -> None:
     from ui_qt.dialogs.settings_fields import group_title, settings_caption
     from ui_qt.utils.icons import design_icon
     from ui_qt.widgets.action_agent_card import AgentHotkeyCard
-    from ui_qt.widgets.action_fields import RouteShortcutField, page_link, plain_row
+    from ui_qt.widgets.action_fields import RouteShortcutField, StatusLine
     from ui_qt.widgets.action_panel import ActionsPanel
     from ui_qt.widgets.setting_tile import InfoTile, SettingTile
 
@@ -101,21 +102,21 @@ def build(dialog, layout) -> None:
     dialog.actions_routing_dictation_tile.checkbox.toggled.connect(
         lambda on: _on_routing_toggled(dialog, "voice_routing_on_dictation", on))
     dialog._tile_group(layout, "", [dialog.actions_routing_tile, dialog.actions_routing_dictation_tile])
+    # Spoken routing's own words for where it stands: off, what it still
+    # needs, or ready (services/actions/routing.py).
+    status = dialog.actions_routing_status = StatusLine(
+        "Fast judgments", "Open Settings → Meeting Mode → Fast judgments")
+    status.link.clicked.connect(lambda: dialog.select_destination(MEETING_FAST))
+    layout.addWidget(status)
 
     title, description = _FIELDS["actions_route_shortcut_tile"]
     tile = dialog.actions_route_shortcut_tile = InfoTile(
         title, description, design_icon("keyboard-green.svg"))
     dialog.actions_route_shortcut = RouteShortcutField(dialog)
     tile.add_body(dialog.actions_route_shortcut)
-
-    status = dialog.actions_routing_status = InfoTile("Fast judgments", "", design_icon("bolt-green.svg"))
-    status.setProperty("tileId", "actionRoutingStatus")
-    status.open_link = page_link("Set it up", "Open Settings → Meeting Mode → Fast judgments")
-    status.open_link.clicked.connect(lambda: dialog.select_destination(MEETING_FAST))
-    status.link_row = plain_row(status.open_link, stretch_last=True)
-    status.add_body(status.link_row)
-    dialog._tile_group(layout, "", [tile, status])
-    layout.addWidget(settings_caption(_PRIVACY_COPY))
+    dialog._tile_group(layout, "", [tile], columns=1)
+    dialog.actions_routing_privacy = settings_caption(_PRIVACY_COPY)
+    layout.addWidget(dialog.actions_routing_privacy)
 
 
 def _on_actions_changed(dialog) -> None:
@@ -146,8 +147,8 @@ def _show_routing(dialog, settings: dict) -> None:
         resolve_voice_routing_enabled,
         resolve_voice_routing_on_dictation,
     )
-    from ui_qt.utils.icons import design_icon
     from ui_qt.utils.restyle import set_style_property
+    from ui_qt.widgets.action_fields import StatusLine
 
     enabled = resolve_voice_routing_enabled(settings)
     for tile, value in (
@@ -159,14 +160,11 @@ def _show_routing(dialog, settings: dict) -> None:
         set_style_property(tile, "checked", value)
     dialog.actions_routing_dictation_tile.setEnabled(enabled)
     state = routing.status(settings)
-    status = dialog.actions_routing_status
-    status.title_label.setText("Ready to route" if state.ready else "Needs Fast judgments")
-    status.set_description(state.message)
-    status.icon_label.setPixmap(
-        design_icon("check-green.svg" if state.ready else "info-warning.svg").pixmap(
-            status.ICON_SIZE, status.ICON_SIZE))
-    status.link_row.setVisible(not state.ready)
-    set_style_property(status, "kind", "field" if state.ready else "notice")
+    tone = (StatusLine.READY if state.ready
+            else StatusLine.ATTENTION if state.enabled else StatusLine.OFF)
+    dialog.actions_routing_status.show_state(tone, state.message, link=not state.ready)
+    # Ready, routing's own message carries the privacy sentence.
+    dialog.actions_routing_privacy.setVisible(not state.ready)
     dialog.actions_route_shortcut.sync()
 
 

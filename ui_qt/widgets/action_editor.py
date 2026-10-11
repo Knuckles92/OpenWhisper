@@ -22,7 +22,6 @@ from services.actions.model import (
     Action,
     ActionKind,
     action_hotkey_conflict,
-    action_secret_name,
     expand_link,
     find_action,
     save_action,
@@ -101,7 +100,9 @@ class ActionEditor(InfoTile):
         self._try_token = 0
         self._scan_token = 0
         self._agents_scanned = False
-        self._secrets_made: set[str] = set()
+        self._secret_token = 0
+        self._secret_renew = False
+        self._secret_made = False
 
         self.name_edit = input_field(QLineEdit())
         self.name_edit.setMaxLength(NAME_MAX_CHARS)
@@ -144,6 +145,9 @@ class ActionEditor(InfoTile):
         self.new_secret_button = neutral_button(Button("New secret"))
         self.new_secret_button.clicked.connect(self.new_secret)
         self.secret_hint = hint_label("Your service checks each request with it.")
+        self.secret_hint.setToolTip(
+            "Requests are signed the Standard Webhooks way: webhook-id, "
+            "webhook-timestamp and webhook-signature headers.")
         self.webhook_box = stack(
             field_label("Address", self.url_edit), self.url_edit, self.url_note,
             Columns(
@@ -214,7 +218,8 @@ class ActionEditor(InfoTile):
         self.add_body(self.start_columns)
         purpose = stack(
             field_label("What it's for", self.description_edit), self.description_edit,
-            hint_label("Route by voice reads this to choose the right action."),
+            hint_label("Route by voice picks the right action more reliably when it says "
+                       "what it's for."),
         )
         purpose.layout().setContentsMargins(0, 6, 0, 0)
         self.add_body(purpose)
@@ -245,6 +250,7 @@ class ActionEditor(InfoTile):
         relay = action_relay.relay()
         relay.try_done.connect(self._on_try_done)
         relay.scan_done.connect(self._on_scan_done)
+        relay.secret_done.connect(self._on_secret_done)
 
     # ---- opening ----
 
@@ -261,7 +267,9 @@ class ActionEditor(InfoTile):
         self.shortcut.cancel_capture()
         self._action = action
         self._is_new = is_new
-        self._secrets_made = set()
+        self._secret_made = False
+        self._secret_token = 0
+        self._set_secret_busy(False)
         settings = self._settings()
         self.title_label.setText("New action" if is_new else f"Edit {action.name}")
         self.set_description(KIND_BLURBS.get(action.kind, ""))
@@ -429,30 +437,13 @@ class ActionEditor(InfoTile):
     # ---- signing secret ----
 
     def copy_secret(self) -> None:
-        from services import credentials
-        from services.automation.signing import new_secret
-
-        name = action_secret_name(self.action_id)
-        try:
-            store = credentials.store()
-            secret = store.get(name)
-            if not secret:
-                secret = new_secret()
-                store.set(name, secret)
-                self._secrets_made.add(name)
-        except Exception as exc:
-            self.show_message(f"Couldn't read the signing secret: {exc}")
-            return
-        copy_text(secret)
-        self.show_message("Signing secret copied. Paste it into your service.", "ok")
+        """Copy this action's signing secret, making one the first time."""
+        self._fetch_secret(renew=False)
 
     def new_secret(self) -> None:
-        from services import credentials
-        from services.automation.signing import new_secret
-
-        name = action_secret_name(self.action_id)
-        store = credentials.store()
-        if store.get(name) and name not in self._secrets_made:
+        """Replace the signing secret and copy the new one."""
+        if not self._is_new:
+            # The service already checks requests with the old one.
             answer = QMessageBox.question(
                 self, "Make a new signing secret?",
                 "Your service will need the new secret before it accepts requests again.",
@@ -461,29 +452,39 @@ class ActionEditor(InfoTile):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-        secret = new_secret()
-        try:
-            store.set(name, secret)
-        except Exception as exc:
-            self.show_message(f"Couldn't save the new secret: {exc}")
-            return
+        self._fetch_secret(renew=True)
+
+    def _fetch_secret(self, *, renew: bool) -> None:
+        self._secret_token = token = action_relay.next_token()
+        self._secret_renew = renew
         if self._is_new:
-            self._secrets_made.add(name)
-        copy_text(secret)
-        self.show_message("New signing secret copied. Update your service with it.", "ok")
+            self._secret_made = True
+        self._set_secret_busy(True)
+        self.show_message("Making a new signing secret…" if renew else "Getting the signing secret…", "")
+        action_relay.fetch_secret(token, self.action_id, renew=renew)
 
-    def _drop_unsaved_secrets(self) -> None:
-        """A new action that's never saved leaves no secret behind."""
-        if not self._is_new or not self._secrets_made:
+    def _set_secret_busy(self, busy: bool) -> None:
+        self.copy_secret_button.setEnabled(not busy)
+        self.new_secret_button.setEnabled(not busy)
+
+    def _on_secret_done(self, token: int, secret: str, error: str) -> None:
+        if token != self._secret_token or not token:
             return
-        from services import credentials
+        self._secret_token = 0
+        self._set_secret_busy(False)
+        if not secret:
+            self.show_message(f"Couldn't get the signing secret: {error or 'nothing was saved'}")
+            return
+        copy_text(secret)
+        self.show_message(
+            "New signing secret copied. Update your service with it." if self._secret_renew
+            else "Signing secret copied. Paste it into your service.", "ok")
 
-        for name in self._secrets_made:
-            try:
-                credentials.store().delete(name)
-            except Exception:
-                pass  # Best effort: an orphaned secret signs nothing.
-        self._secrets_made = set()
+    def _drop_unsaved_secret(self) -> None:
+        """A new action that's never saved leaves no secret behind."""
+        if self._is_new and self._secret_made and self._action is not None:
+            action_relay.forget_secret(self._action.id)
+        self._secret_made = False
 
     # ---- trying ----
 
@@ -536,7 +537,7 @@ class ActionEditor(InfoTile):
         except Exception as exc:
             self.show_message(f"Couldn't save the action: {exc}")
             return False
-        self._secrets_made = set()
+        self._secret_made = False
         self._is_new = False
         self._action = find_action(self._settings(), action.id) or action
         self._baseline = self.draft()
@@ -545,7 +546,7 @@ class ActionEditor(InfoTile):
 
     def cancel(self) -> None:
         self.shortcut.cancel_capture()
-        self._drop_unsaved_secrets()
+        self._drop_unsaved_secret()
         self._action = None
         self._baseline = None
         self.cancelled.emit()

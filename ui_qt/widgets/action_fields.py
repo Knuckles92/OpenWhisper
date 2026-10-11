@@ -45,6 +45,8 @@ from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 _SHORTCUT_TIP = "Click, then press a shortcut. Escape cancels. Press it once to start, again to send."
+#: Agents with no desktop app to open: a session always opens in a terminal.
+AGENTS_WITHOUT_APP = frozenset({"opencode_cli"})
 #: One agent's arrival once a scan finds it: the mark warms to its colour.
 ARRIVAL_MS = 380
 #: The widest the choosers get at 100% font scale: equal cells stretched
@@ -249,6 +251,41 @@ class Columns(QWidget):
                      else QBoxLayout.Direction.LeftToRight)
         if self._layout.direction() != direction:
             self._layout.setDirection(direction)
+
+
+class StatusLine(QFrame):
+    """A dot, one honest sentence about the state, and an optional link to fix it."""
+
+    READY, ATTENTION, OFF = "ready", "attention", "off"
+
+    def __init__(self, link_text: str = "", link_tip: str = "", parent=None):
+        from ui_qt.widgets.engine_field import StatusDot
+
+        super().__init__(parent)
+        self.setObjectName("actionStatusLine")
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(10)
+        self.dot = StatusDot(diameter=10)
+        layout.addWidget(self.dot, alignment=Qt.AlignmentFlag.AlignTop)
+        self.message = hint_label("")
+        self.message.setProperty("tileId", "actionStatusMessage")
+        self.link = page_link(link_text, link_tip)
+        self.link.setVisible(bool(link_text))
+        layout.addWidget(Reflow(self.message, self.link, lead_width=200,
+                                stacked_alignment=Qt.AlignmentFlag.AlignLeft), 1)
+        self.state = self.OFF
+
+    def show_state(self, state: str, message: str, *, link: bool) -> None:
+        from ui_qt.widgets.engine_field import EngineStatus
+
+        self.state = state
+        self.message.setText(message)
+        self.link.setVisible(link)
+        self.dot.set_status({self.READY: EngineStatus.READY,
+                             self.ATTENTION: EngineStatus.ATTENTION}.get(state, EngineStatus.UNKNOWN))
+        set_style_property(self, "state", state)
 
 
 # ---- file pickers (patched by tests) ----
@@ -633,7 +670,7 @@ class AgentFields(QWidget):
         layout.setSpacing(6)
 
         self.chooser = AgentChooser()
-        self.chooser.chosen.connect(self._emit_changed)
+        self.chooser.chosen.connect(self._on_agent_chosen)
         layout.addWidget(field_label("Agent"))
         layout.addWidget(self.chooser)
         self.agent_note = hint_label("")
@@ -724,6 +761,7 @@ class AgentFields(QWidget):
         self.selection_note.hide()
         layout.addWidget(self.selection_note)
         self._app_awareness = True
+        self._compact = False
         self._caps = ((self.chooser, CHOOSER_MAX_WIDTH), (self.mode_bar, BAR_MAX_WIDTH),
                       (self.surface_bar, BAR_MAX_WIDTH), (self.answer_box, CHOOSER_MAX_WIDTH),
                       (self.folder, CHOOSER_MAX_WIDTH), (self.selection_row, CHOOSER_MAX_WIDTH),
@@ -781,6 +819,12 @@ class AgentFields(QWidget):
         self._app_awareness = bool(on)
         self._sync()
 
+    def set_compact(self, compact: bool) -> None:
+        """Only the agents, for a card that invites setup and says itself what was found."""
+        self._compact = bool(compact)
+        self.details.setVisible(not compact)
+        self._sync()
+
     # ---- reactions ----
 
     def _sync(self) -> None:
@@ -792,11 +836,19 @@ class AgentFields(QWidget):
         self.session_box.setVisible(handoff)
         self.answer_box.setVisible(not handoff)
         surface = AgentSurface.ALL[max(0, self.surface_bar.currentIndex())]
-        self.surface_hint.setText(SURFACE_HINTS[surface])
+        app_button = self.surface_bar.buttons[AgentSurface.ALL.index(AgentSurface.APP)]
+        has_app = self.chooser.current() not in AGENTS_WITHOUT_APP
+        app_button.setEnabled(has_app)
+        app_button.setToolTip("" if has_app else f"{name} has no app; it opens in a terminal.")
+        self.surface_hint.setText(
+            SURFACE_HINTS[surface] if has_app
+            else f"{name} has no app to open, so it opens in a new terminal.")
         self.selection_note.setVisible(
             self.selection_row.switch.isChecked() and not self._app_awareness)
         available = self.chooser.available()
-        missing = available is not None and not available.get(self.chooser.current())
+        # A saved choice that went missing; a card inviting setup says so itself.
+        missing = (not self._compact and available is not None
+                   and not available.get(self.chooser.current()))
         if missing and self.chooser.found():
             self.agent_note.setText(f"{name} wasn't found on this computer. Choose another agent.")
         elif missing:
@@ -809,6 +861,17 @@ class AgentFields(QWidget):
             self.changed.emit()
 
     def _on_mode_changed(self, _index: int) -> None:
+        self._emit_changed()
+
+    def _on_agent_chosen(self, agent_id: str) -> None:
+        if (agent_id in AGENTS_WITHOUT_APP
+                and self.surface_bar.currentIndex() == AgentSurface.ALL.index(AgentSurface.APP)):
+            # Nothing to open as an app: the same choice as Auto makes for it.
+            self._loading, loading = True, self._loading
+            try:
+                self.surface_bar.setCurrentIndex(AgentSurface.ALL.index(AgentSurface.AUTO))
+            finally:
+                self._loading = loading
         self._emit_changed()
 
     def _on_surface_changed(self, _index: int) -> None:

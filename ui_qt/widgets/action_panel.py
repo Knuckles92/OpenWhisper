@@ -14,7 +14,6 @@ from services.actions.model import (
     Action,
     ActionKind,
     Preset,
-    action_secret_name,
     delete_action,
     find_action,
     load_actions,
@@ -23,6 +22,7 @@ from services.actions.model import (
 )
 from services.hotkey_manager import format_hotkey_display
 from ui_qt.utils.restyle import set_style_property
+from ui_qt.widgets import action_relay
 from ui_qt.widgets.action_editor import ActionEditor
 from ui_qt.widgets.action_fields import hint_label
 from ui_qt.widgets.action_gallery import PresetGallery
@@ -217,19 +217,10 @@ class ActionsPanel(QWidget):
             self.show_notice(f"Couldn't delete {action.name}: {exc}", "error")
             return
         if action.kind == ActionKind.WEBHOOK:
-            self._forget_secret(action_id)
+            action_relay.forget_secret(action_id)
         self.refresh()
         self.show_notice(f"Deleted {action.name}.", "")
         self.actions_changed.emit()
-
-    @staticmethod
-    def _forget_secret(action_id: str) -> None:
-        from services import credentials
-
-        try:
-            credentials.store().delete(action_secret_name(action_id))
-        except Exception:
-            pass  # Nothing stored, or no store: the secret signs nothing now.
 
     # ---- drafts and capture ----
 
