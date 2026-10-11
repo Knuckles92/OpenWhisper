@@ -503,7 +503,8 @@ def ask(agent_id: str, text: str, *, model: str = "", timeout_s: float = 120.0,
         cancel: Optional[threading.Event] = None) -> ActionResult    # output = the answer
 # launch.py
 class LaunchError(RuntimeError): ...
-def open_uri(uri: str) -> None                     # os.startfile / open / xdg-open; LaunchError
+def open_uri(uri: str) -> None                     # Windows: the association's command via CreateProcess,
+                                                   # COM handlers via ShellExecute / open / xdg-open; LaunchError
 def handler_available(scheme: str) -> Optional[bool]   # None = can't tell
 def open_in_terminal(argv: Sequence[str], *, cwd: str = "") -> None   # LaunchError
 ```
@@ -679,8 +680,16 @@ Deviations the streams made, and why; the code is the reference.
   `filters.drop_all_leases()` (called when the listener stops). Leases need
   `api_text_filters` at dictation time, not only when registered, and
   `Lease.expires_at` is wall-clock.
-- **Launch** detects URL handlers on Windows with `AssocQueryStringW` (MSIX
-  apps declare protocols in their manifest, leaving a bare registry key);
+- **Launch** reads Windows URL handlers with `AssocQueryStringW` on a thread
+  with COM (some packaged apps' protocols only resolve through COM). A
+  handler is a command line or a DelegateExecute COM object (every packaged
+  app, Windows' own pages such as `ms-settings:`); only a scheme with
+  neither, or whose program is gone (`CO_E_APPNOTFOUND`), counts as missing.
+  On Windows a classic handler's command is filled in the way ShellExecute
+  does it (`%1`/`%L` are the link; quotes, whitespace and control characters
+  in the link are percent-encoded) and started with CreateProcess in the
+  user's environment; COM handlers go to ShellExecute. Linux terminals run
+  `/bin/sh <one-shot script>`, so a noexec temp folder doesn't matter.
   `open_in_terminal` takes `env=`, refuses `.cmd`/`.bat`/`.ps1`, and on macOS
   runs a one-shot `.command` script with every argument shell-quoted. Claude
   Code gets a lone word with a trailing space, because it reads a lone word
@@ -752,7 +761,10 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   flight never recreates a deleted webhook's secret.
 - **Programs**: `run_once(..., cancel=)`; canceling or timing out kills the
   whole process tree, while a clean exit leaves children it launched running.
-  Program filters pass the dictation's cancel through.
+  Program filters pass the dictation's cancel through. Once a clean run's
+  output is in (or `OUTPUT_GRACE_S` passes) the stdout reader stops and the
+  pipe closes; processes the program left running keep running, but their
+  later writes to stdout fail.
 - **Actions**: `ActionRuntime.deliver(job, text, *, raw_text, html,
   notice="")` shows the notice with the outcome; `cancel(*, tests_only=False)`
   drops queued runs and stops agent quick answers and programs; a run under
@@ -772,7 +784,11 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   `external_env()` undoes them plus the frozen loader's paths and the app's
   virtualenv. `installed_agents.agent_child_env` and `programs.child_env`
   build on it, so links, terminals, agents, hooks and actions start in the
-  user's environment.
+  user's environment. On Windows that includes apps opened through links: a
+  classic protocol handler is started by OpenWhisper rather than by
+  ShellExecute, which would pass on OpenWhisper's environment.
+  `process_env.drop(env, names)` removes variables matching names the way
+  the system does (case-insensitively on Windows).
 - **Hotkeys**: `hotkey_conflicts.STANDARD_LABELS` is the one label map for
   standard shortcuts.
 
