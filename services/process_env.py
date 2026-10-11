@@ -37,11 +37,10 @@ def _key(name: str) -> str:
     return name.upper() if sys.platform == "win32" else name
 
 
-def _remember(name: str) -> None:
-    key = _key(name)
+def _remember(name: str, original: Optional[str]) -> None:
+    """Record ``name``'s value from before this process first changed it."""
     with _lock:
-        if key not in _original:
-            _original[key] = os.environ.get(name)
+        _original.setdefault(_key(name), original)
 
 
 def set_for_app(name: str, value: str, *, keep_existing: bool = False) -> None:
@@ -49,11 +48,45 @@ def set_for_app(name: str, value: str, *, keep_existing: bool = False) -> None:
 
     Args:
         keep_existing: Leave a value the user already set alone.
+
+    Raises:
+        ValueError: No environment can hold that name or value (an ``=`` in
+            the name, a NUL character, more than Windows' 32,767 characters).
     """
-    if keep_existing and name in os.environ:
+    original = os.environ.get(name)
+    if keep_existing and original is not None:
         return
-    _remember(name)
     os.environ[name] = value
+    _remember(name, original)
+
+
+def load_for_app(values: Mapping[str, str]) -> list[str]:
+    """Add OpenWhisper's own variables (its ``.env``), never over the user's.
+
+    Each one is recorded as the app's (unset for the user), so programs
+    started for the user never get it, whatever the file says later. That
+    includes one already set to the file's value: it came from the file too
+    (an editor that started OpenWhisper, such as VS Code with its default
+    ``python.envFile``, loads the same ``.env``). One set to anything else
+    is the user's own and stays, for those programs too.
+
+    Returns:
+        The names no environment can hold, with their values (see
+        ``set_for_app``). Those are left out; the rest still load.
+    """
+    refused = []
+    for name, value in values.items():
+        try:
+            current = os.environ.get(name)
+            if current is None:
+                os.environ[name] = value
+            elif current != value:
+                continue
+        except (ValueError, OSError):
+            refused.append(name)
+            continue
+        _remember(name, None)
+    return refused
 
 
 def prepend_for_app(name: str, entries: Iterable[str]) -> None:
@@ -61,11 +94,12 @@ def prepend_for_app(name: str, entries: Iterable[str]) -> None:
     entries = [entry for entry in entries if entry]
     if not entries:
         return
-    _remember(name)
-    existing = [part for part in os.environ.get(name, "").split(os.pathsep) if part]
+    original = os.environ.get(name)
+    existing = [part for part in (original or "").split(os.pathsep) if part]
     os.environ[name] = os.pathsep.join(
         entries + [part for part in existing if part not in entries]
     )
+    _remember(name, original)
 
 
 def _within(path: str, root: str) -> bool:

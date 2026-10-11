@@ -161,9 +161,10 @@ def agent_child_env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
 
     OpenWhisper loads its ``.env`` into its own environment; those keys belong
     to OpenWhisper's built-in engines and must not change which account the
-    user's agent bills. Loading records them as the app's own, so
-    ``external_env`` leaves them out; variables the user exported themselves
-    pass through.
+    user's agent bills. Loading records them as the app's own (and one
+    already set to the file's value, which came from the file too), so
+    ``external_env`` leaves them out; variables the user exported with values
+    of their own pass through.
     """
     from services.process_env import drop, external_env
 

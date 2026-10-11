@@ -11,6 +11,7 @@ dependencies = [
     "numpy>=1.24.0",
     "keyboard>=0.13.5 ; sys_platform == \"win32\"",
     "pynput>=1.7.6 ; sys_platform != \"win32\"",
+    "pywin32>=311 ; sys_platform == \"win32\"",
     "openai>=1.66.0",
     "certifi>=2024.2.2",
     "faster-whisper>=1.0.0",

@@ -7,15 +7,24 @@ the elevation prompt) is Windows' own.
 
 The real-Windows checks open nothing visible: the "app" is pythonw.exe (no
 window) running a recorder that appends its command line and one variable
-to a file, and a scheme is registered under HKCU\\Software\\Classes\\<a unique
-name> for one test and removed after it.
+to a file, and a scheme is registered under HKCU\\Software\\Classes\\owtest<hex>
+for one test and removed after it.
+
+Those two checks drive the real Windows shell (Explorer's ShellExecute, and
+ShellExecute in this process on a registered scheme), so they run only when
+OPENWHISPER_TEST_REAL_SHELL=1 is set, and are skipped everywhere else, CI
+included. A scheme is removed when its test ends, passed, failed or
+interrupted; one a killed run left behind is removed before the next is
+registered.
 """
 
 from __future__ import annotations
 
 import contextlib
+import itertools
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -28,6 +37,11 @@ from tests import test_automation_agents_launch as base
 
 fresh_handler_cache = base.fresh_handler_cache
 windows_only = pytest.mark.skipif(sys.platform != "win32", reason="Windows opens links through Explorer")
+#: Set to 1 to run the checks that drive the real Windows shell.
+REAL_SHELL = "OPENWHISPER_TEST_REAL_SHELL"
+real_shell = pytest.mark.skipif(
+    sys.platform != "win32" or os.environ.get(REAL_SHELL) != "1",
+    reason=f"drives the real Windows shell; set {REAL_SHELL}=1 on Windows to run it")
 
 #: Set in this process only: a child that has it got OpenWhisper's environment.
 MARK = "OPENWHISPER_TEST_LAUNCH_MARK"
@@ -199,7 +213,7 @@ def _shortcut(path, target, arguments):
     link.QueryInterface(pythoncom.IID_IPersistFile).Save(str(path), 0)
 
 
-@windows_only
+@real_shell
 def test_what_a_link_opens_gets_explorers_environment_not_openwhispers(tmp_path, monkeypatch):
     # The app a link opens starts from Explorer. ShellExecute in this process
     # (os.startfile, and the classic-handler CreateProcess before it) would
@@ -244,23 +258,76 @@ def _shell_execute_here(uri):
         raise AssertionError(f"ShellExecuteExW failed ({ctypes.get_last_error()})")
 
 
-@contextlib.contextmanager
-def _scheme(template):
+_CLASSES = r"Software\Classes"
+_SCHEME_NAME = re.compile(r"owtest[0-9a-f]{12}")
+_SCHEME_LABEL = "URL:OpenWhisper test"
+#: A test scheme lives for seconds; one this old was left by a killed run.
+_STALE_SCHEME_S = 600
+#: Seconds from 1601-01-01 (registry timestamps) to 1970-01-01.
+_EPOCH_1601_S = 11_644_473_600
+
+
+def _subkeys(key):
     import winreg
 
+    names = []
+    for index in itertools.count():
+        try:
+            names.append(winreg.EnumKey(key, index))
+        except OSError:
+            return names
+
+
+def _delete_tree(path):
+    """Remove an HKCU key and everything under it."""
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+            children = _subkeys(key)
+    except FileNotFoundError:
+        return
+    for child in children:
+        _delete_tree(path + "\\" + child)
+    with contextlib.suppress(FileNotFoundError):
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, path)
+
+
+def _remove_stale_schemes():
+    """Remove test schemes a killed run left behind; never one a running test uses."""
+    import winreg
+
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _CLASSES) as classes:
+        names = [name for name in _subkeys(classes) if _SCHEME_NAME.fullmatch(name)]
+    for name in names:
+        path = _CLASSES + "\\" + name
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+                label = winreg.QueryValueEx(key, "")[0]
+                written = winreg.QueryInfoKey(key)[2] / 10_000_000 - _EPOCH_1601_S
+        except OSError:
+            continue
+        if label == _SCHEME_LABEL and time.time() - written > _STALE_SCHEME_S:
+            _delete_tree(path)
+
+
+@contextlib.contextmanager
+def _scheme(template):
+    """A URL scheme run by ``template`` for this test only; removed however the test ends."""
+    import winreg
+
+    _remove_stale_schemes()
     scheme = "owtest" + uuid.uuid4().hex[:12]
-    base_key = r"Software\Classes" + "\\" + scheme
+    base_key = _CLASSES + "\\" + scheme
     try:
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, base_key) as key:
-            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "URL:OpenWhisper test")
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, _SCHEME_LABEL)
             winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, base_key + r"\shell\open\command") as key:
             winreg.SetValueEx(key, "", 0, winreg.REG_SZ, template)
         yield scheme
     finally:
-        for sub in (r"\shell\open\command", r"\shell\open", r"\shell", ""):
-            with contextlib.suppress(OSError):
-                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, base_key + sub)
+        _delete_tree(base_key)
         launch.forget_handlers()
 
 
@@ -284,7 +351,7 @@ LINKS = [
 ]
 
 
-@windows_only
+@real_shell
 @pytest.mark.parametrize("template", [
     '"{pythonw}" "{script}" "{log}" "%1"',
     '"{pythonw}" "{script}" "{log}" %1',
@@ -312,6 +379,113 @@ def test_a_link_reaches_its_handler_as_shellexecute_passes_it(
             reference, ours = records[-2:]
             assert ours["cmd"] == reference["cmd"]
             assert ours["args"] == reference["args"] and scheme in ours["args"][-1]
+
+
+@pytest.mark.skipif(os.environ.get(REAL_SHELL) == "1", reason="the real-shell checks were asked for")
+def test_the_checks_that_drive_the_real_shell_run_only_when_asked():
+    for check in (test_what_a_link_opens_gets_explorers_environment_not_openwhispers,
+                  test_a_link_reaches_its_handler_as_shellexecute_passes_it):
+        assert any(mark.name == "skipif" and mark.args[0] for mark in check.pytestmark)
+
+
+# -- test schemes never outlive their test (an in-memory registry) -------------------------
+
+
+class FakeRegistry:
+    """The part of ``winreg`` the scheme helpers use, holding HKCU in memory."""
+
+    HKEY_CURRENT_USER = "HKCU"
+    REG_SZ = 1
+
+    def __init__(self):
+        self.keys = {_CLASSES: {}}  # path -> values
+        self.written = {_CLASSES: time.time()}
+
+    class _Key:
+        def __init__(self, path):
+            self.path = path
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def _children(self, path):
+        prefix = path + "\\"
+        return sorted({p[len(prefix):].split("\\")[0] for p in self.keys if p.startswith(prefix)})
+
+    def CreateKey(self, root, path):
+        parts = path.split("\\")
+        for end in range(1, len(parts) + 1):
+            self.keys.setdefault("\\".join(parts[:end]), {})
+        self.written.setdefault(path, time.time())
+        return self._Key(path)
+
+    def OpenKey(self, root, path):
+        if path not in self.keys:
+            raise FileNotFoundError(2, "The system cannot find the file specified")
+        return self._Key(path)
+
+    def EnumKey(self, key, index):
+        children = self._children(key.path)
+        if index >= len(children):
+            raise OSError(259, "No more data is available")
+        return children[index]
+
+    def DeleteKey(self, root, path):
+        if path not in self.keys:
+            raise FileNotFoundError(2, "The system cannot find the file specified")
+        if self._children(path):
+            raise PermissionError(5, "Access is denied")  # as Windows: subkeys first
+        del self.keys[path]
+
+    def SetValueEx(self, key, name, reserved, kind, value):
+        self.keys[key.path][name] = value
+        self.written[key.path] = time.time()
+
+    def QueryValueEx(self, key, name):
+        if name not in self.keys[key.path]:
+            raise FileNotFoundError(2, "The system cannot find the file specified")
+        return self.keys[key.path][name], self.REG_SZ
+
+    def QueryInfoKey(self, key):
+        written = int((self.written.get(key.path, 0) + _EPOCH_1601_S) * 10_000_000)
+        return len(self._children(key.path)), len(self.keys[key.path]), written
+
+    def schemes(self):
+        return [name for name in self._children(_CLASSES) if name.startswith("owtest")]
+
+
+@pytest.fixture
+def registry(monkeypatch):
+    fake = FakeRegistry()
+    monkeypatch.setitem(sys.modules, "winreg", fake)
+    return fake
+
+
+def _left_behind(registry, name, label=_SCHEME_LABEL, age_s=3600):
+    path = _CLASSES + "\\" + name
+    registry.SetValueEx(registry.CreateKey(None, path), "", 0, registry.REG_SZ, label)
+    registry.CreateKey(None, path + r"\shell\open\command")
+    registry.written[path] = time.time() - age_s
+
+
+def test_a_test_scheme_is_removed_however_the_test_ends(registry):
+    with pytest.raises(KeyboardInterrupt):
+        with _scheme("handler %1") as scheme:
+            assert registry.schemes() == [scheme]
+            registry.CreateKey(None, _CLASSES + "\\" + scheme + r"\shell\open\ddeexec")
+            raise KeyboardInterrupt
+    assert registry.schemes() == []
+
+
+def test_schemes_a_killed_run_left_behind_go_before_the_next_is_registered(registry):
+    _left_behind(registry, "owtest" + "a" * 12)                      # an hour old: killed run
+    _left_behind(registry, "owtest" + "b" * 12, age_s=5)            # another test's, running
+    _left_behind(registry, "owtest" + "c" * 12, label="URL:Other")  # not ours
+    with _scheme("handler %1") as scheme:
+        assert sorted(registry.schemes()) == sorted(["owtest" + "b" * 12, "owtest" + "c" * 12, scheme])
 
 
 # -- the association lookup still says when an app is missing ------------------------------

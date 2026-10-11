@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,10 @@ class LaunchError(RuntimeError):
     """Opening failed; the message is safe to show."""
 
 
+class NoAnswer(LaunchError):
+    """Windows didn't answer in time. It may still open the link, so nothing else should."""
+
+
 def _child_env() -> Dict[str, str]:
     """The user's environment without OpenWhisper's own keys and settings."""
     from services.installed_agents import agent_child_env
@@ -63,6 +68,9 @@ def open_uri(uri: str) -> None:
     """Hand ``uri`` to the app registered for its scheme; blocks briefly.
 
     Raises:
+        NoAnswer: Windows didn't answer in time (see :data:`EXPLORER_WAIT_S`);
+            it may still open the link, so don't open it, or another, some
+            other way.
         LaunchError: Nothing could open it, or it is too long to; the message
             says which app is missing when one is known.
     """
@@ -212,6 +220,17 @@ def _windows_handler(scheme: str) -> Optional[bool]:
 #: ShellWindows: Explorer's list of its windows, the desktop among them.
 _CLSID_SHELL_WINDOWS = "{9BA05972-F6A8-11CF-A442-00A0C90A8F39}"
 _SW_SHOWNORMAL = 1
+#: How long Explorer may take to take a link. ShellExecute returns once the
+#: link's app has started or a rundll32 or DDE handler has the link, which
+#: takes moments, and may wait while an elevation prompt is up. This leaves
+#: room for a start slowed by a busy disk and for a person answering that
+#: prompt, and still gets the action's worker back from an Explorer whose
+#: desktop has hung.
+EXPLORER_WAIT_S = 30.0
+_NO_ANSWER = "Windows didn't answer. Try again."
+#: Held while Explorer is asked. Its desktop takes one call at a time, and
+#: no more calls queue up behind one it never answers.
+_explorer_turn = threading.Lock()
 
 
 def _windows_open(uri: str) -> None:
@@ -224,26 +243,76 @@ def _windows_open(uri: str) -> None:
     about how the link reaches it (filling in the handler's command,
     rundll32 and DDE handlers, packaged apps, the elevation prompt) is
     Windows' own. Explorer shows any problem itself.
+
+    Raises:
+        NoAnswer: Explorer didn't answer in time.
+        LaunchError: Without Explorer's desktop, nothing opens the link.
     """
+    if _ask_explorer(uri):
+        return
+    # Explorer's desktop isn't there (Explorer is restarting, another shell
+    # runs, pywin32 is missing): only then does the link open from this
+    # process, and its app get OpenWhisper's environment.
     with _com():
-        if _explorer_open(uri):
-            return
-        # Explorer's desktop isn't there (Explorer is restarting, or another
-        # shell runs): only then does the link open from this process, and
-        # its app get OpenWhisper's environment.
         try:
             os.startfile(uri)  # type: ignore[attr-defined]
         except OSError as exc:
             raise LaunchError("No app on this computer opens that link.") from exc
 
 
+def _ask_explorer(uri: str) -> bool:
+    """:func:`_explorer_open` on a thread of its own, waiting :data:`EXPLORER_WAIT_S` at most.
+
+    That thread has COM while it asks, and is the one that imports pywin32's
+    ``pythoncom`` first, which initialises COM on its thread for good; the
+    caller's thread (an action's worker) is left as it was.
+
+    Raises:
+        NoAnswer: Explorer didn't answer in time.
+    """
+    deadline = time.monotonic() + EXPLORER_WAIT_S
+    if not _explorer_turn.acquire(timeout=EXPLORER_WAIT_S):
+        raise NoAnswer(_NO_ANSWER)
+    outcome: List[object] = []
+
+    def ask() -> None:
+        try:
+            with _com():
+                try:
+                    outcome.append(_explorer_open(uri))
+                except Exception as exc:
+                    # Its frames hold COM objects, which must go before COM does.
+                    traceback.clear_frames(exc.__traceback__)
+                    outcome.append(exc)
+        finally:
+            _explorer_turn.release()
+
+    try:
+        asker = threading.Thread(target=ask, name="explorer-open", daemon=True)
+        asker.start()
+    except BaseException:
+        _explorer_turn.release()
+        raise
+    asker.join(max(0.0, deadline - time.monotonic()))
+    if not outcome:
+        logger.warning("Explorer didn't take a link within %.0f s", EXPLORER_WAIT_S)
+        raise NoAnswer(_NO_ANSWER)
+    if isinstance(outcome[0], Exception):
+        raise outcome[0]
+    return bool(outcome[0])
+
+
 def _explorer_open(uri: str) -> bool:
     """ShellExecute ``uri`` in Explorer; False when Explorer's desktop can't be asked.
 
     Needs COM on this thread; every COM object is released by the time this
-    returns.
+    returns. Without pywin32 Explorer can't be asked either.
     """
-    import pythoncom
+    try:
+        import pythoncom
+    except ImportError:
+        logger.warning("pywin32 isn't installed, so links open from OpenWhisper")
+        return False
 
     try:
         application, hwnd = _desktop_application()

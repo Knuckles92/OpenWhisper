@@ -58,20 +58,17 @@ def test_a_key_deleted_from_dotenv_never_reaches_a_child(monkeypatch, tmp_path):
 
 
 def test_a_key_the_user_exported_reaches_children_even_when_dotenv_has_it(monkeypatch, tmp_path):
-    # Set before OpenWhisper started: the user's own, so loading leaves it
-    # alone and children get it, the same value as the file's or not.
+    # Set before OpenWhisper started, to a value of its own: the user's, so
+    # loading leaves it alone and children get it. (One set to the file's
+    # value came from the file: test_automation_r4b_dotenv.)
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-exported")
-    monkeypatch.setenv("GROQ_API_KEY", "sk-same")
     monkeypatch.setattr(credentials, "env_file_path", lambda: str(tmp_path / ".env"))
     monkeypatch.setattr(process_env, "_original", dict(process_env._original))
-    (tmp_path / ".env").write_text(
-        "OPENROUTER_API_KEY=sk-from-dotenv\nGROQ_API_KEY=sk-same\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-from-dotenv\n", encoding="utf-8")
 
     credentials._load_dotenv_into_environ()
 
-    env = installed_agents.agent_child_env()
-    assert env["OPENROUTER_API_KEY"] == "sk-exported"
-    assert env["GROQ_API_KEY"] == "sk-same"
+    assert installed_agents.agent_child_env()["OPENROUTER_API_KEY"] == "sk-exported"
 
 
 def test_the_app_still_reads_its_keys_from_dotenv(monkeypatch, tmp_path):
