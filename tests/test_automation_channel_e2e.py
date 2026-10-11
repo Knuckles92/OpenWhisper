@@ -73,6 +73,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Transfer-Encoding", "chunked")
         self.end_headers()
         frames: queue.Queue = queue.Queue()
+        frames.put("retry: 2000\r\n\r\n")  # the live API's first frame
         last = self.headers.get("Last-Event-ID")
         with app.cond:
             if last is not None:
@@ -184,6 +185,14 @@ class FakeApp:
             for frames in self.streams:
                 frames.put(frame)
             return self._seq
+
+    def send_gap(self, missed_from_seq: int) -> None:
+        """``events.gap`` as the live API sends it: no ``id:`` line, seq 0."""
+        event = {"id": "", "seq": 0, "type": "events.gap", "time": "2026-10-10T12:00:00.000Z", "v": 1,
+                 "data": {"missed_from_seq": missed_from_seq}}
+        with self.cond:
+            for frames in self.streams:
+                frames.put(f"event: events.gap\r\ndata: {json.dumps(event)}\r\n\r\n")
 
     def wait_for(self, predicate, timeout: float = WAIT_S) -> None:
         with self.cond:
@@ -501,6 +510,13 @@ class _Collector:
             return list(self.messages)
 
 
+def _eventually(predicate, timeout: float = WAIT_S) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "condition never held"
+        time.sleep(0.01)
+
+
 def _stream(link: AppLink, deliver, **kwargs) -> EventStream:
     kwargs.setdefault("backoff_first_s", 0.02)
     kwargs.setdefault("backoff_max_s", 0.08)
@@ -580,6 +596,23 @@ def test_stop_ends_a_quiet_stream_promptly(app):
     stream.stop()
     assert time.monotonic() - started < 2.0
     assert not stream._thread.is_alive()
+
+
+def test_a_gap_forwards_nothing_and_keeps_the_resume_point(app):
+    collected = _Collector()
+    stream = _stream(AppLink(url=app.url, token=TOKEN), collected)
+    stream.start()
+    try:
+        app.wait_for(lambda: app.streams)
+        first = app.publish(_message("before the gap"))
+        collected.wait(1)
+        app.send_gap(missed_from_seq=first + 1)
+        second = app.publish(_message("after the gap"))
+        messages = collected.wait(2)
+        _eventually(lambda: stream.last_id == str(second))
+    finally:
+        stream.stop()
+    assert [m["content"] for m in messages] == ["before the gap", "after the gap"]
 
 
 def test_stream_skips_events_without_text(app):

@@ -43,8 +43,10 @@ logger = logging.getLogger("openwhisper.channel")
 
 #: Handshake revisions this server speaks, newest first.
 PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
+#: The live API counts streams that send this header value as listening
+#: channel sessions (its ``CLIENT_HEADER`` and ``CHANNEL_CLIENT``; the server
+#: module is not imported here, to keep this process free of fastapi).
 CLIENT_HEADER = "X-OpenWhisper-Client"
-#: The app counts streams that send this as listening channel sessions.
 CLIENT_NAME = "claude-channel"
 EVENTS_PATH = "/v1/events?types=" + CHANNEL_MESSAGE
 NOTIFY_PATH = "/v1/notify"
@@ -55,7 +57,7 @@ TOKEN_ENV = "OPENWHISPER_TOKEN"
 BACKOFF_FIRST_S = 1.0
 BACKOFF_MAX_S = 30.0
 CONNECT_TIMEOUT_S = 5.0
-#: The app sends a ping comment every 15 s; three missed ones mean a dead stream.
+#: An idle stream gets a ping comment every 15 s; three missed ones mean it is dead.
 READ_TIMEOUT_S = 45.0
 NOTIFY_TIMEOUT_S = 5.0
 MAX_REPLY_CHARS = 500
@@ -628,6 +630,8 @@ class EventStream:
             self.last_id = parser.last_id
 
     def _handle(self, event: SseEvent) -> None:
+        # events.gap (no id line, so the resume point stays) only says some
+        # messages were missed: there is nothing to forward.
         if event.type != CHANNEL_MESSAGE:
             return
         try:

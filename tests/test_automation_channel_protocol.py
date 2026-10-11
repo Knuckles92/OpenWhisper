@@ -62,6 +62,14 @@ def test_sse_parser_moves_the_resume_point_only_when_a_block_ends():
     assert parser.last_id == "4"
 
 
+def test_sse_parser_leaves_the_resume_point_alone_for_a_gap_and_retry():
+    """The live API opens with ``retry:`` and sends ``events.gap`` without an ``id:`` line."""
+    gap = json.dumps({"id": "", "seq": 0, "type": "events.gap", "data": {"missed_from_seq": 4}})
+    events, parser = _parse(["retry: 2000", "", "event: events.gap", f"data: {gap}", ""], last_id="12")
+    assert [(e.type, e.last_id) for e in events] == [("events.gap", "12")]
+    assert parser.last_id == "12"
+
+
 def test_sse_parser_keeps_ids_from_blocks_without_data_and_ignores_nul_ids():
     events, parser = _parse(["id: 9", "", "id: bad\0id", "data: y", ""])
     assert parser.last_id == "9"
