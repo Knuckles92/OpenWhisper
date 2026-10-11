@@ -397,6 +397,8 @@ def test_ui_automation_reads_a_hidden_edit_control():
                                                   include_selection=True)
             results["selection"] = reader._read_window(window["edit"], include_text=False,
                                                        include_selection=True)
+            results["text"] = reader._read_window(window["edit"], include_text=True,
+                                                  include_selection=False)
         except Exception as exc:
             results["error"] = repr(exc)
         finally:
@@ -421,3 +423,7 @@ def test_ui_automation_reads_a_hidden_edit_control():
         caret_known=True, selection_known=True, source="uia")
     assert results["selection"] == TextContext(selected="Siobhan", selection_known=True,
                                                source="uia")
+    # Not asked for, the selection only places the text around it.
+    assert results["text"] == TextContext(
+        "Meeting notes. Lunch with ", "", " about the Q3 roadmap tomorrow.",
+        caret_known=True, selection_known=False, source="uia")

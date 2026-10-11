@@ -181,18 +181,27 @@ def begin_job(mode: str, settings: Mapping, *, selection=None, action_id: str = 
         action_id: The action an ACTION job runs.
         source: Who started the job (see DictationJob.source).
         route: See DictationJob.route.
-        include_selection: An ACTION job wants the selected text, which the
-            focus capture reads when app awareness is on.
+        include_selection: An ACTION job's action wants the selected text,
+            which the focus capture reads when app awareness is on.
+
+    Only a job the user started reads the selection: Command Mode's is what
+    it rewrites, a dictation replaces it (with the text near the cursor
+    on), and an action reads it when asked. A job a program started never
+    does, so no program learns what is selected in the user's app.
     """
     settings = settings or {}
     focus = target = None
     try:
         if resolve_app_context_enabled(settings):
+            include_text = resolve_app_context_read_text(settings)
+            wanted = {
+                JobMode.COMMAND: True,
+                JobMode.DICTATION: include_text,
+                JobMode.ACTION: include_selection,
+            }.get(mode, False)
             focus = focus_context.get_service().request(
-                include_text=resolve_app_context_read_text(settings),
-                include_selection=mode == JobMode.COMMAND or (
-                    mode == JobMode.ACTION and include_selection
-                ),
+                include_text=include_text,
+                include_selection=wanted and catalog.user_started(source),
             )
         elif mode != JobMode.DICTATION or route:
             # A rewrite pastes even with auto-paste off, and an action's

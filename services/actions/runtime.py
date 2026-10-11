@@ -322,8 +322,9 @@ def _agent(params: dict, text: str, job, cancel: threading.Event) -> ActionResul
     from services.actions import agents
 
     if params["include_selection"]:
-        # The capture runs from the recording's start; a run from the API
-        # may still be waiting for it, which a worker can afford.
+        # Only a job the user started has the selection (begin_job). Its
+        # capture ran while they spoke; a worker can afford to wait for one
+        # still running.
         text = prompt_with_context(text, job.snapshot(timeout=config.CONTEXT_CAPTURE_DEADLINE_S))
     if params["mode"] == AgentMode.ASK:
         return agents.ask(params["agent"], text, model=params["model"], cancel=cancel)

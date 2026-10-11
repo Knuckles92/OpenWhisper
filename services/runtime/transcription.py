@@ -63,14 +63,14 @@ def _start_failure_message(exc: Exception) -> str:
     return f"Failed to process audio: {exc}"
 
 
-def _reads_selection(action, source: str) -> bool:
-    """Whether an action job reads the selected text as context.
+def _reads_selection(action) -> bool:
+    """Whether an action job asks for the selected text as context.
 
-    Only when the user started it: a program (the live API, MCP) must not
-    learn what is selected in the user's app by running an action.
+    begin_job reads it only for a job the user started: a program (the live
+    API, MCP) must not learn what is selected in the user's app by running
+    an action.
     """
-    return (action.param("include_selection") is True
-            and source in event_catalog.USER_SOURCES)
+    return action.param("include_selection") is True
 
 
 #: ``_maybe_cleanup_transcript``'s default: the profile the recording started with.
@@ -368,7 +368,7 @@ class TranscriptionRuntime:
                 action_id=action.id if action is not None else "",
                 source=source,
                 route=route,
-                include_selection=action is not None and _reads_selection(action, source),
+                include_selection=action is not None and _reads_selection(action),
             )
             logger.info("Recording started")
             self.controller.ui_controller.clear_transcription_stats()
@@ -1456,7 +1456,7 @@ class TranscriptionRuntime:
             raise ControlError(BUSY, "OpenWhisper isn't taking actions right now.")
         job = dictation_pipeline.begin_job(
             JobMode.ACTION, settings, action_id=action.id, source=source,
-            include_selection=_reads_selection(action, source),
+            include_selection=_reads_selection(action),
         )
         if not self.begin_rewrite_job(job, source_name=f"Action · {action.name}"):
             raise ControlError(BUSY, "OpenWhisper is busy with another recording.")
