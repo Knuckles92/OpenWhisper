@@ -60,6 +60,8 @@ class ActionsPanel(QWidget):
     actions_changed = pyqtSignal()
     capture_changed = pyqtSignal(bool)
     destination_requested = pyqtSignal(str)
+    #: The page came into view; another page may have changed what it shows.
+    shown = pyqtSignal()
 
     def __init__(self, *, manager, try_action: Callable, parent=None):
         super().__init__(parent)
@@ -270,6 +272,10 @@ class ActionsPanel(QWidget):
         self.editor.cancel_capture()
 
     # ---- small touches ----
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.shown.emit()
 
     def show_notice(self, text: str, tone: str = "") -> None:
         self.notice.setText(text)

@@ -343,3 +343,59 @@ def test_replacing_a_new_webhook_drops_the_secret_it_made(make_dialog, questions
     assert questions == []
     assert panel.editor.action_id == AGENT_ACTION_ID
     assert wait_for(lambda: draft_id not in secrets.saved)
+
+
+# ---- 3. Route by voice's status keeps up ----
+
+
+@pytest.fixture
+def typesafe_key():
+    from services import credentials
+
+    credentials.store().set("TYPESAFE_API_KEY", "ts_fake")
+
+
+def routing_words(store) -> str:
+    return routing.status(store.load_all_settings()).message
+
+
+def test_route_by_voice_status_follows_the_actions(make_dialog, typesafe_key):
+    dialog, store = make_dialog({SettingsKey.VOICE_ROUTING_ENABLED: True,
+                                 SettingsKey.TYPESAFE_ENABLED: True})
+    status, panel = dialog.actions_routing_status.message, dialog.actions_panel
+    no_actions = status.text()
+    assert no_actions == routing_words(store)
+    panel.add_action()
+    panel.start_from_preset(panel.gallery.tile("claude-chat").preset)
+    assert panel.editor.save()
+    assert status.text() == routing_words(store) != no_actions
+    ready = status.text()
+    panel.set_enabled(panel.list.cards[0].action.id, False)
+    assert status.text() == routing_words(store) not in (no_actions, ready)
+
+
+def test_route_by_voice_status_follows_the_agent_card(make_dialog, typesafe_key):
+    dialog, store = make_dialog({SettingsKey.VOICE_ROUTING_ENABLED: True,
+                                 SettingsKey.TYPESAFE_ENABLED: True})
+    status = dialog.actions_routing_status.message
+    no_actions = status.text()
+    dialog.actions_agent_card.set_up()
+    dialog.actions_agent_card.cancel_capture()
+    assert status.text() == routing_words(store) != no_actions
+
+
+def test_route_by_voice_status_is_read_again_when_the_page_returns(make_dialog, typesafe_key):
+    from ui_qt.dialogs.settings_destinations import GENERAL
+
+    dialog, store = make_dialog({SettingsKey.VOICE_ROUTING_ENABLED: True,
+                                 SettingsKey.ACTIONS: [ASK_CLAUDE]})
+    status = dialog.actions_routing_status
+    needs_fast = status.message.text()
+    assert status.state == "attention"
+    dialog.select_destination(GENERAL)
+    # Turned on elsewhere, as the Fast judgments link leads you to.
+    store.save_setting(SettingsKey.TYPESAFE_ENABLED, True)
+    dialog.select_destination(ACTIONS)
+    pump()
+    assert status.message.text() == routing_words(store) != needs_fast
+    assert status.state == "ready"

@@ -84,6 +84,8 @@ def build(dialog, layout) -> None:
 
     panel = dialog.actions_panel = ActionsPanel(manager=_manager(), try_action=try_action)
     panel.actions_changed.connect(lambda: _on_actions_changed(dialog))
+    # Back from another page, say Fast judgments or Styles: read it all again.
+    panel.shown.connect(lambda: refresh(dialog))
     panel.capture_changed.connect(dialog.set_hotkey_capture_suspended)
     panel.destination_requested.connect(
         lambda key: dialog.select_destination(destinations.get(key, key)))
@@ -121,13 +123,17 @@ def build(dialog, layout) -> None:
 
 def _on_actions_changed(dialog) -> None:
     dialog.notify_changed("actions")
-    dialog.actions_agent_card.load(dialog._settings_snapshot())
+    settings = dialog._settings_snapshot()
+    dialog.actions_agent_card.load(settings)
+    _show_routing(dialog, settings)
 
 
 def _on_card_changed(dialog) -> None:
-    # The full editor may be open on the same action.
     dialog.notify_changed("actions")
-    dialog.actions_panel.refresh(dialog._settings_snapshot())
+    settings = dialog._settings_snapshot()
+    # The full editor may be open on the same action.
+    dialog.actions_panel.refresh(settings)
+    _show_routing(dialog, settings)
 
 
 def _on_routing_toggled(dialog, key: str, on: bool) -> None:
