@@ -58,7 +58,9 @@ def test_cancel_reports_a_recording_or_job_it_canceled(h):
 def test_cancel_with_nothing_going_on_reports_nothing_canceled(h):
     h.controller.current_backend.is_transcribing = False
     assert h.runtime.cancel() is False
-    assert h.controller.status_update.calls[-1] == ("Canceled",)
+    # Nor does it say "Canceled": the user's Cancel goes on to the actions.
+    assert h.controller.status_update.calls == []
+    assert h.controller.overlay_state_update.calls == []
 
 
 # -- finding 5: no preview follows the end of its recording ---------------------------

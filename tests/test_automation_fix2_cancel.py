@@ -175,7 +175,7 @@ def test_a_cancel_from_the_hotkey_thread_reaches_actions_on_the_qt_thread(
     threads = []
     controller.transcription_runtime = SimpleNamespace(cancel=lambda: False)
     controller.action_runtime = SimpleNamespace(
-        cancel=lambda: threads.append(threading.current_thread()))
+        cancel=lambda: threads.append(threading.current_thread()) or 1)
     controller.actions_cancel_requested.connect(controller._cancel_actions)  # as _connect_signals
 
     hotkey = threading.Thread(target=controller.cancel)

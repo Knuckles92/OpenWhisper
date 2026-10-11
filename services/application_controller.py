@@ -73,6 +73,8 @@ REMOTE_WATCH_INTERVAL_MS = 1000
 #: Seconds before each automatic reconnect to an unreachable host; the last
 #: repeats until it answers.
 REMOTE_RETRY_DELAYS_S = (2, 5, 15, 30, 60)
+#: What the user's Cancel says when it found nothing to cancel.
+NOTHING_TO_CANCEL = "Nothing to cancel"
 
 
 def _import_openai_sdk() -> None:
@@ -2558,14 +2560,18 @@ class ApplicationController(QObject):
         Cancels the recording or transcription in progress, and only that:
         a Quick answer still thinking from before keeps going. With neither,
         it cancels the actions still running, which is how a long Quick
-        answer is stopped. Either way the status says what was canceled.
+        answer is stopped. Either way the status says what was canceled,
+        or that there was nothing to cancel (a dictation already pasted and
+        being saved included).
         """
         if not self.transcription_runtime.cancel():
             self.actions_cancel_requested.emit()
 
     def _cancel_actions(self) -> None:
         """The user's Cancel for the actions still running; Qt thread."""
-        self.action_runtime.cancel()
+        if not self.action_runtime.cancel():
+            self.ui_controller.set_status(NOTHING_TO_CANCEL)
+            self.ui_controller.show_notice(NOTHING_TO_CANCEL)
 
     def minimize_to_tray(self) -> None:
         """Toggle the main window between tray-hidden and foreground states.
