@@ -581,10 +581,22 @@ class _Editor(QFrame):
         # Read while the editor stands alone, so its chain is its own: the
         # fields were added top to bottom. The section places them in the page.
         self.tab_stops = _tab_stops(self)
+        for signal in (self.name_edit.textChanged, *self._edits()):
+            signal.connect(self._draft_edited)
 
     # Subclasses add their fields here, between the name and the footer.
     def _build_fields(self, layout: QVBoxLayout) -> None:
         raise NotImplementedError
+
+    def _edits(self) -> tuple:
+        """The change signals of the fields ``draft`` reads, besides the name."""
+        return ()
+
+    def _draft_edited(self, *_args) -> None:
+        """"Saved." stays true only until the fields differ from what was saved."""
+        if (self.message.property("tone") == "ok" and not self.message.isHidden()
+                and self.has_unsaved_changes()):
+            self.set_message("")
 
     def _show_fields(self, item) -> None:
         raise NotImplementedError
@@ -714,6 +726,9 @@ class WebhookEditor(_Editor):
         note = unencrypted_note(self.url_edit.text())
         self.url_note.setText(note)
         self.url_note.setVisible(bool(note))
+
+    def _edits(self) -> tuple:
+        return (self.url_edit.textChanged, self.events.changed)
 
     def _show_fields(self, hook) -> None:
         self.url_edit.setText(hook.url)
@@ -896,6 +911,10 @@ class ProgramEditor(_ProgramFields, _Editor):
         extras.addWidget(self.recent)
         layout.addWidget(self.extras)
 
+    def _edits(self) -> tuple:
+        return (self.program_edit.textChanged, self.args_edit.textChanged,
+                self.events.changed, self.timeout.valueChanged)
+
     def _show_fields(self, program) -> None:
         self.program_edit.setText(program.program)
         self.args_edit.setPlainText("\n".join(program.args))
@@ -1032,6 +1051,11 @@ class FilterEditor(_ProgramFields, _Editor):
         note = unencrypted_note(self.url_edit.text()) if self._kind() == models.FILTER_HTTP else ""
         self.url_note.setText(note)
         self.url_note.setVisible(bool(note))
+
+    def _edits(self) -> tuple:
+        return (self.kind_bar.currentIndexChanged, self.url_edit.textChanged,
+                self.program_edit.textChanged, self.args_edit.textChanged,
+                self.stage_bar.currentIndexChanged, self.timeout.valueChanged)
 
     def _show_fields(self, text_filter) -> None:
         self.kind_bar.setCurrentIndex(self.KINDS.index(text_filter.kind))
