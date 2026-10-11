@@ -333,14 +333,14 @@ def create_app(
             bus = automation_events.bus()
             wanted = list(types) if types else None
             if since_seq is None:
-                items, gap, more = bus.recent(limit, types=wanted), False, False
+                items, gap, more = bus.recent(limit, types=wanted), None, False
             else:
                 items, gap = bus.since(since_seq, types=wanted)
                 more = len(items) > limit
                 items = items[:limit]
             return {
                 "events": [event.to_dict() for event in items],
-                "gap": gap,
+                "gap": gap is not None,
                 "has_more": more,
                 "last_seq": bus.last_seq(),
             }

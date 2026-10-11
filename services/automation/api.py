@@ -15,14 +15,17 @@ seconds, so they run on a worker thread and never on the event loop.
     event: <type>
     data: <the event's JSON: id, seq, type, time, v, data>
 
-``seq`` counts up through one app session; reconnecting with
-``Last-Event-ID`` (or ``?since=<seq>``) replays what the stream missed while
-the app still holds it. When it no longer does, the stream first sends a
-synthetic ``events.gap`` event (no ``id:`` line, ``seq`` 0) whose
-``data.missed_from_seq`` is the first event that may be lost; fetch history
-to catch up. A client that reads too slowly gets an ``events.gap`` and the
-stream ends, so reconnecting with ``Last-Event-ID`` resumes it. A ``: ping``
-comment arrives every 15 seconds.
+``seq`` keeps counting up, across app restarts too; reconnecting with
+``Last-Event-ID`` (or ``?since=<seq>``, 0 for everything since the app
+started) replays what the stream missed while the app still holds it. When
+the stream may have missed some, it first sends a synthetic ``events.gap``
+event (no ``id:`` line, ``seq`` 0) whose ``data.missed_from_seq`` is the
+first event that may be lost and ``data.reason`` says why: ``evicted`` (the
+app no longer holds them; fetch history to catch up) or ``restarted`` (the
+position is from before the app restarted; everything since follows). A
+client that reads too slowly gets an ``events.gap`` with reason ``slow`` and
+the stream ends, so reconnecting with ``Last-Event-ID`` resumes it. A
+``: ping`` comment arrives every 15 seconds.
 """
 
 # No ``from __future__ import annotations``: FastAPI reads the route
@@ -124,7 +127,7 @@ def sse_frame(event, *, with_id: bool = True) -> bytes:
     return ("\n".join(lines) + "\n\n").encode("ascii")
 
 
-def gap_event(missed_from_seq: int):
+def gap_event(missed_from_seq: int, reason: str):
     """The synthetic ``events.gap`` event; it never goes through the bus."""
     from services.automation import catalog
     from services.automation.events import Event
@@ -134,7 +137,7 @@ def gap_event(missed_from_seq: int):
         seq=0,
         type=catalog.EVENTS_GAP,
         time=_now_iso(),
-        data=catalog.events_gap(missed_from_seq),
+        data=catalog.events_gap(missed_from_seq, reason),
     )
 
 
@@ -292,6 +295,7 @@ class EventStream:
 
     async def body(self):
         """The response body: bytes of SSE messages."""
+        from services.automation.catalog import GAP_SLOW
         from services.automation.events import bus
 
         loop = self._loop = asyncio.get_running_loop()
@@ -311,7 +315,7 @@ class EventStream:
                 # A position past the newest event is from another app
                 # session, whose numbering this one doesn't continue.
                 missed = 1 if from_other_session else self.replay_from + 1
-                yield sse_frame(gap_event(missed), with_id=False)
+                yield sse_frame(gap_event(missed, gap), with_id=False)
             # The stream's position only rises: a live event at or below it
             # was replayed, or came before the stream's start (the bus's
             # dispatch can lag behind publishing), and sending it now would
@@ -337,7 +341,7 @@ class EventStream:
                         self._overflow_seq,
                     )
                     self._pending.clear()
-                    yield sse_frame(gap_event(missed), with_id=False)
+                    yield sse_frame(gap_event(missed, GAP_SLOW), with_id=False)
                     return
                 if self._pending:
                     event = self._pending.popleft()

@@ -251,7 +251,7 @@ def test_a_position_the_buffer_no_longer_holds_starts_with_a_gap(client):
     assert "id" not in gap  # synthetic: a reconnect keeps its real position
     assert gap["event"] == "events.gap"
     assert payload(gap)["seq"] == 0
-    assert payload(gap)["data"] == {"missed_from_seq": 2}
+    assert payload(gap)["data"] == {"missed_from_seq": 2, "reason": catalog.GAP_EVICTED}
     assert replayed == [str(e.seq) for e in published[3:]]
 
 
@@ -261,7 +261,7 @@ def test_a_position_from_an_earlier_app_session_replays_this_one_after_a_gap(cli
         reader = Reader(response)
         gap = reader.event()
         replayed = [reader.event()["id"] for _ in range(2)]
-    assert payload(gap)["data"] == {"missed_from_seq": 1}
+    assert payload(gap)["data"] == {"missed_from_seq": 1, "reason": catalog.GAP_RESTARTED}
     assert replayed == [str(e.seq) for e in published]
 
 
@@ -390,5 +390,7 @@ def test_a_reader_too_slow_for_the_queue_gets_a_gap_and_the_end(bus, monkeypatch
     assert len(rest) == 1
     gap = rest[0].decode()
     assert gap.startswith("event: events.gap\n")
-    assert json.loads(gap.split("data: ", 1)[1])["data"] == {"missed_from_seq": later[0].seq}
+    assert json.loads(gap.split("data: ", 1)[1])["data"] == {
+        "missed_from_seq": later[0].seq, "reason": catalog.GAP_SLOW,
+    }
     assert bus.subscribers() == 0

@@ -4,19 +4,23 @@ An ``events.gap`` used to be dropped silently, so neither the user nor Claude
 knew that dictated words never arrived. The bridge now logs one warning and
 sends Claude a short notice with origin "openwhisper"; the same gap seen
 again from the same resume point (a reconnect before any new message) is
-not announced twice.
+not announced twice. Only a gap the app can't fill is announced: after a
+restart, or when the stream fell behind, the replay brings every message.
 """
 
 import json
 import logging
 
+import pytest
+
+from services.automation import catalog
 from services.automation import channel_bridge as bridge
 from services.automation.channel_bridge import AppLink, EventStream, SseEvent
 
 
-def gap(last_id, missed_from_seq):
+def gap(last_id, missed_from_seq, reason=catalog.GAP_EVICTED):
     payload = {"id": "", "seq": 0, "type": "events.gap", "time": "2026-10-10T12:00:00.000Z",
-               "v": 1, "data": {"missed_from_seq": missed_from_seq}}
+               "v": 1, "data": {"missed_from_seq": missed_from_seq, "reason": reason}}
     return SseEvent("events.gap", json.dumps(payload), last_id)
 
 
@@ -61,3 +65,16 @@ def test_the_same_gap_on_a_reconnect_is_announced_once(caplog):
     assert [item["meta"].get("origin") for item in delivered] == [
         bridge.ORIGIN_OPENWHISPER, "dictated", bridge.ORIGIN_OPENWHISPER,
     ]
+
+
+@pytest.mark.parametrize("reason", [catalog.GAP_RESTARTED, catalog.GAP_SLOW])
+def test_a_gap_the_replay_fills_is_not_announced(caplog, reason):
+    events, delivered = stream()
+    caplog.set_level(logging.INFO, logger="openwhisper.channel")
+    events._handle(message(4, "before"))
+    # The app restarted (it replays all it sent since), or the stream fell
+    # behind (the reconnect replays the rest): no message is lost.
+    events._handle(gap("4", 5, reason))
+    events._handle(message(9, "after"))
+    assert [item["content"] for item in delivered] == ["before", "after"]
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]

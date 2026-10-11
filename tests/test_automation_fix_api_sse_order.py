@@ -129,25 +129,22 @@ def test_live_events_after_the_replay_still_arrive_in_order(bus):
     assert [int(message[0]) for message in sent] == [first.seq, *(e.seq for e in newer)]
 
 
-def simulate_restart(bus, events_before=6):
-    """A new app session whose numbering starts past every old position.
-
-    The process-wide bus starts each session at a base above the last one's
-    numbers; here a bus that has already numbered and forgotten
-    ``events_before`` events stands in for it.
-    """
-    for n in range(events_before):
-        bus.publish(catalog.RECORDING_CANCELED, {"job_id": f"old{n}"})
-    bus.clear()
-    return [bus.publish(catalog.RECORDING_STARTED, {"job_id": f"new{n}"}) for n in range(2)]
+@pytest.fixture
+def restarted():
+    """A new app session: the process-wide bus numbers past every old position."""
+    fresh = events.EventBus(seq_base=100)
+    previous = events.set_bus(fresh)
+    yield fresh
+    events.set_bus(previous)
+    fresh.close()
 
 
-def test_a_position_from_a_previous_session_gets_a_gap_then_everything(bus):
-    new_session = simulate_restart(bus)
+def test_a_position_from_a_previous_session_gets_a_gap_then_everything(restarted):
+    new_session = [restarted.publish(catalog.RECORDING_STARTED, {"job_id": f"new{n}"}) for n in range(2)]
     sent = run_stream(3, after_subscribe=lambda: None)
     gap, *replayed = sent
     assert gap[0] is None and gap[1] == catalog.EVENTS_GAP
-    assert gap[2]["data"] == {"missed_from_seq": 4}
+    assert gap[2]["data"] == {"missed_from_seq": 4, "reason": catalog.GAP_RESTARTED}
     assert [message[0] for message in replayed] == [str(e.seq) for e in new_session]
 
 

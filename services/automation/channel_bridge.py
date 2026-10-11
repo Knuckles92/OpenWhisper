@@ -41,6 +41,7 @@ from services.agent_mcp.setup import CHANNEL_SERVER_NAME
 from services.automation.catalog import (
     CHANNEL_MESSAGE,
     EVENTS_GAP,
+    GAP_EVICTED,
     ORIGIN_DICTATED,
     ORIGIN_PROGRAM,
 )
@@ -714,14 +715,28 @@ class EventStream:
     def _announce_gap(self, event: SseEvent) -> None:
         """Tell the log and Claude that messages may have been missed, once per resume point.
 
-        ``events.gap`` has no ``id:`` line, so the resume point stays put; until
-        a new message moves it, every reconnect brings the same gap again.
+        Only messages the app no longer holds can be lost: after an app
+        restart every message the new run sent is replayed, and a stream that
+        fell behind replays the rest when it reconnects. ``events.gap`` has no
+        ``id:`` line, so the resume point stays put; until a new message moves
+        it, every reconnect brings the same gap again.
         """
-        if event.last_id == self._gap_announced_at:
+        if _gap_reason(event) != GAP_EVICTED or event.last_id == self._gap_announced_at:
             return
         self._gap_announced_at = event.last_id
         logger.warning("Some messages may have been missed while disconnected from OpenWhisper.")
         self._deliver({"content": GAP_NOTICE, "meta": {"origin": ORIGIN_OPENWHISPER}})
+
+
+def _gap_reason(event: SseEvent) -> str:
+    """An ``events.gap`` event's ``data.reason``; "" when it has none."""
+    try:
+        payload = json.loads(event.data)
+    except ValueError:
+        return ""
+    data = payload.get("data") if isinstance(payload, dict) else None
+    reason = data.get("reason") if isinstance(data, dict) else None
+    return reason if isinstance(reason, str) else ""
 
 
 # -- the MCP server -----------------------------------------------------------
