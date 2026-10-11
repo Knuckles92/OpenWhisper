@@ -195,6 +195,17 @@ def test_open_uri_uses_open_or_xdg_open_off_windows(monkeypatch):
     assert seen == [["open" if sys.platform == "darwin" else "xdg-open", "https://example.com/"]]
 
 
+def test_a_terminal_without_an_env_gets_the_users_without_openwhispers_keys(
+        monkeypatch, dotenv_key, tmp_path):
+    seen = []
+    for name in ("_windows_terminal", "_linux_terminal"):
+        monkeypatch.setattr(launch, name, lambda args, cwd, env: seen.append(env))
+    monkeypatch.setattr(launch, "_macos_terminal", lambda args, cwd: seen.append(None))
+    launch.open_in_terminal(["/bin/agent", "hi"], cwd=str(tmp_path))
+    if sys.platform != "darwin":
+        assert _clean(seen[0])
+
+
 def test_xdg_mime_runs_without_openwhispers_keys(monkeypatch, dotenv_key):
     seen = []
     monkeypatch.setattr(launch.shutil, "which", lambda name: "/usr/bin/xdg-mime")

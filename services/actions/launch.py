@@ -227,7 +227,8 @@ def open_in_terminal(argv: Sequence[str], *, cwd: str = "",
     ``.exe`` directly in a new console; macOS and Linux run a one-shot
     script whose arguments are all single-quoted, so the terminal's own
     command line holds only the script's path (terminals re-parse ``-e``
-    arguments). ``env`` applies where the terminal is our child (Windows,
+    arguments). ``env`` (default: the user's environment without
+    OpenWhisper's keys) applies where the terminal is our child (Windows,
     Linux); macOS Terminal uses the user's own login environment.
 
     Raises:
@@ -241,6 +242,7 @@ def open_in_terminal(argv: Sequence[str], *, cwd: str = "",
     workdir = cwd or os.path.expanduser("~")
     if not os.path.isdir(workdir):
         raise LaunchError("The working folder doesn't exist.")
+    env = dict(env) if env is not None else _child_env()
     if sys.platform == "win32":
         _windows_terminal(args, workdir, env)
     elif sys.platform == "darwin":
