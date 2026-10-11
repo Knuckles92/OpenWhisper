@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextvars
 import hashlib
 import heapq
 import hmac
@@ -741,10 +742,39 @@ def _is_tls_failure(exc: BaseException) -> bool:
     return False
 
 
+#: Set while this module makes a request, so httpx's per-request log lines,
+#: which carry the callback URL and its query, are dropped for it.
+_quiet = contextvars.ContextVar("openwhisper_mcp_events_request", default=False)
+#: httpx logs every request's URL at INFO; httpcore logs hosts at DEBUG.
+_REQUEST_LOGGERS = ("httpx", "httpcore.connection", "httpcore.http11",
+                    "httpcore.http2", "httpcore.proxy", "httpcore.socks")
+
+
+class _QuietRequests(logging.Filter):
+    """Drops a request log record made by MCP Events; other requests keep theirs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not _quiet.get()
+
+
+_quiet_installed = False
+
+
+def _install_quiet_requests() -> None:
+    global _quiet_installed
+    with _state_lock:
+        if _quiet_installed:
+            return
+        for name in _REQUEST_LOGGERS:
+            logging.getLogger(name).addFilter(_QuietRequests())
+        _quiet_installed = True
+
+
 def _new_client(timeout_s: float = REQUEST_TIMEOUT_S):
     """An HTTP client that never follows redirects and ignores proxy variables."""
     import httpx
 
+    _install_quiet_requests()
     return httpx.Client(timeout=timeout_s, follow_redirects=False, trust_env=False)
 
 
@@ -759,6 +789,7 @@ def _post(url: str, body: bytes, headers: Mapping[str, str], timeout_s: float, *
     import httpx
 
     owned = client is None
+    quiet = _quiet.set(True)
     try:
         if owned:
             client = _new_client(timeout_s)
@@ -783,6 +814,7 @@ def _post(url: str, body: bytes, headers: Mapping[str, str], timeout_s: float, *
     finally:
         if owned and client is not None:
             client.close()
+        _quiet.reset(quiet)
 
 
 def _signed_headers(keys: list[str], msg_id: str, body: bytes, sub_id: str) -> dict[str, str]:
