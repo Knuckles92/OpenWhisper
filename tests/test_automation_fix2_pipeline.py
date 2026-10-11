@@ -1,11 +1,14 @@
 """Review round 2 for the transcription runtime: cancel, previews and the job slot."""
 
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
 from PyQt6.QtTest import QTest
 
-from services.dictation_pipeline import DictationJob
+from services.automation.control import ControlError
+from services.dictation_pipeline import DictationJob, JobMode
 from services.runtime import transcription
 from tests import test_automation_foundation_pipeline as foundation
 
@@ -126,3 +129,50 @@ def test_previews_are_live_only(h, recording):
     h.runtime.publish_preview(job, "hello", False)
     _events(h, "transcription.preview")
     assert [e.type for e in h.bus.recent()] == ["recording.started"]
+
+
+# -- finding 10: a rewrite never waits on a recording that is starting ---------------
+
+
+def _hold_capture_lock(h, seconds):
+    """A record start on the hotkey thread, holding the capture lock while
+    the audio device opens; returns the thread once it holds it."""
+    holding = threading.Event()
+
+    def start():
+        with h.runtime._capture_lock:
+            holding.set()
+            time.sleep(seconds)
+
+    starter = threading.Thread(target=start, daemon=True)
+    starter.start()
+    assert holding.wait(5)
+    return starter
+
+
+def test_an_api_run_is_refused_at_once_while_a_recording_starts(h):
+    starter = _hold_capture_lock(h, 1.0)
+    began = time.monotonic()
+    with pytest.raises(ControlError) as busy:
+        h.runtime.run_action_text("a1", "hello", source="api")
+    waited = time.monotonic() - began
+    starter.join(5)
+
+    assert busy.value.code == "busy"
+    assert waited < 0.5
+    assert not h.runtime.has_active_job
+
+
+def test_a_transform_is_refused_at_once_while_a_recording_starts(h):
+    starter = _hold_capture_lock(h, 1.0)
+    began = time.monotonic()
+    began_job = h.runtime.begin_rewrite_job(
+        DictationJob(mode=JobMode.TRANSFORM), source_name="Transform · Polish")
+    waited = time.monotonic() - began
+    starter.join(5)
+
+    assert began_job is False and waited < 0.5
+    assert h.ui.notices[-1] == "A transcription is already in progress — wait before rewriting text"
+    # Once the start is over, a rewrite gets the slot as before.
+    assert h.runtime.begin_rewrite_job(
+        DictationJob(mode=JobMode.TRANSFORM), source_name="Transform · Polish")

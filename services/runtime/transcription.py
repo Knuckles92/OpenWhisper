@@ -2007,8 +2007,9 @@ class TranscriptionRuntime:
     def begin_rewrite_job(self, job: dictation_pipeline.DictationJob, *, source_name: str) -> bool:
         """Claim the slot for a rewrite of selected text; Qt thread.
 
-        Refused while recording or while another job runs. The caller then
-        either submits the rewrite or abandons it, which frees the slot.
+        Refused while recording, while a recording starts, stops or is
+        canceled, or while another job runs. The caller then either submits
+        the rewrite or abandons it, which frees the slot.
 
         Args:
             job: A command or transform DictationJob carrying the selection.
@@ -2017,8 +2018,15 @@ class TranscriptionRuntime:
         # Under the capture lock, like a start, stop or cancel: a recording
         # being stopped has stopped its stream before it claims the slot,
         # and a rewrite (an action run over the API) must not take it then.
-        with self._capture_lock:
+        # Never waited for: a start holds it while the audio device opens,
+        # seconds for Bluetooth, and the Qt thread must not stall on that.
+        if not self._capture_lock.acquire(blocking=False):
+            self._notify(self._report_busy("rewriting text"))
+            return False
+        try:
             return self._begin_rewrite_job(job, source_name=source_name)
+        finally:
+            self._capture_lock.release()
 
     def _begin_rewrite_job(self, job, *, source_name: str) -> bool:
         # Rewrites run from other apps, so a refusal also shows by the pointer.

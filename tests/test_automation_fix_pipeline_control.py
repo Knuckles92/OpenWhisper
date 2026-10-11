@@ -220,7 +220,8 @@ def test_a_program_run_cannot_take_the_slot_from_a_recording_being_stopped(h):
     stopper.join(2)
     runner.join(2)
 
-    assert not finished_early
+    # Refused at once (the stop holds the capture lock), never waiting for it.
+    assert finished_early
     assert outcome == ["busy"]
     assert [fn.__name__ for fn, _args in h.submitted] == ["finish_recording_job"]
 
