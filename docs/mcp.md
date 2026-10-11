@@ -108,10 +108,13 @@ of an incorrect Running status.
 History retrieval tools remain read-only. They reuse the [History API](agent-api.md), including
 bounded cursor pagination, literal search, date filters, sanitized response
 schemas, and exclusion of paired-computer records unless `include_remote=true`.
-No tool deletes history, edits transcript text, or exposes audio files, and
-running actions, recording and notices each need their own switch in
-**Settings → API & MCP** (all off by default; see
-[Actions, live events and hooks](automation.md)). Any authorized
+No tool deletes history, edits transcript text, or exposes audio files.
+`recent_events` follows **Follow live events**, which is on by default like
+reading history: it returns recent dictations, actions and meeting lines.
+Running actions and showing notices need **Run actions**, recording needs
+**Start recordings**, and running an Agent hotkey or Claude Code session
+action also needs **Send words to my coding agents**; all three are off by
+default (see [Actions, live events and hooks](automation.md#live-api)). Any authorized
 client can opt into remote records already saved in this database.
 
 ## Query paired clients directly
@@ -153,7 +156,7 @@ filters, and page size for ten minutes; restart the query after they expire.
 
 ## Optional changes
 
-All new permissions are **off by default**. Configure them in Settings → API & MCP,
+These permissions are **off by default**. Configure them in Settings → API & MCP,
 even while the server is off. The server checks the saved permissions on every
 call, so changing them does not require restarting or reconnecting. Revoking a
 permission blocks subsequent calls; a change already in progress may finish.

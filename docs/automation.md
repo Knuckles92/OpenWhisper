@@ -30,13 +30,13 @@ recording to stop.
 
 | Kind | What it does |
 | --- | --- |
-| Open a link | Opens a link with your words in it. Presets: **Ask Claude** (`claude://claude.ai/new?q={text}`, the Claude desktop app), **ChatGPT app** (`codex://new?prompt={text}`), **ChatGPT on the web** (`https://chatgpt.com/?q={text}`, not documented by OpenAI, so it may stop working). `{text}` is replaced by your words, percent-encoded. Links only fill in the message; you press send. |
-| Agent | Hands your words to Claude Code, Codex or OpenCode installed on this computer. **Open a session** starts a visible session with your words ready (the agent's app when it is set up, else a new terminal). **Quick answer** asks the agent with no tools or files and shows the answer, in the Scratchpad by default. |
+| Open a link | Opens a link with your words in it. Presets: **Ask Claude** (`claude://claude.ai/new?q={text}`, the Claude desktop app), **ChatGPT app** (`codex://new?prompt={text}`), **ChatGPT on the web** (`https://chatgpt.com/?q={text}`, not documented by OpenAI, so it may stop working). `{text}` is replaced by your words, percent-encoded. These apps only fill in the message; you press send. |
+| Agent | Hands your words to Claude Code, Codex or OpenCode installed on this computer. **Open a session** starts a visible session with your words: the agent's app fills them in for you to send, while a terminal session starts working on them right away. **Quick answer** asks the agent with no tools or files and shows the answer, in the Scratchpad by default. |
 | Tell my Claude Code session | Sends your words into a running Claude Code session that has the [OpenWhisper channel](#claude-code-channel). |
 | Webhook | POSTs your words to a web address, signed (see [Verifying signatures](#verifying-signatures)). The reply's `"text"`, if any, can go to an output. |
 | Run a program | Runs a program with your words on its standard input. Its output can go to an output. |
 | Copy only | Copies your words without pasting. |
-| Send to my scripts | Does nothing itself: programs following the [live events](#live-api) or a [webhook](#webhooks) act on `action.ran`. |
+| Send to my scripts | Does nothing itself: programs following the [live events](#live-api), a [webhook](#webhooks) or a [program hook](#programs) act on the `action.ran` event, which carries your words in `text` for this kind. If nothing is listening, your words are copied instead. |
 
 **How the words are prepared** for an action: as you said them (**Raw**: the
 dictionary and snippets apply, no AI), **Cleaned up** (your normal AI
@@ -77,7 +77,7 @@ own `.env`, and is stopped with everything it started after its time limit.
 
 ## Route by voice
 
-Turn on **Spoken routing** on the Actions page, then either:
+Turn on **Route by voice** on the Actions page, then either:
 
 - set the **Route by voice** shortcut (Settings → Hotkeys): record, and your
   words go to the action they name ("ask Claude what's the capital of Peru",
@@ -190,13 +190,14 @@ the read-only [History API](agent-api.md), not these routes.
 | Run actions | off | running actions, showing notices |
 | Start recordings | off | starting, stopping and canceling recordings |
 | Change dictated text | off | text filters registered over the API |
+| Send words to my coding agents | off | with Run actions (or Start recordings), running an Agent hotkey or Claude Code session action with the program's own words |
 
 | Route | Permission | Result |
 | --- | --- | --- |
 | `GET /v1/live/state` | token | `recording`, `busy`, `meeting`, `mode`, `action_id`, `job_id`, `version`, `permissions`, `listeners` |
 | `GET /v1/events?types=a,b&since=<seq>` | live events | Server-Sent Events, below |
 | `GET /v1/actions` | token | `{"actions": [{id, name, kind, description, spoken_names, hotkey, shaping, enabled}]}` (never links, paths or folders) |
-| `POST /v1/actions/{id}/run` `{"text": "…"}` | run actions | 202 `{"job_id"}`: the words take a dictation's path without recording |
+| `POST /v1/actions/{id}/run` `{"text": "…"}` | run actions (+ coding agents for agent and channel actions) | 202 `{"job_id"}`: the words take a dictation's path without recording; 409 `busy` while too many actions are still running |
 | `POST /v1/recording/start` `{"action_id"?}` | start recordings | 202 `{"job_id"}` |
 | `POST /v1/recording/stop`, `/cancel` | start recordings | 202 `{}` |
 | `POST /v1/filters` `{"url", "stage", "timeout_ms"?}` | change text | 201 lease `{id, url, stage, timeout_ms, modes, expires_at, ttl_s}` |
@@ -237,8 +238,14 @@ with httpx.stream("GET", "http://127.0.0.1:8767/v1/events?types=transcription.co
     for line in response.iter_lines():
         if line.startswith("data: "):
             event = json.loads(line[6:])
+            if event["type"] == "events.gap":
+                continue  # some events were missed; fetch history to catch up
             print(event["data"]["text"])
 ```
+
+`events.gap` can arrive whatever `types` asks for. `seq` keeps growing across
+app restarts, so a position from before a restart reads as a gap and the
+stream replays what this session still holds.
 
 ## Events
 
@@ -283,6 +290,10 @@ this computer only. Subscriptions expire unless the agent refreshes them, and
 **Clear** on the API & MCP page removes them all. Agents in the cloud can only
 subscribe if they can reach this computer, which OpenWhisper never sets up.
 
+With MCP Events on, a connected agent chooses the web address its events go
+to, and that address receives what the events carry, including the words you
+dictate. Turn it on only for agents you trust with your dictation.
+
 ## Claude Code channel
 
 A [channel](https://code.claude.com/docs/en/channels) lets OpenWhisper send
@@ -301,8 +312,11 @@ preview).
    confirm the prompts.
 4. Add an action of kind **Tell my Claude Code session** and give it a
    shortcut. Your words arrive in the session as a
-   `<channel source="openwhisper" …>` message; Claude can answer with its
-   `reply` tool.
+   `<channel source="openwhisper" origin="dictated" …>` message; Claude can
+   answer with its `reply` tool. A program can send words there too, through
+   the live API or MCP, only if you also allow **Send words to my coding
+   agents**; those arrive with `origin="program"`, so Claude knows they aren't
+   your own request.
 
 The channel reconnects by itself when OpenWhisper restarts. It needs a
 claude.ai login or a Console API key, doesn't work with `claude -p`, and
@@ -312,16 +326,23 @@ Team or Enterprise organisations must allow channels.
 
 - Everything listens on `127.0.0.1` (plus your Tailscale address only if you
   turned that on for MCP), behind the access token.
-- Running actions, starting recordings and changing dictated text are each
-  off until you allow them, and are checked on every request.
+- Running actions, starting recordings, changing dictated text and sending
+  words to your coding agents are each off until you allow them, and are
+  checked on every request. Following live events is on, the same trust as
+  reading history.
+- With MCP Events on, a connected agent chooses where its events are sent;
+  see [MCP](#mcp).
+- Deleting a dictation, clearing history or deleting a meeting also clears the
+  events held for replay.
 - Programs, webhooks, saved filters and actions are created only in Settings.
-  The API and agents can list and run actions, but never add a program,
-  change an address or turn on a permission.
-- Dictated words reach programs on standard input, links percent-encoded, and
-  terminals as a single argument, never through a shell.
+  The API and agents can list and run actions, but never add a program or
+  webhook, change an action's address or turn on a permission.
+- Dictated words reach programs on standard input, links percent-encoded,
+  and terminals as a single, quoted argument, never through a shell. Events
+  never carry the text you had selected for Command Mode or a transform.
 - Restoring a backup turns every webhook, program, filter, and webhook,
-  program and agent action off, along with the three action permissions and
-  MCP Events. Secrets live in your system's credential store, never in
+  program and agent action off, along with every permission except following
+  live events, and MCP Events. Secrets live in your system's credential store, never in
   backups.
-- Spoken routing sends words to TypeSafe or OpenRouter only as described in
+- Route by voice sends words to TypeSafe or OpenRouter only as described in
   [Route by voice](#route-by-voice).
