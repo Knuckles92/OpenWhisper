@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import ntpath
 import os
 import re
 import shlex
@@ -214,7 +215,7 @@ def _windows_association(scheme: str) -> Tuple[Optional[bool], str, str]:
     found, program = _assoc_query(scheme, _ASSOCSTR_EXECUTABLE)
     # The lookup checks the program: one an uninstalled app left behind opens nothing.
     return (found != _CO_E_APPNOTFOUND, command,
-            program if found == _S_OK and os.path.isabs(program) else "")
+            program if found == _S_OK and ntpath.isabs(program) else "")
 
 
 def _windows_handler(scheme: str) -> Optional[bool]:
