@@ -1193,9 +1193,9 @@ def _enabled(saved: Mapping[str, Any]) -> bool:
 
 
 def _delivery_allowed(saved: Mapping[str, Any], subscription: EventSubscription) -> bool:
-    """Rechecked before every try: MCP, MCP Events and live events must all be
-    on, and a Tailscale peer's subscription needs Tailscale access on too, so it
-    never outlives the access that made it."""
+    """Checked when an event is queued and again before every try: MCP, MCP
+    Events and live events must all be on, and a Tailscale peer's subscription
+    needs Tailscale access on too, so it never outlives the access that made it."""
     from services.settings import SettingsKey
 
     return (
@@ -1230,7 +1230,12 @@ def _event_body(event: Any) -> bytes:
 
 
 def _on_event(event: Any) -> None:
-    """Bus thread: only match and enqueue."""
+    """Bus thread: only match and enqueue.
+
+    Who gets the event is decided here, as it is handed out: one published
+    while a subscription's access was off never goes to it, even when access
+    returns before a worker would send it.
+    """
     if event.type not in PAYLOAD_SCHEMAS:
         return
     registry = _registry()
@@ -1240,6 +1245,10 @@ def _on_event(event: Any) -> None:
     with _state_lock:
         deliverer = _deliverer
     if deliverer is None:
+        return
+    saved = _load_settings()
+    targets = [s for s in targets if _delivery_allowed(saved, s)]
+    if not targets:
         return
     body = _event_body(event)
     for subscription in targets:

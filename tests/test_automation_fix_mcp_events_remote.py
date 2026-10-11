@@ -8,6 +8,7 @@ its local network (by address or by a name that resolves there).
 
 import json
 import socket
+import threading
 import time
 from pathlib import Path
 
@@ -150,26 +151,117 @@ def peer_subscription(clients, receiver, monkeypatch, secret):
     return granted
 
 
+def handed_out(bus):
+    """Wait until the bus has handed every event published so far to its subscribers.
+
+    One thread hands events out in order, so once a later marker arrives,
+    MCP Events has seen (and queued or dropped) everything before it.
+    """
+    arrived = threading.Event()
+    marker = bus.subscribe(lambda event: arrived.set(), types=["test.marker"])
+    bus.publish("test.marker", {})
+    assert arrived.wait(5)
+    marker.close()
+
+
+def saved(n):
+    return {"job_id": f"j{n}", "record_id": str(n), "kind": "dictation"}
+
+
 def test_a_peers_subscription_is_delivered_only_while_tailscale_access_is_on(
     clients, receiver, settings, bus, monkeypatch
 ):
     secret = signing.new_secret()
     granted = peer_subscription(clients, receiver, monkeypatch, secret)
-    saved = json.loads(Path(config.MCP_EVENT_SUBSCRIPTIONS_FILE).read_text(encoding="utf-8"))
-    assert [record["origin"] for record in saved["subscriptions"]] == ["tailscale"]
+    records = json.loads(Path(config.MCP_EVENT_SUBSCRIPTIONS_FILE).read_text(encoding="utf-8"))
+    assert [record["origin"] for record in records["subscriptions"]] == ["tailscale"]
     assert granted["deliveryStatus"]["active"] is True
 
-    first = bus.publish(catalog.HISTORY_SAVED, {"job_id": "j1", "record_id": "1", "kind": "dictation"})
+    first = bus.publish(catalog.HISTORY_SAVED, saved(1))
     [(_, headers, body, payload)] = receiver.wait_for_deliveries(1)
     assert payload["eventId"] == first.id and signing.verify(secret, headers, body)
 
     # The user turned Tailscale access off: the peer's subscription goes quiet.
     settings.values[SettingsKey.MCP_TAILSCALE_ENABLED] = False
-    bus.publish(catalog.HISTORY_SAVED, {"job_id": "j2", "record_id": "2", "kind": "dictation"})
+    bus.publish(catalog.HISTORY_SAVED, saved(2))
+    handed_out(bus)
     settings.values[SettingsKey.MCP_TAILSCALE_ENABLED] = True
-    third = bus.publish(catalog.HISTORY_SAVED, {"job_id": "j3", "record_id": "3", "kind": "dictation"})
+    third = bus.publish(catalog.HISTORY_SAVED, saved(3))
     deliveries = receiver.wait_for_deliveries(2)
     assert [d[3]["eventId"] for d in deliveries] == [first.id, third.id]
+
+
+class HeldSends:
+    """Counts queued deliveries; workers wait for ``release()`` before each try."""
+
+    def __init__(self, deliver, push):
+        self._deliver = deliver
+        self._push = push
+        self._gate = threading.Event()
+        self._cond = threading.Condition()
+        self.queued = 0
+        self.done = 0
+
+    def push(self, deliverer, *args, **kwargs):
+        accepted = self._push(deliverer, *args, **kwargs)
+        with self._cond:
+            self.queued += bool(accepted)
+        return accepted
+
+    def deliver(self, job, client=None):
+        try:
+            assert self._gate.wait(10)
+            return self._deliver(job, client)
+        finally:
+            with self._cond:
+                self.done += 1
+                self._cond.notify_all()
+
+    def release(self):
+        """Let every try go, and wait until each one queued so far has finished."""
+        self._gate.set()
+        with self._cond:
+            queued = self.queued
+            assert self._cond.wait_for(lambda: self.done >= queued, 10)
+
+
+@pytest.fixture
+def held_sends(settings, monkeypatch):
+    held = HeldSends(events_ext._deliver, events_ext._Deliverer.push)
+    monkeypatch.setattr(events_ext, "_deliver", held.deliver)
+    monkeypatch.setattr(events_ext._Deliverer, "push", lambda self, *a, **k: held.push(self, *a, **k))
+    # A fresh deliverer, so its workers call the held version.
+    events_ext.stop_delivery()
+    events_ext.start_delivery(settings=settings)
+    return held
+
+
+def test_an_event_from_while_access_was_off_stays_unsent_when_access_returns_first(
+    clients, receiver, settings, bus, monkeypatch, held_sends
+):
+    peer_subscription(clients, receiver, monkeypatch, signing.new_secret())
+    settings.values[SettingsKey.MCP_TAILSCALE_ENABLED] = False
+    bus.publish(catalog.HISTORY_SAVED, saved(1))
+    handed_out(bus)
+    # Access is back before any worker got to send.
+    settings.values[SettingsKey.MCP_TAILSCALE_ENABLED] = True
+    second = bus.publish(catalog.HISTORY_SAVED, saved(2))
+    handed_out(bus)
+    held_sends.release()
+    assert held_sends.queued == 1
+    assert [d[3]["eventId"] for d in receiver.wait_for_deliveries(1)] == [second.id]
+
+
+def test_access_turned_off_before_the_send_still_stops_it(
+    clients, receiver, settings, bus, monkeypatch, held_sends
+):
+    peer_subscription(clients, receiver, monkeypatch, signing.new_secret())
+    bus.publish(catalog.HISTORY_SAVED, saved(1))
+    handed_out(bus)
+    settings.values[SettingsKey.MCP_TAILSCALE_ENABLED] = False
+    held_sends.release()
+    assert held_sends.queued == 1
+    assert receiver.deliveries() == []
 
 
 def test_a_local_subscription_does_not_need_tailscale_access(clients, receiver, settings, bus):
