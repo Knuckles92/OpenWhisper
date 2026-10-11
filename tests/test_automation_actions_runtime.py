@@ -310,11 +310,11 @@ def test_webhook_posts_a_signed_payload_with_a_secret_kept_in_the_credential_sto
                  {"url": "http://127.0.0.1:8123/hook"}))
     posts = []
 
-    def post_signed(url, payload, secret, *, timeout_s=5.0):
+    def post_signed_reply(url, payload, secret, *, timeout_s=5.0):
         posts.append((url, payload, secret, timeout_s))
-        return DeliveryRecord("", "", "", True, 204, 3)
+        return DeliveryRecord("", "", "", True, 204, 3), b""
 
-    monkeypatch.setattr(webhooks, "post_signed", post_signed)
+    monkeypatch.setattr(webhooks, "post_signed_reply", post_signed_reply)
     job = _job("w1", language="de")
 
     h.rt.deliver(job, "Licht an", raw_text="licht an", html="")
@@ -379,8 +379,8 @@ def test_a_webhook_reply_without_text_is_not_routed(h, monkeypatch):
 
 def test_a_failed_webhook_copies_the_words(h, monkeypatch):
     h.add(Action("w1", "Translate", ActionKind.WEBHOOK, {"url": "http://127.0.0.1:9/hook"}))
-    monkeypatch.setattr(webhooks, "post_signed", lambda *a, **k: DeliveryRecord(
-        "", "", "", False, 500, 3))
+    monkeypatch.setattr(webhooks, "post_signed_reply", lambda *a, **k: (DeliveryRecord(
+        "", "", "", False, 500, 3), None))
 
     h.rt.deliver(_job("w1"), "hello", raw_text=None, html="")
     ran = _finished(h)
@@ -396,7 +396,8 @@ def test_a_webhook_whose_secret_cannot_be_kept_is_not_sent(h, monkeypatch):
         raise RuntimeError("locked")
 
     credentials.set_store(credentials.CredentialStore(backend_factory=locked_backend))
-    monkeypatch.setattr(webhooks, "post_signed", lambda *a, **k: pytest.fail("sent unsigned"))
+    monkeypatch.setattr(webhooks, "post_signed_reply",
+                        lambda *a, **k: pytest.fail("sent unsigned"))
 
     h.rt.deliver(_job("w1"), "hello", raw_text=None, html="")
     ran = _finished(h)
@@ -757,3 +758,24 @@ def test_words_links_arguments_and_replies_are_never_logged(h, monkeypatch, capl
     for secret in ("my private words", "my%20private", "example.com", "secret-tool",
                    "--token-arg", "private-path", "private-reply", "private-answer"):
         assert secret not in caplog.text
+
+
+def test_a_program_action_never_sees_openwhisper_keys(h, monkeypatch):
+    from services import credentials
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-openwhisper-dotenv")
+    monkeypatch.setenv("OPENWHISPER_LLM_API_KEY", "internal")
+    monkeypatch.setenv("USER_OWN_VAR", "kept")
+    monkeypatch.setattr(credentials, "dotenv_injected_names", lambda: {"OPENAI_API_KEY"})
+    h.add(Action("p2", "Env", ActionKind.PROGRAM, {"program": "C:\tools\env.exe"}))
+    seen = []
+    monkeypatch.setattr(programs, "run_once",
+                        lambda argv, stdin, *, timeout_s, cwd="", env=None:
+                        seen.append(env) or (0, b"", ""))
+
+    h.rt.deliver(_job("p2"), "hi", raw_text=None, html="")
+    _finished(h)
+
+    env, = seen
+    assert "OPENAI_API_KEY" not in env and "OPENWHISPER_LLM_API_KEY" not in env
+    assert env["USER_OWN_VAR"] == "kept" and env["OPENWHISPER_ACTION_ID"] == "p2"

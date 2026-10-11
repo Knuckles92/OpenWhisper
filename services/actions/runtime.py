@@ -191,15 +191,10 @@ def delete_action_secret(action_id: str) -> None:
 
 
 def _post_webhook(url: str, payload: dict, secret: str):
-    """POST an action's payload; ``(DeliveryRecord, reply body or None)``.
-
-    The one place that reads a reply: ``post_signed`` reports the delivery
-    only, so no reply reaches an output until it is switched to a variant
-    that also returns the body.
-    """
+    """POST an action's payload; ``(DeliveryRecord, reply body or None)``."""
     from services.automation import webhooks
 
-    return webhooks.post_signed(url, payload, secret, timeout_s=WEBHOOK_TIMEOUT_S), None
+    return webhooks.post_signed_reply(url, payload, secret, timeout_s=WEBHOOK_TIMEOUT_S)
 
 
 def reply_text(body) -> Optional[str]:
@@ -229,6 +224,12 @@ def _webhook(url: str, payload: dict, action_id: str) -> ActionResult:
             return ActionResult(False, f"the address answered {record.status}")
         return ActionResult(False, "the address didn't answer")
     return ActionResult(True, "", reply_text(body))
+
+
+def _program_env(extra: dict) -> dict:
+    from services.automation import programs
+
+    return programs.child_env(extra)
 
 
 def _program(argv: list, stdin: bytes, timeout_s: float, env: dict) -> ActionResult:
@@ -406,12 +407,12 @@ class ActionRuntime:
                 _webhook, action.param("url") or "", self._webhook_payload(run), action.id))
         elif kind == ActionKind.PROGRAM:
             argv = [action.param("program") or "", *(action.param("args") or [])]
-            env = {
-                **os.environ,
+            # The user's environment minus OpenWhisper's own keys and tokens.
+            env = _program_env({
                 "OPENWHISPER_ACTION_ID": action.id,
                 "OPENWHISPER_ACTION_NAME": action.name,
                 "OPENWHISPER_JOB_ID": run.job.id,
-            }
+            })
             self._submit(run, partial(
                 _program, argv, run.text.encode("utf-8"), float(action.param("timeout_s")), env))
         elif kind == ActionKind.AGENT:
