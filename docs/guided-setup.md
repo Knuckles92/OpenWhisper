@@ -40,10 +40,11 @@ home; Change links use stable destination keys.
 
 ## Validation
 
-Run from this worktree with the existing Python environment:
+Run from the repository root with the project's Python environment active:
 
 ```powershell
-& 'D:/coding/whisper_local/.venv/Scripts/python.exe' -m pytest tests/test_guided_setup.py tests/test_bootstrap.py tests/test_setting_defaults.py tests/test_main_entrypoint.py -q --basetemp=.tmp/pytest-guided-final
+$env:QT_QPA_PLATFORM = 'offscreen'
+python -m pytest tests/test_guided_setup.py tests/test_bootstrap.py tests/test_setting_defaults.py tests/test_main_entrypoint.py -q
 ```
 
 Validation passed: 68 targeted tests, Ruff lint/format checks for the new
@@ -61,7 +62,9 @@ invitation. They use an isolated data root and empty audio/model inventories;
 the displayed provider needs a key. No live recording, external provider
 request, or model download is part of this validation.
 
-The existing hotkey/settings-binder suites did not finish in this sandbox;
-the focused setup tests exercise their relevant existing handlers with isolated
-inventories. This change remains in `codex/guided-setup` and is not merged or
-published.
+The combined branch passed 149 integration tests and 3,387 layout subtests,
+including the guided setup, bootstrap, defaults, entrypoint, unified settings,
+hotkey settings, and settings-binder suites. The original feature commit
+remains on `codex/guided-setup`.
+For laptop development with both the unified settings and guided setup, use
+`codex/settings-and-guided-setup`. It has not been merged into `main`.

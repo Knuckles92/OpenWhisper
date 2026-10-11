@@ -1,7 +1,9 @@
 # Unified settings
 
-Option 2 is implemented on `codex/settings-unified` in
-`D:/coding/whisper_local/.tmp/worktrees/settings-unified`.
+The settings redesign and optional guided setup are combined on
+`codex/settings-and-guided-setup` for continued development. The original
+feature commits also remain on `codex/settings-unified` and
+`codex/guided-setup`.
 
 Settings uses six categories: Dictation, Meetings, Personalize, Models,
 Connections, and App. Each category contains expandable sections with saved
@@ -31,23 +33,27 @@ Connections, and a narrow window at 130% font size. They use isolated test
 settings with catalog requests mocked. API-key copy reports configured
 credentials; no key material appears in the images.
 
-The optional first-run Audio → Text → Output setup is separate on
-`codex/guided-setup`, in the sibling `guided-setup` worktree. It uses stable
-settings routes and existing save handlers, so neither feature requires
-the retired Basic presentation. Integrate the two branches independently;
-neither worktree has been merged into the primary checkout.
+The optional first-run Audio → Text → Output setup is included in the same
+development branch. It uses stable settings routes and existing save
+handlers, so neither feature requires the retired Basic presentation.
+See [guided setup](../../guided-setup.md) for its implementation notes.
+The combined branch has not been merged into `main`.
 
 Live audio, external model requests, and downloads were not part of this
 UI validation.
 
 ## Validation
 
-The final regression run passed 2,350 tests and 3,387 layout subtests.
+The settings feature's regression run passed 2,350 tests and 3,387 layout subtests.
 It included every `test_settings*.py` and `test_personalize*.py` file plus
 API keys, hotkeys, MCP, TypeSafe settings messaging, and text-LLM tests.
 Ruff checks for undefined names, imports, and bugbear rules passed on changed
 Python files. `git diff --check` passed. All four Qt previews were inspected.
 
-Changes remain uncommitted and unmerged in the two designated worktrees.
-The primary checkout's existing diagnostic and audio-benchmark changes were
-preserved.
+After combining both features, 149 integration tests and 3,387 layout
+subtests passed, covering guided setup, bootstrap, defaults, the entrypoint,
+unified settings, save bindings, and hotkey settings.
+
+Both implementations are committed on the combined development branch.
+The primary checkout's existing diagnostic and audio-benchmark changes
+were preserved.
