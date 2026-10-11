@@ -14,7 +14,7 @@ def _controller(*, recording=False, busy=False):
     return SimpleNamespace(
         recorder=SimpleNamespace(is_recording=recording),
         transcription_runtime=SimpleNamespace(
-            has_active_job=busy, cancel=lambda: calls.append("cancel") or True),
+            cancelable=recording or busy, cancel=lambda: calls.append("cancel") or True),
         # The user's Cancel, which also reaches their running actions.
         cancel=lambda: calls.append("user_cancel"),
         calls=calls,

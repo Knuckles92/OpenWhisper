@@ -46,7 +46,7 @@ def test_cancel_during_post_roll_transcribes_nothing(tmp_path, monkeypatch):
     controller, runtime, _wav = _runtime(tmp_path, monkeypatch)
     assert runtime._claim_job()  # what stop_recording does before post-roll
 
-    runtime._cancel_recording()
+    runtime._cancel()  # the recorder is still capturing post-roll
     runtime.finish_recording_job()
 
     controller.recorder.save_recording.assert_not_called()
@@ -58,7 +58,7 @@ def test_cancel_during_post_roll_transcribes_nothing(tmp_path, monkeypatch):
 def test_cancel_before_any_stop_leaves_the_next_job_alone(tmp_path, monkeypatch):
     controller, runtime, _wav = _runtime(tmp_path, monkeypatch)
 
-    runtime._cancel_recording()  # an ordinary cancel mid-recording
+    runtime._cancel()  # an ordinary cancel mid-recording
     assert not runtime._cancel_requested.is_set()
 
     assert runtime._claim_job()

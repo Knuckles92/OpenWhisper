@@ -127,6 +127,10 @@ class TranscriptionRuntime:
         # The job the claimed slot is working on. The worker, delivery and
         # history read only this, copied to a local first.
         self._active_job: Optional[dictation_pipeline.DictationJob] = None
+        # The slot's result was delivered (or its failure reported): the
+        # slot is held only while history or the audio is saved, and a
+        # Cancel has nothing left to stop. Read and changed under _job_lock.
+        self._saving = False
         # Rich-text alternative for the transcript being delivered, set by
         # the worker before it emits transcription_completed.
         self._delivery_html = ""
@@ -155,9 +159,30 @@ class TranscriptionRuntime:
 
     @property
     def has_active_job(self) -> bool:
-        """Whether one recording result is queued, transcribing, or cleaning."""
+        """Whether the slot is held: a result is queued, transcribing,
+        cleaning, or being saved. Nothing else may start meanwhile."""
         with self._job_lock:
             return self._job_active
+
+    @property
+    def cancelable(self) -> bool:
+        """Whether a Cancel has something to stop: a recording, or a job
+        still working on its result (not one only being saved)."""
+        with self._job_lock:
+            working = self._job_active and not self._saving
+        return working or bool(self.controller.recorder.is_recording)
+
+    def _settle(self) -> bool:
+        """Mark the slot's outcome decided: from here a Cancel stops nothing.
+
+        Returns:
+            Whether a Cancel got there first. Read under the lock ``_cancel``
+            sets the job's cancel with, so a Cancel lands either before
+            (and is honored) or after (and reaches running actions instead).
+        """
+        with self._job_lock:
+            self._saving = True
+            return self._cancel_requested.is_set()
 
     def begin_shutdown(self) -> None:
         self._cancel_requested.set()
@@ -242,6 +267,7 @@ class TranscriptionRuntime:
             self._route_failed = False
             self._formatting_profile = None
             self._shaping_notice = ""
+            self._saving = False
             self._job_active = False
             self._deliver_to_clipboard = True
 
@@ -639,44 +665,46 @@ class TranscriptionRuntime:
     def cancel(self) -> bool:
         """Cancel an active recording or transcription, depending on state.
 
+        A job whose result was already delivered (or whose failure was
+        reported) only holds the slot while it is saved; it is not canceled.
+
         Returns:
-            False when there was neither a recording, a job nor a
-            transcription to cancel.
+            False when there was neither a recording, a job still working
+            nor a transcription to cancel.
         """
         with self._capture_lock:
             return self._cancel()
 
     def _cancel(self) -> bool:
-        logger.info(f"Cancel called. Recording: {self.controller.recorder.is_recording}")
-        self._cancel_started_at = time.monotonic() if (
-            self.controller.recorder.is_recording or self.has_active_job
-        ) else 0.0
+        recording = self.controller.recorder.is_recording
+        logger.info(f"Cancel called. Recording: {recording}")
+        with self._job_lock:
+            # Under the lock _settle reads it with: a job either sees this
+            # cancel before it delivers, or was already settled.
+            working = self._job_active and not self._saving
+            if working:
+                # A stop's post-roll, the worker, filters, routing and
+                # cleanup each look at it.
+                self._cancel_requested.set()
+            job = self._active_job if self._job_active else self._job
+        self._cancel_started_at = time.monotonic() if recording or working else 0.0
         if self._cancel_started_at:
-            job = self._job or self._active_job
             self._end_preview()
             publish_event(
                 event_catalog.RECORDING_CANCELED, event_catalog.recording_canceled(job)
             )
 
-        if self.controller.recorder.is_recording:
+        if recording:
             self._cancel_recording()
             return True
         if self.controller.current_backend and self.controller.current_backend.is_transcribing:
-            self._cancel_requested.set()
             self._cancel_transcription()
             return True
-        canceled = self.has_active_job
-        if canceled:
-            self._cancel_requested.set()
         self.controller.overlay_state_update.emit(OverlayState.CANCELING)
         self.controller.status_update.emit("Canceled")
-        return canceled
+        return working
 
     def _cancel_recording(self) -> None:
-        if self.has_active_job:
-            # Only a stop claims the job while the recorder still runs, so this
-            # is post-roll; finish_recording_job checks the flag before saving.
-            self._cancel_requested.set()
         self.controller.streaming_runtime.cancel_streaming_session()
         self._incremental.discard()
         self.controller.recording_state_changed.emit(False)
@@ -988,6 +1016,8 @@ class TranscriptionRuntime:
         self.controller.status_update.emit(message)
 
     def on_batch_complete(self, result: BatchResult) -> None:
+        # The files are transcribed; only saving them holds the slot.
+        self._settle()
         request = result.request
         ui = self.controller.ui_controller
         succeeded = [r for r in result.items if r.succeeded]
@@ -1596,7 +1626,9 @@ class TranscriptionRuntime:
             from services.diagnostics import record_metrics
             record_metrics(stop_to_result_s=time.monotonic() - self._stop_started_at)
             self._stop_started_at = 0.0
-        if self._deliver_to_clipboard and self._cancel_requested.is_set():
+        # From here the result is delivered and only saving holds the slot:
+        # a later Cancel reaches the actions it ran instead.
+        if self._settle() and self._deliver_to_clipboard:
             # The cancel arrived between the worker's emit and this slot.
             self.on_transcription_error("Transcription canceled")
             return
@@ -2128,6 +2160,8 @@ class TranscriptionRuntime:
     def on_transcription_error(self, error_message: str) -> None:
         self._stop_started_at = 0.0
         job = self._active_job
+        # Reported now; keeping its audio is all that holds the slot.
+        self._settle()
         with self._job_lock:
             refused, self._refused = self._refused, False
         if refused:

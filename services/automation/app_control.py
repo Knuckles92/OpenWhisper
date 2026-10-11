@@ -190,10 +190,12 @@ def _stop(controller) -> None:
 
 
 def _cancel(controller) -> None:
-    # Recordings and jobs only: the actions the user started are theirs to stop.
-    if not (controller.recorder.is_recording or controller.transcription_runtime.has_active_job):
+    # Recordings and jobs still working only: the actions the user started
+    # are theirs to stop, including those a delivered job (only being
+    # saved) handed its words to.
+    runtime = controller.transcription_runtime
+    if not runtime.cancelable or not runtime.cancel():
         raise ControlError(REFUSED, "Nothing is recording or transcribing.")
-    controller.transcription_runtime.cancel()
 
 
 def _notify(controller, text: str, title: str) -> None:

@@ -35,9 +35,16 @@ class FakeRuntime:
         self._job = None
         self._active_job = None
         self.has_active_job = False
+        # The slot's job was delivered and is only being saved.
+        self.saving = False
         self.refusal = ""
         self.delay_s = 0.0
         self.calls = []
+
+    @property
+    def cancelable(self):
+        working = self.has_active_job and not self.saving
+        return working or self._controller().recorder.is_recording
 
     def run_action_text(self, action_id, text, *, source):
         self.calls.append(("run", action_id, text, source, threading.current_thread()))
@@ -258,6 +265,14 @@ def test_stop_and_cancel_need_something_to_act_on(control, controller):
     # Only the recording or job: never the user's Cancel, which stops their actions.
     assert [name for name, _thread in controller.calls] == ["stop", "cancel", "cancel"]
     assert all(thread is threading.main_thread() for _name, thread in controller.calls)
+
+    # A job already delivered is only being saved: nothing is left to cancel,
+    # and the actions it ran are the user's.
+    controller.transcription_runtime.saving = True
+    result = in_worker(control.cancel)
+    assert (result["error"].code, result["error"].message) == (
+        "refused", "Nothing is recording or transcribing.")
+    assert len(controller.calls) == 3
 
 
 def test_notices_are_one_line(control, controller):
