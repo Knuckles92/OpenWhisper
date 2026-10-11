@@ -771,7 +771,7 @@ def test_a_program_action_never_sees_openwhisper_keys(h, monkeypatch, tmp_path):
     load_dotenv(monkeypatch, tmp_path, {"OPENAI_API_KEY": "sk-from-openwhisper-dotenv"})
     monkeypatch.setenv("OPENWHISPER_LLM_API_KEY", "internal")
     monkeypatch.setenv("USER_OWN_VAR", "kept")
-    h.add(Action("p2", "Env", ActionKind.PROGRAM, {"program": "C:\tools\env.exe"}))
+    h.add(Action("p2", "Env", ActionKind.PROGRAM, {"program": r"C:\tools\env.exe"}))
     seen = []
     monkeypatch.setattr(programs, "run_once",
                         lambda argv, stdin, *, timeout_s, cwd="", env=None, cancel=None:
