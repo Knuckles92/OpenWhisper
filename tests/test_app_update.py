@@ -385,7 +385,7 @@ class TestFetchLatestRelease:
 
 def _check_failure(monkeypatch, exc: Exception) -> str:
     """The message ``fetch_latest_release`` raises when opening fails with ``exc``."""
-    def _open(url, extra_headers=None):
+    def _open(url, extra_headers=None, **kwargs):
         raise exc
 
     monkeypatch.setattr(app_update, "_open", _open)
@@ -409,9 +409,16 @@ def _certificate_failure() -> urllib.error.URLError:
 
 class TestNetworkErrorCopy:
     def test_http_403_is_rate_limit(self, monkeypatch):
-        message = _check_failure(monkeypatch, _http_error(403, "Forbidden"))
+        error = _http_error(403, "Forbidden")
+        error.headers = {"X-RateLimit-Remaining": "0"}
+        message = _check_failure(monkeypatch, error)
         assert "rate-limited" in message.lower()
         assert RELEASES_PAGE_URL in message
+
+    def test_other_http_403_is_not_mislabeled_as_rate_limit(self, monkeypatch):
+        message = _check_failure(monkeypatch, _http_error(403, "Forbidden"))
+        assert "403" in message
+        assert "rate-limited" not in message.lower()
 
     def test_http_429_is_rate_limit(self, monkeypatch):
         message = _check_failure(monkeypatch, _http_error(429, "Too Many Requests"))

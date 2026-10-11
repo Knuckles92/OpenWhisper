@@ -79,13 +79,16 @@ def open_url(
     handlers: Sequence[urllib.request.BaseHandler] = (),
     user_agent: str = USER_AGENT,
     timeout: float = NETWORK_TIMEOUT_S,
+    method: str = "GET",
 ):
     """Open ``url`` over HTTPS verified by ``context``, plus any ``handlers``.
 
     ``urllib`` is used because it honors Windows proxy settings and
     enterprise trust roots.
     """
-    request = urllib.request.Request(url, headers={"User-Agent": user_agent})
+    request = urllib.request.Request(
+        url, headers={"User-Agent": user_agent}, method=method
+    )
     for key, value in (headers or {}).items():
         request.add_header(key, value)
     opener = urllib.request.build_opener(

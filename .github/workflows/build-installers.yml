@@ -81,7 +81,7 @@ jobs:
         shell: pwsh
         run: |
           . .\venv\Scripts\Activate.ps1
-          python -m pytest tests/test_app_update.py tests/test_app_update_apply.py tests/test_app_update_dialog.py tests/test_app_update_handoff.py tests/test_updater_helper.py tests/test_update_startup_gate.py tests/test_update_resilience.py tests/test_application_controller.py tests/test_bootstrap.py -q
+          python -m pytest tests/test_app_update.py tests/test_app_update_rate_limit.py tests/test_app_update_apply.py tests/test_app_update_dialog.py tests/test_app_update_handoff.py tests/test_updater_helper.py tests/test_update_startup_gate.py tests/test_update_resilience.py tests/test_application_controller.py tests/test_bootstrap.py -q
       - name: Build and verify
         shell: pwsh
         run: .\scripts\build_installer.ps1 -Clean

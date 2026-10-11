@@ -237,6 +237,8 @@ class SettingsKey:
     UPDATE_CHECK_ENABLED: Final[str] = "update_check_enabled"
     UPDATE_NOTIFY_ENABLED: Final[str] = "update_notify_enabled"
     UPDATE_LAST_CHECK_AT: Final[str] = "update_last_check_at"
+    UPDATE_LAST_FAILED_CHECK_AT: Final[str] = "update_last_failed_check_at"
+    UPDATE_API_RETRY_AT: Final[str] = "update_api_retry_at"
     UPDATE_SKIPPED_VERSION: Final[str] = "update_skipped_version"
     # Personalization (docs/design/personalize/design.md).
     # Knowing which app has focus is native, local and on by default.
