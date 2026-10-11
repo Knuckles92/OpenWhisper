@@ -191,7 +191,7 @@ class _Harness:
         self.link = link or _FakeLink()
         self.streams: list[_FakeStream] = []
 
-        def make_stream(server):
+        def make_stream():
             stream = _FakeStream()
             self.streams.append(stream)
             return stream
@@ -364,6 +364,17 @@ def test_channel_messages_are_notifications_on_their_own_line(harness):
         "method": "notifications/claude/channel",
         "params": {"content": "a\nb", "meta": {"job_id": "1"}},
     }
+
+
+def test_stepping_aside_for_an_update_closes_stdout_and_ends_the_process():
+    exits: list[int] = []
+    out = io.BytesIO()
+    server = ChannelServer(_Pipe(), out, _FakeLink(), exit_process=exits.append)
+    stream = server._default_stream()
+    assert stream._on_update is not None
+    stream._on_update()
+    assert exits == [0]
+    assert out.closed
 
 
 def test_writer_sends_ascii_json_and_survives_a_lone_surrogate():

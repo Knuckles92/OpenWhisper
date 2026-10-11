@@ -308,43 +308,39 @@ class AppLink:
         if title:
             body["title"] = title
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
-        for attempt in range(2):
-            try:
-                connection, target = self.connect(NOTIFY_TIMEOUT_S)
-            except LinkError as exc:
-                if exc.state == "unreachable":
-                    raise LinkError(
-                        exc.state,
-                        f"{exc.message} The reply wasn't shown; tell the user here instead.",
-                    ) from None
-                raise
-            try:
-                connection.request(
-                    "POST",
-                    target.base_path + NOTIFY_PATH,
-                    body=payload,
-                    headers=self.headers(self.token(), **{"Content-Type": "application/json"}),
-                )
-                response = connection.getresponse()
-                status, reply = response.status, response.read()
-            except socket.timeout:
-                raise LinkError(
-                    "timeout", "OpenWhisper didn't answer in time, so the reply may not have been shown."
-                ) from None
-            except (OSError, http.client.HTTPException):
-                raise LinkError(
-                    "unreachable",
-                    "The connection to OpenWhisper dropped, so the reply wasn't shown.",
-                ) from None
-            finally:
-                connection.close()
-            if 200 <= status < 300:
-                return
-            if status == 401 and attempt == 0 and not self._fixed_token:
-                self.forget_token()
-                continue
+        status, reply = self._post(NOTIFY_PATH, payload)
+        if status == 401 and not self._fixed_token:
+            self.forget_token()  # replaced since it was read; once more with the saved one
+            status, reply = self._post(NOTIFY_PATH, payload)
+        if not 200 <= status < 300:
             raise LinkError(f"http_{status}", _reply_refusal(status, reply))
-        raise LinkError("http_401", _reply_refusal(401, b""))
+
+    def _post(self, path: str, payload: bytes) -> tuple[int, bytes]:
+        try:
+            connection, target = self.connect(NOTIFY_TIMEOUT_S)
+        except LinkError as exc:
+            if exc.state == "unreachable":
+                raise LinkError(exc.state, f"{exc.message} The reply wasn't shown; tell the user here instead.") from None
+            raise
+        try:
+            connection.request(
+                "POST",
+                target.base_path + path,
+                body=payload,
+                headers=self.headers(self.token(), **{"Content-Type": "application/json"}),
+            )
+            response = connection.getresponse()
+            return response.status, response.read()
+        except socket.timeout:
+            raise LinkError(
+                "timeout", "OpenWhisper didn't answer in time, so the reply may not have been shown."
+            ) from None
+        except (OSError, http.client.HTTPException):
+            raise LinkError(
+                "unreachable", "The connection to OpenWhisper dropped, so the reply wasn't shown."
+            ) from None
+        finally:
+            connection.close()
 
 
 def _error_message(body: bytes) -> str:
@@ -374,7 +370,7 @@ def _stream_refusal(status: int, body: bytes) -> tuple[str, str]:
     if status == 200:
         return "unsupported", "OpenWhisper didn't answer with an event stream. Update OpenWhisper."
     if status == 401:
-        return "unauthorized", "OpenWhisper rejected the access token; reading it again."
+        return "unauthorized", "OpenWhisper rejected the access token; retrying."
     if status == 403:
         detail = _error_message(body) or "Allow live events in OpenWhisper Settings > API & MCP."
         return "forbidden", f"OpenWhisper refused the event stream. {detail}"
@@ -693,7 +689,7 @@ class ChannelServer:
         link: AppLink,
         *,
         version: str = "",
-        stream_factory: Optional[Callable[["ChannelServer"], EventStream]] = None,
+        stream_factory: Optional[Callable[[], EventStream]] = None,
         exit_process: Callable[[int], None] = os._exit,
     ) -> None:
         self._reader = reader
@@ -729,20 +725,20 @@ class ChannelServer:
         if stream is not None:
             stream.stop()
 
-    def _default_stream(self, server: "ChannelServer") -> EventStream:
+    def _default_stream(self) -> EventStream:
         return EventStream(self._link, self.send_channel_message, on_update=self._exit_for_update)
 
     def _start_stream(self) -> None:
         with self._stream_lock:
             if self._stream is None:
-                self._stream = self._stream_factory(self)
+                self._stream = self._stream_factory()
                 self._stream.start()
 
     def _exit_for_update(self) -> None:
-        # The main thread is blocked reading stdin, which no other thread can
-        # interrupt on Windows; the process ends here instead.
+        # The main thread is waiting on stdin, which no other thread can
+        # interrupt; the process ends here instead. Log records are already
+        # flushed one by one.
         self._out.close()
-        logging.shutdown()
         self._exit_process(0)
 
     # -- output
@@ -835,10 +831,11 @@ class ChannelServer:
             arguments = {}
         try:
             text, title = _reply_arguments(arguments)
-            self._link.notify(text, title)
         except ValueError as exc:
             self._result(request_id, _tool_result(str(exc), error=True))
             return
+        try:
+            self._link.notify(text, title)
         except LinkError as exc:
             logger.info("A reply wasn't shown (%s).", exc.state)
             self._result(request_id, _tool_result(exc.message, error=True))
