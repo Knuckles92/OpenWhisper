@@ -259,7 +259,7 @@ def test_an_empty_transcript_is_not_taken_for_a_filter_cancel(h, monkeypatch):
     _keeping_filter(monkeypatch)
     job = DictationJob(mode=JobMode.DICTATION)
     assert h.runtime._claim_job(job)
-    assert h.runtime._run_filters("before_cleanup", "   ", job, {}) == "   "
+    assert h.runtime._run_filters("before_cleanup", "   ", job, {}) == (job, "   ")
     assert not h.runtime._filter_canceled
 
 
@@ -267,14 +267,14 @@ def test_a_filter_that_empties_the_words_or_cancels_takes_delivery(h, monkeypatc
     _keeping_filter(monkeypatch, {"before_cleanup": "  "})
     job = DictationJob(mode=JobMode.DICTATION)
     assert h.runtime._claim_job(job)
-    assert h.runtime._run_filters("before_cleanup", "hello", job, {}) is None
+    assert h.runtime._run_filters("before_cleanup", "hello", job, {}) == (job, None)
     assert h.runtime._filter_canceled
 
     h.runtime._finish_job()
     monkeypatch.setattr(filters, "apply", lambda stage, text, job, settings=None, **k:
                         FilterOutcome(text, canceled=True))
     assert h.runtime._claim_job(job)
-    assert h.runtime._run_filters("before_cleanup", "hello", job, {}) is None
+    assert h.runtime._run_filters("before_cleanup", "hello", job, {}) == (job, None)
     assert h.runtime._filter_canceled
 
 

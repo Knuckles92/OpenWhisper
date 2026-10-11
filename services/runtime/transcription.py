@@ -1268,7 +1268,7 @@ class TranscriptionRuntime:
         from services.automation.models import AFTER_CLEANUP, BEFORE_CLEANUP
 
         settings = settings_manager.load_all_settings()
-        text = self._run_filters(BEFORE_CLEANUP, raw, job, settings)
+        job, text = self._run_filters(BEFORE_CLEANUP, raw, job, settings)
         if text is None:
             return raw, None, None
         # A Cancel during any stage ends the job here: canceled words never
@@ -1284,19 +1284,22 @@ class TranscriptionRuntime:
         if not (fixed or "").strip():
             return fixed, raw_text, info
         self._raise_if_canceled()
-        final = self._run_filters(AFTER_CLEANUP, fixed, job, settings)
+        job, final = self._run_filters(AFTER_CLEANUP, fixed, job, settings)
         if final is None or final == fixed:
             return fixed, raw_text, info
         # The rich-text version no longer matches the words.
         self._delivery_html = ""
         return final, (raw_text if raw_text is not None else fixed), info
 
-    def _run_filters(self, stage: str, text: str, job, settings) -> Optional[str]:
-        """``text`` after ``stage``'s text filters; None when one took over delivery.
+    def _run_filters(self, stage: str, text: str, job, settings):
+        """``(job, text)`` after ``stage``'s text filters; text None when one
+        took over delivery.
 
         A filter takes over by canceling, or by turning words into nothing;
         a transcript that was empty to begin with is no speech, not that.
-        Never raises: a failing filter keeps the text (services.automation.filters).
+        The job notes when a program's leased filter changed the words
+        (DictationJob.program_words). Never raises: a failing filter keeps
+        the text (services.automation.filters).
         """
         from services.automation import filters
 
@@ -1304,14 +1307,20 @@ class TranscriptionRuntime:
             outcome = filters.apply(stage, text, job, settings, cancel=self._cancel_requested)
         except Exception:
             logger.warning("Text filters failed; keeping the text")
-            return text
+            return job, text
         filtered = outcome.text if isinstance(outcome.text, str) else text
         emptied = bool((text or "").strip()) and not filtered.strip()
         if outcome.canceled or emptied:
             with self._job_lock:
                 self._filter_canceled = True
-            return None
-        return filtered
+            return job, None
+        if outcome.program_changed:
+            changed = dataclasses.replace(job, changed_by_program=True)
+            with self._job_lock:
+                if self._active_job is job:
+                    self._active_job = changed
+            job = changed
+        return job, filtered
 
     def _route(self, text: str, job, settings):
         """``(job, text)``: an ACTION job when the words name an action; worker.
