@@ -26,8 +26,18 @@ def pad_ui(qapp, tmp_path, monkeypatch):
     activations = []
     monkeypatch.setattr(scratchpad.ScratchpadWindow, "activateWindow",
                         lambda self: activations.append(self))
+    # Whether each show asked not to activate: Qt reads the attribute then.
+    quiet_shows = []
+    real_show = scratchpad.ScratchpadWindow.show
+
+    def show(self):
+        quiet_shows.append(self.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating))
+        real_show(self)
+
+    monkeypatch.setattr(scratchpad.ScratchpadWindow, "show", show)
     ui = SimpleNamespace(copy_to_clipboard=lambda text, **kw: True)
-    yield SimpleNamespace(ui=ui, notes=notes, activations=activations, module=scratchpad)
+    yield SimpleNamespace(ui=ui, notes=notes, activations=activations,
+                          quiet_shows=quiet_shows, module=scratchpad)
     pad = getattr(ui, "_scratchpad", None)
     if pad is not None:
         pad._autosave_timer.stop()
@@ -51,7 +61,17 @@ def test_an_answer_shows_the_pad_without_taking_focus(pad_ui):
 
     assert pad.isVisible()
     assert pad_ui.activations == []
-    assert pad.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+    assert pad_ui.quiet_shows == [True]
+
+
+def test_opening_the_pad_after_an_answer_shows_it_normally(pad_ui):
+    pad_ui.module.show_text(pad_ui.ui, "Lima")
+    pad = pad_ui.ui._scratchpad
+    pad.hide()
+    pad_ui.module.toggle(pad_ui.ui)
+
+    assert pad_ui.quiet_shows == [True, False]
+    assert pad_ui.activations == [pad]
 
 
 def test_opening_the_pad_still_focuses_it(pad_ui):

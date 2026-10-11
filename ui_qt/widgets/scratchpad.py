@@ -415,8 +415,11 @@ class ScratchpadWindow(QWidget):
         """
         self.ensure_loaded()
         if not self.isVisible():
+            # Qt reads it when showing; cleared after, so the user's own
+            # opens (present, the on-top re-show) still activate.
             self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
             self.show()
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
         self.raise_()
 
     def ensure_loaded(self) -> None:
