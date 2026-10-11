@@ -231,9 +231,16 @@ def _interpret(raw: bytes) -> _Verdict:
         return _Verdict(_CANCEL)
     if "text" not in reply:
         return _Verdict(_KEEP)
-    if not isinstance(reply["text"], str):
+    text = reply["text"]
+    if not isinstance(text, str):
         return _Verdict(_FAILED, reason='"text" wasn\'t a string')
-    return _Verdict(_REPLACE, text=reply["text"])
+    try:
+        # JSON may escape half of a surrogate pair ("\ud83d"); such text
+        # can't be pasted, saved or published.
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return _Verdict(_FAILED, reason='"text" wasn\'t valid Unicode')
+    return _Verdict(_REPLACE, text=text)
 
 
 _clients_lock = threading.Lock()
