@@ -138,8 +138,9 @@ class TranscriptionRuntime:
         # A text filter answered that it handled the words: save them, but
         # deliver nothing. Set by the worker, read by on_transcription_complete.
         self._filter_canceled = False
-        # Spoken routing's judge couldn't answer, so the words are pasted
-        # with a notice saying so. Set by the worker, read by _deliver.
+        # Spoken routing's judge couldn't answer, so the words are pasted;
+        # with Route by voice a notice says why. Set by the worker, read by
+        # _deliver.
         self._route_failed = False
         # Decodes a long dictation's completed windows while it is recorded.
         self._incremental = IncrementalDictation()
@@ -1293,6 +1294,8 @@ class TranscriptionRuntime:
     def _run_filters(self, stage: str, text: str, job, settings) -> Optional[str]:
         """``text`` after ``stage``'s text filters; None when one took over delivery.
 
+        A filter takes over by canceling, or by turning words into nothing;
+        a transcript that was empty to begin with is no speech, not that.
         Never raises: a failing filter keeps the text (services.automation.filters).
         """
         from services.automation import filters
@@ -1303,7 +1306,8 @@ class TranscriptionRuntime:
             logger.warning("Text filters failed; keeping the text")
             return text
         filtered = outcome.text if isinstance(outcome.text, str) else text
-        if outcome.canceled or not filtered.strip():
+        emptied = bool((text or "").strip()) and not filtered.strip()
+        if outcome.canceled or emptied:
             with self._job_lock:
                 self._filter_canceled = True
             return None
@@ -1728,17 +1732,16 @@ class TranscriptionRuntime:
             dictation_pipeline.after_paste(job, text, before_cleanup)
         with self._job_lock:
             route_failed = self._route_failed
-        if job is not None and job.route and route_failed:
-            # The judge couldn't answer, which is not the same as no action
-            # being named: the words may have been meant for one.
-            reason = "Couldn't reach Fast judgments"
-            self._notify(f"{reason} — pasted instead" if pasted else reason)
-        elif job is not None and job.route == "hotkey":
-            # Route by voice found no action for these words; say so, since
-            # the user asked for a route, not a paste.
-            self._notify(
-                "No action matched — pasted instead" if pasted else "No action matched"
+        if job is not None and job.route == "hotkey":
+            # Route by voice pasted instead of routing; say why, since the
+            # user asked for a route, not a paste. A dictation that only
+            # could have been routed ("auto") stays as quiet as any paste.
+            reason = (
+                # The judge couldn't answer, which is not the same as no
+                # action being named: the words may have been meant for one.
+                "Couldn't reach Fast judgments" if route_failed else "No action matched"
             )
+            self._notify(f"{reason} — pasted instead" if pasted else reason)
         if forced:
             if not pasted:
                 self._notify(self._delivery_status)
