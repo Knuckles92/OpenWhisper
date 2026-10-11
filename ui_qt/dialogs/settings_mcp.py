@@ -1069,6 +1069,13 @@ class LiveAutomationSection(QWidget):
                 "Let a program on this computer rewrite or hold back words before they're pasted.",
                 "filter-purple.svg",
             ),
+            (
+                SettingsKey.API_AGENT_PROMPTS,
+                "Send words to my coding agents",
+                "Lets a program run your Agent hotkey and Claude Code session actions with its "
+                "own words. Needs Run actions too.",
+                "send-purple.svg",
+            ),
         ):
             row = _PermissionRow(title, description, icon)
             row.checkbox.toggled.connect(
