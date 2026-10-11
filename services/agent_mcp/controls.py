@@ -188,13 +188,10 @@ SETTING_CONTROLS = (
         max_length=10,
         effect=LIVE,
     ),
-    SettingControl(
-        SettingsKey.TRANSCRIPT_CLEANUP_PROMPT,
-        "Custom cleanup prompt",
-        "Cleanup",
-        "string",
-        max_length=16000,
-    ),
+    # The custom cleanup prompt is left out on purpose: it is free-form
+    # instructions for the model that shapes what agent actions send, so an
+    # agent that could write it could steer words sent to the user's coding
+    # agents while they still read as dictated.
     SettingControl(
         SettingsKey.TRANSCRIPT_CLEANUP_REASONING,
         "Cleanup reasoning effort",

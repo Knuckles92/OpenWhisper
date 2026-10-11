@@ -898,3 +898,4 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   `_cancel_io` cancels a blocked read or write on Windows; POSIX writes are
   non-blocking chunks under `poll(POLLOUT)`.
 - **`.env` keys**: loaded through `process_env.set_for_app(..., keep_existing=True)`.
+- **MCP settings**: `TRANSCRIPT_CLEANUP_PROMPT` is no longer an MCP control (read or write): it shapes what agent actions send, so an agent writing it could steer words to coding agents while they read as dictated. Saved grants for it are ignored (`writable_settings` filters by `CONTROLS_BY_KEY`).
