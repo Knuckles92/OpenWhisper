@@ -245,13 +245,16 @@ event: transcription.completed
 data: {"id":"evt_…","seq":42,"type":"transcription.completed","time":"2026-10-10T12:00:00.000Z","v":1,"data":{…}}
 ```
 
-`seq` keeps counting up, across app restarts too. Reconnect with `Last-Event-ID` (or
-`?since=<seq>`) to replay what you missed while the app still holds it (the
-last 500 events). If it no longer does, the stream first sends an
-`events.gap` event (no `id:`) with `missed_from_seq`; fetch
-[history](agent-api.md) to catch up. A `: ping` comment arrives every 15
-seconds. A client that reads too slowly gets an `events.gap` and the stream
-ends; reconnect to resume.
+`seq` keeps counting up, across app restarts too. Reconnect with
+`Last-Event-ID` (or `?since=<seq>`; `since=0` for everything since OpenWhisper
+started) to replay what you missed while the app still holds it (the last
+500 events). When you may have missed some, the stream first sends an
+`events.gap` event (no `id:`) with `missed_from_seq` and a `reason`:
+`evicted` (the app no longer holds them; fetch [history](agent-api.md) to
+catch up) or `restarted` (your position is from before OpenWhisper restarted;
+everything since the restart follows). A `: ping` comment arrives every 15
+seconds. A client that reads too slowly gets an `events.gap` with reason
+`slow` and the stream ends; reconnect to resume.
 
 ```python
 import httpx, json
@@ -262,13 +265,14 @@ with httpx.stream("GET", "http://127.0.0.1:8767/v1/events?types=transcription.co
         if line.startswith("data: "):
             event = json.loads(line[6:])
             if event["type"] == "events.gap":
-                continue  # some events were missed; fetch history to catch up
+                continue  # reason "evicted": fetch history to catch up
             print(event["data"]["text"])
 ```
 
 `events.gap` can arrive whatever `types` asks for. `seq` keeps growing across
-app restarts, so a position from before a restart reads as a gap and the
-stream replays what this session still holds.
+app restarts, so a position from before a restart never matches a new event:
+the stream sends an `events.gap` with reason `restarted` and replays
+everything since the restart.
 
 ## Events
 
@@ -310,7 +314,11 @@ with `events/subscribe` (a webhook address and a `whsec_` secret it chooses)
 and unsubscribes with `events/unsubscribe`. OpenWhisper checks the address
 with a signed challenge before sending anything, then posts each matching
 event signed with the agent's secret. Addresses must use https, or http on
-this computer only. Subscriptions expire unless the agent refreshes them, and
+this computer only. An agent on another computer (over Tailscale) can't send
+events to this computer, including its Tailscale address, or to your local
+network. Its events stop while **Allow agents over Tailscale** is off, and a
+failed check or delivery tells it only that it failed (`challenge_failed`,
+`delivery_failed`), not why. Subscriptions expire unless the agent refreshes them, and
 **Clear** on the API & MCP page removes them all. Agents in the cloud can only
 subscribe if they can reach this computer, which OpenWhisper never sets up.
 

@@ -228,7 +228,8 @@ class EventBus:
     def subscribe(self, callback: Callable[[Event], None], *,
                   types: Optional[Iterable[str]] = None,
                   label: str = "") -> Subscription   # callback on the dispatch thread
-    def since(self, seq: int, *, types=None) -> tuple[list[Event], bool]   # (events after seq, gap)
+    def since(self, seq: int, *, types=None) -> tuple[list[Event], Optional[str]]
+        # (events after seq, None | "evicted" | "restarted"); 0 = from this run's start
     def recent(self, limit: int = 50, *, types=None) -> list[Event]
     def subscribers(self, label: str = "") -> int  # live subscriptions, optionally by label
     def last_seq(self) -> int
@@ -268,7 +269,7 @@ return the `data` dict, so every publisher produces the same shape.
 | `meeting.ended` | `meeting_id, status` | A |
 | `meeting.segments` | `meeting_id, items: [{segment_id, speaker, text, start_s, end_s}]` | A |
 | `meeting.voice_command` | `meeting_id, command` | A |
-| `events.gap` | `missed_from_seq` (SSE only, synthetic) | A |
+| `events.gap` | `missed_from_seq, reason` (`evicted`, `restarted`, `slow`; SSE only, synthetic) | A |
 
 `mode` is `dictation | command | transform | action | file`. `app` is
 `{"id","name","category"}` or null. `cleanup` is `{"provider","model","level"}`
@@ -400,7 +401,7 @@ the headless `--api`). Routes (all JSON errors use the History API's
 | Route | Permission | Result |
 | --- | --- | --- |
 | `GET /v1/live/state` | token | `LiveState` + `permissions` + `listeners` |
-| `GET /v1/events?types=a,b&since=<seq>` | live_events | `text/event-stream`; `id: <seq>`, `event: <type>`, `data: <json>`; `Last-Event-ID` honoured; `: ping` every 15 s; `events.gap` first when the buffer no longer holds `since` |
+| `GET /v1/events?types=a,b&since=<seq>` | live_events | `text/event-stream`; `id: <seq>`, `event: <type>`, `data: <json>`; `Last-Event-ID` honoured; `: ping` every 15 s; `events.gap` first when the buffer no longer holds `since` (reason `evicted`) or `since` is from another run (`restarted`); `slow` before a lagging stream ends |
 | `GET /v1/actions` | token | `{"actions":[…]}` |
 | `POST /v1/actions/{id}/run` `{"text"}` (1–20 000 chars) | run_actions | 202 `{"job_id"}`; 409 busy; 404 |
 | `POST /v1/recording/start` `{"action_id"?}` | control_recording | 202 `{"job_id"}`; 409 |
@@ -734,7 +735,7 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   `program`, `openwhisper`), and the instructions tell Claude Code to treat
   only `dictated` as the user's request. The bridge sends the MCP token only
   to a loopback `OPENWHISPER_URL`, and forwards `events.gap` as an
-  `openwhisper` notice.
+  `openwhisper` notice (since round 2, only for `evicted`).
 - **MCP**: the MCP app is routed at `/mcp` only; other paths reach the live
   API's JSON 404. MCP Events: any non-2xx answer, 410 included, fails that
   delivery only; a subscription ends when it is unsubscribed, expires or is
@@ -806,6 +807,21 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   `include_selection`; `begin_job` asks for it only for the user's jobs
   (Command Mode, a dictation with text near the cursor on, an action that
   wants it); `transcription._reads_selection(action)` takes the action only.
+- **Event bus**: `since` returns why a gap happened; `catalog.GAP_EVICTED`,
+  `GAP_RESTARTED` and `GAP_SLOW`; `events.gap` data has `reason`; `since=0` is
+  from this run's start and a gap only if this run dropped events; the
+  channel bridge announces only `evicted`; MCP `recent_events` keeps a
+  boolean `gap`.
+- **MCP Events**: who gets an event is decided when it is queued (one
+  settings read on the dispatch thread per event with matching subscriptions)
+  and rechecked before each try. A peer's callback name is looked up once per
+  verification or try, and the request goes to that address with the
+  hostname kept for Host, SNI and the certificate check, on its own
+  connection. Addresses this computer can bind (its Tailscale address
+  included) and Tailscale's 100.100.100.100 and fd7a:115c:a1e0::53 count as
+  this computer. A peer sees only `challenge_failed` or `lastError`
+  `delivery_failed` (`address_refused` is kept). A refresh whose save fails
+  puts back the previous secret and rotation.
 - **Routing gate**: a name heard as several words counts when a request
   follows ("chat gpt what's…", "to do buy milk", not "to do that…"), and a
   shortened name counts after lead-ins when it is typed or heard as a name
