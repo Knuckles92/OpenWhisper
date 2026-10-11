@@ -65,6 +65,8 @@ COPIED_INSTEAD = " — copied instead"
 
 @dataclass(frozen=True)
 class ActionResult:
+    """How a run went: ``message`` is shown as it is; ``output`` is an answer's text."""
+
     ok: bool
     message: str
     output: Optional[str] = None

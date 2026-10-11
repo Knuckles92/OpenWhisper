@@ -17,7 +17,12 @@ from services.automation import catalog, events, programs, signing, webhooks
 from services.automation.events import EventBus
 from services.automation.webhooks import DeliveryRecord
 from services.dictation_pipeline import DictationJob, JobMode
-from services.focus_context import AppIdentity, ContextCaptureService, FocusSnapshot, TextContext
+from services.focus_context import (
+    AppIdentity,
+    ContextCaptureService,
+    FocusSnapshot,
+    TextContext,
+)
 from services.recognition_context import RecognitionContext
 from services.settings import SettingsKey
 from tests.fakes.settings import InMemorySettings
@@ -430,7 +435,7 @@ def test_program_gets_the_words_on_stdin_and_its_output_is_routed(h, monkeypatch
 
     def run_once(argv, stdin, *, timeout_s, cwd="", env=None):
         runs.append((argv, stdin, timeout_s, env, threading.current_thread().name))
-        return 0, "HÉLLO\r\n".encode("utf-8"), ""
+        return 0, "HÉLLO\r\n".encode(), ""
 
     monkeypatch.setattr(programs, "run_once", run_once)
     job = _job("p1")
@@ -440,7 +445,7 @@ def test_program_gets_the_words_on_stdin_and_its_output_is_routed(h, monkeypatch
 
     ((argv, stdin, timeout_s, env, thread),) = runs
     assert argv == ["C:\\tools\\shout.exe", "--loud", "two words"]
-    assert stdin == "héllo".encode("utf-8") and timeout_s == 12.0
+    assert stdin == "héllo".encode() and timeout_s == 12.0
     assert (env["OPENWHISPER_ACTION_ID"], env["OPENWHISPER_ACTION_NAME"],
             env["OPENWHISPER_JOB_ID"]) == ("p1", "Shout", job.id)
     assert "PATH" in env or "Path" in env
