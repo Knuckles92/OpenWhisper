@@ -35,6 +35,7 @@ PERMISSIONS = (
     SettingsKey.API_RUN_ACTIONS,
     SettingsKey.API_CONTROL_RECORDING,
     SettingsKey.API_TEXT_FILTERS,
+    SettingsKey.API_AGENT_PROMPTS,
 )
 
 

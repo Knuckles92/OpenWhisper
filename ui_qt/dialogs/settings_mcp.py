@@ -1048,7 +1048,8 @@ class LiveAutomationSection(QWidget):
             (
                 SettingsKey.API_LIVE_EVENTS,
                 "Follow live events",
-                "Watch recordings, dictations and meetings as they happen, like reading history.",
+                "A program can read your finished dictations, the actions you run and meeting "
+                "lines as they happen, like reading history.",
                 "file-music-blue.svg",
             ),
             (
@@ -1068,6 +1069,13 @@ class LiveAutomationSection(QWidget):
                 "Change dictated text",
                 "Let a program on this computer rewrite or hold back words before they're pasted.",
                 "filter-purple.svg",
+            ),
+            (
+                SettingsKey.API_AGENT_PROMPTS,
+                "Send words to my coding agents",
+                "Lets a program run your Agent hotkey and Claude Code session actions with its "
+                "own words. Needs Run actions too.",
+                "send-purple.svg",
             ),
         ):
             row = _PermissionRow(title, description, icon)
@@ -1133,7 +1141,8 @@ class LiveAutomationSection(QWidget):
         )
         row = _PermissionRow(
             "Let agents subscribe",
-            "An assistant connected over MCP can ask to be told when things happen.",
+            "An assistant over MCP chooses the web address, and it receives what you dictate "
+            "(the events it subscribes to).",
             "key-blue.svg",
         )
         self.mcp_events_switch = row.checkbox
@@ -1212,6 +1221,11 @@ class LiveAutomationSection(QWidget):
         # Full width, so the command wraps between words rather than inside them.
         layout.addWidget(self.channel_command)
         layout.addWidget(self.copy_channel_command, 0, Qt.AlignmentFlag.AlignLeft)
+        self.channel_programs = McpSettingsPage._detail(
+            "A program can send words here too once you allow Send words to my coding "
+            "agents. Claude sees they came from a program, not from you."
+        )
+        layout.addWidget(self.channel_programs)
         layout.addStretch()
 
     # ---- layout ----

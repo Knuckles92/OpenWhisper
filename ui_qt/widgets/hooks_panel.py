@@ -188,6 +188,10 @@ class _Requests:
         if callback is not None:
             callback(result, error)
 
+    def forget(self) -> None:
+        """Drop the answers still on their way; they arrive to nothing."""
+        self._waiting.clear()
+
     def in_background(self, call: Callable[[], object], name: str,
                       callback: Callable[[object, Optional[str]], None]) -> None:
         """Run ``call()`` on a worker; ``callback(result, error)`` runs on the Qt thread."""
@@ -341,19 +345,36 @@ class EventChooser(QWidget):
 
 
 class StatusChip(QLabel):
-    """A short, honest result: "Sending…", "200 · 120 ms", or the error."""
+    """A short, honest result beside its button: "Sending…", "200 · 120 ms".
+
+    An error is a sentence, too long for a chip, so it goes in
+    ``error_line``, which wraps; the editor places it under the buttons.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("hooksChip")
         self.setTextFormat(Qt.TextFormat.PlainText)
+        # A chip keeps its own width, even when its buttons stack.
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self.hide()
+        self.error_line = _hint()
+        set_style_property(self.error_line, "tone", "error")
+        self.error_line.hide()
 
     def show_result(self, text: str, tone: str) -> None:
+        self.error_line.setText("")
+        self.error_line.hide()
         self.setText(text)
         self.setToolTip(text)
         set_style_property(self, "tone", tone)
         self.setVisible(bool(text))
+
+    def show_error(self, text: str) -> None:
+        self.setText("")
+        self.hide()
+        self.error_line.setText(text)
+        self.error_line.setVisible(bool(text))
 
 
 class RecentList(QWidget):
@@ -477,6 +498,22 @@ def _small_button(text: str, *, primary: bool = False) -> Button:
     return button
 
 
+def _tab_stops(container: QWidget) -> list[QWidget]:
+    """The widgets in ``container`` that Tab stops at, in its focus chain's order.
+
+    A compound widget (a spin box, a text box) counts once: Qt moves its
+    inner widgets with it.
+    """
+    stops: list[QWidget] = []
+    widget = container.nextInFocusChain()
+    while widget is not container and container.isAncestorOf(widget):
+        takes_tab = widget.focusPolicy() & Qt.FocusPolicy.TabFocus == Qt.FocusPolicy.TabFocus
+        if takes_tab and not any(stop.isAncestorOf(widget) for stop in stops):
+            stops.append(widget)
+        widget = widget.nextInFocusChain()
+    return stops
+
+
 def _choose_program(parent: QWidget, current: str) -> str:
     start = os.path.dirname(current) if current else os.path.expanduser("~")
     path, _filter = QFileDialog.getOpenFileName(parent, "Choose a program", start)
@@ -541,10 +578,25 @@ class _Editor(QFrame):
             [self.delete_button, None, self.cancel_button, self.save_button]
         )
         layout.addWidget(self.footer)
+        # Read while the editor stands alone, so its chain is its own: the
+        # fields were added top to bottom. The section places them in the page.
+        self.tab_stops = _tab_stops(self)
+        for signal in (self.name_edit.textChanged, *self._edits()):
+            signal.connect(self._draft_edited)
 
     # Subclasses add their fields here, between the name and the footer.
     def _build_fields(self, layout: QVBoxLayout) -> None:
         raise NotImplementedError
+
+    def _edits(self) -> tuple:
+        """The change signals of the fields ``draft`` reads, besides the name."""
+        return ()
+
+    def _draft_edited(self, *_args) -> None:
+        """"Saved." stays true only until the fields differ from what was saved."""
+        if (self.message.property("tone") == "ok" and not self.message.isHidden()
+                and self.has_unsaved_changes()):
+            self.set_message("")
 
     def _show_fields(self, item) -> None:
         raise NotImplementedError
@@ -553,6 +605,7 @@ class _Editor(QFrame):
         raise NotImplementedError
 
     def show_item(self, item, *, saved: bool) -> None:
+        self._start_over()
         self.source = item
         self.saved = saved
         self.name_edit.setText(item.name)
@@ -570,8 +623,19 @@ class _Editor(QFrame):
             self.baseline = replace(self.baseline, enabled=enabled)
 
     def clear(self) -> None:
+        self._start_over()
         self.source = self.baseline = None
         self.saved = False
+
+    def _start_over(self) -> None:
+        """One editor serves every item, and a test or secret still on its way
+        was asked for what it showed before (or before a save changed it), so
+        its answer is dropped rather than shown, or copied, here."""
+        self._requests.forget()
+        self._show_idle()
+
+    def _show_idle(self) -> None:
+        """Buttons and results as they are with nothing on its way."""
 
     def item_id(self) -> str:
         return self.source.id if self.source is not None else ""
@@ -644,6 +708,7 @@ class WebhookEditor(_Editor):
         extras.addWidget(_AdaptiveButtons(
             [self.copy_secret, self.rotate_secret, self.secret_chip, None]
         ))
+        extras.addWidget(self.secret_chip.error_line)
         extras.addSpacing(4)
         extras.addWidget(self._divider())
         extras.addWidget(self._section_label("Test and recent deliveries"))
@@ -652,6 +717,7 @@ class WebhookEditor(_Editor):
         self.test_button.clicked.connect(self.send_test)
         self.test_chip = StatusChip()
         extras.addWidget(_AdaptiveButtons([self.test_button, self.test_chip, None]))
+        extras.addWidget(self.test_chip.error_line)
         self.recent = RecentList("No deliveries yet.")
         extras.addWidget(self.recent)
         layout.addWidget(self.extras)
@@ -661,13 +727,20 @@ class WebhookEditor(_Editor):
         self.url_note.setText(note)
         self.url_note.setVisible(bool(note))
 
+    def _edits(self) -> tuple:
+        return (self.url_edit.textChanged, self.events.changed)
+
     def _show_fields(self, hook) -> None:
         self.url_edit.setText(hook.url)
         self.events.set_events(hook.events)
         self.extras.setVisible(self.saved)
+        self._update_note()
+
+    def _show_idle(self) -> None:
+        for button in (self.copy_secret, self.rotate_secret, self.test_button):
+            button.setEnabled(True)
         self.secret_chip.show_result("", "muted")
         self.test_chip.show_result("", "muted")
-        self._update_note()
 
     def draft(self) -> models.Webhook:
         return models.Webhook(
@@ -699,7 +772,7 @@ class WebhookEditor(_Editor):
         def done(secret, error) -> None:
             self.copy_secret.setEnabled(True)
             if error or not secret:
-                self.secret_chip.show_result(error or "No secret yet.", "error")
+                self.secret_chip.show_error(error or "No secret yet.")
                 return
             QApplication.clipboard().setText(secret)
             self.secret_chip.show_result("Copied", "ok")
@@ -725,7 +798,7 @@ class WebhookEditor(_Editor):
         def done(secret, error) -> None:
             self.rotate_secret.setEnabled(True)
             if error or not secret:
-                self.secret_chip.show_result(error or "Couldn't make a new secret.", "error")
+                self.secret_chip.show_error(error or "Couldn't make a new secret.")
                 return
             QApplication.clipboard().setText(secret)
             self.secret_chip.show_result("New secret copied", "ok")
@@ -744,10 +817,14 @@ class WebhookEditor(_Editor):
         def done(record, error) -> None:
             self.test_button.setEnabled(True)
             if error:
-                self.test_chip.show_result(error, "error")
+                self.test_chip.show_error(error)
             else:
                 text, ok = delivery_result(record)
-                self.test_chip.show_result(text, "ok" if ok else "error")
+                # A status code fits the chip; no status means a sentence saying why.
+                if record.status is None:
+                    self.test_chip.show_error(text)
+                else:
+                    self.test_chip.show_result(text, "ok" if ok else "error")
             self.refresh_live()
 
         self._requests.when_done(lambda: webhook_engine.send_test(hook_id), done)
@@ -829,9 +906,14 @@ class ProgramEditor(_ProgramFields, _Editor):
         self.test_button.clicked.connect(self.run_test)
         self.test_chip = StatusChip()
         extras.addWidget(_AdaptiveButtons([self.test_button, self.test_chip, None]))
+        extras.addWidget(self.test_chip.error_line)
         self.recent = RecentList("No runs yet.")
         extras.addWidget(self.recent)
         layout.addWidget(self.extras)
+
+    def _edits(self) -> tuple:
+        return (self.program_edit.textChanged, self.args_edit.textChanged,
+                self.events.changed, self.timeout.valueChanged)
 
     def _show_fields(self, program) -> None:
         self.program_edit.setText(program.program)
@@ -839,6 +921,9 @@ class ProgramEditor(_ProgramFields, _Editor):
         self.events.set_events(program.events)
         self.timeout.setValue(int(program.timeout_s))
         self.extras.setVisible(self.saved)
+
+    def _show_idle(self) -> None:
+        self.test_button.setEnabled(True)
         self.test_chip.show_result("", "muted")
 
     def draft(self) -> models.Program:
@@ -875,10 +960,14 @@ class ProgramEditor(_ProgramFields, _Editor):
         def done(record, error) -> None:
             self.test_button.setEnabled(True)
             if error:
-                self.test_chip.show_result(error, "error")
+                self.test_chip.show_error(error)
             else:
                 text, ok = run_result(record)
-                self.test_chip.show_result(text, "ok" if ok else "error")
+                # An exit code fits the chip; no exit code means a sentence saying why.
+                if record.exit_code is None:
+                    self.test_chip.show_error(text)
+                else:
+                    self.test_chip.show_result(text, "ok" if ok else "error")
             self.refresh_live()
 
         self._requests.when_done(lambda: program_engine.run_test(program_id), done)
@@ -962,6 +1051,11 @@ class FilterEditor(_ProgramFields, _Editor):
         note = unencrypted_note(self.url_edit.text()) if self._kind() == models.FILTER_HTTP else ""
         self.url_note.setText(note)
         self.url_note.setVisible(bool(note))
+
+    def _edits(self) -> tuple:
+        return (self.kind_bar.currentIndexChanged, self.url_edit.textChanged,
+                self.program_edit.textChanged, self.args_edit.textChanged,
+                self.stage_bar.currentIndexChanged, self.timeout.valueChanged)
 
     def _show_fields(self, text_filter) -> None:
         self.kind_bar.setCurrentIndex(self.KINDS.index(text_filter.kind))
@@ -1262,6 +1356,32 @@ class HookSection(QWidget):
         index = self._list.indexOf(row) + 1 if row is not None else self._list.count()
         self._list.insertWidget(index, self.editor)
         self.list_area.setVisible(bool(self._rows) or not self.editor.isHidden())
+        self._chain_tab_order()
+
+    def _chain_tab_order(self) -> None:
+        """Tab goes down the list as it reads, then to Add.
+
+        Rows made after the section joined the end of the window's Tab
+        order, and the editor moves under the row it edits, so every stop is
+        put back between whatever comes before the section and Add.
+        """
+        stops = []
+        for index in range(self._list.count()):
+            widget = self._list.itemAt(index).widget()
+            if widget is self.editor:
+                if not self.editor.isHidden():
+                    stops.extend(self.editor.tab_stops)
+            elif isinstance(widget, _HookRow):
+                stops.extend((widget.edit_button, widget.switch))
+        stops.append(self.add_button)
+        before = self.add_button.previousInFocusChain()
+        while before is not self.add_button and (
+            before.focusPolicy() == Qt.FocusPolicy.NoFocus or self.isAncestorOf(before)
+        ):
+            before = before.previousInFocusChain()
+        for widget in stops:
+            QWidget.setTabOrder(before, widget)
+            before = widget
 
     def _show_editor(self, item, *, saved: bool) -> None:
         self.editor.show_item(item, saved=saved)

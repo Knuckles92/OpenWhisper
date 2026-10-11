@@ -5839,6 +5839,11 @@ QLabel#hooksHint[tone="warning"] {
     color: @warning-text;
 }
 
+/* What went wrong with a test or a secret, in words that wrap. */
+QLabel#hooksHint[tone="error"] {
+    color: @danger-text;
+}
+
 QLabel#hooksMessage {
     color: @success-text;
     background-color: transparent;
