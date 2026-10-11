@@ -75,7 +75,7 @@ class AgentHotkeyCard(InfoTile):
     changed = pyqtSignal()
     capture_changed = pyqtSignal(bool)
     styles_requested = pyqtSignal()
-    #: "More options": open the full editor on the agent action.
+    #: "Customize": open the full editor on the agent action.
     edit_requested = pyqtSignal(object)
 
     def __init__(self, *, manager, try_action: Callable, parent=None):
@@ -136,7 +136,8 @@ class AgentHotkeyCard(InfoTile):
         self.try_button = neutral_button(Button("Try it"))
         self.try_button.setToolTip(f"Sends “{AGENT_SAMPLE}” to the agent, as if you'd said it")
         self.try_button.clicked.connect(self.try_it)
-        self.more_button = neutral_button(Button("More options"))
+        self.more_button = neutral_button(Button("Customize"))
+        self.more_button.setAccessibleName("Customize the agent hotkey in the full editor")
         self.more_button.setToolTip("Spoken names, how your words are prepared, and the rest")
         self.more_button.clicked.connect(
             lambda: self._action is not None and self.edit_requested.emit(self._action))

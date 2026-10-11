@@ -255,7 +255,7 @@ def test_an_edit_of_an_action_removed_elsewhere_isnt_saved_back(make_dialog):
         "Ask Claude no longer exists, so there's nothing to save these changes to.")
 
 
-# ---- 2. "More options" while another action is being edited ----
+# ---- 2. "Customize" while another action is being edited ----
 
 
 def test_more_options_asks_before_leaving_an_unsaved_edit(make_dialog, questions):

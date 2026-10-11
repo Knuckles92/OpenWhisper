@@ -157,10 +157,12 @@ class ActionEditor(InfoTile):
         self.url_note = hint_label("")
         self.url_note.setProperty("tone", "warning")
         self.reply_combo = OutputCombo("Where the reply goes")
-        self.copy_secret_button = neutral_button(Button("Copy secret"))
+        # Short labels under "Signing secret", so they fit a narrow window.
+        self.copy_secret_button = neutral_button(Button("Copy"))
         self.copy_secret_button.setAccessibleName("Copy signing secret")
         self.copy_secret_button.clicked.connect(self.copy_secret)
-        self.new_secret_button = neutral_button(Button("New secret"))
+        self.new_secret_button = neutral_button(Button("New"))
+        self.new_secret_button.setAccessibleName("Make a new signing secret")
         self.new_secret_button.clicked.connect(self.new_secret)
         self.secret_hint = hint_label("Your service checks each request with it.")
         self.secret_hint.setToolTip(
