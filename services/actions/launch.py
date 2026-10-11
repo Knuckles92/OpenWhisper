@@ -53,6 +53,10 @@ class LaunchError(RuntimeError):
     """Opening failed; the message is safe to show."""
 
 
+class NoAnswer(LaunchError):
+    """Windows didn't answer in time. It may still open the link, so nothing else should."""
+
+
 def _child_env() -> Dict[str, str]:
     """The user's environment without OpenWhisper's own keys and settings."""
     from services.installed_agents import agent_child_env
@@ -64,6 +68,9 @@ def open_uri(uri: str) -> None:
     """Hand ``uri`` to the app registered for its scheme; blocks briefly.
 
     Raises:
+        NoAnswer: Windows didn't answer in time (see :data:`EXPLORER_WAIT_S`);
+            it may still open the link, so don't open it, or another, some
+            other way.
         LaunchError: Nothing could open it, or it is too long to; the message
             says which app is missing when one is known.
     """
@@ -238,8 +245,8 @@ def _windows_open(uri: str) -> None:
     Windows' own. Explorer shows any problem itself.
 
     Raises:
-        LaunchError: Explorer didn't answer in time, or, without Explorer's
-            desktop, nothing opens the link.
+        NoAnswer: Explorer didn't answer in time.
+        LaunchError: Without Explorer's desktop, nothing opens the link.
     """
     if _ask_explorer(uri):
         return
@@ -261,12 +268,11 @@ def _ask_explorer(uri: str) -> bool:
     caller's thread (an action's worker) is left as it was.
 
     Raises:
-        LaunchError: Explorer didn't answer in time. It may still open the
-            link later, so nothing else opens it.
+        NoAnswer: Explorer didn't answer in time.
     """
     deadline = time.monotonic() + EXPLORER_WAIT_S
     if not _explorer_turn.acquire(timeout=EXPLORER_WAIT_S):
-        raise LaunchError(_NO_ANSWER)
+        raise NoAnswer(_NO_ANSWER)
     outcome: List[object] = []
 
     def ask() -> None:
@@ -290,7 +296,7 @@ def _ask_explorer(uri: str) -> bool:
     asker.join(max(0.0, deadline - time.monotonic()))
     if not outcome:
         logger.warning("Explorer didn't take a link within %.0f s", EXPLORER_WAIT_S)
-        raise LaunchError(_NO_ANSWER)
+        raise NoAnswer(_NO_ANSWER)
     if isinstance(outcome[0], Exception):
         raise outcome[0]
     return bool(outcome[0])

@@ -66,7 +66,7 @@ def test_an_explorer_that_doesnt_answer_in_time_means_not_opened(explorer):
     fake, here = explorer
     fake.opens = False  # a late "no desktop" doesn't open it from here either
     started = time.monotonic()
-    with pytest.raises(launch.LaunchError, match="^Windows didn't answer. Try again.$"):
+    with pytest.raises(launch.NoAnswer, match="^Windows didn't answer. Try again.$"):
         launch._windows_open("s:x")
     assert time.monotonic() - started < 3
 
@@ -78,9 +78,9 @@ def test_an_explorer_that_doesnt_answer_in_time_means_not_opened(explorer):
 
 def test_no_more_links_queue_behind_one_explorer_hasnt_answered(explorer):
     fake, here = explorer
-    with pytest.raises(launch.LaunchError):
+    with pytest.raises(launch.NoAnswer):
         launch._windows_open("s:first")
-    with pytest.raises(launch.LaunchError, match="Windows didn't answer"):
+    with pytest.raises(launch.NoAnswer, match="Windows didn't answer"):
         launch._windows_open("s:second")
     assert fake.asked == ["s:first"]
 
