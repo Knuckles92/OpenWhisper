@@ -40,8 +40,12 @@ logger = logging.getLogger(__name__)
 
 ROUTE_TIMEOUT_S = 1.5
 #: A route needs the judge's confidence in its chosen action at least this
-#: high (see benchmarks/voice_routing for how it was measured).
-ROUTE_CONFIDENCE = 0.6
+#: high. Measured on 104 synthetic utterances (benchmarks/voice_routing,
+#: October 10, 2026, jev-1.13.0): no false route at 0.4 or above in any run,
+#: and the words that must be pasted never got above 0.33 for an action, so
+#: 0.5 keeps a margin for messier real speech; 0.6 would lose a further tenth
+#: of the routes people meant without avoiding any measured false route.
+ROUTE_CONFIDENCE = 0.5
 
 #: ``DictationJob.route`` values.
 ROUTE_HOTKEY = "hotkey"
@@ -321,14 +325,15 @@ def _sentence_start(span: str) -> str:
 
 # -- the request ----------------------------------------------------------------
 
+#: Worded as measured in benchmarks/voice_routing; rewording needs a live re-run.
 _INSTRUCTIONS = {
     ROUTE_AUTO: (
-        "Is `dictation` addressed to one of the user's saved actions? The user "
-        "addresses an action by starting with its name or one of its spoken names "
-        "(speech recognition may mishear a name, such as \"cloud\" for \"Claude\"), "
-        "then says what it should do. Choose that action. Choose none for ordinary "
-        "dictation meant to be typed, including sentences that only mention a name "
-        "or talk about it."
+        "`dictation` starts with the name of one of the user's saved actions (speech "
+        "recognition may mishear a name, such as \"cloud\" for \"Claude\"). Is the user "
+        "speaking to that action, the way you address an assistant (\"Claude, ...\", "
+        "\"ask Claude to ...\", \"todo: ...\"), to give it a request? Choose the action. "
+        "Choose none when the name is the subject or object of an ordinary sentence "
+        "meant to be typed, such as \"Claude said ...\" or \"I asked Claude ...\"."
     ),
     ROUTE_HOTKEY: (
         "The user recorded `dictation` with a shortcut that sends the words to one "
@@ -340,24 +345,29 @@ _INSTRUCTIONS = {
 }
 _NONE_CRITERIA = {
     ROUTE_AUTO: {
-        "what": "Ordinary dictation to type where the cursor is, not addressed to any action.",
-        "includes": "Sentences that only mention an action's name or talk about it, such as "
-                    "\"I told Claude yesterday that the plan changed.\"",
+        "what": "Ordinary dictation to type where the cursor is.",
+        "includes": "Sentences in which an action's name is just a word, such as "
+                    "\"Claude said the build is green.\"",
     },
     ROUTE_HOTKEY: {
         "what": "No action fits: ordinary dictation, or a request none of the actions handles.",
         "includes": "Sentences that only mention an action's name or talk about it.",
     },
 }
-PAYLOAD_INSTRUCTIONS = (
+PAYLOAD_QUESTION = (
     "Which option is the part of `dictation` meant for the action: the request "
-    "itself, without the words that name or address the action (such as "
-    "\"Claude,\", \"ask Claude to\" or \"send this to my scripts\")?"
+    "itself, without the words at its start or end that only name or address the "
+    "action?"
 )
+PAYLOAD_ADDRESSING = ("an action name, with words such as \"hey\", \"ask\", \"tell\", "
+                      "\"send this to\" or \"add it to my\"")
 PAYLOAD_NONE = "None of these; use the whole dictation as said."
+_MAX_PAYLOAD_NAMES = 12
 
 _KIND_PHRASES = {
-    ActionKind.OPEN_LINK: "Opens a link with the words filled in.",
+    # Links only prefill (a new chat, a search); the user sends.
+    ActionKind.OPEN_LINK: "Opens an app or website with the words filled in, ready for "
+                          "the user to send.",
     ActionKind.CHANNEL: "Sends the words into a running Claude Code session.",
     ActionKind.WEBHOOK: "Sends the words to a web service.",
     ActionKind.PROGRAM: "Runs a program on this computer with the words.",
@@ -492,8 +502,16 @@ def plan(text: str, route: str, actions: Sequence[Action]) -> Optional[RoutePlan
         if len(span_options) > 1:
             payload_criteria: dict[str, Any] = {option: None for option in span_options}
             payload_criteria[NONE] = PAYLOAD_NONE
-            questions["payload"] = {"type": "choice", "instructions": PAYLOAD_INSTRUCTIONS,
-                                    "criteria": payload_criteria}
+            names = list(dict.fromkeys(
+                name for action_id in matched
+                for name in (by_id[action_id].name, *by_id[action_id].spoken_names)
+            ))[:_MAX_PAYLOAD_NAMES]
+            questions["payload"] = {
+                "type": "choice",
+                "instructions": {"question": PAYLOAD_QUESTION, "action_names": names,
+                                 "addressing": PAYLOAD_ADDRESSING},
+                "criteria": payload_criteria,
+            }
         if len(json.dumps({"state": state, "questions": questions})) <= _REQUEST_CHARS:
             break
     return RoutePlan(
