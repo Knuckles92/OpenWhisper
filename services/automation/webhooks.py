@@ -365,14 +365,16 @@ def _signed_headers(secret: str, msg_id: str, body: bytes) -> dict[str, str]:
 
 # -- one-off signed POSTs (actions, MCP Events) ---------------------------------
 
-def _post_signed(url: str, payload: Mapping, secret: str, timeout_s: float,
-                 read_limit: int) -> tuple[DeliveryRecord, Optional[dict]]:
+def _post_signed(url: str, payload: Mapping, secret: str, *, timeout_s: float,
+                 read_limit: int, msg_id: str,
+                 headers: Optional[Mapping[str, str]]) -> tuple[DeliveryRecord, Optional[bytes]]:
     from services.automation.models import validate_url
 
     at = _iso_now()
     payload = payload if isinstance(payload, Mapping) else {}
     raw_id, raw_type = payload.get("id"), payload.get("type")
-    msg_id = raw_id if isinstance(raw_id, str) and raw_id else "msg_" + secrets.token_hex(12)
+    if not (isinstance(msg_id, str) and msg_id):
+        msg_id = raw_id if isinstance(raw_id, str) and raw_id else "msg_" + secrets.token_hex(12)
     event_type = raw_type if isinstance(raw_type, str) else ""
 
     def failed(error: str) -> tuple[DeliveryRecord, None]:
@@ -388,58 +390,64 @@ def _post_signed(url: str, payload: Mapping, secret: str, timeout_s: float,
     except (TypeError, ValueError):
         return failed("The message isn't valid JSON.")
     try:
-        headers = _signed_headers(secret, msg_id, body)
+        signed = _signed_headers(secret, msg_id, body)
     except ValueError as exc:
         return failed(str(exc))
+    # Extra headers never replace the signature or the content type.
+    extra = {str(k): str(v) for k, v in (headers or {}).items()
+             if str(k).lower() not in {h.lower() for h in signed}}
     timeout = float(timeout_s) if timeout_s and timeout_s > 0 else TIMEOUT_S
     with _new_client(_is_private(url)) as client:
-        outcome = _exchange(client, url, body, headers, timeout_s=timeout,
+        outcome = _exchange(client, url, body, {**extra, **signed}, timeout_s=timeout,
                             read_limit=read_limit,
                             deadline=time.monotonic() + timeout if read_limit else None)
     record = DeliveryRecord(msg_id, event_type, at, outcome.ok, outcome.status,
                             outcome.elapsed_ms, outcome.error, 1)
-    return record, _json_object(outcome.body) if outcome.ok else None
+    return record, outcome.body if outcome.ok else None
 
 
-def _json_object(body: bytes) -> Optional[dict]:
-    if not body.strip():
-        return None
-    try:
-        value = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
-        return None
-    return value if isinstance(value, dict) else None
-
-
-def post_signed(url: str, payload: dict, secret: str, *,
-                timeout_s: float = TIMEOUT_S) -> DeliveryRecord:
+def post_signed(url: str, payload: dict, secret: str, *, timeout_s: float = TIMEOUT_S,
+                msg_id: str = "", headers: Optional[Mapping[str, str]] = None
+                ) -> DeliveryRecord:
     """POST ``payload`` as JSON signed with ``secret``; one attempt, never raises.
 
-    The ``webhook-id`` is ``payload["id"]`` when it is a non-empty string
-    (else a fresh ``msg_`` id), and the record's ``event_type`` is
-    ``payload["type"]`` when present. Redirects are not followed.
+    Args:
+        msg_id: The ``webhook-id``; "" uses ``payload["id"]`` when it is a
+            non-empty string, else a fresh ``msg_`` id.
+        headers: Extra request headers (e.g. ``X-MCP-Subscription-Id``);
+            they never replace Content-Type or the signature headers.
+
+    The record's ``event_type`` is ``payload["type"]`` when present.
+    Redirects are not followed; loopback and private addresses skip proxies.
     """
     try:
-        return _post_signed(url, payload, secret, timeout_s, 0)[0]
+        return _post_signed(url, payload, secret, timeout_s=timeout_s, read_limit=0,
+                            msg_id=msg_id, headers=headers)[0]
     except Exception as exc:
-        return DeliveryRecord("", "", _iso_now(), False, None, 0,
+        return DeliveryRecord(msg_id or "", "", _iso_now(), False, None, 0,
                               f"The request failed ({type(exc).__name__}).", 1)
 
 
-def post_signed_reply(url: str, payload: dict, secret: str, *,
-                      timeout_s: float = TIMEOUT_S) -> tuple[DeliveryRecord, Optional[dict]]:
-    """``post_signed`` that also reads the answer; never raises.
+def post_signed_reply(url: str, payload: dict, secret: str, *, timeout_s: float = TIMEOUT_S,
+                      max_bytes: int = MAX_REPLY_BYTES, msg_id: str = "",
+                      headers: Optional[Mapping[str, str]] = None
+                      ) -> tuple[DeliveryRecord, Optional[bytes]]:
+    """``post_signed`` that also reads the reply body; never raises.
 
     Returns:
-        ``(record, reply)``: ``reply`` is the 2xx answer's JSON object (up to
-        ``MAX_REPLY_BYTES``), or None when the POST failed or the answer was
-        empty, not JSON, or not an object. A webhook action reads
-        ``reply.get("text")``. ``timeout_s`` also bounds reading the answer.
+        ``(record, body)``: ``body`` is the 2xx reply's bytes (``b""`` when
+        it had none, e.g. 204), or None when the POST failed. A reply longer
+        than ``max_bytes`` is a failure ("The reply was too large").
+        ``timeout_s`` bounds connecting, sending and reading the reply. A
+        webhook action decodes the body itself, e.g. ``json.loads`` and
+        reads ``"text"``.
     """
     try:
-        return _post_signed(url, payload, secret, timeout_s, MAX_REPLY_BYTES)
+        limit = int(max_bytes) if max_bytes and max_bytes > 0 else MAX_REPLY_BYTES
+        return _post_signed(url, payload, secret, timeout_s=timeout_s, read_limit=limit,
+                            msg_id=msg_id, headers=headers)
     except Exception as exc:
-        return DeliveryRecord("", "", _iso_now(), False, None, 0,
+        return DeliveryRecord(msg_id or "", "", _iso_now(), False, None, 0,
                               f"The request failed ({type(exc).__name__}).", 1), None
 
 

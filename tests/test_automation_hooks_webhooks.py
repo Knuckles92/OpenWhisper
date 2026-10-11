@@ -628,27 +628,64 @@ def test_post_signed_never_raises():
     assert record.event_id.startswith("msg_")
 
 
-def test_post_signed_reply_returns_the_answers_json_object(receiver):
+def test_post_signed_reply_returns_the_reply_body(receiver):
     secret = signing.new_secret()
-    receiver.answer("/text", Answer(200, {"Content-Type": "application/json"},
-                                    json.dumps({"text": "Réponse"}).encode()))
+    answer = json.dumps({"text": "Réponse"}).encode()
+    receiver.answer("/text", Answer(200, {"Content-Type": "application/json"}, answer))
     receiver.answer("/plain", Answer(200, {}, b"not json"))
     receiver.answer("/empty", Answer(204))
     receiver.answer("/fail", Answer(500, {}, b'{"text": "no"}'))
+    receiver.answer("/moved", Answer(301, {"Location": "/text"}))
 
-    record, reply = webhooks.post_signed_reply(receiver.url("/text"), {"x": 1}, secret)
-    assert record.ok and reply == {"text": "Réponse"}
-    assert webhooks.post_signed_reply(receiver.url("/plain"), {}, secret)[1] is None
-    assert webhooks.post_signed_reply(receiver.url("/empty"), {}, secret)[1] is None
-    record, reply = webhooks.post_signed_reply(receiver.url("/fail"), {}, secret)
-    assert (record.ok, record.status, reply) == (False, 500, None)
+    record, body = webhooks.post_signed_reply(receiver.url("/text"), {"x": 1}, secret)
+    assert record.ok and body == answer
+    request = receiver.at("/text")[0]
+    assert signing.verify(secret, request.headers, request.body)
+    assert webhooks.post_signed_reply(receiver.url("/plain"), {}, secret)[1] == b"not json"
+    assert webhooks.post_signed_reply(receiver.url("/empty"), {}, secret)[1] == b""
+    record, body = webhooks.post_signed_reply(receiver.url("/fail"), {}, secret)
+    assert (record.ok, record.status, body) == (False, 500, None)
+    record, body = webhooks.post_signed_reply(receiver.url("/moved"), {}, secret)
+    assert (record.ok, record.status, body) == (False, 301, None)
+    assert len(receiver.at("/text")) == 1
 
 
-def test_post_signed_reply_refuses_a_huge_answer(receiver, monkeypatch):
-    monkeypatch.setattr(webhooks, "MAX_REPLY_BYTES", 100)
+def test_post_signed_reply_refuses_a_reply_over_max_bytes(receiver):
     receiver.answer("/big", Answer(200, {}, b'{"text": "' + b"x" * 500 + b'"}'))
-    record, reply = webhooks.post_signed_reply(receiver.url("/big"), {}, signing.new_secret())
-    assert reply is None and not record.ok and "too large" in record.error
+    record, body = webhooks.post_signed_reply(receiver.url("/big"), {}, signing.new_secret(),
+                                              max_bytes=100)
+    assert body is None and not record.ok and record.error == "The reply was too large"
+    record, body = webhooks.post_signed_reply(receiver.url("/big"), {}, signing.new_secret())
+    assert record.ok and len(body) == 512
+
+
+def test_post_signed_reply_never_raises():
+    record, body = webhooks.post_signed_reply("not a url", {}, signing.new_secret())
+    assert (record.ok, body) == (False, None)
+    record, body = webhooks.post_signed_reply(
+        "http://127.0.0.1:9/x", {}, signing.new_secret(), max_bytes="lots")
+    assert (record.ok, body) == (False, None)
+
+
+def test_post_signed_takes_a_message_id_and_extra_headers(receiver):
+    secret = signing.new_secret()
+    record = webhooks.post_signed(
+        receiver.url("/x"), {"id": "evt_payload", "type": "meeting.started"}, secret,
+        msg_id="msg_chosen",
+        headers={"X-MCP-Subscription-Id": "sub_1", "webhook-signature": "v1,forged",
+                 "Content-Type": "text/plain"},
+    )
+    assert record.ok and record.event_id == "msg_chosen"
+    request = receiver.wait_for(1, "/x")[0]
+    assert request.headers["webhook-id"] == "msg_chosen"
+    assert request.headers["x-mcp-subscription-id"] == "sub_1"
+    assert request.headers["content-type"] == "application/json"
+    assert signing.verify(secret, request.headers, request.body)
+
+    _record, _body = webhooks.post_signed_reply(receiver.url("/y"), {}, secret,
+                                                msg_id="msg_two", headers={"X-Extra": "1"})
+    request = receiver.wait_for(1, "/y")[0]
+    assert (request.headers["webhook-id"], request.headers["x-extra"]) == ("msg_two", "1")
 
 
 # -- privacy ---------------------------------------------------------------------------
