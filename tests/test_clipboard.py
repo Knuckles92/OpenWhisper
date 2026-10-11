@@ -177,7 +177,6 @@ def test_scheduled_restore_runs_after_event_loop_turn():
     loop = QEventLoop()
     QTimer.singleShot(20, loop.quit)
     loop.exec()
-
     assert clipboard.text() == "previous text"
 
 

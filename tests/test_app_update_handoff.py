@@ -136,8 +136,7 @@ class TestNativeHandoff(unittest.TestCase):
         controller = _FakeController()
         controller.main_window.confirm_quit = MagicMock(return_value=False)
 
-        # The real exit() would leave the shared QApplication quitting, so every
-        # later QEventLoop.exec() in this process returns at once.
+        # Exiting the real application disables later nested Qt event loops.
         with patch("ui_qt.ui_controller.QApplication") as qapp:
             UIController.exit_for_update(controller)
 
