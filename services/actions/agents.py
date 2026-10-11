@@ -217,17 +217,17 @@ def npm_shim_command(shim: str) -> Optional[List[str]]:
     for node in (os.path.join(folder, "node.exe"), shutil.which("node.exe") or ""):
         if node.lower().endswith(".exe") and os.path.isfile(node):
             return [node, script]
-    native = _package_exe(script, os.path.splitext(os.path.basename(shim))[0])
+    native = _package_exe(script, os.path.splitext(os.path.basename(shim))[0], folder)
     return [native] if native else None
 
 
-def _package_exe(script: str, command: str) -> str:
+def _package_exe(script: str, command: str, npm_folder: str) -> str:
     """``command``.exe that the npm package holding ``script`` ships, or ""."""
     root = os.path.dirname(script)
     while not os.path.isfile(os.path.join(root, "package.json")):
         parent = os.path.dirname(root)
-        if parent == root:
-            return ""
+        if parent == root or os.path.normcase(parent) == os.path.normcase(npm_folder):
+            return ""  # the package root is below the shim's folder
         root = parent
     name = f"{command}.exe"
     for pattern in (("node_modules", "*", "bin"), ("node_modules", "*", "*", "bin"),
