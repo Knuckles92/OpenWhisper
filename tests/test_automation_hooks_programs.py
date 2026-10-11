@@ -172,13 +172,12 @@ def test_run_once_runs_in_the_home_folder_unless_told_otherwise(tmp_path):
     assert os.path.samefile(out.decode().strip(), tmp_path)
 
 
-def test_run_once_strips_openwhispers_secrets_from_the_environment(monkeypatch):
-    from services import credentials
+def test_run_once_strips_openwhispers_secrets_from_the_environment(monkeypatch, tmp_path):
+    from tests.test_automation_r3c_child_env import load_dotenv
 
-    monkeypatch.setenv("OPENAI_API_KEY", "from-dotenv")
+    load_dotenv(monkeypatch, tmp_path, {"OPENAI_API_KEY": "from-dotenv"})
     monkeypatch.setenv("OPENWHISPER_SIDECAR_TOKEN", "internal")
     monkeypatch.setenv("MY_OWN_SETTING", "kept")
-    monkeypatch.setattr(credentials, "dotenv_injected_names", lambda: {"OPENAI_API_KEY"})
     code, out, _error = programs.run_once(
         [PY, "-c", "import os, json; print(json.dumps({k: os.environ.get(k) for k in "
          "('OPENAI_API_KEY', 'OPENWHISPER_SIDECAR_TOKEN', 'MY_OWN_SETTING')}))"],

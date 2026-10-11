@@ -4,16 +4,15 @@ Words reach a link percent-encoded and a terminal as one argv element; they
 never pass through a shell, cmd.exe or AppleScript source, nor a terminal's
 own command-line parsing (macOS and Linux terminals run a one-shot script
 whose every argument is shell-quoted). Every child gets the user's
-environment without OpenWhisper's own keys (``agent_child_env``), so on
-Windows a link's handler is started here rather than by the shell, which
-would pass on this process's environment.
+environment without OpenWhisper's own keys (``agent_child_env``); on
+Windows a link opens through Explorer, the user's shell, so its app starts
+with Explorer's environment rather than this process's.
 """
 
 from __future__ import annotations
 
 import contextlib
 import logging
-import ntpath
 import os
 import re
 import shlex
@@ -79,7 +78,7 @@ def open_uri(uri: str) -> None:
         raise LaunchError(f"No app on this computer opens {scheme}: links."
                           + (f" Install {app}." if app else ""))
     if sys.platform == "win32":
-        _windows_open(uri, scheme)
+        _windows_open(uri)
         return
     _open_with(["open", uri] if sys.platform == "darwin" else ["xdg-open", uri])
 
@@ -197,94 +196,119 @@ def _assoc_query(scheme: str, what: int) -> Tuple[int, str]:
     return result & 0xFFFFFFFF, buffer.value
 
 
-def _windows_association(scheme: str) -> Tuple[Optional[bool], str, str]:
-    """How ShellExecute would open ``scheme``: ``(found, command, program)``.
-
-    ``found`` is :func:`handler_available`'s answer. ``command`` is the
-    command line of a classic handler and ``program`` the absolute path it
-    starts ("" when the association doesn't name one); both are "" for a COM
-    handler or none.
-    """
+def _windows_handler(scheme: str) -> Optional[bool]:
+    """Whether ShellExecute has a handler for ``scheme``: a COM object or a command."""
     delegate_result, delegate = _assoc_query(scheme, _ASSOCSTR_DELEGATEEXECUTE)
     if delegate_result == _S_OK and delegate:
-        return True, "", ""
+        return True
     result, command = _assoc_query(scheme, _ASSOCSTR_COMMAND)
     if result != _S_OK or not command:
         missing = result in _NO_HANDLER and delegate_result in _NO_HANDLER
-        return (False if missing else None), "", ""
-    found, program = _assoc_query(scheme, _ASSOCSTR_EXECUTABLE)
+        return False if missing else None
     # The lookup checks the program: one an uninstalled app left behind opens nothing.
-    return (found != _CO_E_APPNOTFOUND, command,
-            program if found == _S_OK and ntpath.isabs(program) else "")
+    return _assoc_query(scheme, _ASSOCSTR_EXECUTABLE)[0] != _CO_E_APPNOTFOUND
 
 
-def _windows_handler(scheme: str) -> Optional[bool]:
-    return _windows_association(scheme)[0]
+#: ShellWindows: Explorer's list of its windows, the desktop among them.
+_CLSID_SHELL_WINDOWS = "{9BA05972-F6A8-11CF-A442-00A0C90A8F39}"
+_SW_SHOWNORMAL = 1
 
 
-#: What ShellExecute fills into a protocol's command: the link for these
-#: (in either case), nothing for the extra parameters a link doesn't have.
-_LINK_FIELDS = "01DLV"
-_PARAMETER_FIELDS = "*23456789"
-_FIELD_RE = re.compile(r"%(.)", re.DOTALL)
+def _windows_open(uri: str) -> None:
+    """Open ``uri`` the way the user's shell does, in the user's environment.
 
-
-def _fill_command(template: str, uri: str) -> str:
-    """A protocol's command line with ``uri`` filled in the way ShellExecute does it.
-
-    The link goes in inside whatever quotes the command puts around it, with
-    quotes, whitespace and control characters percent-encoded: a link never
-    contains them, and they could end those quotes or split the link into
-    more arguments. ``%%`` is a percent sign and other fields stay as written.
+    ShellExecute in this process would start the link's app as a child of
+    OpenWhisper, with its environment (its ``.env`` keys, its CUDA folders on
+    ``PATH``). Explorer's desktop runs ShellExecute in Explorer instead: the
+    app starts with Explorer's environment, the user's own, and everything
+    about how the link reaches it (filling in the handler's command,
+    rundll32 and DDE handlers, packaged apps, the elevation prompt) is
+    Windows' own. Explorer shows any problem itself.
     """
-    link = "".join(
-        "".join(f"%{byte:02X}" for byte in ch.encode("utf-8"))
-        if ch == '"' or ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F
-        else ch
-        for ch in uri
-    )
-
-    def field(match: re.Match) -> str:
-        name = match.group(1).upper()
-        if name in _LINK_FIELDS:
-            return link
-        if name in _PARAMETER_FIELDS:
-            return ""
-        return "%" if name == "%" else match.group(0)
-
-    return _FIELD_RE.sub(field, template)
-
-
-def _windows_open(uri: str, scheme: str) -> None:
-    """Open ``uri`` so that its app starts in the user's environment.
-
-    ShellExecute would start a classic handler from this process, with
-    OpenWhisper's environment (its ``.env`` keys, its CUDA folders on
-    ``PATH``), so the handler's command is filled in here the same way and
-    started with the user's. A COM handler is how packaged apps and Windows'
-    own pages take links; Windows starts those apps itself, so the shell
-    opens those links.
-    """
-    _found, command, program = _windows_association(scheme)
-    if not command:
+    with _com():
+        if _explorer_open(uri):
+            return
+        # Explorer's desktop isn't there (Explorer is restarting, or another
+        # shell runs): only then does the link open from this process, and
+        # its app get OpenWhisper's environment.
         try:
-            _shell_open(uri)
+            os.startfile(uri)  # type: ignore[attr-defined]
         except OSError as exc:
             raise LaunchError("No app on this computer opens that link.") from exc
-        return
+
+
+def _explorer_open(uri: str) -> bool:
+    """ShellExecute ``uri`` in Explorer; False when Explorer's desktop can't be asked.
+
+    Needs COM on this thread; every COM object is released by the time this
+    returns.
+    """
+    import pythoncom
+
     try:
-        # Like ShellExecute: a console program gets a console of its own.
-        proc = subprocess.Popen(_fill_command(command, uri), executable=program or None,
-                                env=_child_env(), creationflags=_CREATE_NEW_CONSOLE)
-    except OSError as exc:
-        raise LaunchError("No app on this computer opens that link.") from exc
-    _reap(proc)
+        application, hwnd = _desktop_application()
+        if application is None:
+            return False
+        _allow_foreground(hwnd)
+        # The default verb, as ShellExecute without one.
+        application.Invoke(application.GetIDsOfNames("ShellExecute"), 0,
+                           pythoncom.DISPATCH_METHOD, False,
+                           uri, "", "", "", _SW_SHOWNORMAL)
+    except pythoncom.com_error as exc:
+        logger.debug("Explorer couldn't be asked to open a link (%#x)",
+                     (exc.hresult or 0) & 0xFFFFFFFF)
+        return False
+    return True
 
 
-def _shell_open(uri: str) -> None:
-    """ShellExecute ``uri``, with COM on this thread as it asks for; raises OSError."""
-    with _com():
-        os.startfile(uri)  # type: ignore[attr-defined]
+def _desktop_application():
+    """Explorer's ``Shell.Application`` for its desktop, and the desktop window.
+
+    IShellWindows::FindWindowSW finds the desktop; its folder view's
+    ``Application`` (IShellDispatch2) lives in Explorer, so its ShellExecute
+    runs there. Returns ``(None, 0)`` when there is no desktop.
+
+    Raises:
+        pythoncom.com_error: Explorer couldn't be asked.
+    """
+    import pythoncom
+    from win32comext.shell import shell, shellcon
+
+    windows = pythoncom.CoCreateInstance(_CLSID_SHELL_WINDOWS, None,
+                                         pythoncom.CLSCTX_LOCAL_SERVER, pythoncom.IID_IDispatch)
+    desktop, hwnd = windows.InvokeTypes(
+        windows.GetIDsOfNames("FindWindowSW"), 0, pythoncom.DISPATCH_METHOD,
+        (pythoncom.VT_DISPATCH, 0),
+        ((pythoncom.VT_VARIANT | pythoncom.VT_BYREF, 1),
+         (pythoncom.VT_VARIANT | pythoncom.VT_BYREF, 1), (pythoncom.VT_I4, 1),
+         (pythoncom.VT_I4 | pythoncom.VT_BYREF, 2), (pythoncom.VT_I4, 1)),
+        shellcon.CSIDL_DESKTOP, None, shellcon.SWC_DESKTOP, 0, shellcon.SWFO_NEEDDISPATCH)
+    if desktop is None:
+        return None, 0
+    browser = desktop.QueryInterface(pythoncom.IID_IServiceProvider).QueryService(
+        shell.SID_STopLevelBrowser, shell.IID_IShellBrowser)
+    view = browser.QueryActiveShellView().GetItemObject(
+        shellcon.SVGIO_BACKGROUND, pythoncom.IID_IDispatch)
+    return view.Invoke(view.GetIDsOfNames("Application"), 0,
+                       pythoncom.DISPATCH_PROPERTYGET, True), hwnd
+
+
+def _allow_foreground(hwnd: int) -> None:
+    """Let the Explorer that owns ``hwnd`` bring the app it starts to the front.
+
+    The app starts from Explorer, not from here; OpenWhisper may bring a
+    window forward (the user just pressed its hotkey), and this passes that
+    on. It does nothing when OpenWhisper may not.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32")
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
+    pid = wintypes.DWORD()
+    if user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid)):
+        user32.AllowSetForegroundWindow(pid.value)
 
 
 def _macos_handler(scheme: str) -> Optional[bool]:

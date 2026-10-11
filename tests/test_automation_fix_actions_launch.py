@@ -1,6 +1,6 @@
 """launch.py review fixes: Linux terminal scripts, xdg-open, link guards, child env.
 
-Nothing real opens: Popen, run, startfile and the handler lookup are fakes.
+Nothing real opens: Popen, run, the Windows opener and the handler lookup are fakes.
 """
 
 import os
@@ -10,20 +10,19 @@ import sys
 
 import pytest
 
-from services import credentials
 from services.actions import launch
 from tests import test_automation_agents_launch as base
+from tests.test_automation_r3c_child_env import load_dotenv
 
 WORDS = base.WORDS  # shell metacharacters, quotes, a newline and option-like words
 fresh_handler_cache = base.fresh_handler_cache
 
 
 @pytest.fixture
-def dotenv_key(monkeypatch):
+def dotenv_key(monkeypatch, tmp_path):
     """A key OpenWhisper loaded from its .env; no child may inherit it."""
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-openwhisper-dotenv")
+    load_dotenv(monkeypatch, tmp_path, {"OPENAI_API_KEY": "sk-from-openwhisper-dotenv"})
     monkeypatch.setenv("USER_OWN_VAR", "kept")
-    monkeypatch.setattr(credentials, "dotenv_injected_names", lambda: {"OPENAI_API_KEY"})
 
 
 def _clean(env):
@@ -240,7 +239,7 @@ def opener(monkeypatch):
     """Records links handed to the system, on any platform; handlers by scheme."""
     opened, handlers = [], {}
     monkeypatch.setattr(launch, "_open_with", lambda command: opened.append(command[-1]))
-    monkeypatch.setattr(launch, "_windows_open", lambda uri, scheme: opened.append(uri))
+    monkeypatch.setattr(launch, "_windows_open", opened.append)
     monkeypatch.setattr(launch, "handler_available",
                         lambda scheme: handlers.get(scheme, False))
     return opened, handlers

@@ -3,11 +3,13 @@
 OpenWhisper changes its own environment to run: the frozen build's loader
 puts its bundled libraries first on ``LD_LIBRARY_PATH`` and ``PATH``, the
 source launcher activates the app's virtualenv, the native bootstrap prepends
-CUDA and ICU folders to ``PATH``, and the Qt setup sets display variables.
-Programs OpenWhisper starts for the user (actions, hooks, agents, terminals,
-links) must not inherit any of that: a bundled libreadline crashes bash on
-Arch, the app's virtualenv would catch an agent's ``pip install``, and Qt
-variables meant for this process restyle other apps.
+CUDA and ICU folders to ``PATH``, the Qt setup sets display variables, and
+the API keys in OpenWhisper's ``.env`` are loaded. Programs OpenWhisper
+starts for the user (actions, hooks, agents, terminals, links) must not
+inherit any of that: a bundled libreadline crashes bash on Arch, the app's
+virtualenv would catch an agent's ``pip install``, Qt variables meant for
+this process restyle other apps, and the keys would change which account an
+agent bills.
 
 Code that changes this process's environment records the original value here
 (``set_for_app`` / ``prepend_for_app``); ``external_env`` undoes those changes
@@ -141,8 +143,8 @@ def external_env(extra: Optional[Mapping[str, str]] = None) -> dict[str, str]:
 def drop(env: dict, names: Iterable[str]) -> None:
     """Remove ``names`` from ``env``, matching names the way the system does.
 
-    Windows ignores case in variable names, so ``Anthropic_Api_Key`` written in
-    a ``.env`` file is the ``ANTHROPIC_API_KEY`` that ``os.environ`` holds.
+    Windows ignores case in variable names: ``Openwhisper_Llm_Api_Key`` is
+    the ``OPENWHISPER_LLM_API_KEY`` that ``os.environ`` holds.
     """
     unwanted = {_key(name) for name in names}
     for name in [name for name in env if _key(name) in unwanted]:
