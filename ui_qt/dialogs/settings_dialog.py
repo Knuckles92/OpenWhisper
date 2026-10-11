@@ -1180,6 +1180,7 @@ class SettingsDialog(QDialog):
 
     def _build_mcp_page(self, layout: QVBoxLayout) -> None:
         self.mcp_view = McpSettingsView(settings_manager)
+        self.mcp_view.settings_changed.connect(self.notify_changed)
         # This computer's own controls; the view adds the paired host's.
         self.mcp_page = self.mcp_view.local
         self.mcp_history_tile = self.mcp_view.share_history_tile

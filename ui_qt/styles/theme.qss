@@ -5340,4 +5340,342 @@ QLabel#statsAppWords {
 /* automation:G end */
 
 /* automation:H begin */
+/* Settings > Hooks: each tile holds a list of saved hooks with an editor
+   card that opens under the row being edited. Every container and label the
+   widgets nest is transparent, so only the rows and the editor are surfaces. */
+QWidget#hooksSection,
+QWidget#hooksList,
+QWidget#hooksRowText,
+QWidget#hooksButtonRow,
+QWidget#hooksExtras,
+QWidget#hooksInlineField,
+QWidget#hooksEventChooser,
+QWidget#hooksRecent,
+QWidget#hooksRecentRow,
+QWidget#hooksLeases,
+QWidget#hooksLeaseRows,
+QWidget#hooksSection QLabel {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#hooksCount {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.12);
+    border: 1px solid rgba(@accent-rgb, 0.25);
+    border-radius: 10px;
+    padding: 3px 9px;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+QFrame#hooksRow {
+    background-color: @slate-field;
+    border: 1px solid @slate-border-subtle;
+    border-radius: 10px;
+}
+
+QFrame#hooksRow:hover {
+    background-color: @slate-raised;
+    border-color: @slate-border;
+}
+
+QFrame#hooksRow[selected="true"] {
+    background-color: @accent-tint;
+    border-color: @accent-tint-border;
+}
+
+QLabel#hooksRowName {
+    color: @slate-text;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#hooksRowDetail {
+    color: @slate-text-3;
+    font-size: 12px;
+}
+
+QFrame#hooksRow[off="true"] QLabel#hooksRowName {
+    color: @slate-text-3;
+}
+
+QFrame#hooksEmpty {
+    background-color: @slate-disabled;
+    border: 1px dashed @slate-border-strong;
+    border-radius: 10px;
+}
+
+QLabel#hooksEmptyText {
+    color: @slate-text-2;
+    background-color: transparent;
+    font-size: 13px;
+}
+
+QFrame#hooksEditor {
+    background-color: @slate-surface;
+    border: 1px solid @accent-tint-border;
+    border-radius: 12px;
+}
+
+QFrame#hooksEditor QLabel {
+    background-color: transparent;
+    border: none;
+}
+
+QFrame#hooksEditor QLineEdit,
+QFrame#hooksEditor QPlainTextEdit#hooksArgs,
+QFrame#hooksEditor QSpinBox {
+    color: @slate-text;
+    background-color: @slate-field;
+    border: 1px solid @slate-border-strong;
+    border-radius: 9px;
+    padding: 7px 12px;
+    font-size: 13px;
+    selection-background-color: @accent;
+}
+
+QFrame#hooksEditor QPlainTextEdit#hooksArgs {
+    padding: 4px 8px;
+}
+
+QFrame#hooksEditor QLineEdit:hover,
+QFrame#hooksEditor QPlainTextEdit#hooksArgs:hover,
+QFrame#hooksEditor QSpinBox:hover {
+    border-color: @slate-border-hover;
+}
+
+QFrame#hooksEditor QLineEdit:focus,
+QFrame#hooksEditor QPlainTextEdit#hooksArgs:focus,
+QFrame#hooksEditor QSpinBox:focus {
+    border-color: @accent;
+}
+
+QFrame#hooksDivider {
+    background-color: @slate-border-subtle;
+    border: none;
+}
+
+QLabel#hooksSectionLabel {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#hooksHint {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QLabel#hooksHint[tone="warning"] {
+    color: @warning-text;
+}
+
+QLabel#hooksMessage {
+    color: @success-text;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QLabel#hooksMessage[tone="error"] {
+    color: @danger-text;
+}
+
+/* Event chips: checkable tags that wrap; checked ones wear the accent. */
+QPushButton#hooksEventChip {
+    color: @slate-text-2;
+    background-color: transparent;
+    border: 1px solid @slate-border-strong;
+    border-radius: 13px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#hooksEventChip:hover {
+    color: @slate-text;
+    background-color: @slate-field;
+    border-color: @slate-border-hover;
+}
+
+QPushButton#hooksEventChip:focus {
+    border-color: @accent;
+}
+
+QPushButton#hooksEventChip:checked {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.16);
+    border-color: rgba(@accent-rgb, 0.55);
+}
+
+QPushButton#hooksEventChip:checked:hover {
+    background-color: rgba(@accent-rgb, 0.24);
+}
+
+/* A short honest result next to Send test, Run test and the secret buttons. */
+QLabel#hooksChip {
+    color: @slate-text-2;
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 10px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#hooksChip[tone="ok"] {
+    color: @success-text;
+    background-color: rgba(@success-rgb, 0.12);
+    border-color: rgba(@success-rgb, 0.32);
+}
+
+QLabel#hooksChip[tone="error"] {
+    color: @danger-text;
+    background-color: rgba(@danger-rgb, 0.10);
+    border-color: rgba(@danger-rgb, 0.32);
+}
+
+QLabel#hooksChip[tone="busy"] {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.10);
+    border-color: rgba(@accent-rgb, 0.30);
+}
+
+QLabel#hooksRecentTime {
+    color: @slate-text-3;
+    font-size: 12px;
+}
+
+QLabel#hooksRecentWhat {
+    color: @slate-text-2;
+    font-size: 12px;
+}
+
+QLabel#hooksRecentEmpty {
+    color: @slate-text-3;
+    font-size: 12px;
+}
+
+QLabel#hooksRecentResult {
+    color: @success-text;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#hooksRecentResult[tone="error"] {
+    color: @danger-text;
+}
+
+QFrame#hooksLeaseRow {
+    background-color: @slate-field;
+    border: 1px solid @slate-border-subtle;
+    border-radius: 9px;
+}
+
+QFrame#hooksLeaseRow QLabel {
+    background-color: transparent;
+    border: none;
+}
+
+/* Settings > API & MCP: the live API, MCP Events and Claude Code channel cards
+   sit outside #mcpSettingsPage, so they carry their own copies of its rules. */
+QWidget#mcpLiveSection,
+QWidget#mcpLiveSection QLabel,
+QWidget#mcpLiveRow,
+QWidget#mcpEndpoints {
+    background-color: transparent;
+    border: none;
+}
+
+QWidget#mcpLiveSection QLabel#mcpCardIcon {
+    background-color: rgba(@accent-rgb, 0.14);
+    border-radius: 9px;
+}
+
+QWidget#mcpLiveSection QLineEdit,
+QWidget#mcpLiveSection QPlainTextEdit {
+    color: @slate-text;
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 13px;
+}
+
+QWidget#mcpLiveSection QLineEdit:disabled {
+    color: @slate-text-disabled;
+}
+
+QWidget#mcpLiveSection QPlainTextEdit#mcpChannelConfig {
+    font-family: "Cascadia Mono", "Consolas", "SF Mono", "Menlo", monospace;
+    font-size: 12px;
+}
+
+/* The launch command wraps instead of scrolling, so all of it shows. */
+QWidget#mcpLiveSection QLabel#mcpCommandBox {
+    color: @slate-text;
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: "Cascadia Mono", "Consolas", "SF Mono", "Menlo", monospace;
+    font-size: 12px;
+}
+
+QWidget#mcpLiveSection QLabel#mcpLiveStatus {
+    color: @slate-text-2;
+    font-size: 13px;
+}
+
+QWidget#mcpLiveSection QLabel#mcpPreviewChip {
+    color: @warning-text;
+    background-color: rgba(@warning-rgb, 0.12);
+    border: 1px solid rgba(@warning-rgb, 0.32);
+    border-radius: 10px;
+    padding: 2px 9px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QPushButton#mcpEndpoint {
+    color: @accent;
+    background-color: transparent;
+    border: none;
+    padding: 2px 0;
+    font-family: "Cascadia Mono", "Consolas", "SF Mono", "Menlo", monospace;
+    font-size: 12px;
+    text-align: left;
+}
+
+QPushButton#mcpEndpoint:hover,
+QPushButton#mcpEndpoint:focus {
+    color: @accent-soft;
+    text-decoration: underline;
+}
+
+QPushButton#mcpEndpoint:disabled {
+    color: @slate-text-disabled;
+}
+
+/* A text link. No min-height override, so its height never drops below the text. */
+QPushButton#hooksLink {
+    color: @accent;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 0;
+    text-align: left;
+}
+
+QPushButton#hooksLink:hover,
+QPushButton#hooksLink:focus {
+    color: @accent-soft;
+    text-decoration: underline;
+}
 /* automation:H end */
