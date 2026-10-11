@@ -13,6 +13,7 @@ never logged.
 
 from __future__ import annotations
 
+import glob
 import json
 import logging
 import os
@@ -24,7 +25,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from urllib.parse import quote
 
 from services import installed_agents
@@ -39,11 +40,11 @@ logger = logging.getLogger(__name__)
 #: The whole system prompt of an ask.
 ASK_INSTRUCTION = "Answer briefly in plain text. You can't use tools or files."
 #: Claude Desktop cuts ``q`` near 14,000 characters; longer words go elsewhere.
-CLAUDE_APP_TEXT_MAX = 14_000
+CLAUDE_APP_TEXT_MAX = launch.CLAUDE_APP_TEXT_MAX
 #: Claude Code's own ``claude-cli://open`` handler takes at most 5,000.
 CLAUDE_CLI_TEXT_MAX = 5_000
 #: A link travels on the handler's command line (32,767 on Windows).
-LINK_MAX_CHARS = 30_000
+LINK_MAX_CHARS = launch.LINK_MAX_CHARS
 
 _MODEL_RE = re.compile(r"[\w.:/@\[\]+-]{1,200}")
 _HELP_TIMEOUT_S = 15.0
@@ -147,21 +148,95 @@ def _no_app_message(agent_id: str, text: str) -> str:
     return "OpenCode has no app link. Choose Terminal instead."
 
 
-def terminal_argv(agent_id: str, program: str, text: str) -> List[str]:
+def terminal_argv(agent_id: str, program: Union[str, Sequence[str]], text: str) -> List[str]:
     """The command line that starts ``agent_id`` interactively with ``text``.
 
-    The words are always one element, after anything that would let the CLI
-    read them as its own options or commands.
+    ``program`` is the executable, or the command that starts the agent
+    (``node.exe`` and its script; see :func:`terminal_command`). The words
+    are always one element, after anything that would let the CLI read them
+    as its own options or commands.
     """
+    command = [program] if isinstance(program, str) else list(program)
     if agent_id == CLAUDE_CODE:
         # Claude Code reads a lone word naming one of its commands (update,
         # purge, ...) as that command even after "--"; words with a space
         # never are one.
         prompt = text if any(ch.isspace() for ch in text) else text + " "
-        return [program, "--", prompt]
+        return [*command, "--", prompt]
     if agent_id == CODEX:
-        return [program, "--", text]
-    return [program, f"--prompt={text}"]
+        return [*command, "--", text]
+    return [*command, f"--prompt={text}"]
+
+
+#: Windows runs these through cmd.exe, which would read the words as commands.
+_WINDOWS_SCRIPTS = (".cmd", ".bat")
+#: npm's cmd-shim: the program it runs, and the script it hands that program.
+_SHIM_PROGRAM = re.compile(r'SET\s+"_prog=([^"]*)"', re.IGNORECASE)
+_SHIM_SCRIPT = re.compile(r'"%_prog%"\s+"%dp0%\\([^"%]+)"\s+%\*', re.IGNORECASE)
+
+
+def terminal_command(agent: installed_agents.InstalledAgent) -> List[str]:
+    """How a terminal starts ``agent`` without cmd.exe in between; blocking.
+
+    A ``.cmd`` (npm's shim on Windows) would pass the words through cmd.exe.
+    An ``.exe`` install of the same agent is used instead even when the shim
+    is newer; else the shim is resolved to what it runs (see
+    :func:`npm_shim_command`). Only when neither exists is the shim returned,
+    which ``launch.open_in_terminal`` refuses with its own explanation.
+    """
+    if not agent.path.lower().endswith(_WINDOWS_SCRIPTS):
+        return [agent.path]
+    for candidate in installed_agents.candidate_paths(agent.id):
+        if candidate.lower().endswith(".exe"):
+            return [candidate]
+    return npm_shim_command(agent.path) or [agent.path]
+
+
+def npm_shim_command(shim: str) -> Optional[List[str]]:
+    """The command an npm ``.cmd`` shim runs, without cmd.exe; None if unknown.
+
+    The shim runs ``node.exe`` (beside it, else on PATH) with a script of the
+    package. Without Node, a native ``.exe`` the package ships for this
+    platform (Codex's ``vendor\\<target>\\bin\\codex.exe``) runs instead.
+    """
+    try:
+        with open(shim, "r", encoding="utf-8", errors="replace") as handle:
+            source = handle.read(16_384)
+    except OSError:
+        return None
+    programs = _SHIM_PROGRAM.findall(source)
+    match = _SHIM_SCRIPT.search(source)
+    if not match or not programs or any(
+            os.path.basename(p.replace("\\", "/")).lower() not in ("node", "node.exe")
+            for p in programs):
+        return None  # not npm's shim of a Node script
+    folder = os.path.dirname(os.path.abspath(shim))
+    script = os.path.normpath(os.path.join(folder, *match.group(1).split("\\")))
+    if not os.path.isfile(script):
+        return None
+    for node in (os.path.join(folder, "node.exe"), shutil.which("node.exe") or ""):
+        if node.lower().endswith(".exe") and os.path.isfile(node):
+            return [node, script]
+    native = _package_exe(script, os.path.splitext(os.path.basename(shim))[0], folder)
+    return [native] if native else None
+
+
+def _package_exe(script: str, command: str, npm_folder: str) -> str:
+    """``command``.exe that the npm package holding ``script`` ships, or ""."""
+    root = os.path.dirname(script)
+    while not os.path.isfile(os.path.join(root, "package.json")):
+        parent = os.path.dirname(root)
+        if parent == root or os.path.normcase(parent) == os.path.normcase(npm_folder):
+            return ""  # the package root is below the shim's folder
+        root = parent
+    name = f"{command}.exe"
+    for pattern in (("node_modules", "*", "bin"), ("node_modules", "*", "*", "bin"),
+                    ("node_modules", "*", "vendor", "*", "bin"),
+                    ("node_modules", "*", "*", "vendor", "*", "bin")):
+        for found in sorted(glob.glob(os.path.join(root, *pattern, name))):
+            if os.path.isfile(found):
+                return found
+    return ""
 
 
 def _handoff_terminal(agent_id: str, text: str, folder: str) -> ActionResult:
@@ -171,7 +246,7 @@ def _handoff_terminal(agent_id: str, text: str, folder: str) -> ActionResult:
         return ActionResult(False, f"{name} isn't installed.")
     try:
         launch.open_in_terminal(
-            terminal_argv(agent_id, agent.path, text),
+            terminal_argv(agent_id, terminal_command(agent), text),
             cwd=folder or os.path.expanduser("~"),
             env=installed_agents.agent_child_env(),
         )
@@ -428,16 +503,25 @@ def _run_headless(argv: List[str], prompt: str, *, deadline: float,
     return _Run(status, proc.returncode, stdout, "\n".join(err))
 
 
-def _claude_answer(run: _Run) -> ActionResult:
-    result = None
-    for chunk in [run.stdout.strip(), *reversed(run.stdout.splitlines())]:
+def _claude_result(stdout: str) -> Optional[Dict[str, Any]]:
+    """The ``result`` message ``claude -p --output-format json`` printed.
+
+    It prints that one object, or, when verbose output is on in the user's
+    own config, every message of the turn as one JSON array ending with it.
+    """
+    for chunk in [stdout.strip(), *reversed(stdout.splitlines())]:
         try:
             data = json.loads(chunk)
         except ValueError:
             continue
-        if isinstance(data, dict) and data.get("type") == "result":
-            result = data
-            break
+        for item in reversed(data if isinstance(data, list) else [data]):
+            if isinstance(item, dict) and item.get("type") == "result":
+                return item
+    return None
+
+
+def _claude_answer(run: _Run) -> ActionResult:
+    result = _claude_result(run.stdout)
     if result is None:
         return ActionResult(False, _stopped(CLAUDE_CODE, run))
     text = str(result.get("result") or "")

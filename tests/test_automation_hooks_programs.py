@@ -208,7 +208,7 @@ def test_a_timeout_stops_the_program_and_everything_it_started(tmp_path):
         kill_pid(child)
 
 
-def test_processes_left_behind_are_stopped_when_the_program_exits(tmp_path):
+def test_processes_left_behind_keep_running_when_the_program_exits(tmp_path):
     pid_file = tmp_path / "child.pid"
     # The child inherits stdout, so it holds the output open after its parent exits.
     code = (
@@ -222,7 +222,8 @@ def test_processes_left_behind_are_stopped_when_the_program_exits(tmp_path):
     try:
         assert (exit_code, out.strip(), error) == (0, b"done", "")
         assert time.monotonic() - started < 10
-        wait_until(lambda: not _alive(child), timeout=5)
+        time.sleep(1.0)
+        assert _alive(child)  # an app a program opens stays open
     finally:
         kill_pid(child)
 

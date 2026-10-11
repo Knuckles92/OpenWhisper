@@ -1,7 +1,10 @@
 """Opening links and terminals for actions (stream C2 owns this module).
 
 Words reach a link percent-encoded and a terminal as one argv element; they
-never pass through a shell, cmd.exe or AppleScript source.
+never pass through a shell, cmd.exe or AppleScript source, nor a terminal's
+own command-line parsing (macOS and Linux terminals run a one-shot script
+whose every argument is shell-quoted). Every child gets the user's
+environment without OpenWhisper's own keys (``agent_child_env``).
 """
 
 from __future__ import annotations
@@ -24,8 +27,20 @@ logger = logging.getLogger(__name__)
 HANDLER_CACHE_S = 60.0
 #: Windows rejects longer command lines (32,767 characters with the program).
 WINDOWS_COMMAND_LINE_MAX = 32_000
+#: A link travels on its handler's command line, so longer ones can't open.
+LINK_MAX_CHARS = 30_000
+#: Claude Desktop cuts a ``claude://`` link's ``q`` near 14,000 characters.
+CLAUDE_APP_TEXT_MAX = 14_000
+#: How long ``xdg-open``/``open`` may take to answer; one still running has
+#: started the link's app in the foreground (xdg-open's generic mode).
+OPEN_WAIT_S = 2.0
+#: How long a just-started Linux terminal is watched for dying at once.
+TERMINAL_START_CHECK_S = 0.5
 
 _SCHEME_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*")
+#: What to install for a scheme a preset or an agent link uses.
+_SCHEME_APPS = {"claude": "the Claude app", "claude-cli": "Claude Code",
+                "codex": "the ChatGPT app"}
 _handler_lock = threading.Lock()
 _handler_cache: Dict[str, Tuple[float, Optional[bool]]] = {}
 
@@ -34,28 +49,59 @@ class LaunchError(RuntimeError):
     """Opening failed; the message is safe to show."""
 
 
+def _child_env() -> Dict[str, str]:
+    """The user's environment without OpenWhisper's own keys and settings."""
+    from services.installed_agents import agent_child_env
+
+    return agent_child_env()
+
+
 def open_uri(uri: str) -> None:
     """Hand ``uri`` to the app registered for its scheme; blocks briefly.
 
     Raises:
-        LaunchError: Nothing could open it.
+        LaunchError: Nothing could open it, or it is too long to; the message
+            says which app is missing when one is known.
     """
     if not uri or any(ch in uri for ch in "\r\n\x00"):
         raise LaunchError("That link can't be opened.")
-    try:
-        if sys.platform == "win32":
+    if len(uri) > LINK_MAX_CHARS:
+        raise LaunchError("That's too long to send in a link. Try fewer words.")
+    scheme = uri.split(":", 1)[0].lower()
+    # Windows would offer to find an app in the Store, and xdg-open a
+    # browser, for a scheme nothing handles.
+    if scheme not in ("http", "https") and handler_available(scheme) is False:
+        app = _SCHEME_APPS.get(scheme)
+        raise LaunchError(f"No app on this computer opens {scheme}: links."
+                          + (f" Install {app}." if app else ""))
+    if sys.platform == "win32":
+        try:
             os.startfile(uri)  # type: ignore[attr-defined]
-            return
-        command = ["open", uri] if sys.platform == "darwin" else ["xdg-open", uri]
-        completed = subprocess.run(
+        except OSError as exc:
+            raise LaunchError("No app on this computer opens that link.") from exc
+        return
+    _open_with(["open", uri] if sys.platform == "darwin" else ["xdg-open", uri])
+
+
+def _open_with(command: List[str]) -> None:
+    """Run ``open``/``xdg-open``; done once it hands the link over.
+
+    In its generic mode xdg-open runs the link's app in the foreground, so
+    one still running after :data:`OPEN_WAIT_S` has opened it.
+    """
+    try:
+        proc = subprocess.Popen(
             command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, timeout=10, check=False,
+            stderr=subprocess.DEVNULL, env=_child_env(), start_new_session=True,
         )
     except OSError as exc:
         raise LaunchError("No app on this computer opens that link.") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise LaunchError("Opening the link took too long.") from exc
-    if completed.returncode != 0:
+    try:
+        code = proc.wait(timeout=OPEN_WAIT_S)
+    except subprocess.TimeoutExpired:
+        _reap(proc)
+        return
+    if code != 0:
         raise LaunchError("No app on this computer opens that link.")
 
 
@@ -104,7 +150,7 @@ _ASSOCF_INIT_IGNOREUNKNOWN = 0x400
 _ASSOCF_IS_PROTOCOL = 0x1000
 _ASSOCSTR_COMMAND = 1
 _ASSOCSTR_EXECUTABLE = 2
-_ASSOCSTR_APPID = 20
+_ASSOCSTR_PROGID = 20
 _S_OK = 0
 #: HRESULT_FROM_WIN32(ERROR_NO_ASSOCIATION) and (ERROR_NOT_FOUND).
 _NO_HANDLER = (0x80070483, 0x80070490)
@@ -134,10 +180,10 @@ def _windows_handler(scheme: str) -> Optional[bool]:
         if found == _S_OK and os.path.isabs(program):
             return os.path.isfile(program)
         return True
-    app_result, app_id = _assoc_query(scheme, _ASSOCSTR_APPID)
-    if app_result == _S_OK and app_id.startswith("AppX"):
+    progid_result, progid = _assoc_query(scheme, _ASSOCSTR_PROGID)
+    if progid_result == _S_OK and progid.startswith("AppX"):
         return True  # a packaged app declares the protocol
-    if result in _NO_HANDLER or app_result in _NO_HANDLER or app_result == _S_OK:
+    if result in _NO_HANDLER or progid_result in _NO_HANDLER or progid_result == _S_OK:
         return False
     return None
 
@@ -162,7 +208,7 @@ def _linux_handler(scheme: str) -> Optional[bool]:
         completed = subprocess.run(
             [xdg_mime, "query", "default", f"x-scheme-handler/{scheme}"],
             stdin=subprocess.DEVNULL, capture_output=True, text=True,
-            timeout=5, check=False,
+            timeout=5, check=False, env=_child_env(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -178,10 +224,12 @@ def open_in_terminal(argv: Sequence[str], *, cwd: str = "",
     """Run ``argv`` in a new terminal window; returns once the window is asked for.
 
     Every element reaches the program as one argument: Windows starts the
-    ``.exe`` directly in a new console, macOS runs a one-shot ``.command``
-    script whose arguments are all single-quoted, Linux hands the list to a
-    terminal emulator. ``env`` applies where the terminal is our child
-    (Windows, Linux); macOS Terminal uses the user's own login environment.
+    ``.exe`` directly in a new console; macOS and Linux run a one-shot
+    script whose arguments are all single-quoted, so the terminal's own
+    command line holds only the script's path (terminals re-parse ``-e``
+    arguments). ``env`` (default: the user's environment without
+    OpenWhisper's keys) applies where the terminal is our child (Windows,
+    Linux); macOS Terminal uses the user's own login environment.
 
     Raises:
         LaunchError: No terminal could be opened; the message says why.
@@ -194,6 +242,7 @@ def open_in_terminal(argv: Sequence[str], *, cwd: str = "",
     workdir = cwd or os.path.expanduser("~")
     if not os.path.isdir(workdir):
         raise LaunchError("The working folder doesn't exist.")
+    env = dict(env) if env is not None else _child_env()
     if sys.platform == "win32":
         _windows_terminal(args, workdir, env)
     elif sys.platform == "darwin":
@@ -231,22 +280,43 @@ def _windows_terminal(args: List[str], cwd: str, env: Optional[Mapping[str, str]
     _reap(proc)
 
 
-def _macos_terminal(args: List[str], cwd: str) -> None:
+def _one_shot_script(args: List[str], cwd: str, *, shell: str, suffix: str) -> str:
+    """A private script that removes itself, enters ``cwd`` and runs ``args``.
+
+    Every argument is single-quoted for the shell, so the words reach the
+    program as one argument whatever they hold. Returns its path.
+
+    Raises:
+        OSError: It couldn't be written.
+    """
     script = "\n".join((
-        "#!/bin/zsh -l",
+        f"#!{shell}",
         'rm -f -- "$0"',
         f"cd -- {shlex.quote(cwd)} || exit 1",
         "exec " + " ".join(shlex.quote(arg) for arg in args),
         "",
     ))
-    fd, path = tempfile.mkstemp(prefix="openwhisper-", suffix=".command")
+    fd, path = tempfile.mkstemp(prefix="openwhisper-", suffix=suffix)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(script)
         os.chmod(path, 0o700)
+    except OSError:
+        _remove(path)
+        raise
+    return path
+
+
+def _macos_terminal(args: List[str], cwd: str) -> None:
+    try:
+        path = _one_shot_script(args, cwd, shell="/bin/zsh -l", suffix=".command")
+    except OSError as exc:
+        raise LaunchError("Terminal couldn't be opened.") from exc
+    try:
         completed = subprocess.run(
             ["open", "-a", "Terminal", path], stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False,
+            env=_child_env(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         _remove(path)
@@ -298,8 +368,15 @@ def _terminal_commands(args: List[str]) -> List[List[str]]:
 
 
 def _linux_terminal(args: List[str], cwd: str, env: Optional[Mapping[str, str]]) -> None:
-    commands = _terminal_commands(args)
+    # Many terminals join or re-split what follows -e and hand it to a
+    # shell, so their command line carries only the script's path.
+    try:
+        script = _one_shot_script(args, cwd, shell="/bin/sh", suffix=".sh")
+    except OSError as exc:
+        raise LaunchError("No terminal app could be started.") from exc
+    commands = _terminal_commands([script])
     for command in commands:
+        name = os.path.basename(command[0])
         try:
             proc = subprocess.Popen(
                 command, cwd=cwd, env=dict(env) if env is not None else None,
@@ -307,11 +384,21 @@ def _linux_terminal(args: List[str], cwd: str, env: Optional[Mapping[str, str]])
                 stderr=subprocess.DEVNULL, start_new_session=True,
             )
         except OSError as exc:
-            logger.debug("Terminal %s didn't start (%s)",
-                         os.path.basename(command[0]), type(exc).__name__)
+            logger.debug("Terminal %s didn't start (%s)", name, type(exc).__name__)
             continue
-        _reap(proc)
-        return
+        try:
+            # A launcher (gnome-terminal) exits 0 once its server has the
+            # window; one that dies at once (say, on the bundle's libraries)
+            # didn't open anything.
+            code = proc.wait(timeout=TERMINAL_START_CHECK_S)
+        except subprocess.TimeoutExpired:
+            code = 0
+            _reap(proc)
+        if code != 0:
+            logger.debug("Terminal %s stopped at once (code %s)", name, code)
+            continue
+        return  # the script removes itself when it runs
+    _remove(script)
     if commands:
         raise LaunchError("No terminal app could be started.")
     raise LaunchError("No terminal app was found. Set $TERMINAL to the one you use.")

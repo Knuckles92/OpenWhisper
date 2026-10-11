@@ -174,7 +174,7 @@ def _wait(predicate, timeout=5.0):
 def test_a_quick_answer_pastes_while_the_job_still_saves_its_history(h, monkeypatch):
     seen = []
 
-    def run_once(argv, stdin, *, timeout_s, cwd="", env=None):
+    def run_once(argv, stdin, *, timeout_s, cwd="", env=None, cancel=None):
         seen.append((stdin, threading.current_thread().name))
         return 0, b"Fixed my grammar.", ""
 
@@ -201,7 +201,7 @@ def test_a_quick_answer_pastes_while_the_job_still_saves_its_history(h, monkeypa
 def test_the_job_slot_frees_while_a_slow_action_still_runs(h, monkeypatch):
     release = threading.Event()
 
-    def run_once(argv, stdin, *, timeout_s, cwd="", env=None):
+    def run_once(argv, stdin, *, timeout_s, cwd="", env=None, cancel=None):
         release.wait(5)
         return 0, b"late answer", ""
 

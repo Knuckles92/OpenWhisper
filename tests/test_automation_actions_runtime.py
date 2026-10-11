@@ -172,6 +172,7 @@ def test_the_action_is_read_fresh_for_every_run(h):
     h.rt.deliver(_job("a1"), "one", raw_text=None, html="")
     h.settings.values[SettingsKey.ACTIONS] = [
         Action("a1", "Tell scripts", ActionKind.SCRIPTS).to_dict()]
+    h.bus.subscribe(lambda event: None, label="sse")  # a script follows the events
 
     h.rt.deliver(_job("a1"), "two", raw_text=None, html="")
 
@@ -206,6 +207,7 @@ def test_a_failed_copy_is_not_retried_as_a_fallback(h):
 
 def test_scripts_only_announce_the_run(h):
     h.add(Action("s1", "Send to my scripts", ActionKind.SCRIPTS))
+    h.bus.subscribe(lambda event: None, label="sse")  # a script follows the events
 
     h.rt.deliver(_job("s1"), "hello", raw_text=None, html="")
 
@@ -434,7 +436,7 @@ def test_program_gets_the_words_on_stdin_and_its_output_is_routed(h, monkeypatch
     }))
     runs = []
 
-    def run_once(argv, stdin, *, timeout_s, cwd="", env=None):
+    def run_once(argv, stdin, *, timeout_s, cwd="", env=None, cancel=None):
         runs.append((argv, stdin, timeout_s, env, threading.current_thread().name))
         return 0, "HÉLLO\r\n".encode(), ""
 
@@ -661,7 +663,8 @@ def test_a_long_answer_is_shortened_for_a_notice(h, monkeypatch):
     _finished(h)
 
     (shown, done), = h.ui.notices
-    assert len(shown) == runtime.NOTICE_MAX_CHARS and shown.endswith("…") and done
+    start = shown.removesuffix(runtime.FULL_ANSWER_COPIED)  # all of it is on the clipboard
+    assert len(start) == runtime.NOTICE_MAX_CHARS and start.endswith("…") and done
 
 
 # -- Settings "Try it" ------------------------------------------------------------------
@@ -770,7 +773,7 @@ def test_a_program_action_never_sees_openwhisper_keys(h, monkeypatch):
     h.add(Action("p2", "Env", ActionKind.PROGRAM, {"program": "C:\tools\env.exe"}))
     seen = []
     monkeypatch.setattr(programs, "run_once",
-                        lambda argv, stdin, *, timeout_s, cwd="", env=None:
+                        lambda argv, stdin, *, timeout_s, cwd="", env=None, cancel=None:
                         seen.append(env) or (0, b"", ""))
 
     h.rt.deliver(_job("p2"), "hi", raw_text=None, html="")

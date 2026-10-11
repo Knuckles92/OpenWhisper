@@ -8,10 +8,14 @@ link, a webhook, a program and an agent block, so they run on the runtime's
 own small pool rather than the transcription executor: the dictation's job
 slot frees as soon as its history is saved, however long an agent thinks.
 Their results come back to the Qt thread through one relay that lives for
-the session; a worker only ever emits a token and a result.
+the session; a worker only ever emits a token and a result. At most
+``MAX_PENDING`` of them run or wait at once; more are refused, and
+``cancel`` stops them all (agents and programs are killed, late results
+dropped).
 
-A run that fails leaves the words on the clipboard, so nothing said is lost.
-Dictated text, links, program paths and arguments, selections, secrets and
+A run the user started that fails leaves the words on the clipboard, so
+nothing said is lost; one a program started over the live API or MCP only
+reports the failure (status, notice and ``action.ran``). Dictated text, links, program paths and arguments, selections, secrets and
 replies are never logged.
 """
 
@@ -21,9 +25,10 @@ import itertools
 import json
 import logging
 import os
+import re
 import threading
 import traceback
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, Callable, Optional
@@ -46,12 +51,21 @@ logger = logging.getLogger(__name__)
 
 #: ``EventBus.subscribers`` label of a Claude Code session's channel bridge.
 CHANNEL_LISTENER_LABEL = "claude-channel"
+#: Labels of the listeners "Send to my scripts" reaches: live event streams
+#: (services.automation.api), webhooks, programs and MCP Events.
+SSE_LABEL, WEBHOOKS_LABEL, PROGRAMS_LABEL, MCP_EVENTS_LABEL = (
+    "sse", "webhooks", "programs", "mcp-events")
 #: Blocking runs at once; more wait their turn.
 MAX_WORKERS = 4
+#: Blocking runs running or waiting; beyond this a run is refused.
+MAX_PENDING = 8
 #: How long a webhook action waits for its receiver.
 WEBHOOK_TIMEOUT_S = 5.0
 #: How much of an answer a notice shows.
 NOTICE_MAX_CHARS = 140
+#: Job sources that are another program, not the user: a failed run of
+#: theirs never overwrites the clipboard.
+PROGRAM_SOURCES = ("api", "mcp")
 #: The fixed frame around the selection an agent action passes as context.
 CONTEXT_OPEN = '<context source="OpenWhisper">'
 CONTEXT_CLOSE = "</context>"
@@ -59,8 +73,12 @@ CONTEXT_CLOSE = "</context>"
 MISSING_MESSAGE = "That action no longer exists"
 DISABLED_MESSAGE = "That action is turned off"
 NO_LISTENER_MESSAGE = "No Claude Code session is listening"
+NO_SCRIPTS_MESSAGE = "Nothing is listening for your scripts"
 CLOSING_MESSAGE = "OpenWhisper is closing"
+BUSY_MESSAGE = "Too many actions are still running"
+CANCELED_MESSAGE = "Canceled"
 COPIED_INSTEAD = " — copied instead"
+FULL_ANSWER_COPIED = " — full answer copied"
 
 
 @dataclass(frozen=True)
@@ -144,9 +162,13 @@ def _result_relay() -> _ResultRelay:
 
 # -- blocking work (worker threads; never touches the runtime or Qt) ------------
 
-def _open_link(uri: str) -> ActionResult:
-    from services.actions.launch import LaunchError, open_uri
+def _open_link(uri: str, words: str) -> ActionResult:
+    from services.actions.launch import CLAUDE_APP_TEXT_MAX, LaunchError, open_uri
 
+    # The Claude app quietly cuts longer words short.
+    if uri.split(":", 1)[0].lower() == "claude" and len(words) > CLAUDE_APP_TEXT_MAX:
+        return ActionResult(False, "That's too long for the Claude app "
+                                   f"({CLAUDE_APP_TEXT_MAX:,} characters at most)")
     try:
         open_uri(uri)
     except LaunchError as exc:
@@ -232,10 +254,12 @@ def _program_env(extra: dict) -> dict:
     return programs.child_env(extra)
 
 
-def _program(argv: list, stdin: bytes, timeout_s: float, env: dict) -> ActionResult:
+def _program(argv: list, stdin: bytes, timeout_s: float, env: dict,
+             cancel: threading.Event) -> ActionResult:
     from services.automation import programs
 
-    code, out, error = programs.run_once(argv, stdin, timeout_s=timeout_s, env=env)
+    code, out, error = programs.run_once(argv, stdin, timeout_s=timeout_s, env=env,
+                                         cancel=cancel)
     if error:
         return ActionResult(False, error)
     if code != 0:
@@ -260,9 +284,19 @@ def prompt_with_context(text: str, snapshot) -> str:
     app = identity.name if identity is not None and identity.name else ""
     lines = [CONTEXT_OPEN]
     if app:
-        lines.append(f"<app>{app}</app>")
-    lines += ["<selected_text>", selected, "</selected_text>", CONTEXT_CLOSE]
+        lines.append(f"<app>{_inside_frame(app)}</app>")
+    lines += ["<selected_text>", _inside_frame(selected), "</selected_text>", CONTEXT_CLOSE]
     return text + "\n\n" + "\n".join(lines)
+
+
+#: The "<" of a tag naming one of the frame's own elements, open or close.
+_FRAME_TAG = re.compile(r"<(?=\s*/?\s*(?:selected_text|context|app)\b)", re.IGNORECASE)
+
+
+def _inside_frame(value: str) -> str:
+    """``value`` with the frame's own tags made inert, so a selection or app
+    name can't end the frame early and pose as the request after it."""
+    return _FRAME_TAG.sub("&lt;", value)
 
 
 def _agent(params: dict, text: str, job, cancel: threading.Event) -> ActionResult:
@@ -293,8 +327,16 @@ class _Run:
     settings: dict = field(default_factory=dict)
     #: Settings' "Try it": the outcome goes to this callback, not the user.
     done: Optional[Callable[[ActionResult], None]] = None
-    #: Ends an agent's answer early when the app closes.
-    cancel: Optional[threading.Event] = None
+    #: Stops an agent or a program early (``cancel``, or the app closing).
+    cancel: threading.Event = field(default_factory=threading.Event)
+
+
+@dataclass
+class _Pending:
+    """A run on the pool, until its result is back or it is canceled."""
+
+    run: _Run
+    future: Optional[Future] = None
 
 
 def _output_of(action: Action) -> str:
@@ -306,9 +348,41 @@ def _output_of(action: Action) -> str:
     return output if output in Output.ALL else Output.NONE
 
 
+def _users_own(job) -> bool:
+    """Whether the user started the job (a hotkey, Settings, routing, the
+    desktop), rather than a program over the live API or MCP."""
+    return getattr(job, "source", "") not in PROGRAM_SOURCES
+
+
 def _short(text: str, limit: int = NOTICE_MAX_CHARS) -> str:
     flat = " ".join(text.split())
     return flat if len(flat) <= limit else flat[:limit - 1].rstrip() + "…"
+
+
+def scripts_listening(settings) -> bool:
+    """Whether anything outside OpenWhisper would act on ``action.ran`` now.
+
+    A live event stream, an enabled webhook or program hook that takes
+    ``action.ran``, or an MCP Events subscription. Qt thread; never blocks.
+    """
+    bus = events.bus()
+    if bus.subscribers(SSE_LABEL):
+        return True
+    from services.automation import models
+
+    hooks = []
+    if bus.subscribers(WEBHOOKS_LABEL):
+        hooks += models.load_webhooks(settings)
+    if bus.subscribers(PROGRAMS_LABEL):
+        hooks += models.load_programs(settings)
+    if any(hook.enabled and catalog.ACTION_RAN in hook.events for hook in hooks):
+        return True
+    if bus.subscribers(MCP_EVENTS_LABEL):
+        # Subscribed while MCP Events is on, whether or not an agent is.
+        from services.agent_mcp import events_ext
+
+        return events_ext.subscription_count() > 0
+    return False
 
 
 def _listening(count: int) -> str:
@@ -326,8 +400,8 @@ class ActionRuntime:
         self.controller = controller
         self._lock = threading.Lock()
         self._executor: Optional[ThreadPoolExecutor] = None
-        self._tokens: set[int] = set()
-        self._cancels: set[threading.Event] = set()
+        #: Runs on the pool by relay token: running, or waiting for a worker.
+        self._pending: dict[int, _Pending] = {}
         self._closed = False
 
     # -- entry points --------------------------------------------------------
@@ -369,17 +443,59 @@ class ActionRuntime:
             return
         self._start(run)
 
+    def accepting(self) -> bool:
+        """Whether another blocking run would be taken now; any thread.
+
+        False once ``MAX_PENDING`` runs are running or waiting (a new one
+        would be refused), and after ``close``.
+        """
+        with self._lock:
+            return not self._closed and len(self._pending) < MAX_PENDING
+
+    def cancel(self, *, tests_only: bool = False) -> int:
+        """Cancel every run that is running or waiting; Qt thread.
+
+        Agents and programs are stopped with what they started, and nothing
+        a canceled run would have pasted, copied or shown appears.
+        ``action.ran`` says ``Canceled``; a Settings "Try it" gets that
+        result too.
+
+        Args:
+            tests_only: Only Settings' "Try it" runs (its page went away).
+
+        Returns:
+            How many runs were canceled.
+        """
+        with self._lock:
+            tokens = [token for token, pending in self._pending.items()
+                      if not tests_only or pending.run.done is not None]
+            canceled = [self._pending.pop(token) for token in tokens]
+        if not canceled:
+            return 0
+        if _relay is not None:
+            _relay.drop(tokens)
+        for pending in canceled:
+            pending.run.cancel.set()
+            if pending.future is not None:
+                pending.future.cancel()  # still waiting: never starts
+        for pending in canceled:
+            run = pending.run
+            self._publish_ran(run, False, CANCELED_MESSAGE, Output.NONE)
+            if run.done is not None:
+                run.done(ActionResult(False, CANCELED_MESSAGE))
+        logger.info("Canceled %d action run(s)", len(canceled))
+        return len(canceled)
+
     def close(self) -> None:
         """Stop work in progress at quit: cancel agents, drop late results."""
         with self._lock:
             self._closed = True
-            tokens, self._tokens = self._tokens, set()
-            cancels, self._cancels = self._cancels, set()
+            pending, self._pending = self._pending, {}
             executor, self._executor = self._executor, None
-        for cancel in cancels:
-            cancel.set()
-        if tokens and _relay is not None:
-            _relay.drop(tokens)
+        for item in pending.values():
+            item.run.cancel.set()
+        if pending and _relay is not None:
+            _relay.drop(list(pending))
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
 
@@ -391,8 +507,11 @@ class ActionRuntime:
             copied = self._copy(run.text, run.html)
             self._finish(run, ActionResult(copied, "Copied" if copied else "Couldn't copy the words"))
         elif kind == ActionKind.SCRIPTS:
-            # transcription.completed already carried the words to listeners.
-            self._finish(run, ActionResult(True, "Sent to your scripts"))
+            # action.ran carries the words to whatever listens.
+            if scripts_listening(run.settings):
+                self._finish(run, ActionResult(True, "Sent to your scripts"))
+            else:
+                self._finish(run, ActionResult(False, NO_SCRIPTS_MESSAGE))
         elif kind == ActionKind.CHANNEL:
             self._finish(run, self._send_to_channel(run))
         elif kind == ActionKind.OPEN_LINK:
@@ -401,7 +520,7 @@ class ActionRuntime:
             except ValueError as exc:
                 self._finish(run, ActionResult(False, str(exc)))
                 return
-            self._submit(run, partial(_open_link, uri))
+            self._submit(run, partial(_open_link, uri, run.text))
         elif kind == ActionKind.WEBHOOK:
             self._submit(run, partial(
                 _webhook, action.param("url") or "", self._webhook_payload(run), action.id))
@@ -414,9 +533,9 @@ class ActionRuntime:
                 "OPENWHISPER_JOB_ID": run.job.id,
             })
             self._submit(run, partial(
-                _program, argv, run.text.encode("utf-8"), float(action.param("timeout_s")), env))
+                _program, argv, run.text.encode("utf-8"), float(action.param("timeout_s")), env,
+                run.cancel))
         elif kind == ActionKind.AGENT:
-            run.cancel = threading.Event()
             params = {key: action.param(key) for key in (
                 "agent", "mode", "surface", "folder", "include_selection", "model")}
             self._submit(run, partial(_agent, params, run.text, run.job, run.cancel))
@@ -428,26 +547,30 @@ class ActionRuntime:
         relay = _result_relay()
         token = next(_tokens)
         with self._lock:
-            executor = None
-            if not self._closed:
+            executor, refusal = None, ""
+            if self._closed:
+                refusal = CLOSING_MESSAGE
+            elif len(self._pending) >= MAX_PENDING:
+                refusal = BUSY_MESSAGE
+            else:
                 if self._executor is None:
                     self._executor = ThreadPoolExecutor(
                         max_workers=MAX_WORKERS, thread_name_prefix="action-run")
                 executor = self._executor
-                self._tokens.add(token)
+                pending = self._pending[token] = _Pending(run)
                 relay.expect(token, partial(self._finish_from_worker, token, run))
-                if run.cancel is not None:
-                    self._cancels.add(run.cancel)
         if executor is None:
-            self._finish(run, ActionResult(False, CLOSING_MESSAGE))
+            self._finish(run, ActionResult(False, refusal))
             return
         if run.done is None:
             self.controller.ui_controller.set_status(f"{run.action.name} · working…")
         kind = run.action.kind
         # Bound here: the worker never reaches back into the runtime.
-        emit = relay.finished.emit
+        emit, cancel = relay.finished.emit, run.cancel
 
         def task() -> None:
+            if cancel.is_set():
+                return  # canceled before a worker took it
             try:
                 result = work()
             except Exception as exc:
@@ -455,13 +578,14 @@ class ActionRuntime:
                 result = ActionResult(False, "something went wrong")
             emit(token, result)
 
-        executor.submit(task)
+        try:
+            pending.future = executor.submit(task)
+        except RuntimeError:
+            pass  # closed meanwhile; close() dropped the token
 
     def _finish_from_worker(self, token: int, run: _Run, result: ActionResult) -> None:
         with self._lock:
-            self._tokens.discard(token)
-            if run.cancel is not None:
-                self._cancels.discard(run.cancel)
+            self._pending.pop(token, None)
         if not result.ok and run.done is None:
             result = ActionResult(False, f"{run.action.name}: {result.message}")
         self._finish(run, result)
@@ -477,8 +601,11 @@ class ActionRuntime:
             return
         if not result.ok:
             message, where = result.message.rstrip("."), Output.NONE
-            # A copy action's failure is the copy itself.
-            if run.action.kind != ActionKind.CLIPBOARD and self._copy(run.text, run.html):
+            # Words the user spoke or typed are kept on the clipboard; a
+            # program's are not its to overwrite the clipboard with. A copy
+            # action's failure is the copy itself.
+            if (run.action.kind != ActionKind.CLIPBOARD and _users_own(run.job)
+                    and self._copy(run.text, run.html)):
                 message, where = message + COPIED_INSTEAD, Output.CLIPBOARD
             self._say(message, ok=False)
             self._publish_ran(run, False, message, where)
@@ -505,8 +632,13 @@ class ActionRuntime:
             self._say(message, ok=True)
             return True, message, Output.SCRATCHPAD
         if output == Output.NOTICE:
-            self._say(_short(answer), ok=True)
-            return True, f"Showed {name}'s answer", Output.NOTICE
+            shown, message = _short(answer), f"Showed {name}'s answer"
+            # A notice holds only the start of a long answer; the clipboard
+            # keeps all of it.
+            if len(" ".join(answer.split())) > NOTICE_MAX_CHARS and self._copy(answer):
+                shown, message = shown + FULL_ANSWER_COPIED, message + FULL_ANSWER_COPIED
+            self._say(shown, ok=True)
+            return True, message, Output.NOTICE
         if self._copy(answer):
             message = f"Copied {name}'s answer"
             self._say(message, ok=True)
@@ -582,5 +714,7 @@ class ActionRuntime:
 
     @staticmethod
     def _publish_ran(run: _Run, ok: bool, message: str, where: str) -> None:
+        # "Send to my scripts" exists to hand its listeners the words.
+        text = run.text if run.action.kind == ActionKind.SCRIPTS else None
         events.publish(catalog.ACTION_RAN, catalog.action_ran(
-            run.job, run.action, ok=ok, message=message, output=where))
+            run.job, run.action, ok=ok, message=message, output=where, text=text))

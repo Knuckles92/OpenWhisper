@@ -5,7 +5,8 @@ A program receives the event's wire JSON and a newline on stdin, and
 ``OPENWHISPER_EVENT_SEQ`` in an environment that is the user's own minus
 OpenWhisper's secrets. It runs without a shell or a console window, in its
 own process group, and when its time limit passes it is stopped together
-with everything it started. Its stderr is discarded.
+with everything it started. A program that ends by itself leaves what it
+started alone (an app it opened stays open). Its stderr is discarded.
 
 Each program runs one event at a time; up to ``MAX_QUEUED`` more wait, and
 the oldest is dropped beyond that. Program paths, arguments and output are
@@ -41,9 +42,12 @@ MAX_RECORDS = 20
 MAX_STDOUT_BYTES = 1024 * 1024
 TEST_EVENT_TYPE = "program.test"
 SUBSCRIPTION_LABEL = "programs"
-#: How long, after a program exits, processes it left behind may keep its
-#: output open before they are stopped.
+#: How long, after a program exits, ``run_once`` keeps reading output that
+#: processes it left running hold open.
 OUTPUT_GRACE_S = 1.0
+#: How often a run checks its cancel event.
+CANCEL_POLL_S = 0.05
+CANCELED = "Canceled"
 
 
 @dataclass(frozen=True)
@@ -98,7 +102,8 @@ def _start_error(exc: OSError) -> str:
 
 
 def run_once(argv: Sequence[str], stdin: bytes, *, timeout_s: float, cwd: str = "",
-             env: Optional[Mapping[str, str]] = None) -> tuple[Optional[int], bytes, str]:
+             env: Optional[Mapping[str, str]] = None,
+             cancel: Optional[threading.Event] = None) -> tuple[Optional[int], bytes, str]:
     """Run ``argv`` once without a shell or a window; never raises.
 
     Args:
@@ -108,13 +113,15 @@ def run_once(argv: Sequence[str], stdin: bytes, *, timeout_s: float, cwd: str = 
             are stopped.
         cwd: The working folder; "" is the user's home folder.
         env: The whole environment; None is ``child_env()``.
+        cancel: Set to stop the program and every process it started now.
 
     Returns:
         ``(exit code, stdout, error)``: stdout is at most
         ``MAX_STDOUT_BYTES``; error is "" when the program ran to its end
-        (whatever its exit code), else why it didn't, and the exit code is
-        then None. Processes the program leaves running are stopped when it
-        exits.
+        (whatever its exit code), else why it didn't ("Timed out after …",
+        ``CANCELED``, or why it couldn't start), and the exit code is then
+        None. Processes a program that ends by itself leaves running are
+        left alone; their output is read for ``OUTPUT_GRACE_S`` more at most.
     """
     import subprocess
 
@@ -129,6 +136,8 @@ def run_once(argv: Sequence[str], stdin: bytes, *, timeout_s: float, cwd: str = 
         return None, b"", "The time limit isn't a number."
     if cwd and not os.path.isdir(cwd):
         return None, b"", "The working folder doesn't exist."
+    if cancel is not None and cancel.is_set():
+        return None, b"", CANCELED
     kwargs = {
         "stdin": subprocess.PIPE,
         "stdout": subprocess.PIPE,
@@ -147,7 +156,12 @@ def run_once(argv: Sequence[str], stdin: bytes, *, timeout_s: float, cwd: str = 
         return None, b"", "The program couldn't start (its arguments aren't valid)."
 
     output = bytearray()
+    returned = threading.Event()
 
+    # Each pipe is closed by the thread that uses it, once that thread is
+    # done: a process the program left running may hold the other end for
+    # as long as it lives, and closing a pipe another thread is blocked on
+    # would block here too.
     def read() -> None:
         try:
             while True:
@@ -155,10 +169,12 @@ def run_once(argv: Sequence[str], stdin: bytes, *, timeout_s: float, cwd: str = 
                 if not chunk:
                     return
                 room = MAX_STDOUT_BYTES - len(output)
-                if room > 0:
+                if room > 0 and not returned.is_set():
                     output.extend(chunk[:room])
         except (OSError, ValueError):
             return
+        finally:
+            _close(proc.stdout)
 
     def write() -> None:
         try:
@@ -167,35 +183,107 @@ def run_once(argv: Sequence[str], stdin: bytes, *, timeout_s: float, cwd: str = 
         except (OSError, ValueError):
             pass  # It exited without reading everything.
         finally:
-            try:
-                proc.stdin.close()
-            except (OSError, ValueError):
-                pass
+            _close(proc.stdin)
 
     reader = threading.Thread(target=read, name="program-stdout", daemon=True)
     writer = threading.Thread(target=write, name="program-stdin", daemon=True)
     reader.start()
     writer.start()
-    timed_out = False
+    stopped = _wait(proc, timeout, cancel)
+    if stopped:
+        # Stops the whole tree, which also closes the pipes it held.
+        try:
+            kill_agent_process(proc)
+        except Exception as exc:
+            logger.debug("Could not stop a program's processes: %s", type(exc).__name__)
+        reader.join(timeout=2.0)
+        writer.join(timeout=2.0)
+        returned.set()
+        return None, bytes(output), stopped
+    # It ended by itself: what it started is the user's now.
+    _disown(proc)
+    reader.join(timeout=OUTPUT_GRACE_S)
+    returned.set()
+    return proc.returncode, bytes(output), ""
+
+
+def _wait(proc, timeout: float, cancel: Optional[threading.Event]) -> str:
+    """Wait for ``proc``; "" once it exits, else why it must be stopped."""
+    import subprocess
+
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return f"Timed out after {round(timeout, 3):g} s"
+        try:
+            proc.wait(timeout=min(remaining, CANCEL_POLL_S) if cancel is not None else remaining)
+            return ""
+        except subprocess.TimeoutExpired:
+            if cancel is not None and cancel.is_set():
+                return CANCELED
+
+
+def _close(pipe) -> None:
     try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-    if not timed_out:
-        reader.join(timeout=OUTPUT_GRACE_S)
-    try:
-        kill_agent_process(proc)
-    except Exception as exc:
-        logger.debug("Could not stop a program's processes: %s", type(exc).__name__)
-    reader.join(timeout=2.0)
-    writer.join(timeout=2.0)
-    try:
-        proc.stdout.close()
+        if pipe is not None:
+            pipe.close()
     except (OSError, ValueError):
         pass
-    if timed_out:
-        return None, bytes(output), f"Timed out after {round(timeout, 3):g} s"
-    return proc.returncode, bytes(output), ""
+
+
+_EXTENDED_LIMIT_INFORMATION = 9
+
+
+def _disown(proc) -> None:
+    """Stop owning what a program that exited by itself left running.
+
+    On Windows ``popen_agent`` puts the program in a kill-on-close job so
+    that nothing it starts is orphaned if OpenWhisper dies mid-run; clearing
+    that limit before closing the job's handle leaves the job's remaining
+    processes running. Elsewhere the program's process group is simply not
+    signalled. Never raises.
+    """
+    job = getattr(proc, "_agent_job", None)
+    if job is None:
+        return
+    with job._lock:
+        handle, job._handle = job._handle, None
+    if not handle:
+        return
+    try:
+        import ctypes
+
+        limits = _job_limits_type()()  # all zero: no limits, no kill on close
+        if not job._api.SetInformationJobObject(
+                handle, _EXTENDED_LIMIT_INFORMATION, ctypes.byref(limits), ctypes.sizeof(limits)):
+            logger.debug("Could not release a program's job (error %d)", ctypes.get_last_error())
+    except Exception as exc:
+        logger.debug("Could not release a program's job: %s", type(exc).__name__)
+    finally:
+        job._api.CloseHandle(handle)
+
+
+@functools.lru_cache(maxsize=1)
+def _job_limits_type():
+    """``JOBOBJECT_EXTENDED_LIMIT_INFORMATION``."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Basic(ctypes.Structure):
+        _fields_ = [("process_time", ctypes.c_int64), ("job_time", ctypes.c_int64),
+                    ("flags", wintypes.DWORD), ("min_working_set", ctypes.c_size_t),
+                    ("max_working_set", ctypes.c_size_t), ("active_processes", wintypes.DWORD),
+                    ("affinity", ctypes.c_size_t), ("priority", wintypes.DWORD),
+                    ("scheduling", wintypes.DWORD)]
+
+    class Limits(ctypes.Structure):
+        _fields_ = [("basic", Basic), ("io", ctypes.c_uint64 * 6),
+                    ("process_memory", ctypes.c_size_t), ("job_memory", ctypes.c_size_t),
+                    ("peak_process_memory", ctypes.c_size_t),
+                    ("peak_job_memory", ctypes.c_size_t)]
+
+    return Limits
 
 
 def _run_event(program: Program, event: Event) -> RunRecord:
