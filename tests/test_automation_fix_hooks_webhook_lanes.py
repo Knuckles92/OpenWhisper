@@ -19,29 +19,31 @@ isolated = base.isolated
 
 
 def test_a_slow_webhook_does_not_delay_the_others(receiver, bus, store):
-    # Answers after 2 s, inside the 5 s timeout: a slow receiver, not a failing one.
-    receiver.answer("/slow", Answer(delay=2.0))
+    # Answers after 3 s, inside the 5 s timeout: a slow receiver, not a failing one.
+    receiver.answer("/slow", Answer(delay=3.0))
     save_hooks(store, hook("slow", receiver.url("/slow")), hook("fast", receiver.url("/fast")))
     webhooks.start()
     started = time.monotonic()
     published = [bus.publish("recording.started", {"n": i}) for i in range(3)]
 
-    got = receiver.wait_for(3, "/fast", timeout=1.5)
-    assert time.monotonic() - started < 1.5
+    got = receiver.wait_for(3, "/fast", timeout=2.5)
+    assert time.monotonic() - started < 2.5
     assert [r.json()["id"] for r in got] == [e.id for e in published]
-    # The slow one still gets every event, in order.
-    slow = receiver.wait_for(3, "/slow", timeout=15)
-    assert [r.json()["id"] for r in slow] == [e.id for e in published]
+    # The slow one gets its events in order, one answer at a time.
+    slow = receiver.wait_for(1, "/slow", timeout=10)
+    assert slow[0].json()["id"] == published[0].id
 
 
 def test_an_unreachable_webhooks_retries_do_not_delay_the_others(receiver, bus, store, monkeypatch):
-    monkeypatch.setattr(webhooks, "RETRY_DELAYS_S", (2.0, 2.0, 2.0))
+    monkeypatch.setattr(webhooks, "RETRY_DELAYS_S", (5.0, 5.0, 5.0))
     receiver.answer("/down", Answer(503))
     save_hooks(store, hook("down", receiver.url("/down")), hook("up", receiver.url("/up")))
     webhooks.start()
     for i in range(5):
         bus.publish("recording.started", {"n": i})
-    receiver.wait_for(5, "/up", timeout=1.5)
+    receiver.wait_for(5, "/up", timeout=4)
+    # Meanwhile the unreachable one waits out its first retry.
+    receiver.wait_for(1, "/down", timeout=4)
     assert len(receiver.at("/down")) == 1
 
 

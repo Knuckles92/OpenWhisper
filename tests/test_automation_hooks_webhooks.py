@@ -459,7 +459,9 @@ def test_a_waiting_retry_does_not_hold_up_other_webhooks(receiver, bus, store, m
     started = time.monotonic()
     receiver.wait_for(2, "/fine", timeout=2.5)
     assert time.monotonic() - started < 2.5
-    # The failing webhook's second event waits behind its first one's retry.
+    # The failing webhook's second event waits behind its first one's retry
+    # (each webhook has its own lane, so its first answer may come later).
+    receiver.wait_for(1, "/failing", timeout=2.5)
     assert len(receiver.at("/failing")) == 1
 
 
