@@ -4,8 +4,9 @@ A filter sees the words of a live dictation or action at one stage
 (``before_cleanup`` or ``after_cleanup``) and answers with new text, no
 change, or "deliver nothing". Saved filters (Settings > Hooks) run first, in
 their saved order, then filters leased over the live API, in the order they
-were registered. Words a lease changed are a program's, not the user's
-(``FilterOutcome.program_changed``).
+were registered; a dictation Route by voice may send to an action is routed
+between the two (``StageRun``). Words a lease changed are a program's, not
+the user's (``FilterOutcome.program_changed``).
 
 Request: ``{"v":1,"stage","job_id","mode","action_id","text","language","app"}``
 as JSON (POSTed to an ``http`` filter; on stdin, with a newline, for a
@@ -398,14 +399,15 @@ def _leases_apply(job, settings: Mapping) -> bool:
     return action is None or program_words_allowed(action, settings)
 
 
-def _steps(stage: str, job, settings: Mapping) -> list[_Step]:
+def _steps(stage: str, job, settings: Mapping, *, saved: bool = True,
+           leased: bool = True) -> list[_Step]:
     from services.automation.models import FILTER_HTTP, load_filters
 
     steps = [
         _Step(f.id, f.name, f.kind, f.url, (f.program, *f.args), f.timeout_ms / 1000)
         for f in load_filters(settings) if f.enabled and f.stage == stage
-    ]
-    if _leases_apply(job, settings):
+    ] if saved else []
+    if leased and _leases_apply(job, settings):
         steps.extend(
             _Step(lease.id, "API filter", FILTER_HTTP, lease.url, (), lease.timeout_ms / 1000,
                   leased=True)
@@ -459,59 +461,99 @@ def apply(stage: str, text: str, job, settings: Optional[Mapping] = None, *,
     words than the saved filters did. When ``cancel`` is set (the dictation
     was canceled), the wait on the current filter ends at once, the rest are
     skipped, and ``FilterOutcome(text)`` comes back unchanged, without
-    ``filter.failed``.
+    ``filter.failed``. ``StageRun`` runs a stage in two parts instead.
     """
-    mode = getattr(job, "mode", None) if job is not None else None
-    if (mode not in MODES or not isinstance(text, str) or not text.strip()
-            or (cancel is not None and cancel.is_set())):
-        return FilterOutcome(text)
-    if settings is None:
-        settings = _load_settings()
-    steps = _steps(stage, job, settings)
-    if not steps:
-        return FilterOutcome(text)
-    _prepare_clients(steps)
-    deadline = time.monotonic() + STAGE_BUDGET_S
-    language, app = _context(job, settings)
-    request = {
-        "v": REQUEST_VERSION,
-        "stage": stage,
-        "job_id": getattr(job, "id", "") or "",
-        "mode": mode,
-        "action_id": getattr(job, "action_id", "") or None,
-        "text": text,
-        "language": language,
-        "app": app,
-    }
-    # Saved filters run before leases: what they leave is still the user's.
-    current = users_text = text
-    for index, step in enumerate(steps):
+    return StageRun(stage, settings, cancel=cancel)._run(text, job)
+
+
+class StageRun:
+    """One stage's filters for one job, in two parts sharing ``STAGE_BUDGET_S``.
+
+    A dictation Route by voice may send to an action runs the user's
+    ``saved`` filters, is routed, then runs the ``leased`` ones with the job
+    as routed: a lease sees where the words are going (``_leases_apply``),
+    and can't steer them. Each part returns what ``apply`` would for its
+    filters alone.
+    """
+
+    def __init__(self, stage: str, settings: Optional[Mapping] = None, *,
+                 cancel: Optional[threading.Event] = None) -> None:
+        self.stage = stage
+        self.settings = settings
+        self.cancel = cancel
+        self._budget_s = STAGE_BUDGET_S
+
+    def saved(self, text: str, job) -> FilterOutcome:
+        """The user's saved filters; never ``program_changed``."""
+        return self._run(text, job, leased=False)
+
+    def leased(self, text: str, job) -> FilterOutcome:
+        """The filters programs leased over the live API, for ``job`` as it is now."""
+        return self._run(text, job, saved=False)
+
+    def _run(self, text: str, job, *, saved: bool = True, leased: bool = True) -> FilterOutcome:
+        stage, cancel = self.stage, self.cancel
+        mode = getattr(job, "mode", None) if job is not None else None
+        if (mode not in MODES or not isinstance(text, str) or not text.strip()
+                or (cancel is not None and cancel.is_set())):
+            return FilterOutcome(text)
+        if self.settings is None:
+            self.settings = _load_settings()
+        settings = self.settings
+        steps = _steps(stage, job, settings, saved=saved, leased=leased)
+        if not steps:
+            return FilterOutcome(text)
+        _prepare_clients(steps)
+        deadline = time.monotonic() + self._budget_s
+        try:
+            return self._run_steps(steps, text, job, settings, deadline)
+        finally:
+            # What a later part of this stage has left.
+            self._budget_s = max(0.0, deadline - time.monotonic())
+
+    def _run_steps(self, steps: list[_Step], text: str, job, settings: Mapping,
+                   deadline: float) -> FilterOutcome:
+        stage, cancel = self.stage, self.cancel
+        language, app = _context(job, settings)
+        request = {
+            "v": REQUEST_VERSION,
+            "stage": stage,
+            "job_id": getattr(job, "id", "") or "",
+            "mode": job.mode,
+            "action_id": getattr(job, "action_id", "") or None,
+            "text": text,
+            "language": language,
+            "app": app,
+        }
+        # Saved filters run before leases: what they leave is still the user's.
+        current = users_text = text
+        for index, step in enumerate(steps):
+            if cancel is not None and cancel.is_set():
+                return FilterOutcome(text)
+            remaining = deadline - time.monotonic()
+            if remaining < MIN_SLICE_S:
+                for skipped in steps[index:]:
+                    _failed(skipped, stage,
+                            f"Skipped: this stage's {STAGE_BUDGET_S:g} s for filters ran out")
+                break
+            request["text"] = current
+            body = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            try:
+                verdict = _run_step(step, body, min(step.timeout_s, remaining), cancel)
+            except Exception as exc:
+                verdict = _Verdict(_FAILED, reason=f"The filter couldn't run ({type(exc).__name__})")
+            if verdict is _CANCELED:
+                return FilterOutcome(text)
+            if verdict.kind == _FAILED:
+                _failed(step, stage, verdict.reason)
+            elif verdict.kind == _CANCEL or (verdict.kind == _REPLACE and not verdict.text.strip()):
+                return FilterOutcome(current, canceled=True, changed=current != text,
+                                     program_changed=current != users_text)
+            elif verdict.kind == _REPLACE:
+                current = verdict.text
+                if not step.leased:
+                    users_text = current
         if cancel is not None and cancel.is_set():
             return FilterOutcome(text)
-        remaining = deadline - time.monotonic()
-        if remaining < MIN_SLICE_S:
-            for skipped in steps[index:]:
-                _failed(skipped, stage,
-                        f"Skipped: this stage's {STAGE_BUDGET_S:g} s for filters ran out")
-            break
-        request["text"] = current
-        body = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        try:
-            verdict = _run_step(step, body, min(step.timeout_s, remaining), cancel)
-        except Exception as exc:
-            verdict = _Verdict(_FAILED, reason=f"The filter couldn't run ({type(exc).__name__})")
-        if verdict is _CANCELED:
-            return FilterOutcome(text)
-        if verdict.kind == _FAILED:
-            _failed(step, stage, verdict.reason)
-        elif verdict.kind == _CANCEL or (verdict.kind == _REPLACE and not verdict.text.strip()):
-            return FilterOutcome(current, canceled=True, changed=current != text,
-                                 program_changed=current != users_text)
-        elif verdict.kind == _REPLACE:
-            current = verdict.text
-            if not step.leased:
-                users_text = current
-    if cancel is not None and cancel.is_set():
-        return FilterOutcome(text)
-    return FilterOutcome(current, changed=current != text,
-                         program_changed=current != users_text)
+        return FilterOutcome(current, changed=current != text,
+                             program_changed=current != users_text)

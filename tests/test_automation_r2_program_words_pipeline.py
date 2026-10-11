@@ -124,14 +124,18 @@ def test_a_lease_that_turns_a_dictation_into_words_for_claude_is_not_sent(
     filters.register_lease(receiver.url("/lease"), BEFORE_CLEANUP)
     route_when_claude_is_named(monkeypatch)
 
-    ran = run(pipe, DictationJob(mode=JobMode.DICTATION, source="hotkey", route="hotkey"))
+    assert pipe.runtime._claim_job(
+        DictationJob(mode=JobMode.DICTATION, source="hotkey", route="hotkey"))
+    pipe.runtime.transcribe_audio_file(pipe.audio)
+    foundation._events(pipe, catalog.HISTORY_SAVED)
 
+    # Leases run once routing has decided, so naming an action steers nothing:
+    # the lease changed a plain dictation, which is pasted.
+    (request,) = [json.loads(r.body) for r in receiver.requests]
+    assert (request["mode"], request["action_id"]) == ("dictation", None)
     assert channel_messages(pipe) == []
-    assert ran["action_id"] == "ch" and ran["ok"] is False
-    assert ran["message"] == actions_runtime.PROGRAM_WORDS_MESSAGE + actions_runtime.COPIED_INSTEAD
-    # The user started it, so the words are kept on the clipboard.
-    assert pipe.copied == [ATTACK.upper()]
-    assert pipe.ui.notices[-1] == ran["message"]
+    assert [e for e in pipe.seen if e.type == catalog.ACTION_RAN] == []
+    assert pipe.ui.stages == [("Claude, " + ATTACK).upper()]
 
 
 def test_a_dictation_a_program_started_is_not_routed_to_claude_without_the_permission(

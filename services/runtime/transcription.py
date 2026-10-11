@@ -1346,15 +1346,15 @@ class TranscriptionRuntime:
         from services.automation.models import AFTER_CLEANUP, BEFORE_CLEANUP
 
         settings = settings_manager.load_all_settings()
-        job, text = self._run_filters(BEFORE_CLEANUP, raw, job, settings)
+        if job.mode == JobMode.DICTATION and job.route:
+            job, text = self._filter_and_route(raw, job, settings)
+        else:
+            job, text = self._run_filters(BEFORE_CLEANUP, raw, job, settings)
         if text is None:
             return raw, None, None
         # A Cancel during any stage ends the job here: canceled words never
         # reach the next filter, the judge or cleanup.
         self._raise_if_canceled()
-        if job.mode == JobMode.DICTATION and job.route:
-            job, text = self._route(text, job, settings)
-            self._raise_if_canceled()
         if job.mode == JobMode.ACTION:
             fixed, raw_text, info = self._shape_action(text, job, settings)
         else:
@@ -1369,9 +1369,40 @@ class TranscriptionRuntime:
         self._delivery_html = ""
         return final, (raw_text if raw_text is not None else fixed), info
 
+    def _filter_and_route(self, raw: str, job, settings):
+        """``(job, text)`` for a dictation that may be routed; worker.
+
+        The user's saved before-cleanup filters, then routing, then the
+        filters programs leased, on the job as routed: a lease never sees
+        words routed to an action that wouldn't take a program's words, and
+        can't steer where they go. Text None when a filter took over delivery.
+        """
+        from services.automation.filters import StageRun
+        from services.automation.models import BEFORE_CLEANUP
+
+        before = StageRun(BEFORE_CLEANUP, settings, cancel=self._cancel_requested)
+        job, text = self._filtered(before.saved, raw, job)
+        if text is None:
+            return job, None
+        self._raise_if_canceled()
+        job, text = self._route(text, job, settings)
+        self._raise_if_canceled()
+        return self._filtered(before.leased, text, job)
+
     def _run_filters(self, stage: str, text: str, job, settings):
         """``(job, text)`` after ``stage``'s text filters; text None when one
-        took over delivery.
+        took over delivery (see ``_filtered``)."""
+        from services.automation import filters
+
+        cancel = self._cancel_requested
+        return self._filtered(
+            lambda text, job: filters.apply(stage, text, job, settings, cancel=cancel),
+            text, job,
+        )
+
+    def _filtered(self, run, text: str, job):
+        """``(job, text)`` after ``run(text, job) -> FilterOutcome``; text None
+        when a filter took over delivery.
 
         A filter takes over by canceling, or by turning words into nothing;
         a transcript that was empty to begin with is no speech, not that.
@@ -1379,10 +1410,8 @@ class TranscriptionRuntime:
         (DictationJob.program_words). Never raises: a failing filter keeps
         the text (services.automation.filters).
         """
-        from services.automation import filters
-
         try:
-            outcome = filters.apply(stage, text, job, settings, cancel=self._cancel_requested)
+            outcome = run(text, job)
         except Exception:
             logger.warning("Text filters failed; keeping the text")
             return job, text
