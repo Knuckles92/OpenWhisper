@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from PyQt6.QtCore import QEvent, QRect, Qt
-from PyQt6.QtGui import QTextCursor
+from PyQt6.QtGui import QCursor, QTextCursor
 from PyQt6.QtWidgets import QApplication, QAbstractButton
 
 from config import config
@@ -140,7 +140,9 @@ class TestWindow:
 
 class TestGeometry:
     def test_saved_geometry_comes_back_clamped_to_the_screen(self, ui):
-        available = QApplication.primaryScreen().availableGeometry()
+        # The pad opens on the screen under the pointer, as it does for the user.
+        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        available = screen.availableGeometry()
         settings_manager.save_setting(SettingsKey.SCRATCHPAD_GEOMETRY, {
             "x": available.right() + 5000, "y": available.top() - 900, "width": 430, "height": 330,
         })
