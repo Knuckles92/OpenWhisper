@@ -498,6 +498,22 @@ def _small_button(text: str, *, primary: bool = False) -> Button:
     return button
 
 
+def _tab_stops(container: QWidget) -> list[QWidget]:
+    """The widgets in ``container`` that Tab stops at, in its focus chain's order.
+
+    A compound widget (a spin box, a text box) counts once: Qt moves its
+    inner widgets with it.
+    """
+    stops: list[QWidget] = []
+    widget = container.nextInFocusChain()
+    while widget is not container and container.isAncestorOf(widget):
+        takes_tab = widget.focusPolicy() & Qt.FocusPolicy.TabFocus == Qt.FocusPolicy.TabFocus
+        if takes_tab and not any(stop.isAncestorOf(widget) for stop in stops):
+            stops.append(widget)
+        widget = widget.nextInFocusChain()
+    return stops
+
+
 def _choose_program(parent: QWidget, current: str) -> str:
     start = os.path.dirname(current) if current else os.path.expanduser("~")
     path, _filter = QFileDialog.getOpenFileName(parent, "Choose a program", start)
@@ -562,6 +578,9 @@ class _Editor(QFrame):
             [self.delete_button, None, self.cancel_button, self.save_button]
         )
         layout.addWidget(self.footer)
+        # Read while the editor stands alone, so its chain is its own: the
+        # fields were added top to bottom. The section places them in the page.
+        self.tab_stops = _tab_stops(self)
 
     # Subclasses add their fields here, between the name and the footer.
     def _build_fields(self, layout: QVBoxLayout) -> None:
@@ -1313,6 +1332,32 @@ class HookSection(QWidget):
         index = self._list.indexOf(row) + 1 if row is not None else self._list.count()
         self._list.insertWidget(index, self.editor)
         self.list_area.setVisible(bool(self._rows) or not self.editor.isHidden())
+        self._chain_tab_order()
+
+    def _chain_tab_order(self) -> None:
+        """Tab goes down the list as it reads, then to Add.
+
+        Rows made after the section joined the end of the window's Tab
+        order, and the editor moves under the row it edits, so every stop is
+        put back between whatever comes before the section and Add.
+        """
+        stops = []
+        for index in range(self._list.count()):
+            widget = self._list.itemAt(index).widget()
+            if widget is self.editor:
+                if not self.editor.isHidden():
+                    stops.extend(self.editor.tab_stops)
+            elif isinstance(widget, _HookRow):
+                stops.extend((widget.edit_button, widget.switch))
+        stops.append(self.add_button)
+        before = self.add_button.previousInFocusChain()
+        while before is not self.add_button and (
+            before.focusPolicy() == Qt.FocusPolicy.NoFocus or self.isAncestorOf(before)
+        ):
+            before = before.previousInFocusChain()
+        for widget in stops:
+            QWidget.setTabOrder(before, widget)
+            before = widget
 
     def _show_editor(self, item, *, saved: bool) -> None:
         self.editor.show_item(item, saved=saved)
