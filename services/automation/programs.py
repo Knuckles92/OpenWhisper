@@ -194,7 +194,7 @@ def run_once(argv: Sequence[str], stdin: bytes, *, timeout_s: float, cwd: str = 
     except (OSError, ValueError):
         pass
     if timed_out:
-        return None, bytes(output), f"Timed out after {timeout:g} s"
+        return None, bytes(output), f"Timed out after {round(timeout, 3):g} s"
     return proc.returncode, bytes(output), ""
 
 

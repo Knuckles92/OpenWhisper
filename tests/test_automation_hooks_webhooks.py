@@ -15,7 +15,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Optional
+from typing import Callable, Optional
 
 import pytest
 
@@ -39,6 +39,8 @@ class Answer:
     delay: float = 0.0
     #: Wait for this before answering.
     hold: Optional[threading.Event] = None
+    #: Builds the body from the request, instead of ``body``.
+    reply: Optional[Callable[[Request], bytes]] = None
 
 
 @dataclass
@@ -86,13 +88,14 @@ class Receiver:
                 with receiver._cond:
                     receiver.requests.append(request)
                     receiver._cond.notify_all()
+                body = answer.reply(request) if answer.reply else answer.body
                 try:
                     self.send_response(answer.status)
                     for key, value in answer.headers.items():
                         self.send_header(key, value)
-                    self.send_header("Content-Length", str(len(answer.body)))
+                    self.send_header("Content-Length", str(len(body)))
                     self.end_headers()
-                    self.wfile.write(answer.body)
+                    self.wfile.write(body)
                 except OSError:
                     pass
 
@@ -102,7 +105,8 @@ class Receiver:
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self._server.daemon_threads = True
         self.port = self._server.server_address[1]
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread = threading.Thread(target=self._server.serve_forever, args=(0.05,),
+                                        daemon=True)
         self._thread.start()
 
     def url(self, path: str) -> str:

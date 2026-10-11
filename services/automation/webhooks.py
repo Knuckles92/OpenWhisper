@@ -272,6 +272,11 @@ def _retry_after(value: Optional[str]) -> Optional[float]:
     return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
 
 
+def no_answer_copy(timeout_s: float) -> str:
+    """How a request that timed out is described ("No answer within 1.5 s")."""
+    return f"No answer within {round(timeout_s, 3):g} s"
+
+
 def _read_capped(response, limit: int, deadline: Optional[float]) -> bytes:
     chunks, size = [], 0
     for chunk in response.iter_bytes():
@@ -319,7 +324,7 @@ def _exchange(client: httpx.Client, url: str, body: bytes, headers: Mapping[str,
         return _Result(elapsed_ms=int((time.monotonic() - started) * 1000), **fields)
 
     status: Optional[int] = None
-    timed_out = f"No answer within {timeout_s:g} s"
+    timed_out = no_answer_copy(timeout_s)
     quiet = _quiet.set(True)
     try:
         with client.stream("POST", url, content=body, headers=dict(headers),
