@@ -279,7 +279,8 @@ def normalize_arguments(name: str, arguments: Any) -> dict:
             or not all(isinstance(mode, str) and mode in _MODES for mode in value)
         ):
             raise EventsError(
-                INVALID_PARAMS, "modes must be a nonempty list of distinct values of " + ", ".join(_MODES) + "."
+                INVALID_PARAMS,
+                "modes must be a nonempty list of distinct values of " + ", ".join(_MODES) + ".",
             )
         # Order carries no meaning, so it must not make a second subscription.
         result["modes"] = sorted(value)
