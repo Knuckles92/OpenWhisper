@@ -750,8 +750,10 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   Program filters pass the dictation's cancel through.
 - **Actions**: `ActionRuntime.deliver(job, text, *, raw_text, html,
   notice="")` shows the notice with the outcome; `cancel(*, tests_only=False)`
-  stops running and queued runs (Cancel and the API's cancel both reach it);
-  `accepting()` is False at `MAX_PENDING` (8) runs; `running()` counts them.
+  drops queued runs and stops agent quick answers and programs; a run under
+  way that can't be stopped finishes, `action.ran` reports its real outcome
+  with `output: none`, and its answer goes nowhere. Unless `tests_only` it
+  says what it canceled. `accepting()` is False at `MAX_PENDING` (8) runs.
   A shaping problem never loses the words: `_shape_action` falls back to the
   cleaned words with a notice, and only Command Mode's refusal drops audio.
   Answers from program-started runs never touch the clipboard.
@@ -759,10 +761,7 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   returns `RouteDecision(failure="timeout"|"unreachable")` when the judge
   couldn't answer, so Route by voice says why it pasted; `RoutingStatus.fix`
   names what is missing (`fast_judgments`, `actions`, `trigger`). The gate no
-  longer hears "could", "called" or "cold" as Claude. A name heard as
-  several words counts when a request follows ("chat gpt what's…", "to do
-  buy milk", not "to do that…"), and a shortened name counts after lead-ins
-  when it is typed or heard as a name, so lowercase-typed names work.
+  longer hears "could", "called" or "cold" as Claude.
 - **Environment**: `services/process_env.py` records every change the app
   makes to its own environment (`set_for_app`, `prepend_for_app`);
   `external_env()` undoes them plus the frozen loader's paths and the app's
@@ -771,3 +770,25 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   user's environment.
 - **Hotkeys**: `hotkey_conflicts.STANDARD_LABELS` is the one label map for
   standard shortcuts.
+
+### After review round 2
+
+- **Cancel**: `TranscriptionRuntime.cancel() -> bool` (False when nothing was
+  recording, transcribing or holding the slot). `ApplicationController.cancel()`
+  (the user's) reaches actions only then, via `actions_cancel_requested` onto
+  the Qt thread. The live API's and MCP's cancel reach recordings and jobs only
+  (`app_control._cancel` calls `transcription_runtime.cancel()`), refused when
+  there is none. `ActionRuntime.running()` is gone.
+- **Previews**: `TranscriptionRuntime.publish_preview(job, text, final)`
+  publishes `transcription.preview` only for the recording in progress, under
+  `_job_lock`, from after `recording.started` until before
+  `recording.stopped`/`recording.canceled`. `PreviewEvents(publish)` only
+  throttles.
+- **Job slot**: each claimed job gets a fresh cancel Event (`_claim_job`; the
+  cleanup client follows it), so a later job never un-cancels a filter or
+  routing wait left by the previous one. `begin_rewrite_job` takes the capture
+  lock without waiting; contention (a start, stop or cancel) is busy.
+- **Routing gate**: a name heard as several words counts when a request
+  follows ("chat gpt what's…", "to do buy milk", not "to do that…"), and a
+  shortened name counts after lead-ins when it is typed or heard as a name
+  (`_written_as_name`), so lowercase-typed names work. Benchmark: 146 cases.
