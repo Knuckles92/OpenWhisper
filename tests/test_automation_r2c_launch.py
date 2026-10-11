@@ -12,11 +12,11 @@ import threading
 
 import pytest
 
-from services import credentials
 from services.actions import launch
 from tests import test_automation_agents_launch as base
 from tests import test_automation_fix_actions_launch as round1
 from tests.test_automation_hooks_programs import wait_until
+from tests.test_automation_r3c_child_env import load_dotenv
 
 fresh_handler_cache = base.fresh_handler_cache
 popen = round1.popen
@@ -42,10 +42,9 @@ REGISTERED = FakeAssoc({
 
 
 @pytest.fixture
-def dotenv_key(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-openwhisper-dotenv")
+def dotenv_key(monkeypatch, tmp_path):
+    load_dotenv(monkeypatch, tmp_path, {"ANTHROPIC_API_KEY": "sk-from-openwhisper-dotenv"})
     monkeypatch.setenv("USER_OWN_VAR", "kept")
-    monkeypatch.setattr(credentials, "dotenv_injected_names", lambda: {"ANTHROPIC_API_KEY"})
 
 
 @pytest.fixture

@@ -366,14 +366,16 @@ def _dotenv_values() -> dict[str, str | None]:
 
 
 def _load_dotenv_into_environ() -> None:
-    try:
-        from dotenv import load_dotenv
+    """Copy ``.env`` into ``os.environ``, never over a variable already set.
 
-        load_dotenv(env_file_path())
-    except ImportError:
-        logger.warning("python-dotenv not installed. Skipping .env file loading.")
-    except Exception as exc:
-        logger.warning("Failed to load .env file: %s", exc)
+    Each variable added is recorded as the app's own (``process_env``), so
+    programs started for the user never get it, whatever the file says later.
+    """
+    from services.process_env import set_for_app
+
+    for name, value in _dotenv_values().items():
+        if value is not None:
+            set_for_app(name, value, keep_existing=True)
 
 
 def resolve_credential(name: str) -> str | None:
@@ -403,7 +405,7 @@ def credential_source(name: str) -> str:
     env_value = os.getenv(name)
     dotenv_value = _dotenv_values().get(name) or None
     if env_value:
-        # load_dotenv copies .env into os.environ, so a matching value is
+        # Loading .env copies it into os.environ, so a matching value is
         # the file's own entry rather than a variable the user exported.
         if dotenv_value == env_value:
             return CredentialSource.DOTENV
@@ -411,20 +413,6 @@ def credential_source(name: str) -> str:
     if dotenv_value:
         return CredentialSource.DOTENV
     return CredentialSource.NONE
-
-
-def dotenv_injected_names() -> set[str]:
-    """Environment variables whose value came from OpenWhisper's ``.env``.
-
-    ``load_dotenv`` copies the file into ``os.environ``, so a program started
-    from here would inherit keys the user gave OpenWhisper alone. A variable
-    whose value differs from the file's was exported by the user and is left
-    out, as it would reach that program anyway.
-    """
-    return {
-        name for name, value in _dotenv_values().items()
-        if value and os.environ.get(name) == value
-    }
 
 
 def environment_shadowed(name: str) -> bool:

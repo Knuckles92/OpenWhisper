@@ -764,13 +764,12 @@ def test_words_links_arguments_and_replies_are_never_logged(h, monkeypatch, capl
         assert secret not in caplog.text
 
 
-def test_a_program_action_never_sees_openwhisper_keys(h, monkeypatch):
-    from services import credentials
+def test_a_program_action_never_sees_openwhisper_keys(h, monkeypatch, tmp_path):
+    from tests.test_automation_r3c_child_env import load_dotenv
 
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-openwhisper-dotenv")
+    load_dotenv(monkeypatch, tmp_path, {"OPENAI_API_KEY": "sk-from-openwhisper-dotenv"})
     monkeypatch.setenv("OPENWHISPER_LLM_API_KEY", "internal")
     monkeypatch.setenv("USER_OWN_VAR", "kept")
-    monkeypatch.setattr(credentials, "dotenv_injected_names", lambda: {"OPENAI_API_KEY"})
     h.add(Action("p2", "Env", ActionKind.PROGRAM, {"program": "C:\tools\env.exe"}))
     seen = []
     monkeypatch.setattr(programs, "run_once",

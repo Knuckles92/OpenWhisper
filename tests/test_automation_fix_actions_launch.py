@@ -10,20 +10,19 @@ import sys
 
 import pytest
 
-from services import credentials
 from services.actions import launch
 from tests import test_automation_agents_launch as base
+from tests.test_automation_r3c_child_env import load_dotenv
 
 WORDS = base.WORDS  # shell metacharacters, quotes, a newline and option-like words
 fresh_handler_cache = base.fresh_handler_cache
 
 
 @pytest.fixture
-def dotenv_key(monkeypatch):
+def dotenv_key(monkeypatch, tmp_path):
     """A key OpenWhisper loaded from its .env; no child may inherit it."""
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-openwhisper-dotenv")
+    load_dotenv(monkeypatch, tmp_path, {"OPENAI_API_KEY": "sk-from-openwhisper-dotenv"})
     monkeypatch.setenv("USER_OWN_VAR", "kept")
-    monkeypatch.setattr(credentials, "dotenv_injected_names", lambda: {"OPENAI_API_KEY"})
 
 
 def _clean(env):

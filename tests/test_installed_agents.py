@@ -125,13 +125,21 @@ def test_describe_choice(monkeypatch, tmp_path):
     assert ia.describe_choice(ia.CLAUDE_CODE, "") == "Claude Code · default model"
 
 
-def test_agent_env_drops_keys_from_openwhispers_own_env_file(monkeypatch):
+def test_agent_env_drops_keys_from_openwhispers_own_env_file(monkeypatch, tmp_path):
     import services.credentials as credentials
+    from services import process_env
 
-    monkeypatch.setenv("OPENROUTER_API_KEY", "from-dotenv")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "exported-by-user")
-    monkeypatch.setattr(credentials, "_dotenv_values", lambda: {
-        "OPENROUTER_API_KEY": "from-dotenv", "ANTHROPIC_API_KEY": "different"})
+    (tmp_path / ".env").write_text(
+        "OPENROUTER_API_KEY=from-dotenv\nANTHROPIC_API_KEY=different\n", encoding="utf-8")
+    monkeypatch.setattr(credentials, "env_file_path", lambda: str(tmp_path / ".env"))
+    monkeypatch.setattr(process_env, "_original", dict(process_env._original))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")  # so teardown removes what loading sets
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    credentials._load_dotenv_into_environ()
+    assert os.environ["OPENROUTER_API_KEY"] == "from-dotenv"
+
     env = ia.agent_child_env({"EXTRA": "1"})
     assert "OPENROUTER_API_KEY" not in env
     assert env["ANTHROPIC_API_KEY"] == "exported-by-user"
