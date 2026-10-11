@@ -93,7 +93,8 @@ def client(tmp_path, settings, control, bus):
     path = tmp_path / "live.db"
     DatabaseManager(str(path)).close()
     app = create_app(path, TOKEN, enabled=lambda: True, settings=settings)
-    with TestClient(app, base_url="http://127.0.0.1") as test_client:
+    # A program on this computer: only it may lease text filters.
+    with TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)) as test_client:
         yield test_client
 
 
@@ -511,7 +512,8 @@ def test_frames_are_one_line_of_json_per_event():
     assert lines[2].startswith("data: {")
     assert lines[3:] == [""]
     assert json.loads(lines[2][len("data: "):]) == event.to_dict()
-    assert "café \U0001f600" in frame
+    # ASCII JSON: the words arrive as escapes and decode to the same text.
+    assert frame.isascii()
     gap = api.sse_frame(api.gap_event(7), with_id=False).decode("utf-8")
     assert gap.startswith("event: events.gap\ndata: ")
     assert '"missed_from_seq":7' in gap and '"seq":0' in gap

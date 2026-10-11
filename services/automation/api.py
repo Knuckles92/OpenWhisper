@@ -28,6 +28,7 @@ comment arrives every 15 seconds.
 # No ``from __future__ import annotations``: FastAPI reads the route
 # signatures, whose types are imported inside create_live_router.
 import asyncio
+import ipaddress
 import json
 import logging
 import secrets
@@ -112,19 +113,15 @@ def parse_last_event_id(raw: Optional[str]) -> Optional[int]:
     return int(value)
 
 
-#: Characters str.splitlines() breaks on that JSON leaves unescaped. Readers
-#: built on it (httpx's iter_lines) would cut an event's data line in two;
-#: as JSON escapes they decode to the same text.
-_LINE_BREAKS = str.maketrans({"\u2028": "\\u2028", "\u2029": "\\u2029", "\u0085": "\\u0085"})
-
-
 def sse_frame(event, *, with_id: bool = True) -> bytes:
     """One Server-Sent Events message for ``event`` (an ``events.Event``)."""
     lines = [f"id: {event.seq}"] if with_id else []
     lines.append(f"event: {event.type}")
-    # Compact JSON escapes CR and LF, so one data line is the whole event.
-    lines.append(f"data: {event.to_json().translate(_LINE_BREAKS)}")
-    return ("\n".join(lines) + "\n\n").encode("utf-8")
+    # ASCII JSON: one data line whatever the text holds (every line break,
+    # U+2028 included, is an escape), and nothing that can't be encoded.
+    data = json.dumps(event.to_dict(), ensure_ascii=True, separators=(",", ":"))
+    lines.append(f"data: {data}")
+    return ("\n".join(lines) + "\n\n").encode("ascii")
 
 
 def gap_event(missed_from_seq: int):
@@ -176,6 +173,36 @@ async def read_json_body(request, limit: int) -> dict:
     return value
 
 
+def peer_is_local(request) -> bool:
+    """Whether ``request`` (a Starlette request) came from this computer.
+
+    The listener answers loopback clients and, when the user allows agents
+    over Tailscale, Tailscale peers; anything but a loopback address is
+    another computer.
+    """
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", "") or ""
+    try:
+        address = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False
+    mapped = getattr(address, "ipv4_mapped", None)
+    return (mapped or address).is_loopback
+
+
+def is_unicode_text(value: str) -> bool:
+    """False for a string with a lone UTF-16 surrogate (half an emoji).
+
+    JSON can carry one as an escape, but it is not text: it can't be encoded
+    as UTF-8, so it must never get into a job, an event or a notice.
+    """
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _string(body: Mapping[str, Any], key: str, *, required: bool, max_chars: int,
             label: str = "") -> str:
     value = body.get(key)
@@ -186,6 +213,8 @@ def _string(body: Mapping[str, Any], key: str, *, required: bool, max_chars: int
         if required:
             raise _Invalid(f"{label} must be text of 1 to {max_chars:,} characters.")
         raise _Invalid(f"{label} must be text of at most {max_chars:,} characters.")
+    if not is_unicode_text(value):
+        raise _Invalid(f"{label} must be valid Unicode text.")
     return value
 
 
@@ -269,7 +298,7 @@ class EventStream:
         self._ready = asyncio.Event()
         events_bus = bus()
         # Subscribe before reading the buffer, so nothing falls between the
-        # replay and the live events; duplicates are dropped by seq below.
+        # replay and the live events.
         self._subscription = events_bus.subscribe(
             self._deliver, types=self.types, label=self.label
         )
@@ -277,14 +306,19 @@ class EventStream:
             yield b"retry: 2000\n\n"
             last = events_bus.last_seq()
             replay, gap = events_bus.since(self.replay_from, types=self.types)
+            from_other_session = self.replay_from > last
             if gap:
-                # A position past the newest event is from an earlier app
-                # session; this one's numbering started again at 1.
-                missed = 1 if self.replay_from > last else self.replay_from + 1
+                # A position past the newest event is from another app
+                # session, whose numbering this one doesn't continue.
+                missed = 1 if from_other_session else self.replay_from + 1
                 yield sse_frame(gap_event(missed), with_id=False)
-            replayed = set()
+            # The stream's position only rises: a live event at or below it
+            # was replayed, or came before the stream's start (the bus's
+            # dispatch can lag behind publishing), and sending it now would
+            # repeat it or put it after newer ones.
+            position = 0 if from_other_session else self.replay_from
             for event in replay:
-                replayed.add(event.seq)
+                position = max(position, event.seq)
                 yield sse_frame(event)
 
             next_ping = loop.time() + PING_INTERVAL_S
@@ -299,7 +333,7 @@ class EventStream:
                     # The client fell too far behind: say where it lost track
                     # and end, so it reconnects with Last-Event-ID and replays.
                     missed = next(
-                        (e.seq for e in self._pending if e.seq not in replayed),
+                        (e.seq for e in self._pending if e.seq > position),
                         self._overflow_seq,
                     )
                     self._pending.clear()
@@ -307,7 +341,8 @@ class EventStream:
                     return
                 if self._pending:
                     event = self._pending.popleft()
-                    if event.seq not in replayed:
+                    if event.seq > position:
+                        position = event.seq
                         yield sse_frame(event)
                     continue
                 if now >= next_ping:
@@ -504,6 +539,12 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
     )
     async def create_filter(request: Request):
         """Lease a text filter: ``{"url", "stage", "timeout_ms"?}``; renew within 60 s."""
+        if not peer_is_local(request):
+            # A filter's address is on this computer, which a Tailscale peer
+            # must not point OpenWhisper's dictations at.
+            return failure("filters", _Invalid(
+                "Only a program on this computer can lease a text filter.", 403, "forbidden"
+            ))
         try:
             body = await read_json_body(request, MAX_SMALL_BODY)
         except _Invalid as exc:

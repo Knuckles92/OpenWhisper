@@ -100,6 +100,7 @@ def test_channel_params_carry_the_text_and_routing_meta():
         "type": "channel.message",
         "data": {
             "job_id": "0123456789abcdef",
+            "source": "hotkey",
             "action_id": "claude",
             "text": "  fix the flaky test\n",
             "app": {"id": "code", "name": "Visual Studio Code", "category": "editor"},
@@ -107,16 +108,22 @@ def test_channel_params_carry_the_text_and_routing_meta():
     }
     assert channel_params(event) == {
         "content": "  fix the flaky test\n",
-        "meta": {"job_id": "0123456789abcdef", "action": "claude", "app": "Visual Studio Code"},
+        "meta": {
+            "origin": "dictated", "job_id": "0123456789abcdef", "action": "claude",
+            "app": "Visual Studio Code",
+        },
     }
 
 
 def test_channel_params_accept_an_app_name_and_leave_out_empty_meta():
+    # An event without a source is treated as a program's.
     assert channel_params({"data": {"text": "hi", "app": "Terminal"}}) == {
         "content": "hi",
-        "meta": {"app": "Terminal"},
+        "meta": {"origin": "program", "app": "Terminal"},
     }
-    assert channel_params({"data": {"text": "hi", "app": None, "action_id": None}}) == {"content": "hi"}
+    assert channel_params({"data": {"text": "hi", "app": None, "action_id": None}}) == {
+        "content": "hi", "meta": {"origin": "program"},
+    }
 
 
 @pytest.mark.parametrize(
@@ -436,7 +443,8 @@ def test_unreadable_settings_fall_back_to_the_default_port():
     ],
 )
 def test_the_url_override_wins(url, target):
-    link = AppLink(url=url, read_settings=lambda: pytest.fail("settings read"))
+    # Another computer needs its own token (the saved one stays on this one).
+    link = AppLink(url=url, token=TOKEN, read_settings=lambda: pytest.fail("settings read"))
     assert link.target() == target
 
 

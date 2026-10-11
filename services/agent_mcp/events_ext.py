@@ -21,8 +21,9 @@ developers.openai.com/plugins/build/mcp-events:
 - Each event is one POST of ``{eventId, name, timestamp, data, cursor: null}``
   with Standard Webhooks headers (``webhook-id`` is the eventId) and
   ``X-MCP-Subscription-Id``. Network errors, 408, 425, 429 and 5xx are
-  retried with backoff, each try freshly signed; 410 drops the subscription;
-  413 and other answers are not retried. Bodies over 256 KiB are not sent.
+  retried with backoff, each try freshly signed; other answers (410 and 413
+  included) fail that delivery only and show as ``lastError``. Bodies over
+  256 KiB are not sent.
 
 Events are not replayable: they live in a short in-memory buffer whose
 numbering restarts with the app, so ``cursor`` is always null.
@@ -32,12 +33,19 @@ own agent. Subscriptions persist in ``config.MCP_EVENT_SUBSCRIPTIONS_FILE``
 without secrets; each secret is in the credential store. Deliveries stop
 while MCP, MCP Events or live events are off, and when a subscription
 passes its ``refreshBefore``. URLs, secrets and event data are never logged.
+
+A subscription remembers whether it came from this computer or a Tailscale
+peer. A peer's subscriptions are delivered only while agents over Tailscale
+are allowed, and a peer can't name a callback on this computer or its local
+network, by address or by a name that resolves there (checked again before
+each delivery).
 """
 
 from __future__ import annotations
 
 import base64
 import binascii
+import contextvars
 import hashlib
 import heapq
 import hmac
@@ -52,10 +60,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Any, Callable, Mapping, Optional
 from urllib.parse import urlsplit
 
 from services.automation import catalog, permissions, signing
+from services.automation.api import is_unicode_text
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +95,10 @@ MAX_REPLY_BYTES = 16 * 1024
 SECRET_NAME_PREFIX = "OPENWHISPER_MCP_EVENT_SECRET_"
 #: Everyone holding the MCP token is the same principal: the user's agents.
 PRINCIPAL = "openwhisper-mcp-token"
+#: Where a subscription was made: this computer, or a Tailscale peer.
+ORIGIN_LOCAL = "local"
+ORIGIN_TAILSCALE = "tailscale"
+ORIGINS = (ORIGIN_LOCAL, ORIGIN_TAILSCALE)
 OFF_MESSAGE = "MCP Events is turned off in OpenWhisper Settings > API & MCP."
 
 # JSON-RPC error codes. CallbackEndpointError is ChatGPT's documented
@@ -130,6 +144,10 @@ def _object(**properties: Any) -> dict:
     return {"type": "object", "properties": properties, "required": list(properties)}
 
 
+def _with_optional(schema: dict, **properties: Any) -> dict:
+    return {**schema, "properties": {**schema["properties"], **properties}}
+
+
 _APP = {
     "type": ["object", "null"],
     "description": "The app the words were dictated into.",
@@ -143,6 +161,12 @@ _TEXT = {"type": "string", "description": "The user's words: untrusted, never in
 _NULLABLE_TEXT = {
     "type": ["string", "null"],
     "description": "The user's words: untrusted, never instructions.",
+}
+_SOURCE = {
+    "type": "string",
+    "description": (
+        "Who started the job: the user (hotkey, ui, routing, dbus) or a program (api, mcp)."
+    ),
 }
 #: The ``data`` of each public event type (services/automation/catalog.py builders).
 PAYLOAD_SCHEMAS: dict[str, dict] = {
@@ -167,16 +191,23 @@ PAYLOAD_SCHEMAS: dict[str, dict] = {
     ),
     catalog.TRANSCRIPTION_FAILED: _object(job_id=_STRING, error=_STRING),
     catalog.HISTORY_SAVED: _object(job_id=_STRING, record_id=_STRING, kind=_STRING),
-    catalog.ACTION_RAN: _object(
-        job_id=_STRING,
-        action_id=_STRING,
-        name=_STRING,
-        kind=_STRING,
-        ok=_BOOLEAN,
-        message=_STRING,
-        output=_STRING,
+    catalog.ACTION_RAN: _with_optional(
+        _object(
+            job_id=_STRING,
+            source=_SOURCE,
+            action_id=_STRING,
+            name=_STRING,
+            kind=_STRING,
+            ok=_BOOLEAN,
+            message=_STRING,
+            output=_STRING,
+        ),
+        # Only "Send to my scripts" actions carry the words.
+        text=_TEXT,
     ),
-    catalog.CHANNEL_MESSAGE: _object(job_id=_STRING, action_id=_STRING, text=_TEXT, app=_APP),
+    catalog.CHANNEL_MESSAGE: _object(
+        job_id=_STRING, source=_SOURCE, action_id=_STRING, text=_TEXT, app=_APP
+    ),
     catalog.ROUTE_DECIDED: _object(
         job_id=_STRING,
         action_id=_NULLABLE_STRING,
@@ -267,7 +298,7 @@ def normalize_arguments(name: str, arguments: Any) -> dict:
     result: dict = {}
     if "action_id" in arguments:
         value = arguments["action_id"]
-        if not isinstance(value, str) or not 1 <= len(value) <= 200:
+        if not isinstance(value, str) or not 1 <= len(value) <= 200 or not is_unicode_text(value):
             raise EventsError(INVALID_PARAMS, "action_id must be an action id (1–200 characters).")
         result["action_id"] = value
     if "modes" in arguments:
@@ -309,7 +340,7 @@ def validate_callback_url(url: Any) -> str:
     """``url`` when OpenWhisper may deliver to it: https anywhere, http only to this computer."""
     from services.automation.models import validate_url
 
-    if not isinstance(url, str):
+    if not isinstance(url, str) or not is_unicode_text(url):
         raise EventsError(INVALID_PARAMS, "delivery.url must be a URL.")
     try:
         validate_url(url)
@@ -326,6 +357,63 @@ def validate_callback_url(url: Any) -> str:
         "delivery.url must use https://; http:// is allowed only to this computer "
         "(localhost or a loopback address).",
     )
+
+
+#: ``_destination`` answers.
+PUBLIC = "public"
+PRIVATE = "private"
+UNRESOLVED = "unresolved"
+
+
+def _destination(url: str) -> str:
+    """Where a callback URL leads: ``PUBLIC``, ``PRIVATE`` or ``UNRESOLVED``.
+
+    Private is this computer or a local network: a loopback, private,
+    link-local or other non-global address, a local name (localhost, .local,
+    .lan, .home.arpa), or a name that resolves to any of those. Tailscale
+    addresses are the peer's own network and count as public.
+    """
+    import socket
+
+    from services.automation.models import url_is_private
+    from services.remote_asr.tailscale import is_tailscale_address
+
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if not host or url_is_private(url):
+        return PRIVATE
+    try:
+        addresses = [ipaddress.ip_address(host)]
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(host, parts.port or 443, type=socket.SOCK_STREAM)
+        except (OSError, UnicodeError):
+            return UNRESOLVED
+        addresses = [ipaddress.ip_address(info[4][0].split("%", 1)[0]) for info in infos]
+    if not addresses:
+        return UNRESOLVED
+    for address in addresses:
+        address = getattr(address, "ipv4_mapped", None) or address
+        if not is_tailscale_address(address) and not address.is_global:
+            return PRIVATE
+    return PUBLIC
+
+
+def _require_reachable_by_peer(url: str) -> None:
+    """A Tailscale peer's callback must not lead into this computer or its network."""
+    destination = _destination(url)
+    if destination == PRIVATE:
+        raise EventsError(
+            INVALID_PARAMS,
+            "Subscribing from another computer, delivery.url can't be an address on this "
+            "computer or its local network.",
+        )
+    if destination == UNRESOLVED:
+        raise EventsError(
+            CALLBACK_ENDPOINT_ERROR,
+            "The callback URL did not pass verification (connection_refused).",
+            {"reason": "connection_refused"},
+        )
 
 
 def _is_loopback(host: str) -> bool:
@@ -364,7 +452,7 @@ def _delivery(value: Any, *, subscribing: bool) -> tuple[str, str]:
         )
     if not subscribing:
         url = value.get("url")
-        if not isinstance(url, str) or not url:
+        if not isinstance(url, str) or not url or not is_unicode_text(url):
             raise EventsError(INVALID_PARAMS, "delivery.url must be the subscribed URL.")
         return url, ""
     return validate_callback_url(value.get("url")), validate_secret(value.get("secret"))
@@ -433,6 +521,10 @@ class EventSubscription:
     #: Unix seconds; delivery stops at this moment unless refreshed.
     refresh_before: int
     created_at: str
+    #: Who made or last refreshed it: ``ORIGIN_LOCAL`` (an agent on this
+    #: computer) or ``ORIGIN_TAILSCALE`` (a peer, delivered to only while
+    #: the user allows agents over Tailscale).
+    origin: str
 
     def expired(self, now: Optional[float] = None) -> bool:
         return (time.time() if now is None else now) >= self.refresh_before
@@ -445,6 +537,7 @@ class EventSubscription:
             "url": self.url,
             "refresh_before": _iso(self.refresh_before),
             "created_at": self.created_at,
+            "origin": self.origin,
         }
 
     @classmethod
@@ -458,6 +551,7 @@ class EventSubscription:
             or not sub_id.startswith("sub_")
             or name not in catalog.PUBLIC_TYPES
             or not isinstance(url, str)
+            or not is_unicode_text(url)
             or refresh_before is None
         ):
             return None
@@ -466,9 +560,12 @@ class EventSubscription:
         except EventsError:
             return None
         created_at = record.get("created_at")
+        origin = record.get("origin")
         return cls(
             sub_id, name, arguments, url, refresh_before,
             created_at if isinstance(created_at, str) else "",
+            # Unknown: the more restricted of the two.
+            origin if origin in ORIGINS else ORIGIN_TAILSCALE,
         )
 
 
@@ -480,15 +577,26 @@ class _Status:
 
 
 class _Registry:
-    """Subscriptions saved in one file, with their secrets in the credential store."""
+    """Subscriptions saved in one file, with their secrets in the credential store.
+
+    Two locks, so slow storage never holds anyone up: ``_lock`` guards the
+    in-memory state and is never held across I/O; ``_io_lock`` orders the
+    credential-store and file writes of each change, so the file always ends
+    up holding the newest state. Readers on the bus's dispatch thread and the
+    Qt thread (matching, counting) take neither: every change publishes an
+    immutable snapshot, ``_view``.
+    """
 
     def __init__(self, path: str) -> None:
         self.path = path
-        self._lock = threading.RLock()
+        self._lock = threading.Lock()
+        self._io_lock = threading.Lock()
         self._subs: dict[str, EventSubscription] = {}
+        self._view: Mapping[str, EventSubscription] = MappingProxyType({})
         self._status: dict[str, _Status] = {}
         # id -> (old secret, monotonic deadline) after a refresh rotated it.
         self._previous: dict[str, tuple[str, float]] = {}
+        self._pruning = False
         self._load()
 
     def _load(self) -> None:
@@ -501,17 +609,29 @@ class _Registry:
             logger.warning("Could not read MCP Events subscriptions: %s", type(exc).__name__)
             return
         records = payload.get("subscriptions") if isinstance(payload, dict) else None
-        for record in records if isinstance(records, list) else ():
-            subscription = EventSubscription.from_record(record)
-            if subscription is not None:
-                self._subs[subscription.id] = subscription
+        with self._lock:
+            for record in records if isinstance(records, list) else ():
+                subscription = EventSubscription.from_record(record)
+                if subscription is not None:
+                    self._subs[subscription.id] = subscription
+            self._commit()
 
-    def _save(self) -> None:
-        # Caller holds the lock.
-        payload = {
-            "version": 1,
-            "subscriptions": [s.to_record() for s in self._subs.values()],
-        }
+    # -- in memory: callers hold _lock -------------------------------------
+
+    def _commit(self) -> None:
+        self._view = MappingProxyType(dict(self._subs))
+
+    def _drop(self, sub_id: str) -> None:
+        self._subs.pop(sub_id, None)
+        self._status.pop(sub_id, None)
+        self._previous.pop(sub_id, None)
+
+    def _payload(self) -> dict:
+        return {"version": 1, "subscriptions": [s.to_record() for s in self._subs.values()]}
+
+    # -- storage: callers hold _io_lock, never _lock -----------------------
+
+    def _write(self, payload: dict) -> None:
         directory = os.path.dirname(os.path.abspath(self.path))
         os.makedirs(directory, exist_ok=True)
         descriptor, temporary = tempfile.mkstemp(
@@ -531,90 +651,138 @@ class _Registry:
                 pass
             raise
 
+    @staticmethod
+    def _delete_secret(sub_id: str) -> None:
+        from services.credentials import CredentialStoreError, store
+
+        try:
+            store().delete(secret_name(sub_id))
+        except CredentialStoreError:
+            logger.warning("Could not remove the secret of MCP Events subscription %s", sub_id)
+
+    # -- reading: any thread, never blocks ---------------------------------
+
     def get(self, sub_id: str) -> Optional[EventSubscription]:
-        with self._lock:
-            subscription = self._subs.get(sub_id)
+        subscription = self._view.get(sub_id)
         if subscription is None or subscription.expired():
             return None
         return subscription
 
     def active(self) -> list[EventSubscription]:
         now = time.time()
-        with self._lock:
-            return [s for s in self._subs.values() if not s.expired(now)]
+        return [s for s in self._view.values() if not s.expired(now)]
 
     def matching(self, event_type: str, data: Mapping[str, Any]) -> list[EventSubscription]:
         return [
             s for s in self.active() if s.name == event_type and _matches(s.arguments, data)
         ]
 
-    def prune(self) -> None:
-        """Forget expired subscriptions and their secrets."""
-        now = time.time()
-        with self._lock:
-            expired = [s.id for s in self._subs.values() if s.expired(now)]
-            if not expired:
-                return
-            for sub_id in expired:
-                self._forget(sub_id)
-            self._save()
+    # -- changing ------------------------------------------------------------
 
     def upsert(self, subscription: EventSubscription, secret: str) -> bool:
         """Save a new or refreshed subscription; True when it is new."""
         from services.credentials import store
 
-        with self._lock:
-            existing = self._subs.get(subscription.id)
-            created = existing is None
-            if created and len(self.active()) >= MAX_SUBSCRIPTIONS:
-                raise _too_many()
+        with self._io_lock:
+            with self._lock:
+                existing = self._subs.get(subscription.id)
+                created = existing is None
+                if created and len(self.active()) >= MAX_SUBSCRIPTIONS:
+                    raise _too_many()
             credentials = store()
             name = secret_name(subscription.id)
             current = credentials.get(name)
             if current != secret:
                 credentials.set(name, secret)
-                if current and not created:
+            with self._lock:
+                if current and current != secret and not created:
                     self._previous[subscription.id] = (
                         current, time.monotonic() + ROTATION_WINDOW_S
                     )
-            self._subs[subscription.id] = subscription
+                self._subs[subscription.id] = subscription
+                self._commit()
+                payload = self._payload()
             try:
-                self._save()
+                self._write(payload)
             except OSError:
+                with self._lock:
+                    if created:
+                        self._drop(subscription.id)
+                    else:
+                        self._subs[subscription.id] = existing
+                    self._commit()
                 if created:
-                    self._forget(subscription.id)
-                else:
-                    self._subs[subscription.id] = existing
+                    self._delete_secret(subscription.id)
                 raise
             return created
 
     def remove(self, sub_id: str) -> bool:
-        with self._lock:
-            if sub_id not in self._subs:
-                return False
-            self._forget(sub_id)
-            self._save()
+        with self._io_lock:
+            with self._lock:
+                if sub_id not in self._subs:
+                    return False
+                self._drop(sub_id)
+                self._commit()
+                payload = self._payload()
+            self._delete_secret(sub_id)
+            self._write(payload)
             return True
 
     def clear(self) -> int:
-        with self._lock:
-            count = len(self.active())
-            for sub_id in list(self._subs):
-                self._forget(sub_id)
-            self._save()
+        with self._io_lock:
+            with self._lock:
+                count = len(self.active())
+                removed = list(self._subs)
+                for sub_id in removed:
+                    self._drop(sub_id)
+                self._commit()
+                payload = self._payload()
+            for sub_id in removed:
+                self._delete_secret(sub_id)
+            self._write(payload)
             return count
 
-    def _forget(self, sub_id: str) -> None:
-        # Caller holds the lock.
-        from services.credentials import CredentialStoreError, store
+    def prune(self) -> None:
+        """Forget expired subscriptions and their secrets."""
+        with self._io_lock:
+            now = time.time()
+            with self._lock:
+                expired = [s.id for s in self._subs.values() if s.expired(now)]
+                if not expired:
+                    return
+                for sub_id in expired:
+                    self._drop(sub_id)
+                self._commit()
+                payload = self._payload()
+            for sub_id in expired:
+                self._delete_secret(sub_id)
+            try:
+                self._write(payload)
+            except OSError as exc:
+                # They are expired either way; the next prune writes again.
+                logger.warning("Could not save MCP Events subscriptions: %s", type(exc).__name__)
 
-        self._subs.pop(sub_id, None)
-        self._status.pop(sub_id, None)
-        self._previous.pop(sub_id, None)
+    def prune_later(self) -> None:
+        """``prune`` on a worker thread when something has expired; returns at once."""
+        now = time.time()
+        if not any(s.expired(now) for s in self._view.values()):
+            return
+        with self._lock:
+            if self._pruning:
+                return
+            self._pruning = True
+        threading.Thread(target=self._prune_quietly, name="mcp-events-prune", daemon=True).start()
+
+    def _prune_quietly(self) -> None:
         try:
-            store().delete(secret_name(sub_id))
-        except CredentialStoreError:
-            logger.warning("Could not remove the secret of MCP Events subscription %s", sub_id)
+            self.prune()
+        except Exception as exc:
+            logger.warning("Could not forget expired MCP Events subscriptions: %s", type(exc).__name__)
+        finally:
+            with self._lock:
+                self._pruning = False
+
+    # -- delivery bookkeeping ------------------------------------------------
 
     def signing_secrets(self, sub_id: str) -> list[str]:
         """The current secret, then the previous one while the rotation window lasts."""
@@ -721,10 +889,39 @@ def _is_tls_failure(exc: BaseException) -> bool:
     return False
 
 
+#: Set while this module makes a request, so httpx's per-request log lines,
+#: which carry the callback URL and its query, are dropped for it.
+_quiet = contextvars.ContextVar("openwhisper_mcp_events_request", default=False)
+#: httpx logs every request's URL at INFO; httpcore logs hosts at DEBUG.
+_REQUEST_LOGGERS = ("httpx", "httpcore.connection", "httpcore.http11",
+                    "httpcore.http2", "httpcore.proxy", "httpcore.socks")
+
+
+class _QuietRequests(logging.Filter):
+    """Drops a request log record made by MCP Events; other requests keep theirs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not _quiet.get()
+
+
+_quiet_installed = False
+
+
+def _install_quiet_requests() -> None:
+    global _quiet_installed
+    with _state_lock:
+        if _quiet_installed:
+            return
+        for name in _REQUEST_LOGGERS:
+            logging.getLogger(name).addFilter(_QuietRequests())
+        _quiet_installed = True
+
+
 def _new_client(timeout_s: float = REQUEST_TIMEOUT_S):
     """An HTTP client that never follows redirects and ignores proxy variables."""
     import httpx
 
+    _install_quiet_requests()
     return httpx.Client(timeout=timeout_s, follow_redirects=False, trust_env=False)
 
 
@@ -739,6 +936,7 @@ def _post(url: str, body: bytes, headers: Mapping[str, str], timeout_s: float, *
     import httpx
 
     owned = client is None
+    quiet = _quiet.set(True)
     try:
         if owned:
             client = _new_client(timeout_s)
@@ -763,6 +961,7 @@ def _post(url: str, body: bytes, headers: Mapping[str, str], timeout_s: float, *
     finally:
         if owned and client is not None:
             client.close()
+        _quiet.reset(quiet)
 
 
 def _signed_headers(keys: list[str], msg_id: str, body: bytes, sub_id: str) -> dict[str, str]:
@@ -949,14 +1148,20 @@ def _enabled(saved: Mapping[str, Any]) -> bool:
     return resolve_mcp_events_enabled(saved)
 
 
-def _delivery_allowed(saved: Mapping[str, Any]) -> bool:
-    """Rechecked before every try: MCP, MCP Events and live events must all be on."""
+def _delivery_allowed(saved: Mapping[str, Any], subscription: EventSubscription) -> bool:
+    """Rechecked before every try: MCP, MCP Events and live events must all be
+    on, and a Tailscale peer's subscription needs Tailscale access on too, so it
+    never outlives the access that made it."""
     from services.settings import SettingsKey
 
     return (
         saved.get(SettingsKey.MCP_ENABLED) is True
         and _enabled(saved)
         and permissions.granted(saved, permissions.LIVE_EVENTS)
+        and (
+            subscription.origin == ORIGIN_LOCAL
+            or saved.get(SettingsKey.MCP_TAILSCALE_ENABLED) is True
+        )
     )
 
 
@@ -966,6 +1171,7 @@ def _delivering() -> bool:
 
 
 def _event_body(event: Any) -> bytes:
+    # ASCII JSON: whatever slipped into the event's text, the body is built.
     return json.dumps(
         {
             "eventId": event.id,
@@ -974,9 +1180,9 @@ def _event_body(event: Any) -> bytes:
             "data": dict(event.data),
             "cursor": None,
         },
-        ensure_ascii=False,
+        ensure_ascii=True,
         separators=(",", ":"),
-    ).encode("utf-8")
+    ).encode("ascii")
 
 
 def _on_event(event: Any) -> None:
@@ -1003,8 +1209,17 @@ def _deliver(job: _Job, client: Any = None) -> Optional[float]:
     """Worker thread: one try; the delay before the next one, or None."""
     registry = _registry()
     subscription = registry.get(job.sub_id)
-    if subscription is None or not _delivery_allowed(_load_settings()):
+    if subscription is None or not _delivery_allowed(_load_settings(), subscription):
         return None
+    if subscription.origin != ORIGIN_LOCAL:
+        # Checked again for each try: a name may resolve here by now.
+        destination = _destination(subscription.url)
+        if destination != PUBLIC:
+            registry.record(
+                subscription.id,
+                "address_refused" if destination == PRIVATE else "connection_refused",
+            )
+            return None
     keys = registry.signing_secrets(subscription.id)
     if not keys:
         registry.record(subscription.id, "secret_missing")
@@ -1023,11 +1238,8 @@ def _deliver(job: _Job, client: Any = None) -> Optional[float]:
     if reply.ok:
         registry.record(subscription.id)
         return None
-    if reply.status == 410:
-        # Gone: the receiver no longer wants this subscription.
-        registry.remove(subscription.id)
-        logger.info("MCP Events subscription %s ended: its callback answered 410", subscription.id)
-        return None
+    # Any other answer, 410 Gone included, fails this delivery only: the
+    # subscription ends when it is unsubscribed, expires or is cleared.
     registry.record(subscription.id, reply.category)
     if not reply.retryable or job.attempt > len(RETRY_DELAYS_S):
         return None
@@ -1041,8 +1253,10 @@ def _sync() -> None:
     """Be on the bus exactly while started and MCP Events is on."""
     global _bus_subscription, _deliverer
     want = _started and _enabled(_load_settings())
-    if want:
-        _registry()  # load the file here, not on the bus thread
+    if _started:
+        # Loads the file here, not on the bus thread, and forgets what
+        # expired meanwhile (the credential store's I/O on a worker).
+        _registry().prune_later()
     with _state_lock:
         if want and not _delivering():
             from services.automation import events
@@ -1093,8 +1307,13 @@ def reload() -> None:
 
 
 def subscription_count() -> int:
-    """Active subscriptions agents made (Settings shows it)."""
-    return len(_registry().active())
+    """Active subscriptions agents made (Settings shows it); never waits on storage.
+
+    Expired ones are forgotten, secrets included, on a worker thread.
+    """
+    registry = _registry()
+    registry.prune_later()
+    return len(registry.active())
 
 
 def clear_subscriptions() -> int:
@@ -1119,20 +1338,26 @@ def _require_access(saved: Mapping[str, Any]) -> None:
         )
 
 
-def list_events(params: Mapping[str, Any], saved: Mapping[str, Any]) -> dict:
+def list_events(params: Mapping[str, Any], saved: Mapping[str, Any], origin: str) -> dict:
     """``events/list``: one page holds every event, so there is no nextCursor."""
     _require_access(saved)
     return {"events": descriptors()}
 
 
-def subscribe(params: Mapping[str, Any], saved: Mapping[str, Any]) -> dict:
-    """``events/subscribe``: create or refresh a webhook subscription."""
+def subscribe(params: Mapping[str, Any], saved: Mapping[str, Any], origin: str) -> dict:
+    """``events/subscribe``: create or refresh a webhook subscription.
+
+    ``origin`` is where the request came from (``ORIGIN_LOCAL`` or
+    ``ORIGIN_TAILSCALE``); a refresh takes the newer request's.
+    """
     from services.credentials import CredentialStoreError
 
     _require_access(saved)
     name = _event_name(params.get("name"))
     arguments = normalize_arguments(name, params.get("arguments"))
     url, secret = _delivery(params.get("delivery"), subscribing=True)
+    if origin != ORIGIN_LOCAL:
+        _require_reachable_by_peer(url)
     ttl_ms = _granted_ttl_ms(params)
     sub_id = subscription_id(name, arguments, url)
     registry = _registry()
@@ -1149,6 +1374,7 @@ def subscribe(params: Mapping[str, Any], saved: Mapping[str, Any]) -> dict:
         url,
         int(now + ttl_ms / 1000),
         existing.created_at if existing is not None else _iso(now),
+        origin,
     )
     try:
         created = registry.upsert(subscription, secret)
@@ -1161,8 +1387,8 @@ def subscribe(params: Mapping[str, Any], saved: Mapping[str, Any]) -> dict:
     except OSError:
         raise EventsError(INTERNAL_ERROR, "OpenWhisper could not save the subscription.") from None
     logger.info(
-        "MCP Events subscription %s %s for %s", sub_id,
-        "created" if created else "refreshed", name,
+        "MCP Events subscription %s %s for %s from %s", sub_id,
+        "created" if created else "refreshed", name, origin,
     )
     return {
         "id": sub_id,
@@ -1171,12 +1397,12 @@ def subscribe(params: Mapping[str, Any], saved: Mapping[str, Any]) -> dict:
         "cursor": None,
         "truncated": False,
         "deliveryStatus": registry.delivery_status(
-            sub_id, _delivering() and _delivery_allowed(saved)
+            sub_id, _delivering() and _delivery_allowed(saved, subscription)
         ),
     }
 
 
-def unsubscribe(params: Mapping[str, Any], saved: Mapping[str, Any]) -> dict:
+def unsubscribe(params: Mapping[str, Any], saved: Mapping[str, Any], origin: str) -> dict:
     """``events/unsubscribe``: idempotent, keyed like subscribe (never by id)."""
     _require_access(saved)
     name = _event_name(params.get("name"))
@@ -1188,7 +1414,9 @@ def unsubscribe(params: Mapping[str, Any], saved: Mapping[str, Any]) -> dict:
     return {}
 
 
-METHODS: dict[str, Callable[[Mapping[str, Any], Mapping[str, Any]], dict]] = {
+#: Each takes the request's params, the saved settings and the request's origin.
+Method = Callable[[Mapping[str, Any], Mapping[str, Any], str], dict]
+METHODS: dict[str, Method] = {
     "events/list": list_events,
     "events/subscribe": subscribe,
     "events/unsubscribe": unsubscribe,
@@ -1210,15 +1438,22 @@ def install(mcp: Any, settings: Any) -> None:
     from mcp.types import RequestParams
     from pydantic import ConfigDict
 
+    from services.automation.api import peer_is_local
+
     class EventsParams(RequestParams):
         model_config = ConfigDict(extra="allow")
 
-    def handler(method: Callable[[Mapping[str, Any], Mapping[str, Any]], dict]):
+    def handler(method: Method):
         async def handle(ctx: Any, params: EventsParams) -> dict:
             body = dict(params.model_extra or {})
+            # The HTTP request the message came in; without one, the peer
+            # can't be shown to be this computer.
+            local = peer_is_local(getattr(ctx, "request", None))
+            origin = ORIGIN_LOCAL if local else ORIGIN_TAILSCALE
 
             def run() -> dict:
-                return method(body, _load_settings(settings) if settings is not None else {})
+                saved = _load_settings(settings) if settings is not None else {}
+                return method(body, saved, origin)
 
             try:
                 return await asyncio.to_thread(run)
