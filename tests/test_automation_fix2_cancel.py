@@ -159,7 +159,9 @@ def _users_cancel(h, *, canceled_a_job):
     ApplicationController.cancel(controller)
 
 
-def test_a_cancel_from_the_hotkey_thread_reaches_actions_on_the_qt_thread():
+def test_a_cancel_from_the_hotkey_thread_reaches_actions_on_the_qt_thread(
+    _session_qt_application,
+):
     from PyQt6.QtCore import QCoreApplication, QObject
 
     from services.application_controller import ApplicationController
