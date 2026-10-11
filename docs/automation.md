@@ -97,7 +97,8 @@ name (filler words like "hey" or "okay" and common mishearings such as
 model, through TypeSafe or OpenRouter) one question: which action, and which
 part of the words is for it. Only a confident answer routes; anything else,
 including a failure or a 1.5 s timeout, pastes your words as usual. With Route
-by voice, a notice says when no action matched.
+by voice, a notice says when no action matched, or when Fast judgments
+couldn't be reached in time.
 
 Routing needs Fast judgments set up (Settings → Meeting Mode → Fast
 judgments). **What is sent:** only words recorded with Route by voice, or

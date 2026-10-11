@@ -138,7 +138,7 @@ class TranscriptionRuntime:
         # A text filter answered that it handled the words: save them, but
         # deliver nothing. Set by the worker, read by on_transcription_complete.
         self._filter_canceled = False
-        # Spoken routing's judge couldn't answer, so the words are pasted;
+        # Route by voice's judge couldn't answer, so the words are pasted;
         # with Route by voice a notice says why. Set by the worker, read by
         # _deliver.
         self._route_failed = False
