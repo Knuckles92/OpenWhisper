@@ -219,7 +219,8 @@ class EventStream:
         self.enabled = enabled
         self.allowed = allowed
         self._pending: deque = deque()
-        self._overflow = False
+        # The first event that found the queue full; 0 while none has.
+        self._overflow_seq = 0
         self._ready: Optional[asyncio.Event] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._subscription = None
@@ -239,10 +240,10 @@ class EventStream:
     # -- the event loop side ----------------------------------------------------
 
     def _enqueue(self, event) -> None:
-        if self._overflow:
+        if self._overflow_seq:
             return
         if len(self._pending) >= STREAM_QUEUE_SIZE:
-            self._overflow = True
+            self._overflow_seq = event.seq
         else:
             self._pending.append(event)
         self._ready.set()
@@ -251,7 +252,7 @@ class EventStream:
         """The response body: bytes of SSE messages."""
         from services.automation.events import bus
 
-        self._loop = asyncio.get_running_loop()
+        loop = self._loop = asyncio.get_running_loop()
         self._ready = asyncio.Event()
         events_bus = bus()
         # Subscribe before reading the buffer, so nothing falls between the
@@ -272,46 +273,42 @@ class EventStream:
             for event in replay:
                 replayed.add(event.seq)
                 yield sse_frame(event)
-            async for chunk in self._live(replayed):
-                yield chunk
+
+            next_ping = loop.time() + PING_INTERVAL_S
+            next_permission = loop.time() + PERMISSION_CHECK_S
+            while self.enabled():
+                now = loop.time()
+                if now >= next_permission:
+                    next_permission = now + PERMISSION_CHECK_S
+                    if not await asyncio.to_thread(self.allowed):
+                        return
+                if self._overflow_seq:
+                    # The client fell too far behind: say where it lost track
+                    # and end, so it reconnects with Last-Event-ID and replays.
+                    missed = next(
+                        (e.seq for e in self._pending if e.seq not in replayed),
+                        self._overflow_seq,
+                    )
+                    self._pending.clear()
+                    yield sse_frame(gap_event(missed), with_id=False)
+                    return
+                if self._pending:
+                    event = self._pending.popleft()
+                    if event.seq not in replayed:
+                        yield sse_frame(event)
+                    continue
+                if now >= next_ping:
+                    next_ping = now + PING_INTERVAL_S
+                    yield b": ping\n\n"
+                    continue
+                self._ready.clear()
+                wait = min(next_ping, next_permission, now + ENABLED_CHECK_S) - now
+                try:
+                    await asyncio.wait_for(self._ready.wait(), timeout=max(0.0, wait))
+                except asyncio.TimeoutError:
+                    pass
         finally:
             self._subscription.close()
-
-    async def _live(self, replayed: set):
-        loop = self._loop
-        next_ping = loop.time() + PING_INTERVAL_S
-        next_permission = loop.time() + PERMISSION_CHECK_S
-        while True:
-            if not self.enabled():
-                return
-            now = loop.time()
-            if now >= next_permission:
-                next_permission = now + PERMISSION_CHECK_S
-                if not await asyncio.to_thread(self.allowed):
-                    return
-            if self._overflow:
-                # The client fell too far behind: say where it lost track and
-                # end, so it reconnects with Last-Event-ID and replays.
-                missed = self._pending[0].seq if self._pending else 0
-                self._pending.clear()
-                if missed:
-                    yield sse_frame(gap_event(missed), with_id=False)
-                return
-            if self._pending:
-                event = self._pending.popleft()
-                if event.seq not in replayed:
-                    yield sse_frame(event)
-                continue
-            if now >= next_ping:
-                next_ping = now + PING_INTERVAL_S
-                yield b": ping\n\n"
-                continue
-            self._ready.clear()
-            wait = min(next_ping, next_permission, now + ENABLED_CHECK_S) - now
-            try:
-                await asyncio.wait_for(self._ready.wait(), timeout=max(0.0, wait))
-            except asyncio.TimeoutError:
-                pass
 
 
 def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None):
