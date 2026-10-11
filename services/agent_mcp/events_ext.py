@@ -207,7 +207,19 @@ PAYLOAD_SCHEMAS: dict[str, dict] = {
         text=_TEXT,
     ),
     catalog.CHANNEL_MESSAGE: _object(
-        job_id=_STRING, source=_SOURCE, action_id=_STRING, text=_TEXT, app=_APP
+        job_id=_STRING,
+        source=_SOURCE,
+        origin={
+            "type": "string",
+            "enum": [catalog.ORIGIN_DICTATED, catalog.ORIGIN_PROGRAM],
+            "description": (
+                "Whose words these are: the user's own, or a program's (it sent them "
+                "or changed them)."
+            ),
+        },
+        action_id=_STRING,
+        text=_TEXT,
+        app=_APP,
     ),
     catalog.ROUTE_DECIDED: _object(
         job_id=_STRING,

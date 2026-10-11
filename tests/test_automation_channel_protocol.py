@@ -101,6 +101,7 @@ def test_channel_params_carry_the_text_and_routing_meta():
         "data": {
             "job_id": "0123456789abcdef",
             "source": "hotkey",
+            "origin": "dictated",
             "action_id": "claude",
             "text": "  fix the flaky test\n",
             "app": {"id": "code", "name": "Visual Studio Code", "category": "editor"},
@@ -116,7 +117,7 @@ def test_channel_params_carry_the_text_and_routing_meta():
 
 
 def test_channel_params_accept_an_app_name_and_leave_out_empty_meta():
-    # An event without a source is treated as a program's.
+    # An event without an origin is treated as a program's.
     assert channel_params({"data": {"text": "hi", "app": "Terminal"}}) == {
         "content": "hi",
         "meta": {"origin": "program", "app": "Terminal"},

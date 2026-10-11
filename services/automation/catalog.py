@@ -52,6 +52,10 @@ PUBLIC_TYPES: tuple[str, ...] = tuple(t for t in EVENT_TYPES if t != EVENTS_GAP)
 SOURCES = ("hotkey", "ui", "api", "mcp", "dbus", "routing")
 #: Sources where the user started the job; any other is a program's request.
 USER_SOURCES = frozenset({"hotkey", "ui", "dbus"})
+#: ``channel.message`` ``origin``: the user's own words, or words a program
+#: supplied or changed (DictationJob.program_words).
+ORIGIN_DICTATED = "dictated"
+ORIGIN_PROGRAM = "program"
 #: ``mode`` of a transcription read from a file rather than dictated live.
 FILE_MODE = "file"
 #: ``transcription.failed`` ``error``: why a job ended without text.
@@ -201,12 +205,17 @@ def action_ran(job: Any, action: Any, *, ok: bool, message: str, output: str,
 
 
 def channel_message(job: Any, action: Any, text: str, app: Optional[Mapping]) -> dict:
-    """``source`` tells a listener whether the user dictated the words
-    (hotkey, ui, routing) or a program sent them (api, mcp)."""
+    """``source`` says who started the job; ``origin`` whose words these are:
+    ``program`` when a program supplied or changed them, else ``dictated``.
+
+    A job that can't say counts as a program's.
+    """
     fields = job_fields(job)
+    users = getattr(job, "program_words", True) is False
     return {
         "job_id": fields["job_id"],
         "source": fields["source"],
+        "origin": ORIGIN_DICTATED if users else ORIGIN_PROGRAM,
         "action_id": getattr(action, "id", ""),
         "text": text or "",
         "app": dict(app) if app else None,

@@ -235,7 +235,8 @@ def test_channel_publishes_the_words_to_listening_sessions(h):
 
     (message,) = h.bus.recent(types=[catalog.CHANNEL_MESSAGE])
     assert message.data == {
-        "job_id": job.id, "source": "hotkey", "action_id": "ch", "text": "fix the build",
+        "job_id": job.id, "source": "hotkey", "origin": "dictated", "action_id": "ch",
+        "text": "fix the build",
         "app": {"id": "outlook.exe", "name": "Outlook", "category": message.data["app"]["category"]},
     }
     assert h.ui.copied == []
