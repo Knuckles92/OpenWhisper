@@ -443,7 +443,8 @@ def test_unreadable_settings_fall_back_to_the_default_port():
     ],
 )
 def test_the_url_override_wins(url, target):
-    link = AppLink(url=url, read_settings=lambda: pytest.fail("settings read"))
+    # Another computer needs its own token (the saved one stays on this one).
+    link = AppLink(url=url, token=TOKEN, read_settings=lambda: pytest.fail("settings read"))
     assert link.target() == target
 
 

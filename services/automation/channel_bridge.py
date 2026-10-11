@@ -24,6 +24,7 @@ Contract: docs/design/automation/design.md, decision 11.
 from __future__ import annotations
 
 import http.client
+import ipaddress
 import json
 import logging
 import os
@@ -147,7 +148,8 @@ OpenWhisper must be running with API & MCP on.
 
 Environment:
   OPENWHISPER_URL     The app's address instead of the saved port,
-                      for example http://127.0.0.1:8767
+                      for example http://127.0.0.1:8767; another
+                      computer needs https:// and OPENWHISPER_TOKEN
   OPENWHISPER_TOKEN   The access token instead of the saved one
 """
 
@@ -174,6 +176,16 @@ class Target:
     @property
     def label(self) -> str:
         return f"{self.host}:{self.port}"
+
+    @property
+    def on_this_computer(self) -> bool:
+        if self.host.lower() == "localhost":
+            return True
+        try:
+            address = ipaddress.ip_address(self.host)
+        except ValueError:
+            return False
+        return (getattr(address, "ipv4_mapped", None) or address).is_loopback
 
 
 def _saved_settings() -> Mapping[str, Any]:
@@ -257,7 +269,21 @@ class AppLink:
 
     def target(self) -> Target:
         if self._url:
-            return parse_url(self._url)
+            target = parse_url(self._url)
+            if not target.on_this_computer:
+                # The saved token is this computer's: another computer gets
+                # only a token the user gave for it, and only over https.
+                if not target.https:
+                    raise LinkError(
+                        "bad_url", f"{URL_ENV} must use https:// to reach OpenWhisper on another computer."
+                    )
+                if not self._fixed_token:
+                    raise LinkError(
+                        "no_token",
+                        f"Set {TOKEN_ENV} to reach OpenWhisper on another computer; the saved "
+                        "access token is only sent to OpenWhisper on this one.",
+                    )
+            return target
         try:
             settings = self._read_settings()
         except Exception as exc:
