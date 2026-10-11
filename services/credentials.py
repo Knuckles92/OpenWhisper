@@ -365,17 +365,25 @@ def _dotenv_values() -> dict[str, str | None]:
         return {}
 
 
+#: ``.env`` names already logged as impossible to load, so each is logged once.
+_refused_logged: set[str] = set()
+
+
 def _load_dotenv_into_environ() -> None:
     """Copy ``.env`` into ``os.environ``, never over a variable already set.
 
     Each variable added is recorded as the app's own (``process_env``), so
     programs started for the user never get it, whatever the file says later.
+    An entry no environment can hold is left out and logged by name, never
+    its value; the rest still load. Never raises.
     """
-    from services.process_env import set_for_app
+    from services.process_env import load_for_app
 
-    for name, value in _dotenv_values().items():
-        if value is not None:
-            set_for_app(name, value, keep_existing=True)
+    values = {name: value for name, value in _dotenv_values().items() if value is not None}
+    for name in load_for_app(values):
+        if name not in _refused_logged:
+            _refused_logged.add(name)
+            logger.warning("Skipped %r in .env: it can't be an environment variable", name)
 
 
 def resolve_credential(name: str) -> str | None:
