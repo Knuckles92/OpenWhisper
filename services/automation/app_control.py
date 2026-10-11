@@ -140,12 +140,23 @@ def call_on_qt(fn: Callable[[], T]) -> T:
 # -- the work, on the Qt thread ------------------------------------------------
 
 def _enabled_action(action_id: str):
-    from services.actions.model import find_action
+    """The enabled action ``action_id`` for a program; raises when it may not have it.
+
+    Every AppControl caller is a program (the live API or an MCP agent). An
+    agent or Claude Code channel action hands its words to the user's coding
+    agent, which acts on them, so it also needs "send words to your coding
+    agents".
+    """
+    from services.actions.model import ActionKind, find_action
+    from services.automation import permissions
     from services.settings import settings_manager
 
-    action = find_action(settings_manager.load_all_settings(), action_id)
+    saved = settings_manager.load_all_settings()
+    action = find_action(saved, action_id)
     if action is None or not action.enabled:
         raise ControlError(NOT_FOUND, _NO_ACTION)
+    if action.kind in (ActionKind.AGENT, ActionKind.CHANNEL):
+        permissions.require(saved, permissions.AGENT_PROMPTS)
     return action
 
 

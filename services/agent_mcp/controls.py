@@ -243,6 +243,7 @@ WRITE_CAPABILITIES = (
     permissions.PUBLIC_NAMES[permissions.RUN_ACTIONS],
     permissions.PUBLIC_NAMES[permissions.CONTROL_RECORDING],
     permissions.PUBLIC_NAMES[permissions.TEXT_FILTERS],
+    permissions.PUBLIC_NAMES[permissions.AGENT_PROMPTS],
 )
 
 
@@ -281,7 +282,7 @@ class AgentControls:
             "settings_access": access,
             "writable_settings": sorted(writable_settings(saved)) if access else [],
             # The live API and MCP live tools: live_events, run_actions,
-            # control_recording, text_filters.
+            # control_recording, text_filters, agent_prompts.
             **permissions.describe(saved),
             "mcp_events": resolve_mcp_events_enabled(saved),
         }

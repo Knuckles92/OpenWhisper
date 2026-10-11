@@ -215,6 +215,7 @@ def _closed_port() -> int:
 def _message(text: str = "rename the helper to load_config", **extra) -> dict:
     return {
         "job_id": "0123456789abcdef",
+        "source": "hotkey",
         "action_id": "claude_channel",
         "text": text,
         "app": {"id": "code", "name": "Visual Studio Code", "category": "editor"},
@@ -370,7 +371,10 @@ def test_channel_end_to_end(app, spawn):
     pushed = channel.notification("notifications/claude/channel")
     assert pushed["params"] == {
         "content": "rename the helper to load_config, café ✓",
-        "meta": {"job_id": "0123456789abcdef", "action": "claude_channel", "app": "Visual Studio Code"},
+        "meta": {
+            "origin": "dictated", "job_id": "0123456789abcdef", "action": "claude_channel",
+            "app": "Visual Studio Code",
+        },
     }
 
     reply = channel.request(
