@@ -10,10 +10,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.settings_legacy_testkit import mount_legacy_basic
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QCoreApplication, QEvent
-from PyQt6.QtWidgets import QAbstractButton, QApplication, QComboBox, QLabel, QPushButton
+from PyQt6.QtWidgets import (
+    QAbstractButton,
+    QApplication,
+    QComboBox,
+    QLabel,
+    QPushButton,
+)
 
 from services import audio_devices
 from services.audio_devices import InputDevice
@@ -204,7 +212,7 @@ def test_a_preferred_microphone_on_another_host_api_drops_the_legacy_index(make_
 def test_basic_microphone_writes_the_first_entry_and_keeps_the_backups(make_dialog):
     dialog, store = make_dialog({SettingsKey.AUDIO_INPUT_PRIORITY: [USB, SNOWBALL]}, view=SettingsView.BASIC)
     _pump_until(lambda: dialog._microphones.devices is not None)
-    combo = dialog._basic_pages[BASIC_DICTATION].controls[SettingsKey.AUDIO_INPUT_PRIORITY]
+    combo = mount_legacy_basic(dialog, BASIC_DICTATION).controls[SettingsKey.AUDIO_INPUT_PRIORITY]
     assert combo.currentData() == entry_token(USB)
     webcam = {"name": "Microphone (Webcam)", "hostapi": MME}
 
@@ -327,7 +335,10 @@ def test_rail_value_reads_short_names():
 # test_settings_unified's test_basic_rows_fit_narrow_windows_and_large_fonts.
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
 def test_recording_page_fits_narrow_windows_and_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+    from ui_qt.utils.font_scale import (
+        apply_ui_font_scale,
+        current_ui_font_scale_percent,
+    )
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
 

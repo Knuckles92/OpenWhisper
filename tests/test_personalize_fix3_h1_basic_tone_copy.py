@@ -2,11 +2,16 @@
 
 from services.app_styles import NEW_INSTALL_TONES, AppCategory, Tone
 from services.settings import SettingsKey, SettingsView
+from tests.settings_legacy_testkit import mount_legacy_basic
+from tests.test_personalize_s1_settings_page import (  # noqa: F401  (fixtures)
+    CLEANUP_ON,
+    _qapp,
+    _restore_metadata,
+    _windows_text,
+    make_dialog,
+)
 from ui_qt.dialogs import settings_styles
 from ui_qt.dialogs.settings_destinations import BASIC_DICTATION
-from tests.test_personalize_s1_settings_page import (  # noqa: F401  (fixtures)
-    CLEANUP_ON, _qapp, _restore_metadata, _windows_text, make_dialog,
-)
 
 BASIC = {**CLEANUP_ON, SettingsKey.SETTINGS_VIEW: SettingsView.BASIC}
 
@@ -21,7 +26,7 @@ def _detail(page):
 
 def test_an_upgraded_install_is_told_every_app_is_formal(make_dialog):  # noqa: F811
     dialog, store = make_dialog(BASIC)
-    page = dialog._basic_pages[BASIC_DICTATION]
+    page = mount_legacy_basic(dialog, BASIC_DICTATION)
     assert page.controls[SettingsKey.APP_STYLES_ENABLED].isChecked()
     text = _detail(page)
     assert "Formal in every app" in text
@@ -34,7 +39,7 @@ def test_an_upgraded_install_is_told_every_app_is_formal(make_dialog):  # noqa: 
 
 def test_a_blocker_still_replaces_the_tones(make_dialog):  # noqa: F811
     dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-    assert _detail(dialog._basic_pages[BASIC_DICTATION]) == "Styles need AI cleanup, which is off."
+    assert _detail(mount_legacy_basic(dialog, BASIC_DICTATION)) == "Styles need AI cleanup, which is off."
 
 
 def test_the_summary_names_each_tone_where_it_applies():

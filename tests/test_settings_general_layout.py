@@ -21,12 +21,13 @@ from PyQt6.QtWidgets import (
 
 from ui_qt.dialogs.settings_dialog import (
     ADVANCED,
-    APPEARANCE,
     API_KEYS,
+    APP_GENERAL,
+    APPEARANCE,
     BACKUP,
     CLEANUP,
-    CLEANUP_RULES,
     CLEANUP_PROFILES,
+    CLEANUP_RULES,
     COMMANDS,
     DICTIONARY,
     DOWNLOADS,
@@ -35,8 +36,8 @@ from ui_qt.dialogs.settings_dialog import (
     MCP,
     MEETING_AFTER,
     MEETING_DASHBOARD,
-    MEETING_INTELLIGENCE,
     MEETING_FAST,
+    MEETING_INTELLIGENCE,
     MEETING_VOICE,
     OVERVIEW,
     RECORDING,
@@ -49,8 +50,8 @@ from ui_qt.dialogs.settings_dialog import (
 )
 from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
 from ui_qt.utils.theme_manager import ThemeManager
-from ui_qt.widgets.setting_tile import FieldTile, InfoTile, SettingTile, TileBase
 from ui_qt.widgets.nav_rail import NavRail
+from ui_qt.widgets.setting_tile import FieldTile, InfoTile, SettingTile, TileBase
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 
@@ -91,6 +92,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     RUNTIME,
                     BACKUP,
                     GENERAL,
+                    APP_GENERAL,
                     APPEARANCE,
                     HOTKEYS,
                     API_KEYS,
@@ -98,15 +100,13 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     ADVANCED,
                 ),
             )
-            self.assertEqual(dialog.rail.current_key(), OVERVIEW)
+            self.assertEqual(dialog.rail.current_key(), RECORDING)
+            self.assertEqual(dialog.category_rail.keys(),
+                             ("dictation", "meetings", "personalize", "models", "connections", "app"))
             for key in dialog.rail.keys():
-                if key == DOWNLOADS:
-                    # Its catalog list is the page's own scroller.
-                    self.assertNotIn(key, dialog._page_scrolls)
-                    self.assertIs(dialog._pages[key].parentWidget(), dialog.stack)
-                    continue
+                dialog.select_destination(key)
                 scroll = dialog._page_scrolls[key]
-                self.assertIs(scroll.widget(), dialog._pages[key])
+                self.assertTrue(scroll.widget().isAncestorOf(dialog._pages[key]))
                 self.assertTrue(scroll.widgetResizable())
             def group_titles(page):
                 return [
@@ -117,13 +117,15 @@ class TestSettingsGeneralLayout(unittest.TestCase):
 
             general = dialog._pages[GENERAL]
             tiles = general.findChildren(SettingTile)
-            self.assertEqual(len(tiles), 6)
+            self.assertEqual(len(tiles), 3)
             self.assertEqual(len(general.findChildren(FieldTile)), 0)
             self.assertIs(dialog.auto_paste_check, dialog.auto_paste_tile.checkbox)
             self.assertIs(
                 dialog.update_notify_check, dialog.update_notify_tile.checkbox
             )
-            self.assertEqual(group_titles(general), ["Output", "Window", "Updates"])
+            self.assertEqual(group_titles(general), ["Output"])
+            self.assertEqual(group_titles(dialog._pages[APP_GENERAL]), ["Window", "Updates"])
+            self.assertEqual(len(dialog._pages[APP_GENERAL].findChildren(SettingTile)), 3)
             # Every visual setting lives on Appearance.
             appearance = dialog._pages[APPEARANCE]
             self.assertEqual(
@@ -440,7 +442,8 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                             )
                             continue
                         scroll = dialog._page_scrolls[key]
-                        self.assertEqual(page.width(), scroll.viewport().width())
+                        self.assertLessEqual(page.width(), scroll.viewport().width())
+                        self.assertTrue(scroll.widget().isAncestorOf(page))
                         self.assertGreaterEqual(page.height(), page.minimumSizeHint().height())
                         self.assertTrue(dialog.rect().contains(
                             close.mapTo(dialog, close.rect().bottomRight())
@@ -453,9 +456,9 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                             scroll.viewport().height(),
                         )
             self.assertGreater(dialog._page_scrolls[GENERAL].verticalScrollBar().maximum(), 0)
-            self.assertGreater(dialog.rail.verticalScrollBar().maximum(), 0)
-            item_rect = dialog.rail.visualItemRect(dialog.rail.currentItem())
-            self.assertTrue(dialog.rail.viewport().rect().contains(item_rect))
+            self.assertEqual(dialog.category_rail.verticalScrollBar().maximum(), 0)
+            item_rect = dialog.category_rail.visualItemRect(dialog.category_rail.currentItem())
+            self.assertTrue(dialog.category_rail.viewport().rect().contains(item_rect))
         finally:
             dialog.close()
             self.app.setStyleSheet(previous_stylesheet)

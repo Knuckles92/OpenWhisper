@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.settings_legacy_testkit import mount_legacy_basic
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
@@ -15,9 +17,8 @@ from PyQt6.QtWidgets import QApplication, QPushButton
 from services.settings import SettingsKey, SettingsManager, SettingsView
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
-from ui_qt.dialogs import settings_metadata
+from ui_qt.dialogs import settings_metadata, settings_styles
 from ui_qt.dialogs import settings_models as models_module
-from ui_qt.dialogs import settings_styles
 from ui_qt.dialogs.settings_destinations import (
     BASIC_DICTATION,
     CLEANUP,
@@ -192,7 +193,7 @@ def test_awareness_gate_shows_only_once_cleanup_is_on(make_dialog):
 
 def test_the_style_switch_has_one_name(make_dialog):
     dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-    basic = dialog._basic_pages[BASIC_DICTATION]
+    basic = mount_legacy_basic(dialog, BASIC_DICTATION)
     basic_title = basic.controls[SettingsKey.APP_STYLES_ENABLED].accessibleName()
     titles = {title for attr, title, _copy in settings_styles.SEARCH_FIELDS if attr == "app_styles_tile"}
 

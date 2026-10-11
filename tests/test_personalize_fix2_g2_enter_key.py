@@ -23,9 +23,8 @@ from services import app_styles, dictionary
 from services.settings import SettingsKey, SettingsManager, SettingsView
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
-from ui_qt.dialogs import settings_metadata
+from ui_qt.dialogs import settings_metadata, settings_styles
 from ui_qt.dialogs import settings_models as models_module
-from ui_qt.dialogs import settings_styles
 from ui_qt.dialogs.settings_destinations import (
     CLEANUP_RULES,
     COMMANDS,
@@ -125,7 +124,7 @@ def _type_and_press(widget, text, key=RETURN):
 def _stayed(dialog, store, page_title):
     assert dialog._settings_view == SettingsView.ADVANCED
     assert store.get(SettingsKey.SETTINGS_VIEW) == SettingsView.ADVANCED
-    assert dialog.page_title.text() == page_title
+    assert page_title in (dialog.page_title.text(), dialog._headings[dialog.rail.current_key()][0])
 
 
 def _words(store):
@@ -244,13 +243,16 @@ def test_enter_on_a_focused_button_still_presses_it(make_dialog):
     _stayed(dialog, store, "Dictionary")
 
 
-def test_enter_on_the_advanced_view_button_switches_view(make_dialog):
+def test_enter_on_a_section_header_toggles_only_that_section(make_dialog):
     dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+    section = dialog.sections.sections[RECORDING]
+    assert section.is_expanded()
 
-    _press(dialog.view_buttons[SettingsView.ADVANCED])
+    _press(section.header)
 
-    assert dialog._settings_view == SettingsView.ADVANCED
-    assert store.get(SettingsKey.SETTINGS_VIEW) == SettingsView.ADVANCED
+    assert not section.is_expanded()
+    assert dialog.category_rail.current_key() == "dictation"
+    assert store.get(SettingsKey.SETTINGS_VIEW) == SettingsView.BASIC
 
 
 def test_escape_still_closes_settings(make_dialog):

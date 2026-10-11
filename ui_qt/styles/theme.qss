@@ -541,6 +541,13 @@ QLabel#textModelFootnote {
     border: none;
 }
 
+QLabel#textModelError {
+    color: @danger-text-soft;
+    font-size: 12px;
+    background-color: transparent;
+    border: none;
+}
+
 QLabel#textProviderCredentialIcon,
 QLabel#textModelFootnoteIcon {
     background-color: transparent;
@@ -4075,6 +4082,99 @@ QCheckBox#batchRelationCombine {
 }
 
 /* ---- Settings views and the curated Basic pages ---- */
+
+QListWidget#settingsCategoryRail {
+    background-color: @slate-rail;
+    border: none;
+    padding: 16px 12px;
+    outline: none;
+}
+
+QListWidget#settingsCategoryRail::item {
+    background-color: transparent;
+    border: none;
+}
+
+QPushButton#settingsDeveloperLink {
+    background-color: transparent;
+    color: @slate-text-3;
+    border: none;
+    border-top: 1px solid @slate-border-subtle;
+    padding: 16px;
+    text-align: left;
+}
+
+QPushButton#settingsDeveloperLink:hover {
+    color: @accent;
+}
+
+QWidget#settingsCategoryPage, QScrollArea#settingsCategoryScroll,
+QWidget#settingsSectionBody {
+    background-color: transparent;
+    border: none;
+}
+
+QFrame#settingsSection {
+    background-color: @slate-field;
+    border: 1px solid @slate-border-subtle;
+    border-radius: 10px;
+}
+
+QFrame#settingsSection[searchHit="true"] {
+    border: 1px solid @accent;
+}
+
+QPushButton#settingsSectionHeader {
+    background-color: transparent;
+    border: none;
+    border-radius: 9px;
+    padding: 0;
+}
+
+QPushButton#settingsSectionHeader:hover {
+    background-color: @slate-raised;
+}
+
+QPushButton#settingsSectionHeader:focus {
+    border: 1px solid @accent;
+}
+
+QLabel#settingsSectionTitle {
+    color: @slate-text;
+    font-size: 14px;
+    font-weight: 600;
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#settingsSectionChevron {
+    color: @accent;
+    font-size: 22px;
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#settingsSectionSummary {
+    color: @slate-text-3;
+    font-size: 12px;
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#settingsPrivacyNote {
+    color: @slate-text-2;
+    background-color: transparent;
+    border: none;
+}
+
+QWidget#settingsCategoryPage QFrame#settingsTile {
+    background-color: transparent;
+    border: none;
+}
+
+QWidget#settingsCategoryPage QFrame#settingsTile[searchHit="true"] {
+    border: 1px solid @accent;
+}
 
 QFrame#settingsViewHeader {
     background-color: @slate-rail;

@@ -4,6 +4,8 @@ import os
 
 import pytest
 
+from tests.settings_legacy_testkit import mount_legacy_basic
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QEvent
@@ -12,10 +14,13 @@ from PyQt6.QtWidgets import QApplication
 from services import text_rewrite
 from services.hotkey_manager import format_hotkey_display
 from services.settings import SettingsKey, SettingsView, settings_manager
-from ui_qt.dialogs.settings_destinations import BASIC_DICTATION, COMMANDS
 from tests.test_personalize_s1_settings_page import (  # noqa: F401  (fixtures)
-    _qapp, _restore_metadata, _windows_text, make_dialog,
+    _qapp,
+    _restore_metadata,
+    _windows_text,
+    make_dialog,
 )
+from ui_qt.dialogs.settings_destinations import BASIC_DICTATION, COMMANDS
 
 
 @pytest.fixture
@@ -68,7 +73,7 @@ def test_quick_record_asks_for_ai_setup_until_a_model_is_ready(ready):
 
 
 def _basic_detail(dialog):
-    page = dialog._basic_pages[BASIC_DICTATION]
+    page = mount_legacy_basic(dialog, BASIC_DICTATION)
     for row, control in page._rows:
         if control is dialog.commands_basic_shortcut:
             return page, row.itemAt(0).layout().itemAt(1).widget().text()

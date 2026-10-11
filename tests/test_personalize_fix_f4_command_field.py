@@ -36,7 +36,10 @@ def _restore_metadata():
 
 @pytest.fixture
 def scaled_dialog(monkeypatch):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+    from ui_qt.utils.font_scale import (
+        apply_ui_font_scale,
+        current_ui_font_scale_percent,
+    )
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
 
@@ -111,7 +114,8 @@ def test_commands_page_field_never_overlaps_clear(scaled_dialog, ui_mode, width,
 @pytest.mark.parametrize("width", [560, 460])
 def test_basic_row_field_never_overlaps_change(scaled_dialog, width):
     dialog = scaled_dialog("omarchy", 130, view=SettingsView.BASIC)
-    dialog.select_destination(BASIC_DICTATION)
+    from tests.settings_legacy_testkit import mount_legacy_basic
+    mount_legacy_basic(dialog, BASIC_DICTATION)
     _settle(dialog, width)
     _assert_apart(dialog.commands_basic_shortcut)
 

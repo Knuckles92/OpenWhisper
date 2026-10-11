@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.settings_legacy_testkit import mount_legacy_basic
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import (
@@ -21,9 +23,8 @@ from services.settings import SettingsKey, SettingsManager, SettingsView
 from services.snippets import Snippet, load_snippets
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
-from ui_qt.dialogs import settings_metadata
+from ui_qt.dialogs import settings_metadata, settings_snippets
 from ui_qt.dialogs import settings_models as models_module
-from ui_qt.dialogs import settings_snippets
 from ui_qt.dialogs.settings_destinations import BASIC_DICTATION, SNIPPETS
 from ui_qt.widgets.setting_tile import TileBase
 
@@ -288,7 +289,7 @@ def test_snippet_text_is_never_logged(make_dialog, caplog):
 
 def test_basic_tab_counts_snippets_and_adds_one(make_dialog):
     dialog, store = make_dialog({**_library(CAL)}, view=SettingsView.BASIC)
-    page = dialog._basic_pages[BASIC_DICTATION]
+    page = mount_legacy_basic(dialog, BASIC_DICTATION)
     add = next(b for b in page.findChildren(QPushButton) if b.accessibleName() == "Add a snippet")
     detail = next(
         label for label in page.findChildren(QLabel, "basicSettingsDescription")
@@ -313,7 +314,10 @@ def test_basic_tab_counts_snippets_and_adds_one(make_dialog):
 
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
 def test_the_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+    from ui_qt.utils.font_scale import (
+        apply_ui_font_scale,
+        current_ui_font_scale_percent,
+    )
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
 
@@ -358,7 +362,10 @@ def test_the_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, u
 
 @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 460)])
 def test_the_basic_row_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+    from ui_qt.utils.font_scale import (
+        apply_ui_font_scale,
+        current_ui_font_scale_percent,
+    )
     from ui_qt.utils.theme_manager import ThemeManager
 
     monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
@@ -373,7 +380,7 @@ def test_the_basic_row_fits_narrow_windows_at_large_fonts(make_dialog, monkeypat
         dialog.resize(width, 600)
         for _ in range(8):
             app.processEvents()
-        page = dialog._basic_pages[BASIC_DICTATION]
+        page = mount_legacy_basic(dialog, BASIC_DICTATION)
         add = next(b for b in page.findChildren(QPushButton) if b.accessibleName() == "Add a snippet")
         assert add.isVisible()
         assert add.mapTo(page, add.rect().topLeft()).x() >= 0

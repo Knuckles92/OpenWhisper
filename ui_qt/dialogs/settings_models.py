@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from config import config, is_frozen
+from services import installed_agents, openai_retirement
 from services.components import (
     component_coordinator,
     current_platform_tag,
@@ -37,7 +38,6 @@ from services.components import (
     meeting_agent_payload_dir,
     speaker_model_path,
 )
-from services import installed_agents, openai_retirement
 from services.hf_access import (
     CachedModelInfo,
     custom_model_cache_info,
@@ -45,8 +45,6 @@ from services.hf_access import (
     resolve_model_repo,
     scan_cached_models,
 )
-from services.whisper_sources import custom_models
-from ui_qt.dialogs.custom_whisper_dialog import add_custom_models
 from services.settings import (
     SETTING_DEFAULTS,
     MeetingAgentCore,
@@ -63,13 +61,13 @@ from services.settings import (
     resolve_meeting_agent_core,
     resolve_meeting_agent_model,
     resolve_meeting_agent_models,
+    resolve_meeting_asr_source,
     resolve_meeting_audio_upload_consent,
     resolve_meeting_language,
     resolve_meeting_llm_model,
     resolve_meeting_llm_provider,
     resolve_meeting_speaker_id_backend,
     resolve_meeting_whisper_model,
-    resolve_meeting_asr_source,
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
@@ -83,6 +81,8 @@ from services.text_llm import (
     remove_custom_profile,
     upsert_custom_profile,
 )
+from services.whisper_sources import custom_models
+from ui_qt.dialogs.custom_whisper_dialog import add_custom_models
 from ui_qt.dialogs.settings_destinations import (
     CLEANUP,
     MEETING_INTELLIGENCE,
@@ -90,24 +90,24 @@ from ui_qt.dialogs.settings_destinations import (
     RUNTIME,
     VOICE_MODEL,
 )
-from ui_qt.dialogs.settings_metadata import MODEL_CONTROL_DESTINATIONS
 from ui_qt.dialogs.settings_fields import (
     group_title,
     settings_caption,
     settings_field,
 )
+from ui_qt.dialogs.settings_metadata import MODEL_CONTROL_DESTINATIONS
 from ui_qt.utils.icons import design_icon as _design_icon
 from ui_qt.widgets import Button, ElidingComboBox, InfoTile
 from ui_qt.widgets.agent_picker import BUILTIN, AgentPicker
 from ui_qt.widgets.local_model_picker import LocalModelPicker
 from ui_qt.widgets.nav_rail import NavRail
-from ui_qt.widgets.text_model_picker import TextModelPicker
-from ui_qt.widgets.wrapped_label import WrappedLabel
 from ui_qt.widgets.speech_backend_picker import (
     backend_display_name,
     backend_picker_tooltip,
     populate_backend_combo,
 )
+from ui_qt.widgets.text_model_picker import TextModelPicker
+from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
 
@@ -405,7 +405,13 @@ class ModelAssignments(QObject):
 
     def build_cleanup_model_section(self, layout: QVBoxLayout) -> InfoTile:
         """The chat model AI cleanup runs, embedded in the AI cleanup page."""
-        self.text_model_picker = TextModelPicker()
+        from ui_qt.widgets.settings_section import SettingsSection
+        self.cleanup_options_section = SettingsSection(
+            "Model options", "Endpoint, catalog, reasoning and custom prompt"
+        )
+        self.text_model_picker = TextModelPicker(
+            technical_layout=self.cleanup_options_section.body_layout
+        )
         self._connect_picker_profile_signals(self.text_model_picker)
         self.text_model_picker.provider_changed.connect(
             self._on_text_provider_changed
@@ -438,12 +444,16 @@ class ModelAssignments(QObject):
             _design_icon("box-blue.svg"),
         )
         self.cleanup_model_tile.add_body(self.text_model_picker)
-        self.cleanup_model_tile.add_body(
+        self.cleanup_privacy_note = self._caption("")
+        self.cleanup_privacy_note.setObjectName("settingsPrivacyNote")
+        self.cleanup_model_tile.add_body(self.cleanup_privacy_note)
+        self.cleanup_options_section.body_layout.addWidget(
             self._field("Thinking level", self.cleanup_reasoning_combo)
         )
-        self.cleanup_model_tile.add_body(
+        self.cleanup_options_section.body_layout.addWidget(
             self._caption("Used only by models with configurable reasoning.")
         )
+        self.cleanup_model_tile.add_body(self.cleanup_options_section)
         layout.addWidget(self.cleanup_model_tile)
         self._built.add(CLEANUP)
         return self.cleanup_model_tile
@@ -1136,13 +1146,13 @@ class ModelAssignments(QObject):
         self._update_cleanup_reasoning_controls(
             provider, self.text_model_picker.model_combo.currentText()
         )
-        if self.rail.current_key() == CLEANUP:
+        if self.rail.current_key() == CLEANUP or self.text_model_picker.isVisibleTo(self._host):
             self._fetch_catalog_models(
                 provider, picker=self.text_model_picker
             )
 
     def _on_meeting_provider_changed(self, provider: str) -> None:
-        if self.rail.current_key() == MEETING_INTELLIGENCE:
+        if self.rail.current_key() == MEETING_INTELLIGENCE or self.meeting_model_picker.isVisibleTo(self._host):
             self._fetch_catalog_models(
                 provider, picker=self.meeting_model_picker
             )
@@ -1252,8 +1262,10 @@ class ModelAssignments(QObject):
             if cached is not None:
                 picker.set_models(cached)
             picker.status_label.setText(f"Couldn't load models: {error}")
+            picker.show_error(f"Couldn't load models: {error}")
             return
         picker.set_models(models)
+        picker.show_error("")
         picker.status_label.setText(f"{len(models)} models available")
 
     def _on_text_models_loaded(

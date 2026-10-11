@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.settings_legacy_testkit import mount_legacy_basic
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import (
@@ -21,10 +23,9 @@ from services import text_rewrite
 from services.hotkey_manager import format_hotkey_display
 from services.settings import SettingsKey, SettingsManager, SettingsView
 from services.text_transforms import STARTER_TRANSFORMS, load_transforms
-from ui_qt.dialogs import settings_commands
+from ui_qt.dialogs import settings_commands, settings_metadata
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
-from ui_qt.dialogs import settings_metadata
 from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_destinations import (
     BASIC_DICTATION,
@@ -364,7 +365,7 @@ def test_cancel_capture_stops_every_capture_on_the_page(make_dialog):
 
 def test_basic_has_a_command_mode_shortcut_row(make_dialog):
     dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-    page = dialog._basic_pages[BASIC_DICTATION]
+    page = mount_legacy_basic(dialog, BASIC_DICTATION)
     field = dialog.commands_basic_shortcut
     assert page.isAncestorOf(field)
     assert COMMANDS not in dialog._built_pages
@@ -383,7 +384,10 @@ def test_basic_has_a_command_mode_shortcut_row(make_dialog):
 
 @pytest.mark.parametrize("ui_mode", ["classic", "omarchy"])
 def test_the_page_fits_a_narrow_window_at_large_fonts(make_dialog, monkeypatch, ui_mode):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+    from ui_qt.utils.font_scale import (
+        apply_ui_font_scale,
+        current_ui_font_scale_percent,
+    )
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
 

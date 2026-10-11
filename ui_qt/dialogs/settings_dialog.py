@@ -12,7 +12,6 @@ from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QDialog,
-    QButtonGroup,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -36,6 +35,9 @@ from PyQt6.QtWidgets import (
 )
 
 from config import config
+from services import cleanup_prompts
+from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
+from services.cleanup_prompts import CleanupLevel
 from services.components import component_coordinator
 from services.credentials import (
     MAX_API_KEY_LEN,
@@ -48,15 +50,9 @@ from services.credentials import (
     validate_api_key,
 )
 from services.credentials import store as credential_store
-from services.typesafe import CREDENTIAL_ENV as TYPESAFE_CREDENTIAL_ENV
-from services.typesafe import OPENROUTER_ROUTE as JEV_OPENROUTER_ROUTE
-from services.typesafe import ROUTES as JEV_ROUTES
-from services.typesafe import TYPESAFE_ROUTE as JEV_TYPESAFE_ROUTE
-from services.typesafe import key_present as typesafe_key_present
-from services.typesafe import route_from_settings as typesafe_route_from_settings
-from services.typesafe import verify_key as typesafe_verify_key
 from services.format_utils import format_file_size
 from services.history_manager import history_manager
+from services.hotkey_conflicts import STANDARD, hotkey_conflict
 from services.hotkey_manager import USE_PYNPUT_BACKEND, format_hotkey_display
 from services.recorder import AudioRecorder
 from services.settings import (
@@ -71,36 +67,37 @@ from services.settings import (
     UiFontScale,
     UiTheme,
     resolve_developer_mode,
+    resolve_flow_features_intro_seen,
     resolve_max_saved_recordings,
     resolve_max_saved_recordings_bytes,
     resolve_meeting_context_folder_enabled,
     resolve_meeting_context_folder_path,
     resolve_meeting_end_polish,
     resolve_meeting_end_redecode,
-    resolve_meeting_redecode_coverage_guard,
     resolve_meeting_end_report,
     resolve_meeting_insight_review,
     resolve_meeting_past_recall_enabled,
-    resolve_typesafe_enabled,
+    resolve_meeting_redecode_coverage_guard,
     resolve_meeting_report_brief,
     resolve_meeting_report_ribbon,
     resolve_meeting_report_signal,
-    resolve_recording_trigger_mode,
     resolve_meeting_server_bind,
     resolve_meeting_server_port,
+    resolve_recording_hands_free_latch,
     resolve_recording_overlay_clock,
     resolve_recording_overlay_dot,
     resolve_recording_overlay_look,
     resolve_recording_overlay_text,
+    resolve_recording_trigger_mode,
     resolve_streaming_overlay_font_size,
-    resolve_ui_font_scale,
-    resolve_ui_theme,
-    resolve_settings_view,
     resolve_transcript_cleanup_level,
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
     resolve_transcript_cleanup_rules,
+    resolve_typesafe_enabled,
+    resolve_ui_font_scale,
+    resolve_ui_theme,
     resolve_update_check_enabled,
     resolve_update_notify_enabled,
     setting_value,
@@ -108,33 +105,35 @@ from services.settings import (
 )
 from services.text_llm import (
     credential_label,
-    get_profile as get_text_llm_profile,
     list_profiles,
     profile_display_name,
     verify_api_key,
 )
-from services import cleanup_prompts
-from services.cleanup_prompts import CleanupLevel
-from ui_qt.dialogs import cleanup_levels
+from services.text_llm import (
+    get_profile as get_text_llm_profile,
+)
+from services.typesafe import CREDENTIAL_ENV as TYPESAFE_CREDENTIAL_ENV
+from services.typesafe import OPENROUTER_ROUTE as JEV_OPENROUTER_ROUTE
+from services.typesafe import ROUTES as JEV_ROUTES
+from services.typesafe import TYPESAFE_ROUTE as JEV_TYPESAFE_ROUTE
+from services.typesafe import key_present as typesafe_key_present
+from services.typesafe import route_from_settings as typesafe_route_from_settings
+from services.typesafe import verify_key as typesafe_verify_key
+from ui_qt.dialogs import cleanup_levels, settings_microphones
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
+from ui_qt.dialogs.settings_backup import BackupSettingsPage
+from ui_qt.dialogs.settings_basic import BasicSettingsPage
 from ui_qt.dialogs.settings_binder import SettingsBinder
-from ui_qt.dialogs import settings_microphones
-from ui_qt.dialogs.settings_metadata import (
-    CONTROL_DESTINATIONS,
-    PAGE_HELP_TEXT,
-    PAGE_SEARCH_FIELDS,
-    merge_page_module,
-)
-from ui_qt.utils.list_reconcile import HistoryDelivery
 from ui_qt.dialogs.settings_destinations import (
     ADVANCED,
+    API_KEYS,
+    APP_GENERAL,
     APPEARANCE,
+    BACKUP,
     BASIC_APP,
     BASIC_DICTATION,
     BASIC_MEETINGS,
-    API_KEYS,
-    BACKUP,
     CLEANUP,
     CLEANUP_PROFILES,
     CLEANUP_RULES,
@@ -159,20 +158,24 @@ from ui_qt.dialogs.settings_destinations import (
     resolve_destination,
 )
 from ui_qt.dialogs.settings_downloads import DownloadsPage
-from ui_qt.dialogs.settings_backup import BackupSettingsPage
 from ui_qt.dialogs.settings_fields import (
     group_title,
     settings_caption,
     settings_field,
 )
 from ui_qt.dialogs.settings_mcp import McpSettingsView
+from ui_qt.dialogs.settings_metadata import (
+    CONTROL_DESTINATIONS,
+    PAGE_HELP_TEXT,
+    PAGE_SEARCH_FIELDS,
+    merge_page_module,
+)
 from ui_qt.dialogs.settings_models import ModelAssignments
 from ui_qt.dialogs.settings_overview import OverviewPage, OverviewSummary
-from ui_qt.dialogs.settings_basic import BasicSettingsPage
 from ui_qt.dialogs.settings_remote import RemoteEngineSection
 from ui_qt.dialogs.settings_search import (
-    SETTING,
     HELP,
+    SETTING,
     PageSource,
     SearchEntry,
     SearchPalette,
@@ -180,17 +183,19 @@ from ui_qt.dialogs.settings_search import (
     keyword_entries,
     shortcut_text,
 )
+from ui_qt.dialogs.settings_sections import CATEGORIES, SettingsSections
 from ui_qt.utils.app_icon import app_icon
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
+from ui_qt.utils.list_reconcile import HistoryDelivery
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets import (
     Button,
     DangerButton,
     ElidingComboBox,
-    NoWheelSpinBox,
     FieldTile,
     InfoTile,
+    NoWheelSpinBox,
     PrimaryButton,
     SettingTile,
     WrappedLabel,
@@ -201,25 +206,20 @@ from ui_qt.widgets.buttons import (
     fit_compact_button,
     neutral_button,
 )
+from ui_qt.widgets.cleanup_profiles_panel import CleanupProfilesPanel
 from ui_qt.widgets.hotkey_capture import (
     HotkeyCaptureInput,
     HotkeyCaptureThread,
     mouse_shortcut_note,
 )
 from ui_qt.widgets.hotkey_row import ReflowCard
-from ui_qt.widgets.reflow import Reflow
-from ui_qt.widgets.settings_switch import SettingsSwitch
-from services.hotkey_conflicts import STANDARD, hotkey_conflict
-from services.settings import (
-    resolve_flow_features_intro_seen,
-    resolve_recording_hands_free_latch,
-)
-from ui_qt.widgets.cleanup_profiles_panel import CleanupProfilesPanel
-from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
 from ui_qt.widgets.nav_rail import NavRail
-from ui_qt.widgets.rule_activity import ItemGlow, RuleActivityStrip
 from ui_qt.widgets.recording_look_preview import RecordingLookPreview
+from ui_qt.widgets.reflow import Reflow
+from ui_qt.widgets.rule_activity import ItemGlow, RuleActivityStrip
 from ui_qt.widgets.segmented_bar import SegmentedBar
+from ui_qt.widgets.settings_section import expand_settings_ancestors
+from ui_qt.widgets.settings_switch import SettingsSwitch
 
 logger = logging.getLogger(__name__)
 
@@ -388,9 +388,8 @@ class _SettingsPage(QWidget):
 class SettingsDialog(QDialog):
     """The one non-modal window for settings, model choices, and downloads.
 
-    Basic curates common controls; Advanced groups every destination by
-    feature under an Overview landing page. Both save through the same
-    handlers, and the selected view persists between sessions.
+    Six categories reveal existing destinations in expandable sections.
+    Every control retains its original save handler and stable deep link.
     ``UIController`` holds a single instance and re-raises it instead of
     stacking copies.
     """
@@ -559,11 +558,8 @@ class SettingsDialog(QDialog):
         self._reveal_timer.timeout.connect(self._run_reveal)
 
         self._pages_ready = True
-        self.rail.select(OVERVIEW)
+        self.rail.select(RECORDING)
         self.refresh()
-        self.set_settings_view(resolve_settings_view(self._settings_snapshot()), persist=False)
-        if self._settings_view == SettingsView.BASIC:
-            self.resize(self.BASIC_DEFAULT_SIZE)
         if self._backup_coordinator is not None:
             try:
                 self._on_backup_busy_changed(bool(self._backup_coordinator.snapshot().get("busy")))
@@ -593,6 +589,8 @@ class SettingsDialog(QDialog):
         handle.setCursor(Qt.CursorShape.SizeHorCursor)
         handle.setToolTip("Drag to resize the settings sidebar")
         root.addWidget(self.settings_splitter, stretch=1)
+        self.sections = SettingsSections(self)
+        self._category_last = {}
 
     def _build_view_header(self) -> QWidget:
         header = QFrame()
@@ -614,35 +612,11 @@ class SettingsDialog(QDialog):
         label.setObjectName("settingsViewLabel")
         row.addWidget(label)
         row.addStretch()
-        segment = QFrame()
-        segment.setObjectName("settingsViewSegment")
-        buttons = QHBoxLayout(segment)
-        buttons.setContentsMargins(3, 3, 3, 3)
-        buttons.setSpacing(2)
-        self.view_button_group = QButtonGroup(self)
-        self.view_buttons = {}
-        for view in SettingsView.ALL:
-            button = QPushButton(view.title())
-            button.setObjectName("settingsViewButton")
-            button.setCheckable(True)
-            button.setMinimumWidth(100)
-            button.setAccessibleName(f"{view.title()} settings")
-            button.clicked.connect(lambda _checked, view=view: self.set_settings_view(view))
-            self.view_button_group.addButton(button)
-            self.view_buttons[view] = button
-            buttons.addWidget(button)
-        row.addWidget(segment)
+        self.view_buttons = {}  # Compatibility for callers of the retired view API.
+        row.addWidget(self._build_search_button())
         return header
 
-    def _build_rail_pane(self) -> QWidget:
-        pane = QWidget()
-        pane.setObjectName("modelManagerRailPane")
-        pane.setMinimumWidth(220)
-        pane.setMaximumWidth(560)
-        column = QVBoxLayout(pane)
-        column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(0)
-
+    def _build_search_button(self) -> QPushButton:
         self.search_button = QPushButton()
         self.search_button.setObjectName("settingsRailSearch")
         self.search_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -668,12 +642,21 @@ class SettingsDialog(QDialog):
             label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.search_button.setFixedHeight(34)
         self.search_button.clicked.connect(lambda: self.open_search())
-        search_holder = QHBoxLayout()
-        search_holder.setContentsMargins(12, 12, 12, 8)
-        search_holder.addWidget(self.search_button)
-        column.addLayout(search_holder)
+        self.search_button.setMinimumWidth(250)
+        self.search_button.setMaximumWidth(350)
+        return self.search_button
 
-        self.rail = NavRail()
+    def _build_rail_pane(self) -> QWidget:
+        pane = QWidget()
+        pane.setObjectName("modelManagerRailPane")
+        pane.setMinimumWidth(220)
+        pane.setMaximumWidth(560)
+        column = QVBoxLayout(pane)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
+
+        self.rail = NavRail(pane)
+        self.rail.hide()
         self._rail_groups: Dict[str, str] = {}
         self._rail_icons: Dict[str, str] = {}
 
@@ -711,7 +694,8 @@ class SettingsDialog(QDialog):
                 (BACKUP, "Backup & restore", "box-blue.svg"),
             )),
             ("App", (
-                (GENERAL, "General", "bolt-green.svg"),
+                (GENERAL, "Output", "bolt-green.svg"),
+                (APP_GENERAL, "Window & updates", "box-blue.svg"),
                 (APPEARANCE, "Appearance", "palette-purple.svg"),
                 (HOTKEYS, "Hotkeys", "keyboard-green.svg"),
                 (API_KEYS, "API keys", "key-blue.svg"),
@@ -723,7 +707,21 @@ class SettingsDialog(QDialog):
             for key, name, icon in items:
                 destination(key, name, icon, group)
         self.rail.destination_changed.connect(self._on_destination_changed)
-        column.addWidget(self.rail, stretch=1)
+        self.category_rail = NavRail(pane)
+        self.category_rail.setObjectName("settingsCategoryRail")
+        self.category_rail.setSpacing(6)
+        for key, title, _subtitle, icon, _items in CATEGORIES:
+            self.category_rail.add_destination(key, title, design_icon(icon))
+            item = self.category_rail._items[key]
+            row = self.category_rail._rows[key]
+            row.setMinimumHeight(48)
+            item.setSizeHint(QSize(0, 48))
+        self.category_rail.destination_changed.connect(self._on_category_changed)
+        column.addWidget(self.category_rail, stretch=1)
+        self.developer_options_button = QPushButton("Developer options")
+        self.developer_options_button.setObjectName("settingsDeveloperLink")
+        self.developer_options_button.clicked.connect(lambda: self.select_destination(ADVANCED))
+        column.addWidget(self.developer_options_button)
         return pane
 
     def _build_body(self) -> QWidget:
@@ -888,10 +886,13 @@ class SettingsDialog(QDialog):
         )
         self._add_page(
             GENERAL,
-            "General",
-            "How finished transcriptions leave the app, and how the window "
-            "behaves when you close it.",
-            self._build_general_page,
+            "Output",
+            "Choose how dictated text reaches your apps and clipboard.",
+            self._build_output_page,
+        )
+        self._add_page(
+            APP_GENERAL, "Window & updates",
+            "Window behavior and update preferences.", self._build_general_page,
         )
         self._add_page(
             APPEARANCE,
@@ -1246,7 +1247,7 @@ class SettingsDialog(QDialog):
         layout.addSpacing(6)
         return caption, intro_label
 
-    def _build_general_page(self, layout: QVBoxLayout) -> None:
+    def _build_output_page(self, layout: QVBoxLayout) -> None:
         auto_paste_description = (
             "Types a dictated transcript into whichever window has focus, "
             "pasting it through the clipboard. Upload File results stay in "
@@ -1284,6 +1285,41 @@ class SettingsDialog(QDialog):
         )
         self.copy_clipboard_check = self.copy_clipboard_tile.checkbox
 
+        self._tile_group(
+            layout,
+            "Output",
+            [self.auto_paste_tile, self.restore_clipboard_tile, self.copy_clipboard_tile],
+        )
+        if sys.platform == "darwin":
+            permission_row = QHBoxLayout()
+            self.accessibility_status = QLabel()
+            self.accessibility_status.setWordWrap(True)
+            permission_row.addWidget(self.accessibility_status, 1)
+            self.accessibility_setup_button = QPushButton("Set up auto-paste…")
+            self.accessibility_setup_button.clicked.connect(self._open_accessibility_setup)
+            permission_row.addWidget(self.accessibility_setup_button)
+            layout.addLayout(permission_row)
+            self._accessibility_timer = QTimer(self)
+            self._accessibility_timer.setInterval(1000)
+            self._accessibility_timer.timeout.connect(self._refresh_accessibility_status)
+            self._refresh_accessibility_status()
+        self._bindings.checkbox(
+            self.auto_paste_check,
+            SettingsKey.AUTO_PASTE,
+            lambda settings: setting_value(SettingsKey.AUTO_PASTE, settings),
+        )
+        self._bindings.checkbox(
+            self.restore_clipboard_check,
+            SettingsKey.RESTORE_CLIPBOARD,
+            lambda settings: setting_value(SettingsKey.RESTORE_CLIPBOARD, settings),
+        )
+        self._bindings.checkbox(
+            self.copy_clipboard_check,
+            SettingsKey.COPY_CLIPBOARD,
+            lambda settings: setting_value(SettingsKey.COPY_CLIPBOARD, settings),
+        )
+
+    def _build_general_page(self, layout: QVBoxLayout) -> None:
         self.minimize_tray_tile = SettingTile(
             "Minimize to the system tray on close",
             "Closing the window keeps OpenWhisper running in the tray, so "
@@ -1315,44 +1351,11 @@ class SettingsDialog(QDialog):
         self.update_notify_check = self.update_notify_tile.checkbox
         self.update_notify_check.setObjectName("updateNotifyEnabledCheck")
 
-        self._tile_group(
-            layout,
-            "Output",
-            [self.auto_paste_tile, self.restore_clipboard_tile, self.copy_clipboard_tile],
-        )
-        if sys.platform == "darwin":
-            permission_row = QHBoxLayout()
-            self.accessibility_status = QLabel()
-            self.accessibility_status.setWordWrap(True)
-            permission_row.addWidget(self.accessibility_status, 1)
-            self.accessibility_setup_button = QPushButton("Set up auto-paste…")
-            self.accessibility_setup_button.clicked.connect(self._open_accessibility_setup)
-            permission_row.addWidget(self.accessibility_setup_button)
-            layout.addLayout(permission_row)
-            self._accessibility_timer = QTimer(self)
-            self._accessibility_timer.setInterval(1000)
-            self._accessibility_timer.timeout.connect(self._refresh_accessibility_status)
-            self._refresh_accessibility_status()
         self._tile_group(layout, "Window", [self.minimize_tray_tile])
         self._tile_group(
             layout, "Updates", [self.update_check_tile, self.update_notify_tile]
         )
 
-        self._bindings.checkbox(
-            self.auto_paste_check,
-            SettingsKey.AUTO_PASTE,
-            lambda settings: setting_value(SettingsKey.AUTO_PASTE, settings),
-        )
-        self._bindings.checkbox(
-            self.restore_clipboard_check,
-            SettingsKey.RESTORE_CLIPBOARD,
-            lambda settings: setting_value(SettingsKey.RESTORE_CLIPBOARD, settings),
-        )
-        self._bindings.checkbox(
-            self.copy_clipboard_check,
-            SettingsKey.COPY_CLIPBOARD,
-            lambda settings: setting_value(SettingsKey.COPY_CLIPBOARD, settings),
-        )
         self._bindings.checkbox(
             self.minimize_tray_check,
             SettingsKey.MINIMIZE_TRAY,
@@ -1748,6 +1751,9 @@ class SettingsDialog(QDialog):
         self.transcript_cleanup_check.toggled.connect(
             self._on_cleanup_enabled_changed
         )
+        section = self.sections.sections[CLEANUP]
+        section.header.layout().addWidget(self.transcript_cleanup_check)
+        self.transcript_cleanup_tile.hide()
         self.cleanup_level_bar = SegmentedBar(
             [(title, detail) for _value, title, detail in cleanup_levels.SEGMENTS]
         )
@@ -1759,8 +1765,7 @@ class SettingsDialog(QDialog):
         custom_segment.setToolTip("Write a custom prompt below to use it instead of a level")
         self.cleanup_level_tile = FieldTile(
             "Cleanup level",
-            "How much the AI changes your words. Every level keeps the "
-            "language you spoke and never adds anything you didn't say.",
+            "Choose how closely the transcript follows your words.",
             self.cleanup_level_bar,
             design_icon("wand-purple.svg"),
         )
@@ -1773,6 +1778,10 @@ class SettingsDialog(QDialog):
         )
 
         self.cleanup_model_tile = self.models.build_cleanup_model_section(layout)
+        self.cleanup_model_tile.layout().setContentsMargins(14, 0, 14, 0)
+        self.cleanup_model_tile.layout().setSpacing(0)
+        self.cleanup_model_tile.title_label.parentWidget().hide()
+        self.cleanup_model_tile.icon_label.hide()
         layout.addSpacing(6)
 
         # Plain, not QTextEdit: its placeholder, the level's instructions,
@@ -1807,7 +1816,7 @@ class SettingsDialog(QDialog):
             ButtonRow((self.cleanup_prompt_edit_btn, self.cleanup_prompt_reset_btn))
         )
         self.cleanup_prompt_edit.textChanged.connect(self._update_cleanup_prompt_buttons)
-        self._tile_group(layout, "", [self.cleanup_prompt_tile])
+        self.models.cleanup_options_section.body_layout.addWidget(self.cleanup_prompt_tile)
         # The bar selects a clicked segment after its activated handlers run,
         # so a declined switch away from Custom is put back on the next turn.
         self._cleanup_level_resync = QTimer(self)
@@ -3134,46 +3143,21 @@ class SettingsDialog(QDialog):
         return self._settings_view
 
     def set_settings_view(self, view: str, *, persist: bool = True) -> None:
-        """Switch the presentation while retaining both views' navigation."""
-        if view not in SettingsView.ALL or self._backup_busy:
-            self.view_buttons[self._settings_view].setChecked(True)
-            return
-        if persist and view != self._settings_view:
-            if not self._persist(SettingsKey.SETTINGS_VIEW, view):
-                self.view_buttons[self._settings_view].setChecked(True)
-                return
-        for page in self._basic_pages.values():
-            page.cancel_capture()
-        self._cancel_page_captures()
-        self._save_page_drafts()
-        self._cancel_hotkey_capture()
-        previous = self._settings_view
-        if previous == SettingsView.ADVANCED and view == SettingsView.BASIC and self.isVisible():
-            self._advanced_rail_width = self.settings_splitter.sizes()[0]
-        self._settings_view = view
-        self.view_buttons[view].setChecked(True)
-        basic = view == SettingsView.BASIC
-        self.rail_pane.setVisible(not basic)
-        self.basic_tabs.setVisible(basic)
-        self.body_layout.setSpacing(8 if basic else 14)
-        self.setMinimumSize(self.BASIC_MINIMUM_SIZE if basic else self.MINIMUM_SIZE)
-        if previous == SettingsView.BASIC and not basic:
-            self.settings_splitter.setSizes([
-                self._advanced_rail_width,
-                max(1, self.width() - self._advanced_rail_width),
-            ])
-        if self.isVisible():
-            self._fit_to_screen()
-        if basic:
-            self._on_basic_tab_changed(self.basic_tabs.currentIndex())
-        else:
-            self._on_destination_changed(self.rail.current_key() or OVERVIEW)
+        """Accept the retired API without restoring a second settings mode."""
+        self._settings_view = SettingsView.ADVANCED
 
     def show_home(self) -> None:
-        """Open ordinary Settings in the user's last selected view."""
-        self.set_settings_view(resolve_settings_view(self._settings_snapshot()), persist=False)
-        if self._settings_view == SettingsView.ADVANCED:
-            self.select_destination(OVERVIEW)
+        """Open the unified Dictation category regardless of legacy preferences."""
+        self.select_destination(RECORDING)
+
+    def _on_category_changed(self, category: str) -> None:
+        if not hasattr(self, "sections") or self.sections._navigating:
+            return
+        if self._backup_busy:
+            self.category_rail.select(self.sections.category_for[BACKUP])
+            return
+        items = next(c[4] for c in CATEGORIES if c[0] == category)
+        self.select_destination(self._category_last.get(category, items[0][0]))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -3199,15 +3183,14 @@ class SettingsDialog(QDialog):
         key = resolve_destination(key)
         if self._backup_busy and key != BACKUP:
             return
+        key = {BASIC_DICTATION: RECORDING, BASIC_MEETINGS: MEETING_VOICE,
+               BASIC_APP: APP_GENERAL}.get(key, key)
         if key in self._pages:
-            if key in self._basic_destinations:
-                self.basic_tabs.setCurrentIndex(self._basic_destinations.index(key))
-                self.set_settings_view(SettingsView.BASIC)
-                return
-            if self._settings_view == SettingsView.BASIC:
-                self.set_settings_view(SettingsView.ADVANCED)
             self.ensure_page(key)
-            self.rail.select(key)
+            if self.rail.current_key() == key:
+                self._on_destination_changed(key)
+            else:
+                self.rail.select(key)
 
     def focus_hf_policy(self) -> None:
         """Open Downloads with the Hugging Face policy control focused."""
@@ -3242,11 +3225,11 @@ class SettingsDialog(QDialog):
         if page is None:
             return
         self.ensure_page(key)
-        self.stack.setCurrentWidget(self._page_scrolls.get(key, page))
-        self.rail.scrollToItem(self.rail.currentItem())
-        title, subtitle = self._headings[key]
-        self.page_title.setText(title)
-        self.page_subtitle.setText(subtitle)
+        self.sections.show(key)
+        self._category_last[self.sections.category_for[key]] = key
+        module = self._page_modules.get(key)
+        if module is not None:
+            self._refresh_page_module(key, module)
         if self._pages_ready:
             self.models.on_destination_shown(key)
             if key == OVERVIEW:
@@ -3268,6 +3251,11 @@ class SettingsDialog(QDialog):
             self.select_destination(BACKUP)
         self._backup_busy = bool(busy)
         self.rail.setEnabled(not busy)
+        self.category_rail.setEnabled(not busy)
+        self.developer_options_button.setEnabled(not busy)
+        for key, section in self.sections.sections.items():
+            section.header.setEnabled(not busy)
+            section.body.setEnabled(not busy or key == BACKUP)
         self.search_button.setEnabled(not busy)
         self.basic_tabs.setEnabled(not busy)
         for button in self.view_buttons.values():
@@ -3291,6 +3279,12 @@ class SettingsDialog(QDialog):
                 self._rail_icons.get(key, "box-blue.svg"),
             ))
         entries = build_index(pages, self.downloads, keyword_entries(_SEARCH_ALIASES) + self._agent_search_entries())
+        if CLEANUP in self._built_pages:
+            entries.append(SearchEntry(
+                SETTING, "Clean up transcripts with AI", "Dictation › AI cleanup", CLEANUP,
+                target=self.transcript_cleanup_check,
+                keywords="clean up dictation punctuation formatting enable disable", icon="stack-purple.svg",
+            ))
         for key in self.rail.keys():
             if key in self._built_pages:
                 continue
@@ -3333,6 +3327,13 @@ class SettingsDialog(QDialog):
         self.select_destination(entry.destination)
         target = entry.target or (getattr(self, entry.target_name, None) if entry.target_name else None)
         if target is not None:
+            if (entry.destination == CLEANUP
+                    and cleanup_prompts.resolve_level(self._settings_snapshot()) == CleanupLevel.NONE
+                    and target is not self.transcript_cleanup_tile):
+                self.message_label.setText("Turn on AI cleanup to configure its model and prompt.")
+                target = self.transcript_cleanup_check
+            elif target is self.__dict__.get("transcript_cleanup_tile"):
+                target = self.transcript_cleanup_check
             self._reveal(target)
 
     def _reveal(self, target: QWidget) -> None:
@@ -3340,6 +3341,7 @@ class SettingsDialog(QDialog):
 
         Runs once the event loop has laid out the newly selected page.
         """
+        expand_settings_ancestors(target)
         self._reveal_target = target
         self._reveal_timer.start()
 
@@ -3353,7 +3355,7 @@ class SettingsDialog(QDialog):
                 area.ensureWidgetVisible(target, 0, 40)
             card = target
             while card is not None and card.objectName() not in (
-                "settingsTile", "textModelFootnoteCard"
+                "settingsTile", "textModelFootnoteCard", "settingsSection"
             ):
                 card = card.parentWidget()
             self._clear_search_flash()
@@ -3545,6 +3547,21 @@ class SettingsDialog(QDialog):
             self.rail.set_value(key, value)
         for page in self._basic_pages.values():
             page.refresh()
+        sections = self.__dict__.get("sections")
+        if sections is not None:
+            sections.refresh_summaries()
+        if CLEANUP in self._built_pages:
+            enabled = cleanup_prompts.resolve_level(settings) != CleanupLevel.NONE
+            self.cleanup_level_tile.setVisible(enabled)
+            self.cleanup_model_tile.setVisible(enabled)
+            provider = resolve_transcript_cleanup_provider(settings)
+            name = profile_display_name(provider, settings)
+            from ui_qt.dialogs.settings_styles import reads_text_near_cursor
+            shared = "Transcript text and enabled app context" if reads_text_near_cursor(settings) else "Transcript text"
+            note = (f"{shared} is sent to {name} when cleanup is on."
+                    if self._provider_is_remote(provider)
+                    else f"AI cleanup uses {name}. Transcript text stays on this computer.")
+            self.models.cleanup_privacy_note.setText(note)
         if self.rail.current_key() == OVERVIEW:
             self._refresh_overview()
 
@@ -4225,7 +4242,8 @@ class SettingsDialog(QDialog):
         choice = cleanup_levels.CUSTOM if custom else level
         bar.buttons[-1].setEnabled(custom)
         bar.setCurrentIndex(cleanup_levels.segment_index(choice))
-        self.cleanup_level_note.setText(cleanup_levels.NOTES[choice])
+        self.cleanup_level_note.setText(cleanup_levels.SHORT_NOTES[choice])
+        self.cleanup_level_note.setToolTip(cleanup_levels.NOTES[choice])
         self.cleanup_prompt_edit.setPlaceholderText(cleanup_prompts.preset(level))
         self._update_cleanup_prompt_buttons()
 
@@ -4893,7 +4911,7 @@ class SettingsDialog(QDialog):
             self.cleanup_rules_list.clear()
             self.cleanup_rules_list.addItems(resolve_transcript_cleanup_rules(settings))
         self._update_cleanup_prompt_ui()
-        if self._page_is_loading(GENERAL):
+        if self._page_is_loading(APP_GENERAL):
             self.update_check_check.setChecked(resolve_update_check_enabled(settings))
             self.update_notify_tile.setEnabled(self.update_check_check.isChecked())
         if self._page_is_loading(RECORDING):

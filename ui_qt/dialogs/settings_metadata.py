@@ -17,12 +17,12 @@ CONTROL_DESTINATIONS = {'mcp_page': 'mcp',
  'restore_clipboard_check': 'general',
  'copy_clipboard_tile': 'general',
  'copy_clipboard_check': 'general',
- 'minimize_tray_tile': 'general',
- 'minimize_tray_check': 'general',
- 'update_check_tile': 'general',
- 'update_check_check': 'general',
- 'update_notify_tile': 'general',
- 'update_notify_check': 'general',
+ 'minimize_tray_tile': 'app_general',
+ 'minimize_tray_check': 'app_general',
+ 'update_check_tile': 'app_general',
+ 'update_check_check': 'app_general',
+ 'update_notify_tile': 'app_general',
+ 'update_notify_check': 'app_general',
  'ui_theme_combo': 'appearance',
  'ui_theme_tile': 'appearance',
  'ui_font_scale_combo': 'appearance',
@@ -375,3 +375,8 @@ def merge_page_module(key: str, module) -> None:
     for name in getattr(module, "CONTROL_ATTRS", ()):
         CONTROL_DESTINATIONS[name] = key
     PAGE_SEARCH_FIELDS[key] = list(getattr(module, "SEARCH_FIELDS", ()))
+
+# Output keeps the legacy General route; app behavior has its own section.
+_window_fields = {"minimize_tray_tile", "update_check_tile", "update_notify_tile"}
+PAGE_SEARCH_FIELDS["app_general"] = [field for field in PAGE_SEARCH_FIELDS["general"] if field[0] in _window_fields]
+PAGE_SEARCH_FIELDS["general"] = [field for field in PAGE_SEARCH_FIELDS["general"] if field[0] not in _window_fields]

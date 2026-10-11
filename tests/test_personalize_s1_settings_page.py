@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.settings_legacy_testkit import mount_legacy_basic
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
@@ -17,9 +19,8 @@ from services.focus_context import AppIdentity
 from services.settings import SettingsKey, SettingsManager, SettingsView
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
-from ui_qt.dialogs import settings_metadata
+from ui_qt.dialogs import settings_metadata, settings_styles
 from ui_qt.dialogs import settings_models as models_module
-from ui_qt.dialogs import settings_styles
 from ui_qt.dialogs.settings_destinations import BASIC_DICTATION, OVERVIEW, STYLES
 from ui_qt.widgets.setting_tile import TileBase
 
@@ -120,7 +121,7 @@ def test_defaults_show_awareness_on_and_reading_off(make_dialog):
     dialog, _store = make_dialog()
     _page(dialog)
 
-    assert dialog.page_title.text() == "Apps & styles"
+    assert dialog.page_title.text() == "Personalize"
     assert dialog.app_context_check.isChecked()
     assert dialog.app_context_tile.property("checked") is True
     assert not dialog.read_text_check.isChecked()
@@ -342,7 +343,7 @@ def test_overview_privacy_strip(make_dialog, values, where, item):
 
 def test_basic_row_matches_tone_and_explains_when_it_cannot(make_dialog):
     dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-    page = dialog._basic_pages[BASIC_DICTATION]
+    page = mount_legacy_basic(dialog, BASIC_DICTATION)
     switch = page.controls[SettingsKey.APP_STYLES_ENABLED]
     assert switch.isChecked() and not switch.isEnabled()
     assert "AI cleanup" in switch.toolTip()
@@ -362,7 +363,10 @@ def test_basic_row_matches_tone_and_explains_when_it_cannot(make_dialog):
 
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 720), ("omarchy", 560)])
 def test_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+    from ui_qt.utils.font_scale import (
+        apply_ui_font_scale,
+        current_ui_font_scale_percent,
+    )
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
 

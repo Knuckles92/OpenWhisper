@@ -29,24 +29,26 @@ from services.settings import (
     HuggingFaceAccessPolicy,
     MeetingSpeakerIdBackend,
     SettingsKey,
-    SettingsView,
     SettingsManager,
+    SettingsView,
 )
+from tests.test_rule_composer import _FakeRecorder
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_destinations import (
-    CLEANUP,
-    CLEANUP_RULES,
+    APP_GENERAL,
     BASIC_APP,
     BASIC_DICTATION,
     BASIC_MEETINGS,
+    CLEANUP,
+    CLEANUP_RULES,
     DOWNLOADS,
     GENERAL,
+    MCP,
     MEETING_FAST,
     MEETING_INTELLIGENCE,
     MEETING_VOICE,
-    MCP,
     OVERVIEW,
     RECORDING,
     RUNTIME,
@@ -62,7 +64,6 @@ from ui_qt.dialogs.settings_search import (
     match_entries,
 )
 from ui_qt.ui_controller import UIController
-from tests.test_rule_composer import _FakeRecorder
 
 BASE_REPO = "Systran/faster-whisper-base"
 
@@ -78,7 +79,13 @@ def _cached(repo_id, size_bytes):
 
 @pytest.fixture(scope="module", autouse=True)
 def _qapp():
-    return QApplication.instance() or QApplication([])
+    from PyQt6.QtGui import QFont, QFontDatabase
+    app = QApplication.instance() or QApplication([])
+    if not QFontDatabase.families() and os.name == "nt":
+        for name in ("segoeui.ttf", "segoeuib.ttf", "seguisb.ttf"):
+            QFontDatabase.addApplicationFont("C:/Windows/Fonts/" + name)
+        app.setFont(QFont("Segoe UI", 10))
+    return app
 
 
 @pytest.fixture
@@ -115,7 +122,10 @@ def make_dialog():
 
 class TestRouting:
     def test_page_transitions_keep_sidebar_rows_over_their_click_targets(self, make_dialog):
-        from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+        from ui_qt.utils.font_scale import (
+            apply_ui_font_scale,
+            current_ui_font_scale_percent,
+        )
         from ui_qt.utils.theme_manager import ThemeManager
 
         app = QApplication.instance()
@@ -131,7 +141,7 @@ class TestRouting:
                         "meeting_dashboard", "meeting_after", "api_keys", OVERVIEW):
                 dialog.select_destination(key)
                 QTest.qWait(50)
-                rail = dialog.rail
+                rail = dialog.category_rail
                 for destination, row in rail._rows.items():
                     expected = rail.visualItemRect(rail._items[destination])
                     assert row.geometry().top() == expected.top(), (key, destination, row.geometry(), expected)
@@ -143,9 +153,12 @@ class TestRouting:
             app.setStyleSheet(previous_style)
 
     @pytest.mark.parametrize("scale", [100, 115, 130])
-    @pytest.mark.parametrize("target", ["name_label", "value_label", "icon_label", "row"])
+    @pytest.mark.parametrize("target", ["name_label", "icon_label", "row"])
     def test_scrolled_sidebar_clicks_open_the_visible_destination(self, make_dialog, scale, target):
-        from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+        from ui_qt.utils.font_scale import (
+            apply_ui_font_scale,
+            current_ui_font_scale_percent,
+        )
         from ui_qt.utils.theme_manager import ThemeManager
 
         app = QApplication.instance()
@@ -158,7 +171,7 @@ class TestRouting:
         dialog.resize(1430, 850)
         try:
             app.processEvents()
-            rail = dialog.rail
+            rail = dialog.category_rail
             point = rail.viewport().rect().center()
             # One wheel event scrolls at most a page, and at large fonts the
             # rail is more than one page taller than its viewport.
@@ -169,7 +182,7 @@ class TestRouting:
                     Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False,
                 ))
                 app.processEvents()
-            for key in ("hotkeys", "api_keys", "advanced"):
+            for key in ("models", "connections", "app"):
                 row = rail._rows[key]
                 label = row if target == "row" else getattr(row, target)
                 point = label.mapTo(rail.viewport(), label.rect().center())
@@ -179,23 +192,25 @@ class TestRouting:
                                  pos=label.mapTo(dialog, label.rect().center()))
                 app.processEvents()
                 assert rail.current_key() == key
-                assert dialog.stack.currentWidget() is dialog._page_scrolls[key]
-                assert dialog.page_title.text() == dialog._headings[key][0]
+                assert dialog.stack.currentWidget() is dialog.sections.areas[key]
+                assert dialog.page_title.text() == rail.name(key)
         finally:
             dialog.close()
             apply_ui_font_scale(previous_scale, app=app)
             app.setFont(previous_font)
             app.setStyleSheet(previous_style)
 
-    def test_window_opens_on_the_overview(self, make_dialog):
+    def test_window_opens_on_dictation(self, make_dialog):
         dialog, _store = make_dialog()
-        assert dialog.rail.current_key() == OVERVIEW
-        assert dialog.page_title.text() == "Overview"
-        assert dialog.rail.value(OVERVIEW) == "What is running now"
+        assert dialog.rail.current_key() == RECORDING
+        assert dialog.category_rail.current_key() == "dictation"
+        assert dialog.page_title.text() == "Dictation"
+        assert dialog.sections.sections[RECORDING].is_expanded()
 
 
     def test_refresh_rebuilds_the_overview_once(self, make_dialog):
         dialog, _store = make_dialog()
+        dialog.select_destination(OVERVIEW)
         with patch.object(
             dialog, "_refresh_overview", wraps=dialog._refresh_overview
         ) as overview:
@@ -330,191 +345,148 @@ class TestRouting:
         assert store.load_hf_access_policy() == HuggingFaceAccessPolicy.NEVER
 
 
-class TestBasicSettings:
-    def test_basic_opens_without_building_model_or_cloud_setup(self, make_dialog):
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-        assert dialog.settings_view == SettingsView.BASIC
+class TestGroupedSettings:
+    @pytest.mark.parametrize("legacy_view", [SettingsView.BASIC, SettingsView.ADVANCED, "unknown"])
+    def test_one_view_preserves_legacy_preferences_without_eager_model_setup(self, make_dialog, legacy_view):
+        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: legacy_view, SettingsKey.AUTO_PASTE: False})
+        assert dialog.category_rail.keys() == ("dictation", "meetings", "personalize", "models", "connections", "app")
         assert dialog.page_title.text() == "Dictation"
-        assert dialog.rail_pane.isHidden()
-        assert not dialog.basic_tabs.isHidden()
-        assert dialog.stack.currentWidget() is dialog._page_scrolls[BASIC_DICTATION]
-        assert not {VOICE_MODEL, CLEANUP, MEETING_INTELLIGENCE} & dialog._built_pages
-        assert store.get(SettingsKey.SETTINGS_VIEW) == SettingsView.BASIC
+        assert not dialog.rail_pane.isHidden()
+        assert dialog.basic_tabs.isHidden()
+        assert not dialog.view_buttons
+        assert not {VOICE_MODEL, CLEANUP, MEETING_INTELLIGENCE, DOWNLOADS} & dialog._built_pages
+        assert store.get(SettingsKey.SETTINGS_VIEW) == legacy_view
+        assert store.get(SettingsKey.AUTO_PASTE) is False
+        dialog.close()
 
-    def test_views_remember_navigation_and_restore_after_reopening(self, make_dialog):
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-        dialog.basic_tabs.setCurrentIndex(2)
-        dialog.select_destination(RECORDING)
-        assert dialog.settings_view == SettingsView.ADVANCED
-        assert store.get(SettingsKey.SETTINGS_VIEW) == SettingsView.ADVANCED
-        dialog.set_settings_view(SettingsView.BASIC)
-        assert dialog.stack.currentWidget() is dialog._page_scrolls[BASIC_APP]
-        dialog.set_settings_view(SettingsView.ADVANCED)
-        assert dialog.rail.current_key() == RECORDING
-        reopened = settings_dialog_module.SettingsDialog(background_cache_scan=False)
-        assert reopened.settings_view == SettingsView.ADVANCED
-        assert reopened.page_title.text() == "Overview"
-        reopened.close()
-        dialog.set_settings_view(SettingsView.BASIC)
-        reopened = settings_dialog_module.SettingsDialog(background_cache_scan=False)
-        assert reopened.settings_view == SettingsView.BASIC
-        reopened.close()
+    def test_category_remembers_its_last_destination(self, make_dialog):
+        dialog, _store = make_dialog()
+        dialog.select_destination(GENERAL)
+        dialog.category_rail.select("app")
+        dialog.category_rail.select("dictation")
+        assert dialog.rail.current_key() == GENERAL
+        assert dialog.sections.sections[GENERAL].is_expanded()
+        dialog.close()
 
-    def test_basic_and_advanced_changes_share_the_same_store_and_callbacks(self, make_dialog):
-        dialog, store = make_dialog({
-            SettingsKey.SETTINGS_VIEW: SettingsView.BASIC,
-            SettingsKey.STREAMING_ENABLED: False,
-            SettingsKey.STREAMING_OVERLAY_ENABLED: True,
-        })
-        page = dialog._basic_pages[BASIC_DICTATION]
+    @pytest.mark.parametrize("alias,category", [(BASIC_DICTATION, "dictation"), (BASIC_MEETINGS, "meetings"), (BASIC_APP, "app")])
+    def test_retired_basic_destinations_reach_unified_categories(self, make_dialog, alias, category):
+        dialog, _store = make_dialog()
+        dialog.select_destination(alias)
+        assert dialog.category_rail.current_key() == category
+        assert dialog.basic_tabs.isHidden()
+        dialog.close()
+
+    def test_section_can_be_opened_and_closed_with_keyboard(self, make_dialog):
+        dialog, _store = make_dialog()
+        dialog.show()
+        section = dialog.sections.sections[GENERAL]
+        assert GENERAL not in dialog._built_pages
+        section.header.setFocus()
+        QTest.keyClick(section.header, Qt.Key.Key_Space)
+        assert section.is_expanded() and GENERAL in dialog._built_pages
+        assert dialog.auto_paste_check.isVisible()
+        QTest.keyClick(section.header, Qt.Key.Key_Space)
+        assert not section.is_expanded() and not dialog.auto_paste_check.isVisible()
+        dialog.close()
+
+    def test_existing_save_handlers_and_callbacks_survive_grouping(self, make_dialog):
+        dialog, store = make_dialog({SettingsKey.STREAMING_ENABLED: False, SettingsKey.STREAMING_OVERLAY_ENABLED: True})
         dialog.on_streaming_settings_changed = MagicMock()
-        page.controls[SettingsKey.STREAMING_ENABLED].click()
+        dialog.streaming_enabled_check.setChecked(True)
         assert store.get(SettingsKey.STREAMING_ENABLED) is True
         assert SettingsKey.STREAMING_OVERLAY_ENABLED not in store.load_all_settings()
         dialog.on_streaming_settings_changed.assert_called_once_with()
-        dialog.select_destination(RECORDING)
-        assert dialog.streaming_enabled_check.isChecked()
-        dialog.streaming_enabled_check.setChecked(False)
-        dialog.set_settings_view(SettingsView.BASIC)
-        assert not page.controls[SettingsKey.STREAMING_ENABLED].isChecked()
-
-    def test_microphone_uses_the_shared_inventory_and_live_callback(self, make_dialog):
-        from services.audio_devices import InputDevice
-        from ui_qt.dialogs.settings_microphones import SYSTEM_DEFAULT, entry_token
-
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-        dialog.on_audio_device_changed = MagicMock()
-        desk = InputDevice(index=11, name="Desk microphone", hostapi="MME", default_api=True)
-        dialog._apply_audio_devices(dialog._audio_device_generation, "", [desk], "")
-        combo = dialog._basic_pages[BASIC_DICTATION].controls[SettingsKey.AUDIO_INPUT_PRIORITY]
-        combo.setCurrentIndex(combo.findData(entry_token(desk.key)))
-        assert store.get(SettingsKey.AUDIO_INPUT_PRIORITY) == [desk.key]
-        # The pre-ranking index follows along for a downgrade.
-        assert store.get(SettingsKey.AUDIO_INPUT_DEVICE) == 11
-        dialog.on_audio_device_changed.assert_called_once_with([desk.key])
-        dialog.basic_tabs.setCurrentIndex(1)
-        other = dialog._basic_pages[BASIC_MEETINGS].controls[SettingsKey.AUDIO_INPUT_PRIORITY]
-        assert other.currentData() == entry_token(desk.key)
-        other.setCurrentIndex(other.findData(SYSTEM_DEFAULT))
-        assert store.get(SettingsKey.AUDIO_INPUT_PRIORITY) == []
-        assert SettingsKey.AUDIO_INPUT_DEVICE not in store.load_all_settings()
-
-    def test_voice_choice_uses_the_canonical_controller_label_without_model_setup(self, make_dialog):
-        from ui_qt.widgets.speech_backend_picker import backend_display_name
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-        combo = dialog._basic_pages[BASIC_DICTATION].voice_combo
-        backend = combo.itemData((combo.currentIndex() + 1) % combo.count())
-        def choose(display):
-            from config import config
-            store.save_model_selection(config.MODEL_VALUE_MAP[display])
-        dialog.models.on_backend_changed = MagicMock(side_effect=choose)
-        combo.setCurrentIndex(combo.findData(backend))
-        assert store.load_model_selection() == backend
-        dialog.models.on_backend_changed.assert_called_once_with(backend_display_name(backend))
-        assert VOICE_MODEL not in dialog._built_pages
-
-    def test_app_theme_and_meeting_report_edits_use_existing_handlers(self, make_dialog):
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-        dialog.basic_tabs.setCurrentIndex(2)
-        dialog.on_ui_theme_changed = MagicMock()
-        theme = dialog._basic_pages[BASIC_APP].controls[SettingsKey.UI_THEME]
-        theme.setCurrentIndex(theme.findData("light"))
-        assert store.get(SettingsKey.UI_THEME) == "light"
-        dialog.on_ui_theme_changed.assert_called_once_with("light")
-        dialog.basic_tabs.setCurrentIndex(1)
-        report = dialog._basic_pages[BASIC_MEETINGS].controls[SettingsKey.MEETING_END_REPORT]
-        report.click()
-        assert store.get(SettingsKey.MEETING_END_REPORT) is report.isChecked()
-        dialog.select_destination("meeting_after")
-        assert dialog.meeting_end_report_check.isChecked() == report.isChecked()
-
-    def test_failed_save_restores_basic_and_allows_retry(self, make_dialog):
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-        switch = dialog._basic_pages[BASIC_DICTATION].controls[SettingsKey.AUTO_PASTE]
-        previous = switch.isChecked()
-        with patch.object(store, "save_setting", side_effect=OSError("Disk full")):
-            switch.click()
-        assert switch.isChecked() == previous
-        assert dialog.auto_paste_check.isChecked() == previous
-        assert "Disk full" in dialog.message_label.text()
-        switch.click()
-        assert store.get(SettingsKey.AUTO_PASTE) == (not previous)
-        assert dialog.message_label.text() == ""
-
-    def test_basic_shortcut_capture_cancels_when_switching_view(self, make_dialog):
-        dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-        dialog.on_profile_hotkey_capture = MagicMock()
-        field = dialog._basic_pages[BASIC_DICTATION].shortcut
-        field.begin_capture()
-        dialog.on_profile_hotkey_capture.assert_called_with(True)
-        dialog.set_settings_view(SettingsView.ADVANCED)
-        assert not field._capturing
-        dialog.on_profile_hotkey_capture.assert_called_with(False)
-
-    def test_invalid_view_falls_back_to_basic_without_changing_other_settings(self, make_dialog):
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: "unknown", SettingsKey.AUTO_PASTE: False})
-        assert dialog.settings_view == SettingsView.BASIC
-        assert store.get(SettingsKey.AUTO_PASTE) is False
-
-    def test_change_button_captures_and_saves_a_shortcut_inline(self, make_dialog):
-        from PyQt6.QtWidgets import QPushButton
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-        dialog.show()
-        QApplication.instance().processEvents()
-        field = dialog._basic_pages[BASIC_DICTATION].shortcut
-        button = dialog.findChild(QPushButton, "basicSettingsChangeShortcut")
-        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
-        assert field.hasFocus()
-        QTest.keyClick(field, Qt.Key.Key_J, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)
-        assert not field._capturing
-        assert store.load_hotkey_settings()["record_toggle"] == field.hotkey
-        dialog.select_destination("hotkeys")
-        assert dialog.hotkey_inputs["record_toggle"].text() == field.text()
+        dialog.select_destination(APP_GENERAL)
+        dialog.update_check_check.setChecked(False)
+        assert store.get(SettingsKey.UPDATE_CHECK_ENABLED) is False
+        assert not dialog.update_notify_tile.isEnabled()
         dialog.close()
 
-    @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 460)])
-    def test_basic_rows_fit_narrow_windows_and_large_fonts(self, make_dialog, monkeypatch, ui_mode, width):
-        from PyQt6.QtWidgets import QAbstractButton, QComboBox, QLineEdit, QLabel
-        from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
-        from ui_qt.utils.palette import current_palette, set_current_palette
-        from ui_qt.utils.theme_manager import ThemeManager
-        monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
-        app = QApplication.instance()
-        previous_style, previous_font = app.styleSheet(), app.font()
-        previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
-        manager = ThemeManager()
-        dialog = None
-        try:
-            apply_ui_font_scale(130, app=app, theme_manager=manager)
-            dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-            dialog.show()
-            dialog._fit_to_screen()
-            dialog.resize(width, 600)
-            for index, key in enumerate(dialog._basic_destinations):
-                dialog.basic_tabs.setCurrentIndex(index)
-                for _ in range(8):
-                    app.processEvents()
-                page = dialog._basic_pages[key]
-                assert dialog.width() == width
-                for control in (page.findChildren(QAbstractButton) + page.findChildren(QComboBox) + page.findChildren(QLineEdit)):
-                    if not control.isVisible():
-                        continue
-                    assert control.mapTo(page, control.rect().topLeft()).x() >= 0
-                    assert control.mapTo(page, control.rect().bottomRight()).x() < page.width()
-                for label in page.findChildren(QLabel):
-                    if label.isVisible() and label.wordWrap():
-                        assert label.height() >= label.heightForWidth(label.width())
-                scroll = dialog._page_scrolls[key]
-                scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
-                app.processEvents()
-                assert page.mapTo(scroll.viewport(), page.rect().bottomRight()).y() <= scroll.viewport().height()
-        finally:
-            if dialog is not None:
-                dialog.close()
-            apply_ui_font_scale(previous_scale, app=app)
-            set_current_palette(previous_palette)
-            app.setFont(previous_font)
-            app.setStyleSheet(previous_style)
+    def test_search_reveals_nested_model_options_without_changing_the_prompt(self, make_dialog):
+        dialog, store = make_dialog({SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True, SettingsKey.TRANSCRIPT_CLEANUP_PROMPT: "Keep my terminology."})
+        dialog.show()
+        dialog.select_destination(CLEANUP)
+        options = dialog.models.cleanup_options_section
+        assert not options.is_expanded()
+        dialog._on_search_activated(SearchEntry(SETTING, "Custom prompt", "", CLEANUP, target_name="cleanup_prompt_tile"))
+        QApplication.processEvents()
+        assert options.is_expanded()
+        assert dialog.cleanup_prompt_edit.isVisible()
+        assert dialog.cleanup_prompt_tile.property("searchHit") is True
+        assert store.get(SettingsKey.TRANSCRIPT_CLEANUP_PROMPT) == "Keep my terminology."
+        dialog.close()
+
+    def test_disabled_cleanup_search_focuses_its_enable_switch(self, make_dialog):
+        dialog, store = make_dialog({SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: False})
+        dialog.show()
+        dialog._on_search_activated(SearchEntry(SETTING, "Custom prompt", "", CLEANUP, target_name="cleanup_prompt_tile"))
+        QApplication.processEvents()
+        assert not dialog.cleanup_model_tile.isVisible()
+        assert not dialog.cleanup_level_tile.isVisible()
+        assert dialog.sections.sections[CLEANUP].property("searchHit") is True
+        assert not store.get(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED)
+        dialog.close()
+
+    def test_speech_deep_link_opens_both_disclosures(self, make_dialog):
+        dialog, _store = make_dialog()
+        dialog.sections.sections[RECORDING].set_expanded(False)
+        dialog.select_destination(VOICE_MODEL)
+        assert dialog.sections.sections[RECORDING].is_expanded()
+        assert dialog.sections.sections[VOICE_MODEL].is_expanded()
+        assert dialog.category_rail.current_key() == "dictation"
+        dialog.close()
+
+    @pytest.mark.parametrize("provider,phrase", [("openrouter", "is sent to OpenRouter"), ("ollama", "stays on this computer")])
+    def test_provider_privacy_is_visible_outside_model_options(self, make_dialog, provider, phrase):
+        dialog, store = make_dialog({SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True, SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: provider, SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "llama3.2" if provider == "ollama" else "openrouter/free"})
+        dialog.show()
+        dialog.select_destination(CLEANUP)
+        assert dialog.models.cleanup_privacy_note.isVisible()
+        assert phrase in dialog.models.cleanup_privacy_note.text()
+        assert not dialog.models.cleanup_options_section.is_expanded()
+        dialog.close()
+
+    def test_busy_backup_locks_other_categories_and_disclosures(self, make_dialog):
+        dialog, _store = make_dialog()
+        dialog.show()
+        dialog._on_backup_busy_changed(True)
+        assert dialog.category_rail.current_key() == "app"
+        assert not dialog.category_rail.isEnabled()
+        assert not dialog.sections.sections[GENERAL].header.isEnabled()
+        assert not dialog.sections.sections[GENERAL].body.isEnabled()
+        assert dialog.sections.sections["backup"].body.isEnabled()
+        dialog.select_destination(CLEANUP)
+        assert dialog.rail.current_key() == "backup"
+        dialog._on_backup_busy_changed(False)
+        assert dialog.category_rail.isEnabled()
+        assert dialog.sections.sections[GENERAL].header.isEnabled()
+        dialog.close()
+
+    def test_visible_cleanup_picker_loads_when_another_section_is_active(self, make_dialog):
+        dialog, _store = make_dialog({SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True})
+        dialog.show()
+        dialog.select_destination(CLEANUP)
+        dialog.select_destination(RECORDING)
+        assert dialog.models.text_model_picker.isVisible()
+        assert dialog.rail.current_key() == RECORDING
+        with patch.object(dialog.models, "_fetch_catalog_models") as fetch:
+            dialog.models._on_text_provider_changed("ollama")
+        fetch.assert_called_once_with("ollama", picker=dialog.models.text_model_picker)
+        dialog.close()
+
+    def test_catalog_errors_stay_visible_with_model_options_closed(self, make_dialog):
+        dialog, _store = make_dialog({SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True})
+        dialog.show()
+        dialog.select_destination(CLEANUP)
+        picker = dialog.models.text_model_picker
+        assert not dialog.models.cleanup_options_section.is_expanded()
+        dialog.models._apply_catalog_to_picker(picker, picker.provider, picker.current_sort(), [], "Server unavailable")
+        assert picker.error_label.isVisible()
+        assert "Server unavailable" in picker.error_label.text()
+        dialog.models._apply_catalog_to_picker(picker, picker.provider, picker.current_sort(), [], "")
+        assert picker.error_label.isHidden()
+        dialog.close()
+
 
 class TestControllerRouting:
     def _controller(self, dialog, missing_runtime=None):

@@ -39,6 +39,7 @@ BACKUP: Final[str] = "backup"
 
 # App
 GENERAL: Final[str] = "general"
+APP_GENERAL: Final[str] = "app_general"
 APPEARANCE: Final[str] = "appearance"
 HOTKEYS: Final[str] = "hotkeys"
 API_KEYS: Final[str] = "api_keys"

@@ -2,7 +2,7 @@
 
 **Settings → Personalize** gathers everything that makes dictation sound and
 spell like you: Dictionary, Snippets, Styles, Learned rules, Profiles, and
-Commands. Basic → Dictation shows the same features in a Personalize group.
+Commands. Expand the section you want to configure, or find it with Ctrl+K.
 
 ## Dictionary
 

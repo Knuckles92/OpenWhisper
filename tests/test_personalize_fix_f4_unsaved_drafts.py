@@ -151,11 +151,11 @@ def test_escape_saves_drafts_on_every_page(make_dialog, questions):
     assert not dialog.isVisible()
 
 
-def test_switching_to_basic_saves_a_draft(make_dialog):
+def test_switching_categories_saves_a_draft(make_dialog):
     dialog, store = make_dialog()
     _snippet_draft(dialog)
 
-    dialog.set_settings_view(SettingsView.BASIC)
+    dialog.select_destination(GENERAL)
 
     assert _snippets(store) == ["my address"]
 

@@ -28,10 +28,10 @@ Use a [packaged release](#install) with bundled Python and dependencies, or [run
 - **AI cleanup:** Choose Light, Medium, or High cleanup, which handles spoken corrections and lists, then apply spelling and style rules or reusable [cleanup profiles](docs/cleanup-profiles.md), with separate text-model choices for dictation and meetings.
 - **Personalize:** A [dictionary](docs/personalize.md#dictionary) that steers recognition and learns from your corrections, spoken [snippets](docs/personalize.md#snippets), a tone for each kind of app, and [Command Mode](docs/personalize.md#command-mode-and-transforms) to rewrite selected text by voice or with saved transforms.
 - **Extras:** Hands-free recording by double-tapping the record key, mouse side buttons as shortcuts, ranked microphones with automatic fallback, an overlay language switcher, a floating Scratchpad, and dictation Stats.
-- **Settings:** Use Basic for everyday Dictation, Meetings, and App controls; switch to Advanced for full model configuration, downloads, and Ctrl+K search. Both views edit the same settings and remember your last selected view.
+- **Settings:** Six categories—Dictation, Meetings, Personalize, Models, Connections, and App—keep related controls together. Expand a section for details, or use Ctrl+K to find and reveal any setting. AI cleanup keeps endpoint management, catalog controls, reasoning, and custom prompts under Model options.
 - **History:** Search, play back, retranscribe, and export transcripts as Markdown, plain text, or JSON, and switch an entry between its original and AI-cleaned versions. See [export format support](docs/export-support.md) for what each format includes.
 - **Agent history API (preview):** Search saved transcripts and meeting notes through an opt-in, authenticated local API. See [API setup](docs/agent-api.md).
-- **MCP:** Enable **Settings → MCP** to connect an agent to history, transcripts, and meeting insights. Optionally allow retitling and choose which settings agents may change. See [MCP setup](docs/mcp.md).
+- **MCP:** Enable **Settings → Connections → AI assistant access** to connect an agent to history, transcripts, and meeting insights. Optionally allow retitling and choose which settings agents may change. See [MCP setup](docs/mcp.md).
 
 The app also includes microphone selection, a system tray where available, and dark, light, or system-matched themes.
 
@@ -142,9 +142,9 @@ Use **Help → Check for Updates**. Configure automatic checks and notifications
 
 ## Get started
 
-1. Open **Settings → Voice model** and choose a speech backend. New Windows x64 and Linux x86_64 installs default to Parakeet, and Apple Silicon Macs on macOS 14 or later to Parakeet MLX; other platforms default to Local Whisper. Existing installs keep the engine they use.
-2. Download the model and runtime through **Settings → Downloads**, or add an OpenAI key in **Settings → API keys** for cloud transcription.
-3. Choose your microphone in **Settings → Recording**. On macOS, grant the [required permissions](#macos-permissions).
+1. Open **Settings → Dictation → Recording → Speech engine** and choose a speech backend. New Windows x64 and Linux x86_64 installs default to Parakeet, and Apple Silicon Macs on macOS 14 or later to Parakeet MLX; other platforms default to Local Whisper. Existing installs keep the engine they use.
+2. Download the model and runtime through **Settings → Models → Downloads**, or add an OpenAI key in **Settings → Connections → API keys** for cloud transcription.
+3. Choose your microphone in **Settings → Dictation → Recording**. On macOS, grant the [required permissions](#macos-permissions).
 4. Use **Quick Record** or the recording hotkey. Stop recording to transcribe; dictation follows your clipboard and auto-paste settings. **Upload File** results stay in the app and have Copy buttons.
 
 For meetings, open **Meeting Mode**. Add an optional brief to guide AI notes and the live copilot; you can edit it during the meeting. After transcription, **Continue in the background** lets you start another meeting while reports finish. Find results in **Past Meetings**.
@@ -153,7 +153,7 @@ Optional [insight review](docs/meeting-insight-review.md) helps clarify uncertai
 
 ### Hotkeys
 
-Change shortcuts and choose **Toggle** or **Push and hold** in **Settings → Hotkeys**. Toggle starts and stops recording with successive presses; push-and-hold records until you release the shortcut.
+Change shortcuts and choose **Toggle** or **Push and hold** in **Settings → App → Hotkeys**. Toggle starts and stops recording with successive presses; push-and-hold records until you release the shortcut.
 
 | Action | Windows / Linux | macOS |
 | --- | --- | --- |
@@ -170,7 +170,7 @@ On X11 Linux, hotkeys also reach the focused app. Omarchy supports desktop short
 
 OpenWhisper adapts to Omarchy 3 and 4 with a compact interface and desktop colors. Hyprland manages window placement and sizing; Omarchy mode supports desktop shortcuts and auto-paste on Hyprland 0.55+.
 
-Choose **Settings → Appearance → Theme → Omarchy desktop** to follow your desktop palette. An optional [Omarchy 4 bar widget](integrations/omarchy) provides recording controls, status, and live text.
+Choose **Settings → App → Appearance → Theme → Omarchy desktop** to follow your desktop palette. An optional [Omarchy 4 bar widget](integrations/omarchy) provides recording controls, status, and live text.
 
 ## Speech models
 
@@ -185,7 +185,7 @@ Choose **Settings → Appearance → Theme → Omarchy desktop** to follow your 
 | OpenAI API | GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027 | Cloud; API key and network required | Dictation, uploads |
 | Remote computer | Whichever engine the paired computer has selected | Another computer running OpenWhisper on your network | Dictation with that engine's preview, uploads, meetings with a supported host model |
 
-- **Downloads:** Install both the model and its required runtime in **Settings → Downloads**. Each entry shows its size, publisher, license, and download checks.
+- **Downloads:** Install both the model and its required runtime in **Settings → Models → Downloads**. Each entry shows its size, publisher, license, and download checks.
 - **Languages:** Choose a supported language or **Auto** for detection. Coverage varies by engine; Moonshine is English-only. Language selection controls transcription, not translation.
 - **Apple Silicon:** Choose **Auto** to use the Apple GPU where supported. See [GPU acceleration](#gpu-acceleration) for engine-specific support.
 
@@ -193,7 +193,7 @@ See [speech model details](docs/speech-models.md) for language coverage, platfor
 
 ### Custom Whisper models
 
-Choose **Add custom models…** in **Settings → Downloads**, **Dictation → Voice model**, or **Meeting Mode → Voice & speakers**.
+Choose **Add custom models…** in **Settings → Models → Downloads**, **Dictation → Voice model**, or **Meeting Mode → Voice & speakers**.
 
 - **Local files:** Choose a model folder or a parent folder containing several models. OpenWhisper lists complete model folders for you to select.
 - **Hugging Face:** Enter an `owner/model` repository and, optionally, a subfolder such as `ct2_int8_float16`. **Find on Hugging Face** lists compatible model folders without downloading weights. You can also discover models already in the local Hugging Face cache.
@@ -207,13 +207,13 @@ Click **Add selected**, then choose a model in **Voice model** or **Voice & spea
 
 Use another computer's OpenWhisper engine for dictation, uploads, or meetings:
 
-1. On the computer with the engine, open **Settings → Dictation → Remote engine**, turn on **Share this computer's engine**, and click **Pair a device**. Allow OpenWhisper through the firewall if Windows asks.
+1. On the computer with the engine, open **Settings → Connections → Remote engine**, turn on **Share this computer's engine**, and click **Pair a device**. Allow OpenWhisper through the firewall if Windows asks.
 2. On the other computer, open the same page, enter the host's address (shown under the switch) and the six-digit code, and click **Pair**. Check that both screens show the same identity code.
 3. Click **Use for dictation**, or choose **Remote computer** as the recording engine.
 
 The host's selected engine handles transcription. Traffic is encrypted and limited to paired computers; remove access under **Paired computers**.
 
-- **Meetings:** Select **Remote computer** in **Settings → Meeting Mode → Voice & speakers → Speech engine**. Audio goes to the host for transcription; capture, recordings, and transcripts stay on the computer running the meeting.
+- **Meetings:** Select **Remote computer** in **Settings → Meetings → Voice & speakers → Speech engine**. Audio goes to the host for transcription; capture, recordings, and transcripts stay on the computer running the meeting.
 - **Host models:** Use **Manage host models** to choose or download a model and install speech runtimes. The host must first enable **Allow paired computers to manage models**.
 - **Shared history:** Enable **Allow the paired host to query this computer's history** on the client so agents on the host can search it while the client is online. See [MCP setup](docs/mcp.md#query-paired-clients-directly) for queries and offline copies.
 - **Away from home:** Install [Tailscale](https://tailscale.com/download) on both computers. Hosts on your tailnet appear in the app; computers on the same Tailscale account can connect without a pairing code when the host allows it.
@@ -222,9 +222,9 @@ The host's selected engine handles transcription. Traffic is encrypted and limit
 
 Use AI cleanup to polish dictation and meeting intelligence to generate notes and insights. Each has its own text-model settings.
 
-- **Dictation:** Enable **Settings → AI cleanup**, choose a cleanup level, and choose a text model. Add words to the **Dictionary**, pick a tone per kind of app in **Styles**, teach other behaviour in **Learned rules**, or use [Profiles](docs/cleanup-profiles.md) for reusable formats. See [Personalize dictation](docs/personalize.md).
-- **Providers:** OpenAI, OpenRouter, Ollama, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. Add keys in **Settings → API keys**; Ollama needs a separately managed server.
-- **Meetings:** Choose an engine in **Settings → Meeting Mode → Intelligence** using the options below.
+- **Dictation:** Enable **Settings → Dictation → AI cleanup**, choose a cleanup level, and choose a text model. Add words to the **Dictionary**, pick a tone per kind of app in **Styles**, teach other behaviour in **Learned rules**, or use [Profiles](docs/cleanup-profiles.md) for reusable formats. See [Personalize dictation](docs/personalize.md).
+- **Providers:** OpenAI, OpenRouter, Ollama, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. Add keys in **Settings → Connections → API keys**; Ollama needs a separately managed server.
+- **Meetings:** Choose an engine in **Settings → Meetings → AI insights** using the options below.
 
 | Meeting engine | Setup |
 | --- | --- |
@@ -240,7 +240,7 @@ See [AI and meeting setup](docs/meeting-intelligence.md) for custom endpoints, e
 
 Downloaded speech models load from the local cache without network metadata checks. Install any required runtime before going offline.
 
-Choose whether to ask, allow, or block missing-model downloads in **Settings → Downloads → When a model is missing from this computer**. Set `HF_HUB_OFFLINE=1` before launch to block model downloads entirely. Cloud transcription and remote text providers still need a network connection.
+Choose whether to ask, allow, or block missing-model downloads in **Settings → Models → Downloads → When a model is missing from this computer**. Set `HF_HUB_OFFLINE=1` before launch to block model downloads entirely. Cloud transcription and remote text providers still need a network connection.
 
 <details>
 <summary>More screenshots</summary>
@@ -254,11 +254,11 @@ Choose whether to ask, allow, or block missing-model downloads in **Settings →
 </p>
 
 <p align="center">
-  <img width="880" alt="Settings → AI cleanup: chat model, endpoint, and thinking level" src="docs/screenshots/03-settings-ai-cleanup.png" />
+  <img width="880" alt="Settings → Dictation → AI cleanup: chat model, endpoint, and thinking level" src="docs/screenshots/03-settings-ai-cleanup.png" />
 </p>
 
 <p align="center">
-  <img width="880" alt="Settings → Downloads: model catalog and technical details" src="docs/screenshots/06-downloads-model-profile.png" />
+  <img width="880" alt="Settings → Models → Downloads: model catalog and technical details" src="docs/screenshots/06-downloads-model-profile.png" />
 </p>
 
 <p align="center">

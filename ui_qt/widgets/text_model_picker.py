@@ -26,8 +26,8 @@ from services.settings import (
     default_transcript_cleanup_model,
 )
 from services.text_llm import (
-    PROFILE_KIND_OPENROUTER,
     NEW_PROFILE_IDS,
+    PROFILE_KIND_OPENROUTER,
     TextLLMProfile,
     builtin_profiles,
     credential_label,
@@ -70,8 +70,10 @@ class TextModelPicker(QWidget):
         self,
         parent=None,
         idle_status: str = "Open this destination to load the model catalog.",
+        technical_layout=None,
     ):
         super().__init__(parent)
+        self._technical_layout = technical_layout
         self.provider = TranscriptCleanupProvider.OPENAI
         self._active_provider = ""
         self._active_model = ""
@@ -92,7 +94,8 @@ class TextModelPicker(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        endpoint_label = QLabel("Endpoint")
+        technical = self._technical_layout if self._technical_layout is not None else layout
+        endpoint_label = QLabel("Provider" if self._technical_layout is not None else "Endpoint")
         endpoint_label.setObjectName("textModelFieldLabel")
         layout.addWidget(endpoint_label)
 
@@ -120,7 +123,10 @@ class TextModelPicker(QWidget):
         credential_row.addWidget(self.provider_requirement, stretch=1)
         self.provider_url = QLabel("")
         self.provider_url.setObjectName("textProviderUrl")
-        credential_row.addWidget(self.provider_url)
+        if self._technical_layout is None:
+            credential_row.addWidget(self.provider_url)
+        else:
+            technical.addWidget(self.provider_url)
         layout.addLayout(credential_row)
 
         manage_row = QHBoxLayout()
@@ -146,12 +152,12 @@ class TextModelPicker(QWidget):
             button.setMaximumHeight(28)
             manage_row.addWidget(button)
         manage_row.addStretch()
-        layout.addLayout(manage_row)
+        technical.addLayout(manage_row)
 
         separator = QFrame()
         separator.setObjectName("textModelGroupSeparator")
         separator.setFixedHeight(1)
-        layout.addWidget(separator)
+        technical.addWidget(separator)
 
         model_label_row = QHBoxLayout()
         model_label_row.setSpacing(10)
@@ -173,6 +179,13 @@ class TextModelPicker(QWidget):
         )
         model_label_row.addWidget(self.sort_combo)
         layout.addLayout(model_label_row)
+        if self._technical_layout is not None:
+            model_label_row.removeWidget(self.sort_label)
+            model_label_row.removeWidget(self.sort_combo)
+            catalog_row = QHBoxLayout()
+            catalog_row.addWidget(self.sort_label)
+            catalog_row.addWidget(self.sort_combo, 1)
+            technical.addLayout(catalog_row)
 
         model_row = QHBoxLayout()
         model_row.setSpacing(10)
@@ -199,13 +212,22 @@ class TextModelPicker(QWidget):
         self.refresh_button.clicked.connect(
             lambda: self.refresh_requested.emit(self.provider)
         )
-        model_row.addWidget(self.refresh_button)
+        if self._technical_layout is None:
+            model_row.addWidget(self.refresh_button)
+        else:
+            technical.addWidget(self.refresh_button, alignment=Qt.AlignmentFlag.AlignLeft)
         layout.addLayout(model_row)
 
         self.status_label = QLabel(self._idle_status)
         self.status_label.setObjectName("textModelStatus")
         self.status_label.setWordWrap(True)
-        layout.addWidget(self.status_label)
+        technical.addWidget(self.status_label)
+
+        self.error_label = QLabel()
+        self.error_label.setObjectName("textModelError")
+        self.error_label.setWordWrap(True)
+        layout.addWidget(self.error_label)
+        self.error_label.hide()
 
         self._reload_provider_combo()
         self._render_provider()
@@ -342,6 +364,7 @@ class TextModelPicker(QWidget):
         self.model_combo.setCurrentText(self._staged_model())
         self.model_combo.blockSignals(False)
         self.status_label.setText("Loading models…")
+        self.show_error("")
         self._update_active_badge()
 
     def _update_credential_status(self, credential: Optional[str] = None) -> None:
@@ -411,6 +434,7 @@ class TextModelPicker(QWidget):
             model_spec(self.current_profile(), model)
         except ValueError as exc:
             self.status_label.setText(str(exc))
+            self.show_error(str(exc))
             return
         self._staged_models[self.provider] = model
         self._update_active_badge()
@@ -420,6 +444,11 @@ class TextModelPicker(QWidget):
         )
         if not already_active:
             self.activation_requested.emit(self.provider)
+
+    def show_error(self, text: str) -> None:
+        """Keep actionable failures visible when technical details are folded."""
+        self.error_label.setText(text)
+        self.error_label.setVisible(bool(text) and self._technical_layout is not None)
 
     def _restore_staged_model(self) -> None:
         self._model_edited = False

@@ -359,7 +359,7 @@ def test_backup_page_is_lazy_searchable_and_usable_at_narrow_size(
                 app.processEvents()
                 assert BACKUP in dialog._built_pages
                 assert dialog.backup_page._coordinator is coordinator
-                assert dialog.page_title.text() == "Backup & restore"
+                assert dialog.page_title.text() == "App"
                 for control in (dialog.backup_page.create_button,
                                 dialog.backup_page.inspect_button,
                                 dialog.backup_page.save_schedule_button):

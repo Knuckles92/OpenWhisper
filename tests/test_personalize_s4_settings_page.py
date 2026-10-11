@@ -7,6 +7,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from tests.settings_legacy_testkit import mount_legacy_basic
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
@@ -310,7 +312,7 @@ class TestBasicRow:
         dialog.show()
         try:
             QApplication.processEvents()
-            page = dialog._basic_pages[BASIC_DICTATION]
+            page = mount_legacy_basic(dialog, BASIC_DICTATION)
             button = page.findChild(QPushButton, "basicDictionaryAddButton")
             assert button.text() == "Add word"
             labels = [label.text() for label in page.findChildren(type(page.cleanup_status))]
@@ -327,14 +329,17 @@ class TestBasicRow:
     def test_basic_row_without_words(self, make_dialog):
         dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC,
                                       SettingsKey.SELECTED_MODEL: "local_whisper"})
-        page = dialog._basic_pages[BASIC_DICTATION]
+        page = mount_legacy_basic(dialog, BASIC_DICTATION)
         labels = [label.text() for label in page.findChildren(type(page.cleanup_status))]
         assert "Names and terms dictation should always get right." in labels
 
 
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
 def test_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+    from ui_qt.utils.font_scale import (
+        apply_ui_font_scale,
+        current_ui_font_scale_percent,
+    )
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
 

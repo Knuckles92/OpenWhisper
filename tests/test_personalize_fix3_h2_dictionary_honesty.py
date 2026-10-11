@@ -11,6 +11,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from tests.settings_legacy_testkit import mount_legacy_basic
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QLabel
@@ -184,7 +186,7 @@ class TestWhereWordsDoCount:
 
 class TestBasicRow:
     def _detail(self, dialog):
-        page = dialog._basic_pages[BASIC_DICTATION]
+        page = mount_legacy_basic(dialog, BASIC_DICTATION)
         return [label.text() for label in page.findChildren(QLabel)
                 if label.objectName() == "basicSettingsDescription"]
 
@@ -206,7 +208,10 @@ class TestBasicRow:
 
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
 def test_notice_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+    from ui_qt.utils.font_scale import (
+        apply_ui_font_scale,
+        current_ui_font_scale_percent,
+    )
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
 

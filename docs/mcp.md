@@ -1,6 +1,6 @@
 # Connect an agent to OpenWhisper
 
-Open **Advanced Settings → App → MCP** (the **Connect your AI assistant** page)
+Open **Settings → Connections → AI assistant access** (the **Connect your AI assistant** page)
 and turn on **Enable MCP**. When the status changes to **Running**, copy the setup
 prompt into your agent, or choose a manual setup option. OpenWhisper includes the
 MCP server; users of the installed desktop app

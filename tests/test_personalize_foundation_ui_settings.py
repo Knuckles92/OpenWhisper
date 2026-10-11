@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.settings_legacy_testkit import mount_legacy_basic
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import (
@@ -162,7 +164,8 @@ class TestPersonalizeRail:
         module = dict(_modules())[key]
         dialog.select_destination(key)
         assert key in dialog._built_pages
-        assert dialog.page_title.text() == module.TITLE
+        assert dialog.page_title.text() == "Personalize"
+        assert dialog.sections.sections[key].is_expanded()
         page = dialog._pages[key]
         for attr, title, _keywords in module.SEARCH_FIELDS:
             widget = dialog.__dict__[attr]
@@ -206,7 +209,7 @@ class TestPageModuleRegistry:
         assert settings_metadata.CONTROL_DESTINATIONS["fake_page_tile"] == DICTIONARY
         assert calls == []
 
-        dialog.fake_page_tile
+        _ = dialog.fake_page_tile
         assert calls == ["build", "load"]
 
         calls.clear()
@@ -215,9 +218,9 @@ class TestPageModuleRegistry:
 
         calls.clear()
         dialog.select_destination(DICTIONARY)
-        assert calls == []
+        assert calls == ["refresh"]
         dialog.select_destination(GENERAL)
-        assert calls == ["cancel"]
+        assert calls == ["refresh", "cancel"]
 
         calls.clear()
         dialog.refresh_page(DICTIONARY)
@@ -225,7 +228,7 @@ class TestPageModuleRegistry:
 
         calls.clear()
         dialog.set_settings_view(SettingsView.BASIC)
-        assert calls[0] == "cancel"
+        assert calls == []  # Retired compatibility API leaves the current view alone.
         calls.clear()
         dialog.close()
         assert calls == ["cancel"]
@@ -269,7 +272,7 @@ class TestPageModuleRegistry:
         dialog.select_destination(GENERAL)
         assert dialog.rail.current_key() == GENERAL
         dialog.close()
-        assert calls == ["build"] + ["broken"] * 5
+        assert calls == ["build"] + ["broken"] * 6
 
 
 class TestDialogHelpers:
@@ -353,7 +356,7 @@ class TestBasicPersonalize:
     def test_dictation_tab_has_a_personalize_group_fed_by_page_modules(self, make_dialog, fake_page):
         _module, calls = fake_page
         dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-        page = dialog._basic_pages[BASIC_DICTATION]
+        page = mount_legacy_basic(dialog, BASIC_DICTATION)
         titles = [label.text() for label in page.findChildren(QLabel, "basicSettingsGroupTitle")]
         assert titles == ["Record", "Transcribe", "Personalize", "Output"]
         assert ("basic_rows", BasicSettingsPage, QVBoxLayout) in calls
@@ -375,6 +378,8 @@ class TestBasicPersonalize:
         dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
         dialog.show()
         try:
+            mount_legacy_basic(dialog, BASIC_DICTATION)
+            dialog.ensure_page(OVERVIEW)
             basic = _intro_tiles(dialog._pages[BASIC_DICTATION])
             overview = _intro_tiles(dialog._pages[OVERVIEW])
             assert len(basic) == len(overview) == 1
@@ -402,7 +407,10 @@ class TestBasicPersonalize:
 
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
 def test_new_pages_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+    from ui_qt.utils.font_scale import (
+        apply_ui_font_scale,
+        current_ui_font_scale_percent,
+    )
     from ui_qt.utils.theme_manager import ThemeManager
 
     monkeypatch.setenv("OPENWHISPER_UI", ui_mode)

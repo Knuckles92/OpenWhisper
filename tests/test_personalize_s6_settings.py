@@ -14,8 +14,14 @@ from PyQt6.QtWidgets import QApplication
 
 from services import text_transforms
 from services.hotkey_manager import format_hotkey_display
-from services.settings import RecordingTriggerMode, SettingsKey, SettingsManager, SettingsView
+from services.settings import (
+    RecordingTriggerMode,
+    SettingsKey,
+    SettingsManager,
+    SettingsView,
+)
 from services.text_transforms import Transform
+from tests.settings_legacy_testkit import mount_legacy_basic
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as models_module
@@ -192,7 +198,7 @@ def test_basic_recording_shortcut_mentions_double_tap(make_dialog):
         SettingsKey.SETTINGS_VIEW: SettingsView.BASIC,
         SettingsKey.RECORDING_TRIGGER_MODE: RecordingTriggerMode.PUSH_HOLD,
     })
-    page = dialog._basic_pages[BASIC_DICTATION]
+    page = mount_legacy_basic(dialog, BASIC_DICTATION)
     page.refresh_shortcut()
     assert "double-tap" in page.shortcut_description.text()
     dialog.close()
@@ -355,10 +361,14 @@ def test_windows_capture_removes_only_its_own_hook(_session_qt_application):
 @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 720), ("omarchy", 460)])
 def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch, ui_mode, width):
     from PyQt6.QtWidgets import QAbstractButton, QLabel, QLineEdit
-    from ui_qt.widgets.hotkey_row import ReflowCard
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+
+    from ui_qt.utils.font_scale import (
+        apply_ui_font_scale,
+        current_ui_font_scale_percent,
+    )
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
+    from ui_qt.widgets.hotkey_row import ReflowCard
 
     monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
     # The Windows backend, whose side-button note is the longest; X11 shows
@@ -399,7 +409,7 @@ def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch
             )
             for left, _top, right, _bottom in rects:
                 assert left >= 0 and right < card.width()
-            for first, second in zip(rects, rects[1:]):
+            for first, second in zip(rects, rects[1:], strict=False):
                 if first[1] <= second[3] and second[1] <= first[3]:
                     assert first[2] < second[0]
         if width > 460:

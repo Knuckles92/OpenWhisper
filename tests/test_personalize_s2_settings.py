@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.settings_legacy_testkit import mount_legacy_basic
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QEvent, QEventLoop, QTimer
@@ -102,7 +104,7 @@ def test_the_bar_shows_the_saved_level_and_saves_only_clicks(make_dialog):
     dialog.ensure_page(CLEANUP)
 
     assert _selected(dialog) == "high"
-    assert dialog.cleanup_level_note.text() == cleanup_levels.NOTES["high"]
+    assert dialog.cleanup_level_note.text() == cleanup_levels.SHORT_NOTES["high"]
     assert not dialog.cleanup_level_bar.buttons[-1].isEnabled()
     assert dialog.cleanup_prompt_edit.toPlainText() == ""
     assert dialog.cleanup_prompt_edit.placeholderText() == PRESETS["high"]
@@ -116,7 +118,7 @@ def test_the_bar_shows_the_saved_level_and_saves_only_clicks(make_dialog):
     question.assert_not_called()
     assert store.get(LEVEL) == "light"
     assert _selected(dialog) == "light"
-    assert dialog.cleanup_level_note.text() == cleanup_levels.NOTES["light"]
+    assert dialog.cleanup_level_note.text() == cleanup_levels.SHORT_NOTES["light"]
     assert dialog.cleanup_prompt_edit.placeholderText() == PRESETS["light"]
     assert dialog.rail.value(CLEANUP) == "Light · openrouter/free"
 
@@ -140,7 +142,7 @@ def test_a_saved_custom_prompt_shows_as_custom(make_dialog):
 
     assert _selected(dialog) == cleanup_levels.CUSTOM
     assert dialog.cleanup_level_bar.buttons[-1].isEnabled()
-    assert dialog.cleanup_level_note.text() == cleanup_levels.NOTES[cleanup_levels.CUSTOM]
+    assert dialog.cleanup_level_note.text() == cleanup_levels.SHORT_NOTES[cleanup_levels.CUSTOM]
     assert dialog.cleanup_prompt_edit.toPlainText() == CUSTOM
     assert dialog.cleanup_prompt_reset_btn.isEnabled()
     assert dialog.rail.value(CLEANUP) == "Custom · gpt-test"
@@ -376,7 +378,7 @@ def test_a_gate_on_another_page_turns_cleanup_on_without_building_it(make_dialog
 
 def _basic(make_dialog, values):
     dialog, store = make_dialog(values, view=SettingsView.BASIC)
-    return dialog, store, dialog._basic_pages[BASIC_DICTATION]
+    return dialog, store, mount_legacy_basic(dialog, BASIC_DICTATION)
 
 
 def _items(combo):
@@ -451,7 +453,11 @@ def test_basic_follows_a_change_made_on_the_cleanup_page(make_dialog):
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 720)])
 def test_cleanup_tiles_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
     from PyQt6.QtWidgets import QAbstractButton, QLabel
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+
+    from ui_qt.utils.font_scale import (
+        apply_ui_font_scale,
+        current_ui_font_scale_percent,
+    )
     from ui_qt.utils.palette import current_palette, set_current_palette
     from ui_qt.utils.theme_manager import ThemeManager
 
@@ -462,7 +468,7 @@ def test_cleanup_tiles_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatc
     dialog = None
     try:
         apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
-        dialog, _store = make_dialog({PROMPT: CUSTOM})
+        dialog, _store = make_dialog({PROMPT: CUSTOM, ENABLED: True})
         dialog.show()
         dialog._fit_to_screen()
         dialog.resize(width, 640)
@@ -471,6 +477,10 @@ def test_cleanup_tiles_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatc
             (CLEANUP_RULES, ("cleanup_rules_gate_tile",)),
         ):
             dialog.select_destination(key)
+            if key == CLEANUP:
+                dialog.models.cleanup_options_section.set_expanded(True)
+            else:
+                dialog.transcript_cleanup_check.setChecked(False)
             for _ in range(8):
                 app.processEvents()
             page = dialog._pages[key]
