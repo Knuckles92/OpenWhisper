@@ -647,3 +647,20 @@ def test_search_finds_the_actions_page_but_not_its_gallery(make_dialog):
     titles = _actions_titles(dialog)
     assert {"Agent hotkey", "Ask Claude", "Route by voice"} <= titles
     assert not PRESET_NAMES & titles
+
+
+# ---- 12. "What it's for" starts empty ----
+
+
+@pytest.mark.parametrize("preset", ["claude-chat", "quick-answer", "webhook", "copy"])
+def test_a_preset_leaves_what_its_for_to_you(make_dialog, preset):
+    dialog, store = make_dialog()
+    panel = dialog.actions_panel
+    panel.add_action()
+    panel.start_from_preset(panel.gallery.tile(preset).preset)
+    editor = panel.editor
+    assert editor.description_edit.text() == ""
+    assert editor.description_edit.placeholderText().startswith("What it's for")
+    editor.url_edit.setText("https://example.com/hook")
+    assert editor.save()
+    assert stored(store, editor.action_id).description == ""

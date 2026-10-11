@@ -170,9 +170,11 @@ class ActionsPanel(QWidget):
 
     def start_from_preset(self, preset: Preset) -> None:
         settings = self._settings()
+        # "What it's for" starts empty: routing sends it to the judge, and a
+        # preset's blurb says what the preset does, not what you'd use it for.
         action = Action(
             new_id(), unique_name(preset.name, settings), preset.kind, dict(preset.params),
-            shaping=preset.shaping, description=preset.description.rstrip("."),
+            shaping=preset.shaping,
         )
         self._open_editor(action, is_new=True, note=preset.note)
 
