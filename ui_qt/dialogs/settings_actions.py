@@ -22,8 +22,6 @@ _PRIVACY_SHORTCUT_AND_DICTATION = (
     "Everything you record with the Route by voice shortcut, and normal dictations that "
     "start with an action's name, are sent to TypeSafe or OpenRouter to choose the action."
 )
-#: routing.status(...).fix when Fast judgments are what Route by voice still needs.
-_FIX_FAST_JUDGMENTS = "fast_judgments"
 
 SEARCH_FIELDS = [
     ("actions_agent_card", "Agent hotkey", _AGENT_COPY),
@@ -122,6 +120,9 @@ def build(dialog, layout) -> None:
     tile = dialog.actions_route_shortcut_tile = InfoTile(
         title, description, design_icon("keyboard-green.svg"))
     dialog.actions_route_shortcut = RouteShortcutField(dialog)
+    # Without a shortcut (or Also listen…) nothing starts Route by voice.
+    dialog.actions_route_shortcut.changed.connect(
+        lambda: _show_routing(dialog, dialog._settings_snapshot()))
     tile.add_body(dialog.actions_route_shortcut)
     dialog._tile_group(layout, "", [tile], columns=1)
     dialog.actions_routing_privacy = settings_caption(_PRIVACY_SHORTCUT)
@@ -180,9 +181,10 @@ def _show_routing(dialog, settings: dict) -> None:
     state = routing.status(settings)
     tone = (StatusLine.READY if state.ready
             else StatusLine.ATTENTION if state.enabled else StatusLine.OFF)
-    # The link leads only where the fix is: Fast judgments live on another page.
+    # The link leads only where the fix is: Fast judgments live on another page;
+    # the rest (actions, a way to start it) is on this one.
     dialog.actions_routing_status.show_state(
-        tone, state.message, link=state.fix == _FIX_FAST_JUDGMENTS)
+        tone, state.message, link=state.fix == routing.FIX_FAST_JUDGMENTS)
     privacy = dialog.actions_routing_privacy
     privacy.setText(_PRIVACY_SHORTCUT_AND_DICTATION if on_dictation else _PRIVACY_SHORTCUT)
     # Ready, routing's own message carries the privacy sentence.

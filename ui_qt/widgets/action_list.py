@@ -164,6 +164,8 @@ class ActionList(QWidget):
         self.grid.setVerticalSpacing(12)
         layout.addWidget(self.grid_box)
         self.cards: list[ActionCard] = []
+        #: The actions the cards were made from; None before the first.
+        self._actions: Optional[list[Action]] = None
         self._columns = 0
         self._reflow_timer = QTimer(self)
         self._reflow_timer.setSingleShot(True)
@@ -174,6 +176,10 @@ class ActionList(QWidget):
         return next((card for card in self.cards if card.action.id == action_id), None)
 
     def set_actions(self, actions: list[Action]) -> None:
+        if list(actions) == self._actions:
+            # Nothing changed: the cards keep their place, their focus and any glow.
+            return
+        self._actions = list(actions)
         for card in self.cards:
             self.grid.removeWidget(card)
             card.hide()

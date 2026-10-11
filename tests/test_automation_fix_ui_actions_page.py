@@ -55,7 +55,14 @@ class _Status:
 
 @pytest.fixture(autouse=True)
 def routing_status(monkeypatch):
-    """Routing's own words, with the ``fix`` the page reads; tests may set ``.fixed``."""
+    """Routing's own words, with the ``fix`` the page reads; tests may set ``.fixed``.
+
+    The routing fixes add ``RoutingStatus.fix`` and these constants; this
+    branch is tested before they merge, so it states them here.
+    """
+    for name, value in (("FIX_FAST_JUDGMENTS", "fast_judgments"), ("FIX_ACTIONS", "actions"),
+                        ("FIX_TRIGGER", "trigger")):
+        monkeypatch.setattr(routing, name, value, raising=False)
     real = routing.status
     state = MagicMock()
     state.fixed = None
@@ -66,7 +73,8 @@ def routing_status(monkeypatch):
         found = real(settings)
         fix = ""
         if found.enabled and not found.ready:
-            fix = "fast_judgments" if "Fast judgments" in found.message else "actions"
+            fix = (routing.FIX_FAST_JUDGMENTS if "Fast judgments" in found.message
+                   else routing.FIX_ACTIONS)
         return _Status(found.enabled, found.ready, found.message, fix)
 
     monkeypatch.setattr(routing, "status", status)
@@ -359,9 +367,13 @@ def routing_words(store) -> str:
     return routing.status(store.load_all_settings()).message
 
 
+#: Route by voice on, and listening to normal dictations, so it has a way to start.
+ROUTING_ON = {SettingsKey.VOICE_ROUTING_ENABLED: True,
+              SettingsKey.VOICE_ROUTING_ON_DICTATION: True}
+
+
 def test_route_by_voice_status_follows_the_actions(make_dialog, typesafe_key):
-    dialog, store = make_dialog({SettingsKey.VOICE_ROUTING_ENABLED: True,
-                                 SettingsKey.TYPESAFE_ENABLED: True})
+    dialog, store = make_dialog({**ROUTING_ON, SettingsKey.TYPESAFE_ENABLED: True})
     status, panel = dialog.actions_routing_status.message, dialog.actions_panel
     no_actions = status.text()
     assert no_actions == routing_words(store)
@@ -375,8 +387,7 @@ def test_route_by_voice_status_follows_the_actions(make_dialog, typesafe_key):
 
 
 def test_route_by_voice_status_follows_the_agent_card(make_dialog, typesafe_key):
-    dialog, store = make_dialog({SettingsKey.VOICE_ROUTING_ENABLED: True,
-                                 SettingsKey.TYPESAFE_ENABLED: True})
+    dialog, store = make_dialog({**ROUTING_ON, SettingsKey.TYPESAFE_ENABLED: True})
     status = dialog.actions_routing_status.message
     no_actions = status.text()
     dialog.actions_agent_card.set_up()
@@ -387,8 +398,7 @@ def test_route_by_voice_status_follows_the_agent_card(make_dialog, typesafe_key)
 def test_route_by_voice_status_is_read_again_when_the_page_returns(make_dialog, typesafe_key):
     from ui_qt.dialogs.settings_destinations import GENERAL
 
-    dialog, store = make_dialog({SettingsKey.VOICE_ROUTING_ENABLED: True,
-                                 SettingsKey.ACTIONS: [ASK_CLAUDE]})
+    dialog, store = make_dialog({**ROUTING_ON, SettingsKey.ACTIONS: [ASK_CLAUDE]})
     status = dialog.actions_routing_status
     needs_fast = status.message.text()
     assert status.state == "attention"
@@ -399,6 +409,23 @@ def test_route_by_voice_status_is_read_again_when_the_page_returns(make_dialog, 
     pump()
     assert status.message.text() == routing_words(store) != needs_fast
     assert status.state == "ready"
+
+
+def test_route_by_voice_status_follows_its_shortcut(make_dialog, monkeypatch):
+    # Whether anything starts Route by voice depends on its shortcut.
+    def status(settings):
+        if settings.get("hotkeys", {}).get("route_record"):
+            return _Status(True, True, "Route by voice is on.")
+        return _Status(True, False, "Set a Route by voice shortcut below.", routing.FIX_TRIGGER)
+
+    monkeypatch.setattr(routing, "status", status)
+    dialog, _store = make_dialog({SettingsKey.VOICE_ROUTING_ENABLED: True})
+    line = dialog.actions_routing_status
+    assert line.message.text() == "Set a Route by voice shortcut below."
+    dialog.actions_route_shortcut.input.captured.emit("ctrl+alt+v")
+    assert (line.state, line.message.text()) == ("ready", "Route by voice is on.")
+    dialog.actions_route_shortcut.input.captured.emit("")
+    assert line.message.text() == "Set a Route by voice shortcut below."
 
 
 # ---- 4/5. Route by voice's status, links and privacy line ----
@@ -424,7 +451,7 @@ def test_route_by_voice_off_has_no_link(make_dialog, routing_status):
 
 def test_the_privacy_line_says_what_each_way_of_routing_sends(make_dialog, routing_status):
     routing_status.fixed = _Status(True, False, "Route by voice needs Fast judgments.",
-                                   "fast_judgments")
+                                   routing.FIX_FAST_JUDGMENTS)
     dialog, _store = make_dialog({SettingsKey.VOICE_ROUTING_ENABLED: True})
     privacy = dialog.actions_routing_privacy
     assert privacy.isVisible()
@@ -588,10 +615,22 @@ def test_tab_reaches_the_action_cards_where_they_sit(make_dialog):
 
     page = dialog._pages[ACTIONS]
     assert _tab_order(panel.add_button, page, 7) == expected()
-    # Cards made again, after a save, still come where they sit.
+    # Cards made again, after a change, still come where they sit.
+    before = panel.list.card("h1")
+    panel.set_enabled("h1", False)
     panel.refresh()
     pump()
+    assert panel.list.card("h1") is not before
     assert _tab_order(panel.add_button, page, 7) == expected()
+
+
+def test_reading_the_same_actions_again_keeps_the_cards(make_dialog):
+    dialog, _store = make_dialog({SettingsKey.ACTIONS: [ASK_CLAUDE]})
+    panel = dialog.actions_panel
+    card = panel.list.card("a1")
+    panel.refresh()
+    settings_actions.refresh(dialog)
+    assert panel.list.card("a1") is card
 
 
 # ---- 11. Settings search finds settings, not the Add action gallery ----

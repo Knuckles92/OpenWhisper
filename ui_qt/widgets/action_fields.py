@@ -428,6 +428,8 @@ class RouteShortcutField(CommandShortcutField):
     """The Route by voice shortcut, saved like any standard one (dialog.set_standard_hotkey)."""
 
     ACTION = "route_record"
+    #: A new shortcut was saved, or the old one cleared.
+    changed = pyqtSignal()
 
     def __init__(self, dialog, parent=None):
         super().__init__(dialog, parent=parent)
@@ -448,6 +450,8 @@ class RouteShortcutField(CommandShortcutField):
         error = self.dialog.set_standard_hotkey(self.ACTION, hotkey)
         self.show_error(error)
         self.sync()
+        if not error:
+            self.changed.emit()
 
 
 class SwitchRow(QFrame):

@@ -749,7 +749,7 @@ def test_routing_status_shows_routings_own_words_and_links_to_its_fix(make_dialo
     assert status.state == "off" and not status.link.isVisible()
     assert dialog.actions_routing_privacy.isVisible()
     monkeypatch.setattr(routing, "status", lambda settings: _RoutingStatus(
-        True, False, "Turn on Fast judgments to route by voice.", "fast_judgments"))
+        True, False, "Turn on Fast judgments to route by voice.", routing.FIX_FAST_JUDGMENTS))
     dialog.actions_routing_tile.checkbox.click()
     assert status.message.text() == "Turn on Fast judgments to route by voice."
     assert status.state == "attention" and status.link.isVisible()
