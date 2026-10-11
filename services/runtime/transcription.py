@@ -988,7 +988,6 @@ class TranscriptionRuntime:
                 result = BatchResult(
                     request=request,
                     items=tuple(results),
-                    canceled=canceled,
                     total_elapsed_s=total_elapsed,
                     transcription_time_s=total_transcription_time,
                     cleanup_time_s=total_cleanup_time,
@@ -1041,29 +1040,32 @@ class TranscriptionRuntime:
         self.controller.status_update.emit(message)
 
     def on_batch_complete(self, result: BatchResult) -> None:
-        # The files are transcribed; only saving them holds the slot.
-        self._settle()
+        # The files are transcribed; only saving them holds the slot. A
+        # Cancel that got here first, while the files ran or after, stopped
+        # whatever was left: what was done is kept, and the status says so.
+        canceled = self._settle()
         request = result.request
         ui = self.controller.ui_controller
         succeeded = [r for r in result.items if r.succeeded]
         saveable = [r for r in succeeded if r.text.strip()]
+        is_empty = (not (result.combined_text or "").strip() if request.combine
+                    else not saveable)
+        if canceled and is_empty:
+            self.on_transcription_error("Transcription canceled")
+            return
 
         if request.combine:
             display = result.combined_text or ""
             raw_display = result.combined_raw_text
-            is_empty = not display.strip()
             if is_empty:
                 display = EMPTY_ASR_MESSAGE
                 raw_display = None
         else:
             if not succeeded:
-                if result.canceled:
-                    self.on_transcription_error("Transcription canceled")
-                else:
-                    first_error = result.items[0].error if result.items else "no files"
-                    self.on_transcription_error(
-                        f"All {len(result.items)} files failed: {first_error}"
-                    )
+                first_error = result.items[0].error if result.items else "no files"
+                self.on_transcription_error(
+                    f"All {len(result.items)} files failed: {first_error}"
+                )
                 return
             display = format_batch_transcript(
                 [
@@ -1087,7 +1089,6 @@ class TranscriptionRuntime:
                         for r in result.items
                     ]
                 )
-            is_empty = not saveable
 
         # The tab treats NONE while it is still running as a failure, so the
         # transcript must land first.
@@ -1161,16 +1162,15 @@ class TranscriptionRuntime:
                 ),
             )
 
-        if result.canceled:
-            ui.set_status(
-                f"Canceled — kept {len(saveable)} of {len(request.items)} files"
-            )
-            self._queue_history(entries)
-            return
-
-        status = "Ready"
+        if canceled:
+            kept = ("the transcript" if request.combine
+                    else f"{len(saveable)} of {len(request.items)} files")
+            status = f"Canceled — kept {kept}"
+        else:
+            status = "Ready"
         if result.cleanup_error == CANCELED_REASON:
-            status += " — AI cleanup canceled; showing raw text"
+            # Only a Cancel cuts the cleanup short.
+            status += " without AI cleanup"
         elif result.cleanup_error:
             status += (
                 f" — AI cleanup failed ({result.cleanup_error}); showing raw text"
@@ -1687,7 +1687,7 @@ class TranscriptionRuntime:
             self._stop_started_at = 0.0
         # From here the result is delivered and only saving holds the slot:
         # a later Cancel reaches the actions it ran instead.
-        if self._settle() and self._deliver_to_clipboard:
+        if self._settle():
             # The cancel arrived between the worker's emit and this slot.
             self.on_transcription_error("Transcription canceled")
             return
