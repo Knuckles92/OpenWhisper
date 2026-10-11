@@ -286,15 +286,19 @@ def test_a_program_runs_one_event_at_a_time_in_order(tmp_path, bus, store):
 def test_a_full_queue_drops_the_oldest_event(tmp_path, bus, store, monkeypatch):
     monkeypatch.setattr(programs, "MAX_QUEUED", 2)
     log = tmp_path / "log.txt"
+    started = tmp_path / "started.txt"
     code = (
         "import json, sys, time; n = json.loads(sys.stdin.read())['data']['n']; "
+        "open(sys.argv[2], 'a').write(f'{n}\\n'); "
         "time.sleep(0.4); open(sys.argv[1], 'a').write(f'{n}\\n')"
     )
-    save_programs(store, program("p", code, str(log)))
+    save_programs(store, program("p", code, str(log), str(started)))
     programs.start()
     published = [bus.publish("recording.started", {"n": 0})]
-    # The first event is running (taken off the queue) before the rest arrive.
-    wait_until(lambda: "p" in programs._runners and not programs._runners["p"].events)
+    # The first event is running (its program has started) before the rest
+    # arrive. An empty queue alone isn't enough: it is also empty before the
+    # first event reaches it, and then the full queue would drop that one.
+    wait_until(lambda: started.exists() and started.read_text().split() == ["0"], timeout=10)
     published += [bus.publish("recording.started", {"n": n}) for n in range(1, 6)]
 
     wait_until(lambda: sum(1 for r in programs.runs("p") if r.ok) == 3, timeout=20)
