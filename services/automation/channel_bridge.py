@@ -31,6 +31,7 @@ import re
 import socket
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, BinaryIO, Callable, Mapping, Optional
 from urllib.parse import urlsplit
@@ -187,9 +188,10 @@ def parse_url(url: str) -> Target:
     parts = urlsplit(url.strip())
     try:
         port = parts.port
+        valid = parts.scheme in ("http", "https") and bool(parts.hostname)
     except ValueError:
-        port = None
-    if parts.scheme not in ("http", "https") or not parts.hostname:
+        valid = False
+    if not valid:
         raise LinkError("bad_url", f"{URL_ENV} must be an http:// address such as http://127.0.0.1:8767.")
     https = parts.scheme == "https"
     return Target(
@@ -875,6 +877,71 @@ def _tool_result(text: str, *, error: bool = False) -> dict:
 # -- process setup ------------------------------------------------------------
 
 
+class PipeLineReader:
+    """Lines from a Windows pipe, without ever leaving a read waiting on it.
+
+    Windows serializes synchronous I/O on a pipe: while a ReadFile waits for
+    data, another thread's GetFileType on the same pipe waits with it. A DLL
+    whose C runtime sets up its own stdio calls exactly that while it loads
+    (numpy's does, through config), so a blocking read on stdin froze the
+    first such import on the event thread until Claude Code sent something.
+    Peeking, then reading only the bytes that have arrived, never leaves a
+    read pending.
+    """
+
+    POLL_MIN_S = 0.005
+    POLL_MAX_S = 0.05
+
+    def __init__(self, fd: int) -> None:
+        import msvcrt
+
+        self._fd = fd
+        self._handle = msvcrt.get_osfhandle(fd)
+        self._buffer = bytearray()
+        self._eof = False
+
+    def readline(self) -> bytes:
+        import _winapi
+
+        delay = self.POLL_MIN_S
+        while True:
+            end = self._buffer.find(b"\n")
+            if end >= 0:
+                line = bytes(self._buffer[: end + 1])
+                del self._buffer[: end + 1]
+                return line
+            if self._eof:
+                line = bytes(self._buffer)
+                self._buffer.clear()
+                return line
+            try:
+                available = _winapi.PeekNamedPipe(self._handle)[0]
+            except OSError:
+                self._eof = True  # the writer closed its end
+                continue
+            if available:
+                chunk = os.read(self._fd, available)
+                self._eof = not chunk
+                self._buffer += chunk
+                delay = self.POLL_MIN_S
+            else:
+                time.sleep(delay)
+                delay = min(delay * 2, self.POLL_MAX_S)
+
+    def close(self) -> None:
+        os.close(self._fd)
+
+
+def _is_pipe(fd: int) -> bool:
+    import _winapi
+    import msvcrt
+
+    try:
+        return _winapi.GetFileType(msvcrt.get_osfhandle(fd)) == _winapi.FILE_TYPE_PIPE
+    except OSError:
+        return False
+
+
 def _binary_mode(fd: int) -> None:
     if sys.platform == "win32":
         import msvcrt
@@ -884,8 +951,8 @@ def _binary_mode(fd: int) -> None:
         msvcrt.setmode(fd, os.O_BINARY)
 
 
-def protocol_streams() -> Optional[tuple[BinaryIO, BinaryIO]]:
-    """Binary streams on the inherited stdin and stdout, or None without them.
+def protocol_streams() -> Optional[tuple[Any, BinaryIO]]:
+    """Line reader on the inherited stdin and binary stdout, or None without them.
 
     Anything else that writes to stdout (a print, a native library) is sent to
     stderr instead, so it can never corrupt the protocol.
@@ -908,7 +975,8 @@ def protocol_streams() -> Optional[tuple[BinaryIO, BinaryIO]]:
         os.dup2(devnull, 1)
         os.close(devnull)
     sys.stdout = sys.stderr
-    return os.fdopen(in_fd, "rb"), os.fdopen(out_fd, "wb")
+    reader = PipeLineReader(in_fd) if sys.platform == "win32" and _is_pipe(in_fd) else os.fdopen(in_fd, "rb")
+    return reader, os.fdopen(out_fd, "wb")
 
 
 def _configure_logging() -> None:
@@ -934,14 +1002,12 @@ def _app_version() -> str:
 
 def main(argv: list[str]) -> int:
     """The ``--channel`` entry point; runs until Claude Code closes stdin."""
-    if argv[:1] in (["-h"], ["--help"]):
-        if sys.stderr is not None:
-            sys.stderr.write(_USAGE)
-        return 0
-    _configure_logging()
     if argv:
-        logger.error("Unexpected arguments. Run with --channel --help for usage.")
-        return 2
+        help_asked = argv[:1] in (["-h"], ["--help"])
+        if sys.stderr is not None:
+            sys.stderr.write(_USAGE if help_asked else "Unexpected arguments. Run --channel --help for usage.\n")
+        return 0 if help_asked else 2
+    _configure_logging()
     streams = protocol_streams()
     if streams is None:
         logger.error("Claude Code starts the channel with pipes on stdin and stdout; it can't run without them.")
