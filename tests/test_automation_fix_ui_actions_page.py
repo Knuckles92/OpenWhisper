@@ -399,3 +399,54 @@ def test_route_by_voice_status_is_read_again_when_the_page_returns(make_dialog, 
     pump()
     assert status.message.text() == routing_words(store) != needs_fast
     assert status.state == "ready"
+
+
+# ---- 4/5. Route by voice's status, links and privacy line ----
+
+
+@pytest.mark.parametrize("fix,linked", [
+    ("fast_judgments", True), ("actions", False), ("trigger", False), ("", False)])
+def test_the_fast_judgments_link_shows_only_when_they_are_the_fix(make_dialog, routing_status,
+                                                                  fix, linked):
+    routing_status.fixed = _Status(True, False, "Route by voice needs something.", fix)
+    dialog, _store = make_dialog({SettingsKey.VOICE_ROUTING_ENABLED: True})
+    status = dialog.actions_routing_status
+    assert status.state == "attention"
+    assert status.link.isVisible() is linked
+
+
+def test_route_by_voice_off_has_no_link(make_dialog, routing_status):
+    routing_status.fixed = _Status(False, False, "Route by voice is off.")
+    dialog, _store = make_dialog()
+    assert dialog.actions_routing_status.state == "off"
+    assert not dialog.actions_routing_status.link.isVisible()
+
+
+def test_the_privacy_line_says_what_each_way_of_routing_sends(make_dialog, routing_status):
+    routing_status.fixed = _Status(True, False, "Route by voice needs Fast judgments.",
+                                   "fast_judgments")
+    dialog, _store = make_dialog({SettingsKey.VOICE_ROUTING_ENABLED: True})
+    privacy = dialog.actions_routing_privacy
+    assert privacy.isVisible()
+    assert privacy.text() == (
+        "Everything you record with the Route by voice shortcut is sent to TypeSafe or "
+        "OpenRouter to choose the action.")
+    dialog.actions_routing_dictation_tile.checkbox.click()
+    assert privacy.text() == (
+        "Everything you record with the Route by voice shortcut, and normal dictations that "
+        "start with an action's name, are sent to TypeSafe or OpenRouter to choose the action.")
+    # Ready, routing's own words say what is sent.
+    routing_status.fixed = _Status(True, True, "Route by voice is on.")
+    settings_actions.refresh(dialog)
+    assert not privacy.isVisible()
+
+
+def test_route_by_voice_has_no_caption_repeating_its_tile(make_dialog):
+    from PyQt6.QtWidgets import QLabel
+
+    dialog, _store = make_dialog()
+    page = dialog._pages[ACTIONS]
+    captions = [label.text() for label in page.findChildren(QLabel, "settingsTileGroupTitle")
+                if label.isVisible()]
+    assert "Route by voice" not in captions
+    assert dialog.actions_routing_tile.title_label.text() == "Route by voice"

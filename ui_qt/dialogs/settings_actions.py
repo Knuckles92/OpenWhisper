@@ -13,10 +13,17 @@ _AGENT_COPY = "Press a shortcut, say what you need, and your coding agent takes 
 _ROUTING_COPY = "Say an action's name first, like “Claude, …”, and your words go to it."
 _ON_DICTATION_COPY = "A normal dictation that starts with an action's name goes to that action too."
 _ROUTE_SHORTCUT_COPY = "Record, then send your words to the action they name, or paste them as usual."
-_PRIVACY_COPY = (
-    "Route by voice sends words that start with an action's name to TypeSafe or "
-    "OpenRouter to decide where they go."
+#: What Route by voice sends, by the ways it can be used.
+_PRIVACY_SHORTCUT = (
+    "Everything you record with the Route by voice shortcut is sent to TypeSafe or "
+    "OpenRouter to choose the action."
 )
+_PRIVACY_SHORTCUT_AND_DICTATION = (
+    "Everything you record with the Route by voice shortcut, and normal dictations that "
+    "start with an action's name, are sent to TypeSafe or OpenRouter to choose the action."
+)
+#: routing.status(...).fix when Fast judgments are what Route by voice still needs.
+_FIX_FAST_JUDGMENTS = "fast_judgments"
 
 SEARCH_FIELDS = [
     ("actions_agent_card", "Agent hotkey", _AGENT_COPY),
@@ -63,7 +70,7 @@ def _try_action(dialog, action, sample_text: str, done) -> None:
 
 def build(dialog, layout) -> None:
     from ui_qt.dialogs.settings_destinations import MCP, MEETING_FAST, STYLES
-    from ui_qt.dialogs.settings_fields import group_title, settings_caption
+    from ui_qt.dialogs.settings_fields import settings_caption
     from ui_qt.utils.icons import design_icon
     from ui_qt.widgets.action_agent_card import AgentHotkeyCard
     from ui_qt.widgets.action_fields import RouteShortcutField, StatusLine
@@ -93,7 +100,7 @@ def build(dialog, layout) -> None:
     layout.addWidget(panel)
     layout.addSpacing(12)
 
-    group_title(layout, "Route by voice")
+    # No group caption: the first tile is called Route by voice itself.
     title, description = _FIELDS["actions_routing_tile"]
     dialog.actions_routing_tile = SettingTile(title, description, design_icon("microphone-blue.svg"))
     dialog.actions_routing_tile.checkbox.toggled.connect(
@@ -117,7 +124,7 @@ def build(dialog, layout) -> None:
     dialog.actions_route_shortcut = RouteShortcutField(dialog)
     tile.add_body(dialog.actions_route_shortcut)
     dialog._tile_group(layout, "", [tile], columns=1)
-    dialog.actions_routing_privacy = settings_caption(_PRIVACY_COPY)
+    dialog.actions_routing_privacy = settings_caption(_PRIVACY_SHORTCUT)
     layout.addWidget(dialog.actions_routing_privacy)
 
 
@@ -161,9 +168,10 @@ def _show_routing(dialog, settings: dict) -> None:
     from ui_qt.widgets.action_fields import StatusLine
 
     enabled = resolve_voice_routing_enabled(settings)
+    on_dictation = resolve_voice_routing_on_dictation(settings)
     for tile, value in (
         (dialog.actions_routing_tile, enabled),
-        (dialog.actions_routing_dictation_tile, resolve_voice_routing_on_dictation(settings)),
+        (dialog.actions_routing_dictation_tile, on_dictation),
     ):
         with QSignalBlocker(tile.checkbox):
             tile.checkbox.setChecked(value)
@@ -172,9 +180,13 @@ def _show_routing(dialog, settings: dict) -> None:
     state = routing.status(settings)
     tone = (StatusLine.READY if state.ready
             else StatusLine.ATTENTION if state.enabled else StatusLine.OFF)
-    dialog.actions_routing_status.show_state(tone, state.message, link=not state.ready)
+    # The link leads only where the fix is: Fast judgments live on another page.
+    dialog.actions_routing_status.show_state(
+        tone, state.message, link=state.fix == _FIX_FAST_JUDGMENTS)
+    privacy = dialog.actions_routing_privacy
+    privacy.setText(_PRIVACY_SHORTCUT_AND_DICTATION if on_dictation else _PRIVACY_SHORTCUT)
     # Ready, routing's own message carries the privacy sentence.
-    dialog.actions_routing_privacy.setVisible(not state.ready)
+    privacy.setVisible(not state.ready)
     dialog.actions_route_shortcut.sync()
 
 
