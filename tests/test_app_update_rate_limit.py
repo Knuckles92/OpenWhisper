@@ -193,7 +193,9 @@ def test_other_api_errors_do_not_start_rate_limit_fallback(network, error):
         b"garbage",
         CHECKSUMS + CHECKSUMS,
         b"\xff",
-        b"x" * (app_update._MAX_CHECKSUM_BYTES + 1),
+        # pytest puts the test id in PYTEST_CURRENT_TEST; Windows caps a
+        # variable at 32,767 characters, so this value can't be its own id.
+        pytest.param(b"x" * (app_update._MAX_CHECKSUM_BYTES + 1), id="oversized"),
         urllib.error.HTTPError(BASE + "SHA256SUMS.txt", 404, "Not Found", {}, None),
         (f"{DIGEST}  ../../update.exe\n").encode(),
         (f"{DIGEST}  OpenWhisper-Setup-2.6.0.exe\n").encode(),
