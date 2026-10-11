@@ -1,6 +1,6 @@
 """launch.py review fixes: Linux terminal scripts, xdg-open, link guards, child env.
 
-Nothing real opens: Popen, run, startfile and the handler lookup are fakes.
+Nothing real opens: Popen, run, the Windows opener and the handler lookup are fakes.
 """
 
 import os
@@ -239,7 +239,7 @@ def opener(monkeypatch):
     """Records links handed to the system, on any platform; handlers by scheme."""
     opened, handlers = [], {}
     monkeypatch.setattr(launch, "_open_with", lambda command: opened.append(command[-1]))
-    monkeypatch.setattr(launch, "_windows_open", lambda uri, scheme: opened.append(uri))
+    monkeypatch.setattr(launch, "_windows_open", opened.append)
     monkeypatch.setattr(launch, "handler_available",
                         lambda scheme: handlers.get(scheme, False))
     return opened, handlers
