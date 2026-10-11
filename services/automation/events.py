@@ -117,9 +117,9 @@ class EventBus:
         self._base = base
         self._seq = itertools.count(base + 1)
         self._last_seq = base
-        # The newest event no longer in the buffer (evicted or cleared); the
-        # base while this run has dropped none.
-        self._evicted_seq = base
+        # Per type, the newest event no longer in the buffer (evicted or
+        # cleared); a type this run has dropped none of is absent.
+        self._dropped: dict[str, int] = {}
         self._thread: Optional[threading.Thread] = None
         self._closed = False
 
@@ -157,7 +157,8 @@ class EventBus:
             self._last_seq = seq
             if replay:
                 if len(self._buffer) == self._buffer.maxlen:
-                    self._evicted_seq = self._buffer[0].seq
+                    oldest = self._buffer[0]
+                    self._dropped[oldest.type] = oldest.seq
                 self._buffer.append(event)
             # The recipients are fixed now: a subscription opened later never
             # gets this event, one closed later still does.
@@ -213,6 +214,9 @@ class EventBus:
               ) -> tuple[list[Event], Optional[str]]:
         """Buffered events after ``seq``, and why some may be missing.
 
+        Only events of the wanted ``types`` count: a client is never told of
+        a gap in events it doesn't follow.
+
         Returns:
             The events, and None when the client can't have missed any;
             ``GAP_EVICTED`` when this run no longer holds some it published
@@ -224,14 +228,15 @@ class EventBus:
         with self._lock:
             buffered = list(self._buffer)
             last = self._last_seq
-            evicted = self._evicted_seq
+            dropped = max((newest for kind, newest in self._dropped.items()
+                           if wanted is None or kind in wanted), default=0)
         if 0 < seq and self._base <= seq <= last:
-            gap = GAP_EVICTED if seq < evicted else None
+            gap = GAP_EVICTED if seq < dropped else None
         else:
             # 0, or a position this run never gave out (an earlier run's, or
             # a later one's after the clock was set back): every event of
             # this run is new to the client, and any this run dropped is lost.
-            if evicted > self._base:
+            if dropped:
                 gap = GAP_EVICTED
             else:
                 gap = GAP_RESTARTED if seq else None
@@ -256,10 +261,15 @@ class EventBus:
             return self._last_seq
 
     def clear(self) -> None:
-        """Forget buffered events (history was deleted); sequence numbers continue."""
+        """Forget buffered events (history was deleted); sequence numbers continue.
+
+        They count as dropped, like evicted ones: a client that hadn't got
+        one of a type it follows is told of the gap, never its text.
+        """
         with self._lock:
+            for event in self._buffer:  # oldest first, so the newest of each type stays
+                self._dropped[event.type] = event.seq
             self._buffer.clear()
-            self._evicted_seq = self._last_seq
 
     def close(self) -> None:
         with self._lock:
