@@ -10,6 +10,7 @@ from services.actions.model import Action, ActionKind
 from services.actions.runtime import ActionResult
 from services.automation import programs
 from services.dictation_pipeline import DictationJob, JobMode
+from services.settings import SettingsKey
 from tests import test_automation_actions_runtime as base
 
 h = base.h  # the runtime harness: fake UI, settings and event bus
@@ -205,6 +206,8 @@ def test_a_failed_run_the_user_started_still_copies_the_words(h, monkeypatch, so
 
 
 def test_a_refusal_at_the_cap_from_the_api_is_not_copied(h, blocked):
+    # The program may send its words to coding agents.
+    h.settings.values[SettingsKey.API_AGENT_PROMPTS] = True
     for n in range(runtime.MAX_PENDING):
         h.rt.deliver(_job("q1"), f"question {n}", raw_text=None, html="")
     copied = list(h.ui.copied)

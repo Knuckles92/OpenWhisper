@@ -246,7 +246,7 @@ def test_channel_publishes_the_words_to_listening_sessions(h):
 def test_channel_app_is_null_while_the_capture_is_still_running(h):
     h.add(Action("ch", "Tell my session", ActionKind.CHANNEL))
     h.bus.subscribe(lambda event: None, label="claude-channel")
-    job = DictationJob(mode=JobMode.ACTION, action_id="ch", focus=Future())
+    job = DictationJob(mode=JobMode.ACTION, action_id="ch", source="hotkey", focus=Future())
 
     h.rt.deliver(job, "words", raw_text=None, html="")
 

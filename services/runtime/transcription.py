@@ -1421,11 +1421,12 @@ class TranscriptionRuntime:
         Raises:
             ControlError: ``refused``, ``not_found`` or ``busy``, with a
                 message to show.
-            PermissionDenied: A program (``source`` api or mcp) asked for an
-                agent or Claude Code channel action without the
-                AGENT_PROMPTS permission.
+            PermissionDenied: A program (any ``source`` but the user's) asked
+                for an action that doesn't take its words without the
+                AGENT_PROMPTS permission (``program_words_allowed``).
         """
-        from services.actions.model import ActionKind, find_action
+        from services.actions.model import find_action
+        from services.actions.runtime import program_words_allowed
         from services.automation import permissions
         from services.automation.control import BUSY, NOT_FOUND, REFUSED, ControlError
 
@@ -1438,10 +1439,10 @@ class TranscriptionRuntime:
         action = find_action(settings, action_id)
         if action is None or not action.enabled:
             raise ControlError(NOT_FOUND, "No enabled action has that id.")
-        if (source not in event_catalog.USER_SOURCES
-                and action.kind in (ActionKind.AGENT, ActionKind.CHANNEL)):
-            # A program's words would reach the user's coding agent as a prompt.
-            permissions.require(settings, permissions.AGENT_PROMPTS)
+        if not event_catalog.user_started(source) and not program_words_allowed(action, settings):
+            # A program's words would reach the user's coding agent as a prompt;
+            # delivery would refuse them, so say so now.
+            raise permissions.PermissionDenied(permissions.AGENT_PROMPTS)
         if not self.controller.action_runtime.accepting():
             raise ControlError(BUSY, "OpenWhisper isn't taking actions right now.")
         job = dictation_pipeline.begin_job(

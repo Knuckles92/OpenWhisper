@@ -66,6 +66,14 @@ FAILURES = frozenset({FAILURE_CANCELED, FAILURE_NO_SPEECH, FAILURE_REFUSED, FAIL
 _RAW_TEXT_MODES = frozenset({"dictation", "action", FILE_MODE})
 
 
+def user_started(source: Any) -> bool:
+    """Whether a job of ``source`` was started by the user rather than a program.
+
+    An empty or unknown source counts as a program's.
+    """
+    return source in USER_SOURCES
+
+
 def known_types(types: Iterable[str]) -> list[str]:
     """``types`` filtered to public event types, order kept, duplicates dropped."""
     seen: list[str] = []

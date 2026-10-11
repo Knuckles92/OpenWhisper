@@ -25,6 +25,7 @@ from services import (
     focus_context,
     snippets,
 )
+from services.automation import catalog
 from services.batch_upload import compose_batch_cleanup_prompt
 from services.cleanup_profiles import compose_profile_prompt
 from services.focus_context import FocusSnapshot
@@ -110,6 +111,20 @@ class DictationJob:
     route: str = ""
     #: Spoken routing turned this dictation into an ACTION job.
     routed: bool = False
+    #: A text filter a program leased over the live API changed the words
+    #: (the user's own saved filters don't count).
+    changed_by_program: bool = False
+
+    @property
+    def program_words(self) -> bool:
+        """Whether a program supplied this job's words or changed them.
+
+        A program supplied them when it started the job: any source but the
+        user's own (catalog.USER_SOURCES), so an unknown one counts too.
+        Such words reach the user's coding agents only with "Send words to
+        my coding agents" (services.actions.runtime.program_words_allowed).
+        """
+        return self.changed_by_program or not catalog.user_started(self.source)
 
     def snapshot(self, timeout: float = 0.0) -> Optional[FocusSnapshot]:
         """The focus capture, or None when it failed or isn't ready; never raises.
