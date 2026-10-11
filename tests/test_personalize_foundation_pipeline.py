@@ -291,11 +291,13 @@ def test_begin_job_asks_for_focus_only_when_app_context_is_on():
     service = FakeService(FocusSnapshot(OUTLOOK))
     focus_context.set_service(service)
 
-    dictation = begin_job(JobMode.DICTATION, {SettingsKey.APP_CONTEXT_READ_TEXT: True})
+    dictation = begin_job(JobMode.DICTATION, {SettingsKey.APP_CONTEXT_READ_TEXT: True},
+                          source="hotkey")
     command = begin_job(JobMode.COMMAND, {}, selection="the selected words", source="hotkey")
     off = begin_job(JobMode.DICTATION, {SettingsKey.APP_CONTEXT_ENABLED: False})
 
-    assert service.requests == [(True, False), (False, True)]
+    # A dictation replaces the selection, so it reads it with the text near the cursor.
+    assert service.requests == [(True, True), (False, True)]
     assert dictation.snapshot() == FocusSnapshot(OUTLOOK)
     assert command.selection_text() == "the selected words"
     assert off.focus is None and off.snapshot() is None

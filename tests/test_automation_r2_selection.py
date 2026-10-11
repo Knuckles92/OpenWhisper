@@ -171,4 +171,7 @@ def test_an_agent_prompt_carries_the_selection_only_for_the_users_job(
     (prompt,) = prompts
     assert (SELECTED in prompt) is shared
     assert ("<selected_text>" in prompt) is shared
-    assert job.snapshot(timeout=2).text.before == "Notes: "  # the text near it was still read
+    snapshot = job.snapshot(timeout=2)
+    # A program's job reads nothing on screen, only which app has focus.
+    assert snapshot.identity == MAIL
+    assert (snapshot.text is not None and snapshot.text.before == "Notes: ") is shared
