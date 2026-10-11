@@ -8,12 +8,10 @@ from typing import Callable, Mapping, Optional
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
-    QHBoxLayout,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QSizePolicy,
-    QWidget,
 )
 
 from services.actions.model import (
@@ -43,6 +41,7 @@ from ui_qt.widgets.action_copy import (
 from ui_qt.widgets.action_fields import (
     AgentFields,
     Columns,
+    button_row,
     OutputCombo,
     PathField,
     ShapingField,
@@ -58,6 +57,7 @@ from ui_qt.widgets.action_fields import (
 )
 from ui_qt.widgets.buttons import Button, compact_primary_button, fit_compact_button, neutral_button
 from ui_qt.widgets.no_wheel import NoWheelSpinBox
+from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.setting_tile import InfoTile
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
@@ -99,6 +99,8 @@ class ActionEditor(InfoTile):
         self._action: Optional[Action] = None
         self._is_new = False
         self._try_token = 0
+        self._scan_token = 0
+        self._agents_scanned = False
         self._secrets_made: set[str] = set()
 
         self.name_edit = input_field(QLineEdit())
@@ -136,11 +138,10 @@ class ActionEditor(InfoTile):
         self.url_note = hint_label("")
         self.url_note.setProperty("tone", "warning")
         self.reply_combo = OutputCombo("Where the reply goes")
-        self.copy_secret_button = neutral_button(Button("Copy signing secret"))
-        fit_compact_button(self.copy_secret_button, 0)
+        self.copy_secret_button = neutral_button(Button("Copy secret"))
+        self.copy_secret_button.setAccessibleName("Copy signing secret")
         self.copy_secret_button.clicked.connect(self.copy_secret)
         self.new_secret_button = neutral_button(Button("New secret"))
-        fit_compact_button(self.new_secret_button, 0)
         self.new_secret_button.clicked.connect(self.new_secret)
         self.secret_hint = hint_label("Your service checks each request with it.")
         self.webhook_box = stack(
@@ -148,7 +149,7 @@ class ActionEditor(InfoTile):
             Columns(
                 stack(field_label("Reply goes to", self.reply_combo), self.reply_combo),
                 stack(field_label("Signing secret"),
-                      plain_row(self.copy_secret_button, self.new_secret_button, stretch_last=True),
+                      button_row(self.copy_secret_button, self.new_secret_button),
                       self.secret_hint),
                 min_column=240,
             ),
@@ -222,15 +223,10 @@ class ActionEditor(InfoTile):
         self.sample_edit.setAccessibleName("Words to try it with")
         self.sample_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.try_button = neutral_button(Button("Try it"))
-        fit_compact_button(self.try_button, 0)
+        fit_compact_button(self.try_button)
         self.try_button.clicked.connect(self.try_it)
-        try_row = QWidget()
-        try_row.setProperty("tileId", "actionRow")
-        row = QHBoxLayout(try_row)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
-        row.addWidget(self.sample_edit, 1)
-        row.addWidget(self.try_button)
+        try_row = Reflow(self.sample_edit, self.try_button, lead_width=180,
+                         stacked_alignment=Qt.AlignmentFlag.AlignLeft)
         self.try_result = hint_label("")
         self.try_result.setObjectName("actionTryResult")
         self.try_result.hide()
@@ -242,13 +238,13 @@ class ActionEditor(InfoTile):
         self.message.hide()
         self.add_body(self.message)
         self.cancel_button = neutral_button(Button("Cancel"))
-        fit_compact_button(self.cancel_button, 0)
         self.cancel_button.clicked.connect(self.cancel)
         self.save_button = compact_primary_button(Button("Save action"))
-        fit_compact_button(self.save_button, 120)
         self.save_button.clicked.connect(self.save)
-        self.add_body(plain_row(None, self.cancel_button, self.save_button))
-        action_relay.relay().try_done.connect(self._on_try_done)
+        self.add_body(button_row(self.cancel_button, self.save_button, align="right"))
+        relay = action_relay.relay()
+        relay.try_done.connect(self._on_try_done)
+        relay.scan_done.connect(self._on_scan_done)
 
     # ---- opening ----
 
@@ -287,7 +283,7 @@ class ActionEditor(InfoTile):
 
         self.agent_fields.set_app_awareness(resolve_app_context_enabled(dict(settings)))
         if kind == ActionKind.AGENT:
-            self.agent_fields.set_available(available_agents())
+            self._show_agents(available_agents())
         self.url_edit.setText(hook.param("url") or "")
         self.reply_combo.set_value(hook.param("output"))
         self.program_field.set_path(program.param("program") or "")
@@ -300,6 +296,9 @@ class ActionEditor(InfoTile):
         self.shaping.set_value(action.shaping)
         self.spoken_edit.setText(", ".join(action.spoken_names))
         self.description_edit.setText(action.description)
+        for edit in (self.name_edit, self.template_edit, self.url_edit, self.spoken_edit,
+                     self.description_edit, self.sample_edit):
+            edit.setCursorPosition(0)
         self.shortcut.set_hotkey(action.hotkey)
         self.try_result.hide()
         self.try_button.setEnabled(True)
@@ -317,6 +316,23 @@ class ActionEditor(InfoTile):
         self._update_url_note()
         # The draft as opened: untouched, there is nothing to keep.
         self._baseline = self.draft()
+
+    def _show_agents(self, found: dict) -> None:
+        """What the last scan found, or look once when nothing has been scanned yet."""
+        if found or self._agents_scanned:
+            self.agent_fields.set_available(found)
+            return
+        self._agents_scanned = True
+        self._scan_token = token = action_relay.next_token()
+        self.agent_fields.set_available(None)
+        action_relay.start_agent_scan(token)
+
+    def _on_scan_done(self, token: int) -> None:
+        if token != self._scan_token:
+            return
+        from ui_qt.widgets.action_agent_card import available_agents
+
+        self.agent_fields.set_available(available_agents(), animate=True)
 
     def refresh_choices(self, settings: Mapping) -> None:
         """Profiles, transforms and app awareness may have changed on other pages."""

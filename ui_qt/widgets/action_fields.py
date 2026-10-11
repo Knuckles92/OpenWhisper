@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Mapping, Optional
 
-from PyQt6.QtCore import QEasingCurve, QEvent, QSize, Qt, QVariantAnimation, pyqtSignal
+from PyQt6.QtCore import QEasingCurve, QEvent, QObject, QSize, Qt, QVariantAnimation, pyqtSignal
 from PyQt6.QtWidgets import (
     QBoxLayout,
     QFileDialog,
@@ -36,8 +36,10 @@ from ui_qt.widgets.action_copy import MODE_LABELS, OUTPUT_LABELS, SURFACE_HINTS,
 from ui_qt.widgets.button_row import ButtonRow
 from ui_qt.widgets.buttons import Button, fit_compact_button, neutral_button
 from ui_qt.widgets.command_settings import CommandShortcutField
+from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.no_wheel import ElidingComboBox
 from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
+from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.widgets.wrapped_label import WrappedLabel
@@ -50,6 +52,9 @@ ARRIVAL_MS = 380
 CHOOSER_MAX_WIDTH = 660
 BAR_MAX_WIDTH = 460
 COMBO_MAX_WIDTH = 340
+SHORTCUT_MAX_WIDTH = 380
+#: A tile narrower than this (at 100%) gives its body the full width.
+NARROW_TILE_WIDTH = 360
 
 
 def cap_widths(caps) -> None:
@@ -82,6 +87,29 @@ def hint_label(text: str = "") -> WrappedLabel:
 _ICON_TONES = (("-purple", "purple"), ("-green", "green"), ("-gray", "gray"), ("-blue", "blue"))
 
 
+class _BodyIndent(QObject):
+    """Lines a tile's body up with its title, or gives it the full width when narrow."""
+
+    def __init__(self, tile, indent: int):
+        super().__init__(tile)
+        self._tile = tile
+        self._indent = indent
+        tile.installEventFilter(self)
+        self._apply(tile.width())
+
+    def _apply(self, width: int) -> None:
+        narrow = width < round(NARROW_TILE_WIDTH * current_ui_font_scale())
+        margin = 0 if narrow or not self._indent else self._indent
+        layout = self._tile._body_layout
+        if layout.contentsMargins().left() != margin:
+            layout.setContentsMargins(margin, 0, 0, 0)
+
+    def eventFilter(self, obj, event):
+        if obj is self._tile and event.type() == QEvent.Type.Resize:
+            self._apply(event.size().width())
+        return False
+
+
 def tint_icon(tile, icon: str, *, side: int = 32, indent_body: bool = True) -> None:
     """Sit a tile's icon in a soft rounded square of its own colour, like the MCP cards."""
     from ui_qt.utils.icons import design_icon
@@ -93,9 +121,8 @@ def tint_icon(tile, icon: str, *, side: int = 32, indent_body: bool = True) -> N
     label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     label.setPixmap(design_icon(icon).pixmap(18, 18))
     set_style_property(label, "iconTone", tone)
-    if indent_body:
-        # Line the body up with the title beside the larger icon.
-        tile._body_layout.setContentsMargins(side + 12, 0, 0, 0)
+    if getattr(tile, "_action_body_indent", None) is None:
+        tile._action_body_indent = _BodyIndent(tile, side + 12 if indent_body else 0)
 
 
 def input_field(widget: QWidget) -> QWidget:
@@ -107,8 +134,7 @@ def input_field(widget: QWidget) -> QWidget:
 def page_link(text: str, tooltip: str = "") -> QPushButton:
     """A flat accent link, like the other Settings pages' "Open …" links."""
     link = QPushButton(text)
-    link.setObjectName("settingsPageLink")
-    link.setProperty("tileId", "actionLink")
+    link.setObjectName("actionLink")
     link.setFlat(True)
     link.setCursor(Qt.CursorShape.PointingHandCursor)
     if tooltip:
@@ -131,6 +157,41 @@ def plain_row(*widgets, spacing: int = 8, stretch_last: bool = False) -> QWidget
     if stretch_last:
         layout.addStretch(1)
     return row
+
+
+class ActionButtons(ButtonRow):
+    """Buttons at their own width in one row, wrapping into more rows when narrow."""
+
+    def __init__(self, buttons, *, spacing: int = 8, parent=None):
+        super().__init__(buttons, spacing=spacing, parent=parent)
+        # Its own width when there's room, so a footer never stretches across a card.
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+
+    def sizeHint(self) -> QSize:
+        # Always the one-row width, so whoever places the row (a Reflow, a
+        # stretch) decides the same way however it is wrapped right now.
+        visible = [button for button in self._buttons if not button.isHidden()]
+        width = sum(max(b.minimumWidth(), b.sizeHint().width()) for b in visible)
+        width += self._spacing * max(0, len(visible) - 1)
+        return QSize(width, super().sizeHint().height())
+
+
+def button_row(*buttons, align: str = "left") -> QWidget:
+    """``buttons`` side by side at their own width, wrapping when the column is narrow."""
+    for button in buttons:
+        fit_compact_button(button)
+    row = ActionButtons(buttons)
+    box = QWidget()
+    box.setProperty("tileId", "actionRow")
+    layout = QHBoxLayout(box)
+    layout.setContentsMargins(0, 0, 0, 0)
+    if align == "right":
+        layout.addStretch(1)
+    layout.addWidget(row)
+    if align == "left":
+        layout.addStretch(1)
+    box.buttons = row
+    return box
 
 
 def section_heading(text: str) -> QWidget:
@@ -212,25 +273,23 @@ class PathField(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._title = title
         self._folder = folder
-        layout = QHBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
         self.line = input_field(QLineEdit())
         self.line.setReadOnly(True)
         self.line.setPlaceholderText(placeholder)
         self.line.setAccessibleName(title)
         self.line.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        layout.addWidget(self.line, 1)
         self.choose_button = neutral_button(Button("Choose…"))
-        fit_compact_button(self.choose_button, 0)
         self.choose_button.setAccessibleName(f"Choose {title.lower()}")
         self.choose_button.clicked.connect(self._choose)
-        layout.addWidget(self.choose_button)
         self.clear_button = neutral_button(Button("Clear"))
-        fit_compact_button(self.clear_button, 0)
         self.clear_button.setAccessibleName(f"Clear {title.lower()}")
         self.clear_button.clicked.connect(lambda: self._set(""))
-        layout.addWidget(self.clear_button)
+        # The buttons move under the path when the column is narrow.
+        self.buttons = button_row(self.choose_button, self.clear_button)
+        layout.addWidget(Reflow(self.line, self.buttons, lead_width=160,
+                                stacked_alignment=Qt.AlignmentFlag.AlignLeft))
         self.set_path("")
 
     def path(self) -> str:
@@ -266,25 +325,31 @@ class ShortcutField(QWidget):
         super().__init__(parent)
         self.setProperty("tileId", "actionShortcutField")
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        layout = QHBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
         self.input = ProfileHotkeyInput()
         self.input.setAccessibleName(name)
         self.input.setToolTip(_SHORTCUT_TIP)
         self.input.setPlaceholderText("Click to set a shortcut")
-        self.input.setMinimumWidth(140)
-        self.input.setMaximumWidth(260)
+        self.input.setMinimumWidth(0)
         self.input.capture_changed.connect(self._on_capture_changed)
         self.input.captured.connect(self.captured)
-        layout.addWidget(self.input, 1)
         self.clear_button = neutral_button(Button("Clear"))
-        self.clear_button.set_base_minimum_size(64, 34)
+        fit_compact_button(self.clear_button, 64)
         self.clear_button.setAccessibleName(f"Clear {name.lower()}")
         self.clear_button.clicked.connect(lambda: self.captured.emit(""))
-        layout.addWidget(self.clear_button)
-        layout.addStretch(1)
+        # Clear moves under the box when the column is narrow.
+        self.row = Reflow(self.input, self.clear_button, lead_width=170,
+                          stacked_alignment=Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self.row)
+        self._caps = ((self.row, SHORTCUT_MAX_WIDTH),)
+        cap_widths(self._caps)
         self._before = ""
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if _font_changed(event) and hasattr(self, "_caps"):
+            cap_widths(self._caps)
 
     @property
     def hotkey(self) -> str:
@@ -372,6 +437,8 @@ class SwitchRow(QFrame):
 class OutputCombo(ElidingComboBox):
     """Where an answer, reply or output goes."""
 
+    MINIMUM_WIDTH = 110
+
     def __init__(self, name: str, *, allow_none: bool = True, parent=None):
         super().__init__(parent)
         self.setObjectName("actionOutputCombo")
@@ -426,15 +493,14 @@ class AgentChoice(QPushButton):
         layout.addWidget(self.mark, alignment=Qt.AlignmentFlag.AlignVCenter)
         text = QVBoxLayout()
         text.setSpacing(0)
-        self.name_label = QLabel(name)
+        self.name_label = ElidingLabel(name)
         self.name_label.setObjectName("actionAgentName")
-        self.detail_label = QLabel("Checking…")
+        self.detail_label = ElidingLabel("Checking…")
         self.detail_label.setObjectName("actionAgentDetail")
         for label in (self.name_label, self.detail_label):
             label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             text.addWidget(label)
-        layout.addLayout(text)
-        layout.addStretch(1)
+        layout.addLayout(text, 1)
         self.found: Optional[bool] = None
         self._arrival = QVariantAnimation(self)
         self._arrival.setDuration(ARRIVAL_MS)
@@ -466,7 +532,7 @@ class AgentChoice(QPushButton):
         return self.layout().sizeHint().expandedTo(QSize(0, 44))
 
     def minimumSizeHint(self) -> QSize:
-        return self.sizeHint()
+        return QSize(self.layout().minimumSize().width(), self.sizeHint().height())
 
     def paintEvent(self, event) -> None:
         option = QStyleOptionButton()
@@ -488,16 +554,31 @@ class AgentChooser(QWidget):
         self.choices = {agent_id: AgentChoice(agent_id) for agent_id in AGENTS}
         for choice in self.choices.values():
             choice.clicked.connect(lambda _checked=False, c=choice: self._on_clicked(c.agent_id))
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.row = ButtonRow(list(self.choices.values()))
-        layout.addWidget(self.row)
+        # Side by side while their names fit, else one above the other.
+        self._layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(8)
+        for choice in self.choices.values():
+            self._layout.addWidget(choice, 1)
         self._current = AGENTS[0]
         self._available: Optional[dict] = None
         self._sync()
 
     def current(self) -> str:
         return self._current
+
+    @property
+    def stacked(self) -> bool:
+        return self._layout.direction() == QBoxLayout.Direction.TopToBottom
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        needed = sum(choice.sizeHint().width() for choice in self.choices.values())
+        needed += self._layout.spacing() * (len(self.choices) - 1)
+        direction = (QBoxLayout.Direction.TopToBottom if self.width() < needed
+                     else QBoxLayout.Direction.LeftToRight)
+        if self._layout.direction() != direction:
+            self._layout.setDirection(direction)
 
     def set_current(self, agent_id: str) -> None:
         self._current = agent_id if agent_id in self.choices else AGENTS[0]

@@ -6,6 +6,7 @@ from typing import Optional
 
 from PyQt6.QtCore import QEvent, QSignalBlocker, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
+    QBoxLayout,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -30,6 +31,30 @@ from ui_qt.widgets.wrapped_label import WrappedLabel
 
 #: Cards sit two to a row from this page width (at 100% font scale).
 TWO_COLUMNS_FROM = 640
+
+
+class ChipRow(QWidget):
+    """Chips side by side at their own width, or one under another when they don't fit."""
+
+    def __init__(self, chips, parent=None):
+        super().__init__(parent)
+        self.setProperty("tileId", "actionRow")
+        self._chips = list(chips)
+        self._layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(6)
+        for item in self._chips:
+            self._layout.addWidget(item, 0, Qt.AlignmentFlag.AlignLeft)
+        self._layout.addStretch(1)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        needed = sum(item.sizeHint().width() for item in self._chips)
+        needed += self._layout.spacing() * (len(self._chips) - 1)
+        direction = (QBoxLayout.Direction.TopToBottom if self.width() < needed
+                     else QBoxLayout.Direction.LeftToRight)
+        if self._layout.direction() != direction:
+            self._layout.setDirection(direction)
 
 
 def chip(text: str, tone: str = "") -> QLabel:
@@ -58,21 +83,13 @@ class ActionCard(InfoTile):
         self.switch.toggled.connect(lambda on: self.enabled_toggled.emit(self.action.id, bool(on)))
         self.add_trailing(self.switch)
 
-        chips = QWidget()
-        chips.setProperty("tileId", "actionRow")
-        row = QHBoxLayout(chips)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(6)
         shortcut = format_hotkey_display(action.hotkey)
         self.shortcut_chip = chip(shortcut or "No shortcut", "key" if shortcut else "muted")
         self.shortcut_chip.setAccessibleName(
             f"Shortcut {shortcut}" if shortcut else "No shortcut")
-        row.addWidget(self.shortcut_chip)
         spoken = spoken_hint(action)
-        self.spoken_chip = chip(spoken, "voice")
-        self.spoken_chip.setVisible(bool(spoken))
-        row.addWidget(self.spoken_chip)
-        row.addStretch(1)
+        self.spoken_chip = chip(spoken, "voice") if spoken else None
+        chips = ChipRow([c for c in (self.shortcut_chip, self.spoken_chip) if c is not None])
 
         links = QWidget()
         links.setProperty("tileId", "actionRow")
@@ -129,8 +146,8 @@ class ActionList(QWidget):
         text.setObjectName("actionsEmptyText")
         empty.addWidget(text)
         empty.addSpacing(6)
-        self.empty_add = compact_primary_button(Button("Add your first action"))
-        fit_compact_button(self.empty_add, 0)
+        self.empty_add = compact_primary_button(Button("Add an action"))
+        fit_compact_button(self.empty_add)
         self.empty_add.clicked.connect(self.add_requested)
         empty.addWidget(self.empty_add, alignment=Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self.empty)

@@ -110,7 +110,7 @@ def build(dialog, layout) -> None:
 
     status = dialog.actions_routing_status = InfoTile("Fast judgments", "", design_icon("bolt-green.svg"))
     status.setProperty("tileId", "actionRoutingStatus")
-    status.open_link = page_link("Open Fast judgments", "Settings → Meeting Mode → Fast judgments")
+    status.open_link = page_link("Set it up", "Open Settings → Meeting Mode → Fast judgments")
     status.open_link.clicked.connect(lambda: dialog.select_destination(MEETING_FAST))
     status.link_row = plain_row(status.open_link, stretch_last=True)
     status.add_body(status.link_row)

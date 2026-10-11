@@ -24,10 +24,11 @@ from services.actions.model import (
 from services.hotkey_manager import format_hotkey_display
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.action_editor import ActionEditor
-from ui_qt.widgets.action_fields import hint_label, plain_row
+from ui_qt.widgets.action_fields import hint_label
 from ui_qt.widgets.action_gallery import PresetGallery
 from ui_qt.widgets.action_list import ActionList
 from ui_qt.widgets.buttons import Button, compact_primary_button, fit_compact_button
+from ui_qt.widgets.reflow import Reflow
 
 LIST, GALLERY, EDITOR = "list", "gallery", "editor"
 #: How long a just-saved card glows.
@@ -73,9 +74,9 @@ class ActionsPanel(QWidget):
         title = QLabel("Your actions")
         title.setObjectName("settingsTileGroupTitle")
         self.add_button = compact_primary_button(Button("Add action"))
-        fit_compact_button(self.add_button, 0)
+        fit_compact_button(self.add_button)
         self.add_button.clicked.connect(self.add_action)
-        self.header = plain_row(title, None, self.add_button)
+        self.header = Reflow(title, self.add_button)
         layout.addWidget(self.header)
         self.notice = hint_label("")
         self.notice.setProperty("tileId", "actionsNotice")

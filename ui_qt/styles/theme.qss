@@ -5558,12 +5558,30 @@ QFrame#settingsTile[tileId="actionCard"][searchHit="true"] {
     border-color: @accent-border;
 }
 
-QPushButton#settingsPageLink[tileId="actionLink"] {
+/* Links, like the other pages' "Open ..." links but without their
+   "min-height: 0": Settings pages lay out at their minimum height, so a link
+   must never be allowed below its own text. */
+QPushButton#actionLink {
+    color: @accent;
+    background-color: transparent;
+    border: none;
     font-size: 12px;
+    font-weight: 600;
+    padding: 2px 0;
 }
 
-QPushButton#settingsPageLink[tileId="actionLink"][tone="danger"] {
+QPushButton#actionLink:hover,
+QPushButton#actionLink:focus {
+    color: @accent-soft;
+    text-decoration: underline;
+}
+
+QPushButton#actionLink[tone="danger"] {
     color: @danger-text-soft;
+}
+
+QPushButton#actionLink:disabled {
+    color: @slate-text-disabled;
 }
 
 QLabel#actionChip {

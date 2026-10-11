@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Callable, Mapping, Optional
 
-from PyQt6.QtCore import QSignalBlocker, pyqtSignal
+from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox, QSizePolicy, QVBoxLayout, QWidget
 
 from services.actions.model import (
@@ -34,13 +34,14 @@ from ui_qt.widgets.action_copy import summary
 from ui_qt.widgets.action_fields import (
     AgentFields,
     ShortcutField,
+    button_row,
     field_label,
     hint_label,
     page_link,
-    plain_row,
     tint_icon,
 )
-from ui_qt.widgets.buttons import Button, compact_primary_button, fit_compact_button, neutral_button
+from ui_qt.widgets.buttons import Button, compact_primary_button, neutral_button
+from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.setting_tile import InfoTile
 from ui_qt.widgets.settings_switch import SettingsSwitch
 
@@ -103,14 +104,14 @@ class AgentHotkeyCard(InfoTile):
         self.status = hint_label("")
         self.look_again = page_link("Look again", "Check this computer again, for example after installing an agent")
         self.look_again.clicked.connect(lambda: self.start_scan(refresh=True))
-        self.status_row = plain_row(self.status, self.look_again, None)
-        self.status_row.layout().setStretch(0, 1)
+        self.status_row = Reflow(self.status, self.look_again, lead_width=200,
+                                 stacked_alignment=Qt.AlignmentFlag.AlignLeft)
         self.add_body(self.status_row)
 
-        self.setup_button = compact_primary_button(Button("Set up agent hotkey"))
-        fit_compact_button(self.setup_button, 0)
+        self.setup_button = compact_primary_button(Button("Set it up"))
+        self.setup_button.setAccessibleName("Set up the agent hotkey")
         self.setup_button.clicked.connect(self.set_up)
-        self.setup_row = plain_row(self.setup_button, stretch_last=True)
+        self.setup_row = button_row(self.setup_button)
         self.add_body(self.setup_row)
 
         self.shortcut_box = QWidget()
@@ -131,20 +132,17 @@ class AgentHotkeyCard(InfoTile):
         self.add_body(self.message)
 
         self.try_button = neutral_button(Button("Try it"))
-        fit_compact_button(self.try_button, 0)
         self.try_button.setToolTip(f"Sends “{AGENT_SAMPLE}” to the agent, as if you'd said it")
         self.try_button.clicked.connect(self.try_it)
         self.more_button = neutral_button(Button("More options"))
-        fit_compact_button(self.more_button, 0)
         self.more_button.setToolTip("Spoken names, how your words are prepared, and the rest")
         self.more_button.clicked.connect(
             lambda: self._action is not None and self.edit_requested.emit(self._action))
-        self.remove_button = neutral_button(Button("Remove"))
-        fit_compact_button(self.remove_button, 0)
-        self.remove_button.setToolTip("Remove the agent hotkey and its shortcut")
+        self.remove_button = page_link("Remove", "Remove the agent hotkey and its shortcut")
+        self.remove_button.setProperty("tone", "danger")
         self.remove_button.clicked.connect(self.remove)
-        self.footer = plain_row(self.try_button, self.more_button, self.remove_button,
-                                stretch_last=True)
+        self.footer = Reflow(button_row(self.try_button, self.more_button), self.remove_button,
+                             stacked_alignment=Qt.AlignmentFlag.AlignLeft)
         self.add_body(self.footer)
 
         relay = action_relay.relay()

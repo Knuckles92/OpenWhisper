@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QGridLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from services.actions.model import AGENT_ACTION_ID, PRESETS, ActionKind, Preset
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
 from ui_qt.widgets.action_fields import hint_label, page_link, tint_icon
+from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.setting_tile import TileBase
 
 #: A link of your own, for anything the named presets don't cover.
@@ -77,18 +78,11 @@ class PresetGallery(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
-        header = QWidget()
-        header.setProperty("tileId", "actionRow")
-        row = QHBoxLayout(header)
-        row.setContentsMargins(0, 0, 0, 0)
         title = QLabel("Choose a starting point")
         title.setObjectName("actionSectionLabel")
-        row.addWidget(title)
-        row.addStretch(1)
         self.cancel_link = page_link("Cancel", "Close without adding an action")
         self.cancel_link.clicked.connect(self.cancelled)
-        row.addWidget(self.cancel_link)
-        layout.addWidget(header)
+        layout.addWidget(Reflow(title, self.cancel_link))
         self.grid_box = QWidget()
         self.grid_box.setProperty("tileId", "actionRow")
         self.grid = QGridLayout(self.grid_box)
