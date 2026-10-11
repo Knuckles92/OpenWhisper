@@ -1048,7 +1048,8 @@ class LiveAutomationSection(QWidget):
             (
                 SettingsKey.API_LIVE_EVENTS,
                 "Follow live events",
-                "Watch recordings, dictations and meetings as they happen, like reading history.",
+                "A program can read your finished dictations, the actions you run and meeting "
+                "lines as they happen, like reading history.",
                 "file-music-blue.svg",
             ),
             (

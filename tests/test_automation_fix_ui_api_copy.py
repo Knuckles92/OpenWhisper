@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QApplication
 
 from services.agent_mcp import events_ext
 from services.automation import events
+from services.settings import SettingsKey
 from tests.test_mcp_host_tabs import make_view
 
 
@@ -48,3 +49,11 @@ def test_mcp_events_says_the_agent_picks_the_address_and_gets_what_you_dictate(l
     # One or two lines on the card, not a paragraph.
     assert len(line) <= 140
 
+
+
+def test_follow_live_events_names_what_it_shares_while_on_by_default(live):
+    check = live.api_permission_checks[SettingsKey.API_LIVE_EVENTS]
+    assert check.isChecked()
+    line = check.accessibleDescription()
+    for shared in ("finished dictations", "actions", "meeting lines"):
+        assert shared in line
