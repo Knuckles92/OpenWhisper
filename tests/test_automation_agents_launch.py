@@ -57,10 +57,16 @@ def popen(monkeypatch):
 def test_windows_classic_handler_counts_only_while_its_program_exists(monkeypatch, tmp_path):
     exe = tmp_path / "claude.exe"
     exe.write_bytes(b"")
-    monkeypatch.setattr(launch, "_assoc_query", FakeAssoc({
-        ("claude-cli", launch._ASSOCSTR_COMMAND): (0, f'"{exe}" --handle-uri "%1"'),
-        ("claude-cli", launch._ASSOCSTR_EXECUTABLE): (0, str(exe)),
-    }))
+
+    def assoc(scheme, what):
+        # AssocQueryStringW checks the program: CO_E_APPNOTFOUND once it's gone.
+        if what == launch._ASSOCSTR_COMMAND:
+            return 0, f'"{exe}" --handle-uri "%1"'
+        if what == launch._ASSOCSTR_EXECUTABLE:
+            return (0, str(exe)) if exe.exists() else (0x800401F5, "")
+        return NO_ASSOCIATION, ""
+
+    monkeypatch.setattr(launch, "_assoc_query", assoc)
     assert launch._windows_handler("claude-cli") is True
     exe.unlink()  # an uninstall that left its registration behind
     assert launch._windows_handler("claude-cli") is False
@@ -68,18 +74,19 @@ def test_windows_classic_handler_counts_only_while_its_program_exists(monkeypatc
 
 def test_windows_packaged_app_protocol_counts(monkeypatch):
     # MSIX apps (the ChatGPT app's codex://) leave only a bare "URL Protocol"
-    # key; the association resolves to their AppX id.
+    # key; the association resolves to the AppX protocol handler, a COM object.
     monkeypatch.setattr(launch, "_assoc_query", FakeAssoc({
-        ("codex", launch._ASSOCSTR_PROGID): (0, "AppXpphkyfg606fzrg1c0jchv5hg0k0y69e5"),
+        ("codex", launch._ASSOCSTR_DELEGATEEXECUTE): (0, "{A56A841F-E974-45C1-8001-7E3F8A085917}"),
     }))
     assert launch._windows_handler("codex") is True
 
 
 @pytest.mark.parametrize("table, expected", [
-    ({}, False),                                                     # unknown scheme
-    ({("stale", launch._ASSOCSTR_PROGID): (0, "stale")}, False),      # key, no handler
+    ({}, False),                                                         # unknown scheme
+    ({("stale", launch._ASSOCSTR_COMMAND): (NO_ASSOCIATION, ""),
+      ("stale", launch._ASSOCSTR_DELEGATEEXECUTE): (0x80070490, "")}, False),  # key, no handler
     ({("stale", launch._ASSOCSTR_COMMAND): (0x80004005, ""),
-      ("stale", launch._ASSOCSTR_PROGID): (0x80004005, "")}, None),   # lookup failed
+      ("stale", launch._ASSOCSTR_DELEGATEEXECUTE): (0x80004005, "")}, None),   # lookup failed
 ])
 def test_windows_without_a_handler(monkeypatch, table, expected):
     monkeypatch.setattr(launch, "_assoc_query", FakeAssoc(table))
@@ -340,10 +347,10 @@ def test_linux_tries_the_next_terminal_when_one_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(launch.subprocess, "Popen", Popen)
     launch._linux_terminal(["/bin/agent", WORDS], str(tmp_path), {"A": "1"})
     (args, kwargs), = started
-    # Only the one-shot script's path: terminals re-parse what follows -e.
-    script = args[2]
+    # Only the one-shot script for /bin/sh: terminals re-parse what follows -e.
+    script = args[-1]
     os.remove(script)
-    assert args == ["/usr/bin/xterm", "-e", script] and script.endswith(".sh")
+    assert args == ["/usr/bin/xterm", "-e", "/bin/sh", script] and script.endswith(".sh")
     assert kwargs["cwd"] == str(tmp_path) and kwargs["env"] == {"A": "1"}
     assert kwargs["start_new_session"] is True and "shell" not in kwargs
 

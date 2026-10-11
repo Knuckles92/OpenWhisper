@@ -419,7 +419,7 @@ def test_a_missing_app_is_named_when_an_action_opens_a_link(h, monkeypatch):
 
     monkeypatch.setattr(launch, "handler_available", lambda scheme: False)
     monkeypatch.setattr(launch, "_open_with", lambda command: pytest.fail("opened"))
-    monkeypatch.setattr(launch.os, "startfile", lambda uri: pytest.fail("opened"), raising=False)
+    monkeypatch.setattr(launch, "_windows_open", lambda uri, scheme: pytest.fail("opened"))
     h.add(Action("l1", "ChatGPT app", ActionKind.OPEN_LINK,
                  {"template": "codex://new?prompt={text}"}))
 

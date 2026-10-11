@@ -6,7 +6,8 @@ A program receives the event's wire JSON and a newline on stdin, and
 OpenWhisper's secrets. It runs without a shell or a console window, in its
 own process group, and when its time limit passes it is stopped together
 with everything it started. A program that ends by itself leaves what it
-started alone (an app it opened stays open). Its stderr is discarded.
+started alone (an app it opened stays open), though its stdout closes a
+moment later. Its stderr is discarded.
 
 Each program runs one event at a time; up to ``MAX_QUEUED`` more wait, and
 the oldest is dropped beyond that. Program paths, arguments and output are
@@ -45,6 +46,9 @@ SUBSCRIPTION_LABEL = "programs"
 #: How long, after a program exits, ``run_once`` keeps reading output that
 #: processes it left running hold open.
 OUTPUT_GRACE_S = 1.0
+#: How long, at most, the output reader waits for data at a time where a
+#: read can't be cancelled (not Windows).
+READ_POLL_S = 0.05
 #: How often a run checks its cancel event.
 CANCEL_POLL_S = 0.05
 CANCELED = "Canceled"
@@ -121,7 +125,8 @@ def run_once(argv: Sequence[str], stdin: bytes, *, timeout_s: float, cwd: str = 
         (whatever its exit code), else why it didn't ("Timed out after …",
         ``CANCELED``, or why it couldn't start), and the exit code is then
         None. Processes a program that ends by itself leaves running are
-        left alone; their output is read for ``OUTPUT_GRACE_S`` more at most.
+        left alone; their output is read for ``OUTPUT_GRACE_S`` more at most,
+        then the pipe is closed (their later writes to it fail).
     """
     import subprocess
 
@@ -155,27 +160,8 @@ def run_once(argv: Sequence[str], stdin: bytes, *, timeout_s: float, cwd: str = 
     except (ValueError, TypeError):
         return None, b"", "The program couldn't start (its arguments aren't valid)."
 
-    output = bytearray()
-    returned = threading.Event()
-
     # Each pipe is closed by the thread that uses it, once that thread is
-    # done: a process the program left running may hold the other end for
-    # as long as it lives, and closing a pipe another thread is blocked on
-    # would block here too.
-    def read() -> None:
-        try:
-            while True:
-                chunk = proc.stdout.read1(65536)
-                if not chunk:
-                    return
-                room = MAX_STDOUT_BYTES - len(output)
-                if room > 0 and not returned.is_set():
-                    output.extend(chunk[:room])
-        except (OSError, ValueError):
-            return
-        finally:
-            _close(proc.stdout)
-
+    # done: closing a pipe another thread is blocked on would block here too.
     def write() -> None:
         try:
             if stdin:
@@ -185,9 +171,8 @@ def run_once(argv: Sequence[str], stdin: bytes, *, timeout_s: float, cwd: str = 
         finally:
             _close(proc.stdin)
 
-    reader = threading.Thread(target=read, name="program-stdout", daemon=True)
+    output = _Output(proc.stdout)
     writer = threading.Thread(target=write, name="program-stdin", daemon=True)
-    reader.start()
     writer.start()
     stopped = _wait(proc, timeout, cancel)
     if stopped:
@@ -196,15 +181,97 @@ def run_once(argv: Sequence[str], stdin: bytes, *, timeout_s: float, cwd: str = 
             kill_agent_process(proc)
         except Exception as exc:
             logger.debug("Could not stop a program's processes: %s", type(exc).__name__)
-        reader.join(timeout=2.0)
         writer.join(timeout=2.0)
-        returned.set()
-        return None, bytes(output), stopped
+        return None, output.finish(2.0), stopped
     # It ended by itself: what it started is the user's now.
     _disown(proc)
-    reader.join(timeout=OUTPUT_GRACE_S)
-    returned.set()
-    return proc.returncode, bytes(output), ""
+    return proc.returncode, output.finish(OUTPUT_GRACE_S), ""
+
+
+class _Output:
+    """A program's stdout, read on a thread of its own until the run is done with it.
+
+    A process the program leaves running may hold the pipe for as long as it
+    lives, so the end of the output can't be waited for: ``finish`` stops the
+    reader once the run has what it needs (on Windows by cancelling the read
+    it is blocked in; elsewhere the reader waits for data at most
+    ``READ_POLL_S`` at a time), and the reader then closes the pipe.
+    """
+
+    CHUNK = 65536
+
+    def __init__(self, pipe) -> None:
+        self._pipe = pipe
+        self._data = bytearray()
+        self._stop = threading.Event()
+        self._reader = threading.Thread(target=self._read, name="program-stdout", daemon=True)
+        self._reader.start()
+
+    def _read(self) -> None:
+        fd = self._pipe.fileno()
+        poll = None
+        if sys.platform != "win32":
+            import select
+
+            poll = select.poll()
+            poll.register(fd, select.POLLIN)
+        try:
+            while not self._stop.is_set():
+                # Readable, or every writer has closed its end (then b"").
+                if poll is not None and not poll.poll(int(READ_POLL_S * 1000)):
+                    continue
+                chunk = os.read(fd, self.CHUNK)
+                if not chunk:
+                    return
+                room = MAX_STDOUT_BYTES - len(self._data)
+                if room > 0:
+                    self._data += chunk[:room]
+        except OSError:
+            return  # the read was cancelled (Windows)
+        finally:
+            _close(self._pipe)
+
+    def finish(self, grace: float) -> bytes:
+        """What was kept, once every writer has closed the pipe or ``grace`` has passed.
+
+        The reader is stopped either way: what processes left running write
+        later goes nowhere.
+        """
+        self._reader.join(grace)
+        self._stop.set()
+        if self._reader.is_alive() and sys.platform == "win32":
+            _cancel_read(self._reader)
+        self._reader.join(timeout=1.0)
+        return bytes(self._data)
+
+
+#: The access to a thread that CancelSynchronousIo needs.
+_THREAD_TERMINATE = 0x0001
+
+
+def _cancel_read(thread: threading.Thread) -> None:
+    """Cancel the read ``thread`` is blocked in until it ends; Windows only. Never raises."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenThread.restype = wintypes.HANDLE
+    kernel32.CancelSynchronousIo.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel32.OpenThread(_THREAD_TERMINATE, False, thread.native_id)
+    if not handle:
+        logger.debug("Could not stop a program's output reader (error %d)",
+                     ctypes.get_last_error())
+        return
+    try:
+        # A cancel that lands between two reads is lost; the next one isn't.
+        deadline = time.monotonic() + 1.0
+        while thread.is_alive() and time.monotonic() < deadline:
+            kernel32.CancelSynchronousIo(handle)
+            thread.join(0.01)
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _wait(proc, timeout: float, cancel: Optional[threading.Event]) -> str:

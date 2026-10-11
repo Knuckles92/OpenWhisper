@@ -163,20 +163,18 @@ def agent_child_env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     to OpenWhisper's built-in engines and must not change which account the
     user's agent bills. Variables the user exported themselves pass through.
     """
-    from services.process_env import external_env
+    from services.process_env import drop, external_env
 
     # The user's environment, not the frozen loader's or the app's own venv.
     env = external_env()
     try:
         from services.credentials import dotenv_injected_names
 
-        for name in dotenv_injected_names():
-            env.pop(name, None)
+        drop(env, dotenv_injected_names())
     except Exception:
         logger.debug("Could not read the .env key list", exc_info=True)
-    for name in ("OPENWHISPER_SIDECAR_TOKEN", "OPENWHISPER_LLM_API_KEY",
-                 "OPENWHISPER_LLM_BASE_URL"):
-        env.pop(name, None)
+    drop(env, ("OPENWHISPER_SIDECAR_TOKEN", "OPENWHISPER_LLM_API_KEY",
+               "OPENWHISPER_LLM_BASE_URL"))
     if extra:
         env.update(extra)
     return env

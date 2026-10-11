@@ -138,6 +138,17 @@ def external_env(extra: Optional[Mapping[str, str]] = None) -> dict[str, str]:
     return env
 
 
+def drop(env: dict, names: Iterable[str]) -> None:
+    """Remove ``names`` from ``env``, matching names the way the system does.
+
+    Windows ignores case in variable names, so ``Anthropic_Api_Key`` written in
+    a ``.env`` file is the ``ANTHROPIC_API_KEY`` that ``os.environ`` holds.
+    """
+    unwanted = {_key(name) for name in names}
+    for name in [name for name in env if _key(name) in unwanted]:
+        del env[name]
+
+
 def forget() -> None:
     """Drop the recorded originals (tests)."""
     with _lock:

@@ -90,7 +90,7 @@ def test_linux_terminals_get_one_private_script_with_every_argument_quoted(
     launch._linux_terminal(argv, folder, {"A": "1"})
 
     (proc,) = started
-    assert proc.args[:2] == ["/usr/bin/xterm", "-e"] and len(proc.args) == 3
+    assert proc.args[:3] == ["/usr/bin/xterm", "-e", "/bin/sh"] and len(proc.args) == 4
     path, script = _script_of(proc)
     try:
         assert WORDS not in proc.args and not any("claude" in a for a in proc.args)
@@ -122,7 +122,7 @@ def test_every_terminal_style_takes_just_the_script(monkeypatch, popen, tmp_path
     proc = started[0]
     path, _script = _script_of(proc)
     os.remove(path)
-    assert proc.args == [f"/usr/bin/{style_terminal}", *prefix, path]
+    assert proc.args == [f"/usr/bin/{style_terminal}", *prefix, "/bin/sh", path]
 
 
 def test_a_terminal_that_dies_at_once_falls_through_to_the_next(monkeypatch, popen, tmp_path):
@@ -190,7 +190,7 @@ def test_open_uri_uses_open_or_xdg_open_off_windows(monkeypatch):
     monkeypatch.setattr(launch, "_open_with", seen.append)
     monkeypatch.setattr(launch, "handler_available", lambda scheme: True)
     if sys.platform == "win32":
-        pytest.skip("Windows opens links with os.startfile")
+        pytest.skip("Windows opens links through their association")
     launch.open_uri("https://example.com/")
     assert seen == [["open" if sys.platform == "darwin" else "xdg-open", "https://example.com/"]]
 
@@ -240,7 +240,7 @@ def opener(monkeypatch):
     """Records links handed to the system, on any platform; handlers by scheme."""
     opened, handlers = [], {}
     monkeypatch.setattr(launch, "_open_with", lambda command: opened.append(command[-1]))
-    monkeypatch.setattr(launch.os, "startfile", opened.append, raising=False)
+    monkeypatch.setattr(launch, "_windows_open", lambda uri, scheme: opened.append(uri))
     monkeypatch.setattr(launch, "handler_available",
                         lambda scheme: handlers.get(scheme, False))
     return opened, handlers
@@ -289,9 +289,9 @@ def test_the_limits_are_the_ones_agent_links_use():
     assert agents.CLAUDE_APP_TEXT_MAX == launch.CLAUDE_APP_TEXT_MAX == 14_000
 
 
-# -- item 2: the association string is a ProgID ---------------------------------------------------
+# -- item 2: the association strings it asks for ---------------------------------------------------
 
 
-def test_the_packaged_app_lookup_asks_for_the_progid():
-    assert launch._ASSOCSTR_PROGID == 20  # ASSOCSTR_APPID is 21
+def test_the_handler_lookup_asks_for_the_delegate_execute_handler():
+    assert launch._ASSOCSTR_DELEGATEEXECUTE == 18  # ASSOCSTR_SUPPORTED_URI_PROTOCOLS is 19
     assert not hasattr(launch, "_ASSOCSTR_APPID")
