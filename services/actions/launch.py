@@ -4,7 +4,9 @@ Words reach a link percent-encoded and a terminal as one argv element; they
 never pass through a shell, cmd.exe or AppleScript source, nor a terminal's
 own command-line parsing (macOS and Linux terminals run a one-shot script
 whose every argument is shell-quoted). Every child gets the user's
-environment without OpenWhisper's own keys (``agent_child_env``).
+environment without OpenWhisper's own keys (``agent_child_env``), so on
+Windows a link's handler is started here rather than by the shell, which
+would pass on this process's environment.
 """
 
 from __future__ import annotations
@@ -76,10 +78,7 @@ def open_uri(uri: str) -> None:
         raise LaunchError(f"No app on this computer opens {scheme}: links."
                           + (f" Install {app}." if app else ""))
     if sys.platform == "win32":
-        try:
-            os.startfile(uri)  # type: ignore[attr-defined]
-        except OSError as exc:
-            raise LaunchError("No app on this computer opens that link.") from exc
+        _windows_open(uri, scheme)
         return
     _open_with(["open", uri] if sys.platform == "darwin" else ["xdg-open", uri])
 
@@ -195,20 +194,86 @@ def _assoc_query(scheme: str, what: int) -> Tuple[int, str]:
     return result & 0xFFFFFFFF, buffer.value
 
 
-def _windows_handler(scheme: str) -> Optional[bool]:
+def _windows_association(scheme: str) -> Tuple[Optional[bool], str, str]:
+    """How ShellExecute would open ``scheme``: ``(found, command, program)``.
+
+    ``found`` is :func:`handler_available`'s answer. ``command`` is the
+    command line of a classic handler and ``program`` the absolute path it
+    starts ("" when the association doesn't name one); both are "" for a COM
+    handler or none.
+    """
     delegate_result, delegate = _assoc_query(scheme, _ASSOCSTR_DELEGATEEXECUTE)
     if delegate_result == _S_OK and delegate:
-        return True
+        return True, "", ""
     result, command = _assoc_query(scheme, _ASSOCSTR_COMMAND)
-    if result == _S_OK and command:
-        # A classic handler; one left behind by an uninstalled app opens nothing.
-        found, program = _assoc_query(scheme, _ASSOCSTR_EXECUTABLE)
-        if found == _S_OK and os.path.isabs(program):
-            return os.path.isfile(program)
-        return True
-    if result in _NO_HANDLER and delegate_result in _NO_HANDLER:
-        return False
-    return None
+    if result != _S_OK or not command:
+        missing = result in _NO_HANDLER and delegate_result in _NO_HANDLER
+        return (False if missing else None), "", ""
+    found, program = _assoc_query(scheme, _ASSOCSTR_EXECUTABLE)
+    if found != _S_OK or not os.path.isabs(program):
+        return True, command, ""
+    # One left behind by an uninstalled app opens nothing.
+    return os.path.isfile(program), command, program
+
+
+def _windows_handler(scheme: str) -> Optional[bool]:
+    return _windows_association(scheme)[0]
+
+
+#: What ShellExecute fills into a protocol's command: the link for these
+#: (in either case), nothing for the extra parameters a link doesn't have.
+_LINK_FIELDS = "01DLV"
+_PARAMETER_FIELDS = "*23456789"
+_FIELD_RE = re.compile(r"%(.)", re.DOTALL)
+
+
+def _fill_command(template: str, uri: str) -> str:
+    """A protocol's command line with ``uri`` filled in the way ShellExecute does it.
+
+    The link goes in as it is, inside whatever quotes the command puts around
+    it; ``%%`` is a percent sign and other fields stay as written.
+    """
+    def field(match: re.Match) -> str:
+        name = match.group(1).upper()
+        if name in _LINK_FIELDS:
+            return uri
+        if name in _PARAMETER_FIELDS:
+            return ""
+        return "%" if name == "%" else match.group(0)
+
+    return _FIELD_RE.sub(field, template)
+
+
+def _windows_open(uri: str, scheme: str) -> None:
+    """Open ``uri`` so that its app starts in the user's environment.
+
+    ShellExecute would start a classic handler from this process, with
+    OpenWhisper's environment (its ``.env`` keys, its CUDA folders on
+    ``PATH``), so the handler's command is filled in here the same way and
+    started with the user's. A COM handler is how packaged apps and Windows'
+    own pages take links; Windows starts those apps itself, so the shell
+    opens those links.
+    """
+    _found, command, program = _windows_association(scheme)
+    if not command:
+        try:
+            _shell_open(uri)
+        except OSError as exc:
+            raise LaunchError("No app on this computer opens that link.") from exc
+        return
+    try:
+        # Like ShellExecute: a console program gets a console of its own.
+        proc = subprocess.Popen(_fill_command(command, uri), executable=program or None,
+                                env=_child_env(), creationflags=_CREATE_NEW_CONSOLE)
+    except OSError as exc:
+        raise LaunchError("No app on this computer opens that link.") from exc
+    _reap(proc)
+
+
+def _shell_open(uri: str) -> None:
+    """ShellExecute ``uri``, with COM on this thread as it asks for; raises OSError."""
+    with _com():
+        os.startfile(uri)  # type: ignore[attr-defined]
 
 
 def _macos_handler(scheme: str) -> Optional[bool]:
@@ -428,7 +493,7 @@ def _linux_terminal(args: List[str], cwd: str, env: Optional[Mapping[str, str]])
 
 
 def _reap(proc: subprocess.Popen) -> None:
-    """Collect the terminal's exit status whenever it closes."""
+    """Collect the exit status of a terminal or link handler whenever it ends."""
     threading.Thread(target=proc.wait, name="terminal-reaper", daemon=True).start()
 
 

@@ -190,7 +190,7 @@ def test_open_uri_uses_open_or_xdg_open_off_windows(monkeypatch):
     monkeypatch.setattr(launch, "_open_with", seen.append)
     monkeypatch.setattr(launch, "handler_available", lambda scheme: True)
     if sys.platform == "win32":
-        pytest.skip("Windows opens links with os.startfile")
+        pytest.skip("Windows opens links through their association")
     launch.open_uri("https://example.com/")
     assert seen == [["open" if sys.platform == "darwin" else "xdg-open", "https://example.com/"]]
 
@@ -240,7 +240,7 @@ def opener(monkeypatch):
     """Records links handed to the system, on any platform; handlers by scheme."""
     opened, handlers = [], {}
     monkeypatch.setattr(launch, "_open_with", lambda command: opened.append(command[-1]))
-    monkeypatch.setattr(launch.os, "startfile", opened.append, raising=False)
+    monkeypatch.setattr(launch, "_windows_open", lambda uri, scheme: opened.append(uri))
     monkeypatch.setattr(launch, "handler_available",
                         lambda scheme: handlers.get(scheme, False))
     return opened, handlers

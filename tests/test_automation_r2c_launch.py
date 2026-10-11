@@ -1,6 +1,7 @@
-"""Opening links on Windows (review round 2): handlers that are COM objects.
+"""Opening links on Windows (review round 2): handlers that are COM objects, and
+classic handlers started in the user's environment rather than OpenWhisper's.
 
-Nothing real opens: the association lookup and the shell are fakes. The
+Nothing real opens: the association lookup, Popen and the shell are fakes. The
 association tables are what AssocQueryStringW answers on a real Windows 11.
 """
 
@@ -9,6 +10,7 @@ import threading
 
 import pytest
 
+from services import credentials
 from services.actions import launch
 from tests import test_automation_agents_launch as base
 
@@ -32,6 +34,31 @@ REGISTERED = FakeAssoc({
     ("tel", COMMAND): (0, r'C:\WINDOWS\system32\OpenWith.exe "%1"'),
     ("tel", DELEGATE_EXECUTE): (0, "{e44e9428-bdbc-4987-a099-40dc8fd255e7}"),
 })
+
+
+@pytest.fixture
+def dotenv_key(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-openwhisper-dotenv")
+    monkeypatch.setenv("USER_OWN_VAR", "kept")
+    monkeypatch.setattr(credentials, "dotenv_injected_names", lambda: {"ANTHROPIC_API_KEY"})
+
+
+@pytest.fixture
+def windows(monkeypatch):
+    """The Windows opener's two ways out, recorded: CreateProcess and ShellExecute."""
+    started, shell = [], []
+
+    class Proc:
+        def __init__(self, args, **kwargs):
+            started.append((args, kwargs))
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(launch.subprocess, "Popen", Proc)
+    monkeypatch.setattr(launch, "_shell_open", shell.append)
+    monkeypatch.setattr(launch, "_assoc_query", REGISTERED)
+    return started, shell
 
 
 # -- #3: DelegateExecute handlers count -------------------------------------------------
@@ -98,3 +125,97 @@ def test_a_worker_thread_sees_windows_own_packaged_protocols():
     worker.start()
     worker.join(10)
     assert found == [True]
+
+
+# -- N2: a classic handler starts in the user's environment -------------------------------
+
+
+def test_a_classic_handler_starts_in_the_users_environment(windows, dotenv_key):
+    started, shell = windows
+    launch._windows_open("claude-cli://open?q=hello%20there", "claude-cli")
+
+    ((command, kwargs),) = started
+    assert command == f'"{CLAUDE_CODE}" --handle-uri "claude-cli://open?q=hello%20there"'
+    assert kwargs["executable"] == CLAUDE_CODE
+    env = kwargs["env"]
+    assert "ANTHROPIC_API_KEY" not in env and env["USER_OWN_VAR"] == "kept"
+    # Like ShellExecute: a console program gets its own console, and nothing
+    # of OpenWhisper's (no pipes, no inherited handles).
+    assert kwargs["creationflags"] == launch._CREATE_NEW_CONSOLE
+    assert not {"stdin", "stdout", "stderr", "shell"} & set(kwargs)
+    assert shell == []
+
+
+def test_a_web_link_reaches_the_browser_the_same_way(windows, dotenv_key):
+    started, shell = windows
+    uri = "https://chatgpt.com/?q=caf%C3%A9%20%22quoted%22"
+    launch._windows_open(uri, "https")
+    ((command, kwargs),) = started
+    assert command.endswith(f"--single-argument {uri}")
+    assert "ANTHROPIC_API_KEY" not in kwargs["env"]
+
+
+@pytest.mark.parametrize("scheme", ["codex", "ms-settings", "tel"])
+def test_a_com_handler_is_left_to_windows(windows, scheme):
+    # Windows activates the app (a packaged app, Settings): it never starts
+    # from this process, so it doesn't get this process's environment.
+    started, shell = windows
+    launch._windows_open(f"{scheme}:x", scheme)
+    assert started == [] and shell == [f"{scheme}:x"]
+
+
+def test_an_unknown_handler_is_left_to_windows(windows, monkeypatch):
+    started, shell = windows
+    monkeypatch.setattr(launch, "_assoc_query", FakeAssoc({
+        ("odd", COMMAND): (0x80004005, ""), ("odd", DELEGATE_EXECUTE): (0x80004005, "")}))
+    launch._windows_open("odd:x", "odd")
+    assert started == [] and shell == ["odd:x"]
+
+
+def test_a_handler_that_wont_start_says_so(windows, monkeypatch):
+    def fail(args, **kwargs):
+        raise FileNotFoundError(2, "not found")
+
+    monkeypatch.setattr(launch.subprocess, "Popen", fail)
+    with pytest.raises(launch.LaunchError, match="No app"):
+        launch._windows_open("claude-cli://open?q=hi", "claude-cli")
+
+
+def test_the_shell_failing_says_so(windows, monkeypatch):
+    def fail(uri):
+        raise OSError(1155, "no association")
+
+    monkeypatch.setattr(launch, "_shell_open", fail)
+    with pytest.raises(launch.LaunchError, match="No app"):
+        launch._windows_open("codex://new?prompt=hi", "codex")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows opens links through associations")
+def test_open_uri_on_windows_uses_the_association(monkeypatch):
+    seen = []
+    monkeypatch.setattr(launch, "handler_available", lambda scheme: True)
+    monkeypatch.setattr(launch, "_windows_open", lambda uri, scheme: seen.append((uri, scheme)))
+    launch.open_uri("Claude-CLI://open?q=hi")
+    assert seen == [("Claude-CLI://open?q=hi", "claude-cli")]
+
+
+# What ShellExecuteExW put on a recorder's command line for each template
+# (Windows 11, link "s:x"): the link for %1 %L %V %D %0, nothing for %* and
+# %2..%9, a percent sign for %%.
+@pytest.mark.parametrize("template, expected", [
+    ('"p.exe" "%1"', '"p.exe" "s:x"'),
+    ('"p.exe" %1', '"p.exe" s:x'),
+    ('"p.exe" "%L" %l', '"p.exe" "s:x" s:x'),
+    ('"p.exe" --open-url -- "%1"', '"p.exe" --open-url -- "s:x"'),
+    ('"p.exe" [%*] [%2] [%9]', '"p.exe" [] [] []'),
+    ('"p.exe" [100%%] [%V] [%D] [%0]', '"p.exe" [100%] [s:x] [s:x] [s:x]'),
+    ('"p.exe"', '"p.exe"'),  # ShellExecute doesn't add the link either
+    ('"p.exe" "%1" %', '"p.exe" "s:x" %'),
+])
+def test_the_command_is_filled_in_as_shellexecute_does(template, expected):
+    assert launch._fill_command(template, "s:x") == expected
+
+
+def test_the_link_goes_in_as_it_is():
+    link = r"s:a\1 %1 \\ $(x) & | ^ é 😀"
+    assert launch._fill_command('"p.exe" "%1"', link) == f'"p.exe" "{link}"'
