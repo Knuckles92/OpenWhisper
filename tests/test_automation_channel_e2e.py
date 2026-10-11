@@ -602,7 +602,7 @@ def test_stop_ends_a_quiet_stream_promptly(app):
     assert not stream._thread.is_alive()
 
 
-def test_a_gap_forwards_nothing_and_keeps_the_resume_point(app):
+def test_a_gap_is_announced_and_keeps_the_resume_point(app):
     collected = _Collector()
     stream = _stream(AppLink(url=app.url, token=TOKEN), collected)
     stream.start()
@@ -611,12 +611,17 @@ def test_a_gap_forwards_nothing_and_keeps_the_resume_point(app):
         first = app.publish(_message("before the gap"))
         collected.wait(1)
         app.send_gap(missed_from_seq=first + 1)
+        _eventually(lambda: len(collected.messages) == 2)
+        assert stream.last_id == str(first)
         second = app.publish(_message("after the gap"))
-        messages = collected.wait(2)
+        messages = collected.wait(3)
         _eventually(lambda: stream.last_id == str(second))
     finally:
         stream.stop()
-    assert [m["content"] for m in messages] == ["before the gap", "after the gap"]
+    assert [m["content"] for m in messages] == [
+        "before the gap", channel_bridge.GAP_NOTICE, "after the gap",
+    ]
+    assert messages[1]["meta"] == {"origin": "openwhisper"}
 
 
 def test_stream_skips_events_without_text(app):

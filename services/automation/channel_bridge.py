@@ -38,7 +38,7 @@ from typing import Any, BinaryIO, Callable, Mapping, Optional
 from urllib.parse import urlsplit
 
 from services.agent_mcp.setup import CHANNEL_SERVER_NAME
-from services.automation.catalog import CHANNEL_MESSAGE
+from services.automation.catalog import CHANNEL_MESSAGE, EVENTS_GAP
 
 logger = logging.getLogger("openwhisper.channel")
 
@@ -83,6 +83,13 @@ ORIGIN_OPENWHISPER = "openwhisper"
 #: app's own buttons, a routed dictation, or a desktop shortcut over D-Bus.
 #: Any other source (api, mcp, or one this version doesn't know) is a program.
 DICTATED_SOURCES = frozenset({"hotkey", "ui", "routing", "dbus"})
+
+#: What Claude reads when the event stream says messages were missed.
+GAP_NOTICE = (
+    "Some messages sent from OpenWhisper while this session was disconnected may "
+    "have been missed. If the user seems to be waiting on something, ask them to "
+    "send it again."
+)
 
 INSTRUCTIONS = (
     f'Messages arrive as <channel source="{CHANNEL_SERVER_NAME}" origin="..." job_id="..." '
@@ -567,6 +574,8 @@ class EventStream:
         self._thread: Optional[threading.Thread] = None
         self._state = ""
         self.last_id = ""
+        # The resume point whose gap Claude was last told about.
+        self._gap_announced_at: Optional[str] = None
 
     @property
     def state(self) -> str:
@@ -681,8 +690,9 @@ class EventStream:
             self.last_id = parser.last_id
 
     def _handle(self, event: SseEvent) -> None:
-        # events.gap (no id line, so the resume point stays) only says some
-        # messages were missed: there is nothing to forward.
+        if event.type == EVENTS_GAP:
+            self._announce_gap(event)
+            return
         if event.type != CHANNEL_MESSAGE:
             return
         try:
@@ -695,6 +705,18 @@ class EventStream:
             logger.info("Skipped a channel event with no text.")
             return
         self._deliver(params)
+
+    def _announce_gap(self, event: SseEvent) -> None:
+        """Tell the log and Claude that messages may have been missed, once per resume point.
+
+        ``events.gap`` has no ``id:`` line, so the resume point stays put; until
+        a new message moves it, every reconnect brings the same gap again.
+        """
+        if event.last_id == self._gap_announced_at:
+            return
+        self._gap_announced_at = event.last_id
+        logger.warning("Some messages may have been missed while disconnected from OpenWhisper.")
+        self._deliver({"content": GAP_NOTICE, "meta": {"origin": ORIGIN_OPENWHISPER}})
 
 
 # -- the MCP server -----------------------------------------------------------
@@ -800,7 +822,9 @@ class ChannelServer:
 
     def send_channel_message(self, params: dict) -> None:
         if self._out.send({"jsonrpc": "2.0", "method": "notifications/claude/channel", "params": params}):
-            logger.info("Forwarded a dictated message to Claude Code.")
+            origin = params.get("meta", {}).get("origin", ORIGIN_PROGRAM)
+            # One of the fixed origin values, never the words.
+            logger.info("Forwarded a message (%s) to Claude Code.", origin)
 
     def _result(self, request_id: Any, result: Mapping[str, Any]) -> None:
         self._out.send({"jsonrpc": "2.0", "id": request_id, "result": result})
