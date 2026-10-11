@@ -249,9 +249,13 @@ def test_dictations_actions_and_files_keep_their_before_cleanup_text(h):
 def test_the_action_runtime_shows_the_notice_with_its_outcome(h, monkeypatch):
     from services.actions import runtime as action_runtime
 
+    from services.automation import events
+
     _with_actions(h, POLISHED)
     monkeypatch.setattr(action_runtime, "settings_manager", h.settings)
     runtime = action_runtime.ActionRuntime(h.controller)
+    # A program following the live events, so "Send to my scripts" has a listener.
+    listener = events.bus().subscribe(lambda event: None, label="sse")
     try:
         runtime.deliver(DictationJob(mode=JobMode.ACTION, action_id="a3"), "hello",
                         raw_text=None, html="",
@@ -260,6 +264,7 @@ def test_the_action_runtime_shows_the_notice_with_its_outcome(h, monkeypatch):
                         raw_text=None, html="")
     finally:
         runtime.close()
+        listener.close()
     assert h.ui.statuses == [
         "Sent to your scripts — Polish couldn't run — sent your cleaned words",
         "That action no longer exists — copied instead",
