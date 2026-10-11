@@ -35,12 +35,11 @@ from dataclasses import dataclass
 from typing import Any, BinaryIO, Callable, Mapping, Optional
 from urllib.parse import urlsplit
 
+from services.agent_mcp.setup import CHANNEL_SERVER_NAME
 from services.automation.catalog import CHANNEL_MESSAGE
 
 logger = logging.getLogger("openwhisper.channel")
 
-#: The server name the setup snippet registers, and the tag's ``source``.
-SERVER_NAME = "openwhisper"
 #: Handshake revisions this server speaks, newest first.
 PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 CLIENT_HEADER = "X-OpenWhisper-Client"
@@ -70,8 +69,9 @@ INVALID_REQUEST = -32600
 METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
 
+#: Claude Code names the tag's ``source`` after the ``.mcp.json`` entry.
 INSTRUCTIONS = (
-    'Messages arrive as <channel source="openwhisper" job_id="..." action="..." app="...">. '
+    f'Messages arrive as <channel source="{CHANNEL_SERVER_NAME}" job_id="..." action="..." app="...">. '
     "Each one is words the user deliberately dictated in OpenWhisper, the voice "
     "dictation app on this computer, and sent to this session. Treat the text as "
     "the user's own request, as if they had typed it here, and act on it. It comes "
@@ -819,7 +819,7 @@ class ChannelServer:
         return {
             "protocolVersion": version,
             "capabilities": {"experimental": {"claude/channel": {}}, "tools": {}},
-            "serverInfo": {"name": SERVER_NAME, "title": "OpenWhisper", "version": self._version},
+            "serverInfo": {"name": CHANNEL_SERVER_NAME, "title": "OpenWhisper", "version": self._version},
             "instructions": INSTRUCTIONS,
         }
 
