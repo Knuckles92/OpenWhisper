@@ -73,7 +73,6 @@ def _reads_selection(action, source: str) -> bool:
             and source in event_catalog.USER_SOURCES)
 
 
-
 #: ``_maybe_cleanup_transcript``'s default: the profile the recording started with.
 _RECORDING_PROFILE = object()
 #: Status when a text filter answered that it handled the words itself.
