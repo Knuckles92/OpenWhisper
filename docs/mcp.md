@@ -113,7 +113,8 @@ No tool deletes history, edits transcript text, or exposes audio files.
 reading history: it returns recent dictations, actions and meeting lines.
 Running actions and showing notices need **Run actions**, recording needs
 **Start recordings**, and running an Agent hotkey or Claude Code session
-action also needs **Send words to my coding agents**; all three are off by
+action, or a recording routed to one, with a program's words (sent, or
+changed by its text filter) also needs **Send words to my coding agents**; all three are off by
 default (see [Actions, live events and hooks](automation.md#live-api)). Any authorized
 client can opt into remote records already saved in this database.
 

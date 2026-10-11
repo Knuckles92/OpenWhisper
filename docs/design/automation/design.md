@@ -261,7 +261,7 @@ return the `data` dict, so every publisher produces the same shape.
 | `transcription.failed` | `job_id, error, message` | foundation |
 | `history.saved` | `job_id, record_id, kind` | foundation |
 | `action.ran` | `job_id, action_id, name, kind, source, ok, message, output, text` | C |
-| `channel.message` | `job_id, action_id, source, text, app` | C |
+| `channel.message` | `job_id, action_id, source, origin, text, app` | C |
 | `route.decided` | `job_id, action_id, confidence, fallback` | F |
 | `filter.failed` | `filter_id, name, stage, reason` | B |
 | `meeting.started` | `meeting_id, title` | A (meeting_events) |
@@ -664,7 +664,8 @@ when a stub returns nothing. Merge order: B, A, C2, C, D, E, F, H, G.
 Deviations the streams made, and why; the code is the reference.
 
 - **Selection context** is `job.snapshot().text` (`TextContext.selected` with
-  `selection_known`), not `text_context`. A routed dictation, or any job
+  `selection_known`, present only when the job asked for it in `begin_job`),
+  not `text_context`. A routed dictation, or any job
   with `route` set, records `target` even with app awareness off, so a later
   answer can be pasted into the app it started in.
 - **Paste for answers**: `TranscriptionRuntime.paste_text_now(text, *, job=None)`
@@ -727,6 +728,8 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   off) is required, besides `api_run_actions` or `api_control_recording`,
   whenever a program runs or starts an agent or Claude Code channel action
   (`app_control._enabled_action`; the MCP tools go through the same path).
+  Since round 2 it is also enforced at delivery, on where the words came
+  from (below).
 - **Channel bridge**: each message's meta has `origin` (`dictated`,
   `program`, `openwhisper`), and the instructions tell Claude Code to treat
   only `dictated` as the user's request. The bridge sends the MCP token only
@@ -788,6 +791,21 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   cleanup client follows it), so a later job never un-cancels a filter or
   routing wait left by the previous one. `begin_rewrite_job` takes the capture
   lock without waiting; contention (a start, stop or cancel) is busy.
+- **Where words came from**: `DictationJob.changed_by_program` and the
+  `program_words` property (a program changed the words, or
+  `catalog.user_started(source)` is false). `services.actions.runtime.
+  program_words_allowed(action, settings)` with `AGENT_KINDS` is the one rule,
+  used by `ActionRuntime.deliver` (refuses; copies for the user's runs),
+  `run_action_text`, `app_control._enabled_action` and lease selection.
+  `FilterOutcome.program_changed`; leases skip agent/channel action jobs
+  without `api_agent_prompts`; `TranscriptionRuntime._run_filters` returns
+  `(job, text)` and marks `changed_by_program`. `channel.message` carries
+  `origin` (`catalog.ORIGIN_DICTATED` / `ORIGIN_PROGRAM`); the bridge reads it
+  from the event, not the source.
+- **Selection**: text readers return the selection only with
+  `include_selection`; `begin_job` asks for it only for the user's jobs
+  (Command Mode, a dictation with text near the cursor on, an action that
+  wants it); `transcription._reads_selection(action)` takes the action only.
 - **Routing gate**: a name heard as several words counts when a request
   follows ("chat gpt what's…", "to do buy milk", not "to do that…"), and a
   shortened name counts after lead-ins when it is typed or heard as a name

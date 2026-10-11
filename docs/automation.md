@@ -114,6 +114,11 @@ program, folder or arguments are never sent. Give each action a short
 description ("questions for Claude", "my shopping list"): routing is more
 reliable with one.
 
+Words a program changed, or a recording a program started, go to an Agent
+hotkey or Claude Code session action only with **Send words to my coding
+agents**; otherwise a notice says so and, if you started it, your words are
+copied.
+
 ## Hooks
 
 Open **Settings → Automate → Hooks**. Hooks are saved only in Settings; the
@@ -138,10 +143,15 @@ limit (30 s by default).
 
 ### Text filters
 
-A text filter changes dictated words before they're pasted: either **before
-AI cleanup** (the speech engine's words) or **after** (the final text). It is a
-web address OpenWhisper POSTs to, or a program that gets the same JSON on
-standard input and answers on standard output.
+A text filter changes dictated words before they're pasted or sent to an
+action: either **before AI cleanup** (the speech engine's words) or **after**
+(the final text). It is a web address OpenWhisper POSTs to, or a program that
+gets the same JSON on standard input and answers on standard output.
+
+A filter registered over the API never sees words going to an Agent hotkey or
+Claude Code session action unless you also allow **Send words to my coding
+agents**. Words it changes count as a program's: they reach a coding agent
+only with that permission, and Claude Code sees them as `origin="program"`.
 
 Request:
 
@@ -203,7 +213,7 @@ the read-only [History API](agent-api.md), not these routes.
 | Run actions | off | running actions, showing notices |
 | Start recordings | off | starting, stopping and canceling recordings |
 | Change dictated text | off | text filters registered over the API |
-| Send words to my coding agents | off | with Run actions (or Start recordings), running an Agent hotkey or Claude Code session action with the program's own words |
+| Send words to my coding agents | off | with Run actions, Start recordings or Change dictated text: lets an Agent hotkey or Claude Code session action get words a program sent, a dictation it started, or words its text filter changed. Without it those words aren't sent; if you started the dictation, they're copied instead. |
 
 | Route | Permission | Result |
 | --- | --- | --- |
@@ -277,7 +287,7 @@ file paths or audio.
 | `transcription.failed` | `job_id`, `error` (`canceled`, `no_speech`, `refused` or `failed`), `message` (what OpenWhisper told you, for a refusal; otherwise null) |
 | `history.saved` | `job_id`, `record_id` (fetch it from the [History API](agent-api.md)), `kind` |
 | `action.ran` | `job_id`, `source`, `action_id`, `name`, `kind`, `ok`, `message`, `output` (where an answer went), and `text` for Send to my scripts; a run canceled too late to stop reports what really happened, with `output` `none` |
-| `channel.message` | `job_id`, `source`, `action_id`, `text`, `app` |
+| `channel.message` | `job_id`, `source`, `origin` (`dictated`, or `program` when a program sent or changed the words), `action_id`, `text`, `app` |
 | `route.decided` | `job_id`, `action_id` or null, `confidence`, `fallback` |
 | `filter.failed` | `filter_id`, `name`, `stage`, `reason` |
 | `meeting.started` | `meeting_id`, `title` |
@@ -330,7 +340,8 @@ preview).
    answer with its `reply` tool. A program can send words there too, through
    the live API or MCP, only if you also allow **Send words to my coding
    agents**; those arrive with `origin="program"`, so Claude knows they aren't
-   your own request.
+   your own request. So do your own words when a program's text filter
+   changed them, and dictations a program started.
 
 The channel reconnects by itself when OpenWhisper restarts. It needs a
 claude.ai login or a Console API key, doesn't work with `claude -p`, and
@@ -353,7 +364,8 @@ Team or Enterprise organisations must allow channels.
   webhook, change an action's address or turn on a permission.
 - Dictated words reach programs on standard input, links percent-encoded,
   and terminals as a single, quoted argument, never through a shell. Events
-  never carry the text you had selected for Command Mode or a transform.
+  never carry the text you had selected for Command Mode or a transform, and
+  actions a program runs never read the text you have selected.
 - Restoring a backup turns every webhook, program, filter, and webhook,
   program and agent action off, along with every permission except following
   live events, and MCP Events. Secrets live in your system's credential store, never in
