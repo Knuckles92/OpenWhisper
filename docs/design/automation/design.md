@@ -759,7 +759,10 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   returns `RouteDecision(failure="timeout"|"unreachable")` when the judge
   couldn't answer, so Route by voice says why it pasted; `RoutingStatus.fix`
   names what is missing (`fast_judgments`, `actions`, `trigger`). The gate no
-  longer hears "could", "called" or "cold" as Claude.
+  longer hears "could", "called" or "cold" as Claude. A name heard as
+  several words counts when a request follows ("chat gpt what's…", "to do
+  buy milk", not "to do that…"), and a shortened name counts after lead-ins
+  when it is typed or heard as a name, so lowercase-typed names work.
 - **Environment**: `services/process_env.py` records every change the app
   makes to its own environment (`set_for_app`, `prepend_for_app`);
   `external_env()` undoes them plus the frozen loader's paths and the app's

@@ -92,8 +92,9 @@ Turn on **Route by voice** on the Actions page, then either:
   an action's name or one of its spoken names is routed too.
 
 OpenWhisper first checks in code whether the words start with an action's
-name (filler words like "hey" or "okay" and common mishearings such as
-"cloud" for "Claude" are fine), then asks **Fast judgments** (TypeSafe's Jev
+name (filler words like "hey" or "okay", a name heard as separate words
+like "chat gpt" or "to do", and common mishearings such as "cloud" for
+"Claude" are fine), then asks **Fast judgments** (TypeSafe's Jev
 model, through TypeSafe or OpenRouter) one question: which action, and which
 part of the words is for it. Only a confident answer routes; anything else,
 including a failure or a 1.5 s timeout, pastes your words as usual. With Route
