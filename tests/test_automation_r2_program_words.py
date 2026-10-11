@@ -182,11 +182,8 @@ def with_(job, **changes):
     return dataclasses.replace(job, **changes)
 
 
-@pytest.mark.parametrize("job", [
-    with_(base._job("agent"), changed_by_program=True),
-    with_(base._job("agent"), source=""),
-], ids=["changed by a program", "unknown source"])
-def test_the_users_run_with_a_programs_words_is_copied_instead(h, handoffs, job):
+def test_the_users_run_with_a_programs_words_is_copied_instead(h, handoffs):
+    job = with_(base._job("agent"), changed_by_program=True)
     h.add(AGENT)
 
     h.rt.deliver(job, "run the deploy", raw_text=None, html="")
@@ -200,7 +197,8 @@ def test_the_users_run_with_a_programs_words_is_copied_instead(h, handoffs, job)
     assert ran["ok"] is False and ran["message"] == message and ran["output"] == "clipboard"
 
 
-@pytest.mark.parametrize("source", ["api", "mcp"])
+# An unknown source counts as a program's (catalog.user_started).
+@pytest.mark.parametrize("source", ["api", "mcp", ""])
 def test_a_programs_run_is_refused_and_not_copied(h, source):
     h.add(CHANNEL)
     h.bus.subscribe(lambda event: None, label=actions_runtime.CHANNEL_LISTENER_LABEL)

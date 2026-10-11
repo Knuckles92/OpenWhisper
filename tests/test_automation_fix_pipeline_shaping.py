@@ -257,10 +257,10 @@ def test_the_action_runtime_shows_the_notice_with_its_outcome(h, monkeypatch):
     # A program following the live events, so "Send to my scripts" has a listener.
     listener = events.bus().subscribe(lambda event: None, label="sse")
     try:
-        runtime.deliver(DictationJob(mode=JobMode.ACTION, action_id="a3"), "hello",
+        runtime.deliver(DictationJob(mode=JobMode.ACTION, action_id="a3", source="hotkey"), "hello",
                         raw_text=None, html="",
                         notice="Polish couldn't run — sent your cleaned words")
-        runtime.deliver(DictationJob(mode=JobMode.ACTION, action_id="gone"), "hello",
+        runtime.deliver(DictationJob(mode=JobMode.ACTION, action_id="gone", source="hotkey"), "hello",
                         raw_text=None, html="")
     finally:
         runtime.close()
