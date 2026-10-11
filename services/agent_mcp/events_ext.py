@@ -54,6 +54,7 @@ import itertools
 import json
 import logging
 import os
+import sys
 import secrets
 import tempfile
 import threading
@@ -576,6 +577,24 @@ class _Status:
     failed_since: Optional[str] = None
 
 
+#: Windows refuses to replace a file another handle has open (a reader, an
+#: antivirus scan or the search indexer); such holds last milliseconds.
+_REPLACE_ATTEMPTS = 20
+_REPLACE_WAIT_S = 0.025
+
+
+def _replace(source: str, target: str) -> None:
+    """``os.replace``, retried briefly while Windows reports the target in use."""
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if sys.platform != "win32" or attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(_REPLACE_WAIT_S)
+
+
 class _Registry:
     """Subscriptions saved in one file, with their secrets in the credential store.
 
@@ -643,7 +662,7 @@ class _Registry:
                 handle.write("\n")
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(temporary, self.path)
+            _replace(temporary, self.path)
         except BaseException:
             try:
                 os.unlink(temporary)
