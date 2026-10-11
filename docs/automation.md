@@ -58,13 +58,15 @@ only** puts the words in the Scratchpad.
 Actions that take a while (an agent's answer, a webhook, a program) keep
 running after the dictation is saved, 4 at a time with up to 4 more waiting.
 **Cancel** while a recording or transcription is in progress cancels only
-that. Press it once your words have gone to the action, or with nothing
-recording, to cancel the actions still running:
-those still waiting never start, and a Quick answer or a program is stopped.
-One that has already started and can't be stopped (opening a link, posting
-to a webhook, opening a session), or that had already finished, reports what
-happened, but its answer is dropped, and the notice says it was too late to
-stop it.
+that; pressing it again changes nothing. Press it once your words have gone
+to the action, or with nothing recording, to cancel the actions still
+running: those still waiting never start, and a Quick answer or a program is
+stopped. One that can't be stopped (opening a link, posting to a webhook,
+opening a session), or that had already finished (a program that had
+exited, a Quick answer that had answered), reports what happened, but its
+answer is dropped, and the notice says it was too late to stop it. The
+notice comes once each Quick answer and program has stopped, within
+moments. With nothing to cancel, it says so.
 
 The **Agent hotkey** card at the top of the page sets up the action for your
 installed agent in one place. **Try it** runs an action with sample words
@@ -235,7 +237,7 @@ the read-only [History API](agent-api.md), not these routes.
 | `GET /v1/actions` | token | `{"actions": [{id, name, kind, description, spoken_names, hotkey, shaping, enabled}]}` (never links, paths or folders) |
 | `POST /v1/actions/{id}/run` `{"text": "…"}` | run actions (+ coding agents for agent and channel actions) | 202 `{"job_id"}`: the words take a dictation's path without recording; 409 `busy` while too many actions are still running |
 | `POST /v1/recording/start` `{"action_id"?}` | start recordings | 202 `{"job_id"}`; the dictation isn't cleaned up with the text near your cursor, even when that's on |
-| `POST /v1/recording/stop`, `/cancel` | start recordings | 202 `{}`; `/cancel` cancels the recording or transcription in progress, never actions you started (422 `refused` when there is none, including once a dictation's words have gone to its action) |
+| `POST /v1/recording/stop`, `/cancel` | start recordings | 202 `{}`; `/cancel` cancels the recording or transcription in progress, never actions you started (422 `refused` when there is none, including once a dictation's words have gone to its action or a Cancel already reached it) |
 | `POST /v1/filters` `{"url", "stage", "timeout_ms"?}` | change text | 201 lease `{id, url, stage, timeout_ms, modes, expires_at, ttl_s}` |
 | `POST /v1/filters/{id}/renew`, `DELETE /v1/filters/{id}` | change text | 200 lease / 204 |
 | `POST /v1/notify` `{"text", "title"?}` | run actions | 202: a short notice near the pointer |
@@ -301,10 +303,10 @@ file paths or audio.
 | --- | --- |
 | `recording.started` | `job_id`, `mode` (`dictation`, `command`, `transform`, `action`), `action_id`, `source` (`hotkey`, `ui` for the window or tray, `api`, `mcp`, `dbus` for the Omarchy bar), `route` |
 | `recording.stopped` | `job_id`, `duration_s` |
-| `recording.canceled` | `job_id` |
+| `recording.canceled` | `job_id` (once, when a Cancel reaches the job) |
 | `transcription.preview` | `job_id`, `text`, `final` (live preview, at most four a second; not replayed; never sent after its recording's `recording.stopped` or `recording.canceled`) |
 | `transcription.completed` | `job_id`, `mode` (also `file`, one per file of a multi-file upload), `action_id`, `source`, `routed`, `text`, `raw_text` (before AI cleanup, or null; always null for Command Mode and transforms, so the text you had selected never leaves), `language`, `app` (`id`, `name`, `category`) or null, `cleanup` (`provider`, `model`, `level`) or null, `audio_s` |
-| `transcription.failed` | `job_id`, `error` (`canceled`, `no_speech`, `refused` or `failed`), `message` (what OpenWhisper told you, for a refusal; otherwise null) |
+| `transcription.failed` | `job_id`, `error` (`canceled`, `no_speech`, `refused` or `failed`), `message` (what OpenWhisper told you, for a refusal; otherwise null); a job canceled after its recording stopped (and a canceled upload or text run) ends with `canceled`, after `recording.canceled` |
 | `history.saved` | `job_id`, `record_id` (fetch it from the [History API](agent-api.md)), `kind` |
 | `action.ran` | `job_id`, `source`, `action_id`, `name`, `kind`, `ok`, `message`, `output` (where an answer went), and `text` for Send to my scripts; a run canceled too late to stop (or already finished) reports what really happened, with `output` `none` |
 | `channel.message` | `job_id`, `source`, `origin` (`dictated`, or `program` when a program sent or changed the words), `action_id`, `text`, `app` |
@@ -321,8 +323,8 @@ Agents connected over [MCP](mcp.md) get these tools as well, gated by the same
 permissions: `get_live_state`, `list_actions`, `run_action`,
 `start_dictation`, `stop_dictation`, `cancel_dictation`, `recent_events` and
 `notify_user`. `cancel_dictation` cancels only a recording or transcription
-in progress (not once its words have gone to an action), never your running
-actions.
+in progress that no Cancel has reached yet (not once its words have gone to
+an action), never your running actions.
 
 **MCP Events** (preview, off by default; API & MCP page) implements the
 [MCP Events draft](https://github.com/modelcontextprotocol/experimental-ext-triggers-events)

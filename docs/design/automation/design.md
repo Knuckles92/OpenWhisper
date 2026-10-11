@@ -923,5 +923,28 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   and nothing else opens the link: `agents.handoff` returns at once instead
   of trying the next link or a terminal. pywin32 is declared for win32 in
   `requirements.txt`; without it links open through `os.startfile`.
+- **Action cancel**: `ActionResult.stopped`, set via `_STOPPED` by
+  `_program` (`programs.CANCELED`), by `agents.ask` on its stop paths, and by
+  the task when canceled before it began. `cancel()` reports runs not yet
+  started as Canceled at once; runs under way get `_Pending.canceled_by` a
+  `_Cancel`, and `run.cancel` is set for `_stoppable(action)` (program, ask).
+  `_finish_canceled`: stopped means Canceled, otherwise too late (real
+  outcome, output none). `_Cancel` says its notice once, when `waiting`
+  reaches 0; `cancel()` counts runs an earlier cancel is still stopping.
+  `_Run.finished` is gone.
+- **Transcription cancel**: only the first Cancel of a job acts; a repeat
+  (cancel event set, or `capture_canceled` while the stream closes) returns
+  True quietly, and `cancelable` excludes it. End events: `recording.canceled`
+  once; then `transcription.failed` `canceled` for every job that took the
+  slot (`_abandon_canceled_job` and `abandon_rewrite_job` included).
+  CANCELING / "Canceled" only when something was canceled;
+  `ApplicationController._cancel_actions` says `NOTHING_TO_CANCEL`.
+- **Uploads**: `on_transcription_complete` honours `_settle()` for every
+  kind; `on_batch_complete` uses `canceled = _settle()` (keep what was done,
+  "Canceled — kept …"; nothing kept ends with `transcription.failed`
+  canceled). `BatchResult.canceled` is gone.
+- **Scratchpad**: the transform cursor is anchored at the start of what it
+  read and keeps its end on insert (`setKeepPositionOnInsert`), reset before
+  the result is inserted, so an answer appended meanwhile survives.
 - **Tests**: the checks that drive the real Windows shell need
   `OPENWHISPER_TEST_REAL_SHELL=1`.
