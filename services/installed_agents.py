@@ -163,7 +163,10 @@ def agent_child_env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     to OpenWhisper's built-in engines and must not change which account the
     user's agent bills. Variables the user exported themselves pass through.
     """
-    env = dict(os.environ)
+    from services.process_env import external_env
+
+    # The user's environment, not the frozen loader's or the app's own venv.
+    env = external_env()
     try:
         from services.credentials import dotenv_injected_names
 

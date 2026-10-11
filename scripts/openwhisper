@@ -72,7 +72,7 @@ fi
 # Command-line modes answer in this terminal and exit: run them in the
 # foreground, not in the background with their output in the launch log.
 case "${1:-}" in
-    -h|--help|--version|--diagnostics|--api|--self-test|--workflow-smoke)
+    -h|--help|--version|--diagnostics|--api|--channel|--self-test|--workflow-smoke)
         exec "$PYTHON" "$ENTRY" "$@"
         ;;
 esac

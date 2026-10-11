@@ -3,7 +3,6 @@ PyQt6 Application base class.
 Handles application initialization and event loop management.
 """
 import logging
-import os
 import sys
 from typing import Optional
 from PyQt6.QtWidgets import QApplication, QMainWindow, QStyleFactory
@@ -21,6 +20,7 @@ from ui_qt.utils.font_scale import (
 from ui_qt.utils.theme_manager import ThemeManager
 from ui_qt.utils.tooltip_filter import RoundedTooltipFilter, SnappyTooltipStyle
 from services.desktop_session import use_omarchy_ui
+from services.process_env import set_for_app
 
 APP_NAME = "OpenWhisper"
 
@@ -91,10 +91,10 @@ class QtApplication:
             if use_omarchy_ui():
                 # Keep inherited GTK/GDK scaling out of Qt style metrics. Qt
                 # still uses the compositor's native per-output buffer scale.
-                os.environ["QT_QPA_PLATFORMTHEME"] = ""
+                set_for_app("QT_QPA_PLATFORMTHEME", "")
                 # Applies to later dialogs as well as the main window. Keep
                 # xdg-toplevel management; only Qt's fallback titlebar is off.
-                os.environ["QT_WAYLAND_DISABLE_WINDOWDECORATION"] = "1"
+                set_for_app("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
                 QApplication.setStyle("Fusion")
             self.app = QApplication([])
 

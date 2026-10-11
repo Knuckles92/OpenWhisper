@@ -55,7 +55,9 @@ def register_dll_directory(path: str) -> bool:
 
     existing = os.environ.get("PATH", "")
     if path not in existing.split(os.pathsep):
-        os.environ["PATH"] = path + os.pathsep + existing
+        from services.process_env import prepend_for_app
+
+        prepend_for_app("PATH", [path])
     return True
 
 
