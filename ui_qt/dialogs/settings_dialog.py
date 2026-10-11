@@ -255,7 +255,9 @@ _SEARCH_ALIASES = {
     MCP: (
         "Connect an agent with MCP",
         "Automate › API & MCP",
-        "model context protocol agent server connection claude cursor history api",
+        "model context protocol agent server connection claude cursor history api "
+        "live api events stream webhook subscribe mcp events claude code channel "
+        "permissions run actions start recordings change dictated text curl",
     ),
     VOICE_MODEL: (
         "Model assignments",
@@ -300,7 +302,7 @@ _PAGE_MODULES = (
     (STYLES, "ui_qt.dialogs.settings_styles", "palette-purple.svg"),
     (COMMANDS, "ui_qt.dialogs.settings_commands", "wand-purple.svg"),
     (ACTIONS, "ui_qt.dialogs.settings_actions", "bolt-green.svg"),
-    (HOOKS, "ui_qt.dialogs.settings_hooks", "server-blue.svg"),
+    (HOOKS, "ui_qt.dialogs.settings_hooks", "webhook-blue.svg"),
 )
 _PAGE_MODULE_ICONS = {key: icon for key, _path, icon in _PAGE_MODULES}
 
