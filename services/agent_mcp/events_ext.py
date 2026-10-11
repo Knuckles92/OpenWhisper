@@ -21,8 +21,9 @@ developers.openai.com/plugins/build/mcp-events:
 - Each event is one POST of ``{eventId, name, timestamp, data, cursor: null}``
   with Standard Webhooks headers (``webhook-id`` is the eventId) and
   ``X-MCP-Subscription-Id``. Network errors, 408, 425, 429 and 5xx are
-  retried with backoff, each try freshly signed; 410 drops the subscription;
-  413 and other answers are not retried. Bodies over 256 KiB are not sent.
+  retried with backoff, each try freshly signed; other answers (410 and 413
+  included) fail that delivery only and show as ``lastError``. Bodies over
+  256 KiB are not sent.
 
 Events are not replayable: they live in a short in-memory buffer whose
 numbering restarts with the app, so ``cursor`` is always null.
@@ -1043,11 +1044,8 @@ def _deliver(job: _Job, client: Any = None) -> Optional[float]:
     if reply.ok:
         registry.record(subscription.id)
         return None
-    if reply.status == 410:
-        # Gone: the receiver no longer wants this subscription.
-        registry.remove(subscription.id)
-        logger.info("MCP Events subscription %s ended: its callback answered 410", subscription.id)
-        return None
+    # Any other answer, 410 Gone included, fails this delivery only: the
+    # subscription ends when it is unsubscribed, expires or is cleared.
     registry.record(subscription.id, reply.category)
     if not reply.retryable or job.attempt > len(RETRY_DELAYS_S):
         return None

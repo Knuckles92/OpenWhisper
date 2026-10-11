@@ -359,7 +359,7 @@ def test_subscribe_verifies_then_delivers_signed_filtered_events(client, bus, re
     assert events_ext.subscription_count() == 1
 
 
-def test_retries_transient_failures_then_stops_on_gone(client, bus, receiver, monkeypatch):
+def test_retries_transient_failures_and_not_client_errors(client, bus, receiver, monkeypatch):
     monkeypatch.setattr(events_ext, "RETRY_DELAYS_S", (0.05, 0.05, 0.05))
     secret = signing.new_secret()
     params = subscribe_params(catalog.HISTORY_SAVED, receiver.url(), secret)
@@ -390,18 +390,15 @@ def test_retries_transient_failures_then_stops_on_gone(client, bus, receiver, mo
     assert status["lastError"] == "http_5xx"
     assert status["failedSince"]
 
-    # 410 Gone ends the subscription and forgets its secret.
+    # 410 Gone fails that delivery like any client error; the subscription
+    # and its secret stay.
     receiver.statuses = [410]
     bus.publish(catalog.HISTORY_SAVED, {"job_id": "j5", "record_id": "5", "kind": "dictation"})
     receiver.wait_for_deliveries(10)
-    deadline = time.monotonic() + 5
-    while events_ext.subscription_count() and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert events_ext.subscription_count() == 0
-    assert credentials.store().get(events_ext.secret_name(sub_id)) is None
-    bus.publish(catalog.HISTORY_SAVED, {"job_id": "j6", "record_id": "6", "kind": "dictation"})
     time.sleep(0.3)
     assert len(receiver.deliveries()) == 10
+    assert events_ext.subscription_count() == 1
+    assert credentials.store().get(events_ext.secret_name(sub_id)) == secret
 
 
 def test_unsubscribe_and_subscriptions_survive_a_restart(
