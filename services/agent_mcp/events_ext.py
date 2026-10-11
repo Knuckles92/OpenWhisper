@@ -54,6 +54,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Any, Callable, Mapping, Optional
 from urllib.parse import urlsplit
 
@@ -501,15 +502,26 @@ class _Status:
 
 
 class _Registry:
-    """Subscriptions saved in one file, with their secrets in the credential store."""
+    """Subscriptions saved in one file, with their secrets in the credential store.
+
+    Two locks, so slow storage never holds anyone up: ``_lock`` guards the
+    in-memory state and is never held across I/O; ``_io_lock`` orders the
+    credential-store and file writes of each change, so the file always ends
+    up holding the newest state. Readers on the bus's dispatch thread and the
+    Qt thread (matching, counting) take neither: every change publishes an
+    immutable snapshot, ``_view``.
+    """
 
     def __init__(self, path: str) -> None:
         self.path = path
-        self._lock = threading.RLock()
+        self._lock = threading.Lock()
+        self._io_lock = threading.Lock()
         self._subs: dict[str, EventSubscription] = {}
+        self._view: Mapping[str, EventSubscription] = MappingProxyType({})
         self._status: dict[str, _Status] = {}
         # id -> (old secret, monotonic deadline) after a refresh rotated it.
         self._previous: dict[str, tuple[str, float]] = {}
+        self._pruning = False
         self._load()
 
     def _load(self) -> None:
@@ -522,17 +534,29 @@ class _Registry:
             logger.warning("Could not read MCP Events subscriptions: %s", type(exc).__name__)
             return
         records = payload.get("subscriptions") if isinstance(payload, dict) else None
-        for record in records if isinstance(records, list) else ():
-            subscription = EventSubscription.from_record(record)
-            if subscription is not None:
-                self._subs[subscription.id] = subscription
+        with self._lock:
+            for record in records if isinstance(records, list) else ():
+                subscription = EventSubscription.from_record(record)
+                if subscription is not None:
+                    self._subs[subscription.id] = subscription
+            self._commit()
 
-    def _save(self) -> None:
-        # Caller holds the lock.
-        payload = {
-            "version": 1,
-            "subscriptions": [s.to_record() for s in self._subs.values()],
-        }
+    # -- in memory: callers hold _lock -------------------------------------
+
+    def _commit(self) -> None:
+        self._view = MappingProxyType(dict(self._subs))
+
+    def _drop(self, sub_id: str) -> None:
+        self._subs.pop(sub_id, None)
+        self._status.pop(sub_id, None)
+        self._previous.pop(sub_id, None)
+
+    def _payload(self) -> dict:
+        return {"version": 1, "subscriptions": [s.to_record() for s in self._subs.values()]}
+
+    # -- storage: callers hold _io_lock, never _lock -----------------------
+
+    def _write(self, payload: dict) -> None:
         directory = os.path.dirname(os.path.abspath(self.path))
         os.makedirs(directory, exist_ok=True)
         descriptor, temporary = tempfile.mkstemp(
@@ -552,90 +576,138 @@ class _Registry:
                 pass
             raise
 
+    @staticmethod
+    def _delete_secret(sub_id: str) -> None:
+        from services.credentials import CredentialStoreError, store
+
+        try:
+            store().delete(secret_name(sub_id))
+        except CredentialStoreError:
+            logger.warning("Could not remove the secret of MCP Events subscription %s", sub_id)
+
+    # -- reading: any thread, never blocks ---------------------------------
+
     def get(self, sub_id: str) -> Optional[EventSubscription]:
-        with self._lock:
-            subscription = self._subs.get(sub_id)
+        subscription = self._view.get(sub_id)
         if subscription is None or subscription.expired():
             return None
         return subscription
 
     def active(self) -> list[EventSubscription]:
         now = time.time()
-        with self._lock:
-            return [s for s in self._subs.values() if not s.expired(now)]
+        return [s for s in self._view.values() if not s.expired(now)]
 
     def matching(self, event_type: str, data: Mapping[str, Any]) -> list[EventSubscription]:
         return [
             s for s in self.active() if s.name == event_type and _matches(s.arguments, data)
         ]
 
-    def prune(self) -> None:
-        """Forget expired subscriptions and their secrets."""
-        now = time.time()
-        with self._lock:
-            expired = [s.id for s in self._subs.values() if s.expired(now)]
-            if not expired:
-                return
-            for sub_id in expired:
-                self._forget(sub_id)
-            self._save()
+    # -- changing ------------------------------------------------------------
 
     def upsert(self, subscription: EventSubscription, secret: str) -> bool:
         """Save a new or refreshed subscription; True when it is new."""
         from services.credentials import store
 
-        with self._lock:
-            existing = self._subs.get(subscription.id)
-            created = existing is None
-            if created and len(self.active()) >= MAX_SUBSCRIPTIONS:
-                raise _too_many()
+        with self._io_lock:
+            with self._lock:
+                existing = self._subs.get(subscription.id)
+                created = existing is None
+                if created and len(self.active()) >= MAX_SUBSCRIPTIONS:
+                    raise _too_many()
             credentials = store()
             name = secret_name(subscription.id)
             current = credentials.get(name)
             if current != secret:
                 credentials.set(name, secret)
-                if current and not created:
+            with self._lock:
+                if current and current != secret and not created:
                     self._previous[subscription.id] = (
                         current, time.monotonic() + ROTATION_WINDOW_S
                     )
-            self._subs[subscription.id] = subscription
+                self._subs[subscription.id] = subscription
+                self._commit()
+                payload = self._payload()
             try:
-                self._save()
+                self._write(payload)
             except OSError:
+                with self._lock:
+                    if created:
+                        self._drop(subscription.id)
+                    else:
+                        self._subs[subscription.id] = existing
+                    self._commit()
                 if created:
-                    self._forget(subscription.id)
-                else:
-                    self._subs[subscription.id] = existing
+                    self._delete_secret(subscription.id)
                 raise
             return created
 
     def remove(self, sub_id: str) -> bool:
-        with self._lock:
-            if sub_id not in self._subs:
-                return False
-            self._forget(sub_id)
-            self._save()
+        with self._io_lock:
+            with self._lock:
+                if sub_id not in self._subs:
+                    return False
+                self._drop(sub_id)
+                self._commit()
+                payload = self._payload()
+            self._delete_secret(sub_id)
+            self._write(payload)
             return True
 
     def clear(self) -> int:
-        with self._lock:
-            count = len(self.active())
-            for sub_id in list(self._subs):
-                self._forget(sub_id)
-            self._save()
+        with self._io_lock:
+            with self._lock:
+                count = len(self.active())
+                removed = list(self._subs)
+                for sub_id in removed:
+                    self._drop(sub_id)
+                self._commit()
+                payload = self._payload()
+            for sub_id in removed:
+                self._delete_secret(sub_id)
+            self._write(payload)
             return count
 
-    def _forget(self, sub_id: str) -> None:
-        # Caller holds the lock.
-        from services.credentials import CredentialStoreError, store
+    def prune(self) -> None:
+        """Forget expired subscriptions and their secrets."""
+        with self._io_lock:
+            now = time.time()
+            with self._lock:
+                expired = [s.id for s in self._subs.values() if s.expired(now)]
+                if not expired:
+                    return
+                for sub_id in expired:
+                    self._drop(sub_id)
+                self._commit()
+                payload = self._payload()
+            for sub_id in expired:
+                self._delete_secret(sub_id)
+            try:
+                self._write(payload)
+            except OSError as exc:
+                # They are expired either way; the next prune writes again.
+                logger.warning("Could not save MCP Events subscriptions: %s", type(exc).__name__)
 
-        self._subs.pop(sub_id, None)
-        self._status.pop(sub_id, None)
-        self._previous.pop(sub_id, None)
+    def prune_later(self) -> None:
+        """``prune`` on a worker thread when something has expired; returns at once."""
+        now = time.time()
+        if not any(s.expired(now) for s in self._view.values()):
+            return
+        with self._lock:
+            if self._pruning:
+                return
+            self._pruning = True
+        threading.Thread(target=self._prune_quietly, name="mcp-events-prune", daemon=True).start()
+
+    def _prune_quietly(self) -> None:
         try:
-            store().delete(secret_name(sub_id))
-        except CredentialStoreError:
-            logger.warning("Could not remove the secret of MCP Events subscription %s", sub_id)
+            self.prune()
+        except Exception as exc:
+            logger.warning("Could not forget expired MCP Events subscriptions: %s", type(exc).__name__)
+        finally:
+            with self._lock:
+                self._pruning = False
+
+    # -- delivery bookkeeping ------------------------------------------------
 
     def signing_secrets(self, sub_id: str) -> list[str]:
         """The current secret, then the previous one while the rotation window lasts."""
@@ -1091,8 +1163,10 @@ def _sync() -> None:
     """Be on the bus exactly while started and MCP Events is on."""
     global _bus_subscription, _deliverer
     want = _started and _enabled(_load_settings())
-    if want:
-        _registry()  # load the file here, not on the bus thread
+    if _started:
+        # Loads the file here, not on the bus thread, and forgets what
+        # expired meanwhile (the credential store's I/O on a worker).
+        _registry().prune_later()
     with _state_lock:
         if want and not _delivering():
             from services.automation import events
@@ -1143,8 +1217,13 @@ def reload() -> None:
 
 
 def subscription_count() -> int:
-    """Active subscriptions agents made (Settings shows it)."""
-    return len(_registry().active())
+    """Active subscriptions agents made (Settings shows it); never waits on storage.
+
+    Expired ones are forgotten, secrets included, on a worker thread.
+    """
+    registry = _registry()
+    registry.prune_later()
+    return len(registry.active())
 
 
 def clear_subscriptions() -> int:
