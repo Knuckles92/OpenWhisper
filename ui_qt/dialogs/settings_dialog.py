@@ -211,7 +211,7 @@ from ui_qt.widgets.hotkey_capture import (
 from ui_qt.widgets.hotkey_row import ReflowCard
 from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.settings_switch import SettingsSwitch
-from services.hotkey_conflicts import STANDARD, hotkey_conflict
+from services.hotkey_conflicts import STANDARD, STANDARD_LABELS, hotkey_conflict
 from services.settings import (
     resolve_flow_features_intro_seen,
     resolve_recording_hands_free_latch,
@@ -307,18 +307,7 @@ _PAGE_MODULES = (
 _PAGE_MODULE_ICONS = {key: icon for key, _path, icon in _PAGE_MODULES}
 
 #: How a hotkey message names each standard action.
-_HOTKEY_LABELS = {
-    "record_toggle": "Recording",
-    "cancel": "Cancel",
-    "meeting_toggle": "Meeting Mode",
-    "enable_disable": "Enable/disable",
-    "minimize_tray": "Minimize to tray",
-    "command_mode": "Command Mode",
-    "scratchpad_toggle": "Scratchpad",
-    "cycle_language": "Switch language",
-    "paste_last_original": "Paste original",
-    "route_record": "Route by voice",
-}
+_HOTKEY_LABELS = STANDARD_LABELS
 
 
 class _ThreadRelay(QObject):
@@ -1068,8 +1057,7 @@ class SettingsDialog(QDialog):
             hotkey, self._settings_snapshot(), standard_hotkeys={**updated, action: ""},
         )
         if conflict:
-            names = {other.replace("_", " "): label for other, label in _HOTKEY_LABELS.items()}
-            error = f"That shortcut is already used by {names.get(conflict, conflict)}."
+            error = f"That shortcut is already used by {conflict}."
             self.message_label.setText(error)
             return error
         return self._save_hotkeys(updated, f"{_HOTKEY_LABELS.get(action, 'Shortcut')} hotkey updated.")
@@ -2866,7 +2854,7 @@ class SettingsDialog(QDialog):
                 "route_record",
                 "Route by voice",
                 "Record, then send your words to the action they name, such as "
-                "“Ask Claude…”. Turn on spoken routing on the Actions page.",
+                "“Ask Claude…”. Turn on Route by voice on the Actions page.",
                 optional=True,
             )
         )
@@ -4786,8 +4774,7 @@ class SettingsDialog(QDialog):
         )
         if not conflict:
             return ""
-        names = {action.replace("_", " "): label for action, label in _HOTKEY_LABELS.items()}
-        return f"That shortcut is already used by {names.get(conflict, conflict)}."
+        return f"That shortcut is already used by {conflict}."
 
     def _on_hotkey_capture_failed(
         self, thread: HotkeyCaptureThread, message: str
