@@ -315,10 +315,11 @@ def open_in_terminal(argv: Sequence[str], *, cwd: str = "",
     Every element reaches the program as one argument: Windows starts the
     ``.exe`` directly in a new console; macOS and Linux run a one-shot
     script whose arguments are all single-quoted, so the terminal's own
-    command line holds only the script's path (terminals re-parse ``-e``
-    arguments). ``env`` (default: the user's environment without
-    OpenWhisper's keys) applies where the terminal is our child (Windows,
-    Linux); macOS Terminal uses the user's own login environment.
+    command line holds only the script (``/bin/sh <path>`` on Linux;
+    terminals re-parse ``-e`` arguments). ``env`` (default: the user's
+    environment without OpenWhisper's keys) applies where the terminal is
+    our child (Windows, Linux); macOS Terminal uses the user's own login
+    environment.
 
     Raises:
         LaunchError: No terminal could be opened; the message says why.
@@ -458,12 +459,14 @@ def _terminal_commands(args: List[str]) -> List[List[str]]:
 
 def _linux_terminal(args: List[str], cwd: str, env: Optional[Mapping[str, str]]) -> None:
     # Many terminals join or re-split what follows -e and hand it to a
-    # shell, so their command line carries only the script's path.
+    # shell, so their command line carries only the script's path. /bin/sh
+    # reads the script: a temp folder mounted noexec can't run it directly,
+    # and a launcher (gnome-terminal) would still exit 0 as if it had.
     try:
         script = _one_shot_script(args, cwd, shell="/bin/sh", suffix=".sh")
     except OSError as exc:
         raise LaunchError("No terminal app could be started.") from exc
-    commands = _terminal_commands([script])
+    commands = _terminal_commands(["/bin/sh", script])
     for command in commands:
         name = os.path.basename(command[0])
         try:

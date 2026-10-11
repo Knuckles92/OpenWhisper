@@ -1,10 +1,12 @@
 """Opening links on Windows (review round 2): handlers that are COM objects, and
-classic handlers started in the user's environment rather than OpenWhisper's.
+classic handlers started in the user's environment rather than OpenWhisper's;
+and Linux terminals running their one-shot script through /bin/sh.
 
 Nothing real opens: the association lookup, Popen and the shell are fakes. The
 association tables are what AssocQueryStringW answers on a real Windows 11.
 """
 
+import os
 import sys
 import threading
 
@@ -13,8 +15,11 @@ import pytest
 from services import credentials
 from services.actions import launch
 from tests import test_automation_agents_launch as base
+from tests import test_automation_fix_actions_launch as round1
+from tests.test_automation_hooks_programs import wait_until
 
 fresh_handler_cache = base.fresh_handler_cache
+popen = round1.popen
 FakeAssoc = base.FakeAssoc
 NO_ASSOCIATION = base.NO_ASSOCIATION
 COMMAND, EXECUTABLE, DELEGATE_EXECUTE = 1, 2, 18  # ASSOCSTR_*
@@ -233,3 +238,51 @@ def test_a_handler_whose_program_is_gone_counts_as_missing(windows, monkeypatch)
     # without asking the shell, which would show its own dialog.
     launch._windows_open("sgnl://x", "sgnl")
     assert shell == [] and started[0][0] == r'"C:\gone\Signal.exe" "sgnl://x"'
+
+
+# -- N5: a Linux terminal runs the one-shot script through /bin/sh ------------------------
+
+
+@pytest.mark.parametrize("terminal, prefix", [
+    ("xterm", ["-e"]), ("gnome-terminal", ["--"]), ("kitty", []),
+])
+def test_a_linux_terminal_runs_the_script_through_sh(monkeypatch, popen, tmp_path,
+                                                      terminal, prefix):
+    # A noexec /tmp (or $TMPDIR) can't execute the script itself, while a
+    # launcher such as gnome-terminal still exits 0, so "Opened" would show.
+    started, _codes, _failing = popen
+    monkeypatch.setenv("TERMINAL", terminal)
+    monkeypatch.setattr(launch.shutil, "which", base._which({terminal}))
+
+    launch._linux_terminal(["/bin/agent", "hi"], str(tmp_path), None)
+
+    (proc,) = started
+    script = proc.args[-1]
+    os.remove(script)
+    assert proc.args == [f"/usr/bin/{terminal}", *prefix, "/bin/sh", script]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX terminals")
+def test_the_script_runs_even_where_it_cant_be_executed(monkeypatch, tmp_path):
+    real_script = launch._one_shot_script
+
+    def unexecutable(*args, **kwargs):
+        path = real_script(*args, **kwargs)
+        os.chmod(path, 0o600)  # as in a folder mounted noexec
+        return path
+
+    monkeypatch.setattr(launch, "_one_shot_script", unexecutable)
+    # A launcher-style terminal: it starts the command and exits 0 at once.
+    terminal = tmp_path / "launcher-terminal"
+    terminal.write_text('#!/bin/sh\nshift\n"$@" &\nexit 0\n', encoding="utf-8")
+    terminal.chmod(0o755)
+    monkeypatch.setenv("TERMINAL", str(terminal))
+    monkeypatch.setattr(launch.shutil, "which",
+                        lambda name: str(terminal) if name == str(terminal) else None)
+    marker = tmp_path / "ran.txt"
+
+    launch._linux_terminal(
+        [sys.executable, "-c", "import sys; open(sys.argv[1], 'w').write('ran')", str(marker)],
+        str(tmp_path), None)
+
+    wait_until(marker.exists, timeout=15)

@@ -347,10 +347,10 @@ def test_linux_tries_the_next_terminal_when_one_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(launch.subprocess, "Popen", Popen)
     launch._linux_terminal(["/bin/agent", WORDS], str(tmp_path), {"A": "1"})
     (args, kwargs), = started
-    # Only the one-shot script's path: terminals re-parse what follows -e.
-    script = args[2]
+    # Only the one-shot script for /bin/sh: terminals re-parse what follows -e.
+    script = args[-1]
     os.remove(script)
-    assert args == ["/usr/bin/xterm", "-e", script] and script.endswith(".sh")
+    assert args == ["/usr/bin/xterm", "-e", "/bin/sh", script] and script.endswith(".sh")
     assert kwargs["cwd"] == str(tmp_path) and kwargs["env"] == {"A": "1"}
     assert kwargs["start_new_session"] is True and "shell" not in kwargs
 

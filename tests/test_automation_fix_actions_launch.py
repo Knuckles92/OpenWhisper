@@ -90,7 +90,7 @@ def test_linux_terminals_get_one_private_script_with_every_argument_quoted(
     launch._linux_terminal(argv, folder, {"A": "1"})
 
     (proc,) = started
-    assert proc.args[:2] == ["/usr/bin/xterm", "-e"] and len(proc.args) == 3
+    assert proc.args[:3] == ["/usr/bin/xterm", "-e", "/bin/sh"] and len(proc.args) == 4
     path, script = _script_of(proc)
     try:
         assert WORDS not in proc.args and not any("claude" in a for a in proc.args)
@@ -122,7 +122,7 @@ def test_every_terminal_style_takes_just_the_script(monkeypatch, popen, tmp_path
     proc = started[0]
     path, _script = _script_of(proc)
     os.remove(path)
-    assert proc.args == [f"/usr/bin/{style_terminal}", *prefix, path]
+    assert proc.args == [f"/usr/bin/{style_terminal}", *prefix, "/bin/sh", path]
 
 
 def test_a_terminal_that_dies_at_once_falls_through_to_the_next(monkeypatch, popen, tmp_path):
