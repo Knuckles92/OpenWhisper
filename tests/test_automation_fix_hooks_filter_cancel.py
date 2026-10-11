@@ -97,6 +97,21 @@ def test_a_cancel_stops_waiting_on_a_program_filter(failures):
     assert failures == []
 
 
+def test_a_cancel_wins_over_the_answer_it_caused():
+    # A program filter sees the same cancel, stops, and answers "failed" at
+    # once; that answer must not be reported as the filter failing.
+    cancel = threading.Event()
+
+    def stopped_by_the_cancel():
+        time.sleep(0.005)  # the wait has started polling
+        cancel.set()
+        return filters._Verdict(filters._FAILED, reason="Canceled")
+
+    for _ in range(20):
+        cancel.clear()
+        assert filters._await(stopped_by_the_cancel, None, cancel, "") is filters._CANCELED
+
+
 def test_without_a_cancel_filters_run_as_before(receiver):
     receiver.answer("/f", Answer(body=b'{"text": "new words"}'))
     settings = settings_with(http_filter("f", receiver.url("/f")),

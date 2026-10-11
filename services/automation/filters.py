@@ -320,19 +320,20 @@ def _await(work: Callable[[], _Verdict], timeout_s: Optional[float],
     threading.Thread(target=run, name="text-filter", daemon=True).start()
     deadline = None if timeout_s is None else time.monotonic() + timeout_s
     while True:
+        # A cancel wins over an answer that arrived with it: a program filter
+        # sees the same cancel and answers that it was stopped.
         if cancel is not None and cancel.is_set():
             return _CANCELED
+        if done.is_set():
+            return answer[0]
         wait = None if deadline is None else deadline - time.monotonic()
         if wait is not None and wait <= 0:
-            if done.is_set():
-                return answer[0]
             from services.automation.webhooks import no_answer_copy
 
             return _Verdict(_FAILED, reason=no_answer_copy(timeout_s))
         if cancel is not None:
             wait = _CANCEL_POLL_S if wait is None else min(wait, _CANCEL_POLL_S)
-        if done.wait(wait):
-            return answer[0]
+        done.wait(wait)
 
 
 def _run_http(url: str, body: bytes, timeout_s: float,
