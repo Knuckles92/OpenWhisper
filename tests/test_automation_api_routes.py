@@ -513,3 +513,19 @@ def test_frames_are_one_line_of_json_per_event():
     gap = api.sse_frame(api.gap_event(7), with_id=False).decode("utf-8")
     assert gap.startswith("event: events.gap\ndata: ")
     assert '"missed_from_seq":7' in gap and '"seq":0' in gap
+
+
+def test_stopping_the_listener_drops_leased_filters(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from services.agent_mcp.app import create_app
+    from services.automation import filters
+
+    filters.drop_all_leases()
+    path = tmp_path / "history.db"
+    DatabaseManager(str(path)).close()
+    app = create_app(path, "t" * 40)
+    with TestClient(app, base_url="http://127.0.0.1"):
+        filters.register_lease("http://127.0.0.1:9/filter", "after_cleanup")
+        assert len(filters.leases()) == 1
+    assert filters.leases() == []

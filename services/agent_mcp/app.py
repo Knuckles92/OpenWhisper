@@ -557,8 +557,15 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app):
-        async with history_lifespan(app), mcp.session_manager.run():
-            yield
+        try:
+            async with history_lifespan(app), mcp.session_manager.run():
+                yield
+        finally:
+            # Filters leased over the live API can't be renewed once it
+            # stops; drop them now rather than letting them lapse.
+            from services.automation import filters
+
+            filters.drop_all_leases()
 
     app.router.lifespan_context = lifespan
     # The live API (events, actions, recording) exists only here, where a
