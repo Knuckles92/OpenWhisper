@@ -104,6 +104,15 @@ def test_a_peer_cannot_point_deliveries_at_this_computer_or_its_network(clients,
     assert events_ext.subscription_count() == 0
 
 
+def test_handshake_era_clients_are_told_apart_the_same_way(clients, receiver):
+    peer, local = clients
+    params = subscribe_params(catalog.HISTORY_SAVED, receiver.url(), signing.new_secret())
+    assert error_of(rpc(peer, "events/subscribe", params, modern=False))["code"] == (
+        events_ext.INVALID_PARAMS
+    )
+    assert result_of(rpc(local, "events/subscribe", params, modern=False))["id"].startswith("sub_")
+
+
 def test_a_name_that_resolves_to_this_computer_counts_as_this_computer(clients, monkeypatch):
     peer, _ = clients
     real = socket.getaddrinfo
