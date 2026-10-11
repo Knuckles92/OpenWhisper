@@ -592,3 +592,28 @@ def test_tab_reaches_the_action_cards_where_they_sit(make_dialog):
     panel.refresh()
     pump()
     assert _tab_order(panel.add_button, page, 7) == expected()
+
+
+# ---- 11. Settings search finds settings, not the Add action gallery ----
+
+
+def test_search_leaves_out_tiles_in_a_part_marked_as_choices():
+    from PyQt6.QtWidgets import QVBoxLayout, QWidget
+
+    from ui_qt.dialogs.settings_search import PageSource, build_index
+    from ui_qt.utils.icons import design_icon
+    from ui_qt.widgets.setting_tile import InfoTile
+
+    page, folded, picker = QWidget(), QWidget(), QWidget()
+    picker.setProperty("settingsSearch", False)
+    layouts = {}
+    for title, parent in (("Shown", page), ("Folded away", folded), ("A choice", picker)):
+        layouts[title] = QVBoxLayout(parent)
+        layouts[title].addWidget(InfoTile(title, "", design_icon("bolt-green.svg")))
+    layouts["Shown"].addWidget(folded)
+    layouts["Shown"].addWidget(picker)
+    folded.hide()  # A collapsed section or another tab: still settings, still found.
+    titles = {entry.title for entry in build_index(
+        [PageSource("page", "Crumb", "Page", "", page, "bolt-green.svg")])}
+    assert {"Shown", "Folded away"} <= titles
+    assert "A choice" not in titles
