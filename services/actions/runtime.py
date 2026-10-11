@@ -295,6 +295,9 @@ class _Run:
     done: Optional[Callable[[ActionResult], None]] = None
     #: Ends an agent's answer early when the app closes.
     cancel: Optional[threading.Event] = None
+    #: Why the words aren't what the user asked for (a transform or cleanup
+    #: profile that couldn't run); shown with the outcome.
+    notice: str = ""
 
 
 def _output_of(action: Action) -> str:
@@ -332,7 +335,8 @@ class ActionRuntime:
 
     # -- entry points --------------------------------------------------------
 
-    def deliver(self, job, text: str, *, raw_text: Optional[str], html: str) -> None:
+    def deliver(self, job, text: str, *, raw_text: Optional[str], html: str,
+                notice: str = "") -> None:
         """Run ``job``'s action with ``text``; Qt thread, returns at once.
 
         Shows the outcome, and publishes ``action.ran`` (and
@@ -344,7 +348,8 @@ class ActionRuntime:
         settings = settings_manager.load_all_settings()
         action = find_action(settings, job.action_id)
         run = _Run(job=job, action=action or Action(job.action_id or "", "", ""),
-                   text=text, raw_text=raw_text, html=html or "", settings=settings)
+                   text=text, raw_text=raw_text, html=html or "", settings=settings,
+                   notice=notice or "")
         if action is None or not action.enabled:
             self._finish(run, ActionResult(
                 False, MISSING_MESSAGE if action is None else DISABLED_MESSAGE))
@@ -480,7 +485,7 @@ class ActionRuntime:
             # A copy action's failure is the copy itself.
             if run.action.kind != ActionKind.CLIPBOARD and self._copy(run.text, run.html):
                 message, where = message + COPIED_INSTEAD, Output.CLIPBOARD
-            self._say(message, ok=False)
+            self._say(run, message, ok=False)
             self._publish_ran(run, False, message, where)
             return
         ok, message, where = self._route(run, result)
@@ -495,24 +500,24 @@ class ActionRuntime:
             message = result.message or f"Sent to {name}"
             if output != Output.NONE:
                 message = f"Sent to {name} — nothing came back"
-            self._say(message, ok=True)
+            self._say(run, message, ok=True)
             return True, message, Output.NONE
         if output == Output.PASTE:
             return self._paste(run, answer)
         if output == Output.SCRATCHPAD:
             self.controller.ui_controller.show_in_scratchpad(answer)
             message = f"{name} answered in the Scratchpad"
-            self._say(message, ok=True)
+            self._say(run, message, ok=True)
             return True, message, Output.SCRATCHPAD
         if output == Output.NOTICE:
-            self._say(_short(answer), ok=True)
+            self._say(run, _short(answer), ok=True)
             return True, f"Showed {name}'s answer", Output.NOTICE
         if self._copy(answer):
             message = f"Copied {name}'s answer"
-            self._say(message, ok=True)
+            self._say(run, message, ok=True)
             return True, message, Output.CLIPBOARD
         message = f"Couldn't copy {name}'s answer"
-        self._say(message, ok=False)
+        self._say(run, message, ok=False)
         return False, message, Output.NONE
 
     def _paste(self, run: _Run, answer: str) -> tuple[bool, str, str]:
@@ -524,7 +529,7 @@ class ActionRuntime:
         if target == PasteTarget.SAME:
             if self.controller.transcription_runtime.paste_text_now(answer, job=run.job):
                 message = f"Pasted {name}'s answer"
-                self._say(message, ok=True)
+                self._say(run, message, ok=True)
                 return True, message, Output.PASTE
             reason = "couldn't paste it"
         elif target == PasteTarget.CHANGED:
@@ -533,10 +538,10 @@ class ActionRuntime:
             reason = "couldn't confirm the app"
         if self._copy(answer):
             message = f"Copied — {reason}"
-            self._say(message, ok=True)
+            self._say(run, message, ok=True)
             return True, message, Output.CLIPBOARD
         message = f"Couldn't paste or copy {name}'s answer"
-        self._say(message, ok=False)
+        self._say(run, message, ok=False)
         return False, message, Output.NONE
 
     # -- kinds that finish on the Qt thread ------------------------------------
@@ -574,8 +579,10 @@ class ActionRuntime:
         ui = self.controller.ui_controller
         return bool(ui.copy_to_clipboard(text, html=html) if html else ui.copy_to_clipboard(text))
 
-    def _say(self, message: str, *, ok: bool) -> None:
-        """The outcome in the status line and near the pointer."""
+    def _say(self, run: _Run, message: str, *, ok: bool) -> None:
+        """The outcome in the status line and near the pointer, with the run's notice."""
+        if run.notice:
+            message = f"{message} — {run.notice}"
         ui = self.controller.ui_controller
         ui.set_status(message)
         ui.show_notice(message, done=ok)
