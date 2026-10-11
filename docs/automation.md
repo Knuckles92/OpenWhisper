@@ -90,8 +90,9 @@ A program action gets the prepared words (UTF-8) on standard input and
 its environment; whatever it prints is the answer. It runs without a shell or
 a window, with your environment minus the API keys OpenWhisper loaded from its
 own `.env`, and is stopped with everything it started after its time limit.
-Processes it starts keep running after it exits, but OpenWhisper stops
-reading its output a second later, so send their output somewhere else.
+Processes it starts keep running after it exits, but a second later
+OpenWhisper stops reading their output and writing to their input, so send
+their output somewhere else.
 
 ## Route by voice
 
@@ -146,8 +147,9 @@ A program receives the event's JSON and a newline on standard input, with
 `OPENWHISPER_EVENT_TYPE`, `OPENWHISPER_EVENT_ID` and `OPENWHISPER_EVENT_SEQ`
 in its environment. It runs one event at a time (up to 20 more wait), without
 a shell or a window, and is stopped with everything it started after its time
-limit (30 s by default). Processes it starts keep running after it exits, but OpenWhisper stops
-reading its output a second later, so send their output somewhere else.
+limit (30 s by default). Processes it starts keep running after it exits, but a second later
+OpenWhisper stops reading their output and writing to their input, so send
+their output somewhere else.
 
 ### Text filters
 
@@ -390,9 +392,11 @@ Team or Enterprise organisations must allow channels.
   never carry the text you had selected for Command Mode or a transform.
 - Actions and recordings a program starts never read the text near your
   cursor or the text you have selected; they only learn which app you're in.
-- Programs, terminals, agents and apps opened through links start with your
-  own environment, without the API keys OpenWhisper loaded from its `.env`
-  (however the file spells them) or the folders it adds to `PATH` for itself.
+- Programs, terminals and agents start with your own environment, without
+  the API keys OpenWhisper loaded from its `.env` (however the file spells
+  them, and even after you change or remove them there) or the folders it
+  adds to `PATH` for itself. On Windows, links open through Explorer, so
+  their apps start as they would from a link you click.
 - Restoring a backup turns every webhook, program, filter, and webhook,
   program and agent action off, along with every permission except following
   live events, and MCP Events. Secrets live in your system's credential store, never in

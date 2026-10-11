@@ -505,8 +505,8 @@ def ask(agent_id: str, text: str, *, model: str = "", timeout_s: float = 120.0,
         cancel: Optional[threading.Event] = None) -> ActionResult    # output = the answer
 # launch.py
 class LaunchError(RuntimeError): ...
-def open_uri(uri: str) -> None                     # Windows: the association's command via CreateProcess,
-                                                   # COM handlers via ShellExecute / open / xdg-open; LaunchError
+def open_uri(uri: str) -> None                     # Windows: ShellExecute inside Explorer (os.startfile
+                                                   # without Explorer's desktop) / open / xdg-open; LaunchError
 def handler_available(scheme: str) -> Optional[bool]   # None = can't tell
 def open_in_terminal(argv: Sequence[str], *, cwd: str = "") -> None   # LaunchError
 ```
@@ -687,10 +687,17 @@ Deviations the streams made, and why; the code is the reference.
   handler is a command line or a DelegateExecute COM object (every packaged
   app, Windows' own pages such as `ms-settings:`); only a scheme with
   neither, or whose program is gone (`CO_E_APPNOTFOUND`), counts as missing.
-  On Windows a classic handler's command is filled in the way ShellExecute
-  does it (`%1`/`%L` are the link; quotes, whitespace and control characters
-  in the link are percent-encoded) and started with CreateProcess in the
-  user's environment; COM handlers go to ShellExecute. Linux terminals run
+  On Windows a link goes to ShellExecute inside Explorer, through its
+  desktop's `Shell.Application` (IShellWindows::FindWindowSW, then the
+  folder view's top-level browser), so the app starts with Explorer's
+  environment and ShellExecute treats the handler as it always does
+  (rundll32 and DDE handlers, unquoted program paths, the elevation prompt).
+  OpenWhisper passes its right to bring a window forward to Explorer. Only
+  without Explorer's desktop does the link open from OpenWhisper
+  (`os.startfile`). Explorer reports no errors back, so the association
+  lookup still names a missing app first. (Round 2 filled the handler's
+  command itself and started it with CreateProcess; round 3 found that
+  broke rundll32, unquoted-path, elevation and DDE handlers.) Linux terminals run
   `/bin/sh <one-shot script>`, so a noexec temp folder doesn't matter.
   `open_in_terminal` takes `env=`, refuses `.cmd`/`.bat`/`.ps1`, and on macOS
   runs a one-shot `.command` script with every argument shell-quoted. Claude
@@ -764,9 +771,10 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
 - **Programs**: `run_once(..., cancel=)`; canceling or timing out kills the
   whole process tree, while a clean exit leaves children it launched running.
   Program filters pass the dictation's cancel through. Once a clean run's
-  output is in (or `OUTPUT_GRACE_S` passes) the stdout reader stops and the
-  pipe closes; processes the program left running keep running, but their
-  later writes to stdout fail.
+  output is in and its input written (or `OUTPUT_GRACE_S` passes), both
+  pipe threads stop and the pipes close; processes the program left running
+  keep running, but their later writes to stdout fail and what they hadn't
+  read of stdin is dropped.
 - **Actions**: `ActionRuntime.deliver(job, text, *, raw_text, html,
   notice="")` shows the notice with the outcome; `cancel(*, tests_only=False)`
   drops queued runs and stops agent quick answers and programs; a run under
@@ -786,9 +794,10 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   `external_env()` undoes them plus the frozen loader's paths and the app's
   virtualenv. `installed_agents.agent_child_env` and `programs.child_env`
   build on it, so links, terminals, agents, hooks and actions start in the
-  user's environment. On Windows that includes apps opened through links: a
-  classic protocol handler is started by OpenWhisper rather than by
-  ShellExecute, which would pass on OpenWhisper's environment.
+  user's environment. On Windows, apps opened through links start from
+  Explorer instead (round 3). Loading `.env` records each variable it adds
+  (`set_for_app(..., keep_existing=True)`), so `external_env()` drops those
+  whatever the file says later; `credentials.dotenv_injected_names` is gone.
   `process_env.drop(env, names)` removes variables matching names the way
   the system does (case-insensitively on Windows).
 - **Hotkeys**: `hotkey_conflicts.STANDARD_LABELS` is the one label map for
@@ -880,3 +889,12 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   `since(seq, types=…)` says `evicted` only when a wanted type was dropped
   after `seq`; a clear counts what it held as dropped. The SSE stream, MCP
   `recent_events` and the channel bridge get this through `since(types=…)`.
+- **Windows links**: `launch._windows_open(uri)` calls ShellExecute on
+  Explorer's desktop `Shell.Application` (`_desktop_application()`), after
+  `AllowSetForegroundWindow` for Explorer; `os.startfile` only without it.
+  `_fill_command`, the CreateProcess path and the classic/COM split are gone.
+- **Program pipes**: stdin and stdout are `_Pipe` threads finished by one
+  deadline (2 s after a kill, `OUTPUT_GRACE_S` after a clean exit);
+  `_cancel_io` cancels a blocked read or write on Windows; POSIX writes are
+  non-blocking chunks under `poll(POLLOUT)`.
+- **`.env` keys**: loaded through `process_env.set_for_app(..., keep_existing=True)`.
