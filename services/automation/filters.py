@@ -335,10 +335,11 @@ def _run_http(url: str, body: bytes, timeout_s: float,
                   "The request failed")
 
 
-def _program_verdict(argv: Sequence[str], body: bytes, timeout_s: float) -> _Verdict:
+def _program_verdict(argv: Sequence[str], body: bytes, timeout_s: float,
+                     cancel: Optional[threading.Event] = None) -> _Verdict:
     from services.automation.programs import run_once
 
-    code, stdout, error = run_once(argv, body + b"\n", timeout_s=timeout_s)
+    code, stdout, error = run_once(argv, body + b"\n", timeout_s=timeout_s, cancel=cancel)
     if error:
         return _Verdict(_FAILED, reason=error)
     if code != 0:
@@ -348,8 +349,9 @@ def _program_verdict(argv: Sequence[str], body: bytes, timeout_s: float) -> _Ver
 
 def _run_program(argv: Sequence[str], body: bytes, timeout_s: float,
                  cancel: Optional[threading.Event]) -> _Verdict:
-    """Run the program; ``run_once`` stops it at ``timeout_s``, ``cancel`` stops the wait."""
-    return _await(lambda: _program_verdict(argv, body, timeout_s), None, cancel,
+    """Run the program; ``run_once`` stops it, with everything it started, at
+    ``timeout_s`` or as soon as ``cancel`` is set."""
+    return _await(lambda: _program_verdict(argv, body, timeout_s, cancel), None, cancel,
                   "The filter couldn't run")
 
 

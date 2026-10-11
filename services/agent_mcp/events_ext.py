@@ -190,7 +190,7 @@ PAYLOAD_SCHEMAS: dict[str, dict] = {
         cleanup=_CLEANUP,
         audio_s=_NULLABLE_NUMBER,
     ),
-    catalog.TRANSCRIPTION_FAILED: _object(job_id=_STRING, error=_STRING),
+    catalog.TRANSCRIPTION_FAILED: _object(job_id=_STRING, error=_STRING, message=_NULLABLE_STRING),
     catalog.HISTORY_SAVED: _object(job_id=_STRING, record_id=_STRING, kind=_STRING),
     catalog.ACTION_RAN: _with_optional(
         _object(

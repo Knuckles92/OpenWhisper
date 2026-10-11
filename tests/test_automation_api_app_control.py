@@ -68,6 +68,9 @@ class FakeController(QObject):
         super().__init__()
         self.recorder = SimpleNamespace(is_recording=False)
         self.transcription_runtime = FakeRuntime(self)
+        # Actions still running after their dictation; cancel stops them too.
+        self.actions_running = 0
+        self.action_runtime = SimpleNamespace(running=lambda: self.actions_running)
         self.ui_controller = FakeUi()
         self.meeting = False
         self.calls = []
@@ -250,7 +253,10 @@ def test_stop_and_cancel_need_something_to_act_on(control, controller):
     controller.recorder.is_recording = False
     controller.transcription_runtime.has_active_job = True
     assert in_worker(control.cancel) == {"value": None}
-    assert [name for name, _thread in controller.calls] == ["stop", "cancel", "cancel"]
+    controller.transcription_runtime.has_active_job = False
+    controller.actions_running = 1
+    assert in_worker(control.cancel) == {"value": None}
+    assert [name for name, _thread in controller.calls] == ["stop", "cancel", "cancel", "cancel"]
     assert all(thread is threading.main_thread() for _name, thread in controller.calls)
 
 

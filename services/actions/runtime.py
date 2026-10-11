@@ -448,6 +448,11 @@ class ActionRuntime:
             return
         self._start(run)
 
+    def running(self) -> int:
+        """How many blocking runs are running or waiting; any thread."""
+        with self._lock:
+            return len(self._pending)
+
     def accepting(self) -> bool:
         """Whether another blocking run would be taken now; any thread.
 
