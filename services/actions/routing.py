@@ -59,7 +59,10 @@ NONE = "none"
 
 # -- words -------------------------------------------------------------------
 
-_WORD = re.compile(r"[^\W_]+(?:['’][^\W_]+)*")
+#: A word, with apostrophes and hyphens inside it ("don't", "to-do").
+_WORD = re.compile(r"[^\W_]+(?:['’\-‐][^\W_]+)*")
+#: Punctuation between two words that marks a pause ("To do, email …").
+_PAUSE = re.compile(r"[,.;:!?…—–-]")
 
 
 @dataclass(frozen=True)
@@ -67,13 +70,25 @@ class _Word:
     norm: str
     start: int
     end: int
+    #: Punctuation, or the end of the text, follows the word.
+    pause: bool = False
+
+
+_JOINERS = str.maketrans("", "", "'’-‐")
+
+
+def _norm(token: str) -> str:
+    return token.casefold().translate(_JOINERS)
 
 
 def _words(text: str) -> list[_Word]:
-    """Words of ``text``, casefolded and without apostrophes, with their offsets."""
+    """Words of ``text``, casefolded and without apostrophes or hyphens, with their offsets."""
+    text = text or ""
+    found = list(_WORD.finditer(text))
     return [
-        _Word(m.group().casefold().replace("'", "").replace("’", ""), m.start(), m.end())
-        for m in _WORD.finditer(text or "")
+        _Word(_norm(m.group()), m.start(), m.end(),
+              pause=i + 1 == len(found) or bool(_PAUSE.search(text, m.end(), found[i + 1].start())))
+        for i, m in enumerate(found)
     ]
 
 
@@ -87,11 +102,12 @@ _FILLER_PHRASES = (("all", "right"),)
 
 #: Words that may come between the fillers and an action's name ("can you
 #: ask Claude", "send this to my scripts"), and between a request and a name
-#: said last ("…, add it to my todo list").
+#: said last ("…, add it to my todo list"). Never "the": a name after it is
+#: an ordinary noun ("send the scripts to Bob", "use the webhook from …").
 _LEAD_INS = frozenset({
     "ask", "tell", "send", "message", "ping", "use", "open", "start", "add", "put",
     "save", "post", "note", "have", "let", "lets", "can", "could", "would", "will",
-    "you", "this", "that", "it", "to", "into", "for", "the", "my", "a", "an", "new",
+    "you", "this", "that", "it", "to", "into", "for", "my", "a", "an", "new",
     "with", "via", "using", "in", "on", "hey", "please", "go", "and",
 })
 _MAX_LEAD_INS = 4
@@ -128,62 +144,155 @@ def _skip_fillers(words: Sequence[_Word]) -> int:
     return i
 
 
-def _skeleton(word: str) -> str:
-    """Roughly how a word sounds: its first letter and its consonants."""
+# -- how a word sounds -------------------------------------------------------------
+
+#: Vowel sounds by spelling, longest spellings first. Claude's "au", cloud's
+#: "ou", clod's "o" and clawed's "aw" are one open sound; clued's "ue" isn't.
+_VOWEL_SOUNDS = (
+    (("ai", "ay", "ei", "ey"), "ay"),
+    (("oi", "oy"), "oy"),
+    (("oo", "ew", "eu", "ue", "ui", "u"), "u"),
+    (("a", "o"), "o"),
+    (("e", "i", "y"), "e"),
+)
+
+
+def _sound(word: str) -> Optional[tuple[str, str, str, int]]:
+    """Roughly how a word sounds; None when it has no vowel.
+
+    ``(consonants before the first vowel, that vowel's sound, the consonants
+    after it, syllables)``: "claude", "cloud", "clod" and "clawed" all sound
+    ``("kl", "o", "d", 1)``; "could" (no "l" before the vowel), "cloudy" (two
+    syllables) and "clued" (another vowel) don't.
+    """
     w = (word.replace("ph", "f").replace("ck", "k").replace("x", "ks")
          .replace("q", "k").replace("c", "k").replace("z", "s"))
-    out = w[:1]
-    for ch in w[1:]:
-        if ch in "aeiouyhw" or ch == out[-1]:
+    if len(w) > 3 and w.endswith("e") and w[-2] not in "aeiouy":
+        w = w[:-1]                    # a silent final e: "claude", "code"
+    elif len(w) > 4 and w.endswith("ed") and w[-3] not in "td":
+        w = w[:-2] + "d"              # "clawed", "called": no syllable of its own
+    groups: list[tuple[int, int]] = []
+    i = 0
+    while i < len(w):
+        if w[i] in "aeiou" or (w[i] == "y" and i > 0):
+            j = i + 1
+            while j < len(w) and w[j] in "aeiouwy":
+                j += 1
+            groups.append((i, j))
+            i = j
+        else:
+            i += 1
+    if not groups:
+        return None
+    first, after = groups[0]
+    nucleus = w[first:after]
+    vowel = next((sound for spellings, sound in _VOWEL_SOUNDS if nucleus.startswith(spellings)),
+                 nucleus)
+    tail = ""
+    for ch in w[after:]:
+        if ch in "aeiouyhw" or (tail and ch == tail[-1]):
             continue
-        out += ch
-    return out
+        tail += ch
+    return w[:first], vowel, tail, len(groups)
 
 
 def _alike(heard: str, name: str) -> bool:
-    """True when ``heard`` is ``name`` or plausibly a mishearing of it ("cloud", "Claude")."""
+    """True when ``heard`` is ``name`` or plausibly a mishearing of it ("cloud", "Claude").
+
+    A mishearing keeps the name's consonants around its first vowel, that
+    vowel's sound and its syllables; short names ("todo") must be heard exactly.
+    """
     if heard == name:
         return True
     if len(heard) < 4 or len(name) < 4 or abs(len(heard) - len(name)) > 2:
         return False
-    sound = _skeleton(name)
-    return len(sound) >= 3 and _skeleton(heard) == sound
+    sound = _sound(name)
+    return (sound is not None and len(sound[0]) + len(sound[2]) >= 3
+            and _sound(heard) == sound)
 
 
-def _name_variants(action: Action) -> list[tuple[str, ...]]:
-    """Word sequences that name ``action``: each name, without lead-ins and generic tails."""
-    variants: list[tuple[str, ...]] = []
+# -- names -------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class _Variant:
+    """Words that name an action, and what may come before them."""
+
+    words: tuple[str, ...]
+    #: The name's own leading words dropped to make this form ("send to my"
+    #: from "Send to my scripts"); said before it, they still name the action.
+    dropped: tuple[str, ...] = ()
+    #: Whether any lead-in words may come before it ("can you ask Claude").
+    after_lead_ins: bool = True
+
+    def follows(self, said: Sequence[str]) -> bool:
+        """Whether the lead-in words ``said`` just before it leave it naming the action."""
+        if not said or self.after_lead_ins:
+            return True
+        rest = iter(said)
+        return bool(self.dropped) and all(word in rest for word in self.dropped)
+
+
+def _proper(token: str, index: int) -> bool:
+    """Whether a word of a name, as typed, looks like a proper noun:
+    capitalized after the name's first word ("Ask Claude") or with capitals
+    inside ("ChatGPT")."""
+    return any(ch.isupper() for ch in token[1:]) or (index > 0 and token[:1].isupper())
+
+
+def _name_variants(action: Action) -> list[_Variant]:
+    """What names ``action``: each name as given, then without lead-ins and generic tails.
+
+    A name as given may follow lead-in words ("can you ask Claude") unless
+    it is only generic words ("Webhook"). A shortened form may follow them
+    only when it holds a proper noun ("tell Claude" for "Ask Claude") or
+    after the words it dropped ("send this to my scripts"); else only at the
+    start ("Scripts, …"), so "send my scripts to Bob" names nothing.
+    """
+    variants: list[_Variant] = []
+    seen: set[tuple[str, ...]] = set()
+
+    def add(form: tuple[str, ...], dropped: tuple[str, ...], after_lead_ins: bool) -> None:
+        if form and form not in seen:
+            seen.add(form)
+            variants.append(_Variant(form, dropped, after_lead_ins))
+
     for phrase in (action.name, *action.spoken_names):
-        words = tuple(w.norm for w in _words(phrase))
+        tokens = [m.group() for m in _WORD.finditer(phrase)]
+        words = tuple(_norm(t) for t in tokens)
         if not words:
             continue
-        core = words
-        while len(core) > 1 and core[0] in _LEAD_INS:
-            core = core[1:]
-        forms = [words]
-        for form in (words, core):
-            short = form
-            while len(short) > 1 and short[-1] in _NAME_TAILS:
-                short = short[:-1]
-            forms.extend((form, short))
-        for i, form in enumerate(forms):
-            # A shortened form must still be distinctive; the name itself always counts.
-            if form not in variants and (i == 0 or len("".join(form)) >= 3):
-                variants.append(form)
+        proper = [_proper(t, i) for i, t in enumerate(tokens)]
+        add(words, (), not all(w in _NAME_TAILS for w in words))
+        core = 0
+        while core < len(words) - 1 and words[core] in _LEAD_INS:
+            core += 1
+        for start in (0, core):
+            end = len(words)
+            while end - start > 1 and words[end - 1] in _NAME_TAILS:
+                end -= 1
+            for stop in (len(words), end):
+                form = words[start:stop]
+                # A shortened form must still be distinctive.
+                if len("".join(form)) >= 3:
+                    add(form, words[:start], any(proper[start:stop]))
     return variants
 
 
 def _match_len(words: Sequence[_Word], at: int, variant: Sequence[str]) -> int:
     """How many words from ``at`` say ``variant``; 0 when they don't.
 
-    Spacing is ignored ("chat GPT" says "ChatGPT", "to do" says "todo"), and
-    each word may be a near-homophone of the name's word.
+    Spacing is ignored ("chat GPT" says "ChatGPT", "To do," says "Todo"),
+    though a name word heard as several words names it only before a pause
+    ("to do that" doesn't), and each word may be a near-homophone of the
+    name's word.
     """
     target = "".join(variant)
     joined = ""
     for k in range(at, len(words)):
         joined += words[k].norm
         if joined == target:
+            if k - at + 1 > len(variant) and not words[k].pause:
+                break
             return k - at + 1
         if not target.startswith(joined):
             break
@@ -209,14 +318,16 @@ class GateMatch:
     leading: bool
 
 
-def _leading_match(words: Sequence[_Word], variants: Sequence[Sequence[str]]
+def _leading_match(words: Sequence[_Word], variants: Sequence[_Variant]
                    ) -> Optional[tuple[int, int, int]]:
     start = _skip_fillers(words)
     for skip in range(_MAX_LEAD_INS + 1):
         at = start + skip
         if at >= len(words) or (skip and words[at - 1].norm not in _LEAD_INS):
             return None
-        best = max((_match_len(words, at, v) for v in variants), default=0)
+        said = [w.norm for w in words[start:at]]
+        best = max((_match_len(words, at, v.words) for v in variants if v.follows(said)),
+                   default=0)
         if best:
             return start, at, at + best
     return None
@@ -229,18 +340,23 @@ def _polite_tail(words: Sequence[_Word]) -> int:
     return 2 if norms == ["thank", "you"] else 0
 
 
-def _trailing_match(words: Sequence[_Word], variants: Sequence[Sequence[str]]
+def _trailing_match(words: Sequence[_Word], variants: Sequence[_Variant]
                     ) -> Optional[tuple[int, int, int]]:
     end = len(words) - _polite_tail(words)
     for variant in variants:
-        for at in range(max(0, end - len(variant) - 2), end):
-            if _match_len(words, at, variant) != end - at:
+        for at in range(max(0, end - len(variant.words) - 2), end):
+            if at == 0 or _match_len(words, at, variant.words) != end - at:
                 continue
             first = at
             while first > 0 and at - first < _MAX_LEAD_INS and words[first - 1].norm in _LEAD_INS:
                 first -= 1
-            if first > 0:
-                return first, at, end
+            if first < at and not variant.follows([w.norm for w in words[first:at]]):
+                first = at
+            # Said last on its own, a name is set off by a pause ("Lock the
+            # front door, home."), not the end of a sentence about it.
+            if first == 0 or (first == at and not words[at - 1].pause):
+                continue
+            return first, at, end
     return None
 
 
