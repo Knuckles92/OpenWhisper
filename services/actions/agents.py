@@ -428,16 +428,25 @@ def _run_headless(argv: List[str], prompt: str, *, deadline: float,
     return _Run(status, proc.returncode, stdout, "\n".join(err))
 
 
-def _claude_answer(run: _Run) -> ActionResult:
-    result = None
-    for chunk in [run.stdout.strip(), *reversed(run.stdout.splitlines())]:
+def _claude_result(stdout: str) -> Optional[Dict[str, Any]]:
+    """The ``result`` message ``claude -p --output-format json`` printed.
+
+    It prints that one object, or, when verbose output is on in the user's
+    own config, every message of the turn as one JSON array ending with it.
+    """
+    for chunk in [stdout.strip(), *reversed(stdout.splitlines())]:
         try:
             data = json.loads(chunk)
         except ValueError:
             continue
-        if isinstance(data, dict) and data.get("type") == "result":
-            result = data
-            break
+        for item in reversed(data if isinstance(data, list) else [data]):
+            if isinstance(item, dict) and item.get("type") == "result":
+                return item
+    return None
+
+
+def _claude_answer(run: _Run) -> ActionResult:
+    result = _claude_result(run.stdout)
     if result is None:
         return ActionResult(False, _stopped(CLAUDE_CODE, run))
     text = str(result.get("result") or "")
