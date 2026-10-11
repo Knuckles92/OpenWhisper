@@ -46,9 +46,15 @@ up and then rewritten by a **transform** such as *Prompt engineer*.
 **Where an answer goes** (webhook, program and Quick answer): nowhere (a short
 "done" notice), **Paste**, the **Scratchpad**, a **notice** near the pointer,
 or the **clipboard**. A paste only lands in the app you started in; if you
-switched apps meanwhile, the answer is copied and a notice says so. If an
-action fails, your words are copied so nothing is lost, and the notice says
-why.
+switched apps meanwhile, the answer is copied and a notice says so. A notice
+shows the start of a long answer and copies all of it. If an action you
+started fails, your words are copied so nothing is lost, and the notice says
+why; if its transform can't run, it gets your cleaned-up words instead and
+says so. Actions a program starts over the API never touch your clipboard.
+
+Actions that take a while (an agent's answer, a webhook, a program) keep
+running after the dictation is saved, up to 8 at a time. **Cancel** stops
+them, along with any recording.
 
 The **Agent hotkey** card at the top of the page sets up the action for your
 installed agent in one place. **Try it** runs an action with sample words
@@ -222,7 +228,7 @@ event: transcription.completed
 data: {"id":"evt_…","seq":42,"type":"transcription.completed","time":"2026-10-10T12:00:00.000Z","v":1,"data":{…}}
 ```
 
-`seq` counts up through one app session. Reconnect with `Last-Event-ID` (or
+`seq` keeps counting up, across app restarts too. Reconnect with `Last-Event-ID` (or
 `?since=<seq>`) to replay what you missed while the app still holds it (the
 last 500 events). If it no longer does, the stream first sends an
 `events.gap` event (no `id:`) with `missed_from_seq`; fetch
@@ -256,15 +262,15 @@ file paths or audio.
 
 | Type | `data` |
 | --- | --- |
-| `recording.started` | `job_id`, `mode` (`dictation`, `command`, `transform`, `action`), `action_id`, `source` (`hotkey`, `ui`, `api`, `mcp`, `dbus`), `route` |
+| `recording.started` | `job_id`, `mode` (`dictation`, `command`, `transform`, `action`), `action_id`, `source` (`hotkey`, `ui` for the window or tray, `api`, `mcp`, `dbus` for the Omarchy bar), `route` |
 | `recording.stopped` | `job_id`, `duration_s` |
 | `recording.canceled` | `job_id` |
 | `transcription.preview` | `job_id`, `text`, `final` (live preview, at most four a second; not replayed) |
-| `transcription.completed` | `job_id`, `mode` (also `file`), `action_id`, `source`, `routed`, `text`, `raw_text` (before AI cleanup, or null), `language`, `app` (`id`, `name`, `category`) or null, `cleanup` (`provider`, `model`, `level`) or null, `audio_s` |
-| `transcription.failed` | `job_id`, `error` |
+| `transcription.completed` | `job_id`, `mode` (also `file`, one per file of a multi-file upload), `action_id`, `source`, `routed`, `text`, `raw_text` (before AI cleanup, or null; always null for Command Mode and transforms, so the text you had selected never leaves), `language`, `app` (`id`, `name`, `category`) or null, `cleanup` (`provider`, `model`, `level`) or null, `audio_s` |
+| `transcription.failed` | `job_id`, `error` (`canceled`, `no_speech`, `refused` or `failed`), `message` (what OpenWhisper told you, for a refusal; otherwise null) |
 | `history.saved` | `job_id`, `record_id` (fetch it from the [History API](agent-api.md)), `kind` |
-| `action.ran` | `job_id`, `action_id`, `name`, `kind`, `ok`, `message`, `output` (where an answer went) |
-| `channel.message` | `job_id`, `action_id`, `text`, `app` |
+| `action.ran` | `job_id`, `source`, `action_id`, `name`, `kind`, `ok`, `message`, `output` (where an answer went), and `text` for Send to my scripts |
+| `channel.message` | `job_id`, `source`, `action_id`, `text`, `app` |
 | `route.decided` | `job_id`, `action_id` or null, `confidence`, `fallback` |
 | `filter.failed` | `filter_id`, `name`, `stage`, `reason` |
 | `meeting.started` | `meeting_id`, `title` |
