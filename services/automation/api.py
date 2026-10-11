@@ -112,19 +112,15 @@ def parse_last_event_id(raw: Optional[str]) -> Optional[int]:
     return int(value)
 
 
-#: Characters str.splitlines() breaks on that JSON leaves unescaped. Readers
-#: built on it (httpx's iter_lines) would cut an event's data line in two;
-#: as JSON escapes they decode to the same text.
-_LINE_BREAKS = str.maketrans({"\u2028": "\\u2028", "\u2029": "\\u2029", "\u0085": "\\u0085"})
-
-
 def sse_frame(event, *, with_id: bool = True) -> bytes:
     """One Server-Sent Events message for ``event`` (an ``events.Event``)."""
     lines = [f"id: {event.seq}"] if with_id else []
     lines.append(f"event: {event.type}")
-    # Compact JSON escapes CR and LF, so one data line is the whole event.
-    lines.append(f"data: {event.to_json().translate(_LINE_BREAKS)}")
-    return ("\n".join(lines) + "\n\n").encode("utf-8")
+    # ASCII JSON: one data line whatever the text holds (every line break,
+    # U+2028 included, is an escape), and nothing that can't be encoded.
+    data = json.dumps(event.to_dict(), ensure_ascii=True, separators=(",", ":"))
+    lines.append(f"data: {data}")
+    return ("\n".join(lines) + "\n\n").encode("ascii")
 
 
 def gap_event(missed_from_seq: int):
@@ -176,6 +172,19 @@ async def read_json_body(request, limit: int) -> dict:
     return value
 
 
+def is_unicode_text(value: str) -> bool:
+    """False for a string with a lone UTF-16 surrogate (half an emoji).
+
+    JSON can carry one as an escape, but it is not text: it can't be encoded
+    as UTF-8, so it must never get into a job, an event or a notice.
+    """
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _string(body: Mapping[str, Any], key: str, *, required: bool, max_chars: int,
             label: str = "") -> str:
     value = body.get(key)
@@ -186,6 +195,8 @@ def _string(body: Mapping[str, Any], key: str, *, required: bool, max_chars: int
         if required:
             raise _Invalid(f"{label} must be text of 1 to {max_chars:,} characters.")
         raise _Invalid(f"{label} must be text of at most {max_chars:,} characters.")
+    if not is_unicode_text(value):
+        raise _Invalid(f"{label} must be valid Unicode text.")
     return value
 
 

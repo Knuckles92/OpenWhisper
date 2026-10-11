@@ -56,6 +56,7 @@ from typing import Any, Callable, Mapping, Optional
 from urllib.parse import urlsplit
 
 from services.automation import catalog, permissions, signing
+from services.automation.api import is_unicode_text
 
 logger = logging.getLogger(__name__)
 
@@ -267,7 +268,7 @@ def normalize_arguments(name: str, arguments: Any) -> dict:
     result: dict = {}
     if "action_id" in arguments:
         value = arguments["action_id"]
-        if not isinstance(value, str) or not 1 <= len(value) <= 200:
+        if not isinstance(value, str) or not 1 <= len(value) <= 200 or not is_unicode_text(value):
             raise EventsError(INVALID_PARAMS, "action_id must be an action id (1–200 characters).")
         result["action_id"] = value
     if "modes" in arguments:
@@ -309,7 +310,7 @@ def validate_callback_url(url: Any) -> str:
     """``url`` when OpenWhisper may deliver to it: https anywhere, http only to this computer."""
     from services.automation.models import validate_url
 
-    if not isinstance(url, str):
+    if not isinstance(url, str) or not is_unicode_text(url):
         raise EventsError(INVALID_PARAMS, "delivery.url must be a URL.")
     try:
         validate_url(url)
@@ -364,7 +365,7 @@ def _delivery(value: Any, *, subscribing: bool) -> tuple[str, str]:
         )
     if not subscribing:
         url = value.get("url")
-        if not isinstance(url, str) or not url:
+        if not isinstance(url, str) or not url or not is_unicode_text(url):
             raise EventsError(INVALID_PARAMS, "delivery.url must be the subscribed URL.")
         return url, ""
     return validate_callback_url(value.get("url")), validate_secret(value.get("secret"))
@@ -458,6 +459,7 @@ class EventSubscription:
             or not sub_id.startswith("sub_")
             or name not in catalog.PUBLIC_TYPES
             or not isinstance(url, str)
+            or not is_unicode_text(url)
             or refresh_before is None
         ):
             return None
@@ -966,6 +968,7 @@ def _delivering() -> bool:
 
 
 def _event_body(event: Any) -> bytes:
+    # ASCII JSON: whatever slipped into the event's text, the body is built.
     return json.dumps(
         {
             "eventId": event.id,
@@ -974,9 +977,9 @@ def _event_body(event: Any) -> bytes:
             "data": dict(event.data),
             "cursor": None,
         },
-        ensure_ascii=False,
+        ensure_ascii=True,
         separators=(",", ":"),
-    ).encode("utf-8")
+    ).encode("ascii")
 
 
 def _on_event(event: Any) -> None:
