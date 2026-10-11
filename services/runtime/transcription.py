@@ -172,6 +172,17 @@ class TranscriptionRuntime:
             working = self._job_active and not self._saving
         return working or bool(self.controller.recorder.is_recording)
 
+    @property
+    def current_job(self) -> Optional[dictation_pipeline.DictationJob]:
+        """The job in progress as it is now, or None.
+
+        The slot's job once a stop, rewrite or run claimed it (an ACTION job
+        once routing chose an action; None for an upload), else the
+        recording's.
+        """
+        with self._job_lock:
+            return self._active_job if self._job_active else self._job
+
     def _settle(self) -> bool:
         """Mark the slot's outcome decided: from here a Cancel stops nothing.
 

@@ -46,6 +46,10 @@ class FakeRuntime:
         working = self.has_active_job and not self.saving
         return working or self._controller().recorder.is_recording
 
+    @property
+    def current_job(self):
+        return self._active_job if self.has_active_job else self._job
+
     def run_action_text(self, action_id, text, *, source):
         self.calls.append(("run", action_id, text, source, threading.current_thread()))
         if self.delay_s:
@@ -295,13 +299,15 @@ def test_state_is_read_without_waiting_for_the_qt_thread(control, controller):
     recording = in_worker(control.state, pump=False)["value"]
     assert recording == LiveState(True, False, True, "action", "a1", "job-9", __version__)
 
-    # After the stop, the worker slot holds the job.
+    # After the stop, the worker slot holds the job, as it is now: a routed
+    # dictation is its action's job, while the recording's job is unchanged.
     controller.recorder.is_recording = False
-    runtime._job = None
-    runtime._active_job = SimpleNamespace(id="job-9", mode="action", action_id="a1")
+    runtime._job = SimpleNamespace(id="job-10", mode="dictation", action_id="")
+    runtime._active_job = SimpleNamespace(id="job-10", mode="action", action_id="a1")
     runtime.has_active_job = True
     busy = in_worker(control.state, pump=False)["value"]
-    assert (busy.recording, busy.busy, busy.job_id) == (False, True, "job-9")
+    assert (busy.recording, busy.busy, busy.mode, busy.action_id, busy.job_id) == (
+        False, True, "action", "a1", "job-10")
 
 
 def test_listed_actions_are_the_enabled_ones_without_private_settings(control):
