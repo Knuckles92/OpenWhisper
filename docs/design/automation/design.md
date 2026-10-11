@@ -665,7 +665,8 @@ when a stub returns nothing. Merge order: B, A, C2, C, D, E, F, H, G.
 Deviations the streams made, and why; the code is the reference.
 
 - **Selection context** is `job.snapshot().text` (`TextContext.selected` with
-  `selection_known`, present only when the job asked for it in `begin_job`),
+  `selection_known`, present only when the job asked for it in `begin_job`,
+  never for a job a program started),
   not `text_context`. A routed dictation, or any job
   with `route` set, records `target` even with app awareness off, so a later
   answer can be pasted into the app it started in.
@@ -803,10 +804,14 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   `(job, text)` and marks `changed_by_program`. `channel.message` carries
   `origin` (`catalog.ORIGIN_DICTATED` / `ORIGIN_PROGRAM`); the bridge reads it
   from the event, not the source.
-- **Selection**: text readers return the selection only with
-  `include_selection`; `begin_job` asks for it only for the user's jobs
-  (Command Mode, a dictation with text near the cursor on, an action that
-  wants it); `transcription._reads_selection(action)` takes the action only.
+- **Selection and on-screen text**: text readers return the selection only
+  with `include_selection`. `begin_job` reads on-screen text (the text near
+  the cursor and the selection) only for a job the user started
+  (`catalog.user_started`; the selection for Command Mode, a dictation with
+  text near the cursor on, an action that wants it); a program's job
+  captures the app's identity only. Cleanup, profile and transform prompts,
+  the paste join and dictionary learning all take that capture.
+  `transcription._reads_selection(action)` takes the action only.
 - **Event bus**: `since` returns why a gap happened; `catalog.GAP_EVICTED`,
   `GAP_RESTARTED` and `GAP_SLOW`; `events.gap` data has `reason`; `since=0` is
   from this run's start and a gap only if this run dropped events; the

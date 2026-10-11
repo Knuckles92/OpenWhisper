@@ -221,7 +221,7 @@ the read-only [History API](agent-api.md), not these routes.
 | `GET /v1/events?types=a,b&since=<seq>` | live events | Server-Sent Events, below |
 | `GET /v1/actions` | token | `{"actions": [{id, name, kind, description, spoken_names, hotkey, shaping, enabled}]}` (never links, paths or folders) |
 | `POST /v1/actions/{id}/run` `{"text": "…"}` | run actions (+ coding agents for agent and channel actions) | 202 `{"job_id"}`: the words take a dictation's path without recording; 409 `busy` while too many actions are still running |
-| `POST /v1/recording/start` `{"action_id"?}` | start recordings | 202 `{"job_id"}` |
+| `POST /v1/recording/start` `{"action_id"?}` | start recordings | 202 `{"job_id"}`; the dictation isn't cleaned up with the text near your cursor, even when that's on |
 | `POST /v1/recording/stop`, `/cancel` | start recordings | 202 `{}`; `/cancel` cancels the recording or transcription in progress, never actions you started (422 `refused` when there is none) |
 | `POST /v1/filters` `{"url", "stage", "timeout_ms"?}` | change text | 201 lease `{id, url, stage, timeout_ms, modes, expires_at, ttl_s}` |
 | `POST /v1/filters/{id}/renew`, `DELETE /v1/filters/{id}` | change text | 200 lease / 204 |
@@ -372,8 +372,9 @@ Team or Enterprise organisations must allow channels.
   webhook, change an action's address or turn on a permission.
 - Dictated words reach programs on standard input, links percent-encoded,
   and terminals as a single, quoted argument, never through a shell. Events
-  never carry the text you had selected for Command Mode or a transform, and
-  actions a program runs never read the text you have selected.
+  never carry the text you had selected for Command Mode or a transform.
+- Actions and recordings a program starts never read the text near your
+  cursor or the text you have selected; they only learn which app you're in.
 - Restoring a backup turns every webhook, program, filter, and webhook,
   program and agent action off, along with every permission except following
   live events, and MCP Events. Secrets live in your system's credential store, never in
