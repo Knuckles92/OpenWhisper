@@ -9,6 +9,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [2.7.3] - 2026-10-11
 
+### Added
+- **Microphone-processing benchmark tools** — developer tools compare raw audio, conditioning, RNNoise, and AudioForge simulations with optional installed speech models. The source includes paired scoring, latency checks, regression tests, and the initial smoke results. These are experiments outside the app; dictation processing is unchanged.
+- **Settings design proposals** — three mockups and their design notes explore compact essentials, unified sections, and optional guided setup.
+
 ### Fixed
 - **Qwen3-ASR loads in the installed Windows app** — the speech worker now uses the downloaded runtime's packages before the app's bundled copies. The app's newer tokenizer was overriding Qwen's compatible version and stopping model loads on both CPU and GPU, even with the updated runtime installed.
 
