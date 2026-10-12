@@ -13,7 +13,8 @@ import traceback
 # (and nvidia.py) cannot shadow the downloaded namespace packages.
 worker_dir = Path(__file__).resolve().parent
 sys.path[:] = [entry for entry in sys.path if Path(entry).resolve() != worker_dir]
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+# Frozen builds keep collected packages here too; the runtime's copies must win.
+sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from services.local_asr.languages import native_language_code, qwen_language_name  # noqa: E402
 

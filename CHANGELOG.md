@@ -7,6 +7,11 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.7.3] - 2026-10-11
+
+### Fixed
+- **Qwen3-ASR loads in the installed Windows app** — the speech worker now uses the downloaded runtime's packages before the app's bundled copies. The app's newer tokenizer was overriding Qwen's compatible version and stopping model loads on both CPU and GPU, even with the updated runtime installed.
+
 ## [2.7.2] - 2026-10-11
 
 ### Added
