@@ -21,6 +21,7 @@ from services.text_model_catalog import model_spec
 from services.transcript_cleanup import TranscriptCleanup
 
 CASES = [
+    ("openai", "gpt-6-luna", "responses", "/v1/responses"),
     ("openai", "o4-mini", "responses", "/v1/responses"),
     ("openai", "gpt-5.6-luna", "responses", "/v1/responses"),
     ("openai", "gpt-4o-mini", "responses", "/v1/responses"),
@@ -416,3 +417,76 @@ def test_no_tool_support_uses_validated_json_and_rejects_prose(provider, model, 
     assert len(requests) == 4
     if protocol != "chat":
         assert "signed-reasoning" in requests[-1].content.decode()
+
+
+@pytest.mark.parametrize("level", ["light", "medium", "high", "custom"])
+@pytest.mark.parametrize("reasoning,effort", [("off", "none"), ("low", "low"), ("medium", "medium"), ("high", "high")])
+def test_luna_cleanup_serializes_presets_custom_prompts_and_reasoning(level, reasoning, effort):
+    from config import config
+
+    prompt = ("Format as a checklist." if level == "custom"
+              else config.TRANSCRIPT_CLEANUP_LEVEL_PROMPTS[level])
+    requests = []
+    _, client = client_for("openai", [reply("responses")], requests)
+    with client, patch("services.transcript_cleanup.create_openai_client", return_value=client):
+        cleanup = TranscriptCleanup("openai", api_key="test-secret", reasoning=reasoning)
+        assert cleanup.cleanup("raw transcript", system_prompt=prompt) == "Clean text."
+        assert cleanup.last_error is None
+    body = json.loads(requests[0].content)
+    assert requests[0].url.path == "/v1/responses"
+    assert body["model"] == "gpt-6-luna"
+    assert body["reasoning"] == {"effort": effort}
+    assert body["input"] == [{"role": "system", "content": prompt},
+                             {"role": "user", "content": "raw transcript"}]
+    assert body["store"] is False
+    assert body["max_output_tokens"] == 16384
+    assert not {"temperature", "max_tokens", "reasoning_effort"} & body.keys()
+
+
+@pytest.mark.parametrize("failure", ["empty", "refusal", "incomplete", "http", "timeout"])
+def test_luna_cleanup_failure_keeps_raw_transcript(failure):
+    requests = []
+    def handler(request):
+        requests.append(request)
+        if failure == "timeout":
+            raise httpx.ReadTimeout("timed out", request=request)
+        if failure == "http":
+            return httpx.Response(503, json={"error": {"message": "Unavailable"}})
+        raw = reply("responses")
+        if failure == "empty":
+            raw["output"] = []
+        elif failure == "refusal":
+            raw["output"][-1]["content"] = [{"type": "refusal", "refusal": "Cannot comply"}]
+        else:
+            raw["status"] = "incomplete"
+        return httpx.Response(200, json=raw)
+    client = OpenAI(api_key="test-secret", max_retries=0,
+                    http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    with client, patch("services.transcript_cleanup.create_openai_client", return_value=client):
+        cleanup = TranscriptCleanup("openai", api_key="test-secret")
+        assert cleanup.cleanup("raw transcript") == "raw transcript"
+        assert cleanup.last_error
+    assert len(requests) == 1
+
+
+def test_luna_off_mapping_does_not_change_other_models_or_custom_endpoints():
+    for provider, model in [("openai", "o4-mini"), ("openai", "gpt-5.6-luna"),
+                            ("openai", "gpt-4o-mini"), ("openrouter", "openai/gpt-6-luna")]:
+        assert (model_spec(get_profile(provider, {}), model).thinking_levels or {}).get("off") is None
+
+
+def test_custom_responses_luna_off_keeps_existing_endpoint_behavior():
+    from services.text_llm import TextLLMProfile
+
+    profile = TextLLMProfile("custom_test", "Local endpoint", "custom",
+                             "http://localhost:1234/v1", "", protocol="responses")
+    assert model_spec(profile, "gpt-6-luna").thinking_levels is None
+    requests = []
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json=reply("responses"))
+    with OpenAI(api_key="test", base_url=profile.base_url,
+                http_client=httpx.Client(transport=httpx.MockTransport(handler))) as client:
+        generate(client, profile, model="gpt-6-luna", reasoning_level="off",
+                 messages=[{"role": "user", "content": "raw"}])
+    assert "reasoning" not in json.loads(requests[0].content)

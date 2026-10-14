@@ -225,6 +225,7 @@ Use AI cleanup to polish dictation and meeting intelligence to generate notes an
 
 - **Dictation:** Enable **Settings → AI cleanup**, choose a cleanup level, and choose a text model. Add words to the **Dictionary**, pick a tone per kind of app in **Styles**, teach other behaviour in **Learned rules**, or use [Profiles](docs/cleanup-profiles.md) for reusable formats. See [Personalize dictation](docs/personalize.md).
 - **Providers:** OpenAI, OpenRouter, Ollama, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. Add keys in **Settings → API keys**; Ollama needs a separately managed server.
+- **OpenAI cleanup:** The suggested model is `gpt-6-luna`. Saved OpenAI cleanup assignments using the old `gpt-4o-mini` default resolve to Luna; other models, providers, and saved meeting assignments are kept. Thinking **Off** explicitly requests `reasoning.effort: none` through the Responses API. Cleanup remains off by default, and fresh text-model assignments still use OpenRouter Free.
 - **Meetings:** Choose an engine in **Settings → Meeting Mode → Intelligence** using the options below.
 
 | Meeting engine | Setup |

@@ -1377,12 +1377,14 @@ def resolve_transcript_cleanup_provider(
 def resolve_transcript_cleanup_model(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Return the last chosen cleanup model, or the OpenRouter fallback."""
-    _provider, model = _resolve_text_llm_assignment(
+    """Resolve cleanup, replacing the retiring OpenAI default at read time."""
+    provider, model = _resolve_text_llm_assignment(
         SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER,
         SettingsKey.TRANSCRIPT_CLEANUP_MODEL,
         settings,
     )
+    if provider == TranscriptCleanupProvider.OPENAI and model == "gpt-4o-mini":
+        return config.TRANSCRIPT_CLEANUP_MODEL
     return model
 
 

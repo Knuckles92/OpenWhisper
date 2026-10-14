@@ -111,6 +111,8 @@ def model_spec(profile, model: str) -> TextModelSpec:
             protocol="responses" if responses else "chat",
             reasoning=reasoning,
             reasoning_format="openai" if reasoning else "",
+            # Omitting effort uses Luna's medium default, even when the UI says Off.
+            thinking_levels={"off": "none"} if base_model == "gpt-6-luna" else None,
             context_window=131072,
             max_output_tokens=16384,
         )

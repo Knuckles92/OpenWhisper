@@ -295,10 +295,10 @@ class TestTranscriptCleanupSettings:
 
         saved = {
             SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "openai",
-            SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "  gpt-4o-mini  ",
+            SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "  gpt-4.1-mini  ",
         }
         assert resolve_transcript_cleanup_provider(saved) == "openai"
-        assert resolve_transcript_cleanup_model(saved) == "gpt-4o-mini"
+        assert resolve_transcript_cleanup_model(saved) == "gpt-4.1-mini"
         assert resolve_transcript_cleanup_model({}) == (
             config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL
         )
@@ -520,3 +520,46 @@ def test_append_preview_text_ignores_empty_chunk():
 def test_append_preview_text_starts_from_empty():
     assert append_preview_text("", "hello") == "hello"
     assert append_preview_text(None, "hello") == "hello"
+
+
+@pytest.mark.parametrize("model", ["gpt-4o-mini", "  gpt-4o-mini  "])
+def test_legacy_openai_cleanup_default_resolves_to_luna_without_mutating_settings(model):
+    from services.settings import (
+        SettingsKey, resolve_meeting_llm_model, resolve_transcript_cleanup_model,
+        resolve_transcript_cleanup_provider,
+    )
+    settings = {
+        SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "openai",
+        SettingsKey.TRANSCRIPT_CLEANUP_MODEL: model,
+        SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: False,
+        SettingsKey.MEETING_LLM_PROVIDER: "openai",
+        SettingsKey.MEETING_LLM_MODEL: "gpt-4o-mini",
+    }
+    original = dict(settings)
+    assert resolve_transcript_cleanup_model(settings) == "gpt-6-luna"
+    assert resolve_transcript_cleanup_provider(settings) == "openai"
+    assert resolve_meeting_llm_model(settings) == "gpt-4o-mini"
+    assert settings == original
+    assert resolve_transcript_cleanup_model(settings) == "gpt-6-luna"
+
+
+@pytest.mark.parametrize("provider,model", [
+    ("openai", "gpt-4.1-mini"), ("openai", "gpt-4o-mini-2024-07-18"),
+    ("openai", "ft:gpt-4o-mini:my-org:custom"), ("openai", "gpt-6-luna"),
+    ("openrouter", "gpt-4o-mini"), ("openrouter", "openai/gpt-4o-mini"),
+])
+def test_cleanup_migration_preserves_other_assignments(provider, model):
+    from services.settings import SettingsKey, resolve_transcript_cleanup_model
+    assert resolve_transcript_cleanup_model({
+        SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: provider,
+        SettingsKey.TRANSCRIPT_CLEANUP_MODEL: model,
+    }) == model
+
+
+def test_luna_default_keeps_cleanup_opt_in_and_openrouter_default():
+    from config import config
+    from services.settings import default_transcript_cleanup_model, resolve_transcript_cleanup_model
+    assert default_transcript_cleanup_model("openai") == "gpt-6-luna"
+    assert config.TRANSCRIPT_CLEANUP_ENABLED is False
+    assert config.TRANSCRIPT_CLEANUP_PROVIDER == "openrouter"
+    assert resolve_transcript_cleanup_model({}) == "openrouter/free"
