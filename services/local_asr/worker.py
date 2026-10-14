@@ -114,10 +114,12 @@ def main():
                         check_qwen_gpu(torch)
                     if device == "mps" and not torch.backends.mps.is_available():
                         device = "cpu"
+                    # -1 makes each transcribe call one batch, of the windows
+                    # it is given: one, or qwen_batch's choice.
                     engine = Qwen3ASRModel.from_pretrained(
                         request["model_path"], device_map=device,
                         dtype=torch.float16 if device in ("cuda", "mps") else torch.float32,
-                        max_inference_batch_size=1, max_new_tokens=2048,
+                        max_inference_batch_size=-1, max_new_tokens=2048,
                     )
                     if device == "mps":
                         # torch 2.6's MPS matmul cannot broadcast grouped-query
@@ -168,6 +170,19 @@ def main():
                     code = qwen_language_name(language)
                     text = engine.transcribe(audio=(np.asarray(samples, dtype=np.float32), 16000), language=code)[0].text
                     result = dict(text=text, segments=[dict(text=text, start=0., end=len(samples)/16000)] if text else [])
+            elif op == "transcribe_batch":
+                if engine is None:
+                    raise RuntimeError("No model loaded")
+                if family != "qwen_asr" or device != "cuda":
+                    raise ValueError("Only Qwen on CUDA decodes windows in batches")
+                import numpy as np
+                import torch
+                from services.local_asr.qwen_batch import transcribe_batch
+
+                audios = [np.fromfile(path, dtype=np.float32) for path in request["audio_paths"]]
+                texts, limit = transcribe_batch(engine, audios, qwen_language_name(request.get("language")),
+                                                torch, request["batch_size"])
+                result = dict(texts=texts, batch_size=limit)
             elif op == "cancel_stream":
                 engine.cancel_stream(request["session"])
                 result = {}

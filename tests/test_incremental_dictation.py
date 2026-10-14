@@ -262,7 +262,7 @@ def test_long_dictation_decodes_windows_while_recording_and_matches_the_file_pat
     engine.calls.clear()
     assert text == backend.transcribe(path)
     assert len(engine.labels) == len(engine.calls) == early + len(at_stop)  # no new labels: same windows
-    assert "  " in text  # an empty window's text still takes its separator
+    assert "  " not in text  # an empty window leaves no extra space
 
 
 def test_join_keeps_empty_windows_exactly_like_transcribe(controller, recorder, backend):

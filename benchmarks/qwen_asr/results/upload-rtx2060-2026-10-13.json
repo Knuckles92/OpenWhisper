@@ -1,0 +1,485 @@
+{
+  "date": "2026-10-13",
+  "gpu": "NVIDIA GeForce RTX 2060, 6 GiB, Windows 11",
+  "runtime": "asr-qwen 2026-10-08.1 (PyTorch 2.7.1+cu128), float16",
+  "method": "benchmarks/qwen_asr/bench_upload.py: LocalSpeechBackend with the real worker; serial is one window per request, as before batching. Memory is whole-card nvidia-smi, including about 1.3 GiB used by the desktop.",
+  "models": {
+    "qwen-0.6b": {
+      "audio_s": 733.37,
+      "clips": 61,
+      "gpu_before_load_mib": [
+        1303,
+        4643
+      ],
+      "gpu_after_load_mib": [
+        3168,
+        2778
+      ],
+      "median_s": {
+        "serial": 69.27000000000001,
+        "batched": 17.66
+      },
+      "speedup": 3.92,
+      "runs": [
+        {
+          "run": 1,
+          "mode": "serial",
+          "elapsed_s": 67.61,
+          "rtf": 10.8,
+          "requests": 28,
+          "windows_per_request": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "peak_gpu_used_mib": 3384,
+          "gpu_used_after_mib": 3383,
+          "vs_reference": {
+            "substitutions": 103,
+            "deletions": 188,
+            "insertions": 14,
+            "words": 1897,
+            "hypothesis_words": 1723,
+            "errors": 305,
+            "wer": 0.16078017923036372
+          },
+          "vs_serial": {
+            "substitutions": 0,
+            "deletions": 0,
+            "insertions": 0,
+            "words": 1723,
+            "hypothesis_words": 1723,
+            "errors": 0,
+            "wer": 0.0
+          }
+        },
+        {
+          "run": 1,
+          "mode": "batched",
+          "elapsed_s": 17.97,
+          "rtf": 40.8,
+          "requests": 2,
+          "windows_per_request": [
+            16,
+            12
+          ],
+          "peak_gpu_used_mib": 5396,
+          "gpu_used_after_mib": 3397,
+          "vs_reference": {
+            "substitutions": 103,
+            "deletions": 188,
+            "insertions": 14,
+            "words": 1897,
+            "hypothesis_words": 1723,
+            "errors": 305,
+            "wer": 0.16078017923036372
+          },
+          "vs_serial": {
+            "substitutions": 1,
+            "deletions": 0,
+            "insertions": 0,
+            "words": 1723,
+            "hypothesis_words": 1723,
+            "errors": 1,
+            "wer": 0.0005803830528148578
+          }
+        },
+        {
+          "run": 2,
+          "mode": "batched",
+          "elapsed_s": 17.35,
+          "rtf": 42.3,
+          "requests": 2,
+          "windows_per_request": [
+            16,
+            12
+          ],
+          "peak_gpu_used_mib": 5318,
+          "gpu_used_after_mib": 3459,
+          "vs_reference": {
+            "substitutions": 103,
+            "deletions": 188,
+            "insertions": 14,
+            "words": 1897,
+            "hypothesis_words": 1723,
+            "errors": 305,
+            "wer": 0.16078017923036372
+          },
+          "vs_serial": {
+            "substitutions": 1,
+            "deletions": 0,
+            "insertions": 0,
+            "words": 1723,
+            "hypothesis_words": 1723,
+            "errors": 1,
+            "wer": 0.0005803830528148578
+          }
+        },
+        {
+          "run": 2,
+          "mode": "serial",
+          "elapsed_s": 70.93,
+          "rtf": 10.3,
+          "requests": 28,
+          "windows_per_request": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "peak_gpu_used_mib": 3524,
+          "gpu_used_after_mib": 3300,
+          "vs_reference": {
+            "substitutions": 103,
+            "deletions": 188,
+            "insertions": 14,
+            "words": 1897,
+            "hypothesis_words": 1723,
+            "errors": 305,
+            "wer": 0.16078017923036372
+          },
+          "vs_serial": {
+            "substitutions": 0,
+            "deletions": 0,
+            "insertions": 0,
+            "words": 1723,
+            "hypothesis_words": 1723,
+            "errors": 0,
+            "wer": 0.0
+          }
+        }
+      ],
+      "checks": [
+        {
+          "check": "one-window file",
+          "identical": true
+        },
+        {
+          "check": "cancel mid-batch",
+          "outcome": "Transcription canceled",
+          "wait_s": 0.0,
+          "worker_stopped": true,
+          "recovered_identical": true
+        }
+      ],
+      "forced_out_of_memory": {
+        "model": "qwen-0.6b",
+        "elapsed_s": 44.3,
+        "requests": [
+          [
+            16,
+            16,
+            2
+          ],
+          [
+            2,
+            2,
+            2
+          ],
+          [
+            2,
+            2,
+            2
+          ],
+          [
+            2,
+            2,
+            2
+          ],
+          [
+            2,
+            2,
+            2
+          ],
+          [
+            2,
+            2,
+            2
+          ],
+          [
+            2,
+            2,
+            2
+          ]
+        ],
+        "vs_serial": {
+          "substitutions": 0,
+          "deletions": 0,
+          "insertions": 0,
+          "words": 1723,
+          "hypothesis_words": 1723,
+          "errors": 0,
+          "wer": 0.0
+        },
+        "vs_unconstrained_batched": {
+          "substitutions": 1,
+          "deletions": 0,
+          "insertions": 0,
+          "words": 1723,
+          "hypothesis_words": 1723,
+          "errors": 1,
+          "wer": 0.0005803830528148578
+        },
+        "identical_to_serial": false,
+        "setup": "worker allocator capped at the model plus 700 MiB; memory preflight told each window costs 1 MiB"
+      }
+    },
+    "qwen-1.7b": {
+      "audio_s": 733.37,
+      "clips": 61,
+      "gpu_before_load_mib": [
+        1326,
+        4620
+      ],
+      "gpu_after_load_mib": [
+        5616,
+        330
+      ],
+      "median_s": {
+        "serial": 75.18,
+        "batched": 43.965
+      },
+      "speedup": 1.71,
+      "runs": [
+        {
+          "run": 1,
+          "mode": "serial",
+          "elapsed_s": 72.83,
+          "rtf": 10.1,
+          "requests": 28,
+          "windows_per_request": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "peak_gpu_used_mib": 5792,
+          "gpu_used_after_mib": 5657,
+          "vs_reference": {
+            "substitutions": 98,
+            "deletions": 169,
+            "insertions": 13,
+            "words": 1897,
+            "hypothesis_words": 1741,
+            "errors": 280,
+            "wer": 0.14760147601476015
+          },
+          "vs_serial": {
+            "substitutions": 0,
+            "deletions": 0,
+            "insertions": 0,
+            "words": 1741,
+            "hypothesis_words": 1741,
+            "errors": 0,
+            "wer": 0.0
+          }
+        },
+        {
+          "run": 1,
+          "mode": "batched",
+          "elapsed_s": 43.85,
+          "rtf": 16.7,
+          "requests": 2,
+          "windows_per_request": [
+            16,
+            12
+          ],
+          "peak_gpu_used_mib": 5720,
+          "gpu_used_after_mib": 5615,
+          "vs_reference": {
+            "substitutions": 97,
+            "deletions": 170,
+            "insertions": 13,
+            "words": 1897,
+            "hypothesis_words": 1740,
+            "errors": 280,
+            "wer": 0.14760147601476015
+          },
+          "vs_serial": {
+            "substitutions": 0,
+            "deletions": 1,
+            "insertions": 0,
+            "words": 1741,
+            "hypothesis_words": 1740,
+            "errors": 1,
+            "wer": 0.0005743825387708214
+          }
+        },
+        {
+          "run": 2,
+          "mode": "batched",
+          "elapsed_s": 44.08,
+          "rtf": 16.6,
+          "requests": 2,
+          "windows_per_request": [
+            16,
+            12
+          ],
+          "peak_gpu_used_mib": 5709,
+          "gpu_used_after_mib": 5622,
+          "vs_reference": {
+            "substitutions": 97,
+            "deletions": 170,
+            "insertions": 13,
+            "words": 1897,
+            "hypothesis_words": 1740,
+            "errors": 280,
+            "wer": 0.14760147601476015
+          },
+          "vs_serial": {
+            "substitutions": 0,
+            "deletions": 1,
+            "insertions": 0,
+            "words": 1741,
+            "hypothesis_words": 1740,
+            "errors": 1,
+            "wer": 0.0005743825387708214
+          }
+        },
+        {
+          "run": 2,
+          "mode": "serial",
+          "elapsed_s": 77.53,
+          "rtf": 9.5,
+          "requests": 28,
+          "windows_per_request": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "peak_gpu_used_mib": 5782,
+          "gpu_used_after_mib": 5725,
+          "vs_reference": {
+            "substitutions": 98,
+            "deletions": 169,
+            "insertions": 13,
+            "words": 1897,
+            "hypothesis_words": 1741,
+            "errors": 280,
+            "wer": 0.14760147601476015
+          },
+          "vs_serial": {
+            "substitutions": 0,
+            "deletions": 0,
+            "insertions": 0,
+            "words": 1741,
+            "hypothesis_words": 1741,
+            "errors": 0,
+            "wer": 0.0
+          }
+        }
+      ],
+      "checks": [
+        {
+          "check": "one-window file",
+          "identical": true
+        },
+        {
+          "check": "cancel mid-batch",
+          "outcome": "Transcription canceled",
+          "wait_s": 0.0,
+          "worker_stopped": true,
+          "recovered_identical": true
+        }
+      ]
+    }
+  }
+}

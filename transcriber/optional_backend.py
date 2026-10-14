@@ -34,6 +34,8 @@ def _phrase_options(phrases) -> dict:
 
 class LocalSpeechBackend(TranscriptionBackend):
     supports_recognition = True
+    #: True for RemoteSpeechBackend, whose worker runs on another computer.
+    is_remote = False
 
     def __init__(self, backend: str, model_name: str | None = None, device: str | None = None):
         super().__init__()
@@ -308,19 +310,8 @@ class LocalSpeechBackend(TranscriptionBackend):
             process = self._process
         if process is None:
             raise RuntimeError(self.last_error or "Speech engine is not loaded")
-        if self.backend_id == "qwen_asr" and op == "transcribe":
-            from services.local_asr.qwen_speech import has_speech
-
-            speech = True
-            try:
-                speech = has_speech(audio)
-            except Exception:
-                # A detector failure must not discard a user's recording.
-                logger.warning("Qwen speech detection failed; decoding the original audio", exc_info=True)
-            if self.should_cancel:
-                raise RuntimeError("Transcription canceled")
-            if not speech:
-                return dict(text="", segments=[])
+        if self.backend_id == "qwen_asr" and op == "transcribe" and not self._qwen_has_speech(audio):
+            return dict(text="", segments=[])
         with tempfile.TemporaryDirectory(prefix="openwhisper-asr-") as directory:
             path = os.path.join(directory, "audio.f32")
             np.asarray(audio, dtype=np.float32).tofile(path)
@@ -329,6 +320,19 @@ class LocalSpeechBackend(TranscriptionBackend):
         if self.should_cancel:
             raise RuntimeError("Transcription canceled")
         return result
+
+    def _qwen_has_speech(self, audio) -> bool:
+        from services.local_asr.qwen_speech import has_speech
+
+        speech = True
+        try:
+            speech = has_speech(audio)
+        except Exception:
+            # A detector failure must not discard a user's recording.
+            logger.warning("Qwen speech detection failed; decoding the original audio", exc_info=True)
+        if self.should_cancel:
+            raise RuntimeError("Transcription canceled")
+        return speech
 
     def transcribe(self, audio_path: str, recognition=None) -> str:
         from services.local_asr.audio import windows
@@ -354,10 +358,59 @@ class LocalSpeechBackend(TranscriptionBackend):
                     raise RuntimeError("Transcription canceled")
                 if not self.is_available():
                     raise RuntimeError(self.device_info)
+                if self.backend_id == "qwen_asr" and self.device == "cuda" and not self.is_remote:
+                    return self._transcribe_batched(windows, language)
                 return [self._transcribe_audio(audio, language, phrases)["text"]
                         for _offset, audio in windows]
             finally:
                 self.is_transcribing = False
+
+    def _transcribe_batched(self, windows, language) -> list[str]:
+        """Qwen on this computer's GPU: several windows per worker request.
+
+        Windows are read only as far as the next request needs, so a long
+        file is never held in memory, and those without speech are skipped
+        before they take a place in a batch. Every request goes to the
+        worker this transcription started on: once a reload or cancel
+        closes it, the next one fails instead of joining two models' text.
+        """
+        from services.local_asr.qwen_batch import MAX_BATCH_SIZE
+
+        with self._state_lock:
+            process = self._process
+        language = language or self.request_language()
+        texts, group, limit = [], [], MAX_BATCH_SIZE
+        for _offset, audio in windows:
+            if self.should_cancel:
+                raise RuntimeError("Transcription canceled")
+            texts.append("")
+            if self._audible(audio) and self._qwen_has_speech(audio):
+                group.append((len(texts) - 1, audio))
+            if len(group) >= limit:
+                limit = self._decode_batch(process, group, language, limit, texts)
+                group = []
+        if group:
+            self._decode_batch(process, group, language, limit, texts)
+        return texts
+
+    def _decode_batch(self, process, group, language, limit, texts) -> int:
+        """Fill ``texts`` for ``group``'s ``(index, audio)`` windows in one request.
+
+        Returns the limit for the rest of the file, lower once the GPU has run
+        out of memory (services/local_asr/qwen_batch.py).
+        """
+        with tempfile.TemporaryDirectory(prefix="openwhisper-asr-") as directory:
+            paths = [os.path.join(directory, f"audio-{number}.f32") for number in range(len(group))]
+            for path, (_index, audio) in zip(paths, group):
+                np.asarray(audio, dtype=np.float32).tofile(path)
+            # A batch gets as long as its windows had one request each.
+            result = process.request("transcribe_batch", audio_paths=paths, language=language,
+                                     batch_size=limit, timeout=300 * len(group))
+        if self.should_cancel:
+            raise RuntimeError("Transcription canceled")
+        for (index, _audio), text in zip(group, result["texts"], strict=True):
+            texts[index] = text
+        return result["batch_size"]
 
     def decode_window(self, audio: np.ndarray, language=None, *, phrases=()) -> str:
         """One window's text, decoded exactly as ``transcribe_windows`` would.
@@ -372,8 +425,16 @@ class LocalSpeechBackend(TranscriptionBackend):
 
     @staticmethod
     def join_texts(texts) -> str:
-        """A transcript from its windows' texts; both decode paths join here."""
-        return " ".join(texts).strip()
+        """A transcript from its windows' texts; both decode paths join here.
+
+        A window without speech has no text and leaves no extra space.
+        """
+        return " ".join(filter(None, (text.strip() for text in texts)))
+
+    @staticmethod
+    def _audible(audio) -> bool:
+        """Whether a window rises above digital silence; quieter ones are never decoded."""
+        return bool(audio.size) and np.max(np.abs(audio)) > .00025
 
     def _transcribe_audio(self, audio, language=None, phrases=()):
         texts, segments = [], []
@@ -386,14 +447,14 @@ class LocalSpeechBackend(TranscriptionBackend):
             from services.local_asr.audio import split_point
             end = start + split_point(audio[start:])
             window = audio[start:end]
-            if window.size and np.max(np.abs(window)) > .00025:
+            if self._audible(window):
                 result = self._recognize(window, language, **_phrase_options(phrases))
                 texts.append(result["text"])
                 for segment in result.get("segments", []):
                     segments.append(dict(segment, start=segment["start"]+start/16000,
                                          end=segment["end"]+start/16000))
             start = end
-        return dict(text=" ".join(texts).strip(), segments=segments)
+        return dict(text=self.join_texts(texts), segments=segments)
 
 
 class SpeechDecoder:

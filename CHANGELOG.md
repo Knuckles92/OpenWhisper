@@ -7,6 +7,13 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Changed
+- **Qwen3-ASR transcribes files much faster on NVIDIA GPUs** — Qwen now decodes several 30-second stretches of a file at once, as many as the GPU has free memory for (up to 16), instead of one at a time. On an RTX 2060 a 12-minute file took 18 s instead of 69 s with Qwen3-ASR 0.6B, and 44 s instead of 75 s with 1.7B, with the same accuracy. A batch that runs out of GPU memory is retried smaller; one that fails for any other reason is decoded a stretch at a time, as before. The GPU memory a batch used is given back when it finishes. Uploads and long dictations use it; live preview, meetings, the CPU, Apple Silicon and remote engines are unchanged.
+
+### Fixed
+- **Qwen3-ASR no longer invents text for silent stretches** — before decoding a stretch of audio, Qwen now checks it with the speech detector Local Whisper uses and skips it when nobody speaks. A call recording that began with 25 seconds of near-silence used to start with a sentence nobody said. Stretches with speech, however quiet, are decoded exactly as before, and the other engines are unchanged.
+- **No double spaces where a recording had a pause** — transcripts from Parakeet, Nemotron, Moonshine and Qwen no longer get an extra space where a stretch of a file had no speech.
+
 ## [2.7.3] - 2026-10-11
 
 ### Added

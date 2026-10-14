@@ -1,9 +1,7 @@
 # Qwen silence handling and file batching
 
-Local investigation of OpenWhisper issues #49 and #48 on October 12, 2026.
-The production change addresses #49. Batching remains an experiment: these
-measurements establish a useful direction, but do not qualify a universal
-automatic batch size or the failure/cancellation behavior of a new batch protocol.
+Local investigation of OpenWhisper issues #49 and #48 on October 12, 2026, and
+the batching that shipped for #48 on October 13 ([Batching in the app](#batching-in-the-app-48)).
 
 ## Silence fix (#49)
 
@@ -80,34 +78,59 @@ reference words. This is a limited CPU result, not a long-file qualification.
 The exact measurements, repeats, reference scores and memory values are in
 [results/rtx2060-2026-10-12.json](results/rtx2060-2026-10-12.json).
 
-## Recommended implementation
+## Batching in the app (#48)
 
-Batching is justified, but setting `max_inference_batch_size` alone does not
-help: the app must deliver multiple audio windows in the same worker request.
-A production implementation should:
+Qwen on this computer's CUDA GPU decodes a file's windows several per worker
+request: uploads and the final pass of dictations longer than one window. Live
+preview, meetings, the CPU, Apple Silicon and remote engines still send one
+window per request.
 
-1. Start with a Qwen upload-only path and bounded groups of four windows. Keep
-   each existing window intact, retain source order, and apply the #49 check
-   before building a group. Limit buffered audio instead of loading a whole file.
-2. Choose a smaller group when current GPU memory headroom is insufficient.
-   Memory must account for the loaded model, working/cache allocations, and
-   other GPU users. Batch eight is a reasonable later option for 0.6B or larger
-   cards; it offered no benefit for 1.7B on this card.
-3. Retry a failed group with smaller groups, ultimately one window at a time.
-   Preserve successfully decoded windows and propagate an individual window's
-   error normally. Treat output-limit failure separately from CUDA OOM, since
-   one pathological sequence can fail an otherwise healthy group.
-4. Preserve the existing serialized worker ownership, model-generation checks,
-   cancellation, request deadlines, and response ordering. Test cancellation
-   during inference, reload, low-memory/OOM recovery, output-limit fallback,
-   and resuming after a failed group through the actual new IPC path.
-5. Qualify CPU long files and Apple Silicon separately before choosing their
-   defaults. Validate the complete upload path on both models and ask the
-   reporter to rerun their long call on the 5080 before claiming their 10x gain.
+- `LocalSpeechBackend.transcribe_windows` reads windows only as far as the next
+  request needs and skips those without speech (#49) before they take a place.
+  It sends up to `MAX_BATCH_SIZE` (16) windows per request, in source order,
+  always to the worker it started on, so a reload or cancel mid-file fails the
+  transcription instead of joining two models' text.
+- In the worker, `qwen_batch.transcribe_batch` gives each generate call as many
+  of them as fit: the GPU's free memory plus the worker's own unused pool, less
+  512 MiB, at 256 MiB per window after the first. Windows drivers page an
+  overcommitted GPU out to system memory instead of failing, so this estimate
+  has to hold without an out-of-memory error to correct it. The model is loaded
+  with `max_inference_batch_size=-1`, so each call is exactly one batch.
+- CUDA out-of-memory halves the limit for the rest of the file. Any other
+  failure of a multi-window call decodes that call's windows one at a time, as
+  before batching; a window that reaches the output limit fails its padded
+  batch, and alone raises the error it always did.
+- Each request ends with `torch.cuda.empty_cache()`, so the worker goes back to
+  the model's own memory between requests instead of keeping its peak.
 
-The measured benefit is about 2x here, not a validated 10x promise. The silence
-fix can ship independently while that protocol and its recovery behavior are
-implemented and qualified.
+Measured on the RTX 2060 through the app's backend and real worker
+([bench_upload.py](bench_upload.py), median of two runs each way): a 12.2-minute
+file of 61 LibriSpeech and AMI clips that opens with 25 s of near-silence and
+pauses for 40 s halfway.
+
+| Model | One window per request | Batched | Speedup | Peak GPU used, one window → batched | WER, both ways | Words that differ |
+|---|---:|---:|---:|---:|---:|---:|
+| 0.6B | 69.3 s | 17.7 s | 3.9x | 3,524 → 5,396 MiB | 16.08% | 1 of 1,723 |
+| 1.7B | 75.2 s | 44.0 s | 1.7x | 5,792 → 5,720 MiB | 14.76% | 1 of 1,741 |
+
+With 1.7B loaded only 330 MiB of the card was free. The gain there came from
+fitting two windows per call into memory the worker had already reserved, so
+batching used no more of the card than one window at a time. After every
+batched run the card went back to its usage after loading. A one-window file
+returned identical text both ways, and a cancel during a batch stopped the
+worker at once, after which a reload transcribed identically.
+
+A forced CUDA out-of-memory error (0.6B, worker allocator capped at the model
+plus 700 MiB, preflight told each window costs 1 MiB) took the file's first
+request from 16 windows per call down to 2, and the rest of the file stayed at
+2: the same words as one window per request, in 44 s.
+
+The reporter's 1 h 51 min call on an RTX 5080 went from 681 s to 67 s at 16
+windows per call outside the app; that still has to be confirmed in a build.
+The full measurements are in
+[results/upload-rtx2060-2026-10-13.json](results/upload-rtx2060-2026-10-13.json).
+In `forced_out_of_memory.requests`, each entry is the windows sent, the limit
+sent and the limit returned.
 
 ## Reproducing the batch experiment
 
@@ -137,3 +160,12 @@ $env:TRANSFORMERS_OFFLINE = '1'
 The optional `--groups`/`--clip-ids` filters use a union. Without them, preparation
 includes every clip, including non-speech. The raw benchmark JSON retains every
 window's provenance and text, loading/warmup durations, call times, and failures.
+
+The in-app comparison runs on the app's Python with the installed `asr-qwen`
+runtime. `--model-path` loads a model that isn't in the speech-model cache:
+
+```powershell
+.venv/Scripts/python.exe benchmarks/qwen_asr/bench_upload.py `
+  --corpus-manifest .tmp/linux-asr-default-2026-10-09/corpus/manifest.json `
+  --work .tmp/qwen-upload --model qwen-1.7b --model-path .tmp/qwen49-48/qwen-1.7b
+```
