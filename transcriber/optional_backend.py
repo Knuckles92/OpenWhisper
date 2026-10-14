@@ -308,6 +308,19 @@ class LocalSpeechBackend(TranscriptionBackend):
             process = self._process
         if process is None:
             raise RuntimeError(self.last_error or "Speech engine is not loaded")
+        if self.backend_id == "qwen_asr" and op == "transcribe":
+            from services.local_asr.qwen_speech import has_speech
+
+            speech = True
+            try:
+                speech = has_speech(audio)
+            except Exception:
+                # A detector failure must not discard a user's recording.
+                logger.warning("Qwen speech detection failed; decoding the original audio", exc_info=True)
+            if self.should_cancel:
+                raise RuntimeError("Transcription canceled")
+            if not speech:
+                return dict(text="", segments=[])
         with tempfile.TemporaryDirectory(prefix="openwhisper-asr-") as directory:
             path = os.path.join(directory, "audio.f32")
             np.asarray(audio, dtype=np.float32).tofile(path)

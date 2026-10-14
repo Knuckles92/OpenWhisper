@@ -1,0 +1,431 @@
+{
+  "batch-cuda": {
+    "model": "qwen-0.6b",
+    "device": "cuda",
+    "gpu": "NVIDIA GeForce RTX 2060",
+    "torch": "2.7.1+cu128",
+    "duration_s": 335.395,
+    "windows": 37,
+    "manifest_sha256": "dab22b6a4952905f10c60f9781efc9e16b101d5df779a843d04970f3719c42cc",
+    "serial_hypothesis_words": 877,
+    "serial_reference_score": {
+      "reference_words": 950,
+      "errors": 121,
+      "wer": 0.12736842105263158
+    },
+    "batches": [
+      {
+        "batch_size": 1,
+        "failures": [],
+        "times_s": [
+          32.59596859999965,
+          33.39924770000016,
+          34.29900859999998
+        ],
+        "median_s": 33.39924770000016,
+        "speedup": 1.0,
+        "drift_errors": [
+          0,
+          0,
+          0
+        ],
+        "changed_windows": [
+          0,
+          0,
+          0
+        ],
+        "reference_scores": [
+          {
+            "reference_words": 950,
+            "errors": 121,
+            "wer": 0.12736842105263158
+          },
+          {
+            "reference_words": 950,
+            "errors": 121,
+            "wer": 0.12736842105263158
+          },
+          {
+            "reference_words": 950,
+            "errors": 121,
+            "wer": 0.12736842105263158
+          }
+        ],
+        "peak_allocated_mib": 1732.67919921875,
+        "peak_reserved_mib": 1976.0
+      },
+      {
+        "batch_size": 2,
+        "failures": [],
+        "times_s": [
+          23.399963599999865,
+          24.75168769999982,
+          25.190321800000675
+        ],
+        "median_s": 24.75168769999982,
+        "speedup": 1.3493725399581704,
+        "drift_errors": [
+          0,
+          0,
+          0
+        ],
+        "changed_windows": [
+          0,
+          0,
+          0
+        ],
+        "reference_scores": [
+          {
+            "reference_words": 950,
+            "errors": 121,
+            "wer": 0.12736842105263158
+          },
+          {
+            "reference_words": 950,
+            "errors": 121,
+            "wer": 0.12736842105263158
+          },
+          {
+            "reference_words": 950,
+            "errors": 121,
+            "wer": 0.12736842105263158
+          }
+        ],
+        "peak_allocated_mib": 1834.48876953125,
+        "peak_reserved_mib": 1976.0
+      },
+      {
+        "batch_size": 4,
+        "failures": [],
+        "times_s": [
+          15.890274800000043,
+          16.044231699999727,
+          17.073939299999438
+        ],
+        "median_s": 16.044231699999727,
+        "speedup": 2.0816981657028006,
+        "drift_errors": [
+          3,
+          3,
+          3
+        ],
+        "changed_windows": [
+          1,
+          1,
+          1
+        ],
+        "reference_scores": [
+          {
+            "reference_words": 950,
+            "errors": 119,
+            "wer": 0.12526315789473685
+          },
+          {
+            "reference_words": 950,
+            "errors": 119,
+            "wer": 0.12526315789473685
+          },
+          {
+            "reference_words": 950,
+            "errors": 119,
+            "wer": 0.12526315789473685
+          }
+        ],
+        "peak_allocated_mib": 2162.431640625,
+        "peak_reserved_mib": 2968.0
+      },
+      {
+        "batch_size": 8,
+        "failures": [],
+        "times_s": [
+          11.354097299999921,
+          12.219975899999554,
+          11.382548300000053
+        ],
+        "median_s": 11.382548300000053,
+        "speedup": 2.934250470081467,
+        "drift_errors": [
+          0,
+          0,
+          0
+        ],
+        "changed_windows": [
+          0,
+          0,
+          0
+        ],
+        "reference_scores": [
+          {
+            "reference_words": 950,
+            "errors": 121,
+            "wer": 0.12736842105263158
+          },
+          {
+            "reference_words": 950,
+            "errors": 121,
+            "wer": 0.12736842105263158
+          },
+          {
+            "reference_words": 950,
+            "errors": 121,
+            "wer": 0.12736842105263158
+          }
+        ],
+        "peak_allocated_mib": 2817.75390625,
+        "peak_reserved_mib": 3770.0
+      }
+    ]
+  },
+  "batch-cuda-1.7b": {
+    "model": "qwen-1.7b",
+    "device": "cuda",
+    "gpu": "NVIDIA GeForce RTX 2060",
+    "torch": "2.7.1+cu128",
+    "duration_s": 335.395,
+    "windows": 37,
+    "manifest_sha256": "dab22b6a4952905f10c60f9781efc9e16b101d5df779a843d04970f3719c42cc",
+    "serial_hypothesis_words": 882,
+    "serial_reference_score": {
+      "reference_words": 950,
+      "errors": 112,
+      "wer": 0.11789473684210526
+    },
+    "batches": [
+      {
+        "batch_size": 1,
+        "failures": [],
+        "times_s": [
+          36.27142679999997,
+          34.76267530000041
+        ],
+        "median_s": 35.51705105000019,
+        "speedup": 1.0,
+        "drift_errors": [
+          0,
+          0
+        ],
+        "changed_windows": [
+          0,
+          0
+        ],
+        "reference_scores": [
+          {
+            "reference_words": 950,
+            "errors": 112,
+            "wer": 0.11789473684210526
+          },
+          {
+            "reference_words": 950,
+            "errors": 112,
+            "wer": 0.11789473684210526
+          }
+        ],
+        "peak_allocated_mib": 4128.53515625,
+        "peak_reserved_mib": 4558.0
+      },
+      {
+        "batch_size": 2,
+        "failures": [],
+        "times_s": [
+          27.437642500000038,
+          25.697682899999563
+        ],
+        "median_s": 26.5676626999998,
+        "speedup": 1.3368526788019053,
+        "drift_errors": [
+          0,
+          0
+        ],
+        "changed_windows": [
+          0,
+          0
+        ],
+        "reference_scores": [
+          {
+            "reference_words": 950,
+            "errors": 112,
+            "wer": 0.11789473684210526
+          },
+          {
+            "reference_words": 950,
+            "errors": 112,
+            "wer": 0.11789473684210526
+          }
+        ],
+        "peak_allocated_mib": 4233.78271484375,
+        "peak_reserved_mib": 4546.0
+      },
+      {
+        "batch_size": 4,
+        "failures": [],
+        "times_s": [
+          19.56028190000052,
+          19.053441599999132
+        ],
+        "median_s": 19.306861749999825,
+        "speedup": 1.8396076747170218,
+        "drift_errors": [
+          0,
+          0
+        ],
+        "changed_windows": [
+          0,
+          0
+        ],
+        "reference_scores": [
+          {
+            "reference_words": 950,
+            "errors": 112,
+            "wer": 0.11789473684210526
+          },
+          {
+            "reference_words": 950,
+            "errors": 112,
+            "wer": 0.11789473684210526
+          }
+        ],
+        "peak_allocated_mib": 4565.00390625,
+        "peak_reserved_mib": 5014.0
+      },
+      {
+        "batch_size": 8,
+        "failures": [],
+        "times_s": [
+          18.842406400000073,
+          20.807096900000943
+        ],
+        "median_s": 19.824751650000508,
+        "speedup": 1.7915508691882798,
+        "drift_errors": [
+          0,
+          0
+        ],
+        "changed_windows": [
+          0,
+          0
+        ],
+        "reference_scores": [
+          {
+            "reference_words": 950,
+            "errors": 112,
+            "wer": 0.11789473684210526
+          },
+          {
+            "reference_words": 950,
+            "errors": 112,
+            "wer": 0.11789473684210526
+          }
+        ],
+        "peak_allocated_mib": 5227.599609375,
+        "peak_reserved_mib": 5904.0
+      }
+    ]
+  },
+  "batch-cpu": {
+    "model": "qwen-0.6b",
+    "device": "cpu",
+    "gpu": null,
+    "torch": "2.7.1+cu128",
+    "duration_s": 41.97,
+    "windows": 8,
+    "manifest_sha256": "0d329a0bb8091e184e8f2296ba00a4a4096e7a36beb44c47e433f0165d21a1cc",
+    "serial_hypothesis_words": 105,
+    "serial_reference_score": {
+      "reference_words": 106,
+      "errors": 3,
+      "wer": 0.02830188679245283
+    },
+    "batches": [
+      {
+        "batch_size": 1,
+        "failures": [],
+        "times_s": [
+          18.693771399999605,
+          18.72223230000054
+        ],
+        "median_s": 18.708001850000073,
+        "speedup": 1.0,
+        "drift_errors": [
+          0,
+          0
+        ],
+        "changed_windows": [
+          0,
+          0
+        ],
+        "reference_scores": [
+          {
+            "reference_words": 106,
+            "errors": 3,
+            "wer": 0.02830188679245283
+          },
+          {
+            "reference_words": 106,
+            "errors": 3,
+            "wer": 0.02830188679245283
+          }
+        ]
+      },
+      {
+        "batch_size": 2,
+        "failures": [],
+        "times_s": [
+          13.179211399999986,
+          13.097466899998835
+        ],
+        "median_s": 13.13833914999941,
+        "speedup": 1.4239244120898578,
+        "drift_errors": [
+          0,
+          0
+        ],
+        "changed_windows": [
+          0,
+          0
+        ],
+        "reference_scores": [
+          {
+            "reference_words": 106,
+            "errors": 3,
+            "wer": 0.02830188679245283
+          },
+          {
+            "reference_words": 106,
+            "errors": 3,
+            "wer": 0.02830188679245283
+          }
+        ]
+      },
+      {
+        "batch_size": 4,
+        "failures": [],
+        "times_s": [
+          11.382598100000905,
+          11.2162644
+        ],
+        "median_s": 11.299431250000453,
+        "speedup": 1.6556587173358237,
+        "drift_errors": [
+          0,
+          0
+        ],
+        "changed_windows": [
+          0,
+          0
+        ],
+        "reference_scores": [
+          {
+            "reference_words": 106,
+            "errors": 3,
+            "wer": 0.02830188679245283
+          },
+          {
+            "reference_words": 106,
+            "errors": 3,
+            "wer": 0.02830188679245283
+          }
+        ]
+      }
+    ]
+  }
+}

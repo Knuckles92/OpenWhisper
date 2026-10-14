@@ -1,0 +1,1311 @@
+{
+  "date": "2026-10-12",
+  "runtime": "asr-qwen 2026-10-08.1",
+  "speech_presence": {
+    "source_manifest_sha256": "a463c20e65a2faff75ed102e1ed0bcd40c9117aa5b98b537e35c94b7cd331b61",
+    "speech": [
+      {
+        "id": "librispeech-clean-6930-75918-0000",
+        "rms_db": -30.649385452270508,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-6930-75918-0001",
+        "rms_db": -28.28988265991211,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-260-123286-0000",
+        "rms_db": -24.653152465820312,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-260-123286-0001",
+        "rms_db": -24.926193237304688,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-3575-170457-0031",
+        "rms_db": -23.091938018798828,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-3575-170457-0032",
+        "rms_db": -19.80413246154785,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-8463-294828-0022",
+        "rms_db": -24.866378784179688,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-8463-294828-0023",
+        "rms_db": -24.705551147460938,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-1995-1837-0023",
+        "rms_db": -23.59666633605957,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-1995-1837-0024",
+        "rms_db": -23.58038330078125,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-8455-210777-0028",
+        "rms_db": -21.74587059020996,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-8455-210777-0029",
+        "rms_db": -20.410871505737305,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-4446-2275-0005",
+        "rms_db": -22.242538452148438,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-4446-2275-0006",
+        "rms_db": -22.638076782226562,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-7021-79730-0001",
+        "rms_db": -22.501747131347656,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-7021-79730-0002",
+        "rms_db": -24.995162963867188,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-672-122797-0071",
+        "rms_db": -26.49250030517578,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-672-122797-0072",
+        "rms_db": -28.869094848632812,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-1188-133604-0029",
+        "rms_db": -29.378986358642578,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-1188-133604-0030",
+        "rms_db": -27.01557159423828,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-1580-141083-0051",
+        "rms_db": -31.772903442382812,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-1580-141083-0052",
+        "rms_db": -27.51459312438965,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-61-70968-0021",
+        "rms_db": -24.29551124572754,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-61-70968-0022",
+        "rms_db": -27.800857543945312,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-237-134493-0012",
+        "rms_db": -19.182544708251953,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-237-134493-0013",
+        "rms_db": -17.72968864440918,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-7902-96591-0000",
+        "rms_db": -23.50847625732422,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-7902-96591-0001",
+        "rms_db": -23.737171173095703,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-4198-61336-0003",
+        "rms_db": -30.2132625579834,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-4198-61336-0004",
+        "rms_db": -29.54026985168457,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-5764-299665-0095",
+        "rms_db": -25.688304901123047,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-5764-299665-0096",
+        "rms_db": -25.71031379699707,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-3331-159609-0008",
+        "rms_db": -22.133808135986328,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-3331-159609-0009",
+        "rms_db": -27.785215377807617,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-3528-168669-0123",
+        "rms_db": -30.963171005249023,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-3528-168669-0124",
+        "rms_db": -29.74460220336914,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-8131-117029-0003",
+        "rms_db": -25.736970901489258,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-8131-117029-0004",
+        "rms_db": -26.171560287475586,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-3538-163619-0000",
+        "rms_db": -25.722501754760742,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-3538-163619-0001",
+        "rms_db": -26.47356414794922,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-3764-168671-0026",
+        "rms_db": -27.547592163085938,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-3764-168671-0027",
+        "rms_db": -27.428958892822266,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-1688-142285-0052",
+        "rms_db": -23.542160034179688,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-1688-142285-0053",
+        "rms_db": -23.090879440307617,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-1998-29455-0018",
+        "rms_db": -28.93431854248047,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-1998-29455-0019",
+        "rms_db": -29.215991973876953,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-6432-63723-0009",
+        "rms_db": -23.74996566772461,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-6432-63723-0010",
+        "rms_db": -25.053443908691406,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-4350-9170-0000",
+        "rms_db": -25.459260940551758,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-other-4350-9170-0001",
+        "rms_db": -26.31680679321289,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "IN1001",
+        "rms_db": -28.090991973876953,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "IN1002",
+        "rms_db": -26.317712783813477,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "IN1005",
+        "rms_db": -17.876991271972656,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "IN1007",
+        "rms_db": -14.83652114868164,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "IN1008",
+        "rms_db": -24.151174545288086,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "IN1009",
+        "rms_db": -23.778839111328125,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "IN1012",
+        "rms_db": -18.099571228027344,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "IN1013",
+        "rms_db": -14.19487190246582,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "IN1014",
+        "rms_db": -24.954017639160156,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "IN1016",
+        "rms_db": -23.806827545166016,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-6930-75918-0000-noise10",
+        "rms_db": -30.232458114624023,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-3575-170457-0031-noise10",
+        "rms_db": -22.674272537231445,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-1995-1837-0023-noise10",
+        "rms_db": -23.184120178222656,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-4446-2275-0005-noise10",
+        "rms_db": -21.81450080871582,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-672-122797-0071-noise10",
+        "rms_db": -26.071290969848633,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-1580-141083-0051-noise10",
+        "rms_db": -31.375728607177734,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "librispeech-clean-237-134493-0012-noise10",
+        "rms_db": -18.770662307739258,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "long-read-speech",
+        "rms_db": -24.052717208862305,
+        "speech": true,
+        "quiet": {
+          "-45": true,
+          "-55": true
+        }
+      },
+      {
+        "id": "quiet-speech--35",
+        "speech": true
+      },
+      {
+        "id": "sparse-speech--35",
+        "speech": true
+      },
+      {
+        "id": "quiet-speech--45",
+        "speech": true
+      },
+      {
+        "id": "sparse-speech--45",
+        "speech": true
+      },
+      {
+        "id": "quiet-speech--55",
+        "speech": true
+      },
+      {
+        "id": "sparse-speech--55",
+        "speech": true
+      },
+      {
+        "id": "isolated-word-192000",
+        "speech": true
+      },
+      {
+        "id": "isolated-word-391200",
+        "speech": true
+      }
+    ],
+    "non_speech": [
+      {
+        "id": "silence",
+        "rms_db": -240.0,
+        "speech": false
+      },
+      {
+        "id": "quiet-noise",
+        "rms_db": -46.01381301879883,
+        "speech": false
+      },
+      {
+        "id": "quiet-noise--67--43",
+        "speech": false,
+        "peak_passes_old_gate": true
+      },
+      {
+        "id": "quiet-noise--67--53",
+        "speech": false,
+        "peak_passes_old_gate": true
+      },
+      {
+        "id": "quiet-noise--63--33",
+        "speech": false,
+        "peak_passes_old_gate": true
+      }
+    ]
+  },
+  "real_engine_comparisons": [
+    {
+      "family": "qwen_asr",
+      "model": "qwen-0.6b",
+      "id": "isolated-word-192000",
+      "raw_text": "Concor.",
+      "filtered_text": "Concor.",
+      "elapsed_s": 0.5169789999999921,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-0.6b",
+      "id": "isolated-word-391200",
+      "raw_text": "Concor.",
+      "filtered_text": "Concor.",
+      "elapsed_s": 0.20509300000048825,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-0.6b",
+      "id": "quiet-noise--63--33",
+      "raw_text": "The.",
+      "filtered_text": "",
+      "elapsed_s": 0.026090100000146776,
+      "speech": false,
+      "exact_same": false
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-0.6b",
+      "id": "quiet-noise--67--43",
+      "raw_text": "The.",
+      "filtered_text": "",
+      "elapsed_s": 0.026273499999661,
+      "speech": false,
+      "exact_same": false
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-0.6b",
+      "id": "quiet-noise--67--53",
+      "raw_text": "The.",
+      "filtered_text": "",
+      "elapsed_s": 0.026796300000569317,
+      "speech": false,
+      "exact_same": false
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-0.6b",
+      "id": "quiet-speech--35",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.3314912000005279,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-0.6b",
+      "id": "quiet-speech--45",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.37938650000069174,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-0.6b",
+      "id": "quiet-speech--55",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.33403349999935017,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-0.6b",
+      "id": "sparse-speech--35",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.3770264999984647,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-0.6b",
+      "id": "sparse-speech--45",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.3881294999991951,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-0.6b",
+      "id": "sparse-speech--55",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.40110439999989467,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-0.6b",
+      "id": "librispeech-clean-6930-75918-0000",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.3217430999993667,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-0.6b",
+      "id": "librispeech-clean-6930-75918-0001",
+      "raw_text": "The English forwarded to the French baskets of flowers, of which they had made a plentiful provision to greet the arrival of the young princess. The French, in return, invited the English to a supper, which was to be given the next day.",
+      "filtered_text": "The English forwarded to the French baskets of flowers, of which they had made a plentiful provision to greet the arrival of the young princess. The French, in return, invited the English to a supper, which was to be given the next day.",
+      "elapsed_s": 1.6223432000006142,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-0.6b",
+      "id": "librispeech-clean-260-123286-0000",
+      "raw_text": "Saturday, August fifteenth. The sea unbroken all round, no land in sight.",
+      "filtered_text": "Saturday, August fifteenth. The sea unbroken all round, no land in sight.",
+      "elapsed_s": 0.5551501000009011,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-0.6b",
+      "id": "librispeech-clean-260-123286-0001",
+      "raw_text": "The horizon seems extremely distant.",
+      "filtered_text": "The horizon seems extremely distant.",
+      "elapsed_s": 0.24076459999923827,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-1.7b",
+      "id": "isolated-word-192000",
+      "raw_text": "Concours.",
+      "filtered_text": "Concours.",
+      "elapsed_s": 0.28946189999987837,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-1.7b",
+      "id": "isolated-word-391200",
+      "raw_text": "Concorde.",
+      "filtered_text": "Concorde.",
+      "elapsed_s": 0.2870653999998467,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-1.7b",
+      "id": "quiet-noise--63--33",
+      "raw_text": "The.",
+      "filtered_text": "",
+      "elapsed_s": 0.024726300000111223,
+      "speech": false,
+      "exact_same": false
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-1.7b",
+      "id": "quiet-noise--67--43",
+      "raw_text": "The.",
+      "filtered_text": "",
+      "elapsed_s": 0.023588600000948645,
+      "speech": false,
+      "exact_same": false
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-1.7b",
+      "id": "quiet-noise--67--53",
+      "raw_text": "The.",
+      "filtered_text": "",
+      "elapsed_s": 0.0275818000009167,
+      "speech": false,
+      "exact_same": false
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-1.7b",
+      "id": "quiet-speech--35",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.3709208000000217,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-1.7b",
+      "id": "quiet-speech--45",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.34340509999856295,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-1.7b",
+      "id": "quiet-speech--55",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.3572041999996145,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-1.7b",
+      "id": "sparse-speech--35",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.4281202999991365,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-1.7b",
+      "id": "sparse-speech--45",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.4447346999986621,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-1.7b",
+      "id": "sparse-speech--55",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.5080398999998579,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-1.7b",
+      "id": "librispeech-clean-6930-75918-0000",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.39848480000000563,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-1.7b",
+      "id": "librispeech-clean-6930-75918-0001",
+      "raw_text": "The English forwarded to the French baskets of flowers, of which they had made a plentiful provision to greet the arrival of the young princess. The French, in return, invited the English to a supper, which was to be given the next day.",
+      "filtered_text": "The English forwarded to the French baskets of flowers, of which they had made a plentiful provision to greet the arrival of the young princess. The French, in return, invited the English to a supper, which was to be given the next day.",
+      "elapsed_s": 1.7354326999993646,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-1.7b",
+      "id": "librispeech-clean-260-123286-0000",
+      "raw_text": "Saturday, August fifteenth, the sea unbroken all round, no land in sight.",
+      "filtered_text": "Saturday, August fifteenth, the sea unbroken all round, no land in sight.",
+      "elapsed_s": 0.6404452999995556,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "qwen_asr",
+      "model": "qwen-1.7b",
+      "id": "librispeech-clean-260-123286-0001",
+      "raw_text": "The horizon seems extremely distant.",
+      "filtered_text": "The horizon seems extremely distant.",
+      "elapsed_s": 0.24576250000063737,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "parakeet",
+      "model": "parakeet-v3",
+      "id": "isolated-word-192000",
+      "raw_text": "",
+      "filtered_text": "",
+      "elapsed_s": 0.09395299999960116,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "parakeet",
+      "model": "parakeet-v3",
+      "id": "isolated-word-391200",
+      "raw_text": "",
+      "filtered_text": "",
+      "elapsed_s": 0.09216829999968468,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "parakeet",
+      "model": "parakeet-v3",
+      "id": "quiet-noise--63--33",
+      "raw_text": "",
+      "filtered_text": "",
+      "elapsed_s": 0.08856999999989057,
+      "speech": false,
+      "exact_same": true
+    },
+    {
+      "family": "parakeet",
+      "model": "parakeet-v3",
+      "id": "quiet-noise--67--43",
+      "raw_text": "",
+      "filtered_text": "",
+      "elapsed_s": 0.1089652999999089,
+      "speech": false,
+      "exact_same": true
+    },
+    {
+      "family": "parakeet",
+      "model": "parakeet-v3",
+      "id": "quiet-noise--67--53",
+      "raw_text": "",
+      "filtered_text": "",
+      "elapsed_s": 0.13838749999922584,
+      "speech": false,
+      "exact_same": true
+    },
+    {
+      "family": "parakeet",
+      "model": "parakeet-v3",
+      "id": "quiet-speech--35",
+      "raw_text": "Concord returned to its place amidst the tents,",
+      "filtered_text": "Concord returned to its place amidst the tents,",
+      "elapsed_s": 0.04650669999864476,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "parakeet",
+      "model": "parakeet-v3",
+      "id": "quiet-speech--45",
+      "raw_text": "Concord returned to its place amidst the tents,",
+      "filtered_text": "Concord returned to its place amidst the tents,",
+      "elapsed_s": 0.03478540000105568,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "parakeet",
+      "model": "parakeet-v3",
+      "id": "quiet-speech--55",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.03999219999968773,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "parakeet",
+      "model": "parakeet-v3",
+      "id": "sparse-speech--35",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.09950170000047365,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "parakeet",
+      "model": "parakeet-v3",
+      "id": "sparse-speech--45",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.10921130000133417,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "parakeet",
+      "model": "parakeet-v3",
+      "id": "sparse-speech--55",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.0949901999993017,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "parakeet",
+      "model": "parakeet-v3",
+      "id": "librispeech-clean-6930-75918-0000",
+      "raw_text": "Concord returned to its place amidst the tents,",
+      "filtered_text": "Concord returned to its place amidst the tents,",
+      "elapsed_s": 0.03617590000067139,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "parakeet",
+      "model": "parakeet-v3",
+      "id": "librispeech-clean-6930-75918-0001",
+      "raw_text": "the English forwarded to the French baskets of flowers, of which they had made a plentiful provision to greet the arrival of the young princess. The French, in return, invited the English to a supper, which was to be given the next day.",
+      "filtered_text": "the English forwarded to the French baskets of flowers, of which they had made a plentiful provision to greet the arrival of the young princess. The French, in return, invited the English to a supper, which was to be given the next day.",
+      "elapsed_s": 0.08520539999881294,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "parakeet",
+      "model": "parakeet-v3",
+      "id": "librispeech-clean-260-123286-0000",
+      "raw_text": "Saturday, august fifteenth. The sea unbroken all round. No land in sight,",
+      "filtered_text": "Saturday, august fifteenth. The sea unbroken all round. No land in sight,",
+      "elapsed_s": 0.05855940000037663,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "parakeet",
+      "model": "parakeet-v3",
+      "id": "librispeech-clean-260-123286-0001",
+      "raw_text": "The horizon seems extremely distant.",
+      "filtered_text": "The horizon seems extremely distant.",
+      "elapsed_s": 0.03413870000076713,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "nemotron",
+      "model": "nemotron-3.5",
+      "id": "isolated-word-192000",
+      "raw_text": "Concours",
+      "filtered_text": "Concours",
+      "elapsed_s": 0.09833360000084213,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "nemotron",
+      "model": "nemotron-3.5",
+      "id": "isolated-word-391200",
+      "raw_text": "Concours.",
+      "filtered_text": "Concours.",
+      "elapsed_s": 0.09963860000061686,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "nemotron",
+      "model": "nemotron-3.5",
+      "id": "quiet-noise--63--33",
+      "raw_text": "",
+      "filtered_text": "",
+      "elapsed_s": 0.09515800000008312,
+      "speech": false,
+      "exact_same": true
+    },
+    {
+      "family": "nemotron",
+      "model": "nemotron-3.5",
+      "id": "quiet-noise--67--43",
+      "raw_text": "",
+      "filtered_text": "",
+      "elapsed_s": 0.09473660000003292,
+      "speech": false,
+      "exact_same": true
+    },
+    {
+      "family": "nemotron",
+      "model": "nemotron-3.5",
+      "id": "quiet-noise--67--53",
+      "raw_text": "",
+      "filtered_text": "",
+      "elapsed_s": 0.09093609999945329,
+      "speech": false,
+      "exact_same": true
+    },
+    {
+      "family": "nemotron",
+      "model": "nemotron-3.5",
+      "id": "quiet-speech--35",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.06482150000010733,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "nemotron",
+      "model": "nemotron-3.5",
+      "id": "quiet-speech--45",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.039709300001049996,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "nemotron",
+      "model": "nemotron-3.5",
+      "id": "quiet-speech--55",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.05755210000097577,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "nemotron",
+      "model": "nemotron-3.5",
+      "id": "sparse-speech--35",
+      "raw_text": "Concord returned to its place amidst the tents",
+      "filtered_text": "Concord returned to its place amidst the tents",
+      "elapsed_s": 0.11155789999975241,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "nemotron",
+      "model": "nemotron-3.5",
+      "id": "sparse-speech--45",
+      "raw_text": "Concord returned to its place amidst the tents",
+      "filtered_text": "Concord returned to its place amidst the tents",
+      "elapsed_s": 0.10975959999996121,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "nemotron",
+      "model": "nemotron-3.5",
+      "id": "sparse-speech--55",
+      "raw_text": "Concord returned to its place amidst the tents",
+      "filtered_text": "Concord returned to its place amidst the tents",
+      "elapsed_s": 0.10986650000086229,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "nemotron",
+      "model": "nemotron-3.5",
+      "id": "librispeech-clean-6930-75918-0000",
+      "raw_text": "Concord returned to its place amidst the tents.",
+      "filtered_text": "Concord returned to its place amidst the tents.",
+      "elapsed_s": 0.03756480000083684,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "nemotron",
+      "model": "nemotron-3.5",
+      "id": "librispeech-clean-6930-75918-0001",
+      "raw_text": "The English forwaded to the French baskets of flowers of which they had made a plentiful provision to greet the arrival of the young princess. The French, in return, invited the English to a supper, which was to be given the next day.",
+      "filtered_text": "The English forwaded to the French baskets of flowers of which they had made a plentiful provision to greet the arrival of the young princess. The French, in return, invited the English to a supper, which was to be given the next day.",
+      "elapsed_s": 0.1642007000009471,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "nemotron",
+      "model": "nemotron-3.5",
+      "id": "librispeech-clean-260-123286-0000",
+      "raw_text": "Saturday August fifteenth the sea and broken all round. No land in sight.",
+      "filtered_text": "Saturday August fifteenth the sea and broken all round. No land in sight.",
+      "elapsed_s": 0.07905089999985648,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "nemotron",
+      "model": "nemotron-3.5",
+      "id": "librispeech-clean-260-123286-0001",
+      "raw_text": "The horizon seems extremely distant.",
+      "filtered_text": "The horizon seems extremely distant.",
+      "elapsed_s": 0.03336469999885594,
+      "speech": true,
+      "exact_same": true
+    },
+    {
+      "family": "whisper-turbo",
+      "id": "librispeech-clean-6930-75918-0000",
+      "text": "Concord returned to its place amidst the tents.",
+      "score": {
+        "substitutions": 0,
+        "deletions": 0,
+        "insertions": 0,
+        "words": 8,
+        "hypothesis_words": 8,
+        "errors": 0,
+        "wer": 0.0
+      }
+    },
+    {
+      "family": "whisper-turbo",
+      "id": "librispeech-clean-6930-75918-0001",
+      "text": "the english forwarded to the french baskets of flowers of which they had made a plentiful provision to greet the arrival of the young princess the french in return invited the english to a supper which was to be given the next day",
+      "score": {
+        "substitutions": 0,
+        "deletions": 0,
+        "insertions": 0,
+        "words": 43,
+        "hypothesis_words": 43,
+        "errors": 0,
+        "wer": 0.0
+      }
+    }
+  ],
+  "regression_tests_passed": 244
+}
