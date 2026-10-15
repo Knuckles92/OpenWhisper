@@ -7,6 +7,8 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.7.4] - 2026-10-14
+
 ### Changed
 - **OpenAI cleanup uses GPT-6 Luna** — the OpenAI picker default and saved cleanup assignments using `gpt-4o-mini` now resolve to `gpt-6-luna`. Thinking Off explicitly disables reasoning for Luna. Other saved model/provider choices and meeting assignments are preserved; cleanup remains opt-in and OpenRouter Free remains the fresh-install default.
 - **Qwen3-ASR transcribes files much faster on NVIDIA GPUs** — Qwen now decodes several 30-second stretches of a file at once, as many as the GPU has free memory for (up to 16), instead of one at a time. On an RTX 2060 a 12-minute file took 18 s instead of 69 s with Qwen3-ASR 0.6B, and 44 s instead of 75 s with 1.7B, with the same accuracy. A batch that runs out of GPU memory is retried smaller; one that fails for any other reason is decoded a stretch at a time, as before. The GPU memory a batch used is given back when it finishes. Uploads and long dictations use it; live preview, meetings, the CPU, Apple Silicon and remote engines are unchanged.
