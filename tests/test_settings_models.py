@@ -489,8 +489,12 @@ class TestTextModelPicker(_DialogTestCase):
         assert "in use" in dialog.message_label.text()
         assert len(values[SettingsKey.TEXT_LLM_PROFILES]) == 1
 
-    def test_catalog_result_populates_matching_provider(self):
-        dialog, _values = self._make_text_dialog(model="gpt-4o-mini")
+    @pytest.mark.parametrize("saved_model,expected_model", [
+        ("gpt-4o-mini", "gpt-6-luna"),
+        ("gpt-4.1", "gpt-4.1"),
+    ])
+    def test_catalog_result_populates_matching_provider(self, saved_model, expected_model):
+        dialog, values = self._make_text_dialog(model=saved_model)
         models = ["gpt-4.1", "gpt-4o-mini", "o4-mini"]
 
         dialog._on_text_models_loaded(
@@ -502,7 +506,8 @@ class TestTextModelPicker(_DialogTestCase):
 
         picker = dialog.text_model_picker
         assert picker.model_combo.count() == len(models)
-        assert picker.model_combo.currentText() == "gpt-4o-mini"
+        assert picker.model_combo.currentText() == expected_model
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == saved_model
         assert picker.status_label.text() == "3 models available"
 
     def test_opening_a_text_destination_loads_that_provider_catalog(self):

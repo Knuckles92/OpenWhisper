@@ -653,7 +653,7 @@ class TestMeetingSettings:
             self.keys.MEETING_LLM_MODEL: "gpt-4o-mini",
         }
         assert resolve_transcript_cleanup_provider(openai) == "openai"
-        assert resolve_transcript_cleanup_model(openai) == "gpt-4o-mini"
+        assert resolve_transcript_cleanup_model(openai) == "gpt-6-luna"
         assert resolve_meeting_llm_provider(openai) == "openai"
         assert resolve_meeting_llm_model(openai) == "gpt-4o-mini"
 

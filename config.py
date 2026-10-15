@@ -508,7 +508,7 @@ class AppConfig:
     # ends there too. Per-file batch cleanups share this cap and the timeout.
     TRANSCRIPT_CLEANUP_MAX_RETRIES: int = 1
     TRANSCRIPT_CLEANUP_PROVIDER: str = "openrouter"
-    TRANSCRIPT_CLEANUP_MODEL: str = "gpt-4o-mini"
+    TRANSCRIPT_CLEANUP_MODEL: str = "gpt-6-luna"
     TRANSCRIPT_CLEANUP_OPENROUTER_MODEL: str = "openrouter/free"
     # Model-list ordering in Model Manager. "alphabetical" sorts client-side;
     # other values are OpenRouter /models sort params.
