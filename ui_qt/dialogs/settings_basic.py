@@ -457,7 +457,8 @@ class BasicSettingsPage(QWidget):
         self._toggle(
             updates,
             "Check for updates automatically",
-            "Look for new releases in the background.",
+            "Ask GitHub for the latest release at most once a day. "
+            "Sends the app version, no IDs.",
             GENERAL,
             "update_check_check",
             SettingsKey.UPDATE_CHECK_ENABLED,
