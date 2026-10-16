@@ -24,8 +24,9 @@ def openai_transcribe(request: dict) -> dict:
     hints = {name: request[name] for name in _OPENAI_HINTS if request.get(name)}
     # The parent enforces an absolute deadline as well. Disabling
     # automatic retries avoids duplicate paid requests on cancel.
-    with OpenAI(api_key=request["api_key"], max_retries=0,
-                timeout=httpx.Timeout(120., connect=10.)) as client:
+    # No base_url means OpenAI (or the SDK's OPENAI_BASE_URL).
+    with OpenAI(api_key=request["api_key"], base_url=request.get("base_url"), max_retries=0,
+                timeout=httpx.Timeout(request["read_timeout"], connect=10.)) as client:
         with open(request["audio_path"], "rb") as audio:
             response = client.audio.transcriptions.create(
                 file=audio, model=request["model"], response_format=request["response_format"],

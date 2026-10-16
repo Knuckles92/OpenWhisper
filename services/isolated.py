@@ -155,10 +155,16 @@ class IsolatedWhisperModel:
 
 
 class IsolatedOpenAIClient:
-    """Small SDK-shaped adapter; each upload owns a killable worker process."""
+    """Small SDK-shaped adapter; each upload owns a killable worker process.
 
-    def __init__(self, api_key):
+    ``base_url`` None is OpenAI. ``read_timeout`` bounds the wait for the
+    server's answer; the worker gets a minute more to connect and upload.
+    """
+
+    def __init__(self, api_key, base_url=None, read_timeout=120.):
         self._api_key = api_key
+        self._base_url = base_url
+        self._read_timeout = read_timeout
         self._lock = threading.Lock()
         self._closed = False
         self._workers = set()
@@ -177,9 +183,10 @@ class IsolatedOpenAIClient:
             self._workers.add(worker)
         try:
             return worker.request("openai_transcribe", api_key=self._api_key,
+                                  base_url=self._base_url, read_timeout=self._read_timeout,
                                   audio_path=os.path.abspath(file.name), model=model,
-                                  response_format=response_format, timeout=180.,
-                                  **hints)["text"]
+                                  response_format=response_format,
+                                  timeout=self._read_timeout + 60., **hints)["text"]
         finally:
             worker.close()
             with self._lock:

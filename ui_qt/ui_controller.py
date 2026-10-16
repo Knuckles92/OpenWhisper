@@ -153,7 +153,6 @@ class UIController(QObject):
         self.on_audio_device_changed: Optional[Callable] = None
         self.on_streaming_settings_changed: Optional[Callable] = None
         self.on_hf_policy_changed: Optional[Callable] = None
-        self.on_api_keys_changed: Optional[Callable] = None
         # A Settings page module changed something the app caches, by kind
         # ("transforms", "hotkeys", "dictionary", ...). Always callable.
         self.on_settings_changed: Callable[[str], None] = _ignore_settings_change
@@ -1154,9 +1153,10 @@ class UIController(QObject):
             viewer.refresh_typography()
 
     def _on_api_keys_changed(self):
-        """A key was saved or removed: rebuild clients, then redraw key status."""
-        if self.on_api_keys_changed:
-            self.on_api_keys_changed()
+        """A key was saved or removed: redraw key status.
+
+        Every client resolves its key when it next connects.
+        """
         self.refresh_model_views()
 
     def show_hf_consent_dialog(
