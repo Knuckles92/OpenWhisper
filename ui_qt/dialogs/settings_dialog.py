@@ -1305,8 +1305,10 @@ class SettingsDialog(QDialog):
 
         self.update_check_tile = SettingTile(
             "Check for updates automatically",
-            "Looks for new OpenWhisper releases in the background. Nothing "
-            "is installed without your approval.",
+            "When OpenWhisper starts, at most once a day, asks GitHub "
+            "(api.github.com) for the latest release. The request includes "
+            "the app version, no account or device ID. Nothing is installed "
+            "without your approval.",
             design_icon("refresh-blue.svg"),
         )
         self.update_check_check = self.update_check_tile.checkbox

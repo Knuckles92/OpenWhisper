@@ -1,5 +1,6 @@
 name: Bug report
 description: Report a problem with transcription, recordings, meetings, or the app.
+labels: ["bug"]
 body:
   - type: textarea
     id: problem
@@ -12,32 +13,69 @@ body:
     id: version
     attributes:
       label: App version and installation
-      description: Include the version or source commit and whether you use an installer or source checkout.
+      description: Include the version or source commit and whether you use an installer, a Linux package, or a source checkout.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
     validations:
       required: true
   - type: input
     id: platform
     attributes:
-      label: Operating system and hardware
-      description: Include OS/version, CPU, and GPU/VRAM if relevant. Parakeet and Nemotron run on Windows x64 and Linux x86_64 (Parakeet also on Apple Silicon CPU); Qwen3-ASR and Moonshine require Windows x64.
+      label: OS version and hardware
+      description: Include OS/version (and desktop or compositor on Linux), CPU, and GPU/VRAM if relevant. Parakeet and Nemotron run on Windows x64 and Linux x86_64 (Parakeet also on Apple Silicon CPU); Qwen3-ASR and Moonshine require Windows x64.
   - type: dropdown
     id: backend
     attributes:
-      label: Transcription backend
+      label: Speech engine
       options:
         - Not applicable / unsure
         - Local Whisper
-        - API
         - Parakeet
         - Qwen3-ASR
         - Nemotron Streaming
         - Moonshine
-        - Remote computer
+        - Cloud speech API (OpenAI)
+        - Remote computer (another computer's engine)
+        - Other speech endpoint
   - type: input
     id: model
     attributes:
       label: Model and actual device
       description: Copy the Model and device/status values. For meetings, include the separately selected meeting model. Mention installed speech runtime components if loading failed.
+  - type: dropdown
+    id: text_provider
+    attributes:
+      label: Text model provider
+      description: The provider used for AI cleanup, Command Mode, transforms, or meeting insights, if the problem involves them.
+      multiple: true
+      options:
+        - Not applicable / unsure
+        - OpenAI
+        - OpenRouter
+        - Groq
+        - OpenCode Go or Zen
+        - Ollama
+        - LM Studio
+        - vLLM
+        - llama.cpp
+        - LocalAI
+        - Custom endpoint
+        - Fast judgments (TypeSafe)
+        - Coding agent (Claude Code, Codex, OpenCode)
+  - type: input
+    id: text_model
+    attributes:
+      label: Text model and endpoint
+      description: The model name, and for local servers or custom endpoints the server and version. Leave out API keys and private hostnames.
   - type: textarea
     id: diagnostics
     attributes:

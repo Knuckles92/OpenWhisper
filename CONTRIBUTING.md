@@ -1,5 +1,17 @@
 # Contributing
 
+## Pull requests
+
+- Branch from `main` and keep each pull request to one topic. Split unrelated fixes, refactors, and dependency updates into their own pull requests.
+- For a larger feature or a new dependency, open an issue or a discussion first so the approach can be agreed before you build it.
+- Run the tests for the code you touched and `ruff check --select F .` (see [Validation](#validation)). UI changes need both interfaces checked (see [Desktop feature parity](#desktop-feature-parity)) and before/after screenshots in the pull request.
+- Add a user-visible change to `CHANGELOG.md` under `## [Unreleased]`, in the matching `### Added`, `### Changed`, or `### Fixed` group. Follow the existing entries: a bold summary, then what changed for the user and any limits. Internal refactors and test-only changes need no entry.
+- Update the README or the page in `docs/` that describes the behavior you changed.
+- Keep API keys, tokens, private hostnames, and transcript content out of code, tests, logs, and screenshots.
+- Report security problems privately; see [SECURITY.md](SECURITY.md).
+
+By contributing, you agree that your contribution is licensed under the project's [MIT License](LICENSE).
+
 ## Comments and Docstrings
 
 Code is the primary source of truth. Add prose only when it records information the code cannot express clearly.
@@ -123,6 +135,25 @@ Release pins should only change as part of a deliberate dependency update. Use
 `uv add` only for experiments: permanent dependency changes must also go through
 the requirements files and generator. uv itself is optional for source users and
 is not required by the release builders.
+
+## Adding a provider or engine
+
+Most new integrations are an OpenAI-compatible endpoint, so start from the closest existing one and follow the same files.
+
+**Text model providers** (AI cleanup, Command Mode, transforms, meeting intelligence):
+
+- Built-in endpoints are the `TextLLMProfile` entries returned by `builtin_profiles()` in `services/text_llm.py`. Local servers take their default address from `LOCAL_SERVER_DEFAULT_URLS` and need no key; hosted providers name the environment variable that holds their key (`api_key_env`), which **Settings → API keys** stores in the OS credential store.
+- Add the provider ID to `TranscriptCleanupProvider` in `services/settings.py` so saved choices validate, and check provider-specific behavior in `services/text_generation.py`, `services/transcript_cleanup.py` (for example the longer timeout local servers get), `services/text_model_catalog.py`, and the meeting agents in `meeting/agent/`.
+- The picker and endpoint settings live in `ui_qt/widgets/text_model_picker.py`, `ui_qt/dialogs/settings_models.py`, and `ui_qt/dialogs/text_endpoint_dialog.py`.
+- Cover it in `tests/test_text_llm.py`, `tests/test_settings_models.py`, and `tests/test_text_generation.py`.
+- Anything a user can reach with a custom endpoint does not need a built-in profile; add one when the provider needs a known address, key name, headers, or model list.
+
+**Speech engines:**
+
+- Engines that run on this computer (Whisper, Parakeet, Nemotron, Qwen3-ASR, Moonshine) follow [Local speech backends and models](#local-speech-backends-and-models) below: the family catalog in `services/local_asr/catalog.py`, pinned weights in `services/local_asr/models.json`, runtimes as components (`services/components.py`, `services/component_catalog.py`), and the worker in `transcriber/optional_backend.py`.
+- Network speech engines implement the backend interface in `transcriber/base.py`; `transcriber/openai_backend.py` (cloud API; its requests run in the worker process in `services/isolated_worker.py`, so a stalled connection can be killed) and `transcriber/remote_backend.py` (a paired computer) are the existing examples. Engine IDs and labels are in `config.py`.
+
+For any new network destination, add it to [Network and privacy](docs/network-and-privacy.md), keep it off until the user chooses it, and add the provider to the bug report form in `.github/ISSUE_TEMPLATE/bug_report.yml`.
 
 ## Local speech backends and models
 
