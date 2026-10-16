@@ -84,6 +84,22 @@ class TestServerSettings:
         }}
         assert configured_endpoint("vllm", settings) == configured_endpoint("vllm", {})
 
+    @pytest.mark.parametrize("endpoint_id,url,self_hosted", [
+        ("openai", None, False),
+        ("groq", None, False),
+        ("speaches", "http://gpu-box:8000/v1", True),
+        ("custom", "http://127.0.0.1:9000/v1", True),
+        ("custom", "https://speech.example.com/v1", False),
+    ])
+    def test_servers_the_user_runs_get_the_long_timeout(self, endpoint_id, url, self_hosted):
+        if url:
+            speech_endpoints.save_server(endpoint_id, base_url=url, api_key_env="", model="m")
+        endpoint = configured_endpoint(endpoint_id)
+        assert endpoint.self_hosted is self_hosted
+        assert endpoint.timeout_s == (
+            speech_endpoints.SELF_HOSTED_TIMEOUT_S if self_hosted else speech_endpoints.HOSTED_TIMEOUT_S
+        )
+
     def test_custom_server_is_usable_once_it_has_an_address(self):
         speech_endpoints.save_server(
             "custom", base_url="http://127.0.0.1:9000/v1", api_key_env="", model="tiny",

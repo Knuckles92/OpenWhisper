@@ -55,10 +55,7 @@ from services.settings import (
     TranscriptCleanupModelSort,
     TranscriptCleanupProvider,
     TranscriptCleanupReasoning,
-    api_model_choices,
-    api_model_label,
     default_transcript_cleanup_model,
-    resolve_api_transcription_model,
     resolve_meeting_agent_core,
     resolve_meeting_agent_model,
     resolve_meeting_agent_models,
@@ -115,7 +112,10 @@ logger = logging.getLogger(__name__)
 
 _ENGINE_CAPTIONS = {
     "local_whisper": "Local faster-whisper on this computer.",
-    "api": "OpenAI transcription. Enter your API key in Settings → API keys.",
+    "api": (
+        "OpenAI, Groq, or an OpenAI-compatible speech server you run. Hosted "
+        "services need an API key in Settings → API keys."
+    ),
     "remote": (
         "Another computer's engine, over your network. Pair with it in "
         "Settings → Remote engine."
@@ -366,13 +366,11 @@ class ModelAssignments(QObject):
             self._on_speech_settings_changed
         )
         card.addWidget(self.speech_controls)
-        self.api_model_combo = ElidingComboBox()
-        self.api_model_combo.setMinimumHeight(40)
-        for model in api_model_choices():
-            self.api_model_combo.addItem(api_model_label(model), model)
-        self.api_model_combo.currentIndexChanged.connect(self._on_api_model_changed)
-        self.api_model_field = self._field("Model", self.api_model_combo)
-        card.addWidget(self.api_model_field)
+        from ui_qt.widgets.speech_server_controls import SpeechServerControls
+        self.api_server = SpeechServerControls()
+        self.api_server.changed.connect(self._on_api_server_changed)
+        self.api_server.help_requested.connect(self._open_api_server_help)
+        card.addWidget(self.api_server)
 
         from ui_qt.widgets.local_engine_controls import DictationLanguagesField
         self.dictation_languages = DictationLanguagesField()
@@ -837,14 +835,16 @@ class ModelAssignments(QObject):
             self.on_runtime_settings_changed()
         self._refresh_rail_values()
 
-    def _on_api_model_changed(self, _index: int = 0) -> None:
-        model = self.api_model_combo.currentData()
-        if model is None:
-            return
-        settings_manager.save_setting(SettingsKey.API_TRANSCRIPTION_MODEL, model)
+    def _on_api_server_changed(self) -> None:
+        """The fields saved a server or model; the engine follows it."""
         if self.on_backend_changed:
             self.on_backend_changed("API")
         self._refresh_rail_values()
+
+    def _open_api_server_help(self, destination: str) -> None:
+        if destination == "api_keys":
+            endpoint = self.api_server.endpoint
+            self._host.focus_api_keys(endpoint.connection.api_key_env or None)
 
     def _on_runtime_changed(self, _text: str = "") -> None:
         """Persist shared device/quant and ask the controller to reload."""
@@ -1483,9 +1483,7 @@ class ModelAssignments(QObject):
             self.engine_combo.blockSignals(blocker)
             self._update_engine_caption()
             self._update_ondemand_whisper_enabled()
-            blocker = self.api_model_combo.blockSignals(True)
-            self.api_model_combo.setCurrentIndex(max(0, self.api_model_combo.findData(resolve_api_transcription_model(settings))))
-            self.api_model_combo.blockSignals(blocker)
+            self.api_server.refresh()
         if self._page_is_loading(RUNTIME):
             device = setting_value(SettingsKey.WHISPER_DEVICE, settings)
             compute = setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings)
@@ -1522,7 +1520,7 @@ class ModelAssignments(QObject):
         self.speech_download_button.setVisible(is_speech)
         if is_speech:
             self.speech_controls.set_backend(backend)
-        self.api_model_field.setVisible(backend == "api")
+        self.api_server.setVisible(backend == "api")
         self.dictation_languages.set_backend(backend)
         # Neither engine keeps anything on this computer.
         on_this_computer = backend not in ("api", "remote")
@@ -1806,8 +1804,11 @@ class ModelAssignments(QObject):
             model = self.ondemand_whisper_picker.current_model() if VOICE_MODEL in self._built else setting_value(SettingsKey.WHISPER_MODEL, self._settings_snapshot())
             return f"Local Whisper · {model}"
         if engine_value == "api":
-            model = self.api_model_combo.currentData() if VOICE_MODEL in self._built else resolve_api_transcription_model(self._settings_snapshot())
-            return f"API · {model or config.DEFAULT_API_MODEL}"
+            from services import speech_endpoints
+
+            settings = self._settings_snapshot()
+            endpoint = speech_endpoints.selected_endpoint(settings)
+            return f"{endpoint.name} · {speech_endpoints.endpoint_model(endpoint, settings)}"
         if engine_value == "remote":
             pairing = self._remote_pairing()
             return f"Remote · {pairing.host_name}" if pairing else "Remote · not paired"
@@ -1821,7 +1822,12 @@ class ModelAssignments(QObject):
         """Where dictation runs, for the Overview card."""
         engine_value = self._engine_value()
         if engine_value == "api":
-            return "Sent to OpenAI for transcription"
+            from services import speech_endpoints
+
+            endpoint = speech_endpoints.selected_endpoint(self._settings_snapshot())
+            if endpoint.is_local:
+                return f"On this computer · {endpoint.name}"
+            return f"Sent to {speech_endpoints.destination(endpoint)} for transcription"
         if engine_value == "remote":
             pairing = self._remote_pairing()
             if pairing is None:
@@ -1835,10 +1841,15 @@ class ModelAssignments(QObject):
 
     def voice_is_remote(self) -> bool:
         """True when dictation audio leaves this computer."""
-        return self._engine_value() in ("api", "remote")
+        return self._engine_value() == "remote" or self.voice_is_cloud()
 
     def voice_is_cloud(self) -> bool:
-        return self._engine_value() == "api"
+        """True when dictation audio goes to an API server off this computer."""
+        if self._engine_value() != "api":
+            return False
+        from services import speech_endpoints
+
+        return not speech_endpoints.selected_endpoint(self._settings_snapshot()).is_local
 
     @staticmethod
     def _remote_pairing():

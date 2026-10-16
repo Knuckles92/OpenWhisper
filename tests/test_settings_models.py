@@ -180,6 +180,9 @@ class _DialogTestCase:
                 dialog_module, "scan_cached_models", return_value=cached or {}
             ),
             patch.object(dialog_module, "settings_manager", fake_settings),
+            # The API server fields keep their choice in the same store.
+            patch("services.speech_endpoints.settings_manager", fake_settings),
+            patch("ui_qt.widgets.speech_server_controls.settings_manager", fake_settings),
             # Keys by the provider that needs them, resolved by variable name.
             patch(
                 "services.text_llm.resolve_credential",
@@ -249,7 +252,7 @@ class TestRail(_DialogTestCase):
         dialog.engine_combo.setCurrentIndex(
             dialog.engine_combo.findData("api")
         )
-        assert dialog.rail.value(ONDEMAND_VOICE) == "API · gpt-transcribe"
+        assert dialog.rail.value(ONDEMAND_VOICE) == "OpenAI · gpt-transcribe"
 
     def test_manage_downloads_links_open_downloads_filtered(self):
         dialog, _values = self._make_dialog()
@@ -1267,17 +1270,39 @@ class TestApiModelSelection(_DialogTestCase):
         })
         requested = []
         dialog.on_backend_changed = requested.append
-        assert not dialog.api_model_field.isHidden()
+        assert not dialog.api_server.isHidden()
         assert dialog.ondemand_whisper_field.isHidden()
-        combo = dialog.api_model_combo
+        assert dialog.api_server.server_combo.currentData() == "openai"
+        combo = dialog.api_server.model_combo
         assert combo.currentData() == "whisper-1"
         assert combo.currentText() == "whisper-1 (retiring Feb 26, 2027)"
         combo.setCurrentIndex(combo.findData("gpt-transcribe"))
         assert values[SettingsKey.API_TRANSCRIPTION_MODEL] == "gpt-transcribe"
         assert requested == ["API"]
-        assert dialog.rail.value(ONDEMAND_VOICE) == "API · gpt-transcribe"
+        assert dialog.rail.value(ONDEMAND_VOICE) == "OpenAI · gpt-transcribe"
+        assert dialog.voice_detail() == "Sent to OpenAI (api.openai.com) for transcription"
+        assert dialog.voice_is_cloud() and dialog.voice_is_remote()
         dialog.refresh()
         assert requested == ["API"]
+
+    def test_a_server_on_this_computer_keeps_audio_here(self):
+        dialog, values = self._make_dialog(extra_settings={
+            SettingsKey.SELECTED_MODEL: "api",
+            SettingsKey.API_TRANSCRIPTION_ENDPOINT: "speaches",
+        })
+        requested = []
+        dialog.on_backend_changed = requested.append
+        assert dialog.api_server.server_combo.currentData() == "speaches"
+        assert dialog.rail.value(ONDEMAND_VOICE) == "Speaches · Systran/faster-whisper-small"
+        assert dialog.voice_detail() == "On this computer · Speaches"
+        assert not dialog.voice_is_cloud() and not dialog.voice_is_remote()
+        servers = dialog.api_server.server_combo
+        servers.setCurrentIndex(servers.findData("groq"))
+        assert values[SettingsKey.API_TRANSCRIPTION_ENDPOINT] == "groq"
+        assert requested == ["API"]
+        assert dialog.rail.value(ONDEMAND_VOICE) == "Groq · whisper-large-v3-turbo"
+        assert dialog.voice_is_cloud()
+        assert dialog.voice_detail() == "Sent to Groq (api.groq.com) for transcription"
 
     def test_retired_models_leave_the_picker_after_shutdown(self):
         from datetime import date
@@ -1290,7 +1315,7 @@ class TestApiModelSelection(_DialogTestCase):
                 SettingsKey.API_TRANSCRIPTION_MODEL: "whisper-1",
                 SettingsKey.MEETING_SPEAKER_ID_BACKEND: MeetingSpeakerIdBackend.OPENAI,
             })
-            combo = dialog.api_model_combo
+            combo = dialog.api_server.model_combo
             assert [combo.itemData(i) for i in range(combo.count())] == ["gpt-transcribe"]
             assert combo.currentData() == "gpt-transcribe"
             speaker = dialog.meeting_speaker_id_combo

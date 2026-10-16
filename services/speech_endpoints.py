@@ -64,7 +64,6 @@ class SpeechEndpoint:
     default_model: str
     #: Whether the user may change the address, key variable and model id.
     configurable: bool
-    timeout_s: float
     description: str = ""
     #: Catalog route under the base URL; None when the server has none, or
     #: when ``known_models`` already says what it serves.
@@ -99,6 +98,20 @@ class SpeechEndpoint:
     def is_configured(self) -> bool:
         return self.is_openai or bool(self.base_url)
 
+    @property
+    def self_hosted(self) -> bool:
+        """True for a server the user runs: a server preset wherever it
+        lives, or any endpoint on this computer (``TextLLMProfile``'s rule).
+
+        The Custom slot is anything else, which is as likely a hosted
+        gateway, so only its address decides.
+        """
+        return (self.configurable and self.id != CUSTOM_ENDPOINT_ID) or self.is_local
+
+    @property
+    def timeout_s(self) -> float:
+        return SELF_HOSTED_TIMEOUT_S if self.self_hosted else HOSTED_TIMEOUT_S
+
 
 def _endpoint(
     endpoint_id: str, name: str, base_url: Optional[str], api_key_env: str,
@@ -112,7 +125,6 @@ def _endpoint(
         ),
         default_model=default_model,
         configurable=not hosted,
-        timeout_s=HOSTED_TIMEOUT_S if hosted else SELF_HOSTED_TIMEOUT_S,
         **details,
     )
 

@@ -4340,12 +4340,8 @@ class SettingsDialog(QDialog):
         """Where the dictation engine runs, named as the rail names it."""
         summary = self.models.voice_summary()
         if self.models.voice_is_cloud():
-            from services import speech_endpoints
-
-            settings = self._settings_snapshot()
-            endpoint = speech_endpoints.selected_endpoint(settings)
-            where = "On this computer" if endpoint.is_local else f"Sent to {endpoint.name}"
-            return f"{where} · {speech_endpoints.endpoint_model(endpoint, settings)}"
+            # The rail names the server first: "Groq · whisper-large-v3".
+            return f"Sent to {summary}"
         if self.models.voice_is_remote():
             return self.models.voice_detail()
         return f"On this computer · {summary}"
