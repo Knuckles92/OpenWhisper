@@ -32,7 +32,8 @@ from services.history_calendar import (
     month_distance, month_key, place_label, shift_month,
 )
 from ui_qt.widgets.history_calendar import (
-    AgendaCard, KindChip, MonthGrid, YearStrip, fade_in, kind_breakdown, plural,
+    AgendaCard, KindChip, MonthGrid, MonthPicker, MonthTitleButton, YearStrip, fade_in,
+    kind_breakdown, plural,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,9 +42,12 @@ _STYLE = """
     QDialog#historyCalendarDialog {
         background-color: @bg;
     }
-    QLabel#calendarMonthTitle {
+    QPushButton#calendarMonthTitle {
         color: @text-heading;
         background: transparent;
+        border: none;
+        padding: 0px 30px 0px 8px;
+        text-align: left;
         font-size: 24px;
         font-weight: 700;
     }
@@ -461,10 +465,16 @@ class HistoryCalendarDialog(QDialog):
         self.next_button.clicked.connect(lambda: self.step_month(1))
         header.addWidget(self.prev_button)
         header.addWidget(self.next_button)
-        header.addSpacing(8)
-        self.month_title = QLabel(_month_title(self._view))
-        self.month_title.setObjectName("calendarMonthTitle")
-        header.addWidget(self.month_title)
+        header.addSpacing(2)
+        self.month_title = MonthTitleButton(_month_title(self._view))
+        self.month_title.setFixedHeight(40)
+        self.month_title.setToolTip("Choose a month or year (M)")
+        self.month_title.setAccessibleName("Choose a month or year")
+        self.month_title.clicked.connect(self.open_month_picker)
+        header.addWidget(self.month_title, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.month_picker = MonthPicker(self)
+        self.month_picker.month_chosen.connect(self._on_month_picked)
+        self.month_picker.closed.connect(self._on_picker_closed)
         header.addSpacing(4)
         self.streak_label = QLabel("")
         self.streak_label.setObjectName("calendarStreak")
@@ -518,6 +528,7 @@ class HistoryCalendarDialog(QDialog):
         self.grid.day_activated.connect(self._activate_day)
         self.grid.month_step.connect(self.step_month)
         self.grid.today_requested.connect(self.go_today)
+        self.grid.picker_requested.connect(self.open_month_picker)
         month_column.addWidget(self.grid, stretch=1)
         body.addLayout(month_column, stretch=1)
 
@@ -724,6 +735,18 @@ class HistoryCalendarDialog(QDialog):
     def step_month(self, step: int) -> None:
         self.show_month(shift_month(self._view, step))
 
+    def open_month_picker(self) -> None:
+        """The month and year picker, under the month's name."""
+        self.month_title.set_open(True)
+        self.month_picker.popup(self.month_title)
+
+    def _on_month_picked(self, key: MonthKey) -> None:
+        self.show_month(key)
+        self.grid.setFocus()
+
+    def _on_picker_closed(self) -> None:
+        self.month_title.set_open(False)
+
     def go_today(self) -> None:
         today = self._today()
         if month_key(today) == self._view:
@@ -835,8 +858,9 @@ class HistoryCalendarDialog(QDialog):
             self.streak_label.setText(f"{streak}-day streak" + (" · keep it going" if streak >= 7 else ""))
         self.streak_label.setVisible(streak >= 2)
 
-        self.year_strip.set_data(self._strip_months(), index.month_counts(self._kinds, self._place),
-                                 self._view, month_key(today))
+        counts = index.month_counts(self._kinds, self._place)
+        self.year_strip.set_data(self._strip_months(), counts, self._view, month_key(today))
+        self.month_picker.set_data(counts, self._view, month_key(today))
 
         notice = self._notice
         if notice and "reachable" in notice:

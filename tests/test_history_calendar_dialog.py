@@ -350,6 +350,88 @@ def test_agenda_card_shows_where_and_how_long():
     assert labels["calendarMilestone"] == "✦ Your 100th recording"
 
 
+# ---- the month picker ----
+
+def years_apart():
+    return september() + [
+        item("y25", datetime(2025, 3, 14, 9, 0)),
+        item("y24a", datetime(2024, 11, 2, 9, 0)),
+        item("y24b", datetime(2024, 11, 3, 9, 0)),
+    ]
+
+
+def test_the_title_opens_the_picker_on_the_year_shown(dialog):
+    window = dialog()
+    picker = window.month_picker
+    QTest.mouseClick(window.month_title, Qt.MouseButton.LeftButton)
+    assert picker.isVisible()
+    assert (picker.mode, picker.year) == (picker.MONTHS, 2026)
+    assert window.month_title._open
+    # A month's tile goes there and closes the picker.
+    QTest.mouseClick(picker, Qt.MouseButton.LeftButton, pos=picker.tile_center(4))
+    assert not picker.isVisible()
+    assert window.grid.month == (2026, 5)
+    assert window.grid.selected() == date(2026, 5, 4)
+    assert not window.month_title._open
+
+
+def test_the_picker_leaps_between_years(dialog):
+    window = dialog(items=years_apart())
+    picker = window.month_picker
+    QTest.keyClick(window.grid, Qt.Key.Key_M)
+    assert picker.isVisible() and picker.year == 2026
+    QTest.keyClick(picker, Qt.Key.Key_PageUp)
+    QTest.keyClick(picker, Qt.Key.Key_PageUp)
+    assert picker.year == 2024
+    # No records before 2024, so it stops there.
+    assert not picker.step(-1)
+
+    # The years, newest first; one opens on its busiest recent month.
+    QTest.keyClick(picker, Qt.Key.Key_Y)
+    assert picker.mode == picker.YEARS
+    assert picker.page_years() == [2026, 2025, 2024]
+    QTest.mouseClick(picker, Qt.MouseButton.LeftButton, pos=picker.tile_center(2))
+    assert (picker.mode, picker.year) == (picker.MONTHS, 2024)
+    QTest.keyClick(picker, Qt.Key.Key_Return)
+    assert window.grid.month == (2024, 11)
+    assert window.grid.selected() == date(2024, 11, 3)
+
+
+def test_picker_keys_run_on_through_the_year_and_escape_steps_out(dialog):
+    window = dialog(items=years_apart())
+    picker = window.month_picker
+    window.open_month_picker()
+    window.month_picker._focus = 0
+    QTest.keyClick(picker, Qt.Key.Key_Left)
+    assert (picker.year, picker._focus) == (2025, 11)
+    QTest.keyClick(picker, Qt.Key.Key_Y)
+    QTest.keyClick(picker, Qt.Key.Key_Escape)
+    assert picker.isVisible() and picker.mode == picker.MONTHS
+    QTest.keyClick(picker, Qt.Key.Key_Escape)
+    assert not picker.isVisible()
+    assert window.grid.month == (2026, 9)
+
+    window.show_month((2025, 3))
+    window.open_month_picker()
+    QTest.keyClick(picker, Qt.Key.Key_T)
+    assert window.grid.month == (2026, 9)
+
+
+def test_one_year_of_records_has_no_years_view(dialog):
+    window = dialog()
+    picker = window.month_picker
+    window.open_month_picker()
+    picker.toggle_years()
+    assert picker.mode == picker.MONTHS
+    assert not picker.step(-1) and not picker.step(1)
+
+
+def test_the_picker_counts_follow_the_filters(dialog):
+    window = dialog()
+    window.kind_chips[MEETING].setChecked(False)
+    assert window.month_picker._counts[(2026, 9)] == 4
+
+
 def test_reopening_returns_to_today(dialog):
     window = dialog()
     window.show_month((2026, 5))
