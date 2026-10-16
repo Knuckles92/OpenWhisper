@@ -27,6 +27,7 @@ from ui_qt.widgets.transcription_progress import (
 )
 from services.settings import SettingsKey, settings_manager
 from ui_qt.dialogs.batch_relation_dialog import BatchRelationDialog
+from ui_qt.utils.theme_manager import ThemeManager
 from ui_qt.widgets.engine_field import EngineStatus
 from ui_qt.widgets.decode_label import DecodeLabel
 from ui_qt.widgets.upload_file_tab import (
@@ -1327,23 +1328,33 @@ class TestUploadFileTab:
 
 class TestEngineCard:
     def test_card_height_is_stable_across_backends(self):
-        """Switching backends must not resize the card, and so not the window."""
-        tab = UploadFileTab()
-        tab.resize(605, 580)
-        tab.show()
-        QApplication.processEvents()
+        """Switching backends must not resize the card, and so not the window.
 
-        local_height = tab.engine_card.height()
+        Under the theme, which sizes the fields: unstyled, every combo is the
+        platform default and a field that missed the theme's rule would pass.
+        """
+        app = QApplication.instance()
+        previous_stylesheet = app.styleSheet()
+        app.setStyleSheet(ThemeManager().stylesheet)
+        try:
+            tab = UploadFileTab()
+            tab.resize(605, 580)
+            tab.show()
+            QApplication.processEvents()
 
-        tab.set_local_engine_visible(False)
-        QApplication.processEvents()
-        assert tab.engine_card.height() == local_height
-        assert not tab.local_engine.isVisible()
+            local_height = tab.engine_card.height()
 
-        tab.set_local_engine_visible(True)
-        QApplication.processEvents()
-        assert tab.engine_card.height() == local_height
-        assert tab.local_engine.isVisible()
+            tab.set_local_engine_visible(False)
+            QApplication.processEvents()
+            assert tab.engine_card.height() == local_height
+            assert not tab.local_engine.isVisible()
+
+            tab.set_local_engine_visible(True)
+            QApplication.processEvents()
+            assert tab.engine_card.height() == local_height
+            assert tab.local_engine.isVisible()
+        finally:
+            app.setStyleSheet(previous_stylesheet)
 
     def test_cleanup_toggle_stays_reachable_on_api_backend(self):
         """AI cleanup applies to every backend, so it outlives the local fields."""

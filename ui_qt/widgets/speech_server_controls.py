@@ -69,9 +69,7 @@ class SpeechServerControls(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(10)
         self.server_combo = engine_combo(())
-        self.server_combo.setObjectName("speechServerCombo")
         self.model_combo = engine_combo(())
-        self.model_combo.setObjectName("speechModelCombo")
         self.server_field = engine_field(
             "Server", self.server_combo,
             "Choose where the API backend sends your audio: OpenAI, Groq, or a "
