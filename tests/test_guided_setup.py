@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QAbstractButton, QApplication, QComboBox, QLineEdit
 
 from services import guided_setup
 from services.audio_devices import InputDevice
+from services.hotkey_manager import format_hotkey_display
 from services.settings import SettingsKey, SettingsManager, SettingsView
 from ui_qt.dialogs import guided_setup as setup_ui
 from ui_qt.dialogs import settings_dialog, settings_downloads, settings_models
@@ -469,8 +470,9 @@ def test_ready_page_shows_the_shortcut_and_takes_dictation(make_setup):
     setup.next_button.click()
     QTest.qWait(20)
     assert setup.page == setup_ui.READY
-    assert setup.keycap.text() == "Ctrl+Alt+J"
-    assert "Ctrl+Alt+J" in setup.try_box.placeholderText()
+    shown = format_hotkey_display("ctrl+alt+j")  # ⌃⌥J on macOS
+    assert setup.keycap.text() == shown
+    assert shown in setup.try_box.placeholderText()
     assert setup.property("openwhisperHotkeyWindow") is True
     assert setup.try_box.hasFocus()
     assert setup.next_button.text() == "Done"
@@ -482,7 +484,7 @@ def test_ready_page_shows_the_shortcut_and_takes_dictation(make_setup):
 
 @pytest.mark.parametrize("paste,copy,expected", [
     (True, True, "wherever the cursor is"),
-    (False, True, "+V after you speak"),
+    (False, True, "V after you speak"),
     (False, False, "only appears in History"),
 ])
 def test_ready_page_explains_where_the_try_it_text_goes(make_setup, paste, copy, expected):
