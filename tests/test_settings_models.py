@@ -524,29 +524,53 @@ class TestTextModelPicker(_DialogTestCase):
         assert picker.edit_endpoint_button.isEnabled()
         assert not picker.delete_endpoint_button.isEnabled()
 
-    def test_editing_a_local_preset_updates_only_its_server_url(self):
+    def test_editing_a_local_preset_updates_its_server_and_key_variable(self):
         dialog, values = self._make_text_dialog()
         picker = dialog.text_model_picker
-        dialog._fetch_catalog_models = lambda provider, picker, force=False: None
-        picker.set_provider("lm_studio")
+        fetches = []
+        dialog._fetch_catalog_models = lambda provider, picker, force=False: (
+            fetches.append((provider, force))
+        )
+        picker.set_provider("vllm")
+        opened = []
 
-        class _UrlPrompt:
-            @staticmethod
-            def getText(_parent, _title, _label, text=""):
-                return "http://192.168.1.60:1234", True
+        class _EditedPreset:
+            def __init__(self, profile=None, parent=None):
+                opened.append(profile)
 
-        def save_setting(key, value):
-            values[key] = value
+            def exec(self):
+                return QDialog.DialogCode.Accepted
 
-        with patch.object(dialog_module, "QInputDialog", _UrlPrompt), patch(
-            "services.settings.settings_manager.save_setting",
-            side_effect=save_setting,
+            def result_payload(self):
+                return {
+                    "name": "vLLM",
+                    "base_url": "http://192.168.1.60:8000/v1",
+                    "api_key_env": "VLLM_API_KEY",
+                    "protocol": "chat",
+                }
+
+        def update_settings(updates):
+            values.update(updates)
+
+        with patch(
+            "ui_qt.dialogs.text_endpoint_dialog.TextEndpointDialog",
+            _EditedPreset,
+        ), patch(
+            "services.settings.settings_manager.update_settings",
+            side_effect=update_settings,
         ):
-            dialog._edit_text_endpoint("lm_studio")
+            dialog._edit_text_endpoint("vllm")
 
-        assert values["lm_studio_base_url"] == "http://192.168.1.60:1234/v1"
-        assert picker.current_profile().base_url == "http://192.168.1.60:1234/v1"
-        assert "LM Studio server updated" in dialog.message_label.text()
+        assert opened[0].id == "vllm"
+        assert values["vllm_base_url"] == "http://192.168.1.60:8000/v1"
+        assert values["vllm_api_key_env"] == "VLLM_API_KEY"
+        profile = picker.current_profile()
+        assert profile.base_url == "http://192.168.1.60:8000/v1"
+        assert profile.api_key_env == "VLLM_API_KEY"
+        assert fetches == [("vllm", True)]
+        assert picker.provider_requirement.text() == "Key needed in Settings → API keys"
+        assert 'Updated "vLLM"' in dialog.message_label.text()
+        assert values.get(SettingsKey.TEXT_LLM_PROFILES, []) == []
 
     def test_custom_endpoint_appears_and_activation_persists(self):
         dialog, values = self._make_dialog(

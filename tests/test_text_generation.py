@@ -12,7 +12,6 @@ from services.text_llm import (
     get_profile,
     list_profiles,
     provider_headers,
-    save_ollama_url,
     snapshot_from_mapping,
     snapshot_from_profile,
     upsert_custom_profile,
@@ -210,16 +209,6 @@ def test_openai_routes_migrate_stale_meeting_metadata(model, protocol, reasoning
     assert snapshot is not None
     spec = model_spec(snapshot.to_profile(), model)
     assert (spec.protocol, spec.reasoning) == (protocol, reasoning)
-
-
-def test_ollama_url_normalizes_and_never_stores_embedded_secrets():
-    with patch("services.settings.settings_manager.save_setting") as save:
-        save_ollama_url("http://localhost:11434/")
-        save.assert_called_once_with("ollama_base_url", "http://localhost:11434/v1")
-        for url in ("http://user:secret@localhost:11434", "http://localhost/?key=secret"):
-            with pytest.raises(ValueError):
-                save_ollama_url(url)
-        assert save.call_count == 1
 
 
 def test_empty_new_provider_model_does_not_reuse_previous_model():

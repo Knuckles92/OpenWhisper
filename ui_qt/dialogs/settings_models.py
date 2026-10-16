@@ -22,7 +22,6 @@ from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QMessageBox,
     QVBoxLayout,
@@ -82,6 +81,7 @@ from services.text_llm import (
     list_profiles,
     profile_display_name,
     remove_custom_profile,
+    save_local_server,
     upsert_custom_profile,
 )
 from ui_qt.dialogs.settings_destinations import (
@@ -1043,60 +1043,43 @@ class ModelAssignments(QObject):
         from ui_qt.dialogs.text_endpoint_dialog import TextEndpointDialog
 
         profile = get_profile(profile_id, self._settings_snapshot())
-        if profile is not None and profile.id in LOCAL_SERVER_PROFILE_IDS:
-            url, accepted = QInputDialog.getText(
-                self._host, f"{profile.name} server",
-                "API base URL (shared by cleanup and meetings):",
-                text=profile.base_url or "",
-            )
-            if not accepted:
-                return
-            from services.text_llm import save_local_server_url
-            try:
-                save_local_server_url(profile.id, url)
-            except ValueError as exc:
-                self._say(str(exc))
-                return
-            self._invalidate_text_catalog(profile.id)
-            self._refresh_picker_profiles()
-            for picker in (self.text_model_picker, self.meeting_model_picker):
-                if picker.provider == profile.id:
-                    self._fetch_catalog_models(
-                        profile.id, picker=picker, force=True
-                    )
-            self._say(
-                f"{profile.name} server updated. "
-                "Active meetings keep their original server."
-            )
-            return
-        if profile is None or profile.builtin:
+        if profile is None or (
+            profile.builtin and profile.id not in LOCAL_SERVER_PROFILE_IDS
+        ):
             return
         dialog = TextEndpointDialog(profile, parent=self._host)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         payload = dialog.result_payload() or {}
         try:
-            updated = settings_manager.mutate_settings(
-                lambda settings: upsert_custom_profile(
-                    settings,
-                    name=payload["name"],
-                    base_url=payload["base_url"],
-                    api_key_env=payload.get("api_key_env", ""),
-                    profile_id=profile_id,
-                    protocol=payload.get("protocol", profile.protocol),
+            if profile.builtin:
+                save_local_server(
+                    profile.id, payload["base_url"], payload.get("api_key_env", "")
                 )
-            )
+            else:
+                settings_manager.mutate_settings(
+                    lambda settings: upsert_custom_profile(
+                        settings,
+                        name=payload["name"],
+                        base_url=payload["base_url"],
+                        api_key_env=payload.get("api_key_env", ""),
+                        profile_id=profile_id,
+                        protocol=payload.get("protocol", profile.protocol),
+                    )
+                )
         except Exception as exc:
             logger.error("Couldn't edit text endpoint: %s", exc)
             self._say(f"Couldn't save endpoint: {exc}")
             return
-        self._invalidate_text_catalog(updated.id)
+        self._invalidate_text_catalog(profile_id)
         self._refresh_picker_profiles()
-        self.text_model_picker.set_provider(updated.id)
-        self.meeting_model_picker.set_provider(
-            self.meeting_model_picker.provider
+        for picker in (self.text_model_picker, self.meeting_model_picker):
+            if picker.provider == profile_id:
+                self._fetch_catalog_models(profile_id, picker=picker, force=True)
+        self._say(
+            f'Updated "{profile_display_name(profile_id, self._settings_snapshot())}". '
+            "Active meetings keep their original endpoint."
         )
-        self._say(f'Updated endpoint "{updated.name}"')
 
     def _delete_text_endpoint(self, profile_id: str) -> None:
         """Delete a custom endpoint that is not currently assigned."""

@@ -11,6 +11,7 @@ from services.text_llm import (
     SIDECAR_API_KEY_ENV,
     consent_destination,
     create_openai_client,
+    credential_label,
     destination_is_remote,
     filter_openai_chat_models,
     get_profile,
@@ -96,19 +97,37 @@ class TestProfileCrud:
         )
         assert other.base_url == "http://127.0.0.1:1234/v1"
 
-    def test_save_local_server_url_normalizes_per_preset(self):
-        from services.text_llm import save_local_server_url
+    def test_save_local_server_normalizes_per_preset(self):
+        from services.text_llm import save_local_server
 
-        with patch("services.settings.settings_manager.save_setting") as save:
-            save_local_server_url("lm_studio", "http://localhost:1234/")
-            save.assert_called_once_with(
-                "lm_studio_base_url", "http://localhost:1234/v1"
-            )
+        with patch("services.settings.settings_manager.update_settings") as save:
+            save_local_server("lm_studio", "http://localhost:1234/")
+            save.assert_called_once_with({
+                "lm_studio_base_url": "http://localhost:1234/v1",
+                "lm_studio_api_key_env": "",
+            })
+            for url in ("http://user:secret@localhost", "http://localhost/?key=secret"):
+                with pytest.raises(ValueError):
+                    save_local_server("lm_studio", url)
             with pytest.raises(ValueError):
-                save_local_server_url("lm_studio", "http://user:secret@localhost")
+                save_local_server("lm_studio", "http://localhost:1234/v1", "not a name")
             with pytest.raises(ValueError):
-                save_local_server_url("openai", "http://localhost:1234/v1")
+                save_local_server("openai", "http://localhost:1234/v1")
             assert save.call_count == 1
+
+    def test_local_preset_can_require_an_api_key(self):
+        settings = {"llama_cpp_api_key_env": "LLAMA_SERVER_KEY"}
+        profile = get_profile("llama_cpp", settings)
+        assert profile.requires_api_key
+        assert credential_label(profile) == "llama.cpp API key"
+        with patch("services.text_llm.resolve_credential", return_value="sk-local"):
+            assert resolve_api_key(profile) == "sk-local"
+        with patch("services.text_llm.resolve_credential", return_value=None):
+            assert resolve_api_key(profile) is None
+        snapshot = snapshot_from_profile(profile)
+        assert snapshot.to_profile().api_key_env == "LLAMA_SERVER_KEY"
+        # A malformed saved variable name falls back to no key.
+        assert not get_profile("llama_cpp", {"llama_cpp_api_key_env": "bad name"}).requires_api_key
 
     def test_upsert_and_remove_custom_profile(self):
         settings = {}
