@@ -1320,14 +1320,18 @@ class SqlMeetingRepository:
                 MeetingEvent.action == f"undo:{int(seq)}",
             ).first() is not None
 
-    def search_candidates(self, query: str, *, exclude_meeting_id=None, limit=48):
-        """Broad term matches plus recent minute passages; only opted-in meetings."""
+    def search_candidates(self, query: str, *, exclude_meeting_id=None, limit=48, shared_only=True):
+        """Broad term matches plus recent minute passages.
+
+        ``shared_only`` keeps to meetings that had AI insights on, the only
+        ones whose text may be sent off this computer for ranking.
+        """
         import re
         terms = [t for t in re.findall(r"\w+", query) if len(t) > 2 and t.lower() not in {
             "the", "did", "what", "when", "where", "how", "was", "were", "about", "with", "that", "meeting",
         }][:20]
         limit = max(1, min(int(limit), 48))
-        params = {"exclude": exclude_meeting_id or "", "limit": limit}
+        params = {"exclude": exclude_meeting_id or "", "limit": limit, "any": int(not shared_only)}
         rows = []
         with self._db.engine.connect() as conn:
             if terms:
@@ -1339,7 +1343,7 @@ class SqlMeetingRepository:
                         FROM meeting_segments_fts
                         JOIN meeting_segments ms ON ms.rowid = meeting_segments_fts.rowid
                         JOIN meeting_sessions s ON s.id = ms.meeting_id
-                        WHERE meeting_segments_fts MATCH :q AND s.cloud_enabled = 1 AND s.id != :exclude
+                        WHERE meeting_segments_fts MATCH :q AND (:any = 1 OR s.cloud_enabled = 1) AND s.id != :exclude
                         ORDER BY bm25(meeting_segments_fts), s.started_at DESC LIMIT :limit
                     """), params).mappings())
                 except Exception:
@@ -1351,7 +1355,7 @@ class SqlMeetingRepository:
                            row_number() OVER (PARTITION BY ms.meeting_id, CAST(ms.start_s / 60 AS INTEGER)
                                               ORDER BY length(ms.text) DESC, ms.id) AS minute_row
                     FROM meeting_segments ms JOIN meeting_sessions s ON s.id = ms.meeting_id
-                    WHERE s.cloud_enabled = 1 AND s.id != :exclude AND length(ms.text) > 20
+                    WHERE (:any = 1 OR s.cloud_enabled = 1) AND s.id != :exclude AND length(ms.text) > 20
                 ), diverse AS (
                     SELECT *, row_number() OVER (PARTITION BY meeting_id ORDER BY start_s DESC) AS meeting_row
                     FROM passages WHERE minute_row = 1

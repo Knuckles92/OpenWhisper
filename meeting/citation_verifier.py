@@ -127,7 +127,7 @@ class CitationVerifier:
             self.store.apply("system", "citation-verifier", [{"op": "citation_check", "id": item["id"],
                 "revision": item["revision"], "check": {"status": status, "confidence": confidence,
                 "revision": item["revision"], "source_fingerprint": fingerprint,
-                "model": getattr(self.judge, "model", "jev-1.13.0"), "checked_at": now_iso()}}])
+                "model": self.judge.model, "checked_at": now_iso()}}])
         self.store.with_state(publish)
 
     def shutdown(self):

@@ -221,9 +221,12 @@ class SettingsKey:
     # TypeSafe fast judgments. The master switch gates every remote judgment;
     # each feature has its own switch so one can be trialled at a time.
     TYPESAFE_ENABLED: Final[str] = "typesafe_enabled"
-    # Where judgments go: TypeSafe directly, or the same model through
-    # OpenRouter with the OpenRouter key (see TypeSafeProvider).
+    # Where judgments go: TypeSafe directly, the same model through
+    # OpenRouter with the OpenRouter key, or one of the user's own text
+    # models (see TypeSafeProvider).
     TYPESAFE_PROVIDER: Final[str] = "typesafe_provider"
+    # Which text model answers on the text-model route (TypeSafeTextModel).
+    TYPESAFE_TEXT_MODEL: Final[str] = "typesafe_text_model"
     TYPESAFE_CITATIONS_ENABLED: Final[str] = "typesafe_citations_enabled"
     TYPESAFE_SEMANTIC_SEARCH_ENABLED: Final[str] = "typesafe_semantic_search_enabled"
     TYPESAFE_QUESTION_RADAR_ENABLED: Final[str] = "typesafe_question_radar_enabled"
@@ -528,13 +531,25 @@ class MeetingAgentCore:
 class TypeSafeProvider:
     """Values for ``SettingsKey.TYPESAFE_PROVIDER``.
 
-    Both run the same pinned Jev model; they differ in which key pays for it
-    and in whether OpenRouter sits between this computer and TypeSafe.
+    The first two run the same pinned Jev model; they differ in which key
+    pays for it and in whether OpenRouter sits between this computer and
+    TypeSafe. The third asks the same questions of a text model the user
+    already set up (``SettingsKey.TYPESAFE_TEXT_MODEL`` says which), which
+    may run on this computer.
     """
     TYPESAFE: Final[str] = "typesafe"      # api.typesafe.ai with TYPESAFE_API_KEY
     OPENROUTER: Final[str] = "openrouter"  # openrouter.ai with OPENROUTER_API_KEY
+    TEXT_MODEL: Final[str] = "text_model"  # a services.text_llm profile and model
 
-    ALL: Final[Tuple[str, ...]] = (TYPESAFE, OPENROUTER)
+    ALL: Final[Tuple[str, ...]] = (TYPESAFE, OPENROUTER, TEXT_MODEL)
+
+
+class TypeSafeTextModel:
+    """Values for ``SettingsKey.TYPESAFE_TEXT_MODEL``: whose text model judges."""
+    MEETING: Final[str] = "meeting"  # Meeting Mode → Intelligence (AI insights)
+    CLEANUP: Final[str] = "cleanup"  # AI cleanup's model
+
+    ALL: Final[Tuple[str, ...]] = (MEETING, CLEANUP)
 
 
 class MeetingSpeakerIdBackend:
@@ -690,6 +705,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.TYPESAFE_ENABLED: False,
     # Never switched implicitly: changing it changes who receives excerpts.
     SettingsKey.TYPESAFE_PROVIDER: TypeSafeProvider.TYPESAFE,
+    SettingsKey.TYPESAFE_TEXT_MODEL: TypeSafeTextModel.MEETING,
     SettingsKey.TYPESAFE_CITATIONS_ENABLED: False,
     SettingsKey.TYPESAFE_SEMANTIC_SEARCH_ENABLED: False,
     SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED: False,
@@ -1222,13 +1238,15 @@ resolve_meeting_end_report = _bool_resolver(SettingsKey.MEETING_END_REPORT)
 resolve_meeting_report_ribbon = _bool_resolver(SettingsKey.MEETING_REPORT_RIBBON)
 resolve_meeting_report_brief = _bool_resolver(SettingsKey.MEETING_REPORT_BRIEF)
 resolve_meeting_report_signal = _bool_resolver(SettingsKey.MEETING_REPORT_SIGNAL)
-# TypeSafe is a separate remote decision service: each judgment sends a short
-# excerpt of text and gets a typed answer back, not generated text. Off by
-# default; every TypeSafe feature also needs it, and meeting features need
-# the meeting's cloud consent too.
+# Fast judgments send a short excerpt of text and get a typed answer back,
+# not generated text: to TypeSafe, or to the user's own text model. Off by
+# default; every feature also needs it, and meeting features need the
+# meeting's AI insights consent too unless the judge runs on this computer.
 resolve_typesafe_enabled = _bool_resolver(SettingsKey.TYPESAFE_ENABLED)
 resolve_typesafe_provider = _choice_resolver(
     SettingsKey.TYPESAFE_PROVIDER, TypeSafeProvider.ALL)
+resolve_typesafe_text_model = _choice_resolver(
+    SettingsKey.TYPESAFE_TEXT_MODEL, TypeSafeTextModel.ALL)
 # Personalization switches.
 resolve_app_context_enabled = _bool_resolver(SettingsKey.APP_CONTEXT_ENABLED)
 resolve_app_context_read_text = _bool_resolver(SettingsKey.APP_CONTEXT_READ_TEXT)

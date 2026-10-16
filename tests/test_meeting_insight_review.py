@@ -7,12 +7,17 @@ import threading
 import pytest
 
 from meeting.insight_review import (
-    CONSENT, TypeSafeReviewer, ReviewUnavailable, assess, evidence_context,
+    CONSENT, REVIEW_TIMEOUT_S, JudgeReviewer, ReviewUnavailable, assess, evidence_context,
     review_config, run_review, start_review,
 )
 from meeting.state.schema import CardItem, FinalizationState, MeetingState
 from meeting.state.store import MeetingStateStore
 from services.settings import SettingsKey, resolve_meeting_insight_review
+from services.typesafe import TypeSafeJudge
+
+
+def http_reviewer(key):
+    return JudgeReviewer(TypeSafeJudge(key, timeout_s=REVIEW_TIMEOUT_S))
 
 
 @pytest.fixture(autouse=True)
@@ -52,6 +57,8 @@ def make_store(count=1, *, consent=CONSENT, enabled=True, cloud=True):
 
 
 class Reviewer:
+    model = "jev-1.13.0"
+
     def __init__(self, scores=None):
         self.scores = scores or {"support": .9, "acceptance": .3, "owner": .2, "contradiction": .01, "asr_uncertain": .01}
         self.calls = 0
@@ -103,7 +110,7 @@ def test_http_client_rejects_missing_consent_before_network(monkeypatch):
     post = Mock()
     monkeypatch.setattr("services.typesafe._http_post", post)
     with pytest.raises(ReviewUnavailable):
-        TypeSafeReviewer("synthetic-key").evaluate({}, {}, consent="")
+        http_reviewer("synthetic-key").evaluate({}, {}, consent="")
     post.assert_not_called()
 
 
@@ -113,7 +120,7 @@ def test_malformed_probability_is_unavailable(monkeypatch, value):
         "answers": {"support": {"type": "noul", "noul": value}}})))
     monkeypatch.setattr("services.typesafe._http_post", post)
     with pytest.raises(ReviewUnavailable):
-        TypeSafeReviewer("synthetic-key").evaluate(
+        http_reviewer("synthetic-key").evaluate(
             {}, {"support": {"type": "noul"}}, consent=CONSENT)
     post.assert_called_once()
 
@@ -122,7 +129,7 @@ def test_timeout_never_exposes_provider_or_key(monkeypatch):
     post = Mock(side_effect=TimeoutError("secret provider body"))
     monkeypatch.setattr("services.typesafe._http_post", post)
     with pytest.raises(ReviewUnavailable) as error:
-        TypeSafeReviewer("secret-key").evaluate(
+        http_reviewer("secret-key").evaluate(
             {}, {"support": {"type": "noul"}}, consent=CONSENT)
     post.assert_called_once()
     assert "secret" not in str(error.value)
@@ -146,7 +153,7 @@ def test_review_uses_shared_model_transport_and_tls_bundle(monkeypatch):
     monkeypatch.setattr(typesafe.http.client, "HTTPSConnection", https)
     state = {"insight": "The team agreed to ship."}
     questions = {"support": {"type": "noul", "instructions": "Is it supported?"}}
-    assert TypeSafeReviewer("synthetic-key").evaluate(
+    assert http_reviewer("synthetic-key").evaluate(
         state, questions, consent=CONSENT) == {"support": .95}
     method, path = connection.request.call_args.args
     assert (method, "https://api.typesafe.ai" + path) == ("POST", ENDPOINT)
@@ -167,7 +174,7 @@ def test_shared_client_failures_are_review_unavailable(monkeypatch, status, body
     post = Mock(return_value=(status, body))
     monkeypatch.setattr("services.typesafe._http_post", post)
     with pytest.raises(ReviewUnavailable) as error:
-        TypeSafeReviewer("secret-key").evaluate(
+        http_reviewer("secret-key").evaluate(
             {}, {"support": {"type": "noul"}}, consent=CONSENT)
     post.assert_called_once()
     assert "secret" not in str(error.value)
@@ -469,7 +476,7 @@ def test_master_switch_revocation_prevents_the_next_http_request(monkeypatch):
     post = Mock()
     monkeypatch.setattr("services.typesafe._http_post", post)
     with pytest.raises(ReviewUnavailable, match="off"):
-        TypeSafeReviewer("synthetic-key").evaluate({}, {}, consent=CONSENT)
+        http_reviewer("synthetic-key").evaluate({}, {}, consent=CONSENT)
     post.assert_not_called()
 
 
@@ -477,8 +484,9 @@ def test_review_runs_over_openrouter_when_that_route_is_chosen(monkeypatch):
     from services import typesafe
 
     store, repo = make_store()
-    monkeypatch.setattr("meeting.insight_review.route_from_settings", lambda: typesafe.OPENROUTER_ROUTE)
-    monkeypatch.setattr("services.credentials.resolve_credential",
+    monkeypatch.setattr("services.settings.settings_manager.load_all_settings",
+                        lambda: {"typesafe_enabled": True, "typesafe_provider": "openrouter"})
+    monkeypatch.setattr("services.typesafe.resolve_credential",
                         {"OPENROUTER_API_KEY": "or-key"}.get)
     post = Mock(return_value=(200, json.dumps({"answers": {
         key: {"type": "noul", "noul": .99}
@@ -493,12 +501,11 @@ def test_review_runs_over_openrouter_when_that_route_is_chosen(monkeypatch):
 
 
 def test_review_without_the_chosen_routes_key_names_that_key(monkeypatch):
-    from services import typesafe
-
     store, repo = make_store()
-    monkeypatch.setattr("meeting.insight_review.route_from_settings", lambda: typesafe.OPENROUTER_ROUTE)
+    monkeypatch.setattr("services.settings.settings_manager.load_all_settings",
+                        lambda: {"typesafe_enabled": True, "typesafe_provider": "openrouter"})
     # A TypeSafe key alone does not run the OpenRouter route.
-    monkeypatch.setattr("services.credentials.resolve_credential",
+    monkeypatch.setattr("services.typesafe.resolve_credential",
                         {"TYPESAFE_API_KEY": "ts-key"}.get)
     post = Mock()
     monkeypatch.setattr("services.typesafe._http_post", post)

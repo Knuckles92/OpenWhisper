@@ -133,7 +133,7 @@ def test_minute_disabled_never_calls_remote(monkeypatch, enabled, allowed):
 def test_verifier_annotations_do_not_change_claim_status_or_revision(monkeypatch):
     monkeypatch.setattr("meeting.citation_verifier.resolve_typesafe_feature_enabled", lambda _: True)
     target, pool = store(), ManualExecutor()
-    verifier = CitationVerifier(target, Repo([row()]), SimpleNamespace(choice=lambda *_: ChoiceAnswer("unsupported", .96)), lambda: True, executor=pool)
+    verifier = CitationVerifier(target, Repo([row()]), SimpleNamespace(choice=lambda *_: ChoiceAnswer("unsupported", .96), model="jev-1.13.0"), lambda: True, executor=pool)
     item = add_claim(target)
     assert target.snapshot()["cards"]["decisions"][0]["citation_check"] == {}
     pool.run()
@@ -146,7 +146,7 @@ def test_verifier_annotations_do_not_change_claim_status_or_revision(monkeypatch
 def test_verifier_failure_and_missing_evidence_are_advisory(monkeypatch):
     monkeypatch.setattr("meeting.citation_verifier.resolve_typesafe_feature_enabled", lambda _: True)
     target, pool = store(), ManualExecutor()
-    verifier = CitationVerifier(target, Repo([row()]), SimpleNamespace(choice=lambda *_: None), lambda: True, executor=pool)
+    verifier = CitationVerifier(target, Repo([row()]), SimpleNamespace(choice=lambda *_: None, model="jev-1.13.0"), lambda: True, executor=pool)
     add_claim(target)
     pool.run()
     assert target.snapshot()["cards"]["decisions"][0]["citation_check"]["status"] == "unavailable"
@@ -185,7 +185,7 @@ def test_verifier_rejects_stale_revision_and_changed_source(monkeypatch):
     def choice(*args):
         repo.rows[0]["text"] = "We did not agree."
         return ChoiceAnswer("supported", .99)
-    verifier = CitationVerifier(target, repo, SimpleNamespace(choice=choice), lambda: True, executor=ManualExecutor())
+    verifier = CitationVerifier(target, repo, SimpleNamespace(choice=choice, model="jev-1.13.0"), lambda: True, executor=ManualExecutor())
     verifier.check(item)
     assert not target.snapshot()["cards"]["decisions"][0]["citation_check"]
     target.apply("host", "me", [{"op": "update_item", "id": item["id"], "set": {"text": "A corrected claim"}}])
@@ -223,6 +223,7 @@ def test_recap_routes_to_note_agent_and_reports_completion():
     engine = MeetingEngine(MeetingEngineOptions(), repository=Repo([]))
     engine.store = target
     engine.request_note_adjustment = lambda text: requests.append(text) or future
+    engine._voice_commands_allowed = lambda: True
     engine._apply_spoken_action("recap", row(text="Note taker, recap the decisions."), [])
     assert "recap the decisions" in requests[0]
     assert "Preparing a recap" in target.snapshot()["voice_feedback"]["message"]
@@ -243,11 +244,11 @@ def test_semantic_ranking_and_failure_fallback(monkeypatch):
     monkeypatch.setattr("meeting.semantic_search.resolve_typesafe_feature_enabled", lambda _: True)
     candidates = [{"segment_id": "sg_a", "meeting_id": "m_a", "text": "Launch postponed"}, {"segment_id": "sg_b", "meeting_id": "m_b", "text": "Coffee break"}]
     repo = SimpleNamespace(search_transcripts=lambda *a, **k: [{"text": "keyword"}], search_candidates=lambda *a, **k: candidates, get_meeting=lambda mid: {"cloud_enabled": True})
-    judge = SimpleNamespace(ask=lambda s, q: {"p0": {"noul": .96}, "p1": {"noul": .08}})
+    judge = SimpleNamespace(ask=lambda s, q, timeout_s: {"p0": {"noul": .96}, "p1": {"noul": .08}}, is_local=False)
     result = search_history(repo, "shipping delay", semantic=True, judge=judge)
     assert result["mode"] == "semantic" and len(result["results"]) == 1
     assert result["results"][0]["semantic_score"] == .96
-    judge.ask = lambda *a: None
+    judge.ask = lambda *a, **k: None
     result = search_history(repo, "shipping delay", semantic=True, judge=judge)
     assert result["mode"] == "keyword" and result["results"] == [{"text": "keyword"}]
 
