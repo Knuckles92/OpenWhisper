@@ -112,6 +112,12 @@ class TextLLMProfile:
         host = (urlsplit(self.base_url).hostname or "").lower()
         return host in _LOCAL_HOSTS
 
+    @property
+    def self_hosted(self) -> bool:
+        """True for a server the user runs: a local server preset wherever
+        it lives, or any endpoint on this computer."""
+        return self.kind in LOCAL_SERVER_PROFILE_IDS or self.is_local
+
 
 @dataclass(frozen=True)
 class TextLLMSnapshot:

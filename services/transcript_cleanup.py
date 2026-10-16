@@ -10,7 +10,6 @@ from config import config
 from services.text_generation import generate
 from services.text_llm import (
     AUTH_FREE_API_KEY,
-    LOCAL_SERVER_PROFILE_IDS,
     connection_fingerprint,
     create_openai_client,
     chat_request_options,
@@ -243,11 +242,9 @@ class TranscriptCleanup:
             old_client = self.client
             if old_client is not None:
                 old_client.close()
-            # Local servers may need to load the model before generating.
+            # A server the user runs may load the model before generating.
             self._timeout_s = (
-                120.0
-                if profile.kind in LOCAL_SERVER_PROFILE_IDS
-                else config.TRANSCRIPT_CLEANUP_TIMEOUT_S
+                120.0 if profile.self_hosted else config.TRANSCRIPT_CLEANUP_TIMEOUT_S
             )
             self.client = create_openai_client(
                 profile,
@@ -288,7 +285,8 @@ class TranscriptCleanup:
 
     @property
     def attempt_timeout_s(self) -> float:
-        """The per-attempt timeout this client was built with (longer for Ollama)."""
+        """The per-attempt timeout this client was built with (longer for a
+        server the user runs)."""
         return self._timeout_s
 
     def is_available(self) -> bool:

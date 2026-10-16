@@ -145,7 +145,8 @@ def rewrite_with(
     )
     message = text if has_selection else instruction
     wait_s = LONG_TEXT_TIMEOUT_S if len(message) > LONG_TEXT_CHARS else REWRITE_TIMEOUT_S
-    # Never less than the client's own attempt timeout (two minutes for Ollama).
+    # Never less than the client's own attempt timeout (two minutes for a
+    # server the user runs, which may first load the model).
     own = getattr(cleaner, "attempt_timeout_s", None)
     if isinstance(own, (int, float)):
         wait_s = max(wait_s, float(own))
