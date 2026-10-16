@@ -105,6 +105,7 @@ from services.settings import (
     resolve_transcript_cleanup_rules,
     resolve_update_check_enabled,
     resolve_update_notify_enabled,
+    resolve_update_restart_prompt_enabled,
     setting_value,
     settings_manager,
 )
@@ -1305,6 +1306,16 @@ class SettingsDialog(QDialog):
         self.update_notify_check = self.update_notify_tile.checkbox
         self.update_notify_check.setObjectName("updateNotifyEnabledCheck")
 
+        self.update_restart_prompt_tile = SettingTile(
+            "Ask me to restart after an update",
+            "When OpenWhisper is updated while it is running, offers to "
+            "restart so the update finishes. Turn off if you chose "
+            "\"Don't show this again\" and changed your mind.",
+            design_icon("refresh-blue.svg"),
+        )
+        self.update_restart_prompt_check = self.update_restart_prompt_tile.checkbox
+        self.update_restart_prompt_check.setObjectName("updateRestartPromptCheck")
+
         self._tile_group(
             layout,
             "Output",
@@ -1325,7 +1336,13 @@ class SettingsDialog(QDialog):
             self._refresh_accessibility_status()
         self._tile_group(layout, "Window", [self.minimize_tray_tile])
         self._tile_group(
-            layout, "Updates", [self.update_check_tile, self.update_notify_tile]
+            layout,
+            "Updates",
+            [
+                self.update_check_tile,
+                self.update_notify_tile,
+                self.update_restart_prompt_tile,
+            ],
         )
 
         self._bindings.checkbox(
@@ -1358,6 +1375,11 @@ class SettingsDialog(QDialog):
             resolve_update_notify_enabled,
         )
         self.update_notify_check.toggled.connect(self._on_update_notify_toggled)
+        self._bindings.checkbox(
+            self.update_restart_prompt_check,
+            SettingsKey.UPDATE_RESTART_PROMPT_ENABLED,
+            resolve_update_restart_prompt_enabled,
+        )
 
     def _refresh_accessibility_status(self):
         from services.hotkey_manager import is_accessibility_trusted

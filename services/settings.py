@@ -243,6 +243,7 @@ class SettingsKey:
     # In-app updater. Absent keys mean both automatic check and notify are on.
     UPDATE_CHECK_ENABLED: Final[str] = "update_check_enabled"
     UPDATE_NOTIFY_ENABLED: Final[str] = "update_notify_enabled"
+    UPDATE_RESTART_PROMPT_ENABLED: Final[str] = "update_restart_prompt_enabled"
     UPDATE_LAST_CHECK_AT: Final[str] = "update_last_check_at"
     UPDATE_LAST_FAILED_CHECK_AT: Final[str] = "update_last_failed_check_at"
     UPDATE_API_RETRY_AT: Final[str] = "update_api_retry_at"
@@ -710,6 +711,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     # In-app updater
     SettingsKey.UPDATE_CHECK_ENABLED: config.UPDATE_CHECK_ENABLED,
     SettingsKey.UPDATE_NOTIFY_ENABLED: config.UPDATE_NOTIFY_ENABLED,
+    SettingsKey.UPDATE_RESTART_PROMPT_ENABLED: config.UPDATE_RESTART_PROMPT_ENABLED,
     # Personalization. APP_STYLE_TONES and TEXT_TRANSFORMS have no
     # entry: their absence has its own meaning (all Formal, the starters).
     SettingsKey.APP_CONTEXT_ENABLED: True,
@@ -1204,6 +1206,8 @@ resolve_transcript_batch_custom_combine = _bool_resolver(
 resolve_developer_mode = _bool_resolver(SettingsKey.DEVELOPER_MODE)
 resolve_update_check_enabled = _bool_resolver(SettingsKey.UPDATE_CHECK_ENABLED)
 resolve_update_notify_enabled = _bool_resolver(SettingsKey.UPDATE_NOTIFY_ENABLED)
+resolve_update_restart_prompt_enabled = _bool_resolver(
+    SettingsKey.UPDATE_RESTART_PROMPT_ENABLED)
 # Meeting consents and acknowledgements, off until given. On unsupported
 # platforms (old macOS, unsupported Linux architectures, other OSes) the
 # Meeting Mode tab stays muted until the ack is granted once; supported Linux

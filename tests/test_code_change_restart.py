@@ -94,6 +94,41 @@ def test_the_poll_asks_once_the_code_changed_and_nothing_is_running(answers):
     assert not controller._code_change_timer.isActive()  # Later means not again.
 
 
+def test_dont_show_again_mutes_the_unprompted_offer(answers):
+    shown, queued = answers
+    controller = _Controller()
+
+    def exec_and_tick(box):
+        shown.append(box)
+        box.checkBox().setChecked(True)
+        next(b for b in box.buttons() if b.text() == "Later").click()
+        return 0
+
+    with patch.object(QMessageBox, "exec", exec_and_tick), \
+            patch("ui_qt.ui_controller.settings_manager") as manager:
+        UIController.offer_restart_for_code_change(controller)
+    manager.save_setting.assert_called_once_with(
+        "update_restart_prompt_enabled", False
+    )
+
+    with patch("ui_qt.ui_controller.changed_since_launch", return_value=True), \
+            patch("ui_qt.ui_controller.settings_manager") as manager:
+        manager.load_all_settings.return_value = {
+            "update_restart_prompt_enabled": False
+        }
+        controller._code_change_timer.start(60_000)
+        UIController._on_code_change_poll(controller)
+    assert len(shown) == 1 and not controller._code_change_timer.isActive()
+
+
+def test_an_error_offer_has_no_dont_show_again(answers):
+    shown, queued = answers
+    queued.append("Later")
+    controller = _Controller()  # Owns the box's parent window.
+    UIController.offer_restart_for_code_change(controller, failure="boom")
+    assert shown[0].checkBox() is None
+
+
 def test_restart_now_confirms_running_work_before_restarting(answers):
     shown, queued = answers
     controller = _Controller()

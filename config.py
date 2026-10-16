@@ -696,6 +696,9 @@ class AppConfig:
     # update-available notice are on until the user opts out.
     UPDATE_CHECK_ENABLED: bool = True
     UPDATE_NOTIFY_ENABLED: bool = True
+    # The "restart to finish the update" offer after the code changed under
+    # the running app; "Don't show this again" turns it off.
+    UPDATE_RESTART_PROMPT_ENABLED: bool = True
     UPDATE_CHECK_INTERVAL_S: int = 4 * 60 * 60
     UPDATE_CHECK_DELAY_MS: int = 8_000
 

@@ -49,6 +49,7 @@ from services.settings import (
     resolve_ui_theme,
     resolve_update_check_enabled,
     resolve_update_notify_enabled,
+    resolve_update_restart_prompt_enabled,
     setting_value,
 )
 from services.text_llm import get_profile, profile_display_name
@@ -642,6 +643,15 @@ class HomePage(QWidget):
             "update_notify_check",
             SettingsKey.UPDATE_NOTIFY_ENABLED,
             resolve_update_notify_enabled,
+        )
+        self.toggle(
+            group,
+            "Ask me to restart after an update",
+            "Offer a restart when the app was updated while it was running.",
+            GENERAL,
+            "update_restart_prompt_check",
+            SettingsKey.UPDATE_RESTART_PROMPT_ENABLED,
+            resolve_update_restart_prompt_enabled,
         )
         self._link(group, "Overlay, hotkeys and all app settings", APPEARANCE)
 

@@ -5,7 +5,7 @@ import threading
 from typing import Any, Callable, Dict, List, Optional
 from PyQt6.QtCore import QTimer, QUrl, pyqtSignal, QObject
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import QApplication, QMessageBox, QProgressDialog
+from PyQt6.QtWidgets import QApplication, QCheckBox, QMessageBox, QProgressDialog
 
 from config import config
 from services.app_update import (
@@ -50,7 +50,12 @@ from ui_qt.dialogs.settings_dialog import (
 from ui_qt.utils.font_scale import apply_ui_font_scale, apply_ui_theme
 from ui_qt.widgets import TabbedContentWidget
 from ui_qt.widgets.transcription_progress import stage_for_overlay_state
-from services.settings import SettingsKey, resolve_ui_theme, settings_manager
+from services.settings import (
+    SettingsKey,
+    resolve_ui_theme,
+    resolve_update_restart_prompt_enabled,
+    settings_manager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2265,6 +2270,11 @@ class UIController(QObject):
         QApplication.instance().exit(0)
 
     def _on_code_change_poll(self) -> None:
+        if not resolve_update_restart_prompt_enabled(
+            settings_manager.load_all_settings()
+        ):
+            self._code_change_timer.stop()
+            return
         if changed_since_launch() and not self._update_work_is_busy():
             self.offer_restart_for_code_change()
 
@@ -2294,10 +2304,19 @@ class UIController(QObject):
                 "Restart to finish the update. Until you do, parts of the app "
                 "that haven't loaded yet may not work."
             )
+        mute = None
+        if not failure:
+            # Only the unprompted offer can be muted; an error still explains itself.
+            mute = QCheckBox("Don't show this again")
+            box.setCheckBox(mute)
         restart = box.addButton("Restart now", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(restart)
         box.exec()
+        if mute is not None and mute.isChecked():
+            settings_manager.save_setting(
+                SettingsKey.UPDATE_RESTART_PROMPT_ENABLED, False
+            )
         if box.clickedButton() is restart and self._confirm_quit_while_busy():
             self.restart_app()
 
