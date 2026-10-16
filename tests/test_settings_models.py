@@ -1390,8 +1390,12 @@ class TestNewTextProviders(_DialogTestCase):
         assert picker.provider_combo.itemText(picker.provider_combo.findData("lm_studio")) == "LM Studio · Running"
         assert picker.provider_combo.itemText(picker.provider_combo.findData("llama_cpp")) == "llama.cpp"
         assert picker.provider == "openrouter"
-        assert picker.provider_requirement.text().endswith(
-            "— or choose LM Studio, running on this computer"
+        assert picker.provider_requirement.text() == (
+            "Key needed in Settings → API keys, or choose LM Studio, "
+            "running on this computer"
+        )
+        assert picker.provider_requirement.toolTip() == (
+            "Requires OpenRouter API key — add it in Settings → API keys"
         )
         picker.set_provider("llama_cpp")
         assert "Answering at http://127.0.0.1:8080/v1" in picker.provider_combo.toolTip()
