@@ -14,13 +14,12 @@ from PyQt6.QtGui import QFocusEvent
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox, QPushButton
 
 from config import config
-from services.settings import SettingsKey, SettingsManager, SettingsView
+from services.settings import SettingsKey, SettingsManager
 from ui_qt.dialogs import cleanup_levels
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_destinations import (
-    BASIC_DICTATION,
     CLEANUP,
     CLEANUP_RULES,
     OVERVIEW,
@@ -49,9 +48,9 @@ def make_dialog():
     stacks = []
     temp = tempfile.TemporaryDirectory()
 
-    def build(values=None, view=SettingsView.ADVANCED):
+    def build(values=None):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: view, **(values or {})})
+        store.save_all_settings({**(values or {})})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))
@@ -312,26 +311,28 @@ def test_the_editor_starts_from_the_levels_instructions(make_dialog, monkeypatch
     assert _selected(dialog) == cleanup_levels.CUSTOM
 
 
-# --- rail, Overview and the Learned rules gate --------------------------------
+# --- rail, Home and the Learned rules gate ------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("values", "rail", "card"),
+    ("values", "rail", "level"),
     [
-        ({}, "Off", "Off"),
+        ({}, "Off", ""),
         ({ENABLED: True, **MODEL}, "Medium · gpt-test", "Medium"),
         ({ENABLED: True, LEVEL: "high", **MODEL}, "High · gpt-test", "High"),
-        ({ENABLED: True, PROMPT: CUSTOM, **MODEL}, "Custom · gpt-test", "Custom prompt"),
-        ({PROMPT: CUSTOM, LEVEL: "light"}, "Off", "Off"),
+        ({ENABLED: True, PROMPT: CUSTOM, **MODEL}, "Custom · gpt-test", "Custom"),
+        ({PROMPT: CUSTOM, LEVEL: "light"}, "Off", ""),
     ],
 )
-def test_rail_and_overview_name_the_level(make_dialog, values, rail, card):
+def test_rail_and_home_name_the_level(make_dialog, values, rail, level):
     dialog, _store = make_dialog(values)
     dialog.select_destination(OVERVIEW)
 
     assert dialog.rail.value(CLEANUP) == rail
-    assert dialog.overview.cards["cleanup"].value_label.text() == card
-    assert dialog.overview.cards["cleanup_profiles"].eyebrow_label.text() == "PERSONALIZE"
+    combo = dialog.home.cleanup_level_combo
+    assert combo.isEnabled() == bool(level)
+    if level:
+        assert combo.currentText() == level
 
 
 def test_the_learned_rules_gate_turns_cleanup_on_at_the_saved_level(make_dialog):
@@ -371,12 +372,12 @@ def test_a_gate_on_another_page_turns_cleanup_on_without_building_it(make_dialog
     assert CLEANUP not in dialog._built_pages
 
 
-# --- Basic --------------------------------------------------------------------
+# --- Home ---------------------------------------------------------------------
 
 
 def _basic(make_dialog, values):
-    dialog, store = make_dialog(values, view=SettingsView.BASIC)
-    return dialog, store, dialog._basic_pages[BASIC_DICTATION]
+    dialog, store = make_dialog(values)
+    return dialog, store, dialog.home
 
 
 def _items(combo):

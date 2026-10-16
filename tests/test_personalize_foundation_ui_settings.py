@@ -21,15 +21,14 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from services.settings import SettingsKey, SettingsManager, SettingsView
+from services.settings import SettingsKey, SettingsManager
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
 from ui_qt.dialogs import settings_models as models_module
-from ui_qt.dialogs.settings_basic import BasicSettingsPage
+from ui_qt.dialogs.settings_home import HomePage
 from ui_qt.dialogs.settings_destinations import (
     ACTIONS,
-    BASIC_DICTATION,
     CLEANUP,
     CLEANUP_PROFILES,
     CLEANUP_RULES,
@@ -74,7 +73,7 @@ def make_dialog():
 
     def build(values=None):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED, **(values or {})})
+        store.save_all_settings({**(values or {})})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))
@@ -107,16 +106,20 @@ def fake_page(monkeypatch):
         dialog.fake_page_tile = InfoTile("Fake words tile", "zebra quokka")
         dialog._tile_group(layout, "", [dialog.fake_page_tile], columns=1)
 
-    def basic_rows(page, group):
-        calls.append(("basic_rows", type(page), type(group)))
-        page.add_refresh_hook(lambda settings: calls.append("basic_refresh"))
+    # Home is built with the window, so its calls are kept apart from the
+    # page's own hooks, which run only once the page is built.
+    module.home_calls = []
+
+    def home_rows(page, group):
+        module.home_calls.append(("home_rows", type(page), type(group)))
+        page.add_refresh_hook(lambda settings: module.home_calls.append("home_refresh"))
 
     module.build = build
     module.load = lambda dialog, settings: calls.append("load")
     module.rail_value = lambda settings: "3 words"
     module.refresh = lambda dialog: calls.append("refresh")
     module.cancel_capture = lambda dialog: calls.append("cancel")
-    module.basic_rows = basic_rows
+    module.home_rows = home_rows
     monkeypatch.setitem(sys.modules, module.__name__, module)
     registry = tuple(
         (key, module.__name__ if key == DICTIONARY else path, icon)
@@ -140,15 +143,14 @@ def _intro_tiles(widget):
 class TestPersonalizeRail:
     def test_personalize_and_automate_sit_between_dictation_and_meeting_mode(self, make_dialog):
         dialog, _store = make_dialog()
-        keys = dialog.rail.keys()
         personalize = (DICTIONARY, SNIPPETS, STYLES, CLEANUP_RULES, CLEANUP_PROFILES, COMMANDS)
         automate = (ACTIONS, HOOKS, MCP)
-        assert keys[keys.index(CLEANUP) + 1:keys.index(ACTIONS)] == personalize
-        assert keys[keys.index(ACTIONS):keys.index(MEETING_VOICE)] == automate
-        assert {dialog._rail_groups[key] for key in automate} == {"Automate"}
+        assert dialog.rail.chapters()[:4] == ("Dictation", "Personalize", "Automate", "Meeting Mode")
+        assert dialog.rail.chapter_keys("Personalize") == personalize
+        assert dialog.rail.chapter_keys("Automate") == automate
+        assert dialog.rail.chapter(MEETING_VOICE) == "Meeting Mode"
         assert [dialog.rail.name(key) for key in automate] == ["Actions", "Hooks", "API & MCP"]
-        assert dialog._rail_groups[CLEANUP] == "Dictation"
-        assert {dialog._rail_groups[key] for key in personalize} == {"Personalize"}
+        assert dialog.rail.chapter(CLEANUP) == "Dictation"
         assert [dialog.rail.name(key) for key in personalize] == [
             "Dictionary", "Snippets", "Styles", "Learned rules", "Profiles", "Commands",
         ]
@@ -189,8 +191,8 @@ class TestPersonalizeRail:
                     if entry.destination == key and entry.target_name == attr
                 ]
                 assert [entry.title for entry in entries] == [title]
-                group = dialog._rail_groups[key]
-                assert entries[0].detail == f"{group} › {dialog.rail.name(key)}"
+                chapter = dialog.rail.chapter(key)
+                assert entries[0].detail == f"{chapter} › {dialog.rail.name(key)}"
                 assert key not in dialog._built_pages
                 dialog._on_search_activated(entries[0])
                 QApplication.processEvents()
@@ -232,7 +234,7 @@ class TestPageModuleRegistry:
         assert calls == ["refresh"]
 
         calls.clear()
-        dialog.set_settings_view(SettingsView.BASIC)
+        dialog.show_home()
         assert calls[0] == "cancel"
         calls.clear()
         dialog.close()
@@ -357,53 +359,50 @@ class TestDialogHelpers:
         ]
 
 
-class TestBasicPersonalize:
-    def test_dictation_tab_has_a_personalize_group_fed_by_page_modules(self, make_dialog, fake_page):
-        _module, calls = fake_page
-        dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-        page = dialog._basic_pages[BASIC_DICTATION]
-        titles = [label.text() for label in page.findChildren(QLabel, "basicSettingsGroupTitle")]
-        assert titles == ["Record", "Transcribe", "Personalize", "Output"]
-        assert ("basic_rows", BasicSettingsPage, QVBoxLayout) in calls
+class TestHomePersonalize:
+    def test_home_has_a_personalize_card_fed_by_page_modules(self, make_dialog, fake_page):
+        module, _calls = fake_page
+        dialog, _store = make_dialog({})
+        page = dialog.home
+        titles = [label.text() for label in page.findChildren(QLabel, "homeCardTitle")]
+        assert titles == ["Dictation", "Personalize", "Meetings", "App", "Storage"]
+        assert ("home_rows", HomePage, QVBoxLayout) in module.home_calls
         assert not set(NEW_PAGES) & dialog._built_pages
 
-        calls.clear()
+        module.home_calls.clear()
         dialog._refresh_rail_values()
-        assert "basic_refresh" in calls
+        assert "home_refresh" in module.home_calls
 
         link = next(
-            button for button in page.findChildren(QPushButton, "basicSettingsAdvancedLink")
+            button for button in page.findChildren(QPushButton, "homeLink")
             if button.text().startswith("Dictionary, snippets")
         )
         link.click()
-        assert dialog.settings_view == SettingsView.ADVANCED
         assert dialog.rail.current_key() == DICTIONARY
 
-    def test_new_features_note_dismisses_everywhere_and_stays_dismissed(self, make_dialog):
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+    def test_new_features_note_dismisses_and_stays_dismissed(self, make_dialog):
+        dialog, store = make_dialog({})
         dialog.show()
         try:
-            basic = _intro_tiles(dialog._pages[BASIC_DICTATION])
-            overview = _intro_tiles(dialog._pages[OVERVIEW])
-            assert len(basic) == len(overview) == 1
-            text = basic[0].description_label.text()
+            notes = _intro_tiles(dialog._pages[OVERVIEW])
+            assert len(notes) == 1
+            text = notes[0].description_label.text()
             for feature in ("dictionary", "snippets", "styles", "Command Mode",
                             "hands-free", "Stats", "Scratchpad"):
                 assert feature in text
-            assert basic[0].isVisible()
+            assert notes[0].isVisible()
             dismiss = next(
-                button for button in overview[0].findChildren(QPushButton)
+                button for button in notes[0].findChildren(QPushButton)
                 if button.text() == "Got it"
             )
             dismiss.click()
             assert store.get(INTRO_SEEN) is True
-            assert basic[0].isHidden() and overview[0].isHidden()
+            assert notes[0].isHidden()
         finally:
             dialog.close()
         reopened = settings_dialog_module.SettingsDialog(background_cache_scan=False)
         try:
             assert not _intro_tiles(reopened._pages[OVERVIEW])
-            assert not _intro_tiles(reopened._pages[BASIC_DICTATION])
         finally:
             reopened.close()
 

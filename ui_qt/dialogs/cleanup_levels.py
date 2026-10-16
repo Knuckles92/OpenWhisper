@@ -34,7 +34,7 @@ NOTES = {
     ),
 }
 
-#: The same, in a few words, for the Basic view's row.
+#: The same, in a few words, for Home's row.
 SHORT_NOTES = {
     CleanupLevel.LIGHT: "Punctuation and filler words only.",
     CleanupLevel.MEDIUM: "Also handles self-corrections and spoken lists.",

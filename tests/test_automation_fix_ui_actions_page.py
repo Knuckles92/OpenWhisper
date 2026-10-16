@@ -21,7 +21,7 @@ from services.actions.model import (
     find_action,
     save_action,
 )
-from services.settings import SettingsKey, SettingsManager, SettingsView
+from services.settings import SettingsKey, SettingsManager
 from ui_qt.dialogs import settings_actions
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
@@ -123,7 +123,7 @@ def make_dialog(questions, agents):
 
     def build(values=None, *, select=True, size=None):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED, **(values or {})})
+        store.save_all_settings({**(values or {})})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))

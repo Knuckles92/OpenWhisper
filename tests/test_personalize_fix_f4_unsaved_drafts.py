@@ -12,7 +12,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from services.settings import SettingsKey, SettingsManager, SettingsView
+from services.settings import SettingsManager
 from services.snippets import load_snippets
 from services.text_transforms import load_transforms
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
@@ -63,7 +63,7 @@ def make_dialog(questions):
 
     def build():
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED})
+        store.save_all_settings({})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))
@@ -151,11 +151,11 @@ def test_escape_saves_drafts_on_every_page(make_dialog, questions):
     assert not dialog.isVisible()
 
 
-def test_switching_to_basic_saves_a_draft(make_dialog):
+def test_going_home_saves_a_draft(make_dialog):
     dialog, store = make_dialog()
     _snippet_draft(dialog)
 
-    dialog.set_settings_view(SettingsView.BASIC)
+    dialog.show_home()
 
     assert _snippets(store) == ["my address"]
 

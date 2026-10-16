@@ -12,14 +12,13 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QPushButton
 
-from services.settings import SettingsKey, SettingsManager, SettingsView
+from services.settings import SettingsKey, SettingsManager
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
 from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs import settings_styles
 from ui_qt.dialogs.settings_destinations import (
-    BASIC_DICTATION,
     CLEANUP,
     CLEANUP_RULES,
     COMMANDS,
@@ -61,7 +60,7 @@ def make_dialog():
 
     def build(values=None):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED, **(values or {})})
+        store.save_all_settings({**(values or {})})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))
@@ -191,8 +190,8 @@ def test_awareness_gate_shows_only_once_cleanup_is_on(make_dialog):
 
 
 def test_the_style_switch_has_one_name(make_dialog):
-    dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-    basic = dialog._basic_pages[BASIC_DICTATION]
+    dialog, _store = make_dialog({})
+    basic = dialog.home
     basic_title = basic.controls[SettingsKey.APP_STYLES_ENABLED].accessibleName()
     titles = {title for attr, title, _copy in settings_styles.SEARCH_FIELDS if attr == "app_styles_tile"}
 

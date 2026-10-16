@@ -194,7 +194,7 @@ def refresh(dialog) -> None:
         page.show_settings(dialog._settings_snapshot())
 
 
-def basic_detail(settings: dict) -> str:
+def home_detail(settings: dict) -> str:
     """The Basic Dictionary row's line: the count, and what fixes words now."""
     from services.dictionary import load_dictionary, summary
 
@@ -207,16 +207,16 @@ def basic_detail(settings: dict) -> str:
     return "Names and terms dictation should always get right."
 
 
-def basic_rows(page, group) -> None:
+def home_rows(page, group) -> None:
     from ui_qt.widgets.buttons import Button, fit_compact_button, neutral_button
 
     button = neutral_button(Button("Add word"))
-    button.setObjectName("basicDictionaryAddButton")
+    button.setObjectName("homeDictionaryAddButton")
     fit_compact_button(button)
-    detail = page._row(group, "Dictionary", "", button)
+    detail = page.add_row(group, "Dictionary", "", button)
     button.setAccessibleName("Add word to dictionary")
     button.clicked.connect(lambda: open_composer(page.dialog))
-    page.add_refresh_hook(lambda settings: detail.setText(basic_detail(settings)))
+    page.add_refresh_hook(lambda settings: detail.setText(home_detail(settings)))
 
 
 def open_composer(dialog) -> None:

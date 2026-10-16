@@ -1,4 +1,4 @@
-"""Settings → Recording: the preferred microphone, its backups, and the Basic mirror."""
+"""Settings → Recording: the preferred microphone, its backups, and Home's mirror."""
 import gc
 import os
 import tempfile
@@ -17,11 +17,11 @@ from PyQt6.QtWidgets import QAbstractButton, QApplication, QComboBox, QLabel, QP
 
 from services import audio_devices
 from services.audio_devices import InputDevice
-from services.settings import SettingsKey, SettingsManager, SettingsView
+from services.settings import SettingsKey, SettingsManager
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as models_module
-from ui_qt.dialogs.settings_destinations import BASIC_DICTATION, RECORDING
+from ui_qt.dialogs.settings_destinations import RECORDING
 from ui_qt.dialogs.settings_microphones import SYSTEM_DEFAULT, entry_token, rail_value
 
 MME, DSOUND = "MME", "Windows DirectSound"
@@ -59,9 +59,9 @@ def make_dialog(monkeypatch):
     devices = list(DEVICES)
     monkeypatch.setattr(settings_dialog_module.AudioRecorder, "get_input_devices", staticmethod(lambda: list(devices)))
 
-    def build(values=None, *, view=SettingsView.ADVANCED, wait=True):
+    def build(values=None, *, wait=True):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: view, **(values or {})})
+        store.save_all_settings({**(values or {})})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))
@@ -72,8 +72,7 @@ def make_dialog(monkeypatch):
         stacks.append(stack)
         dialog = settings_dialog_module.SettingsDialog(get_loaded_model=lambda: None, background_cache_scan=False)
         dialog.on_audio_device_changed = MagicMock()
-        if view == SettingsView.ADVANCED:
-            dialog.select_destination(RECORDING)
+        dialog.select_destination(RECORDING)
         if wait:
             _pump_until(lambda: dialog._microphones is not None and dialog._microphones.devices is not None)
         return dialog, store
@@ -201,10 +200,11 @@ def test_a_preferred_microphone_on_another_host_api_drops_the_legacy_index(make_
     assert SettingsKey.AUDIO_INPUT_DEVICE not in store.load_all_settings()
 
 
-def test_basic_microphone_writes_the_first_entry_and_keeps_the_backups(make_dialog):
-    dialog, store = make_dialog({SettingsKey.AUDIO_INPUT_PRIORITY: [USB, SNOWBALL]}, view=SettingsView.BASIC)
+def test_home_microphone_writes_the_first_entry_and_keeps_the_backups(make_dialog):
+    dialog, store = make_dialog({SettingsKey.AUDIO_INPUT_PRIORITY: [USB, SNOWBALL]})
     _pump_until(lambda: dialog._microphones.devices is not None)
-    combo = dialog._basic_pages[BASIC_DICTATION].controls[SettingsKey.AUDIO_INPUT_PRIORITY]
+    dialog.show_home()
+    combo = dialog.home.controls[SettingsKey.AUDIO_INPUT_PRIORITY]
     assert combo.currentData() == entry_token(USB)
     webcam = {"name": "Microphone (Webcam)", "hostapi": MME}
 
@@ -324,7 +324,7 @@ def test_rail_value_reads_short_names():
 
 
 # The Advanced view's narrowest widths; Basic's 460/720 rows are covered by
-# test_settings_unified's test_basic_rows_fit_narrow_windows_and_large_fonts.
+# test_settings_unified's test_home_rows_fit_narrow_windows_and_large_fonts.
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
 def test_recording_page_fits_narrow_windows_and_large_fonts(make_dialog, monkeypatch, ui_mode, width):
     from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
@@ -400,10 +400,13 @@ def test_refresh_moves_under_the_combo_in_a_narrow_column(make_dialog):
     dialog, _store = make_dialog({SettingsKey.AUDIO_INPUT_PRIORITY: [USB]})
     row = dialog.audio_device_combo.parentWidget()
     dialog.show()
-    dialog.setMinimumSize(0, 0)
+    # Omarchy's floor. No explicit minimum would hand the window the layout's,
+    # which counts the rail until the narrow window folds it away.
+    dialog.setMinimumSize(360, 240)
     try:
+        # 420 folds the rail away, so the page itself is that narrow.
         for width, direction in ((1100, QBoxLayout.Direction.LeftToRight),
-                                 (520, QBoxLayout.Direction.TopToBottom),
+                                 (420, QBoxLayout.Direction.TopToBottom),
                                  (1100, QBoxLayout.Direction.LeftToRight)):
             dialog.resize(width, 700)
             for _ in range(8):

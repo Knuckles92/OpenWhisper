@@ -1,8 +1,8 @@
 """Enter in Settings does the focused field's own job and never switches the view.
 
 Settings saves as you go and has no default action, yet Qt makes the first
-auto-default button of a shown QDialog (the header's Basic view button) its
-default, which Enter in any field that ignores Return used to click. These
+auto-default button of a shown QDialog its default (it was the header's Basic
+view button), which Enter in any field that ignores Return used to click. These
 tests need a shown, active window: an unshown dialog has no default button and
 hides the bug.
 """
@@ -20,7 +20,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from services import app_styles, dictionary
-from services.settings import SettingsKey, SettingsManager, SettingsView
+from services.settings import SettingsKey, SettingsManager
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
@@ -74,8 +74,7 @@ def make_dialog(request, monkeypatch):
 
     def build(values=None):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED,
-                                 SettingsKey.SELECTED_MODEL: "parakeet", **(values or {})})
+        store.save_all_settings({SettingsKey.SELECTED_MODEL: "parakeet", **(values or {})})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))
@@ -123,9 +122,9 @@ def _type_and_press(widget, text, key=RETURN):
 
 
 def _stayed(dialog, store, page_title):
-    assert dialog._settings_view == SettingsView.ADVANCED
-    assert store.get(SettingsKey.SETTINGS_VIEW) == SettingsView.ADVANCED
     assert dialog.page_title.text() == page_title
+    # Enter never reached a header button: the page menu stayed shut.
+    assert dialog._page_menu is None
 
 
 def _words(store):
@@ -242,15 +241,6 @@ def test_enter_on_a_focused_button_still_presses_it(make_dialog):
 
     assert _words(store) == ["Kubernetes"]
     _stayed(dialog, store, "Dictionary")
-
-
-def test_enter_on_the_advanced_view_button_switches_view(make_dialog):
-    dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-
-    _press(dialog.view_buttons[SettingsView.ADVANCED])
-
-    assert dialog._settings_view == SettingsView.ADVANCED
-    assert store.get(SettingsKey.SETTINGS_VIEW) == SettingsView.ADVANCED
 
 
 def test_escape_still_closes_settings(make_dialog):

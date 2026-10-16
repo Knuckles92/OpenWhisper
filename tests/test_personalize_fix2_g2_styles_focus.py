@@ -15,7 +15,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QPushButton
 
 from services import app_styles
-from services.settings import SettingsKey, SettingsView
+from services.settings import SettingsKey
 from tests import test_personalize_fix2_g2_enter_key as shared
 from ui_qt.dialogs.settings_destinations import STYLES
 
@@ -84,7 +84,7 @@ def test_removing_an_excluded_app_focuses_the_next_then_the_picker(make_dialog):
 
     assert store.get(EXCLUDED) == []
     assert QApplication.focusWidget() is page.excluded_picker
-    assert dialog._settings_view == SettingsView.ADVANCED
+    assert dialog.rail.current_key() == "styles"
 
 
 def test_removing_the_last_excluded_app_focuses_the_one_above(make_dialog):
@@ -153,7 +153,7 @@ def test_tab_walks_each_list_in_order_before_its_picker(make_dialog, rows, picke
     _focus(first)
     _key(Qt.Key.Key_Backtab, Qt.KeyboardModifier.ShiftModifier)
     before = QApplication.focusWidget()
-    assert before not in dialog.view_buttons.values()
+    assert before is not dialog.page_menu_button
     assert not rows.isAncestorOf(before)
     _key(Qt.Key.Key_Tab)
     assert QApplication.focusWidget() is first

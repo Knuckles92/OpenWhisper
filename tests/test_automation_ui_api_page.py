@@ -19,7 +19,7 @@ from services.agent_mcp import events_ext, setup
 from services.agent_mcp.runtime import DEFAULT_PORT, ServerStatus
 from services.automation import events
 from services.remote_asr.client import RemoteRequestError
-from services.settings import SettingsKey, SettingsManager, SettingsView
+from services.settings import SettingsKey, SettingsManager
 from tests.test_mcp_host_tabs import FakeRemoteService, make_view, tick
 from tests.test_mcp_settings_page import TOKEN, FakeServer
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
@@ -368,7 +368,7 @@ def make_dialog():
 
     def build():
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED})
+        store.save_all_settings({})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))

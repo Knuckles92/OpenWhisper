@@ -2,7 +2,7 @@
 
 from uuid import uuid4
 
-from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QBoxLayout,
     QGridLayout,
@@ -104,7 +104,7 @@ class CommandShortcutField(QWidget):
         if change_button:
             # Plain, like the Recording shortcut's Change on the Basic tab.
             self.change_button = QPushButton("Change")
-            self.change_button.setObjectName("basicSettingsChangeShortcut")
+            self.change_button.setObjectName("settingsChangeShortcut")
             self.change_button.clicked.connect(self.begin_capture)
             row.addWidget(self.change_button)
         self.clear_button = None
@@ -158,16 +158,35 @@ class CommandShortcutField(QWidget):
         super().showEvent(event)
         self.sync()
 
+    def _buttons(self) -> list:
+        return [b for b in (self.change_button, self.clear_button) if b is not None]
+
+    @staticmethod
+    def _button_width(button) -> int:
+        # A label-fitted Button holds a floor above its size hint; Qt draws
+        # the box over a button squeezed below it (seen with macOS fonts).
+        return max(button.sizeHint().width(), button.minimumWidth())
+
+    def _side_by_side_width(self) -> int:
+        box = round(INPUT_MIN_WIDTH * current_ui_font_scale())
+        return box + sum(self._row.spacing() + self._button_width(b) for b in self._buttons())
+
+    # Both hints are the same whichever way resizeEvent last arranged the
+    # field, so the width a layout gives it never depends on that choice.
+    # When they followed the arrangement, a row could give the field less
+    # room side by side than stacked, and it flipped between the two forever.
+    def sizeHint(self) -> QSize:
+        return QSize(self._side_by_side_width(), super().sizeHint().height())
+
+    def minimumSizeHint(self) -> QSize:
+        buttons = [self._button_width(b) for b in self._buttons()]
+        return QSize(max(buttons, default=0), super().minimumSizeHint().height())
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         box = round(INPUT_MIN_WIDTH * current_ui_font_scale())
-        buttons = [b for b in (self.change_button, self.clear_button) if b is not None]
-        # A label-fitted Button holds a floor above its size hint; Qt draws
-        # the box over a button squeezed below it (seen with macOS fonts).
-        needed = box + sum(
-            self._row.spacing() + max(b.sizeHint().width(), b.minimumWidth()) for b in buttons
-        )
-        stacked = self.width() < needed
+        buttons = self._buttons()
+        stacked = self.width() < self._side_by_side_width()
         self.input.setMinimumWidth(min(box, self.width()) if stacked else box)
         direction = QBoxLayout.Direction.TopToBottom if stacked else QBoxLayout.Direction.LeftToRight
         if self._row.direction() != direction:

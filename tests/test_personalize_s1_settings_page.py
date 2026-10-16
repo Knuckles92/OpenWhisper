@@ -14,13 +14,13 @@ from PyQt6.QtWidgets import QAbstractButton, QApplication, QComboBox, QLabel, QL
 
 from services.app_styles import NEW_INSTALL_TONES
 from services.focus_context import AppIdentity
-from services.settings import SettingsKey, SettingsManager, SettingsView
+from services.settings import SettingsKey, SettingsManager
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
 from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs import settings_styles
-from ui_qt.dialogs.settings_destinations import BASIC_DICTATION, OVERVIEW, STYLES
+from ui_qt.dialogs.settings_destinations import OVERVIEW, STYLES
 from ui_qt.widgets.setting_tile import TileBase
 
 CLEANUP_ON = {SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True}
@@ -57,7 +57,7 @@ def make_dialog():
 
     def build(values=None):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED, **(values or {})})
+        store.save_all_settings({**(values or {})})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))
@@ -318,7 +318,7 @@ def test_search_finds_the_page_before_and_after_it_is_built(make_dialog):
         assert getattr(dialog, attr).title_label.text() == title
 
 
-# --- Overview and Basic ----------------------------------------------------------------
+# --- Home ------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("values,where,item", [
@@ -331,18 +331,18 @@ def test_search_finds_the_page_before_and_after_it_is_built(make_dialog):
     ({SettingsKey.APP_CONTEXT_READ_TEXT: True, SettingsKey.APP_CONTEXT_ENABLED: False},
      "local", "Text near the cursor (off)"),
 ])
-def test_overview_privacy_strip(make_dialog, values, where, item):
+def test_home_privacy_strip(make_dialog, values, where, item):
     dialog, _store = make_dialog(values)
     dialog.select_destination(OVERVIEW)
-    local = dialog.overview.local_list.text().split(" · ")
-    cloud = dialog.overview.cloud_list.text().split(" · ")
+    local = dialog.home.local_list.text().split(" · ")
+    cloud = dialog.home.cloud_list.text().split(" · ")
     assert item in (local if where == "local" else cloud)
     assert not any(entry.startswith("Text near") for entry in (cloud if where == "local" else local))
 
 
-def test_basic_row_matches_tone_and_explains_when_it_cannot(make_dialog):
-    dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-    page = dialog._basic_pages[BASIC_DICTATION]
+def test_home_row_matches_tone_and_explains_when_it_cannot(make_dialog):
+    dialog, store = make_dialog({})
+    page = dialog.home
     switch = page.controls[SettingsKey.APP_STYLES_ENABLED]
     assert switch.isChecked() and not switch.isEnabled()
     assert "AI cleanup" in switch.toolTip()

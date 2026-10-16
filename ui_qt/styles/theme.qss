@@ -375,14 +375,6 @@ QListWidget#modelManagerRail::item:hover {
     border: none;
 }
 
-QLabel#modelManagerRailGroup {
-    color: @slate-text-4;
-    background-color: transparent;
-    border: none;
-    font-size: 10px;
-    font-weight: 700;
-}
-
 QWidget#modelManagerRailItem {
     background-color: transparent;
     border: 1px solid transparent;
@@ -4074,7 +4066,7 @@ QCheckBox#batchRelationCombine {
     background-color: transparent;
 }
 
-/* ---- Settings views and the curated Basic pages ---- */
+/* ---- Settings: header, chapter rail, and Home ---- */
 
 QFrame#settingsViewHeader {
     background-color: @slate-rail;
@@ -4098,109 +4090,129 @@ QLabel#settingsViewLabel {
     padding-left: 12px;
 }
 
-QFrame#settingsViewSegment {
+/* Stands in for the rail in a window too narrow for it. */
+QPushButton#settingsPageMenu {
     background-color: @slate-field;
+    color: @slate-text;
     border: 1px solid @slate-border-strong;
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QPushButton#settingsPageMenu:hover {
+    background-color: @slate-raised;
+    border-color: @slate-border-hover;
+}
+
+QLabel#settingsPageCrumb {
+    color: @slate-text-4;
+    background-color: transparent;
+    border: none;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+QWidget#settingsRailChapter {
+    background-color: transparent;
+    border: 1px solid transparent;
     border-radius: 9px;
 }
 
-QPushButton#settingsViewButton {
-    background-color: transparent;
-    color: @slate-text-3;
-    border: none;
-    border-radius: 6px;
-    padding: 7px 14px;
-    font-size: 13px;
-    font-weight: 500;
-}
-
-QPushButton#settingsViewButton:hover {
-    background-color: @slate-raised;
-    color: @slate-text;
-}
-
-QPushButton#settingsViewButton:checked {
-    background-color: @accent;
-    color: @on-accent;
-}
-
-QPushButton#settingsViewButton:focus {
-    border: 1px solid @accent;
-}
-
-QTabBar#basicSettingsTabs {
-    background-color: transparent;
-}
-
-QTabBar#basicSettingsTabs::tab {
-    background-color: transparent;
-    color: @slate-text-3;
-    border: none;
-    border-bottom: 2px solid transparent;
-    padding: 10px 22px;
-    font-size: 14px;
-    margin-right: 8px;
-}
-
-QTabBar#basicSettingsTabs::tab:selected {
-    color: @accent;
-    border-bottom-color: @accent;
-}
-
-QTabBar#basicSettingsTabs::tab:hover:!selected {
-    color: @slate-text;
+QWidget#settingsRailChapter:hover {
     background-color: @slate-rail-hover;
 }
 
-QWidget#basicSettingsPage,
-QWidget#basicSettingsShortcut,
-QAbstractButton#basicSettingsSwitch {
+QLabel#settingsRailChapterName,
+QLabel#settingsRailChevron {
     background-color: transparent;
     border: none;
 }
 
-QFrame#basicSettingsGroup {
-    background-color: @slate-surface;
-    border: 1px solid @slate-border;
-    border-radius: 10px;
+QLabel#settingsRailChapterName {
+    color: @slate-text-2;
+    font-size: 13px;
+    font-weight: 600;
 }
 
-QLabel#basicSettingsGroupTitle,
-QLabel#basicSettingsRowTitle,
-QLabel#basicSettingsDescription,
-QLabel#basicSettingsStatus,
-QLabel#basicSettingsSummary,
-QLabel#basicSettingsIcon,
+QLabel#settingsRailChapterName[open="true"] {
+    color: @slate-text;
+    font-weight: 700;
+}
+
+QWidget#homePage,
+QWidget#homeShortcut,
+QWidget#homeWhereHalf,
+QAbstractButton#settingsSwitch {
+    background-color: transparent;
+    border: none;
+}
+
+QFrame#homeCard {
+    background-color: @slate-surface;
+    border: 1px solid @slate-border;
+    border-radius: 12px;
+}
+
+/* A deep link to an old Basic tab tints its card briefly, like a search hit. */
+QFrame#homeCard[searchHit="true"] {
+    border-color: @accent-border;
+}
+
+QLabel#homeCardTitle,
+QLabel#homeCardIcon,
+QLabel#homeRowTitle,
+QLabel#homeRowDescription,
+QLabel#homeStatus,
+QLabel#homeStorageValue,
+QLabel#homeLegend,
+QLabel#homeComponents,
+QLabel#homeFooter,
 QLabel#settingsAutoSaveLabel {
     background-color: transparent;
     border: none;
 }
 
-QLabel#basicSettingsGroupTitle {
+QLabel#homeCardTitle {
     color: @slate-text;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 700;
-    padding-left: 6px;
 }
 
-QLabel#basicSettingsRowTitle {
+QLabel#homeRowTitle {
     color: @slate-text;
-    font-size: 14px;
+    font-size: 13px;
 }
 
-QLabel#basicSettingsDescription,
-QLabel#basicSettingsSummary {
+QLabel#homeRowDescription {
     color: @slate-text-3;
     font-size: 12px;
 }
 
-QLabel#basicSettingsSummary {
-    padding-top: 12px;
-}
-
-QLabel#basicSettingsStatus {
+QLabel#homeStatus {
     color: @slate-text-3;
     font-size: 11px;
+    padding-bottom: 4px;
+}
+
+QLabel#homeStorageValue {
+    color: @slate-text;
+    font-size: 15px;
+    font-weight: 700;
+    padding-top: 4px;
+}
+
+QLabel#homeLegend,
+QLabel#homeFooter {
+    color: @slate-text-4;
+    font-size: 11px;
+}
+
+QLabel#homeComponents {
+    color: @slate-text-2;
+    font-size: 12px;
 }
 
 QLabel#settingsAutoSaveLabel {
@@ -4208,12 +4220,12 @@ QLabel#settingsAutoSaveLabel {
     font-size: 11px;
 }
 
-QFrame#basicSettingsDivider {
+QFrame#homeDivider {
     background-color: @slate-border-subtle;
     border: none;
 }
 
-QComboBox#basicSettingsCombo {
+QComboBox#homeCombo {
     background-color: @slate-field;
     color: @slate-text;
     border: 1px solid @slate-border-strong;
@@ -4222,27 +4234,27 @@ QComboBox#basicSettingsCombo {
     font-size: 13px;
 }
 
-QComboBox#basicSettingsCombo:focus {
+QComboBox#homeCombo:focus {
     border-color: @accent;
 }
 
-QPushButton#basicSettingsAdvancedLink {
+QPushButton#homeLink {
     background-color: transparent;
     color: @accent;
     border: none;
-    padding: 8px 0;
+    padding: 9px 0 6px 0;
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 600;
     text-align: left;
 }
 
-QPushButton#basicSettingsAdvancedLink:hover,
-QPushButton#basicSettingsAdvancedLink:focus {
+QPushButton#homeLink:hover,
+QPushButton#homeLink:focus {
     color: @accent-hover;
     text-decoration: underline;
 }
 
-QPushButton#basicSettingsChangeShortcut {
+QPushButton#settingsChangeShortcut {
     background-color: @slate-field;
     color: @slate-text-2;
     border: 1px solid @slate-border-strong;
@@ -4252,7 +4264,7 @@ QPushButton#basicSettingsChangeShortcut {
     font-weight: 500;
 }
 
-/* ---- Unified Settings: rail search, Overview, and the search palette ---- */
+/* ---- Settings: header search, the where strip, and the search palette ---- */
 
 QPushButton#settingsRailSearch {
     background-color: @slate-field;
@@ -4304,7 +4316,6 @@ QLabel#engineInventoryLabel {
 }
 
 QWidget#engineInventoryRow,
-QWidget#overviewPage,
 QWidget#downloadsPage {
     background-color: transparent;
 }
@@ -4347,32 +4358,32 @@ QPushButton#downloadsInspectorClose:hover {
     border-color: @slate-border-hover;
 }
 
-QFrame#overviewWhere {
+QFrame#homeWhere {
     background-color: transparent;
     border: 1px solid @slate-border;
     border-radius: 12px;
 }
 
-QWidget#overviewWhereHalf {
+QWidget#homeWhereHalf {
     background-color: transparent;
 }
 
-QFrame#overviewWhereDivider {
+QFrame#homeWhereDivider {
     background-color: @slate-border;
     border: none;
 }
 
-QLabel#overviewDot {
+QLabel#homeDot {
     border: none;
     border-radius: 4px;
     background-color: @success;
 }
 
-QLabel#overviewDot[tone="warn"] {
+QLabel#homeDot[tone="warn"] {
     background-color: @warning-text-soft;
 }
 
-QLabel#overviewWhereTitle {
+QLabel#homeWhereTitle {
     color: @slate-text;
     background-color: transparent;
     border: none;
@@ -4380,83 +4391,8 @@ QLabel#overviewWhereTitle {
     font-weight: 700;
 }
 
-QLabel#overviewWhereList {
+QLabel#homeWhereList {
     color: @slate-text-3;
-    background-color: transparent;
-    border: none;
-    font-size: 12px;
-}
-
-QFrame#overviewCard {
-    background-color: @slate-surface;
-    border: 1px solid @slate-border;
-    border-radius: 12px;
-}
-
-QFrame#overviewCard:hover {
-    background-color: @slate-surface-hover;
-    border-color: @slate-border-strong;
-}
-
-QFrame#overviewCard:focus {
-    border-color: @accent;
-}
-
-QLabel#overviewCardIcon,
-QLabel#overviewArrow {
-    background-color: transparent;
-    border: none;
-}
-
-QLabel#overviewArrow {
-    color: @slate-text-4;
-    font-size: 13px;
-}
-
-QLabel#overviewEyebrow {
-    color: @slate-text-4;
-    background-color: transparent;
-    border: none;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 1px;
-}
-
-QLabel#overviewRole {
-    color: @slate-text-3;
-    background-color: transparent;
-    border: none;
-    font-size: 12px;
-}
-
-QLabel#overviewValue {
-    color: @slate-text;
-    background-color: transparent;
-    border: none;
-    font-size: 15px;
-    font-weight: 700;
-}
-
-QLabel#overviewValue[muted="true"] {
-    color: @slate-text-3;
-}
-
-QLabel#overviewDetail,
-QLabel#overviewLegend,
-QLabel#overviewComponents {
-    color: @slate-text-4;
-    background-color: transparent;
-    border: none;
-    font-size: 11px;
-}
-
-QLabel#overviewComponents {
-    color: @slate-text-2;
-    font-size: 12px;
-}
-
-QLabel#overviewFooter {
-    color: @slate-text-4;
     background-color: transparent;
     border: none;
     font-size: 12px;
@@ -4610,7 +4546,7 @@ QLabel#remoteHostSummary {
     padding: 12px;
 }
 
-/* Settings: the dismissible "New in OpenWhisper" note on Overview and Basic. */
+/* Settings: the dismissible "New in OpenWhisper" note on Home. */
 QFrame#settingsTile[kind="intro"],
 QFrame#settingsTile[kind="intro"]:hover {
     background-color: @accent-tint;

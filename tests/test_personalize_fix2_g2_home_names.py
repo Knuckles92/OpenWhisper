@@ -1,20 +1,16 @@
-"""Basic settings: a button's accessible name says what its label says.
+"""Settings Home: a button's accessible name says what its label says.
 
-Basic rows name their control after the row title, which for a button with
+Home rows name their control after the row title, which for a button with
 text replaced "Add word" with "Dictionary": a screen reader announced the
 wrong action and voice control could not find the button by its label.
 """
 import os
 
-import pytest
-
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QPushButton
 
-from services.settings import SettingsKey, SettingsView
 from tests import test_personalize_fix2_g2_enter_key as shared
-from ui_qt.dialogs.settings_destinations import BASIC_APP, BASIC_DICTATION, BASIC_MEETINGS
 
 _qapp = shared._qapp
 _restore_metadata = shared._restore_metadata
@@ -27,21 +23,20 @@ def _label(button) -> str:
 
 
 def test_add_word_is_named_after_its_label(make_dialog):
-    dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-    page = dialog._basic_pages[BASIC_DICTATION]
+    dialog, _store = make_dialog({})
+    page = dialog.home
 
-    button = page.findChild(QPushButton, "basicDictionaryAddButton")
+    button = page.findChild(QPushButton, "homeDictionaryAddButton")
 
     assert button.text() == "Add word"
     assert button.accessibleName().startswith("Add word")
 
 
-@pytest.mark.parametrize("key", [BASIC_DICTATION, BASIC_MEETINGS, BASIC_APP])
-def test_every_basic_button_with_a_label_keeps_it_in_its_name(make_dialog, key):
-    dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-    dialog.select_destination(key)
+def test_every_home_button_with_a_label_keeps_it_in_its_name(make_dialog):
+    dialog, _store = make_dialog({})
+    dialog.show_home()
     QApplication.processEvents()
-    page = dialog._basic_pages[key]
+    page = dialog.home
 
     labelled = [button for button in page.findChildren(QAbstractButton) if _label(button)]
 

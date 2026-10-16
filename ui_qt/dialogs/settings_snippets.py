@@ -99,7 +99,7 @@ def save_drafts(dialog, *, ask: bool = False) -> bool:
     return dialog.snippets_panel.save_draft(ask=ask)
 
 
-def basic_rows(page, group) -> None:
+def home_rows(page, group) -> None:
     from ui_qt.dialogs.settings_destinations import SNIPPETS
     from ui_qt.widgets.buttons import Button, neutral_button
 
@@ -111,7 +111,7 @@ def basic_rows(page, group) -> None:
         page.dialog.snippets_panel.new_snippet()
 
     add.clicked.connect(add_snippet)
-    detail = page._row(group, "Snippets", "", add)
+    detail = page.add_row(group, "Snippets", "", add)
     add.setAccessibleName("Add a snippet")
 
     def show(settings: dict) -> None:

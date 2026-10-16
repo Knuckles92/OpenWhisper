@@ -64,20 +64,19 @@ class TestSettingsGeneralLayout(unittest.TestCase):
     def test_uses_rail_and_independently_scrollable_pages(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
-            dialog.set_settings_view("advanced", persist=False)
             dialog.resize(SettingsDialog.DEFAULT_SIZE)
             dialog.ensure_all_pages()
         try:
             self.assertIsInstance(dialog.rail, NavRail)
-            # Grouped by feature, under an Overview landing page.
+            # Chapters by feature, under the Home landing page.
             self.assertEqual(
                 dialog.rail.keys(),
                 (
                     OVERVIEW,
-                    VOICE_MODEL,
-                    REMOTE_ENGINE,
                     RECORDING,
+                    VOICE_MODEL,
                     CLEANUP,
+                    REMOTE_ENGINE,
                     DICTIONARY,
                     SNIPPETS,
                     STYLES,
@@ -313,7 +312,6 @@ class TestSettingsGeneralLayout(unittest.TestCase):
     def test_general_tiles_toggle_and_gate_update_notify(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
-            dialog.set_settings_view("advanced", persist=False)
             dialog.resize(SettingsDialog.DEFAULT_SIZE)
             dialog.ensure_all_pages()
         try:
@@ -338,7 +336,6 @@ class TestSettingsGeneralLayout(unittest.TestCase):
     def test_cleanup_toggle_gates_the_prompt_and_rule_tiles(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
-            dialog.set_settings_view("advanced", persist=False)
             dialog.resize(SettingsDialog.DEFAULT_SIZE)
             dialog.ensure_all_pages()
         try:
@@ -370,7 +367,6 @@ class TestSettingsGeneralLayout(unittest.TestCase):
     def test_learned_rules_gate_button_turns_cleanup_on(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
-            dialog.set_settings_view("advanced", persist=False)
             dialog.resize(SettingsDialog.DEFAULT_SIZE)
             dialog.ensure_all_pages()
         try:
@@ -390,7 +386,6 @@ class TestSettingsGeneralLayout(unittest.TestCase):
     def test_report_view_tiles_follow_the_final_report_toggle(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
-            dialog.set_settings_view("advanced", persist=False)
             dialog.resize(SettingsDialog.DEFAULT_SIZE)
             dialog.ensure_all_pages()
         try:
@@ -413,7 +408,6 @@ class TestSettingsGeneralLayout(unittest.TestCase):
         self.app.setStyleSheet(ThemeManager().stylesheet)
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
-            dialog.set_settings_view("advanced", persist=False)
             dialog.resize(SettingsDialog.DEFAULT_SIZE)
             dialog.ensure_all_pages()
         try:
@@ -459,7 +453,8 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                             scroll.viewport().height(),
                         )
             self.assertGreater(dialog._page_scrolls[GENERAL].verticalScrollBar().maximum(), 0)
-            self.assertGreater(dialog.rail.verticalScrollBar().maximum(), 0)
+            # Only the current chapter's pages show, but a short window can
+            # still scroll the rail: the current page stays in view.
             item_rect = dialog.rail.visualItemRect(dialog.rail.currentItem())
             self.assertTrue(dialog.rail.viewport().rect().contains(item_rect))
         finally:
@@ -469,7 +464,6 @@ class TestSettingsGeneralLayout(unittest.TestCase):
     def test_cards_reflow_when_the_window_narrows(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
-            dialog.set_settings_view("advanced", persist=False)
             dialog.resize(SettingsDialog.DEFAULT_SIZE)
             dialog.ensure_all_pages()
         try:
@@ -500,7 +494,6 @@ class TestSettingsGeneralLayout(unittest.TestCase):
         manager = ThemeManager()
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
-            dialog.set_settings_view("advanced", persist=False)
             dialog.resize(SettingsDialog.DEFAULT_SIZE)
             dialog.ensure_all_pages()
         try:

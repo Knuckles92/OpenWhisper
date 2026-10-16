@@ -125,7 +125,6 @@ def test_the_hooks_page_reads_top_to_bottom_with_every_kind_of_editor_open(tmp_p
     from contextlib import ExitStack
     from unittest.mock import patch
 
-    from services.settings import SettingsView
     from ui_qt.dialogs import settings_dialog as settings_dialog_module
     from ui_qt.dialogs import settings_downloads as downloads_module
     from ui_qt.dialogs import settings_metadata
@@ -138,7 +137,6 @@ def test_the_hooks_page_reads_top_to_bottom_with_every_kind_of_editor_open(tmp_p
                    "program": os.path.abspath("names.exe"), "timeout_ms": 1500, "enabled": True}
     store = SettingsManager(str(tmp_path / "dialog.json"))
     store.save_all_settings({
-        SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED,
         SettingsKey.AUTOMATION_WEBHOOKS: [ALPHA, BETA],
         SettingsKey.AUTOMATION_PROGRAMS: [program, dict(program, id="prog002", name="Logger")],
         SettingsKey.AUTOMATION_FILTERS: [text_filter],

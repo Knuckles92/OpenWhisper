@@ -14,13 +14,13 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QLineEdit, QPushButton
 
 from services import dictionary
-from services.settings import SettingsKey, SettingsManager, SettingsView
+from services.settings import SettingsKey, SettingsManager
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_dictionary as page_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
 from ui_qt.dialogs import settings_models as models_module
-from ui_qt.dialogs.settings_destinations import BASIC_DICTATION, DICTIONARY, STYLES
+from ui_qt.dialogs.settings_destinations import DICTIONARY, STYLES
 from ui_qt.widgets.setting_tile import TileBase
 
 KEY = SettingsKey.DICTATION_DICTIONARY
@@ -57,8 +57,7 @@ def make_dialog():
 
     def build(values=None):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED,
-                                 SettingsKey.SELECTED_MODEL: "parakeet", **(values or {})})
+        store.save_all_settings({SettingsKey.SELECTED_MODEL: "parakeet", **(values or {})})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))
@@ -315,12 +314,12 @@ class TestSpellingRules:
 
 class TestBasicRow:
     def test_basic_shows_the_count_and_opens_the_composer(self, make_dialog):
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC, KEY: WORDS})
+        dialog, store = make_dialog({KEY: WORDS})
         dialog.show()
         try:
             QApplication.processEvents()
-            page = dialog._basic_pages[BASIC_DICTATION]
-            button = page.findChild(QPushButton, "basicDictionaryAddButton")
+            page = dialog.home
+            button = page.findChild(QPushButton, "homeDictionaryAddButton")
             assert button.text() == "Add word"
             labels = [label.text() for label in page.findChildren(type(page.cleanup_status))]
             assert "4 words · 1 new · Only Sounds like spellings are fixed while AI cleanup is off." in labels
@@ -334,9 +333,8 @@ class TestBasicRow:
             dialog.close()
 
     def test_basic_row_without_words(self, make_dialog):
-        dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC,
-                                      SettingsKey.SELECTED_MODEL: "local_whisper"})
-        page = dialog._basic_pages[BASIC_DICTATION]
+        dialog, _store = make_dialog({SettingsKey.SELECTED_MODEL: "local_whisper"})
+        page = dialog.home
         labels = [label.text() for label in page.findChildren(type(page.cleanup_status))]
         assert "Names and terms dictation should always get right." in labels
 

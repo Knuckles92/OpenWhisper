@@ -147,7 +147,7 @@ Hyprland: not in v1; capture explains why.
 
 **10 Mic ranking.** `audio_input_priority` (ordered `{name, hostapi}`) is the
 single source of truth; the legacy `audio_input_device` index migrates to its
-first entry on first load (the old key stays for downgrades). The Basic and
+first entry on first load (the old key stays for downgrades). The Home and
 Recording "Microphone" choice writes the first entry. The Recording page shows
 the ordered list with Up/Down and a fixed "System default" last row. Matching
 uses the host API and a name prefix (MME cuts names to 31 characters); WASAPI
@@ -185,10 +185,10 @@ dialog through a dedicated sounddevice OutputStream (QtMultimedia is not
 bundled). Refused while recording or in a meeting; stopped when a recording or
 meeting starts. Host-kept entries fetch audio first.
 
-**Discoverability.** The Basic Dictation tab gets a Personalize group filled
-by page modules (dictionary count + Add word, snippets count, Match tone to
-each app, Command Mode shortcut). A dismissible "New in OpenWhisper" tile on
-Overview and Basic (`flow_features_intro_seen`). The Quick Record hint shows
+**Discoverability.** Settings Home gets a Personalize card filled by page
+modules (dictionary count + Add word, snippets count, Match tone to each app,
+Command Mode shortcut). A dismissible "New in OpenWhisper" tile on Home
+(`flow_features_intro_seen`). The Quick Record hint shows
 the Command Mode shortcut or "Set a Command Mode shortcut".
 
 ## Architecture
@@ -435,7 +435,7 @@ def load(dialog, settings: dict) -> None
 def rail_value(settings: dict) -> str
 def refresh(dialog) -> None
 def cancel_capture(dialog) -> None           # optional
-def basic_rows(page, group) -> None          # optional: rows in Basic → Dictation → Personalize
+def home_rows(page, group) -> None           # optional: rows in Home's Personalize card
 ```
 Dialog helpers for pages (foundation): `dialog.set_standard_hotkey(action,
 hotkey) -> str` (the only write path for `hotkeys.*`; returns an error or ""),
@@ -489,12 +489,13 @@ agent API exposes none of them.
 
 ## Settings information architecture
 
-Rail: Overview · **Dictation** (Voice model, Remote engine, Recording, AI
-cleanup) · **Personalize** (Dictionary, Snippets, Styles, Learned rules,
-Profiles, Commands) · Meeting Mode · Models & storage · App. The Styles page
-is titled "Apps & styles" and starts with App awareness (know which app; read
-text near the cursor; excluded apps). Basic → Dictation gets a Personalize
-group fed by `basic_rows`.
+Rail: Home · **Dictation** (Recording, Voice model, AI cleanup, Remote
+engine) · **Personalize** (Dictionary, Snippets, Styles, Learned rules,
+Profiles, Commands) · Automate · Meeting Mode · Models & storage · App. Only the
+chapter holding the current page lists its pages. The Styles page is titled
+"Apps & styles" and starts with App awareness (know which app; read text near
+the cursor; excluded apps). Home's Personalize card is fed by `home_rows`
+(`page.add_row`, `page.bind`, `page.add_refresh_hook`).
 
 ## Ownership
 
@@ -515,13 +516,13 @@ entries; import widgets by module path.
 
 | Stream | Features | Owns |
 | --- | --- | --- |
-| S1 Context & styles | 1, 2 | `services/focus_context/`, `services/app_styles.py`, `ui_qt/dialogs/settings_styles.py`, Overview privacy strip lines in `settings_dialog._refresh_overview`, diagnostics metric names |
-| S2 Levels & prompts | 6, 7a | `services/cleanup_prompts.py`, cleanup prompt constants in `config.py`, `compose_profile_prompt`, `resolve_transcript_cleanup_prompt` and the cleanup-prompt default in `services/settings.py`, the AI cleanup page region and cleanup Basic row in `settings_dialog.py`/`settings_basic.py`, MCP level control + its `_apply_agent_changes` line (seam), `benchmarks/cleanup_levels/` |
+| S1 Context & styles | 1, 2 | `services/focus_context/`, `services/app_styles.py`, `ui_qt/dialogs/settings_styles.py`, Home privacy strip lines in `settings_dialog._refresh_home`, diagnostics metric names |
+| S2 Levels & prompts | 6, 7a | `services/cleanup_prompts.py`, cleanup prompt constants in `config.py`, `compose_profile_prompt`, `resolve_transcript_cleanup_prompt` and the cleanup-prompt default in `services/settings.py`, the AI cleanup page region and cleanup Home row in `settings_dialog.py`/`settings_home.py`, MCP level control + its `_apply_agent_changes` line (seam), `benchmarks/cleanup_levels/` |
 | S3 Commands | 3 | `services/runtime/command.py`, `services/text_transforms.py`, `services/text_rewrite.py`, `services/synthetic_keys.py`, copy support in `services/hyprland.py`, `ui_qt/dialogs/settings_commands.py`, Quick Record Command Mode hint |
 | S4 Dictionary | 4 | `services/dictionary.py`, `services/recognition_context.transcribe`, `transcriber/*`, `services/isolated*.py`, `services/local_asr/{worker,nvidia}.py`, `services/remote_asr/*` hint capability, `services/incremental_dictation.py`, `meeting/corrections.py`, `ui_qt/dialogs/settings_dictionary.py` |
 | S5 Snippets | 5 | `services/snippets.py`, html in `TemporaryClipboard.stage_text`/`commit_text`/pre-render, `ui_qt/dialogs/settings_snippets.py` |
 | S6 Hotkeys | 8, 9 | `services/_hotkey_*.py`, `services/hotkey_manager.py`, `services/_mouse_hook_win.py`, `services/runtime/hotkeys.py` (ordered dispatcher, latch, new actions, transform family, scratchpad window counts as OpenWhisper-active), `binding_key` in `services/omarchy_controls.py`, `ui_qt/widgets/hotkey_capture.py`, `ui_qt/widgets/profile_hotkey_input.py`, Hotkeys page region of `settings_dialog.py` (rows for the four new actions + latch switch), FakeHotkeyManager |
-| S7 Microphones | 10 | `services/audio_devices.py`, `services/recorder.py`, Recording page region of `settings_dialog.py` + the rule-dictation recorder lines, Basic microphone row, `meeting/capture/devices.py`, meeting mic selection in `meeting/engine.py` and `services/runtime/meeting.py:965` |
+| S7 Microphones | 10 | `services/audio_devices.py`, `services/recorder.py`, Recording page region of `settings_dialog.py` + the rule-dictation recorder lines, Home microphone row, `meeting/capture/devices.py`, meeting mic selection in `meeting/engine.py` and `services/runtime/meeting.py:965` |
 | S8 Overlay, languages, scratchpad | 11, 13 | `ui_qt/overlays/waveform_overlay.py`, `services/dictation_language.py`, `ui_qt/widgets/scratchpad.py`, `ui_qt/widgets/language_menu.py`, `ui_qt/widgets/local_engine_controls.py` language list, Status()/Button() in `services/omarchy_controls.py` |
 | S9 History, stats, playback | 7b, 12, 14 | `services/history_manager.py` edit methods, `services/dictation_stats.py`, `services/audio_player.py`, `ui_qt/history_actions.py`, `ui_qt/dialogs/stats_dialog.py`, history sidebar and entry dialog, `entry_ext` + text-aware digest in `services/remote_records/kinds.py`, `search_history_entries` app match |
 

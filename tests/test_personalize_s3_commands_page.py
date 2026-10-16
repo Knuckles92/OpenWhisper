@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 
 from services import text_rewrite
 from services.hotkey_manager import format_hotkey_display
-from services.settings import SettingsKey, SettingsManager, SettingsView
+from services.settings import SettingsKey, SettingsManager
 from services.text_transforms import STARTER_TRANSFORMS, load_transforms
 from ui_qt.dialogs import settings_commands
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
@@ -27,7 +27,6 @@ from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
 from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_destinations import (
-    BASIC_DICTATION,
     CLEANUP,
     CLEANUP_PROFILES,
     COMMANDS,
@@ -68,7 +67,7 @@ def make_dialog(provider):
 
     def build(values=None):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED, **(values or {})})
+        store.save_all_settings({**(values or {})})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))
@@ -363,9 +362,9 @@ def test_cancel_capture_stops_every_capture_on_the_page(make_dialog):
 
 
 def test_basic_has_a_command_mode_shortcut_row(make_dialog):
-    dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-    page = dialog._basic_pages[BASIC_DICTATION]
-    field = dialog.commands_basic_shortcut
+    dialog, store = make_dialog({})
+    page = dialog.home
+    field = dialog.commands_home_shortcut
     assert page.isAncestorOf(field)
     assert COMMANDS not in dialog._built_pages
     texts = [label.text() for label in page.findChildren(QLabel)]

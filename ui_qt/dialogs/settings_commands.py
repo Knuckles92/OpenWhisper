@@ -218,20 +218,20 @@ def cancel_capture(dialog) -> None:
         widget = dialog.__dict__.get(name)
         if widget is not None:
             widget.cancel_capture()
-    row = dialog.__dict__.get("commands_basic_shortcut")
+    row = dialog.__dict__.get("commands_home_shortcut")
     if row is not None:
         row.cancel_capture()
 
 
-def basic_rows(page, group) -> None:
+def home_rows(page, group) -> None:
     from services import text_rewrite
     from ui_qt.widgets.command_settings import CommandShortcutField, command_mode_hint
 
     dialog = page.dialog
     field = CommandShortcutField(dialog, change_button=True, clear_button=False, inline_errors=False)
     field.input.setMaximumWidth(210)
-    dialog.commands_basic_shortcut = field
-    detail = page._row(group, "Command Mode shortcut", "", field)
+    dialog.commands_home_shortcut = field
+    detail = page.add_row(group, "Command Mode shortcut", "", field)
 
     def refresh_row(settings: dict) -> None:
         field.sync()

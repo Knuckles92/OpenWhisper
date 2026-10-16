@@ -17,14 +17,14 @@ from PyQt6.QtWidgets import (
     QPushButton,
 )
 
-from services.settings import SettingsKey, SettingsManager, SettingsView
+from services.settings import SettingsKey, SettingsManager
 from services.snippets import Snippet, load_snippets
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
 from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs import settings_snippets
-from ui_qt.dialogs.settings_destinations import BASIC_DICTATION, SNIPPETS
+from ui_qt.dialogs.settings_destinations import SNIPPETS
 from ui_qt.widgets.setting_tile import TileBase
 
 CAL = Snippet("cal", "my calendar link", "https://cal.example.com/dana")
@@ -55,9 +55,9 @@ def make_dialog():
     dialogs = []
     temp = tempfile.TemporaryDirectory()
 
-    def build(values=None, view=SettingsView.ADVANCED):
+    def build(values=None):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: view, **(values or {})})
+        store.save_all_settings({**(values or {})})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))
@@ -286,25 +286,26 @@ def test_snippet_text_is_never_logged(make_dialog, caplog):
     assert "zqsnip" not in caplog.text
 
 
-def test_basic_tab_counts_snippets_and_adds_one(make_dialog):
-    dialog, store = make_dialog({**_library(CAL)}, view=SettingsView.BASIC)
-    page = dialog._basic_pages[BASIC_DICTATION]
+def test_home_counts_snippets_and_adds_one(make_dialog):
+    dialog, store = make_dialog({**_library(CAL)})
+    page = dialog.home
     add = next(b for b in page.findChildren(QPushButton) if b.accessibleName() == "Add a snippet")
     detail = next(
-        label for label in page.findChildren(QLabel, "basicSettingsDescription")
+        label for label in page.findChildren(QLabel, "homeRowDescription")
         if label.text() == "1 snippet"
     )
     assert SNIPPETS not in dialog._built_pages
 
     add.click()
 
-    assert dialog.settings_view == SettingsView.ADVANCED
     assert dialog.rail.current_key() == SNIPPETS
     panel = dialog.snippets_panel
     assert panel.trigger_edit.text() == "" and panel.snippet_list.currentRow() == -1
     panel.trigger_edit.setText("my email address")
     panel.text_edit.setPlainText("dana@example.com")
     assert panel.save_snippet()
+    # Home re-reads its rows when it shows again.
+    dialog.show_home()
     assert detail.text() == "2 snippets"
 
     dialog.snippets_enabled_check.click()
@@ -357,7 +358,7 @@ def test_the_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, u
 
 
 @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 460)])
-def test_the_basic_row_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
+def test_the_home_row_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
     from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
     from ui_qt.utils.theme_manager import ThemeManager
 
@@ -367,13 +368,13 @@ def test_the_basic_row_fits_narrow_windows_at_large_fonts(make_dialog, monkeypat
     previous_scale = current_ui_font_scale_percent()
     try:
         apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
-        dialog, _store = make_dialog(_library(CAL), view=SettingsView.BASIC)
+        dialog, _store = make_dialog(_library(CAL))
         dialog.show()
         dialog._fit_to_screen()
         dialog.resize(width, 600)
         for _ in range(8):
             app.processEvents()
-        page = dialog._basic_pages[BASIC_DICTATION]
+        page = dialog.home
         add = next(b for b in page.findChildren(QPushButton) if b.accessibleName() == "Add a snippet")
         assert add.isVisible()
         assert add.mapTo(page, add.rect().topLeft()).x() >= 0

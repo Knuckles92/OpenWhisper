@@ -15,7 +15,6 @@ from services.settings import (
     RecordingOverlayLook,
     SettingsKey,
     SettingsManager,
-    SettingsView,
     resolve_recording_overlay_clock,
     resolve_recording_overlay_dot,
     resolve_recording_overlay_look,
@@ -306,8 +305,7 @@ def make_dialog():
 
     def build(values=None):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED,
-                                 SettingsKey.SELECTED_MODEL: "parakeet", **(values or {})})
+        store.save_all_settings({SettingsKey.SELECTED_MODEL: "parakeet", **(values or {})})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))

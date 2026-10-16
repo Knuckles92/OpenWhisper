@@ -15,13 +15,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QLabel
 
-from services.settings import SettingsKey, SettingsManager, SettingsView
+from services.settings import SettingsKey, SettingsManager
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_dictionary as page_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
 from ui_qt.dialogs import settings_models as models_module
-from ui_qt.dialogs.settings_destinations import BASIC_DICTATION, DICTIONARY
+from ui_qt.dialogs.settings_destinations import DICTIONARY
 
 KEY = SettingsKey.DICTATION_DICTIONARY
 CLEANUP = SettingsKey.TRANSCRIPT_CLEANUP_ENABLED
@@ -48,8 +48,7 @@ def make_dialog():
 
     def build(values=None):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED,
-                                 SettingsKey.SELECTED_MODEL: "parakeet", **(values or {})})
+        store.save_all_settings({SettingsKey.SELECTED_MODEL: "parakeet", **(values or {})})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))
@@ -184,22 +183,22 @@ class TestWhereWordsDoCount:
 
 class TestBasicRow:
     def _detail(self, dialog):
-        page = dialog._basic_pages[BASIC_DICTATION]
+        page = dialog.home
         return [label.text() for label in page.findChildren(QLabel)
-                if label.objectName() == "basicSettingsDescription"]
+                if label.objectName() == "homeRowDescription"]
 
     def test_default_setup_says_only_sounds_like_spellings_are_fixed(self, make_dialog):
-        dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC, KEY: [KSENIA]})
+        dialog, _store = make_dialog({KEY: [KSENIA]})
         assert "1 word · Only Sounds like spellings are fixed while AI cleanup is off." in self._detail(dialog)
 
     def test_without_words_it_says_what_a_word_needs(self, make_dialog):
-        dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+        dialog, _store = make_dialog({})
         assert ("Names and terms to get right. With AI cleanup off, each needs a "
                 "Sounds like spelling.") in self._detail(dialog)
 
     def test_with_cleanup_on_it_just_counts(self, make_dialog):
         dialog, _store = make_dialog({
-            SettingsKey.SETTINGS_VIEW: SettingsView.BASIC, KEY: [KSENIA], CLEANUP: True,
+            KEY: [KSENIA], CLEANUP: True,
         })
         assert "1 word" in self._detail(dialog)
 

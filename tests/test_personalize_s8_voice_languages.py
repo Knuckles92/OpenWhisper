@@ -11,7 +11,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QLabel
 
-from services.settings import SettingsKey, SettingsView, settings_manager
+from services.settings import SettingsKey, settings_manager
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as models_module
@@ -30,7 +30,7 @@ def make_dialog():
     stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
 
     def build(values=None):
-        settings_manager.update_settings({SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED, **(values or {})})
+        settings_manager.update_settings({**(values or {})})
         dialog = settings_dialog_module.SettingsDialog(
             get_loaded_model=lambda: None, background_cache_scan=False
         )

@@ -15,7 +15,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from services.audio_devices import InputDevice
-from services.settings import SettingsKey, SettingsView
+from services.settings import SettingsKey
 from tests import test_personalize_s7_settings as s7
 from tests.test_personalize_s7_settings import DEVICES, LAPEL, MME, SNOWBALL, USB, _button, _rows
 from ui_qt.dialogs.settings_microphones import entry_token
@@ -95,8 +95,7 @@ def test_moved_microphone_keeps_focus_and_a_second_space_moves_it_back(shown):
 
     assert _priority(store) == [USB, SNOWBALL, LAPEL]
     assert _focused_name() == "Move down: Microphone (Blue Snowball)"
-    assert dialog._settings_view == SettingsView.ADVANCED
-    assert store.get(SettingsKey.SETTINGS_VIEW) == SettingsView.ADVANCED
+    assert dialog.rail.current_key() == "recording"
 
 
 def test_moved_microphone_keeps_the_same_button_away_from_the_edges(shown):

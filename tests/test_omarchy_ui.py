@@ -405,19 +405,3 @@ def test_settings_search_fits_small_tile(omarchy):
     assert host.rect().contains(palette.panel.geometry())
     assert palette.results.verticalScrollBar().maximum() > 0
     host.close()
-
-
-def test_overview_reflows_cards_in_narrow_settings(omarchy):
-    from ui_qt.dialogs.settings_overview import OverviewPage
-
-    page = OverviewPage()
-    page.resize(420, 1200)
-    page.show()
-    QApplication.processEvents()
-    assert page._columns == 1
-    assert page.cards["cleanup"].y() > page.cards["voice_model"].y()
-    page.resize(1000, 1200)
-    QApplication.processEvents()
-    assert page._columns == 3
-    assert page.cards["cleanup"].y() == page.cards["voice_model"].y()
-    page.close()

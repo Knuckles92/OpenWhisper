@@ -14,12 +14,11 @@ from PyQt6.QtWidgets import QApplication
 
 from services import text_transforms
 from services.hotkey_manager import format_hotkey_display
-from services.settings import RecordingTriggerMode, SettingsKey, SettingsManager, SettingsView
+from services.settings import RecordingTriggerMode, SettingsKey, SettingsManager
 from services.text_transforms import Transform
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as models_module
-from ui_qt.dialogs.settings_destinations import BASIC_DICTATION
 from ui_qt.dialogs.settings_dialog import HOTKEYS
 from ui_qt.widgets import hotkey_capture
 from ui_qt.widgets.hotkey_capture import HotkeyCaptureInput
@@ -60,7 +59,7 @@ def make_dialog():
 
     def build(values=None, *, wayland=False):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED, **(values or {})})
+        store.save_all_settings({**(values or {})})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))
@@ -189,10 +188,9 @@ def test_saved_latch_state_loads_with_the_page(make_dialog):
 
 def test_basic_recording_shortcut_mentions_double_tap(make_dialog):
     dialog, _store = make_dialog({
-        SettingsKey.SETTINGS_VIEW: SettingsView.BASIC,
         SettingsKey.RECORDING_TRIGGER_MODE: RecordingTriggerMode.PUSH_HOLD,
     })
-    page = dialog._basic_pages[BASIC_DICTATION]
+    page = dialog.home
     page.refresh_shortcut()
     assert "double-tap" in page.shortcut_description.text()
     dialog.close()

@@ -11,8 +11,8 @@ from PyQt6.QtWidgets import QApplication
 
 from services import text_rewrite
 from services.hotkey_manager import format_hotkey_display
-from services.settings import SettingsKey, SettingsView, settings_manager
-from ui_qt.dialogs.settings_destinations import BASIC_DICTATION, COMMANDS
+from services.settings import SettingsKey, settings_manager
+from ui_qt.dialogs.settings_destinations import COMMANDS
 from tests.test_personalize_s1_settings_page import (  # noqa: F401  (fixtures)
     _qapp, _restore_metadata, _windows_text, make_dialog,
 )
@@ -68,16 +68,16 @@ def test_quick_record_asks_for_ai_setup_until_a_model_is_ready(ready):
 
 
 def _basic_detail(dialog):
-    page = dialog._basic_pages[BASIC_DICTATION]
+    page = dialog.home
     for row, control in page._rows:
-        if control is dialog.commands_basic_shortcut:
+        if control is dialog.commands_home_shortcut:
             return page, row.itemAt(0).layout().itemAt(1).widget().text()
     raise AssertionError("Command Mode row not found")
 
 
 def test_basic_says_command_mode_needs_an_ai_model(make_dialog, ready):  # noqa: F811
     ready["ready"] = False
-    dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+    dialog, _store = make_dialog({})
     page, text = _basic_detail(dialog)
     assert text == "Needs an AI cleanup model, even while cleanup is off."
 

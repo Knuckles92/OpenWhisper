@@ -1,7 +1,7 @@
 """Settings → Recording → Microphone: the preferred microphone and its backups.
 
 ``audio_input_priority`` is the single source of truth. Its first entry is the
-preferred microphone in the combo (the Basic view mirrors that combo); the
+preferred microphone in the combo (Home mirrors that combo); the
 rest are the backups, listed in order above a fixed System default row.
 Combo items carry an entry token rather than a device index, because indexes
 shift whenever PortAudio re-reads its devices.

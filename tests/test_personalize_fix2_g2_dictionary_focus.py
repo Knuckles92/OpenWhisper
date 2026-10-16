@@ -15,7 +15,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from services import dictionary
-from services.settings import SettingsKey, SettingsView
+from services.settings import SettingsKey
 from tests import test_personalize_fix2_g2_enter_key as shared
 from ui_qt.dialogs.settings_destinations import DICTIONARY
 
@@ -118,8 +118,7 @@ def test_removing_the_bottom_word_focuses_the_one_above_then_the_word_field(make
 
     assert _saved(store) == []
     assert QApplication.focusWidget() is page.term_edit
-    assert dialog._settings_view == SettingsView.ADVANCED
-    assert store.get(SettingsKey.SETTINGS_VIEW) == SettingsView.ADVANCED
+    assert dialog.rail.current_key() == "dictionary"
 
 
 def test_removing_a_word_focuses_the_one_that_takes_its_place(make_dialog):

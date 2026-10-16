@@ -124,8 +124,6 @@ class SettingsKey:
     UI_FONT_SCALE: Final[str] = "ui_font_scale"
     # Colour theme: "dark", "light", or "system" (follow the OS setting).
     UI_THEME: Final[str] = "ui_theme"
-    # Presentation of the same settings: a curated Basic view or the full rail.
-    SETTINGS_VIEW: Final[str] = "settings_view"
     # Legacy keys kept for reading/migrating older settings files
     STREAMING_OVERLAY_ENABLED: Final[str] = "streaming_overlay_enabled"
     STREAMING_PASTE_ENABLED: Final[str] = "streaming_paste_enabled"
@@ -425,14 +423,6 @@ class RecordingOverlayLook:
     ALIASES: Final[Dict[str, str]] = {"live": RIBBON, "orb": PULSE, "bubbles": BAIT_BALL}
 
 
-class SettingsView:
-    """Views of the Settings window, independent of developer mode."""
-
-    BASIC: Final[str] = "basic"
-    ADVANCED: Final[str] = "advanced"
-    ALL: Final[Tuple[str, ...]] = (BASIC, ADVANCED)
-
-
 class TranscriptCleanupProvider:
     """Built-in values for ``SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER``.
 
@@ -648,7 +638,6 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.RECORDING_OVERLAY_CLOCK: True,
     SettingsKey.UI_FONT_SCALE: config.UI_FONT_SCALE,
     SettingsKey.UI_THEME: config.UI_THEME,
-    SettingsKey.SETTINGS_VIEW: SettingsView.BASIC,
     SettingsKey.QUICK_RECORD_PROFILE: "",
     SettingsKey.DEVELOPER_MODE: config.DEVELOPER_MODE,
     # Local engines
@@ -1169,7 +1158,6 @@ def _choice_resolver(key: str, choices: Tuple[Any, ...]) -> Callable[..., Any]:
 # default. Each is called as ``resolve_x(settings=None)``.
 resolve_recording_trigger_mode = _choice_resolver(
     SettingsKey.RECORDING_TRIGGER_MODE, RecordingTriggerMode.ALL)
-resolve_settings_view = _choice_resolver(SettingsKey.SETTINGS_VIEW, SettingsView.ALL)
 _resolve_recording_overlay_look = _choice_resolver(
     SettingsKey.RECORDING_OVERLAY_LOOK, RecordingOverlayLook.ALL)
 

@@ -16,7 +16,7 @@ class SettingsSwitch(QAbstractButton):
         self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.setObjectName("basicSettingsSwitch")
+        self.setObjectName("settingsSwitch")
 
     def sizeHint(self):
         scale = current_ui_font_scale()

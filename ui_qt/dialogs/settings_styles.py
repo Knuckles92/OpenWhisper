@@ -163,7 +163,7 @@ def _join(names: list[str]) -> str:
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
-def basic_copy(settings: dict) -> str:
+def home_copy(settings: dict) -> str:
     """The tone each kind of app gets, in one line for Basic, which has no tone controls."""
     tones = app_styles.resolve_tones(settings)
     chat = (AppCategory.WORK, AppCategory.PERSONAL)
@@ -256,17 +256,17 @@ def refresh(dialog) -> None:
     dialog.apps_styles_page.sync(dialog._settings_snapshot())
 
 
-def basic_rows(page, group) -> None:
+def home_rows(page, group) -> None:
     switch = SettingsSwitch()
-    detail = page._row(group, _STYLES_TITLE, "", switch)
-    page._bind(switch, STYLES, "app_styles_check", SettingsKey.APP_STYLES_ENABLED,
+    detail = page.add_row(group, _STYLES_TITLE, "", switch)
+    page.bind(switch, STYLES, "app_styles_check", SettingsKey.APP_STYLES_ENABLED,
                resolve_app_styles_enabled)
 
     def update(settings):
         reason = styles_blocker(settings)
         switch.setEnabled(not reason)
         switch.setToolTip(reason)
-        detail.setText(reason or basic_copy(settings))
+        detail.setText(reason or home_copy(settings))
 
     page.add_refresh_hook(update)
 

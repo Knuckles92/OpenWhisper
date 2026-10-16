@@ -10,12 +10,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 
-from services.settings import SettingsKey, SettingsManager, SettingsView
+from services.settings import SettingsManager
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
 from ui_qt.dialogs import settings_models as models_module
-from ui_qt.dialogs.settings_destinations import BASIC_DICTATION, COMMANDS
+from ui_qt.dialogs.settings_destinations import COMMANDS
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -46,12 +46,11 @@ def scaled_dialog(monkeypatch):
     temp = tempfile.TemporaryDirectory()
     opened = []
 
-    def build(ui_mode, scale, view=SettingsView.ADVANCED):
+    def build(ui_mode, scale):
         monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
         apply_ui_font_scale(scale, app=app, theme_manager=ThemeManager("dark"))
         store = SettingsManager(os.path.join(temp.name, f"settings{len(opened)}.json"))
         store.save_all_settings({
-            SettingsKey.SETTINGS_VIEW: view,
             "hotkeys": {"command_mode": "ctrl+alt+shift+k"},
         })
         stack = ExitStack()
@@ -109,11 +108,11 @@ def test_commands_page_field_never_overlaps_clear(scaled_dialog, ui_mode, width,
 
 
 @pytest.mark.parametrize("width", [560, 460])
-def test_basic_row_field_never_overlaps_change(scaled_dialog, width):
-    dialog = scaled_dialog("omarchy", 130, view=SettingsView.BASIC)
-    dialog.select_destination(BASIC_DICTATION)
+def test_home_row_field_never_overlaps_change(scaled_dialog, width):
+    dialog = scaled_dialog("omarchy", 130)
+    dialog.show_home()
     _settle(dialog, width)
-    _assert_apart(dialog.commands_basic_shortcut)
+    _assert_apart(dialog.commands_home_shortcut)
 
 
 def test_a_wide_field_keeps_its_buttons_beside_the_box(scaled_dialog):

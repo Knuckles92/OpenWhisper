@@ -34,7 +34,7 @@ from services.agent_mcp.setup import (
     client_config,
 )
 from services.settings import SettingsKey
-from ui_qt.dialogs.settings_basic import SettingsSwitch
+from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
 from ui_qt.utils.restyle import set_style_property

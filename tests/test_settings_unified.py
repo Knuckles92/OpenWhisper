@@ -1,8 +1,8 @@
-"""The unified Settings window: routing, the Overview, and search.
+"""The unified Settings window: routing, Home, the chapter rail, and search.
 
 Settings hosts what used to be three windows. These tests pin the parts that
-only exist because of that: legacy destination names, the Overview landing
-page, the Downloads rail value, and the Ctrl+K palette across every page.
+only exist because of that: legacy destination names, the Home landing page,
+the Downloads rail value, and the Ctrl+K palette across every page.
 """
 import builtins
 import gc
@@ -29,7 +29,6 @@ from services.settings import (
     HuggingFaceAccessPolicy,
     MeetingSpeakerIdBackend,
     SettingsKey,
-    SettingsView,
     SettingsManager,
 )
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
@@ -43,6 +42,7 @@ from ui_qt.dialogs.settings_destinations import (
     BASIC_MEETINGS,
     DOWNLOADS,
     GENERAL,
+    HOOKS,
     MEETING_FAST,
     MEETING_INTELLIGENCE,
     MEETING_VOICE,
@@ -89,7 +89,7 @@ def make_dialog():
 
     def build(values=None, cached=None, *, background_cache_scan=False):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SETTINGS_VIEW: SettingsView.ADVANCED, **(values or {})})
+        store.save_all_settings({**(values or {})})
         stack = ExitStack()
         for module in (settings_dialog_module, models_module, downloads_module):
             stack.enter_context(patch.object(module, "settings_manager", store))
@@ -133,6 +133,8 @@ class TestRouting:
                 QTest.qWait(50)
                 rail = dialog.rail
                 for destination, row in rail._rows.items():
+                    if rail._items[destination].isHidden():
+                        continue
                     expected = rail.visualItemRect(rail._items[destination])
                     assert row.geometry().top() == expected.top(), (key, destination, row.geometry(), expected)
                     assert row.geometry().bottom() == expected.bottom(), (key, destination, row.geometry(), expected)
@@ -157,6 +159,8 @@ class TestRouting:
         dialog.show()
         dialog.resize(1430, 850)
         try:
+            # The App chapter's pages show once one of them is current.
+            dialog.select_destination("general")
             app.processEvents()
             rail = dialog.rail
             point = rail.viewport().rect().center()
@@ -187,22 +191,31 @@ class TestRouting:
             app.setFont(previous_font)
             app.setStyleSheet(previous_style)
 
-    def test_window_opens_on_the_overview(self, make_dialog):
+    def test_window_opens_on_home(self, make_dialog):
         dialog, _store = make_dialog()
         assert dialog.rail.current_key() == OVERVIEW
-        assert dialog.page_title.text() == "Overview"
-        assert dialog.rail.value(OVERVIEW) == "What is running now"
+        assert dialog.page_title.text() == "Home"
+        assert dialog.rail.name(OVERVIEW) == "Home"
+        assert dialog.rail.value(OVERVIEW) == ""
 
-
-    def test_refresh_rebuilds_the_overview_once(self, make_dialog):
+    def test_show_home_returns_to_the_top_of_home(self, make_dialog):
         dialog, _store = make_dialog()
-        with patch.object(
-            dialog, "_refresh_overview", wraps=dialog._refresh_overview
-        ) as overview:
+        dialog.show()
+        try:
+            dialog.select_destination(MCP)
+            dialog.show_home()
+            assert dialog.rail.current_key() == OVERVIEW
+            assert dialog._page_scrolls[OVERVIEW].verticalScrollBar().value() == 0
+        finally:
+            dialog.close()
+
+    def test_refresh_rebuilds_home_once(self, make_dialog):
+        dialog, _store = make_dialog()
+        with patch.object(dialog, "_refresh_home", wraps=dialog._refresh_home) as home:
             dialog.refresh()
-        # Model and download refreshes each ask for a rail redraw; the
-        # Overview behind it is rebuilt once, after they all finish.
-        assert overview.call_count == 1
+        # Model and download refreshes each ask for a rail redraw; Home
+        # behind it is rebuilt once, after they all finish.
+        assert home.call_count == 1
 
     def test_opening_settings_keeps_runtime_imports_off_the_ui_thread(
         self, make_dialog, monkeypatch
@@ -330,43 +343,36 @@ class TestRouting:
         assert store.load_hf_access_policy() == HuggingFaceAccessPolicy.NEVER
 
 
-class TestBasicSettings:
-    def test_basic_opens_without_building_model_or_cloud_setup(self, make_dialog):
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-        assert dialog.settings_view == SettingsView.BASIC
-        assert dialog.page_title.text() == "Dictation"
-        assert dialog.rail_pane.isHidden()
-        assert not dialog.basic_tabs.isHidden()
-        assert dialog.stack.currentWidget() is dialog._page_scrolls[BASIC_DICTATION]
-        assert not {VOICE_MODEL, CLEANUP, MEETING_INTELLIGENCE} & dialog._built_pages
-        assert store.get(SettingsKey.SETTINGS_VIEW) == SettingsView.BASIC
+class TestHome:
+    def test_home_opens_without_building_pages_or_asking_for_microphones(self, make_dialog):
+        dialog, store = make_dialog()
+        assert dialog.rail.current_key() == OVERVIEW
+        assert dialog.stack.currentWidget() is dialog._page_scrolls[OVERVIEW]
+        assert dialog._built_pages == {OVERVIEW}
+        combo = dialog.home.controls[SettingsKey.AUDIO_INPUT_PRIORITY]
+        assert [combo.itemText(i) for i in range(combo.count())] == ["System default"]
 
-    def test_views_remember_navigation_and_restore_after_reopening(self, make_dialog):
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-        dialog.basic_tabs.setCurrentIndex(2)
-        dialog.select_destination(RECORDING)
-        assert dialog.settings_view == SettingsView.ADVANCED
-        assert store.get(SettingsKey.SETTINGS_VIEW) == SettingsView.ADVANCED
-        dialog.set_settings_view(SettingsView.BASIC)
-        assert dialog.stack.currentWidget() is dialog._page_scrolls[BASIC_APP]
-        dialog.set_settings_view(SettingsView.ADVANCED)
-        assert dialog.rail.current_key() == RECORDING
-        reopened = settings_dialog_module.SettingsDialog(background_cache_scan=False)
-        assert reopened.settings_view == SettingsView.ADVANCED
-        assert reopened.page_title.text() == "Overview"
-        reopened.close()
-        dialog.set_settings_view(SettingsView.BASIC)
-        reopened = settings_dialog_module.SettingsDialog(background_cache_scan=False)
-        assert reopened.settings_view == SettingsView.BASIC
-        reopened.close()
+    def test_basic_tab_keys_open_their_home_cards(self, make_dialog):
+        dialog, _store = make_dialog()
+        dialog.show()
+        try:
+            for key, card in ((BASIC_MEETINGS, "meetings"), (BASIC_APP, "app"),
+                              (BASIC_DICTATION, "dictation")):
+                dialog.select_destination(RECORDING)
+                dialog.select_destination(key)
+                QApplication.processEvents()
+                assert dialog.rail.current_key() == OVERVIEW
+                assert dialog.home.cards[card].property("searchHit") is True
+                dialog._clear_search_flash()
+        finally:
+            dialog.close()
 
-    def test_basic_and_advanced_changes_share_the_same_store_and_callbacks(self, make_dialog):
+    def test_home_and_page_changes_share_the_same_store_and_callbacks(self, make_dialog):
         dialog, store = make_dialog({
-            SettingsKey.SETTINGS_VIEW: SettingsView.BASIC,
             SettingsKey.STREAMING_ENABLED: False,
             SettingsKey.STREAMING_OVERLAY_ENABLED: True,
         })
-        page = dialog._basic_pages[BASIC_DICTATION]
+        page = dialog.home
         dialog.on_streaming_settings_changed = MagicMock()
         page.controls[SettingsKey.STREAMING_ENABLED].click()
         assert store.get(SettingsKey.STREAMING_ENABLED) is True
@@ -375,34 +381,36 @@ class TestBasicSettings:
         dialog.select_destination(RECORDING)
         assert dialog.streaming_enabled_check.isChecked()
         dialog.streaming_enabled_check.setChecked(False)
-        dialog.set_settings_view(SettingsView.BASIC)
+        dialog.show_home()
         assert not page.controls[SettingsKey.STREAMING_ENABLED].isChecked()
 
-    def test_microphone_uses_the_shared_inventory_and_live_callback(self, make_dialog):
+    def test_microphone_reads_devices_once_its_menu_opens(self, make_dialog):
         from services.audio_devices import InputDevice
         from ui_qt.dialogs.settings_microphones import SYSTEM_DEFAULT, entry_token
 
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+        dialog, store = make_dialog()
         dialog.on_audio_device_changed = MagicMock()
+        combo = dialog.home.controls[SettingsKey.AUDIO_INPUT_PRIORITY]
+        assert RECORDING not in dialog._built_pages
+        with patch.object(settings_dialog_module.AudioRecorder, "get_input_devices", return_value=[]):
+            dialog.home._load_microphones()
+        assert RECORDING in dialog._built_pages
         desk = InputDevice(index=11, name="Desk microphone", hostapi="MME", default_api=True)
         dialog._apply_audio_devices(dialog._audio_device_generation, "", [desk], "")
-        combo = dialog._basic_pages[BASIC_DICTATION].controls[SettingsKey.AUDIO_INPUT_PRIORITY]
         combo.setCurrentIndex(combo.findData(entry_token(desk.key)))
         assert store.get(SettingsKey.AUDIO_INPUT_PRIORITY) == [desk.key]
         # The pre-ranking index follows along for a downgrade.
         assert store.get(SettingsKey.AUDIO_INPUT_DEVICE) == 11
         dialog.on_audio_device_changed.assert_called_once_with([desk.key])
-        dialog.basic_tabs.setCurrentIndex(1)
-        other = dialog._basic_pages[BASIC_MEETINGS].controls[SettingsKey.AUDIO_INPUT_PRIORITY]
-        assert other.currentData() == entry_token(desk.key)
-        other.setCurrentIndex(other.findData(SYSTEM_DEFAULT))
+        assert dialog.audio_device_combo.currentData() == entry_token(desk.key)
+        combo.setCurrentIndex(combo.findData(SYSTEM_DEFAULT))
         assert store.get(SettingsKey.AUDIO_INPUT_PRIORITY) == []
         assert SettingsKey.AUDIO_INPUT_DEVICE not in store.load_all_settings()
 
     def test_voice_choice_uses_the_canonical_controller_label_without_model_setup(self, make_dialog):
         from ui_qt.widgets.speech_backend_picker import backend_display_name
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-        combo = dialog._basic_pages[BASIC_DICTATION].voice_combo
+        dialog, store = make_dialog()
+        combo = dialog.home.voice_combo
         backend = combo.itemData((combo.currentIndex() + 1) % combo.count())
         def choose(display):
             from config import config
@@ -414,23 +422,21 @@ class TestBasicSettings:
         assert VOICE_MODEL not in dialog._built_pages
 
     def test_app_theme_and_meeting_report_edits_use_existing_handlers(self, make_dialog):
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-        dialog.basic_tabs.setCurrentIndex(2)
+        dialog, store = make_dialog()
         dialog.on_ui_theme_changed = MagicMock()
-        theme = dialog._basic_pages[BASIC_APP].controls[SettingsKey.UI_THEME]
+        theme = dialog.home.controls[SettingsKey.UI_THEME]
         theme.setCurrentIndex(theme.findData("light"))
         assert store.get(SettingsKey.UI_THEME) == "light"
         dialog.on_ui_theme_changed.assert_called_once_with("light")
-        dialog.basic_tabs.setCurrentIndex(1)
-        report = dialog._basic_pages[BASIC_MEETINGS].controls[SettingsKey.MEETING_END_REPORT]
+        report = dialog.home.controls[SettingsKey.MEETING_END_REPORT]
         report.click()
         assert store.get(SettingsKey.MEETING_END_REPORT) is report.isChecked()
         dialog.select_destination("meeting_after")
         assert dialog.meeting_end_report_check.isChecked() == report.isChecked()
 
-    def test_failed_save_restores_basic_and_allows_retry(self, make_dialog):
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
-        switch = dialog._basic_pages[BASIC_DICTATION].controls[SettingsKey.AUTO_PASTE]
+    def test_failed_save_restores_home_and_allows_retry(self, make_dialog):
+        dialog, store = make_dialog()
+        switch = dialog.home.controls[SettingsKey.AUTO_PASTE]
         previous = switch.isChecked()
         with patch.object(store, "save_setting", side_effect=OSError("Disk full")):
             switch.click()
@@ -441,28 +447,23 @@ class TestBasicSettings:
         assert store.get(SettingsKey.AUTO_PASTE) == (not previous)
         assert dialog.message_label.text() == ""
 
-    def test_basic_shortcut_capture_cancels_when_switching_view(self, make_dialog):
-        dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+    def test_home_shortcut_capture_cancels_when_leaving_home(self, make_dialog):
+        dialog, _store = make_dialog()
         dialog.on_profile_hotkey_capture = MagicMock()
-        field = dialog._basic_pages[BASIC_DICTATION].shortcut
+        field = dialog.home.shortcut
         field.begin_capture()
         dialog.on_profile_hotkey_capture.assert_called_with(True)
-        dialog.set_settings_view(SettingsView.ADVANCED)
+        dialog.select_destination(RECORDING)
         assert not field._capturing
         dialog.on_profile_hotkey_capture.assert_called_with(False)
 
-    def test_invalid_view_falls_back_to_basic_without_changing_other_settings(self, make_dialog):
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: "unknown", SettingsKey.AUTO_PASTE: False})
-        assert dialog.settings_view == SettingsView.BASIC
-        assert store.get(SettingsKey.AUTO_PASTE) is False
-
     def test_change_button_captures_and_saves_a_shortcut_inline(self, make_dialog):
         from PyQt6.QtWidgets import QPushButton
-        dialog, store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+        dialog, store = make_dialog()
         dialog.show()
         QApplication.instance().processEvents()
-        field = dialog._basic_pages[BASIC_DICTATION].shortcut
-        button = dialog.findChild(QPushButton, "basicSettingsChangeShortcut")
+        field = dialog.home.shortcut
+        button = field.parentWidget().findChild(QPushButton, "settingsChangeShortcut")
         QTest.mouseClick(button, Qt.MouseButton.LeftButton)
         assert field.hasFocus()
         QTest.keyClick(field, Qt.Key.Key_J, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)
@@ -472,8 +473,8 @@ class TestBasicSettings:
         assert dialog.hotkey_inputs["record_toggle"].text() == field.text()
         dialog.close()
 
-    @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 460)])
-    def test_basic_rows_fit_narrow_windows_and_large_fonts(self, make_dialog, monkeypatch, ui_mode, width):
+    @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("classic", 1315), ("omarchy", 460)])
+    def test_home_rows_fit_narrow_windows_and_large_fonts(self, make_dialog, monkeypatch, ui_mode, width):
         from PyQt6.QtWidgets import QAbstractButton, QComboBox, QLineEdit, QLabel
         from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
         from ui_qt.utils.palette import current_palette, set_current_palette
@@ -486,28 +487,29 @@ class TestBasicSettings:
         dialog = None
         try:
             apply_ui_font_scale(130, app=app, theme_manager=manager)
-            dialog, _store = make_dialog({SettingsKey.SETTINGS_VIEW: SettingsView.BASIC})
+            dialog, _store = make_dialog()
             dialog.show()
             dialog._fit_to_screen()
             dialog.resize(width, 600)
-            for index, key in enumerate(dialog._basic_destinations):
-                dialog.basic_tabs.setCurrentIndex(index)
-                for _ in range(8):
-                    app.processEvents()
-                page = dialog._basic_pages[key]
-                assert dialog.width() == width
-                for control in (page.findChildren(QAbstractButton) + page.findChildren(QComboBox) + page.findChildren(QLineEdit)):
-                    if not control.isVisible():
-                        continue
-                    assert control.mapTo(page, control.rect().topLeft()).x() >= 0
-                    assert control.mapTo(page, control.rect().bottomRight()).x() < page.width()
-                for label in page.findChildren(QLabel):
-                    if label.isVisible() and label.wordWrap():
-                        assert label.height() >= label.heightForWidth(label.width())
-                scroll = dialog._page_scrolls[key]
-                scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
+            for _ in range(8):
                 app.processEvents()
-                assert page.mapTo(scroll.viewport(), page.rect().bottomRight()).y() <= scroll.viewport().height()
+            page = dialog.home
+            assert dialog.width() == width
+            # Too narrow for the rail beside a page: the header's menu stands in.
+            assert dialog.rail_pane.isHidden() == (width < 1040)
+            assert dialog.page_menu_button.isHidden() == (width >= 1040)
+            for control in (page.findChildren(QAbstractButton) + page.findChildren(QComboBox) + page.findChildren(QLineEdit)):
+                if not control.isVisible():
+                    continue
+                assert control.mapTo(page, control.rect().topLeft()).x() >= 0
+                assert control.mapTo(page, control.rect().bottomRight()).x() < page.width()
+            for label in page.findChildren(QLabel):
+                if label.isVisible() and label.wordWrap():
+                    assert label.height() >= label.heightForWidth(label.width())
+            scroll = dialog._page_scrolls[OVERVIEW]
+            scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
+            app.processEvents()
+            assert page.mapTo(scroll.viewport(), page.rect().bottomRight()).y() <= scroll.viewport().height()
         finally:
             if dialog is not None:
                 dialog.close()
@@ -515,6 +517,71 @@ class TestBasicSettings:
             set_current_palette(previous_palette)
             app.setFont(previous_font)
             app.setStyleSheet(previous_style)
+
+    def test_cards_sit_in_two_columns_when_the_page_is_wide(self, make_dialog):
+        dialog, _store = make_dialog()
+        dialog.show()
+        try:
+            cards = dialog.home.cards
+            dialog.resize(1500, 850)
+            for _ in range(4):
+                QApplication.processEvents()
+            assert cards["personalize"].x() > cards["dictation"].x()
+            assert cards["app"].y() > cards["dictation"].y()
+            dialog.resize(dialog.MINIMUM_SIZE)
+            for _ in range(4):
+                QApplication.processEvents()
+            assert {card.x() for card in cards.values()} == {cards["dictation"].x()}
+            assert (cards["storage"].y() > cards["app"].y() > cards["meetings"].y()
+                    > cards["personalize"].y() > cards["dictation"].y())
+        finally:
+            dialog.close()
+
+
+class TestChapters:
+    def test_only_the_current_pages_chapter_is_open(self, make_dialog):
+        dialog, _store = make_dialog()
+        assert dialog.rail.open_chapter() == ""
+        dialog.select_destination(CLEANUP)
+        assert dialog.rail.open_chapter() == "Dictation"
+        assert not dialog.rail._items[CLEANUP].isHidden()
+        assert dialog.rail._items[MCP].isHidden()
+        dialog.select_destination(MCP)
+        assert dialog.rail.open_chapter() == "Automate"
+        assert dialog.rail._items[CLEANUP].isHidden()
+
+    def test_the_crumb_names_the_chapter(self, make_dialog):
+        dialog, _store = make_dialog()
+        assert dialog.page_crumb.text() == "SETTINGS"
+        dialog.select_destination(MEETING_FAST)
+        assert dialog.page_crumb.text() == "MEETING MODE"
+        assert dialog.page_title.text() == "Fast judgments"
+
+    def test_every_page_is_in_exactly_one_place(self, make_dialog):
+        dialog, _store = make_dialog()
+        keys = dialog.rail.keys()
+        assert keys[0] == OVERVIEW and dialog.rail.chapter(OVERVIEW) == ""
+        chaptered = [key for chapter in dialog.rail.chapters() for key in dialog.rail.chapter_keys(chapter)]
+        assert sorted(chaptered) == sorted(keys[1:])
+        assert set(keys) == set(dialog._pages)
+
+    def test_the_page_menu_lists_every_page_by_chapter(self, make_dialog):
+        dialog, _store = make_dialog()
+        dialog.select_destination(HOOKS)
+        dialog._show_page_menu()
+        menu = dialog._page_menu
+        try:
+            texts = [action.text() for action in menu.actions() if not action.isSeparator()]
+            assert texts[0] == "Home"
+            assert texts[texts.index("Automate") + 1:texts.index("Automate") + 4] == ["Actions", "Hooks", "API & MCP"]
+            checked = [action.text() for action in menu.actions() if action.isChecked()]
+            assert checked == ["Hooks"]
+            headings = [action for action in menu.actions() if action.text() in dialog.rail.chapters()]
+            assert headings and not any(action.isEnabled() for action in headings)
+            next(action for action in menu.actions() if action.text() == "Runtime").trigger()
+            assert dialog.rail.current_key() == RUNTIME
+        finally:
+            menu.close()
 
 class TestControllerRouting:
     def _controller(self, dialog, missing_runtime=None):
@@ -574,8 +641,8 @@ class TestRailValues:
         assert dialog.rail.value(CLEANUP) == "Off"
 
 
-class TestOverview:
-    def test_cards_repeat_what_each_destination_reports(self, make_dialog):
+class TestHomeSummary:
+    def test_rows_and_storage_repeat_what_each_destination_reports(self, make_dialog):
         dialog, _store = make_dialog({
             SettingsKey.MEETING_LLM_PROVIDER: "openai",
             SettingsKey.MEETING_LLM_MODEL: "gpt-4o-mini",
@@ -583,26 +650,30 @@ class TestOverview:
         }, cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)})
         dialog.refresh_models()
         dialog.select_destination(OVERVIEW)
-        cards = dialog.overview.cards
+        home = dialog.home
 
-        assert cards["voice_model"].value_label.text() == dialog.models.voice_summary()
-        assert cards["cleanup"].value_label.text() == "Off"
-        assert cards["meeting_intelligence"].value_label.text() == "gpt-4o-mini"
-        assert "Me / Others labels" in cards["meeting_voice"].detail_label.text()
-        assert cards["downloads"].value_label.text() == "145 MB"
-        assert "1 of " in cards["downloads"].detail_label.text()
+        assert home.meeting_intelligence.text().startswith("gpt-4o-mini")
+        assert "Me / Others labels" in home.meeting_voice.text()
+        assert home.storage_value.text() == "145 MB of speech models"
+        assert home.storage_detail.text().startswith("1 of ")
 
-    def test_clicking_a_card_opens_its_destination(self, make_dialog):
+    def test_links_and_buttons_open_their_destination(self, make_dialog):
+        from PyQt6.QtWidgets import QPushButton
+
         dialog, _store = make_dialog()
         dialog.show()
-        card = dialog.overview.cards["meeting_intelligence"]
-        QTest.mouseClick(card, Qt.MouseButton.LeftButton)
-        assert dialog.rail.current_key() == MEETING_INTELLIGENCE
+        try:
+            button = next(b for b in dialog.home.findChildren(QPushButton)
+                          if b.accessibleName() == "Set up AI insights")
+            QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+            assert dialog.rail.current_key() == MEETING_INTELLIGENCE
 
-        dialog.select_destination(OVERVIEW)
-        dialog.overview.cards["components"].clicked.emit("components")
-        assert dialog.rail.current_key() == DOWNLOADS
-        dialog.close()
+            dialog.show_home()
+            link = next(b for b in dialog.home.cards["storage"].findChildren(QPushButton, "homeLink"))
+            link.click()
+            assert dialog.rail.current_key() == DOWNLOADS
+        finally:
+            dialog.close()
 
     def test_where_strip_places_a_remote_cleanup_provider_in_the_cloud(self, make_dialog):
         dialog, _store = make_dialog({
@@ -610,8 +681,8 @@ class TestOverview:
             SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "openrouter/free",
         })
         dialog.select_destination(OVERVIEW)
-        assert "AI cleanup" in dialog.overview.cloud_list.text()
-        assert "AI cleanup" not in dialog.overview.local_list.text()
+        assert "AI cleanup" in dialog.home.cloud_list.text()
+        assert "AI cleanup" not in dialog.home.local_list.text()
 
     def test_where_strip_keeps_a_local_cleanup_provider_on_this_computer(self, make_dialog):
         dialog, _store = make_dialog({
@@ -619,9 +690,17 @@ class TestOverview:
             SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "llama3.2",
         })
         dialog.select_destination(OVERVIEW)
-        assert "AI cleanup" in dialog.overview.local_list.text()
-        assert "AI cleanup" not in dialog.overview.cloud_list.text()
+        assert "AI cleanup" in dialog.home.local_list.text()
+        assert "AI cleanup" not in dialog.home.cloud_list.text()
 
+    def test_home_is_only_reread_while_it_shows(self, make_dialog):
+        dialog, store = make_dialog()
+        dialog.select_destination(GENERAL)
+        with patch.object(dialog.home, "refresh") as refresh:
+            dialog.auto_paste_check.click()
+        refresh.assert_not_called()
+        dialog.show_home()
+        assert dialog.home.controls[SettingsKey.AUTO_PASTE].isChecked() == store.get(SettingsKey.AUTO_PASTE)
 
 class TestSearchMatching:
     def _entries(self):
