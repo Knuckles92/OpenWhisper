@@ -62,17 +62,32 @@ def fit_desktop_dialog(dialog: QDialog) -> None:
         # A compositor can assign a smaller tile after the dialog opens. Keep
         # the form accessible without imposing its minimum on the surface.
         if not getattr(dialog, "_desktop_dialog_scroll", None):
-            contents = QWidget()
-            contents.setLayout(layout)
-            scroll = QScrollArea(dialog)
-            scroll.setFrameShape(QFrame.Shape.NoFrame)
-            scroll.setWidgetResizable(True)
-            scroll.setWidget(contents)
-            outer = QVBoxLayout(dialog)
-            outer.setContentsMargins(0, 0, 0, 0)
-            outer.addWidget(scroll)
-            dialog._desktop_dialog_scroll = scroll
-    dialog.setMinimumSize(QSize(240, 120).boundedTo(room))
+            hint = dialog.sizeHint()
+            minimum_hint = dialog.minimumSizeHint()
+            desired = QSize(
+                max(hint.width(), minimum_hint.width()),
+                max(hint.height(), minimum_hint.height()),
+            )
+            # Only oversized forms need the scroll area. Wrapping a dialog
+            # that already fits (e.g. QMessageBox) hides its contents' size
+            # from the window, which collapses it to a clipped sliver.
+            if desired.width() > room.width() or desired.height() > room.height():
+                contents = QWidget()
+                contents.setLayout(layout)
+                scroll = QScrollArea(dialog)
+                scroll.setFrameShape(QFrame.Shape.NoFrame)
+                scroll.setWidgetResizable(True)
+                scroll.setWidget(contents)
+                outer = QVBoxLayout(dialog)
+                outer.setContentsMargins(0, 0, 0, 0)
+                outer.addWidget(scroll)
+                dialog._desktop_dialog_scroll = scroll
+    if getattr(dialog, "_desktop_dialog_scroll", None):
+        dialog.setMinimumSize(QSize(240, 120).boundedTo(room))
+    else:
+        minimum = dialog.minimumSize()
+        if minimum.width() > room.width() or minimum.height() > room.height():
+            dialog.setMinimumSize(minimum.boundedTo(room))
     dialog.resize(dialog.size().boundedTo(room))
 
 

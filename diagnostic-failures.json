@@ -46,5 +46,29 @@
     "component": "recorder",
     "category": "LoggedError",
     "line": 636
+  },
+  {
+    "utc": "2026-10-16T07:18:55.250749+00:00",
+    "component": "meeting",
+    "category": "Error",
+    "line": 636
+  },
+  {
+    "utc": "2026-10-16T07:18:55.320758+00:00",
+    "component": "application",
+    "category": "Error",
+    "line": 853
+  },
+  {
+    "utc": "2026-10-16T07:19:05.009566+00:00",
+    "component": "meeting",
+    "category": "Error",
+    "line": 636
+  },
+  {
+    "utc": "2026-10-16T07:19:05.015958+00:00",
+    "component": "application",
+    "category": "Error",
+    "line": 853
   }
 ]
