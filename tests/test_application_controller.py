@@ -895,9 +895,16 @@ class TestApplicationController:
         self.db_state = {"closed": False}
 
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_recorded_audio_file = config.RECORDED_AUDIO_FILE
-        config.RECORDED_AUDIO_FILE = str(Path(self.temp_dir.name) / "recorded_audio.wav")
+        monkeypatch.setattr(
+            config, "RECORDED_AUDIO_FILE",
+            str(Path(self.temp_dir.name) / "recorded_audio.wav"),
+        )
 
+        # Import the controller for real first, so only the modules popped
+        # below bind the stubs. Otherwise every module that nothing has
+        # imported yet binds them too, and that set depends on which other
+        # test files were collected.
+        importlib.import_module("services.application_controller")
         # patch.dict restores sys.modules, but not child attributes on packages.
         # Load the adapter and its cache before the snapshot so later tests
         # cannot retain an orphan cache module that their mocks never reach.
@@ -916,39 +923,30 @@ class TestApplicationController:
             self.keyboard,
             self.db_state,
         )
-        self.module_patcher = patch.dict(sys.modules, module_stubs)
-        self.module_patcher.start()
+        # One block owns the stubs, so a failed setup still removes them; a
+        # stub services.settings left behind fails every later test.
+        with self.temp_dir, patch.dict(sys.modules, module_stubs):
+            for module_name in [
+                "services.runtime",
+                "services.runtime.hotkeys",
+                "services.runtime.streaming",
+                "services.runtime.transcription",
+                # Without this, the real import above leaves MeetingRuntime
+                # bound to the REAL settings_manager, so consent-dependent
+                # tests read the process-wide store instead of the fake.
+                "services.runtime.meeting",
+                "services.application_controller",
+            ]:
+                sys.modules.pop(module_name, None)
 
-        for module_name in [
-            "services.runtime",
-            "services.runtime.hotkeys",
-            "services.runtime.streaming",
-            "services.runtime.transcription",
-            # Without this, a collection-time import by another test file (e.g.
-            # test_meeting_runtime) leaves MeetingRuntime bound to the REAL
-            # settings_manager, so the developer's own consent grant leaks in
-            # and consent-dependent tests flip depending on the local machine.
-            "services.runtime.meeting",
-            "services.application_controller",
-        ]:
-            sys.modules.pop(module_name, None)
-
-        self.app_controller_module = importlib.import_module("services.application_controller")
-        self.hotkeys_runtime_module = importlib.import_module("services.runtime.hotkeys")
-        self.watchdog_patcher = patch.object(
-            self.hotkeys_runtime_module.HotkeyRuntime,
-            "setup_hook_watchdog",
-            lambda _self: None,
-        )
-        self.watchdog_patcher.start()
-
-    @pytest.fixture(autouse=True)
-    def _teardown(self):
-        yield
-        self.watchdog_patcher.stop()
-        self.module_patcher.stop()
-        config.RECORDED_AUDIO_FILE = self.original_recorded_audio_file
-        self.temp_dir.cleanup()
+            self.app_controller_module = importlib.import_module("services.application_controller")
+            self.hotkeys_runtime_module = importlib.import_module("services.runtime.hotkeys")
+            monkeypatch.setattr(
+                self.hotkeys_runtime_module.HotkeyRuntime,
+                "setup_hook_watchdog",
+                lambda _self: None,
+            )
+            yield
 
     def _create_controller(self):
         controller = self.app_controller_module.ApplicationController(DummyUIController())
