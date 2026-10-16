@@ -13,7 +13,7 @@ The last endpoint entry, Custom…, is an action rather than a provider: picking
 it asks the host to add an OpenAI-compatible endpoint and restores the current
 selection, so backing out of that dialog changes nothing.
 """
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -35,11 +35,9 @@ from services.text_llm import (
     NEW_PROFILE_IDS,
     TextLLMProfile,
     builtin_profiles,
-    credential_label,
     credential_status,
     get_profile,
 )
-from services.transcript_cleanup import find_api_key
 from ui_qt.utils.icons import design_icon
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.buttons import Button
@@ -86,6 +84,8 @@ class TextModelPicker(QWidget):
         self._active_model = ""
         self._idle_status = idle_status
         self._profiles: List[TextLLMProfile] = list(builtin_profiles())
+        #: Local servers found answering, ``{base_url: server}``.
+        self._running_servers: Dict[str, str] = {}
         # Model shown per endpoint. Only a committed pick or a caller updates
         # it, so switching endpoints never carries a search fragment along.
         self._staged_models = {
@@ -266,8 +266,9 @@ class TextModelPicker(QWidget):
         self.provider_combo.clear()
         for profile in self._profiles:
             icon = icons.get(profile.id, custom_icon)
-            self.provider_combo.addItem(icon, profile.name, profile.id)
-            description = self._profile_copy(profile)[1]
+            label = f"{profile.name} · Running" if self._is_running(profile) else profile.name
+            self.provider_combo.addItem(icon, label, profile.id)
+            description = self._description(profile)
             self.provider_combo.setItemData(
                 self.provider_combo.count() - 1,
                 f"{profile.name} — {description}",
@@ -300,42 +301,55 @@ class TextModelPicker(QWidget):
         self._render_provider()
         self.provider_changed.emit(provider)
 
-    def _profile_copy(self, profile: Optional[TextLLMProfile]) -> tuple:
+    _DESCRIPTIONS = {
+        "openai": "Direct access to OpenAI chat and reasoning models.",
+        "openrouter": "One catalog with models from OpenAI, Anthropic, Google, and more.",
+        "ollama": "Connect to your Ollama server. Install and manage models in Ollama.",
+        "lm_studio": "Connect to LM Studio's local server. Load a model and start the server in LM Studio.",
+        "vllm": "Connect to a vLLM server started with vllm serve.",
+        "llama_cpp": "Connect to llama.cpp's llama-server.",
+        "localai": "Connect to your LocalAI server.",
+        "groq": "Cloud text models served by Groq.",
+        "opencode_go": "OpenCode Go subscription endpoint.",
+        "opencode_zen": "OpenCode Zen usage-billed endpoint.",
+    }
+
+    def _description(self, profile: Optional[TextLLMProfile]) -> str:
         if profile is None:
-            return ("API", "Unknown endpoint.", "API key")
-        if profile.id == TranscriptCleanupProvider.OPENAI:
-            return (
-                "OAI",
-                "Direct access to OpenAI chat and reasoning models.",
-                credential_label(profile),
-            )
-        if profile.id == TranscriptCleanupProvider.OPENROUTER:
-            return (
-                "OR",
-                "One catalog with models from OpenAI, Anthropic, Google, and more.",
-                credential_label(profile),
-            )
-        descriptions = {
-            "ollama": "Connect to your Ollama server. Install and manage models in Ollama.",
-            "lm_studio": "Connect to LM Studio's local server. Load a model and start the server in LM Studio.",
-            "vllm": "Connect to a vLLM server started with vllm serve.",
-            "llama_cpp": "Connect to llama.cpp's llama-server.",
-            "localai": "Connect to your LocalAI server.",
-            "groq": "Cloud text models served by Groq.",
-            "opencode_go": "OpenCode Go subscription endpoint.",
-            "opencode_zen": "OpenCode Zen usage-billed endpoint.",
-        }
-        if profile.id in descriptions:
-            return ("API", descriptions[profile.id], credential_label(profile))
-        return (
-            "API",
-            "Any server that speaks the OpenAI Chat Completions API.",
-            credential_label(profile) if profile.api_key_env else "",
+            return "Unknown endpoint."
+        description = self._DESCRIPTIONS.get(
+            profile.id, "Any server that speaks the OpenAI Chat Completions API."
         )
+        if self._is_running(profile):
+            return f"{description} Running on this computer."
+        elsewhere = next((url for url, server in self._running_servers.items()
+                          if profile.builtin and server == profile.kind), "")
+        if elsewhere:
+            return f"{description} Answering at {elsewhere} — choose Edit to use it."
+        return description
+
+    def set_running_servers(self, servers: Dict[str, str]) -> None:
+        """Mark the local servers found running, ``{base_url: server}``."""
+        self._running_servers = dict(servers)
+        self._reload_provider_combo()
+        index = self.provider_combo.findData(self.provider)
+        self.provider_combo.blockSignals(True)
+        self.provider_combo.setCurrentIndex(max(0, index))
+        self.provider_combo.blockSignals(False)
+        profile = self.current_profile()
+        if profile is not None:
+            self.provider_combo.setToolTip(f"{profile.name} — {self._description(profile)}")
+        self._update_credential_status()
+
+    def _is_running(self, profile: TextLLMProfile) -> bool:
+        return self._running_servers.get(profile.base_url or "") == profile.kind
+
+    def _running_profiles(self) -> List[TextLLMProfile]:
+        return [p for p in self._profiles if self._is_running(p)]
 
     def _render_provider(self) -> None:
         profile = self.current_profile()
-        _mark, description, credential = self._profile_copy(profile)
+        description = self._description(profile)
         name = profile.name if profile else "Endpoint"
         self.provider_combo.setToolTip(f"{name} — {description}")
         if profile is not None and profile.base_url:
@@ -351,7 +365,7 @@ class TextModelPicker(QWidget):
             self.provider_url.setText("")
             self.provider_url.setToolTip("")
             self.provider_url.setVisible(False)
-        self._update_credential_status(credential)
+        self._update_credential_status()
         show_sort = bool(profile and profile.kind == PROFILE_KIND_OPENROUTER)
         self.sort_label.setVisible(show_sort)
         self.sort_combo.setVisible(show_sort)
@@ -370,28 +384,23 @@ class TextModelPicker(QWidget):
         self.status_label.setText("Loading models…")
         self._update_active_badge()
 
-    def _update_credential_status(self, credential: Optional[str] = None) -> None:
+    def _update_credential_status(self) -> None:
         """Show whether the selected provider's API key is available.
 
-        Args:
-            credential: User-facing credential name from the provider metadata.
-                When omitted, it is looked up from that metadata.
+        When a cloud endpoint lacks its key and a local server is running,
+        the line also points at that server.
         """
         profile = self.current_profile()
-        if profile is not None and (not profile.builtin or profile.id in NEW_PROFILE_IDS):
-            available, text = credential_status(profile)
+        if profile is None:
+            available, text = False, "Unknown endpoint."
         else:
-            if credential is None:
-                credential = self._profile_copy(profile)[2]
-            available = bool(find_api_key(self.provider))
-            text = (
-                f"{credential} found"
-                if available
-                else f"Requires {credential} — add it in Settings → API keys"
-            )
+            available, text = credential_status(profile)
         self.provider_requirement.setToolTip(text)
         if profile is not None and profile.id in NEW_PROFILE_IDS and not available:
             text = "Key needed in Settings → API keys"
+        running = self._running_profiles()
+        if profile is not None and not available and not profile.self_hosted and running:
+            text += f" — or choose {running[0].name}, running on this computer"
         self.provider_requirement.setText(text)
         credential_icon = design_icon(
             "check-green.svg" if available else "info-warning.svg"

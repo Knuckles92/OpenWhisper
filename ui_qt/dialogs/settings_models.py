@@ -76,6 +76,7 @@ from services.settings import (
     settings_manager,
 )
 from services.text_llm import (
+    LOCAL_SERVER_DEFAULT_URLS,
     LOCAL_SERVER_PROFILE_IDS,
     get_profile,
     list_profiles,
@@ -174,6 +175,7 @@ class _WorkerRelay(QObject):
     cache_scan_finished = pyqtSignal(int, object)
     engine_runtime_checked = pyqtSignal(object, str, int)
     meeting_remote_checked = pyqtSignal(int, str)
+    local_servers_detected = pyqtSignal(int, object)
 
 
 _relay: Optional[_WorkerRelay] = None
@@ -247,6 +249,7 @@ class ModelAssignments(QObject):
         self._background_cache_scan = bool(background_cache_scan)
         self._cache_scan_generation = 0
         self._meeting_remote_token = 0
+        self._local_servers_token = 0
         #: Engine runtime checks under way, each with its request's token.
         self._engine_runtime_pending: Dict[tuple[str, str], int] = {}
         self._engine_runtime_labels: Dict[tuple[str, str], str] = {}
@@ -270,6 +273,7 @@ class ModelAssignments(QObject):
         relay.cache_scan_finished.connect(self._on_cache_scan_finished)
         relay.engine_runtime_checked.connect(self._on_engine_runtime_checked)
         relay.meeting_remote_checked.connect(self._on_meeting_remote_checked)
+        relay.local_servers_detected.connect(self._on_local_servers_detected)
 
     def __getattr__(self, name):
         destination = MODEL_CONTROL_DESTINATIONS.get(name)
@@ -665,16 +669,52 @@ class ModelAssignments(QObject):
         if key == MEETING_VOICE:
             self._refresh_meeting_source()
         elif key == CLEANUP:
+            self._detect_local_servers()
             self._fetch_catalog_models(
                 self.text_model_picker.provider, picker=self.text_model_picker
             )
         elif key == MEETING_INTELLIGENCE:
+            self._detect_local_servers()
             self.meeting_agent_picker.ensure_scanned()
             if not self.meeting_agent_is_installed():
                 self._fetch_catalog_models(
                     self.meeting_model_picker.provider,
                     picker=self.meeting_model_picker,
                 )
+
+    def _detect_local_servers(self, force: bool = False) -> None:
+        """Look once per Settings for local servers answering on this computer.
+
+        Each preset's own address and every preset's standard one are probed
+        off the Qt thread; the pickers mark what answers. Nothing polls.
+        """
+        if self._local_servers_token and not force:
+            return
+        token = self._local_servers_token = next(_tokens)
+        urls = [p.base_url for p in list_profiles(self._settings_snapshot())
+                if p.id in LOCAL_SERVER_PROFILE_IDS]
+        urls += list(LOCAL_SERVER_DEFAULT_URLS.values())
+        detected = _worker_relay().local_servers_detected
+
+        def detect():
+            try:
+                from services.local_text_servers import detect_running_servers
+
+                found = detect_running_servers(urls)
+            except Exception:
+                logger.debug("Local server detection failed", exc_info=True)
+                found = {}
+            detected.emit(token, found)
+
+        threading.Thread(target=detect, name="local-text-servers", daemon=True).start()
+
+    def _on_local_servers_detected(self, token: int, found) -> None:
+        if token != self._local_servers_token:
+            return
+        for name in ("text_model_picker", "meeting_model_picker"):
+            picker = self.__dict__.get(name)
+            if picker is not None:
+                picker.set_running_servers(found)
 
     # ---- assignment handlers ----
 
@@ -1073,6 +1113,8 @@ class ModelAssignments(QObject):
             return
         self._invalidate_text_catalog(profile_id)
         self._refresh_picker_profiles()
+        if profile.builtin:
+            self._detect_local_servers(force=True)
         for picker in (self.text_model_picker, self.meeting_model_picker):
             if picker.provider == profile_id:
                 self._fetch_catalog_models(profile_id, picker=picker, force=True)

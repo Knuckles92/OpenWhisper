@@ -10,6 +10,7 @@ import pytest
 import os
 import tempfile
 import threading
+import time
 import weakref
 from unittest.mock import patch
 
@@ -30,6 +31,7 @@ from services.settings import (
     TranscriptCleanupProvider,
     default_transcript_cleanup_model,
 )
+from services.text_llm import get_profile
 from tests.fakes.settings import InMemorySettings
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
@@ -43,7 +45,6 @@ from ui_qt.dialogs.settings_destinations import (
 )
 from ui_qt.dialogs.settings_models import WHISPER_FILTER, ModelAssignments
 from ui_qt.widgets import agent_picker
-from ui_qt.widgets import text_model_picker as picker_module
 from ui_qt.widgets.nav_rail import NavRail
 
 # The rail keys these tests used when Model Manager was its own window.
@@ -179,12 +180,13 @@ class _DialogTestCase:
                 dialog_module, "scan_cached_models", return_value=cached or {}
             ),
             patch.object(dialog_module, "settings_manager", fake_settings),
-            patch.object(
-                picker_module,
-                "find_api_key",
-                side_effect=lambda selected_provider: (api_keys or {}).get(
-                    selected_provider
-                ),
+            # Keys by the provider that needs them, resolved by variable name.
+            patch(
+                "services.text_llm.resolve_credential",
+                side_effect=lambda env_name: {
+                    get_profile(provider).api_key_env: key
+                    for provider, key in (api_keys or {}).items()
+                }.get(env_name),
             ),
         ]
         for patcher in patchers:
@@ -1367,6 +1369,35 @@ class TestNewTextProviders(_DialogTestCase):
         dialog._on_text_models_loaded("groq", "alphabetical", [], "offline")
         assert picker.model_combo.count() == 1
         assert "offline" in picker.status_label.text()
+
+    def test_running_local_servers_are_marked_and_offered_instead_of_a_missing_key(self):
+        dialog, _ = self._make_dialog()
+        picker = dialog.text_model_picker
+        picker.set_provider("openrouter")
+        found = {"http://127.0.0.1:1234/v1": "lm_studio", "http://127.0.0.1:8080/v1": "llama_cpp"}
+        with patch("services.local_text_servers.detect_running_servers",
+                   return_value=found) as detect:
+            dialog.on_destination_shown(CLEANUP)
+            deadline = time.monotonic() + 5
+            while "Running" not in picker.provider_combo.itemText(
+                    picker.provider_combo.findData("lm_studio")) and time.monotonic() < deadline:
+                QApplication.processEvents()
+                time.sleep(0.01)
+            dialog.on_destination_shown(CLEANUP)
+        assert detect.call_count == 1  # once per Settings, no polling
+        probed = detect.call_args.args[0]
+        assert "http://127.0.0.1:9931/v1" in probed and "http://127.0.0.1:8080/v1" in probed
+        assert picker.provider_combo.itemText(picker.provider_combo.findData("lm_studio")) == "LM Studio · Running"
+        assert picker.provider_combo.itemText(picker.provider_combo.findData("llama_cpp")) == "llama.cpp"
+        assert picker.provider == "openrouter"
+        assert picker.provider_requirement.text().endswith(
+            "— or choose LM Studio, running on this computer"
+        )
+        picker.set_provider("llama_cpp")
+        assert "Answering at http://127.0.0.1:8080/v1" in picker.provider_combo.toolTip()
+        picker.set_provider("lm_studio")
+        assert picker.provider_requirement.text() == "No API key required"
+        assert "Running on this computer." in picker.provider_combo.toolTip()
 
     def test_local_thinking_model_enables_the_thinking_level(self):
         from services.text_model_catalog import TextModelSpec, remember_server_specs
