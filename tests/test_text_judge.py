@@ -170,6 +170,11 @@ class TestPrimitives:
         assert judge().noul("x" * typesafe.MAX_STATE_CHARS, "Is it?") is None
         assert FakeOpenAI.instances == [] or client.get().requests == []
 
+    def test_a_server_that_reports_no_context_gets_no_invented_limit(self, client):
+        # LOCAL's server does not answer discovery, so its window is unknown.
+        client.reply = lambda request: json.dumps({"q": 0.4})
+        assert judge().noul("x" * (typesafe.MAX_STATE_CHARS - 200), "Is it?") == 0.4
+
     def test_transport_errors_and_cut_off_answers_are_no_judgment(self, client):
         client.reply = lambda request: TimeoutError("slow")
         assert judge().noul("x", "Is it?") is None

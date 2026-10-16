@@ -312,6 +312,32 @@ def test_judgments_ask_a_thinking_model_not_to_think(local_server, monkeypatch, 
     assert chat[0]["temperature"] == 0
 
 
+def test_a_judgment_larger_than_the_reported_context_is_not_sent(local_server, monkeypatch):
+    handler, chat = _ollama_with_chat('{"q": 0.9}')
+    local_server(handler)
+    judge = _ollama_judge(monkeypatch, handler, "llama3.2")  # no num_ctx: 4096 tokens
+    assert judge.noul({"text": "word " * 2500}, "Is it?") is None
+    assert chat == [] and judge.usage.failures == 1
+    assert judge.noul({"text": "word " * 100}, "Is it?") == 0.9
+
+
+def test_the_test_button_says_the_context_is_too_small_and_rereads_it(local_server, monkeypatch):
+    from services import text_judge
+
+    shown = {**OLLAMA_SHOW, "llama3.2": dict(OLLAMA_SHOW["llama3.2"])}
+    handler, _chat = _ollama_with_chat('{"q": 0.9}')
+    table = {("POST", "/api/show"): lambda r: _json(shown[json.loads(r.content)["model"]])}
+    local_server(lambda request: table.get((request.method, request.url.path), handler)(request))
+    route = _ollama_judge(monkeypatch, handler, "llama3.2").route
+    ok, detail = text_judge.verify_text_model("dummy", route=route, timeout_s=5)
+    assert not ok
+    assert detail.startswith("Ollama · llama3.2: the model's context of 4,096 tokens is too small")
+    assert "num_ctx of 16384 or more" in detail
+    shown["llama3.2"]["parameters"] = "num_ctx 16384"
+    ok, detail = text_judge.verify_text_model("dummy", route=route, timeout_s=5)
+    assert ok, detail
+
+
 @pytest.mark.parametrize("provider,model", [
     ("openrouter", "vendor/small-model"),
     ("groq", "llama-3.3-70b-versatile"),
