@@ -38,7 +38,8 @@ if mode == "die_silently":
 hello_token = "wrong-token" if mode == "bad_token" else token
 hello = {"token": hello_token, "protocol": 1, "pi_version": "stub-1"}
 if mode != "pi1_hello":
-    hello.update(host_prompt=1, request_scoped_tools=1)
+    hello.update(host_prompt=1, request_scoped_tools=1,
+                 text_protocols=["chat", "responses", "anthropic", "google"])
 sys.stdout.write(json.dumps({
     "jsonrpc": "2.0",
     "method": "hello",
@@ -420,7 +421,20 @@ class TestSidecarHandshake:
                 "api_key_env": "",
             },
         )
-        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0):
+        import httpx
+        from openai import OpenAI
+
+        # The model at the custom endpoint calls Pi's test tool.
+        noop_call = {"choices": [{"finish_reason": "tool_calls", "message": {
+            "role": "assistant", "content": "", "tool_calls": [{
+                "id": "call_1", "type": "function",
+                "function": {"name": "noop", "arguments": "{}"}}]}}]}
+        endpoint = OpenAI(api_key="dummy", base_url="http://127.0.0.1:1234/v1", max_retries=0,
+                          http_client=httpx.Client(transport=httpx.MockTransport(
+                              lambda request: httpx.Response(200, json=noop_call))))
+        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0), patch(
+            "services.text_llm.create_openai_client", return_value=endpoint
+        ):
             agent.initialize(cfg, FakeTools())
             try:
                 env = agent._build_env("dummy")

@@ -63,13 +63,14 @@ LOCAL_SERVER_PROFILE_IDS = tuple(LOCAL_SERVER_DEFAULT_URLS)
 # than from the caller, unlike the generic servers above and custom endpoints.
 HOSTED_CATALOG_PROFILE_IDS = ("groq", "opencode_go", "opencode_zen")
 
-NEW_PROFILE_IDS = (*LOCAL_SERVER_PROFILE_IDS, *HOSTED_CATALOG_PROFILE_IDS)
-BUILTIN_KINDS = (PROFILE_KIND_OPENAI, PROFILE_KIND_OPENROUTER, *NEW_PROFILE_IDS)
+BUILTIN_KINDS = (PROFILE_KIND_OPENAI, PROFILE_KIND_OPENROUTER,
+                 *LOCAL_SERVER_PROFILE_IDS, *HOSTED_CATALOG_PROFILE_IDS)
 PROFILE_KINDS = (*BUILTIN_KINDS, PROFILE_KIND_CUSTOM)
 
 OPENAI_PROFILE_ID = "openai"
 OPENROUTER_PROFILE_ID = "openrouter"
-BUILTIN_PROFILE_IDS = (OPENAI_PROFILE_ID, OPENROUTER_PROFILE_ID, *NEW_PROFILE_IDS)
+# Every built-in profile's id is its kind.
+BUILTIN_PROFILE_IDS = BUILTIN_KINDS
 
 # OpenAI's client requires a non-empty api_key even when the server ignores it.
 AUTH_FREE_API_KEY = "dummy"
@@ -121,6 +122,17 @@ class TextLLMProfile:
         """True for a server the user runs: a local server preset wherever
         it lives, or any endpoint on this computer."""
         return self.kind in LOCAL_SERVER_PROFILE_IDS or self.is_local
+
+    @property
+    def refuses_unsupported_tools(self) -> bool:
+        """True when the API itself answers an error for tools a model cannot call.
+
+        OpenAI does, and OpenRouter routes a tool request only to providers
+        that support tools. Anywhere else (a server the user runs, Groq,
+        OpenCode, any custom endpoint) a model may ignore the tools and
+        answer in prose, so only a test call proves it uses them.
+        """
+        return self.kind in (PROFILE_KIND_OPENAI, PROFILE_KIND_OPENROUTER)
 
 
 @dataclass(frozen=True)
@@ -596,7 +608,7 @@ def credential_label(profile: TextLLMProfile) -> str:
         return "OpenAI API key"
     if profile.id == OPENROUTER_PROFILE_ID:
         return "OpenRouter API key"
-    if profile.id in NEW_PROFILE_IDS:
+    if profile.builtin:
         return f"{profile.name} API key" if profile.api_key_env else ""
     return profile.api_key_env
 
