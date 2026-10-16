@@ -10,10 +10,10 @@ from config import config
 from services.text_generation import generate
 from services.text_llm import (
     AUTH_FREE_API_KEY,
-    LOCAL_SERVER_PROFILE_IDS,
     connection_fingerprint,
     create_openai_client,
     chat_request_options,
+    discover_server_models,
     filter_openai_chat_models,
     get_profile,
     list_chat_models,
@@ -127,6 +127,23 @@ def find_api_key(provider: str) -> Optional[str]:
     if not env_key:
         return AUTH_FREE_API_KEY
     return lookup_env_value(env_key)
+
+
+def _learn_server_models(profile, api_key: Optional[str]) -> None:
+    """Ask a server the user runs about its models once per session.
+
+    The model's reasoning control comes from what the server reports, and
+    a dictation can be the first request since launch, before Settings ever
+    loaded the catalog. A server that will not say keeps the defaults.
+    """
+    from services.text_model_catalog import server_specs_known
+
+    if server_specs_known(profile.base_url):
+        return
+    try:
+        discover_server_models(profile, api_key=api_key, timeout=3.0)
+    except Exception as exc:
+        logger.debug("Couldn't read %s's model list: %s", profile.name, type(exc).__name__)
 
 
 def _filter_openai_chat_models(model_ids: List[str]) -> List[str]:
@@ -243,11 +260,9 @@ class TranscriptCleanup:
             old_client = self.client
             if old_client is not None:
                 old_client.close()
-            # Local servers may need to load the model before generating.
+            # A server the user runs may load the model before generating.
             self._timeout_s = (
-                120.0
-                if profile.kind in LOCAL_SERVER_PROFILE_IDS
-                else config.TRANSCRIPT_CLEANUP_TIMEOUT_S
+                120.0 if profile.self_hosted else config.TRANSCRIPT_CLEANUP_TIMEOUT_S
             )
             self.client = create_openai_client(
                 profile,
@@ -288,7 +303,8 @@ class TranscriptCleanup:
 
     @property
     def attempt_timeout_s(self) -> float:
-        """The per-attempt timeout this client was built with (longer for Ollama)."""
+        """The per-attempt timeout this client was built with (longer for a
+        server the user runs)."""
         return self._timeout_s
 
     def is_available(self) -> bool:
@@ -377,18 +393,19 @@ class TranscriptCleanup:
             give_up_s = attempt_timeout_s * (retries + 1) + _RETRY_BACKOFF_ALLOWANCE_S
             if deadline_s is not None:
                 give_up_s = deadline_s
-            response = _call_with_deadline(
-                lambda: generate(
+            def run():
+                if profile is not None and profile.self_hosted:
+                    _learn_server_models(profile, self.api_key)
+                return generate(
                     client, profile,
                     session_id=str(uuid.uuid4()),
                     reasoning_level=self.reasoning,
                     model=self.model,
                     messages=messages,
                     **request_kwargs,
-                ),
-                give_up_s,
-                self.cancel_event,
-            )
+                )
+
+            response = _call_with_deadline(run, give_up_s, self.cancel_event)
             cleaned = response.text.strip()
             if not cleaned:
                 self.last_error = "empty response"

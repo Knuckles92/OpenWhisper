@@ -321,6 +321,59 @@ def _no_real_network_discovery():
 
 
 @pytest.fixture(autouse=True)
+def _no_real_local_text_servers():
+    """Keep tests off the Ollama, LM Studio or vLLM this computer may run.
+
+    Catalog loads, cleanup and Settings ask local servers about their models
+    over HTTP. Here nothing answers unless a test hands over a transport.
+    """
+    import httpx
+
+    from services import local_text_servers, text_model_catalog
+
+    def refused(request):
+        raise httpx.ConnectError("no local server in tests", request=request)
+
+    def http(base_url, api_key, timeout):
+        return httpx.Client(base_url=local_text_servers.server_root(base_url),
+                            transport=httpx.MockTransport(refused))
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(local_text_servers, "_http", http)
+        patcher.setattr(text_model_catalog, "_server_specs", {})
+        yield
+
+
+@pytest.fixture
+def local_server(monkeypatch):
+    """Answer local text server HTTP with a handler; returns requests seen.
+
+    ``local_server(handler)`` routes every probe and catalog request to
+    ``handler(httpx.Request) -> httpx.Response``.
+    """
+    import httpx
+
+    from services import local_text_servers
+
+    def install(handler):
+        seen = []
+
+        def record(request):
+            seen.append(request)
+            return handler(request)
+
+        def http(base_url, api_key, timeout):
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            return httpx.Client(base_url=local_text_servers.server_root(base_url),
+                                headers=headers, transport=httpx.MockTransport(record))
+
+        monkeypatch.setattr(local_text_servers, "_http", http)
+        return seen
+
+    return install
+
+
+@pytest.fixture(autouse=True)
 def _no_installed_agent_probes(request):
     """Keep Settings from running the user's real coding agents.
 

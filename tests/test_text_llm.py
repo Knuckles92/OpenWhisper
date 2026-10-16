@@ -1,4 +1,5 @@
 """Tests for named OpenAI-compatible text-LLM endpoint profiles."""
+import httpx
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +12,7 @@ from services.text_llm import (
     SIDECAR_API_KEY_ENV,
     consent_destination,
     create_openai_client,
+    credential_label,
     destination_is_remote,
     filter_openai_chat_models,
     get_profile,
@@ -75,7 +77,7 @@ class TestProfileCrud:
             "ollama": "http://localhost:11434/v1",
             "lm_studio": "http://127.0.0.1:1234/v1",
             "vllm": "http://127.0.0.1:8000/v1",
-            "llama_cpp": "http://127.0.0.1:8080/v1",
+            "llama_cpp": "http://127.0.0.1:9931/v1",
             "localai": "http://127.0.0.1:8080/v1",
         }
         for profile_id, url in expected.items():
@@ -96,19 +98,37 @@ class TestProfileCrud:
         )
         assert other.base_url == "http://127.0.0.1:1234/v1"
 
-    def test_save_local_server_url_normalizes_per_preset(self):
-        from services.text_llm import save_local_server_url
+    def test_save_local_server_normalizes_per_preset(self):
+        from services.text_llm import save_local_server
 
-        with patch("services.settings.settings_manager.save_setting") as save:
-            save_local_server_url("lm_studio", "http://localhost:1234/")
-            save.assert_called_once_with(
-                "lm_studio_base_url", "http://localhost:1234/v1"
-            )
+        with patch("services.settings.settings_manager.update_settings") as save:
+            save_local_server("lm_studio", "http://localhost:1234/")
+            save.assert_called_once_with({
+                "lm_studio_base_url": "http://localhost:1234/v1",
+                "lm_studio_api_key_env": "",
+            })
+            for url in ("http://user:secret@localhost", "http://localhost/?key=secret"):
+                with pytest.raises(ValueError):
+                    save_local_server("lm_studio", url)
             with pytest.raises(ValueError):
-                save_local_server_url("lm_studio", "http://user:secret@localhost")
+                save_local_server("lm_studio", "http://localhost:1234/v1", "not a name")
             with pytest.raises(ValueError):
-                save_local_server_url("openai", "http://localhost:1234/v1")
+                save_local_server("openai", "http://localhost:1234/v1")
             assert save.call_count == 1
+
+    def test_local_preset_can_require_an_api_key(self):
+        settings = {"llama_cpp_api_key_env": "LLAMA_SERVER_KEY"}
+        profile = get_profile("llama_cpp", settings)
+        assert profile.requires_api_key
+        assert credential_label(profile) == "llama.cpp API key"
+        with patch("services.text_llm.resolve_credential", return_value="sk-local"):
+            assert resolve_api_key(profile) == "sk-local"
+        with patch("services.text_llm.resolve_credential", return_value=None):
+            assert resolve_api_key(profile) is None
+        snapshot = snapshot_from_profile(profile)
+        assert snapshot.to_profile().api_key_env == "LLAMA_SERVER_KEY"
+        # A malformed saved variable name falls back to no key.
+        assert not get_profile("llama_cpp", {"llama_cpp_api_key_env": "bad name"}).requires_api_key
 
     def test_upsert_and_remove_custom_profile(self):
         settings = {}
@@ -209,8 +229,8 @@ class TestCredentialsAndCatalog:
         openrouter = get_profile(OPENROUTER_PROFILE_ID)
         custom = upsert_custom_profile(
             {},
-            name="Local",
-            base_url="http://127.0.0.1:1234/v1",
+            name="Gateway",
+            base_url="https://gateway.test/v1",
         )
 
         def _client_with(ids):
@@ -252,8 +272,8 @@ class TestCredentialsAndCatalog:
     def test_list_chat_models_propagates_catalog_failure(self):
         profile = upsert_custom_profile(
             {},
-            name="Local",
-            base_url="http://127.0.0.1:1234/v1",
+            name="Gateway",
+            base_url="https://gateway.test/v1",
         )
         with patch(
             "services.text_llm.create_openai_client",
@@ -261,6 +281,12 @@ class TestCredentialsAndCatalog:
         ):
             with pytest.raises(RuntimeError):
                 list_chat_models(profile)
+        local = upsert_custom_profile(
+            {}, name="Local", base_url="http://127.0.0.1:1234/v1",
+        )
+        # Nothing answers on loopback in tests.
+        with pytest.raises(httpx.ConnectError):
+            list_chat_models(local)
 
 
 class TestSnapshotsAndConsent:
@@ -271,6 +297,20 @@ class TestSnapshotsAndConsent:
         assert snapshot.profile_id == OPENAI_PROFILE_ID
         assert snapshot.kind == "openai"
         assert snapshot.base_url is None
+
+    def test_deleted_endpoint_uses_the_chosen_meeting_endpoint_not_a_cloud(self):
+        settings = {
+            "meeting_llm_provider": "ollama",
+            "meeting_llm_model": "llama3.2",
+        }
+        snapshot = snapshot_from_meeting(
+            {"agent_provider": "custom_deleted"}, settings,
+            fallback_provider="custom_deleted",
+        )
+        assert snapshot.profile_id == "ollama"
+        profile = profile_from_agent_config("custom_deleted", None, settings)
+        assert profile.id == "ollama"
+        assert profile.is_local
 
     def test_stored_snapshot_wins_over_current_settings(self):
         snapshot = snapshot_from_meeting(

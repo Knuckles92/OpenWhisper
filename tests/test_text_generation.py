@@ -12,7 +12,6 @@ from services.text_llm import (
     get_profile,
     list_profiles,
     provider_headers,
-    save_ollama_url,
     snapshot_from_mapping,
     snapshot_from_profile,
     upsert_custom_profile,
@@ -212,16 +211,6 @@ def test_openai_routes_migrate_stale_meeting_metadata(model, protocol, reasoning
     assert (spec.protocol, spec.reasoning) == (protocol, reasoning)
 
 
-def test_ollama_url_normalizes_and_never_stores_embedded_secrets():
-    with patch("services.settings.settings_manager.save_setting") as save:
-        save_ollama_url("http://localhost:11434/")
-        save.assert_called_once_with("ollama_base_url", "http://localhost:11434/v1")
-        for url in ("http://user:secret@localhost:11434", "http://localhost/?key=secret"):
-            with pytest.raises(ValueError):
-                save_ollama_url(url)
-        assert save.call_count == 1
-
-
 def test_empty_new_provider_model_does_not_reuse_previous_model():
     with patch("services.transcript_cleanup.create_openai_client"):
         cleaner = TranscriptCleanup("openai", "gpt-test", api_key="test")
@@ -364,25 +353,22 @@ def test_pi_endpoint_metadata_and_old_bundle_detection(provider, model, protocol
     agent._check_sidecar_text_support()
 
 
-def test_ollama_catalog_filters_embeddings_and_snapshots_capabilities():
+def test_ollama_catalog_filters_embeddings_and_snapshots_capabilities(local_server):
     from services.text_llm import list_chat_models
     profile = get_profile("ollama", {})
-    requests = []
     def handler(request):
-        requests.append(request)
         if request.url.path == "/v1/models":
             return httpx.Response(200, json={"data": [{"id": "test-embedding"}, {"id": "test-completion"}]})
         assert request.url.path == "/api/show"
         model = json.loads(request.content)["model"]
         return httpx.Response(200, json={"capabilities": ["embedding"] if "embedding" in model else ["completion"],
                                         "parameters": "num_ctx 8192"})
-    client = OpenAI(api_key="dummy", base_url=profile.base_url,
-                    http_client=httpx.Client(transport=httpx.MockTransport(handler)))
-    with patch("services.text_llm.create_openai_client", return_value=client):
-        assert list_chat_models(profile) == ["test-completion"]
+    requests = local_server(handler)
+    assert list_chat_models(profile) == ["test-completion"]
     saved = snapshot_from_profile(profile, "test-completion")
     assert saved.model_metadata["tools"] is False
     assert saved.model_metadata["context_window"] == 8192
+    assert saved.model_metadata["reasoning_format"] == ""
     assert len(requests) == 3
 
 
