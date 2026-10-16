@@ -63,8 +63,52 @@ class TestProfileCrud:
 
     def test_builtins_always_present(self):
         profiles = list_profiles({})
-        assert [p.id for p in profiles] == ["openai", "openrouter", "ollama", "groq", "opencode_go", "opencode_zen"]
+        assert [p.id for p in profiles] == [
+            "openai", "openrouter", "ollama", "lm_studio", "vllm",
+            "llama_cpp", "localai", "groq", "opencode_go", "opencode_zen",
+        ]
         assert all(p.builtin for p in profiles)
+
+    def test_local_server_presets_ship_their_standard_urls(self):
+        profiles = {p.id: p for p in list_profiles({})}
+        expected = {
+            "ollama": "http://localhost:11434/v1",
+            "lm_studio": "http://127.0.0.1:1234/v1",
+            "vllm": "http://127.0.0.1:8000/v1",
+            "llama_cpp": "http://127.0.0.1:8080/v1",
+            "localai": "http://127.0.0.1:8080/v1",
+        }
+        for profile_id, url in expected.items():
+            profile = profiles[profile_id]
+            assert profile.base_url == url
+            assert profile.is_local
+            assert not profile.requires_api_key
+            assert resolve_api_key(profile) == AUTH_FREE_API_KEY
+
+    def test_local_server_url_override_comes_from_its_own_setting(self):
+        profile = get_profile(
+            "vllm", {"vllm_base_url": "http://192.168.1.50:8000/v1/"}
+        )
+        assert profile.base_url == "http://192.168.1.50:8000/v1"
+        # One preset's setting never leaks into another preset.
+        other = get_profile(
+            "lm_studio", {"vllm_base_url": "http://192.168.1.50:8000/v1"}
+        )
+        assert other.base_url == "http://127.0.0.1:1234/v1"
+
+    def test_save_local_server_url_normalizes_per_preset(self):
+        from services.text_llm import save_local_server_url
+
+        with patch("services.settings.settings_manager.save_setting") as save:
+            save_local_server_url("lm_studio", "http://localhost:1234/")
+            save.assert_called_once_with(
+                "lm_studio_base_url", "http://localhost:1234/v1"
+            )
+            with pytest.raises(ValueError):
+                save_local_server_url("lm_studio", "http://user:secret@localhost")
+            with pytest.raises(ValueError):
+                save_local_server_url("openai", "http://localhost:1234/v1")
+            assert save.call_count == 1
 
     def test_upsert_and_remove_custom_profile(self):
         settings = {}

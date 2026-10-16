@@ -77,6 +77,7 @@ from services.settings import (
     settings_manager,
 )
 from services.text_llm import (
+    LOCAL_SERVER_PROFILE_IDS,
     get_profile,
     list_profiles,
     profile_display_name,
@@ -1042,27 +1043,30 @@ class ModelAssignments(QObject):
         from ui_qt.dialogs.text_endpoint_dialog import TextEndpointDialog
 
         profile = get_profile(profile_id, self._settings_snapshot())
-        if profile is not None and profile.id == "ollama":
+        if profile is not None and profile.id in LOCAL_SERVER_PROFILE_IDS:
             url, accepted = QInputDialog.getText(
-                self._host, "Ollama server",
+                self._host, f"{profile.name} server",
                 "API base URL (shared by cleanup and meetings):",
                 text=profile.base_url or "",
             )
             if not accepted:
                 return
-            from services.text_llm import save_ollama_url
+            from services.text_llm import save_local_server_url
             try:
-                save_ollama_url(url)
+                save_local_server_url(profile.id, url)
             except ValueError as exc:
                 self._say(str(exc))
                 return
-            self._invalidate_text_catalog("ollama")
+            self._invalidate_text_catalog(profile.id)
             self._refresh_picker_profiles()
             for picker in (self.text_model_picker, self.meeting_model_picker):
-                if picker.provider == "ollama":
-                    self._fetch_catalog_models("ollama", picker=picker, force=True)
+                if picker.provider == profile.id:
+                    self._fetch_catalog_models(
+                        profile.id, picker=picker, force=True
+                    )
             self._say(
-                "Ollama server updated. Active meetings keep their original server."
+                f"{profile.name} server updated. "
+                "Active meetings keep their original server."
             )
             return
         if profile is None or profile.builtin:

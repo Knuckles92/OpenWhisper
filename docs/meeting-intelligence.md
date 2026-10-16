@@ -1,6 +1,6 @@
 # AI cleanup and meeting intelligence
 
-Choose separate text models in **Settings → AI cleanup** and **Settings → Intelligence**. Supported providers include OpenAI, OpenRouter, Ollama, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. Ollama needs a separately managed server. Custom endpoints let you choose **Chat Completions** or **Responses**; existing custom endpoints keep Chat Completions. Supported modern OpenAI text models use Responses automatically.
+Choose separate text models in **Settings → AI cleanup** and **Settings → Intelligence**. Supported providers include OpenAI, OpenRouter, Ollama, LM Studio, vLLM, llama.cpp, LocalAI, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. The local servers ship preconfigured with their standard local addresses; each one needs its own separately managed server process, and Edit in the endpoint picker changes its address when it runs elsewhere. Custom endpoints let you choose **Chat Completions** or **Responses**; existing custom endpoints keep Chat Completions. Supported modern OpenAI text models use Responses automatically.
 
 Add credentials in **Settings → API keys**. Keys use the OS credential store. Environment variables or `.env` are a fallback: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENCODE_GO_API_KEY`, and `OPENCODE_ZEN_API_KEY`.
 

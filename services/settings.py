@@ -438,11 +438,18 @@ class TranscriptCleanupProvider:
     OPENROUTER: Final[str] = "openrouter"
 
     OLLAMA: Final[str] = "ollama"
+    LM_STUDIO: Final[str] = "lm_studio"
+    VLLM: Final[str] = "vllm"
+    LLAMA_CPP: Final[str] = "llama_cpp"
+    LOCALAI: Final[str] = "localai"
     GROQ: Final[str] = "groq"
     OPENCODE_GO: Final[str] = "opencode_go"
     OPENCODE_ZEN: Final[str] = "opencode_zen"
 
-    ALL: Final[Tuple[str, ...]] = (OPENAI, OPENROUTER, OLLAMA, GROQ, OPENCODE_GO, OPENCODE_ZEN)
+    ALL: Final[Tuple[str, ...]] = (
+        OPENAI, OPENROUTER, OLLAMA, LM_STUDIO, VLLM, LLAMA_CPP, LOCALAI,
+        GROQ, OPENCODE_GO, OPENCODE_ZEN,
+    )
 
 
 class TranscriptCleanupLevel:

@@ -63,7 +63,7 @@ class TextEndpointDialog(QDialog):
 
         intro = QLabel(
             "Servers that support OpenAI Chat Completions or Responses work "
-            "here — LM Studio, vLLM, Ollama's /v1 route, LiteLLM, or a "
+            "here — LiteLLM, a second LM Studio or vLLM server, or a "
             "private gateway. Name the variable that holds its API key, then "
             "enter the key under Settings → API keys (or export the variable). "
             "Leave it blank for a local server that does not authenticate."

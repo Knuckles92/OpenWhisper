@@ -222,8 +222,10 @@ QComboBox QAbstractItemView {
     padding: 4px;
 }
 
-/* Label styling */
+/* Label styling. Transparent so a label never paints QWidget's @bg over
+   whatever card, rail, or dialog surface it sits on. */
 QLabel {
+    background-color: transparent;
     color: @text;
     font-size: 14px;
 }
@@ -497,7 +499,6 @@ QLabel#textProviderUrl {
     border: none;
 }
 
-QPushButton#textEndpointAddButton,
 QPushButton#textEndpointEditButton,
 QPushButton#textEndpointDeleteButton {
     color: @slate-text-2;
@@ -508,7 +509,6 @@ QPushButton#textEndpointDeleteButton {
     font-size: 12px;
 }
 
-QPushButton#textEndpointAddButton:hover,
 QPushButton#textEndpointEditButton:hover,
 QPushButton#textEndpointDeleteButton:hover {
     color: @slate-text;

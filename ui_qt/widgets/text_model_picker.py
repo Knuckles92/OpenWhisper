@@ -8,6 +8,10 @@ Choosing a model assigns it: there is no separate confirm step. An Active badge
 inside the model combo marks the assignment, so the only place that reports what
 is in use is the value itself. A search fragment left in the editor is not a
 choice — it reverts when focus leaves without Enter or a pick from the list.
+
+The last endpoint entry, Custom…, is an action rather than a provider: picking
+it asks the host to add an OpenAI-compatible endpoint and restores the current
+selection, so backing out of that dialog changes nothing.
 """
 from typing import List, Optional
 
@@ -26,6 +30,7 @@ from services.settings import (
     default_transcript_cleanup_model,
 )
 from services.text_llm import (
+    LOCAL_SERVER_PROFILE_IDS,
     PROFILE_KIND_OPENROUTER,
     NEW_PROFILE_IDS,
     TextLLMProfile,
@@ -50,6 +55,10 @@ class TextModelPicker(QWidget):
     add_endpoint_requested = pyqtSignal()
     edit_endpoint_requested = pyqtSignal(str)
     delete_endpoint_requested = pyqtSignal(str)
+
+    # Combo data for the trailing "add a custom endpoint" action. It never
+    # names a profile, so it must stay outside the profile-id space.
+    _CUSTOM_OPTION = "__custom__"
 
     _SORT_OPTIONS = (
         ("A → Z", TranscriptCleanupModelSort.ALPHABETICAL),
@@ -125,12 +134,6 @@ class TextModelPicker(QWidget):
 
         manage_row = QHBoxLayout()
         manage_row.setSpacing(8)
-        self.add_endpoint_button = Button("Add endpoint")
-        self.add_endpoint_button.setObjectName("textEndpointAddButton")
-        self.add_endpoint_button.setToolTip(
-            "Add an OpenAI-compatible server such as LM Studio or vLLM"
-        )
-        self.add_endpoint_button.clicked.connect(self.add_endpoint_requested.emit)
         self.edit_endpoint_button = Button("Edit")
         self.edit_endpoint_button.setObjectName("textEndpointEditButton")
         self.edit_endpoint_button.clicked.connect(self._emit_edit)
@@ -138,7 +141,6 @@ class TextModelPicker(QWidget):
         self.delete_endpoint_button.setObjectName("textEndpointDeleteButton")
         self.delete_endpoint_button.clicked.connect(self._emit_delete)
         for button in (
-            self.add_endpoint_button,
             self.edit_endpoint_button,
             self.delete_endpoint_button,
         ):
@@ -271,11 +273,28 @@ class TextModelPicker(QWidget):
                 f"{profile.name} — {description}",
                 Qt.ItemDataRole.ToolTipRole,
             )
+        self.provider_combo.addItem(
+            design_icon("plus-blue.svg"), "Custom…", self._CUSTOM_OPTION
+        )
+        self.provider_combo.setItemData(
+            self.provider_combo.count() - 1,
+            "Custom — add another OpenAI-compatible server or gateway",
+            Qt.ItemDataRole.ToolTipRole,
+        )
         self.provider_combo.blockSignals(False)
 
     def _on_provider_combo_changed(self, _index: int) -> None:
         provider = self.provider_combo.currentData()
         if not provider:
+            return
+        if provider == self._CUSTOM_OPTION:
+            # Restore first, so cancelling the add dialog leaves the current
+            # endpoint selected; a saved endpoint is selected by the host.
+            index = self.provider_combo.findData(self.provider)
+            self.provider_combo.blockSignals(True)
+            self.provider_combo.setCurrentIndex(max(0, index))
+            self.provider_combo.blockSignals(False)
+            self.add_endpoint_requested.emit()
             return
         self.provider = provider
         self._render_provider()
@@ -298,6 +317,10 @@ class TextModelPicker(QWidget):
             )
         descriptions = {
             "ollama": "Connect to your Ollama server. Install and manage models in Ollama.",
+            "lm_studio": "Connect to LM Studio's local server. Load a model and start the server in LM Studio.",
+            "vllm": "Connect to a vLLM server started with vllm serve.",
+            "llama_cpp": "Connect to llama.cpp's llama-server.",
+            "localai": "Connect to your LocalAI server.",
             "groq": "Cloud text models served by Groq.",
             "opencode_go": "OpenCode Go subscription endpoint.",
             "opencode_zen": "OpenCode Zen usage-billed endpoint.",
@@ -332,7 +355,10 @@ class TextModelPicker(QWidget):
         show_sort = bool(profile and profile.kind == PROFILE_KIND_OPENROUTER)
         self.sort_label.setVisible(show_sort)
         self.sort_combo.setVisible(show_sort)
-        can_edit = bool(profile and (not profile.builtin or profile.id == "ollama"))
+        can_edit = bool(
+            profile
+            and (not profile.builtin or profile.id in LOCAL_SERVER_PROFILE_IDS)
+        )
         self.edit_endpoint_button.setEnabled(can_edit)
         self.delete_endpoint_button.setEnabled(bool(profile and not profile.builtin))
 
@@ -529,7 +555,9 @@ class TextModelPicker(QWidget):
 
     def _emit_edit(self) -> None:
         profile = self.current_profile()
-        if profile is not None and (not profile.builtin or profile.id == "ollama"):
+        if profile is not None and (
+            not profile.builtin or profile.id in LOCAL_SERVER_PROFILE_IDS
+        ):
             self.edit_endpoint_requested.emit(profile.id)
 
     def _emit_delete(self) -> None:

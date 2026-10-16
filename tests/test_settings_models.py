@@ -16,7 +16,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QEvent
-from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QDialog, QLabel, QVBoxLayout, QWidget
 
 from services import installed_agents
 from services.hf_access import CachedModelInfo
@@ -339,10 +339,80 @@ class TestTextModelPicker(_DialogTestCase):
             picker.provider_combo.itemText(i)
             for i in range(picker.provider_combo.count())
         ]
-        assert labels == ["OpenAI", "OpenRouter", "Ollama", "Groq", "OpenCode Go", "OpenCode Zen"]
+        assert labels == [
+            "OpenAI", "OpenRouter", "Ollama", "LM Studio", "vLLM",
+            "llama.cpp", "LocalAI", "Groq", "OpenCode Go", "OpenCode Zen",
+            "Custom…",
+        ]
+        assert not hasattr(picker, "add_endpoint_button")
         assert picker.provider == TranscriptCleanupProvider.OPENAI
         assert picker.model_combo.currentText() == "gpt-test"
         assert picker.model_combo.badge_text() == "Active"
+
+    def test_selecting_custom_asks_to_add_and_restores_the_current_endpoint(self):
+        """Custom… is an action, never a selectable provider.
+
+        Asking for a dialog must not switch the provider, fetch a catalog for
+        a pseudo-endpoint, or leave the combo showing "Custom…" when the
+        user backs out.
+        """
+        dialog, _values = self._make_text_dialog()
+        picker = dialog.text_model_picker
+        picker.add_endpoint_requested.disconnect()
+        add_requests = []
+        provider_changes = []
+        picker.add_endpoint_requested.connect(lambda: add_requests.append(1))
+        picker.provider_changed.connect(provider_changes.append)
+
+        picker.provider_combo.setCurrentIndex(
+            picker.provider_combo.findText("Custom…")
+        )
+
+        assert add_requests == [1]
+        assert provider_changes == []
+        assert picker.provider == TranscriptCleanupProvider.OPENAI
+        assert picker.provider_combo.currentText() == "OpenAI"
+
+    def test_adding_from_custom_selects_the_new_endpoint(self):
+        dialog, values = self._make_text_dialog()
+        picker = dialog.text_model_picker
+        fetches = []
+        dialog._fetch_catalog_models = lambda provider, picker, force=False: (
+            fetches.append(provider)
+        )
+
+        class _AcceptedDialog:
+            def __init__(self, profile=None, parent=None):
+                pass
+
+            def exec(self):
+                return QDialog.DialogCode.Accepted
+
+            def result_payload(self):
+                return {
+                    "name": "LM Studio",
+                    "base_url": "http://127.0.0.1:1234/v1",
+                    "api_key_env": "",
+                    "protocol": "chat",
+                }
+
+        with patch(
+            "ui_qt.dialogs.text_endpoint_dialog.TextEndpointDialog",
+            _AcceptedDialog,
+        ):
+            picker.provider_combo.setCurrentIndex(
+                picker.provider_combo.findText("Custom…")
+            )
+
+        profiles = values[SettingsKey.TEXT_LLM_PROFILES]
+        assert len(profiles) == 1
+        assert picker.provider == profiles[0]["id"]
+        assert picker.provider_combo.currentText() == "LM Studio"
+        labels = [
+            picker.provider_combo.itemText(i)
+            for i in range(picker.provider_combo.count())
+        ]
+        assert labels[-2:] == ["LM Studio", "Custom…"]
 
     def test_switching_provider_updates_the_same_model_picker(self):
         dialog, _values = self._make_text_dialog()
@@ -439,6 +509,44 @@ class TestTextModelPicker(_DialogTestCase):
         assert values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == "anthropic/claude-test"
         assert picker.model_combo.badge_text() == "Active"
         assert dialog.text_summary() == "OpenRouter · anthropic/claude-test"
+
+    def test_local_preset_shows_its_default_url_and_offers_edit_not_delete(self):
+        dialog, _values = self._make_text_dialog()
+        picker = dialog.text_model_picker
+
+        picker.provider_combo.setCurrentIndex(
+            picker.provider_combo.findData("vllm")
+        )
+
+        assert picker.provider == "vllm"
+        assert picker.provider_url.toolTip() == "http://127.0.0.1:8000/v1"
+        assert picker.provider_requirement.text() == "No API key required"
+        assert picker.edit_endpoint_button.isEnabled()
+        assert not picker.delete_endpoint_button.isEnabled()
+
+    def test_editing_a_local_preset_updates_only_its_server_url(self):
+        dialog, values = self._make_text_dialog()
+        picker = dialog.text_model_picker
+        dialog._fetch_catalog_models = lambda provider, picker, force=False: None
+        picker.set_provider("lm_studio")
+
+        class _UrlPrompt:
+            @staticmethod
+            def getText(_parent, _title, _label, text=""):
+                return "http://192.168.1.60:1234", True
+
+        def save_setting(key, value):
+            values[key] = value
+
+        with patch.object(dialog_module, "QInputDialog", _UrlPrompt), patch(
+            "services.settings.settings_manager.save_setting",
+            side_effect=save_setting,
+        ):
+            dialog._edit_text_endpoint("lm_studio")
+
+        assert values["lm_studio_base_url"] == "http://192.168.1.60:1234/v1"
+        assert picker.current_profile().base_url == "http://192.168.1.60:1234/v1"
+        assert "LM Studio server updated" in dialog.message_label.text()
 
     def test_custom_endpoint_appears_and_activation_persists(self):
         dialog, values = self._make_dialog(

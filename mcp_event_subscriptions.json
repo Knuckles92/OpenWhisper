@@ -1,41 +1,4 @@
 {
   "version": 1,
-  "subscriptions": [
-    {
-      "id": "sub_5fbd5b279e801f01174dacee5a403b12",
-      "name": "recording.started",
-      "arguments": {},
-      "url": "http://127.0.0.1:63311/openwhisper-events",
-      "refresh_before": "2026-10-11T22:13:00Z",
-      "created_at": "2026-10-11T21:53:00Z",
-      "origin": "local"
-    },
-    {
-      "id": "sub_67419e3891b1914158106d63c5d47696",
-      "name": "recording.stopped",
-      "arguments": {},
-      "url": "http://127.0.0.1:63311/openwhisper-events",
-      "refresh_before": "2026-10-11T22:13:00Z",
-      "created_at": "2026-10-11T21:53:00Z",
-      "origin": "local"
-    },
-    {
-      "id": "sub_b7c81762f1fdbc1ff7efc630ae8cacda",
-      "name": "transcription.completed",
-      "arguments": {},
-      "url": "http://127.0.0.1:63311/openwhisper-events",
-      "refresh_before": "2026-10-11T22:13:00Z",
-      "created_at": "2026-10-11T21:53:00Z",
-      "origin": "local"
-    },
-    {
-      "id": "sub_ec27555839876442ebbdf5cec71526a4",
-      "name": "action.ran",
-      "arguments": {},
-      "url": "http://127.0.0.1:63311/openwhisper-events",
-      "refresh_before": "2026-10-11T22:13:00Z",
-      "created_at": "2026-10-11T21:53:00Z",
-      "origin": "local"
-    }
-  ]
+  "subscriptions": []
 }

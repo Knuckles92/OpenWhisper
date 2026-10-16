@@ -28,6 +28,7 @@ CASES = [
     ("openai", "gpt-4.1-mini", "responses", "/v1/responses"),
     ("openai", "gpt-3.5-turbo", "chat", "/v1/chat/completions"),
     ("ollama", "llama3.2", "chat", "/v1/chat/completions"),
+    ("vllm", "qwen3-8b", "chat", "/v1/chat/completions"),
     ("groq", "llama-3.3-70b-versatile", "chat", "/openai/v1/chat/completions"),
     ("opencode_go", "glm-5.2", "chat", "/zen/go/v1/chat/completions"),
     ("opencode_go", "gpt-5.6-luna", "responses", "/zen/go/v1/responses"),
@@ -38,7 +39,7 @@ CASES = [
     ("opencode_zen", "gemini-3.1-pro", "google", "/zen/v1/models/gemini-3.1-pro:generateContent"),
 ]
 NEW_PROVIDER_CASES = [case for case in CASES if case[0] in (
-    "ollama", "groq", "opencode_go", "opencode_zen",
+    "ollama", "vllm", "groq", "opencode_go", "opencode_zen",
 )]
 TOOL = {"type": "function", "function": {
     "name": "search_context_files", "description": "Find evidence",
