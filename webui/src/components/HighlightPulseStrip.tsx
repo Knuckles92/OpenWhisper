@@ -191,13 +191,12 @@ function activityBuckets(segments: Segment[], participants: Participant[], durat
 }
 
 export default function HighlightPulseStrip({ pulses, onSelect, playbackAvailable = true,
-  highlightStatus = 'unknown', meetingStatus = 'ended', cloudEnabled = true, isHost = false,
+  highlightStatus = 'unknown', meetingStatus = 'ended', isHost = false,
   chapters = [], segments = [], participants = [], durationS, nowEdge = false }: {
   pulses: HighlightPulse[];
   playbackAvailable?: boolean;
   highlightStatus?: LiveHighlightsStatus;
   meetingStatus?: string;
-  cloudEnabled?: boolean;
   isHost?: boolean;
   onSelect: (pulse: HighlightPulse) => void;
   /** Topic chapters drawn as labelled bands along the ruler. */
@@ -280,9 +279,9 @@ export default function HighlightPulseStrip({ pulses, onSelect, playbackAvailabl
         : 'Live highlights are off. The host can enable them in Meeting settings.';
     } else if (highlightStatus === 'unknown') {
       message = 'Live highlight status is unavailable. Reconnect to check the current setting.';
-    } else if (!cloudEnabled) {
+    } else if (highlightStatus === 'needs_insights') {
       message = isHost
-        ? 'Live highlights are on, but AI insights are off. Turn on AI insights to resume highlights.'
+        ? 'Live highlights are on, but AI insights are off. Turn on AI insights, or run Fast judgments on this computer, to resume highlights.'
         : 'Live highlights are on, but the host has AI insights turned off.';
     } else if (highlightStatus === 'unavailable') {
       message = isHost

@@ -224,7 +224,7 @@ test('highlight status from hello and live updates replaces the empty message wi
     state:{status:'active', cloud_enabled:true, live_highlights_status:'off', live_highlights:[], participants:{}, cards:{}},
   }});
   const props = () => ({pulses:ui.state.live_highlights, highlightStatus:ui.state.live_highlights_status,
-    meetingStatus:ui.state.status, cloudEnabled:ui.state.cloud_enabled, isHost:true, onSelect:() => {}});
+    meetingStatus:ui.state.status, isHost:true, onSelect:() => {}});
   const container = await mount(PulseStrip, props());
   assert.match(container.querySelector('[role=status]').textContent, /Live highlights are off/);
   assert.doesNotMatch(container.textContent, /Click a moment/);
@@ -241,14 +241,14 @@ test('highlight status from hello and live updates replaces the empty message wi
   assert.match(container.textContent, /Live highlights are off/);
   assert.equal(container.querySelectorAll('.pulse-mark').length, 1);
   await update({type:'status', live_highlights_status:'on'});
-  await update({type:'patch', results:[{seq:2, effect:{entity:'cloud_enabled', enabled:false}}]});
+  await update({type:'status', live_highlights_status:'needs_insights'});
   assert.match(container.textContent, /Live highlights are on, but AI insights are off/);
 });
 
 for (const [props, expected] of [
   [{highlightStatus:'off', isHost:false}, /Live highlights are off.*host can enable/],
   [{highlightStatus:'unavailable', isHost:true}, /Live highlights are on, but unavailable.*Meeting settings/],
-  [{highlightStatus:'on', cloudEnabled:false, isHost:false}, /host has AI insights turned off/],
+  [{highlightStatus:'needs_insights', isHost:false}, /host has AI insights turned off/],
   [{highlightStatus:'on', meetingStatus:'paused'}, /Live highlights are on.*Resume the meeting/],
   [{}, /Live highlight status is unavailable/],
   [{highlightStatus:'on', meetingStatus:'ended'}, /No highlights were captured for this meeting/],

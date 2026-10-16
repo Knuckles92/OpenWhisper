@@ -69,7 +69,7 @@ export interface InsightReviewState {
   questions: ReviewQuestion[];
 }
 
-export type LiveHighlightsStatus = 'on' | 'off' | 'unavailable' | 'unknown';
+export type LiveHighlightsStatus = 'on' | 'off' | 'unavailable' | 'needs_insights' | 'unknown';
 
 export interface HighlightPulse {
   id: string;
