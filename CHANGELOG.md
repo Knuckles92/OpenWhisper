@@ -7,6 +7,28 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Added
+- **Local inference server presets** — the text-model picker for AI cleanup and meetings now includes LM Studio, vLLM, llama.cpp and LocalAI next to Ollama, each preset to its server's standard local address (llama.cpp uses llama-server's new default port, 9931). **Edit** changes the address or sets an optional API key variable for servers started with one. **Custom…** adds any other OpenAI-compatible endpoint.
+- **Local servers report their models** — the picker marks local servers that are running, tells LocalAI and llama.cpp apart on port 8080, and suggests a running local server when a cloud provider's key is missing. Each model's context window, tool support and thinking support come from the server itself, and embedding, speech and rerank models no longer appear in the chat model list.
+- **Self-hosted servers are asked about their models before the first request** — the first dictation cleanup, fast judgment or meeting after launch reads the model's real context and thinking control from Ollama, LM Studio, vLLM, llama.cpp, LocalAI or a custom server on this computer, and meetings record it.
+- **Thinking level for local thinking models** — Ollama, LM Studio, vLLM, llama.cpp and LocalAI models that can think now offer the Thinking level control, and Off turns thinking off where the server supports it.
+- **API transcription with Groq or your own speech server** — dictation and uploads on the API engine can use Groq or an OpenAI-compatible speech server you run (Speaches, LocalAI, vLLM, whisper.cpp started with `--inference-path /v1/audio/transcriptions`, or a custom address) in place of OpenAI. A new **Server** field sits beside the model in the main window and on the Voice model page, and models are listed from the server. OpenAI stays the default with your saved model. Self-hosted servers get a 10-minute request limit for first-request model loads and CPU transcription.
+- **Fast judgments on your own text model** — citation checks, live highlights, the questions radar, semantic history search, meeting voice commands, Route by voice and insight review can run on your AI insights or AI cleanup model. With a model on this computer they send nothing to a judging service, and live highlights, the questions radar, voice commands and semantic search work even in meetings with AI insights off (citation checks and insight review still work on AI insights' output). A hosted model, or one on another computer, still needs AI insights consent. Choose it under **Meeting Mode → Fast judgments → Judge**, where Test reports how long your model takes. On thinking models it asks for thinking off so the short answer isn't cut off, and a judgment that won't fit the context your server reports is skipped; Test says when the context is too small and how to raise it. Its probabilities are the model's own estimate, so the thresholds tuned on TypeSafe's model are a starting point rather than measured.
+- **Security policy, contributor guides and network page** — [SECURITY.md](SECURITY.md) explains how to report a vulnerability privately and how Host Mode, the dashboard, MCP, automation, downloads and updates are protected. [Network and privacy](docs/network-and-privacy.md) lists every connection OpenWhisper can make and which are on by default. The repository also has a code of conduct, a pull request template and a feature request form, the bug report asks for the speech engine and text provider, and CONTRIBUTING explains pull requests and how to add a provider or engine.
+
+### Changed
+- **Privacy wording names where audio and text go** — the API engine's tooltips, the Dictionary page, the Overview's privacy summary and dictation rules say which server receives audio, and say it stays on this computer for a local server. The AI insights consent dialog says when Fast judgments also send excerpts elsewhere.
+- **The meeting dashboard ships its own fonts** — DM Sans and Instrument Serif are bundled instead of loaded from Google Fonts each time the dashboard opens.
+- **The meeting agent no longer identifies itself as Pi** — the Pi agent core runs with its install telemetry off, so its OpenRouter requests carry only OpenWhisper's attribution.
+- **The update-check switch says what it contacts** — Settings explains that OpenWhisper asks GitHub's API for the latest release at most once a day when it starts, sending only the app version. The check is still on by default.
+- **The final highlight pass checks the newest minutes first.**
+
+### Fixed
+- **Local servers get requests they can serve** — LM Studio, vLLM, llama.cpp and LocalAI no longer receive a forced 16,384-token output limit (vLLM rejected it for models with a smaller context), and AI cleanup keeps temperature 0 on them, the same as a custom endpoint on the same server.
+- **Every server you run gets the two-minute model-load timeout** — a custom endpoint on this computer now waits as long as the presets do for its first cleanup.
+- **Meetings on a custom endpoint check that the model really calls tools** — including endpoints on this computer. The standard engine falls back to JSON answers, and Pi asks for a tool-capable model.
+- **Rerunning a meeting whose text endpoint was deleted stays off OpenRouter** — reruns and reports now use your chosen meeting endpoint instead of falling back to OpenRouter.
+
 ## [2.7.4] - 2026-10-14
 
 ### Changed

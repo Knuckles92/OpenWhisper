@@ -12,6 +12,14 @@ The native Windows and Linux distributions include, among other dependencies:
 - **Qt 6** — GNU Lesser General Public License v3 and other terms applicable to
   individual Qt modules. The redistributable build includes the wheel's
   license text at `_internal/third_party_licenses/Qt/LICENSE`.
+- **Tabler Icons** — MIT License, Copyright (c) 2020-2026 Paweł Kuna. The
+  icons and their license are in `ui_qt/assets/tabler`.
+- **React and React DOM** — MIT License, built into the meeting dashboard
+  bundle in `webui/dist`. Versions are pinned in `webui/package-lock.json`.
+- **DM Sans and Instrument Serif fonts** — SIL Open Font License 1.1,
+  Copyright 2014 The DM Sans Project Authors and Copyright 2022 The
+  Instrument Serif Project Authors. Bundled into the meeting dashboard from
+  the Fontsource packages; the license texts ship in `webui/dist/licenses`.
 
 Additional Python distributions retain their upstream license files under
 `_internal` (typically in `*.dist-info/licenses`, package-specific `LICENSE`
@@ -37,6 +45,17 @@ The additional Windows x64 backends are downloaded on demand; their model weight
 The Windows optional runtimes include a Python embedded distribution under the Python Software Foundation license. The Linux and macOS native runtimes use the app's Python interpreter. Qwen also includes PyTorch, Transformers, and their pinned wheel dependencies; Moonshine includes its native SDK and wheel dependencies. Package license files remain in the extracted runtime (including distribution metadata where supplied). NVIDIA CUDA libraries and other native dependencies retain their respective upstream terms. Model attribution identifies NVIDIA, Oruk AI, the Qwen team, and Moonshine AI above; OpenWhisper uses their inference artifacts without retraining them.
 
 Exact versions, source URLs, hashes, and artifact sizes are recorded in [`services/local_asr/models.json`](services/local_asr/models.json) and the `*runtime.json` manifests in that directory. Weight storage sizes and format choices are documented under [Speech models](README.md#speech-models).
+
+## Other components downloaded on demand
+
+These are installed from **Downloads → Components**, or fetched the first time a feature needs them. Each download is pinned to an exact URL, size, and SHA-256 in [`services/components.py`](services/components.py). OpenWhisper keeps only the files it runs from the Node.js and NVIDIA archives (the `node` executable and the CUDA libraries), so those archives' license files are not copied; their terms are at the links below.
+
+| Component | Artifact | Upstream | License |
+| --- | --- | --- | --- |
+| GPU Acceleration | NVIDIA cuBLAS, NVRTC, and CUDA runtime 12.9 libraries, from NVIDIA's PyPI wheels | [nvidia-cublas-cu12](https://pypi.org/project/nvidia-cublas-cu12/), [CUDA EULA](https://docs.nvidia.com/cuda/eula/index.html) | NVIDIA proprietary (CUDA Toolkit EULA); these libraries are listed as redistributable in its Attachment A |
+| Meeting Intelligence Agent | Node.js 22 LTS runtime | [Node.js](https://nodejs.org), [license](https://github.com/nodejs/node/blob/main/LICENSE) | MIT; bundled libraries such as OpenSSL, libuv, and ICU retain their own licenses |
+| Meeting Intelligence Agent | OpenWhisper's Pi sidecar (`bundle.cjs`), built from [`sidecar/`](sidecar/) | [Pi coding agent](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai`), [TypeBox](https://github.com/sinclairzx81/typebox) | Pi and TypeBox: MIT. The bundle also contains their npm dependencies under MIT, Apache-2.0, BSD-3-Clause, ISC, BlueOak-1.0.0, and 0BSD; exact versions are in [`sidecar/package-lock.json`](sidecar/package-lock.json) |
+| Speaker identification (Meeting Mode) | WeSpeaker ResNet34-LM ONNX model, trained on VoxCeleb2 | [Wespeaker/wespeaker-voxceleb-resnet34-LM](https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM), [WeSpeaker](https://github.com/wenet-e2e/wespeaker) | CC-BY-4.0; model by the WeSpeaker project |
 
 Built-in Whisper aliases use the exact Hugging Face commits in
 [`services/whisper_models.json`](services/whisper_models.json). Standard Whisper

@@ -302,7 +302,8 @@ class TestJevConnection(TypeSafeMessagingTestCase):
         self.store.set(OPENROUTER_ENV, OPENROUTER_KEY)
         dialog = self._open(**{SettingsKey.TYPESAFE_PROVIDER: "openrouter"})
         details = [button._detail.text() for button in dialog.typesafe_route_bar.buttons]
-        self.assertEqual(details, ["Direct · no key", "Same model · key set"])
+        # The text-model route names the AI insights model's provider.
+        self.assertEqual(details, ["Direct · no key", "Same model · key set", "OpenRouter · key set"])
         self.assertIn("No TypeSafe account needed",
                       dialog.typesafe_route_tile.description_label.text())
 
@@ -363,6 +364,56 @@ class TestJevConnection(TypeSafeMessagingTestCase):
         uses = dialog.api_key_uses_caption.text()
         self.assertIn("OpenRouter key", uses)
         self.assertNotIn("sensitive-dictation", uses)
+
+
+class TestTextModelJudge(TypeSafeMessagingTestCase):
+    """Fast judgments can run on a text model the user already set up."""
+
+    LOCAL = {SettingsKey.TYPESAFE_ENABLED: True, SettingsKey.TYPESAFE_PROVIDER: "text_model",
+             SettingsKey.MEETING_LLM_PROVIDER: "ollama", SettingsKey.MEETING_LLM_MODEL: "qwen3:4b"}
+
+    def test_a_local_model_needs_no_key_and_keeps_excerpts_here(self):
+        dialog = self._open(**self.LOCAL)
+        self.assertEqual(dialog.typesafe_route_bar.currentIndex(), 2)
+        self.assertTrue(dialog.typesafe_key_notice.isHidden())
+        self.assertEqual(dialog.typesafe_route_bar.buttons[2]._detail.text(), "Ollama · on this PC")
+        self.assertFalse(dialog.typesafe_text_model_bar.isHidden())
+        self.assertEqual(dialog.typesafe_text_model_bar.currentIndex(), 0)
+        self.assertEqual(dialog.typesafe_text_model_bar.buttons[0]._detail.text(), "Ollama · qwen3:4b")
+        self.assertIn("stay on this computer", dialog.typesafe_destination_label.text())
+        self.assertIn("answers on this computer", dialog.typesafe_route_tile.description_label.text())
+        self.assertEqual(dialog.rail.value(MEETING_FAST), "On · 1 · Ollama")
+
+    def test_jev_routes_hide_the_text_model_choice(self):
+        dialog = self._open(**{SettingsKey.TYPESAFE_ENABLED: True})
+        self.assertTrue(dialog.typesafe_text_model_bar.isHidden())
+        dialog.typesafe_route_bar.buttons[2].click()
+        self.assertEqual(self.manager.load_all_settings()[SettingsKey.TYPESAFE_PROVIDER], "text_model")
+        self.assertFalse(dialog.typesafe_text_model_bar.isHidden())
+
+    def test_choosing_the_hosted_cleanup_model_asks_for_its_key(self):
+        dialog = self._open(**self.LOCAL)
+        dialog.typesafe_text_model_bar.buttons[1].click()
+        self.assertEqual(self.manager.load_all_settings()[SettingsKey.TYPESAFE_TEXT_MODEL], "cleanup")
+        self.assertFalse(dialog.typesafe_key_notice.isHidden())
+        self.assertEqual(dialog.typesafe_key_notice.title_label.text(), "No OpenRouter API key")
+        # There is no other Jev route to offer for a text model.
+        self.assertTrue(dialog.typesafe_switch_route_btn.isHidden())
+        self.assertIn("only while AI insights are on", dialog.typesafe_destination_label.text())
+
+    def test_test_button_asks_the_local_model_without_a_key(self):
+        dialog = self._open(**self.LOCAL)
+        with patch.object(
+            settings_dialog_module, "typesafe_verify_key",
+            return_value=(True, "Ollama · qwen3:4b answered in 0.80 s."),
+        ) as verify, patch.object(settings_dialog_module.threading, "Thread") as thread:
+            dialog.typesafe_route_test_btn.click()
+            thread.call_args.kwargs["target"]()
+        key, = verify.call_args.args
+        self.assertEqual(key, "dummy")
+        self.assertEqual(verify.call_args.kwargs["route"].model, "qwen3:4b")
+        self.app.processEvents()
+        self.assertIn("answered in 0.80 s", dialog.typesafe_route_status.text())
 
 
 if __name__ == "__main__":

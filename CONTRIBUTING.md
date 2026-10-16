@@ -1,5 +1,17 @@
 # Contributing
 
+## Pull requests
+
+- Branch from `main` and keep each pull request to one topic. Split unrelated fixes, refactors, and dependency updates into their own pull requests.
+- For a larger feature or a new dependency, open an issue or a discussion first so the approach can be agreed before you build it.
+- Run the tests for the code you touched and `ruff check --select F .` (see [Validation](#validation)). UI changes need both interfaces checked (see [Desktop feature parity](#desktop-feature-parity)) and before/after screenshots in the pull request.
+- Add a user-visible change to `CHANGELOG.md` under `## [Unreleased]`, in the matching `### Added`, `### Changed`, or `### Fixed` group. Follow the existing entries: a bold summary, then what changed for the user and any limits. Internal refactors and test-only changes need no entry.
+- Update the README or the page in `docs/` that describes the behavior you changed.
+- Keep API keys, tokens, private hostnames, and transcript content out of code, tests, logs, and screenshots.
+- Report security problems privately; see [SECURITY.md](SECURITY.md).
+
+By contributing, you agree that your contribution is licensed under the project's [MIT License](LICENSE).
+
 ## Comments and Docstrings
 
 Code is the primary source of truth. Add prose only when it records information the code cannot express clearly.
@@ -123,6 +135,28 @@ Release pins should only change as part of a deliberate dependency update. Use
 `uv add` only for experiments: permanent dependency changes must also go through
 the requirements files and generator. uv itself is optional for source users and
 is not required by the release builders.
+
+## Adding a provider or engine
+
+Most new integrations are an OpenAI-compatible endpoint, so start from the closest existing one and follow the same files.
+
+**Text model providers** (AI cleanup, Command Mode, transforms, meeting intelligence, and Fast judgments on a text model):
+
+- Built-in endpoints are the `TextLLMProfile` entries returned by `builtin_profiles()` in `services/text_llm.py`. Anything a user can reach with a custom endpoint does not need one; add a built-in profile when the provider needs a known address, key name, headers, or model list.
+- **A local inference server** is one entry in `LOCAL_SERVER_DEFAULT_URLS` (its documented default address, ending in `/v1`) and `LOCAL_SERVER_NAMES`; `builtin_profiles()` builds the profile from them, and the user's address and optional key variable are saved as `<id>_base_url` and `<id>_api_key_env`. Being in `LOCAL_SERVER_PROFILE_IDS` makes the profile `self_hosted`: the 120 s cleanup timeout (`services/transcript_cleanup.py`) and model limits from what the server reports (`model_spec()` in `services/text_model_catalog.py`). Like every provider outside `HOSTED_CATALOG_PROFILE_IDS`, it keeps the caller's sampling options and gets no forced `max_tokens` (`generate()` in `services/text_generation.py`).
+- Teach `services/local_text_servers.py` about the server: a handler in `_DESCRIBE` that reads its model routes into `TextModelSpec`s (context size, tools, thinking, and `thinking_levels` for the `reasoning_effort` values it accepts; return `None` for embedding, speech and rerank models so they stay out of the chat list), and a check in `_identify` using a route that needs no key, so **Running** detection and the "answering at another address" hint work. Write down the upstream routes you relied on in the module docstring, with the date you checked them.
+- **A hosted provider** names the environment variable that holds its key (`api_key_env`), which **Settings → API keys** stores in the OS credential store. If its request shape is reviewed per model, add it to `HOSTED_CATALOG_PROFILE_IDS` and its models to `_ROUTES` in `services/text_model_catalog.py`; the catalog then decides sampling, reasoning and the output limit. Session headers go in `provider_headers()`.
+- Add the provider ID to `TranscriptCleanupProvider` (and its `ALL`) in `services/settings.py` so saved choices validate, give it a description in `_DESCRIPTIONS` in `ui_qt/widgets/text_model_picker.py`, and check the meeting agents in `meeting/agent/` (every endpoint except OpenAI and OpenRouter must pass a real tool-call probe; see `TextLLMProfile.refuses_unsupported_tools`). Endpoint settings live in `ui_qt/dialogs/settings_models.py` and `ui_qt/dialogs/text_endpoint_dialog.py`.
+- Fast judgments need nothing extra: `text_model_route()` in `services/typesafe.py` builds a judge from whichever profile the AI insights or AI cleanup model uses, and `services/text_judge.py` asks it the questions. Whether a judge counts as on this computer, and so skips the meeting's AI insights consent, comes only from `TextLLMProfile.is_local` (a loopback address); don't add another rule for it. A judge that is not a chat model would be a new `JudgeRoute` kind, a `TypeSafeProvider` value, and a `_RouteJudge` subclass handled in `route_from_settings`, `judge_from_settings` and `verify_key`.
+- Cover it in `tests/test_text_llm.py`, `tests/test_local_text_servers.py`, `tests/test_settings_models.py`, `tests/test_text_generation.py`, and for judging behavior `tests/test_text_judge.py`.
+
+**Speech engines:**
+
+- Engines that run on this computer (Whisper, Parakeet, Nemotron, Qwen3-ASR, Moonshine) follow [Local speech backends and models](#local-speech-backends-and-models) below: the family catalog in `services/local_asr/catalog.py`, pinned weights in `services/local_asr/models.json`, runtimes as components (`services/components.py`, `services/component_catalog.py`), and the worker in `transcriber/optional_backend.py`.
+- **A speech server with an OpenAI-compatible `/audio/transcriptions` route** is a preset, not a new backend: one `_endpoint(...)` entry in `ENDPOINTS` in `services/speech_endpoints.py`, with its default address, key variable (empty for none), default model, `hosted=True` for a service the user cannot re-address, and where its model list is (`models_path`, or `known_models` when it has no usable catalog). Set `auto_language` if it assumes one language when `language` is absent. Request differences (hint fields, `response_format`) belong in `transcription_hints()` and `response_format()` in `transcriber/openai_backend.py`. Presets the user runs get the 600 s upload timeout. Uploads run in the worker process in `services/isolated_worker.py`, so a stalled connection can be killed. Cover it in `tests/test_speech_endpoints.py`, `tests/test_openai_backend.py`, and `tests/test_speech_server_controls.py`.
+- Other network speech engines implement the backend interface in `transcriber/base.py`; `transcriber/openai_backend.py` and `transcriber/remote_backend.py` (a paired computer) are the existing examples. Engine IDs and labels are in `config.py`.
+
+For any new network destination, add it to [Network and privacy](docs/network-and-privacy.md), keep it off until the user chooses it, and add it to the bug report form in `.github/ISSUE_TEMPLATE/bug_report.yml`. Privacy copy reads the destination from the profile or endpoint (`consent_destination()`, `speech_endpoints.destination()`), so a correct address is enough for the app to say where text and audio go.
 
 ## Local speech backends and models
 

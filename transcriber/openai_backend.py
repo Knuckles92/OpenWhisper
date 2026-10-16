@@ -1,20 +1,13 @@
-"""OpenAI API transcription backend."""
+"""API transcription backend: OpenAI or another OpenAI-compatible server."""
 import logging
 import threading
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
-from typing import TYPE_CHECKING, Optional, List
+from typing import Optional, List, Tuple
 from .base import TranscriptionBackend
 from config import config
-from services import openai_retirement
-from services.credentials import resolve_credential
-from services.settings import (
-    resolve_api_transcription_model,
-    serving_api_model,
-    settings_manager,
-)
-
-if TYPE_CHECKING:
-    from openai import OpenAI
+from services import openai_retirement, speech_endpoints
+from services.settings import serving_api_model, settings_manager
+from services.speech_endpoints import SpeechEndpoint
 
 logger = logging.getLogger(__name__)
 
@@ -29,90 +22,129 @@ CHUNK_UPLOAD_CONCURRENCY = 3
 _HINT_REJECTIONS = frozenset({400, 422})
 
 
-def transcription_hints(api_model: str, recognition) -> dict:
-    """The hint fields ``api_model`` takes for a RecognitionContext.
+def transcription_hints(endpoint: SpeechEndpoint, api_model: str, recognition) -> dict:
+    """The hint fields ``api_model`` on ``endpoint`` takes for a RecognitionContext.
 
-    gpt-transcribe takes ``keywords`` and ``languages``; the older models
-    take a ``prompt``, read as preceding text, and one ``language``.
+    OpenAI's gpt-transcribe takes ``keywords`` and ``languages``; every other
+    model, OpenAI's older ones and other servers' Whisper models alike, takes
+    a ``prompt``, read as preceding text, and one ``language``. A server that
+    assumes a language without the field is asked to detect it.
     """
     from services.recognition_context import keywords, language_code, vocabulary_prompt
 
-    if not recognition:
-        return {}
+    phrases = recognition.phrases if recognition else ()
+    language = language_code(recognition.language) if recognition else ""
     hints = {}
-    language = language_code(recognition.language)
-    if api_model == "gpt-transcribe":
-        words = keywords(recognition.phrases)
+    if endpoint.is_openai and api_model == "gpt-transcribe":
+        words = keywords(phrases)
         if words:
             hints["keywords"] = words
         if language:
             hints["languages"] = [language]
     else:
-        prompt = vocabulary_prompt(recognition.phrases)
+        prompt = vocabulary_prompt(phrases)
         if prompt:
             hints["prompt"] = prompt
+        language = language or endpoint.auto_language
         if language:
             hints["language"] = language
     return hints
 
 
-class OpenAIBackend(TranscriptionBackend):
-    """OpenAI API transcription backend."""
+def response_format(endpoint: SpeechEndpoint, api_model: str) -> str:
+    """OpenAI's older models answer in plain text, as they always have here.
 
-    #: Whether ``client`` still has to be built for ``api_key``. The
-    #: controller creates this backend at startup in every session, and the
-    #: openai SDK takes most of a second to import, so the client waits for
-    #: the first request or for ``prepare_client`` on a worker.
-    _client_pending = False
+    Everything else gets JSON, the API's default and so the one format every
+    compatible server takes (LocalAI, for one, rejects "text").
+    """
+    return "text" if endpoint.is_openai and api_model != "gpt-transcribe" else "json"
+
+
+class OpenAIBackend(TranscriptionBackend):
+    """Uploads audio to the selected OpenAI-compatible transcription server.
+
+    ``model_type`` "api" follows the saved server and model; an OpenAI model
+    id pins this backend to that OpenAI model.
+
+    The client is built for one connection (address, key, timeout) on the
+    first request after it changes, so a saved key or a newly chosen server
+    reaches the next request without anyone pushing it here. Building waits
+    for a request (or ``prepare_client`` on a worker) because the controller
+    creates this backend at startup in every session.
+    """
+
     supports_recognition = True
 
-    def __init__(self, model_type: str = "api", api_key: str = None):
+    def __init__(self, model_type: str = "api"):
         super().__init__()
         self.model_type = model_type
-        self.api_key = api_key or self._get_api_key()
-        self.client: Optional[OpenAI] = None
+        self.client = None
+        #: The connection ``client`` was built for, and one that failed to build.
+        self._client_connection: Optional[tuple] = None
+        self._failed_connection: Optional[tuple] = None
         self._client_lock = threading.Lock()
-        self._client_pending = True
 
-    def _get_api_key(self) -> Optional[str]:
-        return resolve_credential("OPENAI_API_KEY")
-
-    def prepare_client(self) -> None:
-        """Build the client if it is still pending. Safe from any thread."""
-        if not self._client_pending:
-            return
-        with self._client_lock:
-            if self._client_pending:
-                self._initialize_client()
-                self._client_pending = False
-
-    def _initialize_client(self):
-        if self.api_key:
-            try:
-                from services.isolated import IsolatedOpenAIClient
-
-                self.client = IsolatedOpenAIClient(api_key=self.api_key)
-                logger.info("OpenAI client initialized successfully")
-            except Exception as e:
-                logger.error(f"Failed to initialize OpenAI client: {e}")
-                self.client = None
-        else:
-            logger.warning("No OpenAI API key found")
-            self.client = None
-
-    def _get_api_model_name(self) -> str:
+    def _target(self) -> Tuple[SpeechEndpoint, str]:
+        """The endpoint and model the next request goes to."""
         if self.model_type == "api":
-            return resolve_api_transcription_model(settings_manager.load_all_settings())
+            settings = settings_manager.load_all_settings()
+            endpoint = speech_endpoints.selected_endpoint(settings)
+            return endpoint, speech_endpoints.endpoint_model(endpoint, settings)
         if self.model_type in config.API_MODEL_CHOICES:
-            return serving_api_model(self.model_type)
+            return (
+                speech_endpoints.configured_endpoint(speech_endpoints.OPENAI_ENDPOINT_ID),
+                serving_api_model(self.model_type),
+            )
         raise ValueError(f"Unknown API transcription model: {self.model_type}")
 
-    def _transcribe_file(self, audio_path: str, api_model: str, recognition=None) -> str:
+    @staticmethod
+    def _connection(endpoint: SpeechEndpoint) -> tuple:
+        return (endpoint.base_url, speech_endpoints.api_key(endpoint), endpoint.timeout_s)
+
+    def _build_client(self, connection: tuple):
+        from services.isolated import IsolatedOpenAIClient
+
+        base_url, api_key, timeout_s = connection
+        return IsolatedOpenAIClient(api_key=api_key, base_url=base_url, read_timeout=timeout_s)
+
+    def prepare_client(self, endpoint: Optional[SpeechEndpoint] = None) -> None:
+        """Build the client for ``endpoint`` (default: the selected one) if it isn't.
+
+        Safe from any thread.
+        """
+        endpoint = endpoint or self._target()[0]
+        connection = self._connection(endpoint)
+        with self._client_lock:
+            if self.client is not None and self._client_connection == connection:
+                return
+            if self.client is not None:
+                self.client.close()
+            self.client = None
+            self._client_connection = None
+            if connection[1] is None:
+                logger.warning("No API key for %s transcription", endpoint.name)
+                return
+            try:
+                self.client = self._build_client(connection)
+                self._client_connection = connection
+                self._failed_connection = None
+                logger.info("%s transcription client initialized", endpoint.name)
+            except Exception as e:
+                logger.error(f"Failed to initialize the {endpoint.name} client: {e}")
+                self._failed_connection = connection
+
+    def _get_api_model_name(self) -> str:
+        return self._target()[1]
+
+    def _transcribe_file(
+        self, audio_path: str, endpoint: SpeechEndpoint, api_model: str, recognition=None,
+    ) -> str:
         try:
-            return self._request_hinted(audio_path, api_model, recognition)
+            return self._request_hinted(audio_path, endpoint, api_model, recognition)
         except Exception as exc:
             if (
-                api_model not in openai_retirement.RETIRING_TRANSCRIPTION_MODELS
+                not endpoint.is_openai
+                or api_model not in openai_retirement.RETIRING_TRANSCRIPTION_MODELS
                 or not openai_retirement.is_model_gone_error(exc)
             ):
                 raise
@@ -123,39 +155,46 @@ class OpenAIBackend(TranscriptionBackend):
                 "OpenAI no longer serves %s; retrying with %s",
                 api_model, config.DEFAULT_API_MODEL,
             )
-            return self._request_hinted(audio_path, config.DEFAULT_API_MODEL, recognition)
+            return self._request_hinted(
+                audio_path, endpoint, config.DEFAULT_API_MODEL, recognition,
+            )
 
-    def _request_hinted(self, audio_path: str, api_model: str, recognition) -> str:
+    def _request_hinted(
+        self, audio_path: str, endpoint: SpeechEndpoint, api_model: str, recognition,
+    ) -> str:
         """One request with ``recognition``'s hints, then once more without them.
 
-        Hints must never cost a dictation, and OpenAI documents no limits
-        for them.
+        Hints must never cost a dictation, and neither OpenAI nor the
+        compatible servers document limits for them.
         """
-        hints = transcription_hints(api_model, recognition)
+        hints = transcription_hints(endpoint, api_model, recognition)
         if not hints:
-            return self._request_transcript(audio_path, api_model)
+            return self._request_transcript(audio_path, endpoint, api_model)
         try:
-            return self._request_transcript(audio_path, api_model, **hints)
+            return self._request_transcript(audio_path, endpoint, api_model, **hints)
         except Exception as exc:
             status = getattr(exc, "status_code", None)
             if status not in _HINT_REJECTIONS or openai_retirement.is_model_gone_error(exc):
                 raise
             logger.warning(
-                "OpenAI rejected a request with hints (HTTP %s: %d keywords, "
+                "%s rejected a request with hints (HTTP %s: %d keywords, "
                 "%d prompt characters, language %s); retrying without them",
-                status, len(hints.get("keywords", ())), len(hints.get("prompt", "")),
+                endpoint.name, status, len(hints.get("keywords", ())),
+                len(hints.get("prompt", "")),
                 "set" if "language" in hints or "languages" in hints else "unset",
             )
-            return self._request_transcript(audio_path, api_model)
+            return self._request_transcript(audio_path, endpoint, api_model)
 
-    def _request_transcript(self, audio_path: str, api_model: str, **hints) -> str:
+    def _request_transcript(
+        self, audio_path: str, endpoint: SpeechEndpoint, api_model: str, **hints,
+    ) -> str:
         if self.should_cancel:
             raise RuntimeError("Transcription canceled")
         with open(audio_path, "rb") as audio_file:
             response = self.client.audio.transcriptions.create(
                 model=api_model,
                 file=audio_file,
-                response_format="json" if api_model == "gpt-transcribe" else "text",
+                response_format=response_format(endpoint, api_model),
                 **hints,
             )
         return (response if isinstance(response, str) else response.text).strip()
@@ -176,21 +215,24 @@ class OpenAIBackend(TranscriptionBackend):
         try:
             self.is_transcribing = True
             self.reset_cancel_flag()
-            self.prepare_client()
+            endpoint, api_model = self._target()
+            self.prepare_client(endpoint)
             if self.should_cancel:
                 raise RuntimeError("Transcription canceled")
-            if not self.is_available():
-                raise Exception("OpenAI API is not available (no API key or client initialization failed)")
+            if self.client is None:
+                raise Exception(
+                    f"{endpoint.name} transcription is not available "
+                    "(no API key or client initialization failed)"
+                )
 
-            api_model = self._get_api_model_name()
-            logger.info(f"Using OpenAI API model: {api_model}")
+            logger.info(f"Using {endpoint.name} model: {api_model}")
             # Without a context the helpers are called exactly as before.
             extra = {"recognition": recognition} if recognition else {}
             if self.large_file_size_mb(audio_path) is not None:
-                transcript = self._transcribe_split(audio_path, api_model, **extra)
+                transcript = self._transcribe_split(audio_path, endpoint, api_model, **extra)
             else:
-                logger.info("Sending audio file to OpenAI API...")
-                transcript = self._transcribe_file(audio_path, api_model, **extra)
+                logger.info(f"Sending audio file to {endpoint.name}...")
+                transcript = self._transcribe_file(audio_path, endpoint, api_model, **extra)
 
             if self.should_cancel:
                 logger.info("Transcription canceled by user")
@@ -201,7 +243,7 @@ class OpenAIBackend(TranscriptionBackend):
             return transcript
 
         except Exception as e:
-            logger.error(f"OpenAI API transcription failed: {e}")
+            logger.error(f"API transcription failed: {e}")
             raise
         finally:
             self.is_transcribing = False
@@ -211,32 +253,26 @@ class OpenAIBackend(TranscriptionBackend):
         return "model"
 
     def is_available(self) -> bool:
-        """Return whether there is a key and a client, built or still pending.
+        """Return whether the selected server has its key and a client that built.
 
         Recording start asks this on the UI thread, so it never builds the
         client itself; the request does, on its worker.
         """
-        return self.api_key is not None and (
-            self.client is not None or self._client_pending
-        )
+        connection = self._connection(self._target()[0])
+        return connection[1] is not None and connection != self._failed_connection
 
-    def update_api_key(self, api_key: Optional[str]):
-        """Replace the API key; the next request rebuilds the client."""
-        with self._client_lock:
-            if self.client is not None:
-                self.client.close()
-                self.client = None
-            self.api_key = api_key
-            self._client_pending = True
-
-    def _transcribe_one_chunk(self, chunk_file: str, api_model: str, **extra) -> str:
+    def _transcribe_one_chunk(
+        self, chunk_file: str, endpoint: SpeechEndpoint, api_model: str, **extra,
+    ) -> str:
         """Upload one chunk. Raises if the job was canceled before it started."""
         if self.should_cancel:
             raise Exception("Transcription canceled")
 
-        return self._transcribe_file(chunk_file, api_model, **extra)
+        return self._transcribe_file(chunk_file, endpoint, api_model, **extra)
 
-    def _transcribe_split(self, audio_path: str, api_model: str, **extra) -> str:
+    def _transcribe_split(
+        self, audio_path: str, endpoint: SpeechEndpoint, api_model: str, **extra,
+    ) -> str:
         """Split a file over the upload limit and upload the chunks.
 
         The chunks are temp files shared through ``audio_processor``, so they
@@ -255,14 +291,16 @@ class OpenAIBackend(TranscriptionBackend):
             self._report_progress(
                 f"Transcribing {len(chunk_files)} chunks...", transcribing=True
             )
-            return self._transcribe_chunks(chunk_files, api_model, **extra)
+            return self._transcribe_chunks(chunk_files, endpoint, api_model, **extra)
         finally:
             try:
                 audio_processor.cleanup_temp_files()
             except Exception as cleanup_error:
                 logger.warning(f"Failed to cleanup temp files: {cleanup_error}")
 
-    def _transcribe_chunks(self, chunk_files: List[str], api_model: str, **extra) -> str:
+    def _transcribe_chunks(
+        self, chunk_files: List[str], endpoint: SpeechEndpoint, api_model: str, **extra,
+    ) -> str:
         """Upload chunks concurrently and combine their text in order.
 
         Each chunk is an independent upload with no shared state, and the wall
@@ -279,13 +317,13 @@ class OpenAIBackend(TranscriptionBackend):
         """
         total = len(chunk_files)
         logger.info(
-            f"Starting chunked transcription with OpenAI API model: {api_model} "
+            f"Starting chunked transcription with {endpoint.name} model: {api_model} "
             f"({total} chunks, up to {CHUNK_UPLOAD_CONCURRENCY} at a time)"
         )
 
         if total <= 1:
             transcriptions = [
-                self._transcribe_one_chunk(chunk, api_model, **extra)
+                self._transcribe_one_chunk(chunk, endpoint, api_model, **extra)
                 for chunk in chunk_files
             ]
         else:
@@ -293,8 +331,10 @@ class OpenAIBackend(TranscriptionBackend):
             with ThreadPoolExecutor(
                 max_workers=workers, thread_name_prefix="chunk-upload"
             ) as pool:
-                futures = [pool.submit(self._transcribe_one_chunk, chunk, api_model, **extra)
-                           for chunk in chunk_files]
+                futures = [
+                    pool.submit(self._transcribe_one_chunk, chunk, endpoint, api_model, **extra)
+                    for chunk in chunk_files
+                ]
                 done, _ = wait(futures, return_when=FIRST_EXCEPTION)
                 failed = next((future for future in futures
                                if future in done and future.exception() is not None), None)
@@ -312,21 +352,21 @@ class OpenAIBackend(TranscriptionBackend):
         return audio_processor.combine_transcriptions(transcriptions)
 
     def cleanup(self):
-        """Clean up OpenAI client resources."""
+        """Close the client; the next request builds a fresh one."""
         try:
-            if self.client is not None:
-                logger.info(f"Cleaning up OpenAI backend ({self.model_type})...")
+            with self._client_lock:
+                client, self.client = self.client, None
+                self._client_connection = None
+            if client is not None:
+                logger.info(f"Cleaning up API backend ({self.model_type})...")
 
                 self.should_cancel = True
 
-                self.client.close()
-                self.client = None
+                client.close()
 
-                self._client_pending = True
-
-                logger.info(f"OpenAI backend ({self.model_type}) cleaned up successfully")
+                logger.info(f"API backend ({self.model_type}) cleaned up successfully")
         except Exception as e:
-            logger.debug(f"Error during OpenAI backend cleanup: {e}")
+            logger.debug(f"Error during API backend cleanup: {e}")
 
     def cancel_transcription(self):
         super().cancel_transcription()
@@ -336,4 +376,5 @@ class OpenAIBackend(TranscriptionBackend):
 
     @property
     def name(self) -> str:
-        return f"OpenAI ({self._get_api_model_name()})"
+        endpoint, api_model = self._target()
+        return f"{endpoint.name} ({api_model})"

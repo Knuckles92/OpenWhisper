@@ -1,4 +1,9 @@
-"""System-owned advisory state operations for fast meeting judgments."""
+"""System-owned advisory state operations for fast meeting judgments.
+
+Consent is not checked here: whether a judgment needed the meeting's AI
+insights switch depends on where its text went, which only the worker that
+asked knows. Workers recheck it under the state lock before publishing.
+"""
 from copy import deepcopy
 
 from meeting.highlights import PULSE_LABELS
@@ -10,7 +15,7 @@ def publish_highlights(state, op, ctx):
     if ctx.actor_type != "system" or ctx.actor_id != "live-signals":
         return OpResult(False, op, reason="system_only")
     statuses = ("ending", "ended") if op.get("final") is True else ("active", "paused")
-    if not state.cloud_enabled or state.status not in statuses:
+    if state.status not in statuses:
         return OpResult(False, op, reason="inactive")
     pulses = op.get("pulses", [])
     if not isinstance(pulses, list) or len(pulses) > len(PULSE_LABELS):
@@ -39,7 +44,7 @@ def citation_check(state, op, ctx):
     item = state.find_item(op.get("id", ""))
     if not item or item.status == "removed":
         return OpResult(False, op, reason="unknown_item")
-    if not state.cloud_enabled or item.revision != op.get("revision"):
+    if item.revision != op.get("revision"):
         return OpResult(False, op, reason="stale_check")
     item.citation_check = deepcopy(op.get("check") or {})
     # No revision increment: this is an annotation, not an edit of the claim.
@@ -49,7 +54,7 @@ def citation_check(state, op, ctx):
 def voice_feedback(state, op, ctx):
     if ctx.actor_type != "system" or ctx.actor_id != "voice_command":
         return OpResult(False, op, reason="system_only")
-    if not state.cloud_enabled or state.status not in ("active", "paused"):
+    if state.status not in ("active", "paused"):
         return OpResult(False, op, reason="inactive")
     state.voice_feedback = {"message": str(op.get("message", ""))[:500], "at": now_iso()}
     return OpResult(True, op, effect={"entity": "voice_feedback", "feedback": dict(state.voice_feedback)})

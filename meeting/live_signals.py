@@ -232,18 +232,21 @@ class LiveSignals:
 
         Use a fresh worker after live workers and transcript edits stop.
         This runs independently of the notes agent and never reopens questions.
+        Newest minutes go first: the last, partial minute was never checked
+        live, and a slow judge may only get through a few within the budget.
         """
         if self.closed or not self.allowed() or not resolve_typesafe_feature_enabled("highlights"):
             return
         deadline = time.monotonic() + timeout_s
         rows = self.repository.get_segments(self.store.meeting_id)
-        for minute in sorted({int(r["start_s"] // 60) for r in rows if r["start_s"] >= 0}):
+        for minute in sorted({int(r["start_s"] // 60) for r in rows if r["start_s"] >= 0}, reverse=True):
             remaining = deadline - time.monotonic()
             if remaining <= 0 or self.closed or not self.allowed():
                 logger.info("Final highlight catch-up stopped meeting_id=%s minute=%s remaining_s=%.2f",
                             self.store.meeting_id, minute, max(0.0, remaining))
                 break
-            self._run(minute, final=True, timeout_s=min(4.0, remaining))
+            # The judge caps this at its own per-judgment budget.
+            self._run(minute, final=True, timeout_s=remaining)
 
     def shutdown(self):
         with self.lock:

@@ -11,6 +11,7 @@ from openai import OpenAI
 
 from meeting.agent import openrouter_direct as direct
 from services.text_generation import ToolCall
+from services.text_llm import builtin_profile
 
 
 OP = {"op": "set_topic", "text": "Late budget", "evidence": ["sg_1"]}
@@ -64,7 +65,7 @@ def test_capability_probe_has_a_wall_deadline(monkeypatch):
     monkeypatch.setattr(direct, "_PROBE_TIMEOUT_S", .1)
     monkeypatch.setattr(direct, "generate", lambda *a, **k: release.wait(5))
     agent = direct.DirectOpenRouterAgent()
-    agent._profile = SimpleNamespace(kind="openrouter")
+    agent._profile = builtin_profile("openrouter")
     started = time.monotonic()
     try:
         agent._probe_tool_support(MagicMock())

@@ -22,7 +22,6 @@ from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QMessageBox,
     QVBoxLayout,
@@ -56,10 +55,7 @@ from services.settings import (
     TranscriptCleanupModelSort,
     TranscriptCleanupProvider,
     TranscriptCleanupReasoning,
-    api_model_choices,
-    api_model_label,
     default_transcript_cleanup_model,
-    resolve_api_transcription_model,
     resolve_meeting_agent_core,
     resolve_meeting_agent_model,
     resolve_meeting_agent_models,
@@ -77,11 +73,13 @@ from services.settings import (
     settings_manager,
 )
 from services.text_llm import (
+    LOCAL_SERVER_DEFAULT_URLS,
     LOCAL_SERVER_PROFILE_IDS,
     get_profile,
     list_profiles,
     profile_display_name,
     remove_custom_profile,
+    save_local_server,
     upsert_custom_profile,
 )
 from ui_qt.dialogs.settings_destinations import (
@@ -114,7 +112,10 @@ logger = logging.getLogger(__name__)
 
 _ENGINE_CAPTIONS = {
     "local_whisper": "Local faster-whisper on this computer.",
-    "api": "OpenAI transcription. Enter your API key in Settings → API keys.",
+    "api": (
+        "OpenAI, Groq, or an OpenAI-compatible speech server you run. Hosted "
+        "services need an API key in Settings → API keys."
+    ),
     "remote": (
         "Another computer's engine, over your network. Pair with it in "
         "Settings → Remote engine."
@@ -174,6 +175,7 @@ class _WorkerRelay(QObject):
     cache_scan_finished = pyqtSignal(int, object)
     engine_runtime_checked = pyqtSignal(object, str, int)
     meeting_remote_checked = pyqtSignal(int, str)
+    local_servers_detected = pyqtSignal(int, object)
 
 
 _relay: Optional[_WorkerRelay] = None
@@ -247,6 +249,7 @@ class ModelAssignments(QObject):
         self._background_cache_scan = bool(background_cache_scan)
         self._cache_scan_generation = 0
         self._meeting_remote_token = 0
+        self._local_servers_token = 0
         #: Engine runtime checks under way, each with its request's token.
         self._engine_runtime_pending: Dict[tuple[str, str], int] = {}
         self._engine_runtime_labels: Dict[tuple[str, str], str] = {}
@@ -270,6 +273,7 @@ class ModelAssignments(QObject):
         relay.cache_scan_finished.connect(self._on_cache_scan_finished)
         relay.engine_runtime_checked.connect(self._on_engine_runtime_checked)
         relay.meeting_remote_checked.connect(self._on_meeting_remote_checked)
+        relay.local_servers_detected.connect(self._on_local_servers_detected)
 
     def __getattr__(self, name):
         destination = MODEL_CONTROL_DESTINATIONS.get(name)
@@ -362,13 +366,11 @@ class ModelAssignments(QObject):
             self._on_speech_settings_changed
         )
         card.addWidget(self.speech_controls)
-        self.api_model_combo = ElidingComboBox()
-        self.api_model_combo.setMinimumHeight(40)
-        for model in api_model_choices():
-            self.api_model_combo.addItem(api_model_label(model), model)
-        self.api_model_combo.currentIndexChanged.connect(self._on_api_model_changed)
-        self.api_model_field = self._field("Model", self.api_model_combo)
-        card.addWidget(self.api_model_field)
+        from ui_qt.widgets.speech_server_controls import SpeechServerControls
+        self.api_server = SpeechServerControls()
+        self.api_server.changed.connect(self._on_api_server_changed)
+        self.api_server.help_requested.connect(self._open_api_server_help)
+        card.addWidget(self.api_server)
 
         from ui_qt.widgets.local_engine_controls import DictationLanguagesField
         self.dictation_languages = DictationLanguagesField()
@@ -665,16 +667,52 @@ class ModelAssignments(QObject):
         if key == MEETING_VOICE:
             self._refresh_meeting_source()
         elif key == CLEANUP:
+            self._detect_local_servers()
             self._fetch_catalog_models(
                 self.text_model_picker.provider, picker=self.text_model_picker
             )
         elif key == MEETING_INTELLIGENCE:
+            self._detect_local_servers()
             self.meeting_agent_picker.ensure_scanned()
             if not self.meeting_agent_is_installed():
                 self._fetch_catalog_models(
                     self.meeting_model_picker.provider,
                     picker=self.meeting_model_picker,
                 )
+
+    def _detect_local_servers(self, force: bool = False) -> None:
+        """Look once per Settings for local servers answering on this computer.
+
+        Each preset's own address and every preset's standard one are probed
+        off the Qt thread; the pickers mark what answers. Nothing polls.
+        """
+        if self._local_servers_token and not force:
+            return
+        token = self._local_servers_token = next(_tokens)
+        urls = [p.base_url for p in list_profiles(self._settings_snapshot())
+                if p.id in LOCAL_SERVER_PROFILE_IDS]
+        urls += list(LOCAL_SERVER_DEFAULT_URLS.values())
+        detected = _worker_relay().local_servers_detected
+
+        def detect():
+            try:
+                from services.local_text_servers import detect_running_servers
+
+                found = detect_running_servers(urls)
+            except Exception:
+                logger.debug("Local server detection failed", exc_info=True)
+                found = {}
+            detected.emit(token, found)
+
+        threading.Thread(target=detect, name="local-text-servers", daemon=True).start()
+
+    def _on_local_servers_detected(self, token: int, found) -> None:
+        if token != self._local_servers_token:
+            return
+        for name in ("text_model_picker", "meeting_model_picker"):
+            picker = self.__dict__.get(name)
+            if picker is not None:
+                picker.set_running_servers(found)
 
     # ---- assignment handlers ----
 
@@ -797,14 +835,16 @@ class ModelAssignments(QObject):
             self.on_runtime_settings_changed()
         self._refresh_rail_values()
 
-    def _on_api_model_changed(self, _index: int = 0) -> None:
-        model = self.api_model_combo.currentData()
-        if model is None:
-            return
-        settings_manager.save_setting(SettingsKey.API_TRANSCRIPTION_MODEL, model)
+    def _on_api_server_changed(self) -> None:
+        """The fields saved a server or model; the engine follows it."""
         if self.on_backend_changed:
             self.on_backend_changed("API")
         self._refresh_rail_values()
+
+    def _open_api_server_help(self, destination: str) -> None:
+        if destination == "api_keys":
+            endpoint = self.api_server.endpoint
+            self._host.focus_api_keys(endpoint.connection.api_key_env or None)
 
     def _on_runtime_changed(self, _text: str = "") -> None:
         """Persist shared device/quant and ask the controller to reload."""
@@ -1043,60 +1083,45 @@ class ModelAssignments(QObject):
         from ui_qt.dialogs.text_endpoint_dialog import TextEndpointDialog
 
         profile = get_profile(profile_id, self._settings_snapshot())
-        if profile is not None and profile.id in LOCAL_SERVER_PROFILE_IDS:
-            url, accepted = QInputDialog.getText(
-                self._host, f"{profile.name} server",
-                "API base URL (shared by cleanup and meetings):",
-                text=profile.base_url or "",
-            )
-            if not accepted:
-                return
-            from services.text_llm import save_local_server_url
-            try:
-                save_local_server_url(profile.id, url)
-            except ValueError as exc:
-                self._say(str(exc))
-                return
-            self._invalidate_text_catalog(profile.id)
-            self._refresh_picker_profiles()
-            for picker in (self.text_model_picker, self.meeting_model_picker):
-                if picker.provider == profile.id:
-                    self._fetch_catalog_models(
-                        profile.id, picker=picker, force=True
-                    )
-            self._say(
-                f"{profile.name} server updated. "
-                "Active meetings keep their original server."
-            )
-            return
-        if profile is None or profile.builtin:
+        if profile is None or (
+            profile.builtin and profile.id not in LOCAL_SERVER_PROFILE_IDS
+        ):
             return
         dialog = TextEndpointDialog(profile, parent=self._host)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         payload = dialog.result_payload() or {}
         try:
-            updated = settings_manager.mutate_settings(
-                lambda settings: upsert_custom_profile(
-                    settings,
-                    name=payload["name"],
-                    base_url=payload["base_url"],
-                    api_key_env=payload.get("api_key_env", ""),
-                    profile_id=profile_id,
-                    protocol=payload.get("protocol", profile.protocol),
+            if profile.builtin:
+                save_local_server(
+                    profile.id, payload["base_url"], payload.get("api_key_env", "")
                 )
-            )
+            else:
+                settings_manager.mutate_settings(
+                    lambda settings: upsert_custom_profile(
+                        settings,
+                        name=payload["name"],
+                        base_url=payload["base_url"],
+                        api_key_env=payload.get("api_key_env", ""),
+                        profile_id=profile_id,
+                        protocol=payload.get("protocol", profile.protocol),
+                    )
+                )
         except Exception as exc:
             logger.error("Couldn't edit text endpoint: %s", exc)
             self._say(f"Couldn't save endpoint: {exc}")
             return
-        self._invalidate_text_catalog(updated.id)
+        self._invalidate_text_catalog(profile_id)
         self._refresh_picker_profiles()
-        self.text_model_picker.set_provider(updated.id)
-        self.meeting_model_picker.set_provider(
-            self.meeting_model_picker.provider
+        if profile.builtin:
+            self._detect_local_servers(force=True)
+        for picker in (self.text_model_picker, self.meeting_model_picker):
+            if picker.provider == profile_id:
+                self._fetch_catalog_models(profile_id, picker=picker, force=True)
+        self._say(
+            f'Updated "{profile_display_name(profile_id, self._settings_snapshot())}". '
+            "Active meetings keep their original endpoint."
         )
-        self._say(f'Updated endpoint "{updated.name}"')
 
     def _delete_text_endpoint(self, profile_id: str) -> None:
         """Delete a custom endpoint that is not currently assigned."""
@@ -1270,12 +1295,17 @@ class ModelAssignments(QObject):
         self._text_models_loading.discard(key)
         if not error:
             self._text_models_cache[key] = models
-        self._apply_catalog_to_picker(
-            self.__dict__.get("text_model_picker"), provider, sort, models, error
-        )
+        text_picker = self.__dict__.get("text_model_picker")
+        self._apply_catalog_to_picker(text_picker, provider, sort, models, error)
         self._apply_catalog_to_picker(
             self.__dict__.get("meeting_model_picker"), provider, sort, models, error
         )
+        if text_picker is not None and text_picker.provider == provider:
+            # A server the user runs reports each model's reasoning control
+            # with its catalog.
+            self._update_cleanup_reasoning_controls(
+                provider, text_picker.model_combo.currentText().strip()
+            )
 
     def _update_cleanup_reasoning_controls(self, provider: str, model: str) -> None:
         from services.text_model_catalog import model_spec
@@ -1283,6 +1313,7 @@ class ModelAssignments(QObject):
         supported = profile is not None and profile.kind in ("openai", "openrouter")
         if profile is not None and model:
             try:
+                # Includes local servers that said this model takes an effort.
                 supported = supported or model_spec(profile, model).reasoning_format in ("openai", "deepseek")
             except ValueError:
                 pass
@@ -1452,9 +1483,7 @@ class ModelAssignments(QObject):
             self.engine_combo.blockSignals(blocker)
             self._update_engine_caption()
             self._update_ondemand_whisper_enabled()
-            blocker = self.api_model_combo.blockSignals(True)
-            self.api_model_combo.setCurrentIndex(max(0, self.api_model_combo.findData(resolve_api_transcription_model(settings))))
-            self.api_model_combo.blockSignals(blocker)
+            self.api_server.refresh()
         if self._page_is_loading(RUNTIME):
             device = setting_value(SettingsKey.WHISPER_DEVICE, settings)
             compute = setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings)
@@ -1491,7 +1520,7 @@ class ModelAssignments(QObject):
         self.speech_download_button.setVisible(is_speech)
         if is_speech:
             self.speech_controls.set_backend(backend)
-        self.api_model_field.setVisible(backend == "api")
+        self.api_server.setVisible(backend == "api")
         self.dictation_languages.set_backend(backend)
         # Neither engine keeps anything on this computer.
         on_this_computer = backend not in ("api", "remote")
@@ -1775,8 +1804,11 @@ class ModelAssignments(QObject):
             model = self.ondemand_whisper_picker.current_model() if VOICE_MODEL in self._built else setting_value(SettingsKey.WHISPER_MODEL, self._settings_snapshot())
             return f"Local Whisper · {model}"
         if engine_value == "api":
-            model = self.api_model_combo.currentData() if VOICE_MODEL in self._built else resolve_api_transcription_model(self._settings_snapshot())
-            return f"API · {model or config.DEFAULT_API_MODEL}"
+            from services import speech_endpoints
+
+            settings = self._settings_snapshot()
+            endpoint = speech_endpoints.selected_endpoint(settings)
+            return f"{endpoint.name} · {speech_endpoints.endpoint_model(endpoint, settings)}"
         if engine_value == "remote":
             pairing = self._remote_pairing()
             return f"Remote · {pairing.host_name}" if pairing else "Remote · not paired"
@@ -1790,7 +1822,12 @@ class ModelAssignments(QObject):
         """Where dictation runs, for the Overview card."""
         engine_value = self._engine_value()
         if engine_value == "api":
-            return "Sent to OpenAI for transcription"
+            from services import speech_endpoints
+
+            endpoint = speech_endpoints.selected_endpoint(self._settings_snapshot())
+            if endpoint.is_local:
+                return f"On this computer · {endpoint.name}"
+            return f"Sent to {speech_endpoints.destination(endpoint)} for transcription"
         if engine_value == "remote":
             pairing = self._remote_pairing()
             if pairing is None:
@@ -1804,10 +1841,15 @@ class ModelAssignments(QObject):
 
     def voice_is_remote(self) -> bool:
         """True when dictation audio leaves this computer."""
-        return self._engine_value() in ("api", "remote")
+        return self._engine_value() == "remote" or self.voice_is_cloud()
 
     def voice_is_cloud(self) -> bool:
-        return self._engine_value() == "api"
+        """True when dictation audio goes to an API server off this computer."""
+        if self._engine_value() != "api":
+            return False
+        from services import speech_endpoints
+
+        return not speech_endpoints.selected_endpoint(self._settings_snapshot()).is_local
 
     @staticmethod
     def _remote_pairing():

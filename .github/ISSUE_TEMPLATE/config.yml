@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/Knuckles92/OpenWhisper/discussions
+    about: Ask for help, share setups, or talk through an idea before filing it.
+  - name: Report a security vulnerability
+    url: https://github.com/Knuckles92/OpenWhisper/security/policy
+    about: Please report vulnerabilities privately, not in a public issue.

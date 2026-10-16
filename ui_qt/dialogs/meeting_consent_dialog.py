@@ -33,6 +33,26 @@ def _chosen_agent() -> str:
     return core if core in MeetingAgentCore.INSTALLED else ""
 
 
+def _fast_judgments_elsewhere() -> str:
+    """Who else receives excerpts under this consent: the Fast judgments judge, "" if none.
+
+    Fast judgments answered on this computer need no consent and send
+    nothing, so they are not named.
+    """
+    try:
+        from services.settings import resolve_typesafe_enabled, settings_manager
+        from services.typesafe import route_from_settings
+
+        settings = settings_manager.load_all_settings()
+        if not resolve_typesafe_enabled(settings):
+            return ""
+        route = route_from_settings(settings)
+    except Exception:
+        logger.debug("Could not read the Fast judgments route", exc_info=True)
+        return ""
+    return "" if route.is_local else f"{route.name} ({route.host})"
+
+
 class MeetingConsentDialog(QDialog):
     RESULT_CANCEL: Final[str] = "cancel"
     RESULT_ENABLE: Final[str] = "enable"
@@ -125,13 +145,25 @@ class MeetingConsentDialog(QDialog):
                 f"{name} gets OpenWhisper's meeting tools and nothing else: no "
                 "files, no shell."
             )
+        judge = _fast_judgments_elsewhere()
+        judged = (
+            f" Fast judgments are on, so short transcript excerpts also go "
+            f"to {judge}." if judge else ""
+        )
         if self.remote:
             return (
                 f"To do this, the meeting transcript text and the dashboard "
                 f"state are sent to {self.destination}, using the model "
                 f"chosen in Settings → Meeting Mode → Intelligence.\n\n"
                 "That destination is remote, so transcript text leaves this "
-                "computer."
+                f"computer.{judged}"
+            )
+        if judge:
+            return (
+                f"To do this, the meeting transcript text and the dashboard "
+                f"state are sent to {self.destination}, using the model "
+                f"chosen in Settings → Meeting Mode → Intelligence.\n\n"
+                f"That destination is on this computer.{judged}"
             )
         return (
             f"To do this, the meeting transcript text and the dashboard "

@@ -50,10 +50,12 @@ from services.credentials import (
 from services.credentials import store as credential_store
 from services.typesafe import CREDENTIAL_ENV as TYPESAFE_CREDENTIAL_ENV
 from services.typesafe import OPENROUTER_ROUTE as JEV_OPENROUTER_ROUTE
-from services.typesafe import ROUTES as JEV_ROUTES
+from services.typesafe import TEXT_MODEL_TIMEOUT_S
 from services.typesafe import TYPESAFE_ROUTE as JEV_TYPESAFE_ROUTE
 from services.typesafe import key_present as typesafe_key_present
 from services.typesafe import route_from_settings as typesafe_route_from_settings
+from services.typesafe import route_key as typesafe_route_key
+from services.typesafe import text_model_route as typesafe_text_model_route
 from services.typesafe import verify_key as typesafe_verify_key
 from services.format_utils import format_file_size
 from services.history_manager import history_manager
@@ -68,6 +70,8 @@ from services.settings import (
     RecordingTriggerMode,
     SettingsKey,
     SettingsView,
+    TypeSafeProvider,
+    TypeSafeTextModel,
     UiFontScale,
     UiTheme,
     resolve_developer_mode,
@@ -82,6 +86,7 @@ from services.settings import (
     resolve_meeting_insight_review,
     resolve_meeting_past_recall_enabled,
     resolve_typesafe_enabled,
+    resolve_typesafe_text_model,
     resolve_meeting_report_brief,
     resolve_meeting_report_ribbon,
     resolve_meeting_report_signal,
@@ -330,6 +335,17 @@ class _ThreadRelay(QObject):
 _relay: Optional[_ThreadRelay] = None
 #: Request tokens, unique across windows because they share the relay.
 _tokens = itertools.count(1)
+#: Fast judgments routes, in the order the Judge bar shows them.
+_JUDGE_TITLES = {
+    TypeSafeProvider.TYPESAFE: "TypeSafe",
+    TypeSafeProvider.OPENROUTER: "OpenRouter",
+    TypeSafeProvider.TEXT_MODEL: "Your text model",
+}
+#: Which text model answers on the text-model route, in the bar's order.
+_JUDGE_TEXT_MODEL_TITLES = {
+    TypeSafeTextModel.MEETING: "AI insights model",
+    TypeSafeTextModel.CLEANUP: "AI cleanup model",
+}
 
 
 def _thread_relay() -> _ThreadRelay:
@@ -856,7 +872,7 @@ class SettingsDialog(QDialog):
         self._add_page(
             MEETING_FAST,
             "Fast judgments",
-            "Optional TypeSafe/Jev checks. Each feature describes the text it shares.",
+            "Optional checks by Jev or your own text model. Each feature describes the text it shares.",
             self._build_meeting_fast_page,
         )
         self._add_page(
@@ -1305,8 +1321,10 @@ class SettingsDialog(QDialog):
 
         self.update_check_tile = SettingTile(
             "Check for updates automatically",
-            "Looks for new OpenWhisper releases in the background. Nothing "
-            "is installed without your approval.",
+            "When OpenWhisper starts, at most once a day, asks GitHub "
+            "(api.github.com) for the latest release. The request includes "
+            "the app version, no account or device ID. Nothing is installed "
+            "without your approval.",
             design_icon("refresh-blue.svg"),
         )
         self.update_check_check = self.update_check_tile.checkbox
@@ -2116,19 +2134,29 @@ class SettingsDialog(QDialog):
         self.typesafe_key_notice.add_trailing(self.open_typesafe_key_btn)
         layout.addWidget(self.typesafe_key_notice)
 
-        # Same model either way; the choice is whose key pays for it and
-        # whether OpenRouter sits in between.
+        # Jev either way for the first two, the choice being whose key pays
+        # and whether OpenRouter sits in between; or one of the user's own
+        # text models, which can keep every judgment on this computer.
         self.typesafe_route_tile = InfoTile(
-            "Jev connection",
+            "Judge",
             "",
             design_icon("world-blue.svg"),
         )
         self.typesafe_route_bar = SegmentedBar(
-            [(route.name, "") for route in JEV_ROUTES.values()]
+            [(_JUDGE_TITLES[route_id], "") for route_id in TypeSafeProvider.ALL]
         )
-        self.typesafe_route_bar.setAccessibleName("Connect Jev through")
+        self.typesafe_route_bar.setAccessibleName("Run fast judgments on")
         self.typesafe_route_bar.activated.connect(self._on_typesafe_route_activated)
         self.typesafe_route_tile.add_body(self.typesafe_route_bar)
+        # The text models are set up on the Models page; this only picks one.
+        self.typesafe_text_model_bar = SegmentedBar(
+            [(_JUDGE_TEXT_MODEL_TITLES[source], "") for source in TypeSafeTextModel.ALL],
+            compact=True,
+        )
+        self.typesafe_text_model_bar.setAccessibleName("Text model that answers fast judgments")
+        self.typesafe_text_model_bar.activated.connect(self._on_typesafe_text_model_activated)
+        self.typesafe_text_model_bar.hide()
+        self.typesafe_route_tile.add_body(self.typesafe_text_model_bar)
         self.typesafe_route_test_btn = neutral_button(Button("Test"))
         self.typesafe_route_test_btn.setToolTip(
             "Send one tiny judgment (the word “ok”) over this connection"
@@ -2143,9 +2171,9 @@ class SettingsDialog(QDialog):
         self._tile_group(layout, "", [self.typesafe_route_tile], columns=1)
 
         self.typesafe_enabled_tile = SettingTile(
-            "TypeSafe fast judgments (Experimental)",
-            "Answers narrow yes/no questions about a minute of transcript in "
-            "about 0.2 s. It never writes text.",
+            "Fast judgments (Experimental)",
+            "Answers narrow yes/no questions about a minute of transcript: "
+            "about 0.2 s with Jev, seconds with a text model. It never writes text.",
             design_icon("bolt-green.svg"),
         )
         self.typesafe_enabled_check = self.typesafe_enabled_tile.checkbox
@@ -2187,13 +2215,13 @@ class SettingsDialog(QDialog):
         self.typesafe_feature_tiles = {}
         for feature, key, title, description in (
             ("citations", SettingsKey.TYPESAFE_CITATIONS_ENABLED, "Advisory citation checks",
-             "Sends generated claims and their cited excerpts to TypeSafe/Jev. Flags weak evidence without changing the claim."),
+             "Gives the judge generated claims and their cited excerpts. Flags weak evidence without changing the claim."),
             ("semantic_search", SettingsKey.TYPESAFE_SEMANTIC_SEARCH_ENABLED, "Semantic history search",
-             "Sends your search and shortlisted excerpts from past AI-insight meetings to TypeSafe/Jev to rank by meaning. Keyword search stays available."),
+             "Gives the judge your search and shortlisted past excerpts to rank by meaning: only from AI-insight meetings unless it runs on this computer. Keyword search stays available."),
             ("question_radar", SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED, "Open questions radar",
-             "Sends a minute of transcript and tracked questions to TypeSafe/Jev to find unanswered questions and suggest answers."),
+             "Gives the judge a minute of transcript and tracked questions to find unanswered questions and suggest answers."),
             ("highlights", SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED, "Live highlight pulses",
-             "Sends a minute of transcript to TypeSafe/Jev to mark decisions, disagreements, dated commitments, numbers and takeaways. Click a pulse to play that moment."),
+             "Gives the judge a minute of transcript to mark decisions, disagreements, dated commitments, numbers and takeaways. Click a pulse to play that moment."),
         ):
             tile = SettingTile(title, description, design_icon("bolt-green.svg"))
             self._meeting_bindings.checkbox(
@@ -2255,10 +2283,9 @@ class SettingsDialog(QDialog):
 
         self.meeting_review_tile = SettingTile(
             "Review uncertain insights at the end (Experimental)",
-            "For new meetings. Sends relevant excerpts, speaker names and insights to "
-            "TypeSafe to find ambiguities, and asks the three highest-priority questions "
-            "first. No audio is sent. Needs AI insights and Fast judgments with a "
-            "TypeSafe or OpenRouter key.",
+            "For new meetings. Gives the Fast judgments judge relevant excerpts, speaker "
+            "names and insights to find ambiguities, and asks the three highest-priority "
+            "questions first. No audio is sent. Needs AI insights and Fast judgments.",
             design_icon("check-green.svg"),
         )
         self.meeting_review_check = self.meeting_review_tile.checkbox
@@ -2512,10 +2539,13 @@ class SettingsDialog(QDialog):
     @staticmethod
     def _api_key_entries(settings: dict) -> list:
         """One row per distinct variable; profiles sharing a variable share it."""
+        from services import speech_endpoints
+
         names: Dict[str, list] = {}
-        for profile in list_profiles(settings):
-            if profile.api_key_env:
-                names.setdefault(profile.api_key_env, []).append(profile.name)
+        owners = [(p.api_key_env, p.name) for p in list_profiles(settings) if p.api_key_env]
+        for env_name, owner in owners + speech_endpoints.credential_owners(settings):
+            if owner not in names.setdefault(env_name, []):
+                names[env_name].append(owner)
         entries = [
             (env_name, f"{' / '.join(owners)} · {env_name}")
             for env_name, owners in names.items()
@@ -2551,7 +2581,15 @@ class SettingsDialog(QDialog):
         return self.api_key_combo.currentData() or ""
 
     def _api_key_profile(self, env_name: str):
-        for profile in list_profiles(settings_manager.load_all_settings()):
+        """The text endpoint, else the speech server, that sends ``env_name``."""
+        from services import speech_endpoints
+
+        settings = settings_manager.load_all_settings()
+        speech = [
+            speech_endpoints.configured_endpoint(endpoint_id, settings).connection
+            for endpoint_id in speech_endpoints.ENDPOINT_IDS
+        ]
+        for profile in [*list_profiles(settings), *speech]:
             if profile.api_key_env == env_name:
                 return profile
         return None
@@ -2609,9 +2647,9 @@ class SettingsDialog(QDialog):
     def _render_api_key_uses(self, env_name: str) -> None:
         if env_name == "OPENAI_API_KEY":
             text = (
-                "Used for cloud transcription (Whisper, GPT-4o), OpenAI "
-                "transcript cleanup and meeting intelligence, and cloud "
-                "speaker identification."
+                "Used for API transcription with OpenAI, OpenAI transcript "
+                "cleanup and meeting intelligence, and cloud speaker "
+                "identification."
             )
         elif env_name == JEV_OPENROUTER_ROUTE.credential_env:
             text = (
@@ -2628,15 +2666,17 @@ class SettingsDialog(QDialog):
                 "run the same model instead."
             )
         elif env_name:
-            owners = [
-                profile.name
-                for profile in list_profiles(settings_manager.load_all_settings())
-                if profile.api_key_env == env_name
-            ]
-            text = (
-                f"Sent as the API key to {' and '.join(owners)} for transcript "
-                "cleanup and meeting intelligence."
-            )
+            from services import speech_endpoints
+
+            settings = settings_manager.load_all_settings()
+            uses = []
+            owners = [p.name for p in list_profiles(settings) if p.api_key_env == env_name]
+            if owners:
+                uses.append(f"to {' and '.join(owners)} for transcript cleanup and meeting intelligence")
+            speech = [name for env, name in speech_endpoints.credential_owners(settings) if env == env_name]
+            if speech:
+                uses.append(f"to {' and '.join(speech)} for API transcription")
+            text = f"Sent as the API key {', and '.join(uses)}."
         else:
             text = ""
         self.api_key_uses_caption.setText(text)
@@ -3954,15 +3994,21 @@ class SettingsDialog(QDialog):
             return
         if checked:
             route = self._selected_typesafe_route()
-            destination = (
-                "TypeSafe" if route is JEV_TYPESAFE_ROUTE
-                else f"TypeSafe through {route.name}"
-            )
+            if route.is_local:
+                destination = f"{route.name} on this computer"
+            elif route.profile is not None:
+                destination = f"{route.name} ({route.host})"
+            elif route is JEV_TYPESAFE_ROUTE:
+                destination = "TypeSafe"
+            else:
+                destination = f"TypeSafe through {route.name}"
+            separate = ("" if route.profile is not None
+                        else "This is a separate service from your meeting LLM. ")
             reply = QMessageBox.question(
-                self, "Enable experimental TypeSafe insight review?",
+                self, "Enable experimental insight review?",
                 "For future meetings with AI insights on, send relevant transcript "
                 f"excerpts, speaker names, and generated insights to {destination} after the meeting? "
-                "This is a separate service from your meeting LLM. No audio is sent. "
+                f"{separate}No audio is sent. "
                 "Review is optional and does not block saving your recording.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
@@ -4035,7 +4081,7 @@ class SettingsDialog(QDialog):
         self._update_typesafe_feature_tiles()
 
     def _selected_typesafe_route(self):
-        """The Jev route Settings name now: TypeSafe unless OpenRouter was chosen."""
+        """The Fast judgments route Settings name now: TypeSafe unless another was chosen."""
         return typesafe_route_from_settings(self._settings_snapshot())
 
     def _typesafe_key_present(self, route=None) -> bool:
@@ -4048,11 +4094,24 @@ class SettingsDialog(QDialog):
 
     @staticmethod
     def _other_typesafe_route(route):
+        """The other way to Jev, whose key can stand in; None for a text model."""
+        if route.profile is not None:
+            return None
         return JEV_OPENROUTER_ROUTE if route is JEV_TYPESAFE_ROUTE else JEV_TYPESAFE_ROUTE
 
     @staticmethod
     def _typesafe_destination_copy(route) -> str:
         """Who receives excerpts over ``route``; OpenRouter is a hop, not the model."""
+        if route.is_local:
+            return (
+                f"Transcript excerpts stay on this computer: {route.name} answers "
+                "here, even in meetings with AI insights off."
+            )
+        if route.profile is not None:
+            return (
+                f"Transcript excerpts go to {route.name} ({route.host}) only "
+                "while AI insights are on for the meeting."
+            )
         if route is JEV_TYPESAFE_ROUTE:
             return (
                 f"Transcript excerpts go to TypeSafe ({route.host}) only "
@@ -4065,18 +4124,34 @@ class SettingsDialog(QDialog):
         )
 
     def _on_typesafe_route_activated(self, index: int) -> None:
-        route = list(JEV_ROUTES.values())[index]
-        if route is self._selected_typesafe_route():
+        route_id = TypeSafeProvider.ALL[index]
+        if route_id == self._selected_typesafe_route().id:
             return
-        self._persist(SettingsKey.TYPESAFE_PROVIDER, route.id)
+        self._persist(SettingsKey.TYPESAFE_PROVIDER, route_id)
         # A result for the other route would now describe the wrong thing.
+        self.typesafe_route_status.hide()
+        self._update_typesafe_feature_tiles()
+
+    def _on_typesafe_text_model_activated(self, index: int) -> None:
+        source = TypeSafeTextModel.ALL[index]
+        if source == resolve_typesafe_text_model(self._settings_snapshot()):
+            return
+        self._persist(SettingsKey.TYPESAFE_TEXT_MODEL, source)
         self.typesafe_route_status.hide()
         self._update_typesafe_feature_tiles()
 
     def _switch_typesafe_route(self) -> None:
         other = self._other_typesafe_route(self._selected_typesafe_route())
-        self.typesafe_route_bar.setCurrentIndex(list(JEV_ROUTES.values()).index(other))
+        if other is None:
+            return
+        self.typesafe_route_bar.setCurrentIndex(TypeSafeProvider.ALL.index(other.id))
         self._on_typesafe_route_activated(self.typesafe_route_bar.currentIndex())
+
+    @staticmethod
+    def _text_model_label(route) -> str:
+        # OpenRouter ids carry the vendor; the profile already names the route.
+        model = (route.model or "").rsplit("/", 1)[-1]
+        return f"{route.name} · {model}" if model else route.name
 
     def _render_typesafe_route(self) -> None:
         """Show the chosen route, each route's key state, and where excerpts go."""
@@ -4084,20 +4159,45 @@ class SettingsDialog(QDialog):
         # construction waits for the whole page.
         if "typesafe_destination_label" not in self.__dict__:
             return
+        settings = self._settings_snapshot()
         route = self._selected_typesafe_route()
-        routes = list(JEV_ROUTES.values())
-        self.typesafe_route_bar.setCurrentIndex(routes.index(route))
-        for index, candidate in enumerate(routes):
-            lead = "Direct" if candidate is JEV_TYPESAFE_ROUTE else "Same model"
+        text_route = typesafe_text_model_route(settings)
+        self.typesafe_route_bar.setCurrentIndex(TypeSafeProvider.ALL.index(route.id))
+        routes = {**{r.id: r for r in (JEV_TYPESAFE_ROUTE, JEV_OPENROUTER_ROUTE)},
+                  TypeSafeProvider.TEXT_MODEL: text_route}
+        for index, candidate in enumerate(routes[route_id] for route_id in TypeSafeProvider.ALL):
             state = "key set" if self._typesafe_key_present(candidate) else "no key"
-            self.typesafe_route_bar.set_detail(index, f"{lead} · {state}")
-        self.typesafe_route_tile.set_description(
-            f"Answers come straight from TypeSafe ({route.host}) and are "
-            "billed to your TypeSafe account."
-            if route is JEV_TYPESAFE_ROUTE else
-            f"The same Jev model, reached through {route.name} ({route.host}) "
-            f"and billed to your {route.name} credits. No TypeSafe account needed."
-        )
+            detail = (
+                f"Direct · {state}" if candidate is JEV_TYPESAFE_ROUTE else
+                f"Same model · {state}" if candidate is JEV_OPENROUTER_ROUTE else
+                f"{candidate.name} · on this PC" if candidate.is_local else
+                f"{candidate.name} · {state}"
+            )
+            self.typesafe_route_bar.set_detail(index, detail)
+        self.typesafe_text_model_bar.setVisible(route.profile is not None)
+        self.typesafe_text_model_bar.setCurrentIndex(
+            TypeSafeTextModel.ALL.index(resolve_typesafe_text_model(settings)))
+        for index, source in enumerate(TypeSafeTextModel.ALL):
+            candidate = typesafe_text_model_route({**settings, SettingsKey.TYPESAFE_TEXT_MODEL: source})
+            self.typesafe_text_model_bar.set_detail(index, self._text_model_label(candidate))
+        if route is JEV_TYPESAFE_ROUTE:
+            description = (
+                f"Answers come straight from TypeSafe ({route.host}) and are "
+                "billed to your TypeSafe account."
+            )
+        elif route is JEV_OPENROUTER_ROUTE:
+            description = (
+                f"The same Jev model, reached through {route.name} ({route.host}) "
+                f"and billed to your {route.name} credits. No TypeSafe account needed."
+            )
+        else:
+            where = "on this computer" if route.is_local else f"at {route.host}"
+            description = (
+                f"{self._text_model_label(route)} answers {where}, as set under AI "
+                "cleanup or Meeting Mode → Intelligence. Slower than Jev and not benchmarked like it: a "
+                f"judgment that takes over {TEXT_MODEL_TIMEOUT_S:.0f} s is skipped."
+            )
+        self.typesafe_route_tile.set_description(description)
         self.typesafe_destination_label.setText(self._typesafe_destination_copy(route))
         self.typesafe_route_test_btn.setEnabled(not self._typesafe_route_testing)
 
@@ -4105,7 +4205,7 @@ class SettingsDialog(QDialog):
         if self._typesafe_route_testing:
             return
         route = self._selected_typesafe_route()
-        key = resolve_credential(route.credential_env)
+        key = typesafe_route_key(route)
         if not key:
             self._show_typesafe_route_result(
                 False, f"No {route.key_label} to test. Add one under API keys → {route.name}."
@@ -4156,11 +4256,12 @@ class SettingsDialog(QDialog):
         route = self._selected_typesafe_route()
         other = self._other_typesafe_route(route)
         present = self._typesafe_key_present(route)
-        other_present = not present and self._typesafe_key_present(other)
+        other_present = other is not None and not present and self._typesafe_key_present(other)
         master_on = self.typesafe_enabled_check.isChecked()
         self.typesafe_key_notice.setVisible(not present)
         self.typesafe_switch_route_btn.setVisible(other_present)
-        self.typesafe_switch_route_btn.setText(f"Use {other.name}")
+        if other is not None:
+            self.typesafe_switch_route_btn.setText(f"Use {other.name}")
         self.open_typesafe_key_btn.setToolTip(
             f"Open API keys with the {route.name} credential selected"
         )
@@ -4325,7 +4426,8 @@ class SettingsDialog(QDialog):
         """Where the dictation engine runs, named as the rail names it."""
         summary = self.models.voice_summary()
         if self.models.voice_is_cloud():
-            return f"Sent to OpenAI · {summary.split(' · ', 1)[-1]}"
+            # The rail names the server first: "Groq · whisper-large-v3".
+            return f"Sent to {summary}"
         if self.models.voice_is_remote():
             return self.models.voice_detail()
         return f"On this computer · {summary}"

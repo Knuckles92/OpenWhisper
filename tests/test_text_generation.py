@@ -12,7 +12,6 @@ from services.text_llm import (
     get_profile,
     list_profiles,
     provider_headers,
-    save_ollama_url,
     snapshot_from_mapping,
     snapshot_from_profile,
     upsert_custom_profile,
@@ -212,16 +211,6 @@ def test_openai_routes_migrate_stale_meeting_metadata(model, protocol, reasoning
     assert (spec.protocol, spec.reasoning) == (protocol, reasoning)
 
 
-def test_ollama_url_normalizes_and_never_stores_embedded_secrets():
-    with patch("services.settings.settings_manager.save_setting") as save:
-        save_ollama_url("http://localhost:11434/")
-        save.assert_called_once_with("ollama_base_url", "http://localhost:11434/v1")
-        for url in ("http://user:secret@localhost:11434", "http://localhost/?key=secret"):
-            with pytest.raises(ValueError):
-                save_ollama_url(url)
-        assert save.call_count == 1
-
-
 def test_empty_new_provider_model_does_not_reuse_previous_model():
     with patch("services.transcript_cleanup.create_openai_client"):
         cleaner = TranscriptCleanup("openai", "gpt-test", api_key="test")
@@ -364,25 +353,22 @@ def test_pi_endpoint_metadata_and_old_bundle_detection(provider, model, protocol
     agent._check_sidecar_text_support()
 
 
-def test_ollama_catalog_filters_embeddings_and_snapshots_capabilities():
+def test_ollama_catalog_filters_embeddings_and_snapshots_capabilities(local_server):
     from services.text_llm import list_chat_models
     profile = get_profile("ollama", {})
-    requests = []
     def handler(request):
-        requests.append(request)
         if request.url.path == "/v1/models":
             return httpx.Response(200, json={"data": [{"id": "test-embedding"}, {"id": "test-completion"}]})
         assert request.url.path == "/api/show"
         model = json.loads(request.content)["model"]
         return httpx.Response(200, json={"capabilities": ["embedding"] if "embedding" in model else ["completion"],
                                         "parameters": "num_ctx 8192"})
-    client = OpenAI(api_key="dummy", base_url=profile.base_url,
-                    http_client=httpx.Client(transport=httpx.MockTransport(handler)))
-    with patch("services.text_llm.create_openai_client", return_value=client):
-        assert list_chat_models(profile) == ["test-completion"]
+    requests = local_server(handler)
+    assert list_chat_models(profile) == ["test-completion"]
     saved = snapshot_from_profile(profile, "test-completion")
     assert saved.model_metadata["tools"] is False
     assert saved.model_metadata["context_window"] == 8192
+    assert saved.model_metadata["reasoning_format"] == ""
     assert len(requests) == 3
 
 
@@ -418,6 +404,57 @@ def test_no_tool_support_uses_validated_json_and_rejects_prose(provider, model, 
     assert len(requests) == 4
     if protocol != "chat":
         assert "signed-reasoning" in requests[-1].content.decode()
+
+
+LOCAL_BOX = upsert_custom_profile({}, name="Box", base_url="http://localhost:5000/v1")
+
+
+def _prose_client(profile, requests):
+    """A chat endpoint that answers every request in prose, never calling a tool."""
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=reply("chat"))
+    return OpenAI(api_key="test-secret", base_url=profile.base_url, max_retries=0,
+                  http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+@pytest.mark.parametrize("profile,must_call", [
+    (LOCAL_BOX, True),
+    (upsert_custom_profile({}, name="Gateway", base_url="https://gateway.test/v1"), True),
+    (get_profile("openrouter", {}), False),
+])
+def test_direct_agent_probe_needs_a_tool_call_unless_the_api_rejects_tools(profile, must_call):
+    from meeting.agent.openrouter_direct import DirectOpenRouterAgent
+    requests = []
+    agent = DirectOpenRouterAgent()
+    agent._profile = profile
+    agent._model = "qwen3"
+    with _prose_client(profile, requests) as client:
+        agent._probe_tool_support(client)
+    assert agent._json_mode is must_call
+    assert requests[0]["tools"][0]["function"]["name"] == "noop"
+    assert requests[0]["max_tokens"] == (512 if must_call else 16)
+
+
+def test_pi_has_a_custom_localhost_model_call_the_test_tool():
+    from meeting.agent.pi_sidecar import PiSidecarAgent
+    from meeting.interfaces import AgentConfig
+
+    def config(profile):
+        return AgentConfig(meeting_id="meeting-1", provider=profile.id, model="qwen3", api_key=None,
+                           system_prompt="Use evidence.",
+                           endpoint=snapshot_from_profile(profile, "qwen3").to_dict())
+
+    agent = PiSidecarAgent(payload_dir="unused-test-payload")
+    agent._cfg = config(LOCAL_BOX)
+    requests = []
+    with patch("services.text_llm.create_openai_client", return_value=_prose_client(LOCAL_BOX, requests)):
+        with pytest.raises(RuntimeError, match="did not call the test tool"):
+            agent._require_tool_calls("dummy")
+    assert len(requests) == 1
+    agent._cfg = config(get_profile("openrouter", {}))
+    with patch("services.text_llm.create_openai_client", side_effect=AssertionError("probed")):
+        agent._require_tool_calls("key")
 
 
 @pytest.mark.parametrize("level", ["light", "medium", "high", "custom"])

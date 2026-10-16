@@ -15,9 +15,6 @@ from services.settings import (
     SETTING_DEFAULTS,
     LEGACY_STREAMING_KEYS,
     SettingsKey,
-    api_model_choices,
-    api_model_label,
-    resolve_api_transcription_model,
     settings_manager,
 )
 from ui_qt.overlay_state import OverlayState
@@ -43,6 +40,7 @@ from ui_qt.widgets.local_engine_controls import LocalEngineControls
 from ui_qt.widgets.remote_link import RemoteLinkGlyph
 from ui_qt.widgets.remote_engine_controls import RemoteEngineControls
 from ui_qt.widgets.remote_model_notice import RemoteModelNotice
+from ui_qt.widgets.speech_server_controls import SpeechServerControls
 from ui_qt.widgets.wrapped_label import WrappedLabel
 from ui_qt.widgets.speech_backend_picker import (
     backend_display_name,
@@ -239,19 +237,9 @@ class TranscriptionTabBase(QWidget):
         self._apply_backend_status(EngineStatus.UNKNOWN)
 
         self.local_engine = LocalEngineControls(dictation=self.DICTATION_LANGUAGES)
-        self.api_model_combo = engine_combo(())
-        for model in api_model_choices():
-            self.api_model_combo.addItem(api_model_label(model), model)
-        self.api_model_combo.setToolTip(
-            "OpenAI transcription model. Requires an API key in Settings → API keys."
-        )
-        self.api_model_field = engine_field(
-            "Model", self.api_model_combo,
-            "Choose the OpenAI speech model that turns your audio into text. Models differ in speed and accuracy. Audio is uploaded to OpenAI; an API key and internet connection are required.",
-            [("Open Settings → API keys", "api_keys")], self.help_requested.emit,
-        )
-        self.api_model_field.hide()
-        self.refresh_api_model()
+        # The API backend's server and its model.
+        self.api_server = SpeechServerControls()
+        self.api_server.hide()
 
         # The paired computer's own models. Choosing one switches that
         # computer to it, just as choosing it there would.
@@ -272,15 +260,13 @@ class TranscriptionTabBase(QWidget):
         self._field_row.setSpacing(10)
         self._field_row.addWidget(engine_field(
             "Backend", self.model_combo,
-            "Choose which speech recognition engine turns your audio into text. Local engines process audio on this computer after download. OpenAI sends audio to the cloud and requires an API key. This choice determines the available models.",
+            "Choose which speech recognition engine turns your audio into text. Local engines process audio on this computer after download. API sends audio to the server you choose: OpenAI, Groq, or a speech server you run. This choice determines the available models.",
             [("Open Settings → Voice model", "ondemand")], self.help_requested.emit,
         ), stretch=2)
         self._field_row.addWidget(self.local_engine, stretch=4)
-        self._field_row.addWidget(self.api_model_field, stretch=2)
+        self._field_row.addWidget(self.api_server, stretch=4)
         self._field_row.addWidget(self.remote_model_field, stretch=2)
         self._field_row.addWidget(self.remote_engine, stretch=2)
-        self._field_filler_index = self._field_row.count()
-        self._field_row.addStretch(0)
         engine_layout.addLayout(self._field_row)
 
         self.remote_runtime_label = WrappedLabel("")
@@ -432,7 +418,8 @@ class TranscriptionTabBase(QWidget):
 
     def _connect_signals(self):
         self.model_combo.currentTextChanged.connect(self._on_backend_changed)
-        self.api_model_combo.currentIndexChanged.connect(self._on_api_model_changed)
+        self.api_server.changed.connect(self._on_api_server_changed)
+        self.api_server.help_requested.connect(self.help_requested)
         # activated, not currentIndexChanged: only a person's choice switches
         # the paired computer, never the field following what it reports.
         self.remote_model_combo.activated.connect(self._on_remote_model_activated)
@@ -552,17 +539,9 @@ class TranscriptionTabBase(QWidget):
         return self._fixed_text
 
     def refresh_api_model(self):
-        model = resolve_api_transcription_model(settings_manager.load_all_settings())
-        index = self.api_model_combo.findData(model)
-        blocked = self.api_model_combo.blockSignals(True)
-        self.api_model_combo.setCurrentIndex(max(0, index))
-        self.api_model_combo.blockSignals(blocked)
+        self.api_server.refresh()
 
-    def _on_api_model_changed(self, _index: int = 0):
-        model = self.api_model_combo.currentData()
-        if model is None:
-            return
-        settings_manager.save_setting(SettingsKey.API_TRANSCRIPTION_MODEL, model)
+    def _on_api_server_changed(self):
         self.model_changed.emit(self.current_model)
 
     @staticmethod
@@ -609,7 +588,7 @@ class TranscriptionTabBase(QWidget):
     def set_backend_enabled(self, enabled: bool):
         """Lock the backend choice, e.g. while recording."""
         self.model_combo.setEnabled(enabled)
-        self.api_model_combo.setEnabled(enabled)
+        self.api_server.setEnabled(enabled)
         self._backend_enabled = enabled
         self._sync_remote_model_enabled()
 
@@ -857,20 +836,19 @@ class TranscriptionTabBase(QWidget):
     def set_local_engine_visible(self, visible: bool):
         """Switch between the local runtime fields and a single Model field.
 
-        Without local fields, the API backend offers its OpenAI models and the
-        Remote backend shows the model the paired computer runs.
+        Without local fields, the API backend offers its server and model and
+        the Remote backend shows the model the paired computer runs.
         """
         remote = not visible and config.MODEL_VALUE_MAP.get(self.current_model) == "remote"
         self._remote_shown = remote
         self.local_engine.setVisible(visible)
-        self.api_model_field.setVisible(not visible and not remote)
+        self.api_server.setVisible(not visible and not remote)
         self.remote_model_field.setVisible(remote)
         self.remote_engine.setVisible(remote)
         self.remote_manage_button.setVisible(remote)
         self._show_remote_runtime()
         if remote:
             self._show_remote_models()
-        self._field_row.setStretch(self._field_filler_index, 0 if visible or remote else 2)
         # A remote engine is connected or it isn't; the API has no engine here.
         self._engine_dot_visible = visible or remote
         self._refresh_engine_status()

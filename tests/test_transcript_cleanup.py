@@ -434,6 +434,30 @@ class TestCleanupCustomEndpoints:
             assert cleaner._connection != first_connection
             assert mock_create.call_count >= 2
 
+    @pytest.mark.parametrize("provider,settings,timeout_s", [
+        ("custom_abcd1234", {"text_llm_profiles": [{
+            "id": "custom_abcd1234", "name": "Local",
+            "base_url": "http://localhost:1234/v1", "api_key_env": "",
+        }]}, 120.0),
+        ("vllm", {"vllm_base_url": "http://192.168.1.50:8000/v1"}, 120.0),
+        ("custom_abcd1234", {"text_llm_profiles": [{
+            "id": "custom_abcd1234", "name": "Gateway",
+            "base_url": "https://gateway.test/v1", "api_key_env": "",
+        }]}, None),
+    ])
+    def test_servers_the_user_runs_get_time_to_load_a_model(
+        self, provider, settings, timeout_s
+    ):
+        from config import config
+
+        with patch("services.text_llm._load_settings", return_value=settings), patch(
+            "services.transcript_cleanup.create_openai_client"
+        ):
+            cleaner = TranscriptCleanup(provider=provider, model="qwen3")
+        assert cleaner.attempt_timeout_s == (
+            timeout_s or config.TRANSCRIPT_CLEANUP_TIMEOUT_S
+        )
+
     def test_list_cleanup_models_uses_custom_profile(self):
         from services.transcript_cleanup import list_cleanup_models
 

@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote
 
-from services.text_llm import NEW_PROFILE_IDS, provider_headers
+from services.text_llm import HOSTED_CATALOG_PROFILE_IDS, provider_headers
 from services.text_model_catalog import TextModelSpec, model_spec
 
 
@@ -261,22 +261,26 @@ def generate(client, profile, *, model: str, messages: list[dict],
         raise TextGenerationError("This model does not support tool calls.")
     if session_id and profile is not None and profile.kind in ("opencode_go", "opencode_zen"):
         options["extra_headers"] = provider_headers(profile, session_id)
-    if profile is not None and profile.kind in NEW_PROFILE_IDS:
+    # A reviewed hosted catalog decides sampling, reasoning and output budget.
+    # Servers the user runs and custom endpoints keep the caller's options:
+    # their limits are the server's, and an unknown output limit is left to it.
+    hosted = profile is not None and profile.kind in HOSTED_CATALOG_PROFILE_IDS
+    if hosted:
         options.pop("temperature", None)
         options.pop("reasoning_effort", None)
         options.pop("extra_body", None)
-        level = (spec.thinking_levels or {}).get(reasoning_level, reasoning_level)
+    level = (spec.thinking_levels or {}).get(reasoning_level, reasoning_level)
+    if spec.protocol == "chat":
         if level and level != "off" and spec.reasoning_format == "openai":
-            if spec.protocol == "responses":
-                options["reasoning"] = {"effort": level}
-            elif spec.protocol == "chat":
-                options["reasoning_effort"] = level
+            options["reasoning_effort"] = level
+            if level != "none":
+                # Thinking models are not meant to sample greedily.
+                options.pop("temperature", None)
         elif level and level != "off" and spec.reasoning_format == "deepseek":
             options["extra_body"] = {"thinking": {"type": "enabled"}}
             if level in ("high", "max"):
                 options["extra_body"]["reasoning_effort"] = level
-    if spec.protocol == "chat":
-        if profile is not None and profile.kind in NEW_PROFILE_IDS:
+        if hosted:
             options.setdefault("max_tokens", spec.max_output_tokens)
         if tools:
             options["tools"] = tools
@@ -289,7 +293,6 @@ def generate(client, profile, *, model: str, messages: list[dict],
             options.pop("temperature", None)
         options.pop("reasoning_effort", None)
         options.pop("extra_body", None)
-        level = (spec.thinking_levels or {}).get(reasoning_level, reasoning_level)
         if level and level != "off" and spec.reasoning_format == "openai":
             options["reasoning"] = {"effort": level}
         if spec.protocol == "responses" and spec.reasoning_format == "openai":

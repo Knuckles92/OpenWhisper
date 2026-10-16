@@ -10,6 +10,7 @@ import pytest
 import os
 import tempfile
 import threading
+import time
 import weakref
 from unittest.mock import patch
 
@@ -30,6 +31,7 @@ from services.settings import (
     TranscriptCleanupProvider,
     default_transcript_cleanup_model,
 )
+from services.text_llm import get_profile
 from tests.fakes.settings import InMemorySettings
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
@@ -43,7 +45,6 @@ from ui_qt.dialogs.settings_destinations import (
 )
 from ui_qt.dialogs.settings_models import WHISPER_FILTER, ModelAssignments
 from ui_qt.widgets import agent_picker
-from ui_qt.widgets import text_model_picker as picker_module
 from ui_qt.widgets.nav_rail import NavRail
 
 # The rail keys these tests used when Model Manager was its own window.
@@ -179,12 +180,16 @@ class _DialogTestCase:
                 dialog_module, "scan_cached_models", return_value=cached or {}
             ),
             patch.object(dialog_module, "settings_manager", fake_settings),
-            patch.object(
-                picker_module,
-                "find_api_key",
-                side_effect=lambda selected_provider: (api_keys or {}).get(
-                    selected_provider
-                ),
+            # The API server fields keep their choice in the same store.
+            patch("services.speech_endpoints.settings_manager", fake_settings),
+            patch("ui_qt.widgets.speech_server_controls.settings_manager", fake_settings),
+            # Keys by the provider that needs them, resolved by variable name.
+            patch(
+                "services.text_llm.resolve_credential",
+                side_effect=lambda env_name: {
+                    get_profile(provider).api_key_env: key
+                    for provider, key in (api_keys or {}).items()
+                }.get(env_name),
             ),
         ]
         for patcher in patchers:
@@ -247,7 +252,7 @@ class TestRail(_DialogTestCase):
         dialog.engine_combo.setCurrentIndex(
             dialog.engine_combo.findData("api")
         )
-        assert dialog.rail.value(ONDEMAND_VOICE) == "API · gpt-transcribe"
+        assert dialog.rail.value(ONDEMAND_VOICE) == "OpenAI · gpt-transcribe"
 
     def test_manage_downloads_links_open_downloads_filtered(self):
         dialog, _values = self._make_dialog()
@@ -524,29 +529,53 @@ class TestTextModelPicker(_DialogTestCase):
         assert picker.edit_endpoint_button.isEnabled()
         assert not picker.delete_endpoint_button.isEnabled()
 
-    def test_editing_a_local_preset_updates_only_its_server_url(self):
+    def test_editing_a_local_preset_updates_its_server_and_key_variable(self):
         dialog, values = self._make_text_dialog()
         picker = dialog.text_model_picker
-        dialog._fetch_catalog_models = lambda provider, picker, force=False: None
-        picker.set_provider("lm_studio")
+        fetches = []
+        dialog._fetch_catalog_models = lambda provider, picker, force=False: (
+            fetches.append((provider, force))
+        )
+        picker.set_provider("vllm")
+        opened = []
 
-        class _UrlPrompt:
-            @staticmethod
-            def getText(_parent, _title, _label, text=""):
-                return "http://192.168.1.60:1234", True
+        class _EditedPreset:
+            def __init__(self, profile=None, parent=None):
+                opened.append(profile)
 
-        def save_setting(key, value):
-            values[key] = value
+            def exec(self):
+                return QDialog.DialogCode.Accepted
 
-        with patch.object(dialog_module, "QInputDialog", _UrlPrompt), patch(
-            "services.settings.settings_manager.save_setting",
-            side_effect=save_setting,
+            def result_payload(self):
+                return {
+                    "name": "vLLM",
+                    "base_url": "http://192.168.1.60:8000/v1",
+                    "api_key_env": "VLLM_API_KEY",
+                    "protocol": "chat",
+                }
+
+        def update_settings(updates):
+            values.update(updates)
+
+        with patch(
+            "ui_qt.dialogs.text_endpoint_dialog.TextEndpointDialog",
+            _EditedPreset,
+        ), patch(
+            "services.settings.settings_manager.update_settings",
+            side_effect=update_settings,
         ):
-            dialog._edit_text_endpoint("lm_studio")
+            dialog._edit_text_endpoint("vllm")
 
-        assert values["lm_studio_base_url"] == "http://192.168.1.60:1234/v1"
-        assert picker.current_profile().base_url == "http://192.168.1.60:1234/v1"
-        assert "LM Studio server updated" in dialog.message_label.text()
+        assert opened[0].id == "vllm"
+        assert values["vllm_base_url"] == "http://192.168.1.60:8000/v1"
+        assert values["vllm_api_key_env"] == "VLLM_API_KEY"
+        profile = picker.current_profile()
+        assert profile.base_url == "http://192.168.1.60:8000/v1"
+        assert profile.api_key_env == "VLLM_API_KEY"
+        assert fetches == [("vllm", True)]
+        assert picker.provider_requirement.text() == "Key needed in Settings → API keys"
+        assert 'Updated "vLLM"' in dialog.message_label.text()
+        assert values.get(SettingsKey.TEXT_LLM_PROFILES, []) == []
 
     def test_custom_endpoint_appears_and_activation_persists(self):
         dialog, values = self._make_dialog(
@@ -1241,17 +1270,39 @@ class TestApiModelSelection(_DialogTestCase):
         })
         requested = []
         dialog.on_backend_changed = requested.append
-        assert not dialog.api_model_field.isHidden()
+        assert not dialog.api_server.isHidden()
         assert dialog.ondemand_whisper_field.isHidden()
-        combo = dialog.api_model_combo
+        assert dialog.api_server.server_combo.currentData() == "openai"
+        combo = dialog.api_server.model_combo
         assert combo.currentData() == "whisper-1"
         assert combo.currentText() == "whisper-1 (retiring Feb 26, 2027)"
         combo.setCurrentIndex(combo.findData("gpt-transcribe"))
         assert values[SettingsKey.API_TRANSCRIPTION_MODEL] == "gpt-transcribe"
         assert requested == ["API"]
-        assert dialog.rail.value(ONDEMAND_VOICE) == "API · gpt-transcribe"
+        assert dialog.rail.value(ONDEMAND_VOICE) == "OpenAI · gpt-transcribe"
+        assert dialog.voice_detail() == "Sent to OpenAI (api.openai.com) for transcription"
+        assert dialog.voice_is_cloud() and dialog.voice_is_remote()
         dialog.refresh()
         assert requested == ["API"]
+
+    def test_a_server_on_this_computer_keeps_audio_here(self):
+        dialog, values = self._make_dialog(extra_settings={
+            SettingsKey.SELECTED_MODEL: "api",
+            SettingsKey.API_TRANSCRIPTION_ENDPOINT: "speaches",
+        })
+        requested = []
+        dialog.on_backend_changed = requested.append
+        assert dialog.api_server.server_combo.currentData() == "speaches"
+        assert dialog.rail.value(ONDEMAND_VOICE) == "Speaches · Systran/faster-whisper-small"
+        assert dialog.voice_detail() == "On this computer · Speaches"
+        assert not dialog.voice_is_cloud() and not dialog.voice_is_remote()
+        servers = dialog.api_server.server_combo
+        servers.setCurrentIndex(servers.findData("groq"))
+        assert values[SettingsKey.API_TRANSCRIPTION_ENDPOINT] == "groq"
+        assert requested == ["API"]
+        assert dialog.rail.value(ONDEMAND_VOICE) == "Groq · whisper-large-v3-turbo"
+        assert dialog.voice_is_cloud()
+        assert dialog.voice_detail() == "Sent to Groq (api.groq.com) for transcription"
 
     def test_retired_models_leave_the_picker_after_shutdown(self):
         from datetime import date
@@ -1264,7 +1315,7 @@ class TestApiModelSelection(_DialogTestCase):
                 SettingsKey.API_TRANSCRIPTION_MODEL: "whisper-1",
                 SettingsKey.MEETING_SPEAKER_ID_BACKEND: MeetingSpeakerIdBackend.OPENAI,
             })
-            combo = dialog.api_model_combo
+            combo = dialog.api_server.model_combo
             assert [combo.itemData(i) for i in range(combo.count())] == ["gpt-transcribe"]
             assert combo.currentData() == "gpt-transcribe"
             speaker = dialog.meeting_speaker_id_combo
@@ -1343,6 +1394,52 @@ class TestNewTextProviders(_DialogTestCase):
         dialog._on_text_models_loaded("groq", "alphabetical", [], "offline")
         assert picker.model_combo.count() == 1
         assert "offline" in picker.status_label.text()
+
+    def test_running_local_servers_are_marked_and_offered_instead_of_a_missing_key(self):
+        dialog, _ = self._make_dialog()
+        picker = dialog.text_model_picker
+        picker.set_provider("openrouter")
+        found = {"http://127.0.0.1:1234/v1": "lm_studio", "http://127.0.0.1:8080/v1": "llama_cpp"}
+        with patch("services.local_text_servers.detect_running_servers",
+                   return_value=found) as detect:
+            dialog.on_destination_shown(CLEANUP)
+            deadline = time.monotonic() + 5
+            while "Running" not in picker.provider_combo.itemText(
+                    picker.provider_combo.findData("lm_studio")) and time.monotonic() < deadline:
+                QApplication.processEvents()
+                time.sleep(0.01)
+            dialog.on_destination_shown(CLEANUP)
+        assert detect.call_count == 1  # once per Settings, no polling
+        probed = detect.call_args.args[0]
+        assert "http://127.0.0.1:9931/v1" in probed and "http://127.0.0.1:8080/v1" in probed
+        assert picker.provider_combo.itemText(picker.provider_combo.findData("lm_studio")) == "LM Studio · Running"
+        assert picker.provider_combo.itemText(picker.provider_combo.findData("llama_cpp")) == "llama.cpp"
+        assert picker.provider == "openrouter"
+        assert picker.provider_requirement.text() == (
+            "Key needed in Settings → API keys, or choose LM Studio, "
+            "running on this computer"
+        )
+        assert picker.provider_requirement.toolTip() == (
+            "Requires OpenRouter API key — add it in Settings → API keys"
+        )
+        picker.set_provider("llama_cpp")
+        assert "Answering at http://127.0.0.1:8080/v1" in picker.provider_combo.toolTip()
+        picker.set_provider("lm_studio")
+        assert picker.provider_requirement.text() == "No API key required"
+        assert "Running on this computer." in picker.provider_combo.toolTip()
+
+    def test_local_thinking_model_enables_the_thinking_level(self):
+        from services.text_model_catalog import TextModelSpec, remember_server_specs
+
+        dialog, _ = self._make_dialog()
+        picker = dialog.text_model_picker
+        picker.set_provider("ollama", "qwen3")
+        dialog._on_text_provider_changed("ollama")
+        assert not dialog.cleanup_reasoning_combo.isEnabled()
+        remember_server_specs("http://localhost:11434/v1", {"qwen3": TextModelSpec(
+            reasoning=True, reasoning_format="openai", thinking_levels={"off": "none"})})
+        dialog._on_text_models_loaded("ollama", "alphabetical", ["qwen3"], "")
+        assert dialog.cleanup_reasoning_combo.isEnabled()
 
     def test_ollama_exposes_edit_but_not_delete(self):
         dialog, _ = self._make_dialog()

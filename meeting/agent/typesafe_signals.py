@@ -1,4 +1,4 @@
-"""Meeting-side TypeSafe questions, worded exactly as benchmarked.
+"""Meeting-side Fast judgments questions, worded exactly as benchmarked on Jev.
 
 Each helper wraps one narrow judgment over explicit state and returns
 ``None`` whenever the judge is unavailable or fails, so callers keep their
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Optional, Sequence
 
-from services.typesafe import ChoiceAnswer, TypeSafeJudge
+from services.typesafe import ChoiceAnswer, Judge
 
 # -- topic boundary --------------------------------------------------------------
 
@@ -24,9 +24,13 @@ TOPIC_CHANGED_INSTRUCTIONS = (
 #: A minute of speech is about a thousand characters; this leaves headroom
 #: for a dense window without letting the request grow with the meeting.
 _WINDOW_MAX_CHARS = 6_000
+#: The scheduler waits for this answer before its next checkpoint, and word
+#: overlap decides when none arrives, so a slow text model gets no longer
+#: than this. Jev answers well inside it.
+TOPIC_TIMEOUT_S = 5.0
 
 
-def topic_shift_probability(judge: TypeSafeJudge, previous_window: str,
+def topic_shift_probability(judge: Judge, previous_window: str,
                             window: str) -> Optional[float]:
     """Probability that ``window`` left the topic of ``previous_window``."""
     older = (previous_window or "").strip()
@@ -38,7 +42,7 @@ def topic_shift_probability(judge: TypeSafeJudge, previous_window: str,
     if len(newer) > _WINDOW_MAX_CHARS:
         newer = newer[:_WINDOW_MAX_CHARS]
     return judge.noul({"previous_window": older, "window": newer},
-                      TOPIC_CHANGED_INSTRUCTIONS)
+                      TOPIC_CHANGED_INSTRUCTIONS, timeout_s=TOPIC_TIMEOUT_S)
 
 
 # -- voice commands ------------------------------------------------------------
@@ -66,7 +70,7 @@ VOICE_COMMAND_INSTRUCTIONS = (
 )
 
 
-def voice_command_choice(judge: TypeSafeJudge, segment: str,
+def voice_command_choice(judge: Judge, segment: str,
                          previous_segments: Sequence[str],
                          assistant_names: Sequence[str]) -> Optional[ChoiceAnswer]:
     """Classify a wake-named segment as one command or ``none``."""

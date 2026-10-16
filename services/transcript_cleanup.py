@@ -10,12 +10,12 @@ from config import config
 from services.text_generation import generate
 from services.text_llm import (
     AUTH_FREE_API_KEY,
-    LOCAL_SERVER_PROFILE_IDS,
     connection_fingerprint,
     create_openai_client,
     chat_request_options,
     filter_openai_chat_models,
     get_profile,
+    learn_server_models,
     list_chat_models,
     lookup_env_value,
     resolve_api_key,
@@ -243,11 +243,9 @@ class TranscriptCleanup:
             old_client = self.client
             if old_client is not None:
                 old_client.close()
-            # Local servers may need to load the model before generating.
+            # A server the user runs may load the model before generating.
             self._timeout_s = (
-                120.0
-                if profile.kind in LOCAL_SERVER_PROFILE_IDS
-                else config.TRANSCRIPT_CLEANUP_TIMEOUT_S
+                120.0 if profile.self_hosted else config.TRANSCRIPT_CLEANUP_TIMEOUT_S
             )
             self.client = create_openai_client(
                 profile,
@@ -288,7 +286,8 @@ class TranscriptCleanup:
 
     @property
     def attempt_timeout_s(self) -> float:
-        """The per-attempt timeout this client was built with (longer for Ollama)."""
+        """The per-attempt timeout this client was built with (longer for a
+        server the user runs)."""
         return self._timeout_s
 
     def is_available(self) -> bool:
@@ -377,18 +376,19 @@ class TranscriptCleanup:
             give_up_s = attempt_timeout_s * (retries + 1) + _RETRY_BACKOFF_ALLOWANCE_S
             if deadline_s is not None:
                 give_up_s = deadline_s
-            response = _call_with_deadline(
-                lambda: generate(
+            def run():
+                if profile is not None:
+                    learn_server_models(profile, self.api_key)
+                return generate(
                     client, profile,
                     session_id=str(uuid.uuid4()),
                     reasoning_level=self.reasoning,
                     model=self.model,
                     messages=messages,
                     **request_kwargs,
-                ),
-                give_up_s,
-                self.cancel_event,
-            )
+                )
+
+            response = _call_with_deadline(run, give_up_s, self.cancel_event)
             cleaned = response.text.strip()
             if not cleaned:
                 self.last_error = "empty response"

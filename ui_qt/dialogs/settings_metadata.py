@@ -96,6 +96,7 @@ CONTROL_DESTINATIONS = {'mcp_page': 'mcp',
  'typesafe_switch_route_btn': 'meeting_fast',
  'typesafe_route_tile': 'meeting_fast',
  'typesafe_route_bar': 'meeting_fast',
+ 'typesafe_text_model_bar': 'meeting_fast',
  'typesafe_route_test_btn': 'meeting_fast',
  'typesafe_route_status': 'meeting_fast',
  'typesafe_destination_label': 'meeting_fast',
@@ -147,8 +148,7 @@ MODEL_CONTROL_DESTINATIONS = {'engine_combo': 'voice_model',
  'ondemand_whisper_picker': 'voice_model',
  'ondemand_whisper_field': 'voice_model',
  'speech_controls': 'voice_model',
- 'api_model_combo': 'voice_model',
- 'api_model_field': 'voice_model',
+ 'api_server': 'voice_model',
  'engine_inventory_title': 'voice_model',
  'engine_inventory_row': 'voice_model',
  'engine_inventory_label': 'voice_model',
@@ -193,8 +193,9 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
               'stay available.'),
              ('update_check_tile',
               'Check for updates automatically',
-              'Looks for new OpenWhisper releases in the background. Nothing is installed without '
-              'your approval.'),
+              'When OpenWhisper starts, at most once a day, asks GitHub (api.github.com) for the '
+              'latest release. The request includes the app version, no account or device ID. '
+              'Nothing is installed without your approval.'),
              ('update_notify_tile',
               'Notify me about updates',
               'Opens the update dialog when a newer release is found. Requires automatic checks.')],
@@ -274,13 +275,15 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                           ('meeting_agent_core_combo', 'Agent core', '')],
  'meeting_fast': [('typesafe_key_notice', 'No TypeSafe API key', ''),
                   ('typesafe_route_tile',
-                   'Jev connection',
-                   'Run fast judgments with a TypeSafe key, or with your OpenRouter key through '
-                   'OpenRouter. Same Jev model either way. Test sends one tiny judgment.'),
+                   'Judge',
+                   'Run fast judgments on Jev with a TypeSafe key or through OpenRouter, or on '
+                   'your own text model (the AI insights or AI cleanup one), which can run on '
+                   'this computer with Ollama, LM Studio, vLLM, llama.cpp or LocalAI. Test sends one tiny '
+                   'judgment.'),
                   ('typesafe_enabled_tile',
-                   'TypeSafe fast judgments (Experimental)',
+                   'Fast judgments (Experimental)',
                    'Off by default. Answers narrow yes/no questions about a minute of transcript '
-                   'in about 0.2 s; never writes text. Key: API keys → TypeSafe or OpenRouter.'),
+                   'in about 0.2 s with Jev, seconds with a text model; never writes text.'),
                   ('typesafe_topic_shift_tile',
                    'Semantic topic changes (Experimental)',
                    'Fire early checkpoints on a judged topic change instead of word overlap. '
@@ -306,11 +309,11 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                     'insights on for the meeting.'),
                    ('meeting_review_tile',
                     'Review uncertain insights at the end (Experimental)',
-                    'Optional, for new meetings. Sends relevant transcript excerpts, speaker '
-                    'names, and insights to TypeSafe to identify ambiguities. Start with the three '
-                    'highest-priority questions, then choose Review more to see the rest. No audio '
-                    'is sent. Requires AI insights, TypeSafe fast judgments on the Fast judgments '
-                    'page, and a TypeSafe or OpenRouter API key (Settings → API keys).'),
+                    'Optional, for new meetings. Gives the Fast judgments judge relevant transcript '
+                    'excerpts, speaker names, and insights to identify ambiguities. Start with the '
+                    'three highest-priority questions, then choose Review more to see the rest. No '
+                    'audio is sent. Requires AI insights and Fast judgments on the Fast judgments '
+                    'page.'),
                    ('meeting_report_ribbon_tile',
                     'Ribbon',
                     'Timeline walk. Adds timeline beats and polished minutes, which is the main '
@@ -344,7 +347,10 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                'dashboard with a fake transcript so you can test end-of-meeting cleanup and the '
                'final report without recording a real meeting.')],
  'voice_model': [('ondemand_whisper_picker', 'Model', ''),
-                 ('api_model_combo', 'Model', ''),
+                 ('api_server',
+                  'API server and model',
+                  'Where the API engine sends audio: OpenAI, Groq, Speaches, LocalAI, vLLM, '
+                  'whisper.cpp or a custom OpenAI-compatible server.'),
                  ('engine_combo', 'Recording engine', '')],
  'meeting_voice': [('meeting_whisper_picker', 'Meeting speech model', ''),
                    ('meeting_source_combo', 'Speech engine', ''),

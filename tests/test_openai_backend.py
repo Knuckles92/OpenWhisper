@@ -41,13 +41,20 @@ class FakeTranscriptions:
                 self.in_flight -= 1
 
 
-def make_backend(transcriptions):
-    backend = OpenAIBackend.__new__(OpenAIBackend)
-    backend.model_type = "whisper-1"
-    backend.api_key = "sk-test"
-    backend.is_transcribing = False
-    backend.should_cancel = False
-    backend.client = SimpleNamespace(audio=SimpleNamespace(transcriptions=transcriptions))
+def make_backend(transcriptions, model="whisper-1"):
+    """An OpenAI backend whose clients send to ``transcriptions``.
+
+    Replacing ``backend.client`` afterwards keeps the replacement: the
+    connection it stands for is unchanged.
+    """
+    from services import credentials
+
+    credentials.store().set("OPENAI_API_KEY", "sk-test")
+    backend = OpenAIBackend(model)
+    backend._build_client = lambda _connection: SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=transcriptions), close=lambda: None,
+    )
+    backend.prepare_client()
     return backend
 
 
@@ -184,8 +191,8 @@ class TestChunkedTranscription:
         original = backend._transcribe_one_chunk
         seen = []
 
-        def cancel_after_two(chunk_file, api_model):
-            result = original(chunk_file, api_model)
+        def cancel_after_two(chunk_file, endpoint, api_model):
+            result = original(chunk_file, endpoint, api_model)
             seen.append(chunk_file)
             if len(seen) >= 2:
                 backend.should_cancel = True
@@ -220,8 +227,10 @@ class TestChunkedTranscription:
         assert backend.is_transcribing is False
 
     def test_unavailable_backend_refuses_before_splitting(self, chunks, split):
+        from services import credentials
+
         backend = make_backend(FakeTranscriptions())
-        backend.client = None
+        credentials.store().delete("OPENAI_API_KEY")
         record = split(chunks)
 
         with pytest.raises(Exception, match="not available"):

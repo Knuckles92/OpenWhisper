@@ -202,12 +202,14 @@ def test_rejected_chunk_interrupts_other_stalled_uploads(native_worker, tmp_path
     paths = [tmp_path / name for name in ("stalled.wav", "reject.wav", "queued.wav")]
     for path in paths:
         path.write_bytes(b"RIFF" + b"0" * 64)
-    backend = OpenAIBackend("whisper-1", api_key="test")
+    from services import credentials
+    credentials.store().set("OPENAI_API_KEY", "test")
+    backend = OpenAIBackend("whisper-1")
     backend.prepare_client()
     before = time.monotonic()
     try:
         with pytest.raises(RuntimeError, match="upload rejected"):
-            backend._transcribe_chunks([str(path) for path in paths], "whisper-1")
+            backend._transcribe_chunks([str(path) for path in paths], *backend._target())
         assert time.monotonic() - before < 3
         assert all(p.poll() is not None for p in processes)
     finally:
@@ -292,7 +294,9 @@ def test_cloud_cancel_interrupts_stalled_http_and_fresh_job_succeeds(monkeypatch
     monkeypatch.setenv("OPENAI_BASE_URL", f"http://127.0.0.1:{server.server_port}/v1")
     audio = tmp_path / "audio.wav"
     audio.write_bytes(b"RIFF" + b"0" * 64)
-    backend = OpenAIBackend("whisper-1", api_key="test-only-local-server")
+    from services import credentials
+    credentials.store().set("OPENAI_API_KEY", "test-only-local-server")
+    backend = OpenAIBackend("whisper-1")
     try:
         with ThreadPoolExecutor() as executor:
             pending = executor.submit(backend.transcribe, str(audio))

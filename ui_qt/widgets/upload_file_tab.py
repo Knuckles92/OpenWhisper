@@ -1262,7 +1262,7 @@ class UploadFileTab(TranscriptionTabBase):
     def _engine_splits_files(self) -> bool:
         """Whether the selected engine uploads a file over the limit in chunks.
 
-        Only the OpenAI API does (``OpenAIBackend.large_file_size_mb``); every
+        Only the API backend does (``OpenAIBackend.large_file_size_mb``); every
         other engine takes a file of any size in one pass, so its preview
         needs no chunk count and no decode.
         """

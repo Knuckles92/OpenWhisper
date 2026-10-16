@@ -38,27 +38,39 @@ PROFILE_KIND_OPENAI = "openai"
 PROFILE_KIND_OPENROUTER = "openrouter"
 PROFILE_KIND_CUSTOM = "custom"
 
-# Built-in local inference servers: one slot each, like Ollama, shipping the
-# server's standard local address so the user only edits it when the server
-# lives somewhere else. Each saves its override under "<id>_base_url".
+# Built-in local inference servers: one slot each, shipping the server's
+# standard local address so the user only edits it when the server lives
+# somewhere else. Each saves its overrides under "<id>_base_url" and, for a
+# server started with an API key, "<id>_api_key_env".
 LOCAL_SERVER_DEFAULT_URLS = {
     "ollama": "http://localhost:11434/v1",
     "lm_studio": "http://127.0.0.1:1234/v1",
     "vllm": "http://127.0.0.1:8000/v1",
-    "llama_cpp": "http://127.0.0.1:8080/v1",
+    # llama-server moved from 8080 to 9931 in October 2026, leaving 8080 to
+    # LocalAI; an older llama.cpp is found there by server detection.
+    "llama_cpp": "http://127.0.0.1:9931/v1",
     "localai": "http://127.0.0.1:8080/v1",
 }
+LOCAL_SERVER_NAMES = {
+    "ollama": "Ollama",
+    "lm_studio": "LM Studio",
+    "vllm": "vLLM",
+    "llama_cpp": "llama.cpp",
+    "localai": "LocalAI",
+}
 LOCAL_SERVER_PROFILE_IDS = tuple(LOCAL_SERVER_DEFAULT_URLS)
+# Hosted providers whose request shape comes from a reviewed catalog rather
+# than from the caller, unlike the generic servers above and custom endpoints.
+HOSTED_CATALOG_PROFILE_IDS = ("groq", "opencode_go", "opencode_zen")
 
-NEW_PROFILE_IDS = (*LOCAL_SERVER_PROFILE_IDS, "groq", "opencode_go", "opencode_zen")
-BUILTIN_KINDS = (PROFILE_KIND_OPENAI, PROFILE_KIND_OPENROUTER, *NEW_PROFILE_IDS)
+BUILTIN_KINDS = (PROFILE_KIND_OPENAI, PROFILE_KIND_OPENROUTER,
+                 *LOCAL_SERVER_PROFILE_IDS, *HOSTED_CATALOG_PROFILE_IDS)
 PROFILE_KINDS = (*BUILTIN_KINDS, PROFILE_KIND_CUSTOM)
 
 OPENAI_PROFILE_ID = "openai"
 OPENROUTER_PROFILE_ID = "openrouter"
-BUILTIN_PROFILE_IDS = (OPENAI_PROFILE_ID, OPENROUTER_PROFILE_ID, *NEW_PROFILE_IDS)
-OLLAMA_BASE_URL_KEY = "ollama_base_url"
-OLLAMA_DEFAULT_URL = LOCAL_SERVER_DEFAULT_URLS["ollama"]
+# Every built-in profile's id is its kind.
+BUILTIN_PROFILE_IDS = BUILTIN_KINDS
 
 # OpenAI's client requires a non-empty api_key even when the server ignores it.
 AUTH_FREE_API_KEY = "dummy"
@@ -76,6 +88,11 @@ _OPENAI_NON_CHAT_MARKERS = (
     "audio", "realtime", "tts", "whisper", "embedding", "moderation",
     "dall-e", "transcribe", "image", "search", "instruct",
 )
+
+
+def is_loopback_url(url: Optional[str]) -> bool:
+    """True when ``url``'s host is this computer."""
+    return bool(url) and (urlsplit(url).hostname or "").lower() in _LOCAL_HOSTS
 
 
 @dataclass(frozen=True)
@@ -98,10 +115,24 @@ class TextLLMProfile:
     @property
     def is_local(self) -> bool:
         """True when the endpoint host is loopback."""
-        if not self.base_url:
-            return False
-        host = (urlsplit(self.base_url).hostname or "").lower()
-        return host in _LOCAL_HOSTS
+        return is_loopback_url(self.base_url)
+
+    @property
+    def self_hosted(self) -> bool:
+        """True for a server the user runs: a local server preset wherever
+        it lives, or any endpoint on this computer."""
+        return self.kind in LOCAL_SERVER_PROFILE_IDS or self.is_local
+
+    @property
+    def refuses_unsupported_tools(self) -> bool:
+        """True when the API itself answers an error for tools a model cannot call.
+
+        OpenAI does, and OpenRouter routes a tool request only to providers
+        that support tools. Anywhere else (a server the user runs, Groq,
+        OpenCode, any custom endpoint) a model may ignore the tools and
+        answer in prose, so only a test call proves it uses them.
+        """
+        return self.kind in (PROFILE_KIND_OPENAI, PROFILE_KIND_OPENROUTER)
 
 
 @dataclass(frozen=True)
@@ -162,11 +193,10 @@ def builtin_profiles() -> Tuple[TextLLMProfile, ...]:
             api_key_env="OPENROUTER_API_KEY",
             builtin=True,
         ),
-        TextLLMProfile("ollama", "Ollama", "ollama", OLLAMA_DEFAULT_URL, "", True),
-        TextLLMProfile("lm_studio", "LM Studio", "lm_studio", LOCAL_SERVER_DEFAULT_URLS["lm_studio"], "", True),
-        TextLLMProfile("vllm", "vLLM", "vllm", LOCAL_SERVER_DEFAULT_URLS["vllm"], "", True),
-        TextLLMProfile("llama_cpp", "llama.cpp", "llama_cpp", LOCAL_SERVER_DEFAULT_URLS["llama_cpp"], "", True),
-        TextLLMProfile("localai", "LocalAI", "localai", LOCAL_SERVER_DEFAULT_URLS["localai"], "", True),
+        *(
+            TextLLMProfile(server, name, server, LOCAL_SERVER_DEFAULT_URLS[server], "", True)
+            for server, name in LOCAL_SERVER_NAMES.items()
+        ),
         TextLLMProfile("groq", "Groq", "groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY", True),
         TextLLMProfile("opencode_go", "OpenCode Go", "opencode_go", "https://opencode.ai/zen/go/v1", "OPENCODE_GO_API_KEY", True),
         TextLLMProfile("opencode_zen", "OpenCode Zen", "opencode_zen", "https://opencode.ai/zen/v1", "OPENCODE_ZEN_API_KEY", True),
@@ -230,10 +260,18 @@ def validate_text_protocol(protocol: str) -> str:
 
 
 def snapshot_from_profile(profile: TextLLMProfile, model: str = "") -> TextLLMSnapshot:
+    """Freeze ``profile``'s connection and, given ``model``, what it is.
+
+    A meeting runs every agent request, re-run and report on the snapshot's
+    metadata, so a server the user runs is asked about its models first
+    (see :func:`learn_server_models`): off the GUI thread when ``model`` is
+    given.
+    """
     metadata = profile.model_metadata
     if model:
         from services.text_model_catalog import model_spec
 
+        learn_server_models(profile)
         metadata = {"model": model, **model_spec(profile, model).to_dict()}
     return TextLLMSnapshot(
         profile_id=profile.id,
@@ -373,38 +411,49 @@ def list_profiles(
     return [*(_configured_builtin(p, settings) for p in builtin_profiles()), *list_custom_profiles(settings)]
 
 
-def local_server_base_url_key(profile_id: str) -> str:
-    """Return the settings key holding a local server preset's URL override."""
-    return f"{profile_id}_base_url"
+def _local_server_keys(profile_id: str) -> Tuple[str, str]:
+    return f"{profile_id}_base_url", f"{profile_id}_api_key_env"
 
 
 def _configured_builtin(profile: TextLLMProfile, settings: Dict[str, Any]) -> TextLLMProfile:
     default_url = LOCAL_SERVER_DEFAULT_URLS.get(profile.id)
-    if default_url is not None:
-        url = normalize_base_url(
-            settings.get(local_server_base_url_key(profile.id)) or default_url
-        )
-        profile = replace(profile, base_url=url)
-    return profile
+    if default_url is None:
+        return profile
+    url_key, env_key = _local_server_keys(profile.id)
+    try:
+        api_key_env = validate_api_key_env(str(settings.get(env_key) or ""))
+    except ValueError:
+        api_key_env = ""
+    return replace(
+        profile,
+        base_url=normalize_base_url(settings.get(url_key) or default_url),
+        api_key_env=api_key_env,
+    )
 
 
-def save_local_server_url(profile_id: str, url: str) -> None:
-    """Persist one local server preset's URL, rejecting embedded secrets."""
-    if profile_id not in LOCAL_SERVER_DEFAULT_URLS:
-        raise ValueError(f"'{profile_id}' is not a built-in local server.")
-    from services.settings import settings_manager
+def normalize_local_server_url(url: str) -> str:
+    """Return a local server's API URL, rejecting embedded secrets.
 
+    A bare host gets the ``/v1`` route every local server serves.
+    """
     normalized = normalize_base_url(url)
     parts = urlsplit(normalized)
     if parts.username or parts.password or parts.query:
         raise ValueError("Use a server URL without credentials or query parameters.")
-    if not parts.path:
-        normalized += "/v1"
-    settings_manager.save_setting(local_server_base_url_key(profile_id), normalized)
+    return normalized if parts.path else normalized + "/v1"
 
 
-def save_ollama_url(url: str) -> None:
-    save_local_server_url("ollama", url)
+def save_local_server(profile_id: str, url: str, api_key_env: str = "") -> None:
+    """Persist one local server preset's URL and optional API key variable."""
+    if profile_id not in LOCAL_SERVER_DEFAULT_URLS:
+        raise ValueError(f"'{profile_id}' is not a built-in local server.")
+    from services.settings import settings_manager
+
+    url_key, env_key = _local_server_keys(profile_id)
+    settings_manager.update_settings({
+        url_key: normalize_local_server_url(url),
+        env_key: validate_api_key_env(api_key_env),
+    })
 
 
 def get_profile(
@@ -559,7 +608,7 @@ def credential_label(profile: TextLLMProfile) -> str:
         return "OpenAI API key"
     if profile.id == OPENROUTER_PROFILE_ID:
         return "OpenRouter API key"
-    if profile.id in NEW_PROFILE_IDS:
+    if profile.builtin:
         return f"{profile.name} API key" if profile.api_key_env else ""
     return profile.api_key_env
 
@@ -686,9 +735,12 @@ def list_chat_models(
     """Fetch chat model ids from the profile's ``/models`` endpoint.
 
     Catalog failure is the caller's problem: the UI still lets the user type
-    a model id by hand.
+    a model id by hand. A server the user runs is asked what each model is,
+    which also records its limits for :func:`model_spec`.
 
     """
+    if profile.self_hosted:
+        return discover_server_models(profile, api_key=api_key, timeout=timeout)
     client = create_openai_client(profile, timeout=timeout, api_key=api_key)
     server_sort = (
         profile.kind == PROFILE_KIND_OPENROUTER
@@ -699,30 +751,6 @@ def list_chat_models(
         if server_sort:
             return [model.id for model in client.models.list(extra_query={"sort": sort})]
         model_ids = [model.id for model in client.models.list()]
-        if profile.kind == "ollama":
-            from concurrent.futures import ThreadPoolExecutor
-            from services.text_model_catalog import remember_ollama_spec
-            import re
-
-            show_url = profile.base_url.rstrip("/")
-            if show_url.endswith("/v1"):
-                show_url = show_url[:-3]
-            def inspect_model(model):
-                data = client.with_options(timeout=5.0, max_retries=0).post(
-                    show_url + "/api/show", cast_to=dict[str, Any], body={"model": model},
-                )
-                capabilities = data.get("capabilities", [])
-                if "completion" not in capabilities:
-                    return None
-                context = re.search(r"(?m)^num_ctx\s+(\d+)", data.get("parameters", ""))
-                budget = max(1024, min(int(context.group(1)), 2000000)) if context else 4096
-                remember_ollama_spec(profile.base_url, model, capabilities, budget)
-                return model
-
-            # /api/show only inspects installed metadata; it never pulls or loads a model.
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                model_ids = [model for model in executor.map(inspect_model, model_ids) if model]
-
     finally:
         client.close()
     if profile.kind == PROFILE_KIND_OPENAI:
@@ -732,13 +760,67 @@ def list_chat_models(
     return sorted(model_ids)
 
 
+def discover_server_models(
+    profile: TextLLMProfile,
+    *,
+    api_key: Optional[str] = None,
+    timeout: float = 15.0,
+) -> List[str]:
+    """List a self-hosted server's chat models, recording what it reports.
+
+    A preset names its server; a custom endpoint is identified first.
+    """
+    from services.local_text_servers import discover_chat_models
+
+    key = api_key or resolve_api_key(profile)
+    if not key:
+        raise RuntimeError(
+            f"No API key found for {profile.name} (set {profile.api_key_env})"
+        )
+    return discover_chat_models(
+        profile.base_url,
+        profile.kind if profile.kind in LOCAL_SERVER_PROFILE_IDS else None,
+        None if key == AUTH_FREE_API_KEY else key,
+        timeout=timeout,
+    )
+
+
+def learn_server_models(
+    profile: TextLLMProfile,
+    api_key: Optional[str] = None,
+    *,
+    timeout: float = 3.0,
+) -> None:
+    """Ask a server the user runs about its models once per session.
+
+    :func:`services.text_model_catalog.model_spec` knows a self-hosted
+    model's real context and reasoning control only after
+    :func:`discover_server_models`, and a dictation, a fast judgment or a
+    meeting can be the first request since launch, before Settings ever
+    loaded the catalog. Other endpoints are left alone, and a server that
+    will not say keeps the defaults. Makes HTTP requests: never call it on
+    the GUI thread.
+    """
+    if not profile.self_hosted:
+        return
+    from services.text_model_catalog import server_specs_known
+
+    if server_specs_known(profile.base_url):
+        return
+    try:
+        discover_server_models(profile, api_key=api_key, timeout=timeout)
+    except Exception as exc:
+        logger.debug("Couldn't read %s's model list: %s", profile.name, type(exc).__name__)
+
+
 def chat_request_options(profile: TextLLMProfile, reasoning: str = "off") -> dict:
     """Build per-request kwargs for cleanup-style chat calls.
 
-    Custom endpoints never receive reasoning parameters; they get
-    ``temperature=0`` so local servers that reject unknown fields still work.
+    Only OpenAI and OpenRouter take reasoning from here. Everyone else gets
+    ``temperature=0``, and :func:`services.text_generation.generate` adds the
+    reasoning control the model's spec says its server accepts.
     """
-    if reasoning == "off" or profile.kind == PROFILE_KIND_CUSTOM or profile.kind in NEW_PROFILE_IDS:
+    if reasoning == "off" or profile.kind not in (PROFILE_KIND_OPENAI, PROFILE_KIND_OPENROUTER):
         return {"temperature": 0}
     if profile.kind == PROFILE_KIND_OPENROUTER:
         return {"extra_body": {"reasoning": {"effort": reasoning}}}
@@ -761,6 +843,23 @@ def destination_is_remote(profile: TextLLMProfile) -> bool:
     return not profile.is_local
 
 
+def _profile_or_meeting_default(
+    provider: Optional[str], settings: Optional[Dict[str, Any]]
+) -> TextLLMProfile:
+    """Resolve ``provider``, or the meeting endpoint the user has chosen now.
+
+    An endpoint that no longer exists is never swapped for a fixed cloud
+    provider: a meeting recorded on a deleted local server would otherwise
+    send its transcript somewhere the user never picked.
+    """
+    profile = get_profile(provider, settings)
+    if profile is not None:
+        return profile
+    from services.settings import resolve_meeting_llm_profile
+
+    return resolve_meeting_llm_profile(_load_settings(settings))
+
+
 def snapshot_from_meeting(
     meeting: Optional[Dict[str, Any]],
     settings: Optional[Dict[str, Any]] = None,
@@ -771,17 +870,15 @@ def snapshot_from_meeting(
 
     Prefers the persisted ``agent_endpoint_json`` snapshot so deleted or
     renamed custom profiles can still be retried. Older rows reconstruct a
-    built-in snapshot from ``agent_provider``.
+    built-in snapshot from ``agent_provider``; rows that predate it were
+    all recorded on ``fallback_provider``.
     """
     meeting = meeting or {}
     snapshot = snapshot_from_mapping(meeting.get("agent_endpoint_json"))
     if snapshot is not None:
         return snapshot
     provider = meeting.get("agent_provider") or fallback_provider
-    profile = get_profile(provider, settings) or builtin_profile(
-        fallback_provider
-    ) or builtin_profiles()[1]
-    return snapshot_from_profile(profile)
+    return snapshot_from_profile(_profile_or_meeting_default(provider, settings))
 
 
 def profile_from_agent_config(
@@ -793,7 +890,4 @@ def profile_from_agent_config(
     snapshot = snapshot_from_mapping(endpoint)
     if snapshot is not None:
         return snapshot.to_profile()
-    profile = get_profile(provider, settings)
-    if profile is not None:
-        return profile
-    return builtin_profile(OPENROUTER_PROFILE_ID) or builtin_profiles()[1]
+    return _profile_or_meeting_default(provider, settings)

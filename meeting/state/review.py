@@ -229,7 +229,7 @@ def answer_review(state, op, ctx):
 def unavailable_review(state, op, ctx):
     if ctx.actor_type != "system":
         return _reject(op, "system_only")
-    state.insight_review.update(status="unavailable", message="AI insights and TypeSafe sharing must both be on for this meeting.")
+    state.insight_review.update(status="unavailable", message="AI insights and insight review must both be on for this meeting.")
     return _result(op, state)
 
 

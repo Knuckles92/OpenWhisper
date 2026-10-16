@@ -138,7 +138,7 @@ class TestListener:
         store = store or FakeStore()
         judge = judge or FakeJudge(answer)
         listener = VoiceCommandListener(
-            store, judge, DEFAULT_VOICE_COMMAND_NAMES, cloud_enabled=lambda: cloud,
+            store, judge, DEFAULT_VOICE_COMMAND_NAMES, allowed=lambda: cloud,
             executor=ImmediateExecutor(),
         )
         return listener, store, judge
@@ -205,7 +205,7 @@ def streaming_listener(executor=None, judge=None, allowed=lambda: True):
     events, store = [], FakeStore()
     judge = judge or FakeJudge(ChoiceAnswer("note_this", .95, {}))
     listener = VoiceCommandListener(store, judge, DEFAULT_VOICE_COMMAND_NAMES,
-                                    cloud_enabled=allowed, executor=executor or ImmediateExecutor(),
+                                    allowed=allowed, executor=executor or ImmediateExecutor(),
                                     on_feedback=events.append)
     return listener, store, judge, events
 
