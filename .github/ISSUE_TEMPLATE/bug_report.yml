@@ -43,9 +43,14 @@ body:
         - Qwen3-ASR
         - Nemotron Streaming
         - Moonshine
-        - Cloud speech API (OpenAI)
+        - API engine: OpenAI
+        - API engine: Groq
+        - API engine: Speaches
+        - API engine: LocalAI
+        - API engine: vLLM
+        - API engine: whisper.cpp
+        - API engine: custom server
         - Remote computer (another computer's engine)
-        - Other speech endpoint
   - type: input
     id: model
     attributes:
@@ -69,7 +74,8 @@ body:
         - llama.cpp
         - LocalAI
         - Custom endpoint
-        - Fast judgments (TypeSafe)
+        - Fast judgments: TypeSafe or OpenRouter (Jev)
+        - Fast judgments: my text model
         - Coding agent (Claude Code, Codex, OpenCode)
   - type: input
     id: text_model

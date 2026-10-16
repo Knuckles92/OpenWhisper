@@ -795,7 +795,7 @@ class SidecarAgent:
         # Pi's install telemetry tags OpenRouter, NVIDIA and Cloudflare calls
         # as coming from Pi; OpenWhisper sends its own attribution instead.
         env["PI_TELEMETRY"] = "0"
-        profile =profile_from_agent_config(self._cfg.provider, self._cfg.endpoint)
+        profile = profile_from_agent_config(self._cfg.provider, self._cfg.endpoint)
         if profile.base_url:
             env["OPENWHISPER_LLM_BASE_URL"] = profile.base_url
         return env

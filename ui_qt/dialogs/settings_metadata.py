@@ -278,7 +278,7 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                    'Judge',
                    'Run fast judgments on Jev with a TypeSafe key or through OpenRouter, or on '
                    'your own text model (the AI insights or AI cleanup one), which can run on '
-                   'this computer with Ollama, LM Studio, vLLM or llama.cpp. Test sends one tiny '
+                   'this computer with Ollama, LM Studio, vLLM, llama.cpp or LocalAI. Test sends one tiny '
                    'judgment.'),
                   ('typesafe_enabled_tile',
                    'Fast judgments (Experimental)',

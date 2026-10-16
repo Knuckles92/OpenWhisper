@@ -4193,8 +4193,8 @@ class SettingsDialog(QDialog):
         else:
             where = "on this computer" if route.is_local else f"at {route.host}"
             description = (
-                f"{self._text_model_label(route)} answers {where}, as set on the "
-                "Models page. Slower than Jev and not benchmarked like it: a "
+                f"{self._text_model_label(route)} answers {where}, as set under AI "
+                "cleanup or Meeting Mode → Intelligence. Slower than Jev and not benchmarked like it: a "
                 f"judgment that takes over {TEXT_MODEL_TIMEOUT_S:.0f} s is skipped."
             )
         self.typesafe_route_tile.set_description(description)
