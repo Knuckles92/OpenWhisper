@@ -46,7 +46,9 @@ LOCAL_SERVER_DEFAULT_URLS = {
     "ollama": "http://localhost:11434/v1",
     "lm_studio": "http://127.0.0.1:1234/v1",
     "vllm": "http://127.0.0.1:8000/v1",
-    "llama_cpp": "http://127.0.0.1:8080/v1",
+    # llama-server moved from 8080 to 9931 in October 2026, leaving 8080 to
+    # LocalAI; an older llama.cpp is found there by server detection.
+    "llama_cpp": "http://127.0.0.1:9931/v1",
     "localai": "http://127.0.0.1:8080/v1",
 }
 LOCAL_SERVER_NAMES = {
@@ -87,6 +89,11 @@ _OPENAI_NON_CHAT_MARKERS = (
 )
 
 
+def is_loopback_url(url: Optional[str]) -> bool:
+    """True when ``url``'s host is this computer."""
+    return bool(url) and (urlsplit(url).hostname or "").lower() in _LOCAL_HOSTS
+
+
 @dataclass(frozen=True)
 class TextLLMProfile:
     """Named chat endpoint whose credential remains outside persisted settings."""
@@ -107,10 +114,7 @@ class TextLLMProfile:
     @property
     def is_local(self) -> bool:
         """True when the endpoint host is loopback."""
-        if not self.base_url:
-            return False
-        host = (urlsplit(self.base_url).hostname or "").lower()
-        return host in _LOCAL_HOSTS
+        return is_loopback_url(self.base_url)
 
     @property
     def self_hosted(self) -> bool:
@@ -711,9 +715,12 @@ def list_chat_models(
     """Fetch chat model ids from the profile's ``/models`` endpoint.
 
     Catalog failure is the caller's problem: the UI still lets the user type
-    a model id by hand.
+    a model id by hand. A server the user runs is asked what each model is,
+    which also records its limits for :func:`model_spec`.
 
     """
+    if profile.self_hosted:
+        return discover_server_models(profile, api_key=api_key, timeout=timeout)
     client = create_openai_client(profile, timeout=timeout, api_key=api_key)
     server_sort = (
         profile.kind == PROFILE_KIND_OPENROUTER
@@ -724,30 +731,6 @@ def list_chat_models(
         if server_sort:
             return [model.id for model in client.models.list(extra_query={"sort": sort})]
         model_ids = [model.id for model in client.models.list()]
-        if profile.kind == "ollama":
-            from concurrent.futures import ThreadPoolExecutor
-            from services.text_model_catalog import remember_ollama_spec
-            import re
-
-            show_url = profile.base_url.rstrip("/")
-            if show_url.endswith("/v1"):
-                show_url = show_url[:-3]
-            def inspect_model(model):
-                data = client.with_options(timeout=5.0, max_retries=0).post(
-                    show_url + "/api/show", cast_to=dict[str, Any], body={"model": model},
-                )
-                capabilities = data.get("capabilities", [])
-                if "completion" not in capabilities:
-                    return None
-                context = re.search(r"(?m)^num_ctx\s+(\d+)", data.get("parameters", ""))
-                budget = max(1024, min(int(context.group(1)), 2000000)) if context else 4096
-                remember_ollama_spec(profile.base_url, model, capabilities, budget)
-                return model
-
-            # /api/show only inspects installed metadata; it never pulls or loads a model.
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                model_ids = [model for model in executor.map(inspect_model, model_ids) if model]
-
     finally:
         client.close()
     if profile.kind == PROFILE_KIND_OPENAI:
@@ -757,13 +740,39 @@ def list_chat_models(
     return sorted(model_ids)
 
 
+def discover_server_models(
+    profile: TextLLMProfile,
+    *,
+    api_key: Optional[str] = None,
+    timeout: float = 15.0,
+) -> List[str]:
+    """List a self-hosted server's chat models, recording what it reports.
+
+    A preset names its server; a custom endpoint is identified first.
+    """
+    from services.local_text_servers import discover_chat_models
+
+    key = api_key or resolve_api_key(profile)
+    if not key:
+        raise RuntimeError(
+            f"No API key found for {profile.name} (set {profile.api_key_env})"
+        )
+    return discover_chat_models(
+        profile.base_url,
+        profile.kind if profile.kind in LOCAL_SERVER_PROFILE_IDS else None,
+        None if key == AUTH_FREE_API_KEY else key,
+        timeout=timeout,
+    )
+
+
 def chat_request_options(profile: TextLLMProfile, reasoning: str = "off") -> dict:
     """Build per-request kwargs for cleanup-style chat calls.
 
-    Custom endpoints never receive reasoning parameters; they get
-    ``temperature=0`` so local servers that reject unknown fields still work.
+    Only OpenAI and OpenRouter take reasoning from here. Everyone else gets
+    ``temperature=0``, and :func:`services.text_generation.generate` adds the
+    reasoning control the model's spec says its server accepts.
     """
-    if reasoning == "off" or profile.kind == PROFILE_KIND_CUSTOM or profile.kind in NEW_PROFILE_IDS:
+    if reasoning == "off" or profile.kind not in (PROFILE_KIND_OPENAI, PROFILE_KIND_OPENROUTER):
         return {"temperature": 0}
     if profile.kind == PROFILE_KIND_OPENROUTER:
         return {"extra_body": {"reasoning": {"effort": reasoning}}}

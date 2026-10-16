@@ -6,16 +6,21 @@ The live catalog determines availability; new IDs require a reviewed route.
 from dataclasses import asdict, dataclass
 from threading import Lock
 
-_ollama_specs = {}
-_ollama_lock = Lock()
+# What servers the user runs reported about their models, by server URL.
+# Only non-secret capabilities; endpoint snapshots preserve them for reruns.
+_server_specs = {}
+_server_lock = Lock()
 
 
-def remember_ollama_spec(base_url, model, capabilities, context_window=4096):
-    # Cache only non-secret capabilities; endpoint snapshots preserve them for reruns.
-    spec = TextModelSpec(tools='tools' in capabilities, reasoning='thinking' in capabilities,
-                         context_window=context_window, max_output_tokens=min(4096, context_window // 2))
-    with _ollama_lock:
-        _ollama_specs[(base_url, model)] = spec
+def remember_server_specs(base_url, specs):
+    """Replace what one server URL reported, ``{model: TextModelSpec}``."""
+    with _server_lock:
+        _server_specs[base_url] = dict(specs)
+
+
+def server_specs_known(base_url) -> bool:
+    with _server_lock:
+        return base_url in _server_specs
 
 
 
@@ -124,9 +129,11 @@ def model_spec(profile, model: str) -> TextModelSpec:
         return TextModelSpec(protocol="responses", reasoning=reasoning,
                              reasoning_format="openai" if reasoning else "",
                              context_window=131072, max_output_tokens=16384)
-    if profile.kind == "ollama":
-        with _ollama_lock:
-            return _ollama_specs.get((profile.base_url, model), TextModelSpec(context_window=4096, max_output_tokens=2048))
+    if getattr(profile, "self_hosted", False):
+        # A server the user runs, as a preset or a custom endpoint: what it
+        # reported, else a modest default rather than a hosted model's limits.
+        with _server_lock:
+            return _server_specs.get(profile.base_url, {}).get(model) or TextModelSpec()
     if profile.kind in _ROUTES:
         for protocol, models in _ROUTES[profile.kind].items():
             if model in models:

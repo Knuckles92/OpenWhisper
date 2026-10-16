@@ -1368,6 +1368,19 @@ class TestNewTextProviders(_DialogTestCase):
         assert picker.model_combo.count() == 1
         assert "offline" in picker.status_label.text()
 
+    def test_local_thinking_model_enables_the_thinking_level(self):
+        from services.text_model_catalog import TextModelSpec, remember_server_specs
+
+        dialog, _ = self._make_dialog()
+        picker = dialog.text_model_picker
+        picker.set_provider("ollama", "qwen3")
+        dialog._on_text_provider_changed("ollama")
+        assert not dialog.cleanup_reasoning_combo.isEnabled()
+        remember_server_specs("http://localhost:11434/v1", {"qwen3": TextModelSpec(
+            reasoning=True, reasoning_format="openai", thinking_levels={"off": "none"})})
+        dialog._on_text_models_loaded("ollama", "alphabetical", ["qwen3"], "")
+        assert dialog.cleanup_reasoning_combo.isEnabled()
+
     def test_ollama_exposes_edit_but_not_delete(self):
         dialog, _ = self._make_dialog()
         picker = dialog.text_model_picker

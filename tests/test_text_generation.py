@@ -353,25 +353,22 @@ def test_pi_endpoint_metadata_and_old_bundle_detection(provider, model, protocol
     agent._check_sidecar_text_support()
 
 
-def test_ollama_catalog_filters_embeddings_and_snapshots_capabilities():
+def test_ollama_catalog_filters_embeddings_and_snapshots_capabilities(local_server):
     from services.text_llm import list_chat_models
     profile = get_profile("ollama", {})
-    requests = []
     def handler(request):
-        requests.append(request)
         if request.url.path == "/v1/models":
             return httpx.Response(200, json={"data": [{"id": "test-embedding"}, {"id": "test-completion"}]})
         assert request.url.path == "/api/show"
         model = json.loads(request.content)["model"]
         return httpx.Response(200, json={"capabilities": ["embedding"] if "embedding" in model else ["completion"],
                                         "parameters": "num_ctx 8192"})
-    client = OpenAI(api_key="dummy", base_url=profile.base_url,
-                    http_client=httpx.Client(transport=httpx.MockTransport(handler)))
-    with patch("services.text_llm.create_openai_client", return_value=client):
-        assert list_chat_models(profile) == ["test-completion"]
+    requests = local_server(handler)
+    assert list_chat_models(profile) == ["test-completion"]
     saved = snapshot_from_profile(profile, "test-completion")
     assert saved.model_metadata["tools"] is False
     assert saved.model_metadata["context_window"] == 8192
+    assert saved.model_metadata["reasoning_format"] == ""
     assert len(requests) == 3
 
 

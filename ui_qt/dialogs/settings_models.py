@@ -1253,12 +1253,17 @@ class ModelAssignments(QObject):
         self._text_models_loading.discard(key)
         if not error:
             self._text_models_cache[key] = models
-        self._apply_catalog_to_picker(
-            self.__dict__.get("text_model_picker"), provider, sort, models, error
-        )
+        text_picker = self.__dict__.get("text_model_picker")
+        self._apply_catalog_to_picker(text_picker, provider, sort, models, error)
         self._apply_catalog_to_picker(
             self.__dict__.get("meeting_model_picker"), provider, sort, models, error
         )
+        if text_picker is not None and text_picker.provider == provider:
+            # A server the user runs reports each model's reasoning control
+            # with its catalog.
+            self._update_cleanup_reasoning_controls(
+                provider, text_picker.model_combo.currentText().strip()
+            )
 
     def _update_cleanup_reasoning_controls(self, provider: str, model: str) -> None:
         from services.text_model_catalog import model_spec
@@ -1266,6 +1271,7 @@ class ModelAssignments(QObject):
         supported = profile is not None and profile.kind in ("openai", "openrouter")
         if profile is not None and model:
             try:
+                # Includes local servers that said this model takes an effort.
                 supported = supported or model_spec(profile, model).reasoning_format in ("openai", "deepseek")
             except ValueError:
                 pass

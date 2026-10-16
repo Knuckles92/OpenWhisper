@@ -203,7 +203,7 @@ def recent_apps() -> tuple[AppIdentity, ...]:
 
 
 # The prompt carries less than a capture holds: small local models
-# (Ollama's default spec is a 4096-token context) also need room for the
+# (Ollama gives a model 4096 tokens unless told otherwise) also need room for the
 # instructions, the rules, the dictionary and the transcript.
 _PROMPT_BEFORE_CHARS = 600
 _PROMPT_AFTER_CHARS = 200

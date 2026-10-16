@@ -24,7 +24,7 @@ def test_endpoint_editor_saves_and_restores_responses():
 def test_local_preset_editor_changes_only_address_and_key_variable():
     dialog = TextEndpointDialog(get_profile("llama_cpp", {}))
     assert dialog.windowTitle() == "llama.cpp server"
-    assert dialog.url_edit.text() == "http://127.0.0.1:8080/v1"
+    assert dialog.url_edit.text() == "http://127.0.0.1:9931/v1"
     assert dialog.name_edit.parent() is None
     assert dialog.protocol_combo.parent() is None
     dialog.url_edit.setText("http://user:pw@127.0.0.1:8081")

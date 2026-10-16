@@ -1,4 +1,5 @@
 """Tests for named OpenAI-compatible text-LLM endpoint profiles."""
+import httpx
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -76,7 +77,7 @@ class TestProfileCrud:
             "ollama": "http://localhost:11434/v1",
             "lm_studio": "http://127.0.0.1:1234/v1",
             "vllm": "http://127.0.0.1:8000/v1",
-            "llama_cpp": "http://127.0.0.1:8080/v1",
+            "llama_cpp": "http://127.0.0.1:9931/v1",
             "localai": "http://127.0.0.1:8080/v1",
         }
         for profile_id, url in expected.items():
@@ -228,8 +229,8 @@ class TestCredentialsAndCatalog:
         openrouter = get_profile(OPENROUTER_PROFILE_ID)
         custom = upsert_custom_profile(
             {},
-            name="Local",
-            base_url="http://127.0.0.1:1234/v1",
+            name="Gateway",
+            base_url="https://gateway.test/v1",
         )
 
         def _client_with(ids):
@@ -271,8 +272,8 @@ class TestCredentialsAndCatalog:
     def test_list_chat_models_propagates_catalog_failure(self):
         profile = upsert_custom_profile(
             {},
-            name="Local",
-            base_url="http://127.0.0.1:1234/v1",
+            name="Gateway",
+            base_url="https://gateway.test/v1",
         )
         with patch(
             "services.text_llm.create_openai_client",
@@ -280,6 +281,12 @@ class TestCredentialsAndCatalog:
         ):
             with pytest.raises(RuntimeError):
                 list_chat_models(profile)
+        local = upsert_custom_profile(
+            {}, name="Local", base_url="http://127.0.0.1:1234/v1",
+        )
+        # Nothing answers on loopback in tests.
+        with pytest.raises(httpx.ConnectError):
+            list_chat_models(local)
 
 
 class TestSnapshotsAndConsent:
