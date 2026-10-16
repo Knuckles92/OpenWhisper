@@ -227,6 +227,10 @@ class UIController(QObject):
         self._meeting_urls: dict = {}
 
         self._settings_dialog = None
+        self._guided_setup_dialog = None
+        self._guided_setup_offer_timer = QTimer(self)
+        self._guided_setup_offer_timer.setSingleShot(True)
+        self._guided_setup_offer_timer.timeout.connect(self._offer_guided_setup_now)
         self.backup_coordinator = None
         self._download_progress_dialog = None
 
@@ -271,6 +275,7 @@ class UIController(QObject):
         self.main_window.remote_retry_requested.connect(self._on_remote_retry)
         self.main_window.live_preview_changed.connect(self._on_live_preview_changed)
         self.main_window.settings_requested.connect(self.open_settings_dialog)
+        self.main_window.guided_setup_requested.connect(self.open_guided_setup)
         self.main_window.engine_help_requested.connect(self.open_engine_help_destination)
         self.main_window.settings_destination_requested.connect(
             self.open_settings_destination
@@ -1001,6 +1006,54 @@ class UIController(QObject):
 
     def show_main_window(self):
         self.main_window.restore_from_tray()
+
+    def offer_guided_setup(self) -> None:
+        """Offer setup to a new install after first paint, yielding to startup dialogs."""
+        from services.guided_setup import should_invite
+
+        if should_invite():
+            self._guided_setup_offer_timer.start(750)
+
+    def _offer_guided_setup_now(self) -> None:
+        from services.guided_setup import should_invite
+
+        dialog = self._guided_setup_dialog
+        if not should_invite() or (dialog is not None and dialog.isVisible()):
+            return
+        if (
+            QApplication.activeModalWidget() is not None
+            or not self.main_window.isVisible()
+            or self.main_window.isMinimized()
+        ):
+            # A model-download consent, a recovery prompt, or a start in the tray.
+            self._guided_setup_offer_timer.start(1000)
+            return
+        self._show_guided_setup(welcome=True)
+
+    def open_guided_setup(self) -> None:
+        """File → Guided setup…: straight to the first step."""
+        self._show_guided_setup(welcome=False)
+
+    def _show_guided_setup(self, *, welcome: bool) -> None:
+        from ui_qt.dialogs.guided_setup import GuidedSetupDialog
+
+        self._guided_setup_offer_timer.stop()
+        if self._guided_setup_dialog is None:
+            self._guided_setup_dialog = GuidedSetupDialog(
+                self._settings_for_guided_setup,
+                self.main_window,
+                open_destination=self.open_settings_destination,
+                open_all_settings=self.open_settings_dialog,
+            )
+        dialog = self._guided_setup_dialog
+        if not dialog.isVisible():
+            dialog.begin(welcome=welcome)
+        self._raise_dialog(dialog)
+
+    def _settings_for_guided_setup(self) -> SettingsDialog:
+        settings = self._prepare_settings_dialog()
+        settings.refresh()
+        return settings
 
     def open_settings_dialog(self, focus_hf_policy: bool = False):
         """Show the non-modal Settings window in its remembered view (re-raised).

@@ -292,6 +292,7 @@ class MainWindow(QMainWindow):
     remote_retry_requested = pyqtSignal()
     live_preview_changed = pyqtSignal()  # Live preview toggled from a tab footer
     settings_requested = pyqtSignal()
+    guided_setup_requested = pyqtSignal()
     #: A Settings destination key (or legacy alias) to open.
     settings_destination_requested = pyqtSignal(str)
     engine_help_requested = pyqtSignal(str)
@@ -796,6 +797,8 @@ class MainWindow(QMainWindow):
         # rewrites the label to "Preferences" on Windows. Keep our wording.
         settings_action = file_menu.addAction("Settings", self.open_settings)
         settings_action.setMenuRole(QAction.MenuRole.NoRole)
+        setup_action = file_menu.addAction("Guided setup…", self.guided_setup_requested.emit)
+        setup_action.setMenuRole(QAction.MenuRole.NoRole)
         downloads_action = file_menu.addAction("Downloads...", self.open_downloads)
         downloads_action.setMenuRole(QAction.MenuRole.NoRole)
         file_menu.addAction("Hotkeys", self.open_hotkey_settings)
