@@ -693,10 +693,10 @@ class AppConfig:
     DEVELOPER_MODE: bool = False
 
     # In-app updater. Automatic GitHub metadata checks and the
-    # update-available dialog are on until the user opts out.
+    # update-available notice are on until the user opts out.
     UPDATE_CHECK_ENABLED: bool = True
     UPDATE_NOTIFY_ENABLED: bool = True
-    UPDATE_CHECK_INTERVAL_S: int = 24 * 60 * 60
+    UPDATE_CHECK_INTERVAL_S: int = 4 * 60 * 60
     UPDATE_CHECK_DELAY_MS: int = 8_000
 
     # Meeting Mode defaults

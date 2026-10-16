@@ -700,14 +700,12 @@ class TestUpdatePreferences:
         from services.settings import (
             resolve_update_check_enabled,
             resolve_update_notify_enabled,
-            resolve_update_skipped_version,
         )
 
         assert config.UPDATE_CHECK_ENABLED is True
         assert config.UPDATE_NOTIFY_ENABLED is True
         assert resolve_update_check_enabled({})
         assert resolve_update_notify_enabled({})
-        assert resolve_update_skipped_version({}) == ""
 
     def test_saved_false_round_trips(self):
         from services.settings import (
@@ -742,20 +740,14 @@ class TestUpdatePreferences:
             SettingsKey,
             resolve_update_check_enabled,
             resolve_update_notify_enabled,
-            resolve_update_skipped_version,
         )
 
         saved = {
             SettingsKey.UPDATE_CHECK_ENABLED: "yes",
             SettingsKey.UPDATE_NOTIFY_ENABLED: 0,
-            SettingsKey.UPDATE_SKIPPED_VERSION: 2,
         }
         assert resolve_update_check_enabled(saved)
         assert resolve_update_notify_enabled(saved)
-        assert resolve_update_skipped_version(saved) == ""
-        assert resolve_update_skipped_version(
-            {SettingsKey.UPDATE_SKIPPED_VERSION: "  2.2.0  "}
-        ) == "2.2.0"
 
 
 def test_config_version_tracks_version_module():

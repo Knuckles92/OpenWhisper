@@ -74,6 +74,9 @@ REMOTE_WATCH_INTERVAL_MS = 1000
 REMOTE_RETRY_DELAYS_S = (2, 5, 15, 30, 60)
 #: What the user's Cancel says when it found nothing to cancel.
 NOTHING_TO_CANCEL = "Nothing to cancel"
+#: Least wait after an update check before the next one, whatever the stored
+#: times say: a copy that cannot save them must not ask GitHub again at once.
+UPDATE_RECHECK_FLOOR_MS = 60 * 60 * 1000
 
 
 def _import_openai_sdk() -> None:
@@ -577,6 +580,9 @@ class ApplicationController(QObject):
             from services.automation import service as automation_service
 
             automation_service.reload(kind)
+        if kind == "updates":
+            # Turning automatic checks back on checks once it is due.
+            self._update_check_timer.start(config.UPDATE_CHECK_DELAY_MS)
 
     def reload_whisper_model(self) -> None:
         """Schedule a debounced, background reload of the local whisper model.
@@ -902,20 +908,23 @@ class ApplicationController(QObject):
         self.executor.submit(self._update_check_worker, manual)
 
     def _maybe_start_update_check(self) -> None:
-        """Automatic check: skip while busy, or when prefs/throttle say no."""
-        from services.app_update import should_auto_check
+        """Run the automatic check if it is due, else wait until it is."""
+        wait_ms = self._update_check_wait_ms()
+        if wait_ms == 0:
+            self.request_update_check(manual=False)
+        elif wait_ms is not None:
+            self._update_check_timer.start(wait_ms)
 
-        if getattr(self.recorder, "is_recording", False) or self.is_meeting_active():
-            self._update_check_timer.start(config.UPDATE_CHECK_DELAY_MS)
-            return
+    def _update_check_wait_ms(self) -> Optional[int]:
+        """Milliseconds until the automatic check is due; None when it is off."""
+        from services.app_update import seconds_until_auto_check
+
         try:
-            settings = settings_manager.load_all_settings()
+            wait_s = seconds_until_auto_check()
         except Exception as exc:
-            logger.warning("Could not load update-check settings: %s", exc)
-            return
-        if not should_auto_check(settings):
-            return
-        self.request_update_check(manual=False)
+            logger.warning("Could not read the update-check schedule: %s", exc)
+            return None
+        return None if wait_s is None else int(wait_s * 1000)
 
     def _update_check_worker(self, manual: bool) -> None:
         from services.app_update import AppUpdateError, check_for_update
@@ -932,6 +941,10 @@ class ApplicationController(QObject):
         self.update_check_finished.emit(result, "", manual)
 
     def _on_update_check_finished(self, result, error: str, manual: bool) -> None:
+        # The check saved its time, success or failure; wait from there.
+        wait_ms = self._update_check_wait_ms()
+        if wait_ms is not None:
+            self._update_check_timer.start(max(wait_ms, UPDATE_RECHECK_FLOOR_MS))
         if error and not manual:
             from services.app_update import update_check_failure_status
 
@@ -1134,8 +1147,8 @@ class ApplicationController(QObject):
             self._startup_database_requested = True
             self._startup_executor.submit(self._initialize_startup_database)
         self.component_executor.submit(self._prune_update_leftovers)
-        # Defer the GitHub metadata check so HF consent / recovery win the
-        # first modal slot, and so a recording or meeting can start first.
+        # The GitHub metadata check waits out startup; after it, the timer
+        # re-arms itself for as long as the app runs.
         self._update_check_timer.start(config.UPDATE_CHECK_DELAY_MS)
         # Share this computer's engine if Settings says so. Its own thread:
         # a first run creates the TLS certificate, and the two executors can

@@ -16,7 +16,7 @@ from services.app_update import (
     UpdateStatus,
     channel_label,
     detect_channel,
-    should_auto_notify,
+    shows_update_notice,
 )
 from services.app_update_apply import (
     acquire_application_mutex_or_exit,
@@ -280,6 +280,7 @@ class UIController(QObject):
         self.main_window.check_for_updates_requested.connect(
             self._on_check_for_updates_requested
         )
+        self.main_window.update_notice_requested.connect(self.show_found_update)
         self.main_window.retranscribe_requested.connect(self._on_retranscribe_requested)
         self.main_window.upload_file_requested.connect(self._on_upload_file_transcribe)
         self.main_window.upload_files_requested.connect(self._on_upload_files_transcribe)
@@ -325,6 +326,7 @@ class UIController(QObject):
         self.tray_manager.copy_last_original_requested.connect(self.copy_last_original)
         self.tray_manager.scratchpad_requested.connect(self.toggle_scratchpad)
         self.tray_manager.stats_requested.connect(self.show_stats)
+        self.tray_manager.update_requested.connect(self._on_tray_update)
         self.tray_manager.language_menu_requested.connect(self.populate_language_menu)
         # Filled once now as well: some platforms won't open an empty submenu.
         self.populate_language_menu(self.tray_manager.language_menu)
@@ -469,6 +471,10 @@ class UIController(QObject):
     def _on_tray_hide(self):
         self.main_window.hide()
         logger.debug("Window hidden to tray")
+
+    def _on_tray_update(self):
+        self.main_window.restore_from_tray()
+        self.show_found_update()
 
     def _on_tray_exit(self):
         logger.info("Exit requested from tray")
@@ -936,6 +942,8 @@ class UIController(QObject):
             # Quick Record's Language field shows only while no dictation
             # language is in charge.
             self.refresh_local_engine_controls()
+        if kind == "updates":
+            self._refresh_update_notice()
         # Read at call time: the application controller assigns its handler
         # after Settings may already exist.
         self.on_settings_changed(kind)
@@ -1902,26 +1910,43 @@ class UIController(QObject):
         error: str = "",
         manual: bool = False,
     ) -> None:
-        """Show the update dialog for a manual check or an allowed auto-notify."""
+        """Keep the update notice current; a manual check also shows the dialog.
+
+        A failed check keeps the last result: being offline for a moment does
+        not make a release found earlier go away.
+        """
+        if self._update_dialog is not None:
+            # The open dialog's download reports against the result it shows.
+            if manual:
+                self._update_dialog.raise_()
+                self._update_dialog.activateWindow()
+            return
+        if result is not None:
+            self._last_update_result = result
+        self._refresh_update_notice()
+        if manual:
+            self.show_app_update_dialog(result, error=error)
+
+    def _refresh_update_notice(self) -> None:
+        """Offer the found release in the title bar and tray, or withdraw it."""
+        result = self._last_update_result
+        version = ""
+        if (
+            result is not None
+            and result.release is not None
+            and shows_update_notice(result.status, settings_manager.load_all_settings())
+        ):
+            version = result.release.version
+        self.main_window.set_update_notice(version)
+        self.tray_manager.set_update_available(version)
+
+    def show_found_update(self) -> None:
+        """Open the update dialog on the release the notice offers."""
         if self._update_dialog is not None:
             self._update_dialog.raise_()
             self._update_dialog.activateWindow()
             return
-        if result is not None:
-            self._last_update_result = result
-        if not manual:
-            if result is None or error:
-                return
-            latest = result.release.version if result.release else ""
-            if not should_auto_notify(
-                result.status, latest, settings_manager.load_all_settings()
-            ):
-                return
-            if self.is_recording or (
-                self.get_meeting_active and self.get_meeting_active()
-            ):
-                return
-        self.show_app_update_dialog(result, error=error)
+        self.show_app_update_dialog(self._last_update_result)
 
     def show_app_update_dialog(
         self,
@@ -1948,6 +1973,8 @@ class UIController(QObject):
         # walked away from must not report into a dead widget.
         if self._update_dialog is dialog:
             self._update_dialog = None
+        # Its opt-out boxes save the same settings as Settings → Updates.
+        self._on_settings_page_changed("updates")
 
     def _update_work_is_busy(self) -> Optional[str]:
         if self.is_recording:

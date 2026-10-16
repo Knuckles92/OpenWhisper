@@ -246,7 +246,6 @@ class SettingsKey:
     UPDATE_LAST_CHECK_AT: Final[str] = "update_last_check_at"
     UPDATE_LAST_FAILED_CHECK_AT: Final[str] = "update_last_failed_check_at"
     UPDATE_API_RETRY_AT: Final[str] = "update_api_retry_at"
-    UPDATE_SKIPPED_VERSION: Final[str] = "update_skipped_version"
     # Personalization (docs/design/personalize/design.md).
     # Knowing which app has focus is native, local and on by default.
     APP_CONTEXT_ENABLED: Final[str] = "app_context_enabled"
@@ -720,7 +719,6 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     # In-app updater
     SettingsKey.UPDATE_CHECK_ENABLED: config.UPDATE_CHECK_ENABLED,
     SettingsKey.UPDATE_NOTIFY_ENABLED: config.UPDATE_NOTIFY_ENABLED,
-    SettingsKey.UPDATE_SKIPPED_VERSION: "",
     # Personalization. APP_STYLE_TONES and TEXT_TRANSFORMS have no
     # entry: their absence has its own meaning (all Formal, the starters).
     SettingsKey.APP_CONTEXT_ENABLED: True,
@@ -1689,18 +1687,6 @@ def resolve_meeting_context_folder_path(
     if not os.path.isabs(expanded):
         expanded = os.path.abspath(expanded)
     return os.path.normpath(expanded)
-
-
-def resolve_update_skipped_version(
-    settings: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Return the release version the user dismissed with Later, if any."""
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-    raw = setting_value(SettingsKey.UPDATE_SKIPPED_VERSION, settings)
-    if not isinstance(raw, str):
-        return ""
-    return raw.strip()
 
 
 def resolve_meeting_report_views(

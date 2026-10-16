@@ -267,10 +267,13 @@ def test_failed_checks_throttle_auto_retry_without_claiming_success(
     failed_at = app_update.parse_last_check_at(
         settings[SettingsKey.UPDATE_LAST_FAILED_CHECK_AT]
     )
-    assert not app_update.should_auto_check(
-        settings, now=failed_at + timedelta(minutes=59)
-    )
-    assert app_update.should_auto_check(settings, now=failed_at + timedelta(hours=1))
+    installer = app_update.InstallChannel.INSTALLER
+    assert app_update.seconds_until_auto_check(
+        settings, now=failed_at + timedelta(minutes=59), channel=installer
+    ) == 60
+    assert app_update.seconds_until_auto_check(
+        settings, now=failed_at + timedelta(hours=1), channel=installer
+    ) == 0
 
 
 def test_loopback_feed_bypasses_production_cooldown(manager, monkeypatch):

@@ -28,6 +28,7 @@ class SystemTrayManager(QSystemTrayIcon):
     copy_last_original_requested = pyqtSignal()
     scratchpad_requested = pyqtSignal()
     stats_requested = pyqtSignal()
+    update_requested = pyqtSignal()
     # Emitted as the Language submenu opens, so a connected slot can refill
     # it with the current choices before it is drawn.
     language_menu_requested = pyqtSignal(object)
@@ -53,6 +54,7 @@ class SystemTrayManager(QSystemTrayIcon):
 
     def _setup_icon(self):
         self.setIcon(app_icon())
+        self.setToolTip("OpenWhisper")
 
     def _setup_menu(self):
         self.menu = QMenu()
@@ -92,6 +94,11 @@ class SystemTrayManager(QSystemTrayIcon):
         settings_action.triggered.connect(self._on_settings)
 
         self.menu.addSeparator()
+        # Shown only while a newer release is waiting.
+        self.update_action = self.menu.addAction("")
+        self.update_action.setMenuRole(QAction.MenuRole.NoRole)
+        self.update_action.triggered.connect(self.update_requested)
+        self.update_action.setVisible(False)
         exit_action = self.menu.addAction("Exit")
         exit_action.setMenuRole(QAction.MenuRole.NoRole)
         exit_action.triggered.connect(self._on_exit)
@@ -163,6 +170,14 @@ class SystemTrayManager(QSystemTrayIcon):
             self.toggle_action.setText("Stop Recording")
         else:
             self.toggle_action.setText("Start Recording")
+
+    def set_update_available(self, version: str) -> None:
+        """Offer the newer release ``version`` in the menu; "" withdraws it."""
+        self.update_action.setText(f"Update to {version}…")
+        self.update_action.setVisible(bool(version))
+        self.setToolTip(
+            f"OpenWhisper: update {version} available" if version else "OpenWhisper"
+        )
 
     def set_meeting_active(
         self, active: bool, dashboard_available: Optional[bool] = None

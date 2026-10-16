@@ -45,7 +45,6 @@ from services.settings import (
     SettingsKey,
     resolve_update_check_enabled,
     resolve_update_notify_enabled,
-    resolve_update_skipped_version,
     settings_manager,
 )
 from services.update_contract import (
@@ -269,76 +268,74 @@ def parse_last_check_at(raw: object) -> Optional[datetime]:
     return parsed
 
 
-def should_auto_check(
+def seconds_until_auto_check(
     settings: Optional[Dict] = None,
     now: Optional[datetime] = None,
     interval_s: Optional[int] = None,
-) -> bool:
-    """Return whether a background GitHub check should run.
+    channel: Optional[str] = None,
+) -> Optional[float]:
+    """Return how long until the next background GitHub check is due.
+
+    The times come from settings, so a restart does not reset the clock and
+    the launch check and the running app's checks share one budget.
 
     Args:
         settings: Loaded settings dict. Loaded from disk when omitted.
-        now: Clock to compare against ``update_last_check_at``.
-        interval_s: Minimum seconds between automatic checks.
+        now: Clock to compare against the stored check times.
+        interval_s: Minimum seconds between successful automatic checks.
+        channel: A :class:`InstallChannel`. Detected when omitted.
 
     Returns:
-        ``False`` when the user disabled checks, when the last check is
-        newer than ``interval_s``, or a failed check is less than an hour old.
+        ``None`` when automatic checks are off: the user disabled them, or
+        this is a git checkout, which follows ``main`` rather than releases.
+        Otherwise the seconds until ``interval_s`` has passed since the last
+        successful check and an hour since the last failed one; ``0`` when
+        that is now.
     """
+    if channel is None:
+        channel = detect_channel()
+    if channel == InstallChannel.GIT:
+        return None
     if settings is None:
         settings = settings_manager.load_all_settings()
     if not resolve_update_check_enabled(settings):
-        return False
+        return None
     if interval_s is None:
         interval_s = config.UPDATE_CHECK_INTERVAL_S
     if now is None:
         now = datetime.now(timezone.utc)
     elif now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
-    failed = parse_last_check_at(
-        settings.get(SettingsKey.UPDATE_LAST_FAILED_CHECK_AT)
-    )
-    if (
-        failed is not None
-        and 0 <= (now - failed).total_seconds() < _FAILED_CHECK_INTERVAL_S
+    due = now
+    # A stored time in the future means the clock moved back; it says
+    # nothing about when this copy last asked.
+    for key, wait_s in (
+        (SettingsKey.UPDATE_LAST_CHECK_AT, interval_s),
+        (SettingsKey.UPDATE_LAST_FAILED_CHECK_AT, _FAILED_CHECK_INTERVAL_S),
     ):
-        return False
-    last = parse_last_check_at(settings.get(SettingsKey.UPDATE_LAST_CHECK_AT))
-    if last is None:
-        return True
-    if last > now:
-        return True
-    return (now - last).total_seconds() >= interval_s
+        at = parse_last_check_at(settings.get(key))
+        if at is not None and at <= now:
+            due = max(due, at + timedelta(seconds=wait_s))
+    return (due - now).total_seconds()
 
 
-def should_auto_notify(
-    status: str,
-    version: str,
-    settings: Optional[Dict] = None,
-) -> bool:
-    """Return whether an automatic update-available dialog should open.
+def shows_update_notice(status: str, settings: Optional[Dict] = None) -> bool:
+    """Return whether the window and tray should offer the found release.
 
-    Auto-notify is only for :attr:`UpdateStatus.UPDATE_AVAILABLE`. A skipped
-    version, a disabled notify preference, or a disabled check preference
-    all suppress the dialog. ``up_to_date`` and ``development`` never nag.
+    Only :attr:`UpdateStatus.UPDATE_AVAILABLE` qualifies, and only while both
+    automatic checks and notices are on.
 
     Args:
         status: A :class:`UpdateStatus` value.
-        version: Latest release version (``v`` prefix optional).
         settings: Loaded settings dict. Loaded from disk when omitted.
     """
     if status != UpdateStatus.UPDATE_AVAILABLE:
         return False
     if settings is None:
         settings = settings_manager.load_all_settings()
-    if not resolve_update_check_enabled(settings):
-        return False
-    if not resolve_update_notify_enabled(settings):
-        return False
-    skipped = resolve_update_skipped_version(settings)
-    if skipped and parse_version(skipped) == parse_version(version):
-        return False
-    return True
+    return resolve_update_check_enabled(settings) and resolve_update_notify_enabled(
+        settings
+    )
 
 
 def _asset_ready(asset: Optional[ReleaseAsset]) -> bool:
@@ -824,28 +821,17 @@ def _save_check_timestamp(key: str, now: Optional[datetime] = None) -> None:
         logger.warning("Could not persist update check timestamp: %s", exc)
 
 
-def persist_prompt_choices(
-    *,
-    notify_enabled: bool,
-    check_enabled: bool,
-    skipped_version: Optional[str] = None,
-) -> None:
-    """Save first-prompt / Settings-equivalent updater preferences.
+def persist_prompt_choices(*, notify_enabled: bool, check_enabled: bool) -> None:
+    """Save the update dialog's Settings-equivalent preferences.
 
     Args:
-        notify_enabled: When False, no automatic update dialog.
+        notify_enabled: When False, no update-available notice.
         check_enabled: When False, no background GitHub fetch.
-        skipped_version: When set, this release is not auto-notified again.
     """
-    updates = {
+    settings_manager.update_settings({
         SettingsKey.UPDATE_NOTIFY_ENABLED: bool(notify_enabled),
         SettingsKey.UPDATE_CHECK_ENABLED: bool(check_enabled),
-    }
-    if skipped_version:
-        updates[SettingsKey.UPDATE_SKIPPED_VERSION] = normalize_version(
-            skipped_version
-        )
-    settings_manager.update_settings(updates)
+    })
 
 
 def updates_dir() -> str:
