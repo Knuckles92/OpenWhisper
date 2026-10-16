@@ -36,7 +36,7 @@ import time
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 from services.text_generation import TextGenerationError, generate
-from services.text_llm import create_openai_client
+from services.text_llm import create_openai_client, learn_server_models
 from services.typesafe import (
     _VERIFY_QUESTIONS,
     _VERIFY_STATE,
@@ -53,6 +53,9 @@ logger = logging.getLogger(__name__)
 #: option number and a probability, about twenty tokens.
 _BASE_TOKENS = 64
 _TOKENS_PER_QUESTION = 40
+#: The most of a judgment's budget spent asking a server the user runs what
+#: its models are, once per session (see ``learn_server_models``).
+_LEARN_TIMEOUT_S = 3.0
 
 SYSTEM_PROMPT = (
     "You are a judgment function. The user message is JSON with `state` and "
@@ -238,11 +241,15 @@ class TextModelJudge(_RouteJudge):
     def request(self, state: Any, questions: Mapping[str, Mapping[str, Any]],
                 timeout_s: float) -> Tuple[Dict[str, Dict[str, Any]], int]:
         """One judgment that raises instead of returning ``None``; ``(answers, input tokens)``."""
+        deadline = time.monotonic() + timeout_s
         shown, labels, schema = render(questions)
         content = json.dumps({"state": state, "questions": shown}, ensure_ascii=False)
         if len(content) > MAX_STATE_CHARS:
             raise ValueError(f"request of {len(content)} chars exceeds the {MAX_STATE_CHARS} bound")
-        deadline = time.monotonic() + timeout_s
+        learn_server_models(self.profile, self._api_key, timeout=min(_LEARN_TIMEOUT_S, timeout_s))
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("no time left after reading the server's model list")
         options: Dict[str, Any] = {
             "temperature": 0,
             "max_tokens": _BASE_TOKENS + _TOKENS_PER_QUESTION * len(questions),
@@ -255,7 +262,7 @@ class TextModelJudge(_RouteJudge):
                     {"role": "user", "content": content}]
         client = _client(self.route, self._api_key)
         try:
-            result = generate(client.with_options(timeout=timeout_s), self.profile,
+            result = generate(client.with_options(timeout=left), self.profile,
                               model=self.model, messages=messages, **options)
         except Exception as exc:
             left = deadline - time.monotonic()

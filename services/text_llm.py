@@ -248,10 +248,18 @@ def validate_text_protocol(protocol: str) -> str:
 
 
 def snapshot_from_profile(profile: TextLLMProfile, model: str = "") -> TextLLMSnapshot:
+    """Freeze ``profile``'s connection and, given ``model``, what it is.
+
+    A meeting runs every agent request, re-run and report on the snapshot's
+    metadata, so a server the user runs is asked about its models first
+    (see :func:`learn_server_models`): off the GUI thread when ``model`` is
+    given.
+    """
     metadata = profile.model_metadata
     if model:
         from services.text_model_catalog import model_spec
 
+        learn_server_models(profile)
         metadata = {"model": model, **model_spec(profile, model).to_dict()}
     return TextLLMSnapshot(
         profile_id=profile.id,
@@ -763,6 +771,34 @@ def discover_server_models(
         None if key == AUTH_FREE_API_KEY else key,
         timeout=timeout,
     )
+
+
+def learn_server_models(
+    profile: TextLLMProfile,
+    api_key: Optional[str] = None,
+    *,
+    timeout: float = 3.0,
+) -> None:
+    """Ask a server the user runs about its models once per session.
+
+    :func:`services.text_model_catalog.model_spec` knows a self-hosted
+    model's real context and reasoning control only after
+    :func:`discover_server_models`, and a dictation, a fast judgment or a
+    meeting can be the first request since launch, before Settings ever
+    loaded the catalog. Other endpoints are left alone, and a server that
+    will not say keeps the defaults. Makes HTTP requests: never call it on
+    the GUI thread.
+    """
+    if not profile.self_hosted:
+        return
+    from services.text_model_catalog import server_specs_known
+
+    if server_specs_known(profile.base_url):
+        return
+    try:
+        discover_server_models(profile, api_key=api_key, timeout=timeout)
+    except Exception as exc:
+        logger.debug("Couldn't read %s's model list: %s", profile.name, type(exc).__name__)
 
 
 def chat_request_options(profile: TextLLMProfile, reasoning: str = "off") -> dict:

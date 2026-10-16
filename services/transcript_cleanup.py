@@ -13,9 +13,9 @@ from services.text_llm import (
     connection_fingerprint,
     create_openai_client,
     chat_request_options,
-    discover_server_models,
     filter_openai_chat_models,
     get_profile,
+    learn_server_models,
     list_chat_models,
     lookup_env_value,
     resolve_api_key,
@@ -127,23 +127,6 @@ def find_api_key(provider: str) -> Optional[str]:
     if not env_key:
         return AUTH_FREE_API_KEY
     return lookup_env_value(env_key)
-
-
-def _learn_server_models(profile, api_key: Optional[str]) -> None:
-    """Ask a server the user runs about its models once per session.
-
-    The model's reasoning control comes from what the server reports, and
-    a dictation can be the first request since launch, before Settings ever
-    loaded the catalog. A server that will not say keeps the defaults.
-    """
-    from services.text_model_catalog import server_specs_known
-
-    if server_specs_known(profile.base_url):
-        return
-    try:
-        discover_server_models(profile, api_key=api_key, timeout=3.0)
-    except Exception as exc:
-        logger.debug("Couldn't read %s's model list: %s", profile.name, type(exc).__name__)
 
 
 def _filter_openai_chat_models(model_ids: List[str]) -> List[str]:
@@ -394,8 +377,8 @@ class TranscriptCleanup:
             if deadline_s is not None:
                 give_up_s = deadline_s
             def run():
-                if profile is not None and profile.self_hosted:
-                    _learn_server_models(profile, self.api_key)
+                if profile is not None:
+                    learn_server_models(profile, self.api_key)
                 return generate(
                     client, profile,
                     session_id=str(uuid.uuid4()),

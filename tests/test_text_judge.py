@@ -180,7 +180,9 @@ class TestPrimitives:
         j.ask("x", NOUL_Q, timeout_s=2.0)
         j.ask("x", NOUL_Q, timeout_s=500.0)
         j.ask("x", NOUL_Q)
-        assert client.get().timeouts == [2.0, typesafe.TEXT_MODEL_TIMEOUT_S, typesafe.TEXT_MODEL_TIMEOUT_S]
+        # What is left of the budget once the request is built.
+        assert client.get().timeouts == pytest.approx(
+            [2.0, typesafe.TEXT_MODEL_TIMEOUT_S, typesafe.TEXT_MODEL_TIMEOUT_S], abs=0.5)
         assert client.get().kwargs["max_retries"] == 0
 
     def test_a_server_without_json_schema_gets_plain_json_from_then_on(self, client):
@@ -264,7 +266,7 @@ class TestSettings:
         client.reply = lambda request: json.dumps({"q": 0.99})
         ok, detail = typesafe.verify_key("dummy", route=route_for(LOCAL))
         assert ok and detail.startswith("My server · judge-1 answered in")
-        assert client.get().timeouts == [typesafe.TEXT_MODEL_TIMEOUT_S]
+        assert client.get().timeouts == pytest.approx([typesafe.TEXT_MODEL_TIMEOUT_S], abs=0.5)
         client.reply = lambda request: "Sure! The answer is yes."
         ok, detail = verify_text_model("dummy", route=route_for(LOCAL), timeout_s=5)
         assert not ok and "not with a usable judgment" in detail
@@ -483,7 +485,7 @@ def test_route_by_voice_on_a_local_model_gets_its_own_budget(client, monkeypatch
     client.reply = answer_all(choice=choose)
     decision = routing.decide("Todo, buy milk", SimpleNamespace(route=routing.ROUTE_AUTO), values, judge=judge())
     assert decision.action_id == "a_todo" and decision.payload == "Buy milk"
-    assert client.get().timeouts == [routing.TEXT_MODEL_ROUTE_TIMEOUT_S]
+    assert client.get().timeouts == pytest.approx([routing.TEXT_MODEL_ROUTE_TIMEOUT_S], abs=0.5)
 
 
 def test_routing_status_says_the_words_stay_here(monkeypatch):
@@ -509,7 +511,7 @@ def test_insight_review_on_a_local_model(client, monkeypatch):
 def test_topic_shift_caps_a_slow_model(client):
     client.reply = answer_all(noul=0.7)
     assert topic_shift_probability(judge(), "budget talk", "hiring plans") == 0.7
-    assert client.get().timeouts == [TOPIC_TIMEOUT_S]
+    assert client.get().timeouts == pytest.approx([TOPIC_TIMEOUT_S], abs=0.5)
 
 
 def test_final_highlight_pass_goes_newest_first_with_the_judges_budget(monkeypatch):

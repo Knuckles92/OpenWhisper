@@ -263,3 +263,60 @@ def test_first_cleanup_learns_the_server_before_its_request(local_server):
         assert cleaner.cleanup("raw transcript") == "Clean."
     assert chat[0]["reasoning_effort"] == "none"
     assert chat[0]["temperature"] == 0
+
+
+def _ollama_with_chat(answer):
+    """The Ollama fake plus a chat route answering ``answer``; returns (handler, chat bodies)."""
+    chat = []
+
+    def completion(request):
+        chat.append(json.loads(request.content))
+        return _json({"choices": [{"message": {"role": "assistant", "content": answer},
+                                   "finish_reason": "stop"}]})
+
+    table = dict(OLLAMA)
+    table[("POST", "/v1/chat/completions")] = completion
+    return _routes(table), chat
+
+
+def _ollama_judge(monkeypatch, handler, model="qwen3"):
+    from services import text_judge, typesafe
+    from services.settings import SettingsKey
+
+    client = OpenAI(api_key="dummy", base_url="http://localhost:11434/v1", max_retries=0,
+                    http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(text_judge, "_CLIENTS", {})
+    monkeypatch.setattr(text_judge, "create_openai_client", lambda *a, **k: client)
+    route = typesafe.text_model_route({SettingsKey.MEETING_LLM_PROVIDER: "ollama",
+                                       SettingsKey.MEETING_LLM_MODEL: model})
+    return text_judge.TextModelJudge("dummy", route=route)
+
+
+def test_first_judgment_learns_the_server_once(local_server, monkeypatch):
+    handler, chat = _ollama_with_chat('{"q": 0.9}')
+    requests = local_server(handler)
+    judge = _ollama_judge(monkeypatch, handler)
+    assert judge.noul({"text": "hi"}, "Is it?") == 0.9
+    assert judge.noul({"text": "hi"}, "Is it?") == 0.9
+    assert model_spec(judge.profile, "qwen3").context_window == 16384
+    assert [r.url.path for r in requests].count("/v1/models") == 1
+    assert len(chat) == 2
+
+
+def test_a_meeting_snapshot_records_what_the_server_reports(local_server):
+    from services.text_llm import snapshot_from_profile
+
+    local_server(_routes(OLLAMA))
+    saved = snapshot_from_profile(get_profile("ollama", {}), "qwen3").model_metadata
+    assert saved["context_window"] == 16384
+    assert saved["thinking_levels"] == {"off": "none"}
+
+
+def test_hosted_endpoints_are_never_asked_about_their_models(local_server):
+    from services.text_llm import learn_server_models
+
+    requests = local_server(lambda request: pytest.fail("hosted endpoint was probed"))
+    learn_server_models(get_profile("groq", {}), "key")
+    hosted = upsert_custom_profile({}, name="Gateway", base_url="https://gateway.test/v1")
+    learn_server_models(hosted, "key")
+    assert requests == []
