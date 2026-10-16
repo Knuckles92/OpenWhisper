@@ -1,6 +1,6 @@
 # OpenWhisper
 
-A desktop app for dictation, audio-file transcription, and meeting notes on Windows, macOS, and Linux. Transcribe with local speech models or the OpenAI API, then optionally use AI to clean up the text.
+A desktop app for dictation, audio-file transcription, and meeting notes on Windows, macOS, and Linux. Transcribe with local speech models, a speech server you run, or a cloud API, then optionally use AI, including models you run yourself, to clean up the text.
 
 [Website](https://openwhisper.fiorilabs.tech/) · [Download](https://github.com/Knuckles92/OpenWhisper/releases/latest) · [Run from source](#run-from-source) · [Install](#install) · [Changelog](CHANGELOG.md)
 
@@ -150,7 +150,7 @@ On macOS, use **OpenWhisper → Check for Updates**. On Windows and Linux, use *
 
 For meetings, open **Meeting Mode**. Add an optional brief to guide AI notes and the live copilot; you can edit it during the meeting. After transcription, **Continue in the background** lets you start another meeting while reports finish. Find results in **Past Meetings**.
 
-Optional [insight review](docs/meeting-insight-review.md) helps clarify uncertain decisions and commitments. [Fast judgments](docs/typesafe-fast-judgments.md) add citation checks, meaning-based history search, and live meeting cues; enable them under **Meeting Mode → Fast judgments**, with a TypeSafe key or the OpenRouter key you already use.
+Optional [insight review](docs/meeting-insight-review.md) helps clarify uncertain decisions and commitments. [Fast judgments](docs/typesafe-fast-judgments.md) add citation checks, meaning-based history search, and live meeting cues; enable them under **Meeting Mode → Fast judgments**, with a TypeSafe key, the OpenRouter key you already use, or your own text model. With a model on this computer, they send nothing and work even when AI insights are off.
 
 ### Hotkeys
 
@@ -183,7 +183,7 @@ Choose **Settings → Appearance → Theme → Omarchy desktop** to follow your 
 | Qwen3-ASR | 0.6B, 1.7B | Windows x64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (MPS) | Dictation, uploads |
 | Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (Metal); Intel Mac CPU | Dictation with preview, uploads, meetings with native preview |
 | Moonshine | Streaming Small / Medium, English | Windows x64 CPU; Apple Silicon CPU, macOS 15+ | Dictation, uploads, meetings with native preview |
-| OpenAI API | GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027 | Cloud; API key and network required | Dictation, uploads |
+| API | OpenAI: GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027. Groq: Whisper Large v3 / Turbo. Your own server: whatever it serves | OpenAI or Groq in the cloud (API key required), or an OpenAI-compatible speech server you run: Speaches, LocalAI, vLLM, whisper.cpp, or custom | Dictation, uploads |
 | Remote computer | Whichever engine the paired computer has selected | Another computer running OpenWhisper on your network | Dictation with that engine's preview, uploads, meetings with a supported host model |
 
 - **Downloads:** Install both the model and its required runtime in **Settings → Downloads**. Each entry shows its size, publisher, license, and download checks.
@@ -224,7 +224,7 @@ The host's selected engine handles transcription. Traffic is encrypted and limit
 Use AI cleanup to polish dictation and meeting intelligence to generate notes and insights. Each has its own text-model settings.
 
 - **Dictation:** Enable **Settings → AI cleanup**, choose a cleanup level, and choose a text model. Add words to the **Dictionary**, pick a tone per kind of app in **Styles**, teach other behaviour in **Learned rules**, or use [Profiles](docs/cleanup-profiles.md) for reusable formats. See [Personalize dictation](docs/personalize.md).
-- **Providers:** OpenAI, OpenRouter, Ollama, LM Studio, vLLM, llama.cpp, LocalAI, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. Add keys in **Settings → API keys**; the local servers are preconfigured with their standard local addresses and need no key — just run the server (Edit changes its address if it lives elsewhere).
+- **Providers:** OpenAI, OpenRouter, Ollama, LM Studio, vLLM, llama.cpp, LocalAI, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. Add keys in **Settings → API keys**; the local servers are preconfigured with their standard local addresses and need no key — just run the server. **Edit** changes its address or sets an optional API key variable. The picker marks local servers that are running, reads each model's context and thinking support from the server, and lists only chat models.
 - **OpenAI cleanup:** The suggested model is `gpt-6-luna`. Saved OpenAI cleanup assignments using the old `gpt-4o-mini` default resolve to Luna; other models, providers, and saved meeting assignments are kept. Thinking **Off** explicitly requests `reasoning.effort: none` through the Responses API. Cleanup remains off by default, and fresh text-model assignments still use OpenRouter Free.
 - **Meetings:** Choose an engine in **Settings → Meeting Mode → Intelligence** using the options below.
 
@@ -242,7 +242,7 @@ See [AI and meeting setup](docs/meeting-intelligence.md) for custom endpoints, e
 
 Downloaded speech models load from the local cache without network metadata checks. Install any required runtime before going offline.
 
-Choose whether to ask, allow, or block missing-model downloads in **Settings → Downloads → When a model is missing from this computer**. Set `HF_HUB_OFFLINE=1` before launch to block model downloads entirely. Cloud transcription and remote text providers still need a network connection.
+Choose whether to ask, allow, or block missing-model downloads in **Settings → Downloads → When a model is missing from this computer**. Set `HF_HUB_OFFLINE=1` before launch to block model downloads entirely. Cloud transcription and remote text providers still need a network connection; speech and text servers on this computer do not. See [Network and privacy](docs/network-and-privacy.md) for every connection the app can make. Only the daily update check is on by default, and there is no telemetry.
 
 <details>
 <summary>More screenshots</summary>
@@ -271,6 +271,6 @@ Choose whether to ask, allow, or block missing-model downloads in **Settings →
 
 ## Contributing and license
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, validation, and backend changes. Release history lives in [CHANGELOG.md](CHANGELOG.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, validation, pull requests, and adding a provider or engine. Release history lives in [CHANGELOG.md](CHANGELOG.md). Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Participation follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 OpenWhisper builds on OpenAI Whisper, faster-whisper, NVIDIA NeMo-Speech.cpp, Qwen3-ASR, and Moonshine, with converted Whisper weights from Systran and Mobius Labs. The app source is [MIT licensed](LICENSE); model weights and dependencies retain their own licenses. See [Third-party notices](THIRD_PARTY_NOTICES.md).
