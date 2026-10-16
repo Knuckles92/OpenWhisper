@@ -111,6 +111,14 @@ class TestDestination:
         assert local.is_local
         assert speech_endpoints.destination(local) == "your local server at 127.0.0.1:8000"
 
+    def test_privacy_sentence(self):
+        assert speech_endpoints.audio_destination_sentence(configured_endpoint("vllm")) == (
+            "Audio stays on this computer: it goes to your local server at 127.0.0.1:8000."
+        )
+        assert speech_endpoints.audio_destination_sentence(configured_endpoint("groq")) == (
+            "Audio is uploaded to Groq (api.groq.com)."
+        )
+
     def test_local_servers_need_no_key_but_hosted_ones_do(self):
         assert speech_endpoints.api_key(configured_endpoint("whisper_cpp"))
         assert speech_endpoints.api_key(configured_endpoint("groq")) is None
@@ -202,19 +210,10 @@ class TestCatalogs:
         with serve({"/v1/models/capabilities": (200, catalog)}) as url:
             assert speech_endpoints.list_models(_point("localai", url)) == ["whisper-1"]
 
-    def test_groq_drops_its_chat_models(self, monkeypatch):
-        import httpx
-
-        catalog = {"data": [{"id": "whisper-large-v3"}, {"id": "llama-3.3-70b-versatile"},
-                            {"id": "whisper-large-v3-turbo"}]}
-        calls = []
-        monkeypatch.setattr(httpx, "get", lambda url, **kw: calls.append((url, kw)) or httpx.Response(
-            200, json=catalog, request=httpx.Request("GET", url)))
-        credentials.store().set("GROQ_API_KEY", "gsk-test")
-        models = speech_endpoints.list_models(configured_endpoint("groq"))
-        assert models == ["whisper-large-v3", "whisper-large-v3-turbo"]
-        assert calls[0][0] == "https://api.groq.com/openai/v1/models"
-        assert calls[0][1]["headers"] == {"Authorization": "Bearer gsk-test"}
+    def test_groq_offers_its_whisper_models_without_asking(self):
+        assert speech_endpoints.list_models(configured_endpoint("groq")) == [
+            "whisper-large-v3-turbo", "whisper-large-v3",
+        ]
 
     def test_a_server_without_a_catalog_lists_nothing(self):
         with serve({}) as url:

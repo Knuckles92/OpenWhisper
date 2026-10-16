@@ -227,6 +227,15 @@ class TestRecognitionAndLearning:
     def test_engine_line(self, engine, expected):
         assert page_module.engine_line({SettingsKey.SELECTED_MODEL: engine}) == expected
 
+    @pytest.mark.parametrize("server,expected", [
+        ("speaches", "Your engine (Speaches) also steers the speech model toward your words."),
+        ("groq", "Your engine (Groq) also steers the speech model toward your words. "
+                 "They're sent to Groq with your audio."),
+    ])
+    def test_engine_line_names_the_api_server(self, server, expected):
+        settings = {SettingsKey.SELECTED_MODEL: "api", SettingsKey.API_TRANSCRIPTION_ENDPOINT: server}
+        assert page_module.engine_line(settings) == expected
+
     def test_a_connected_host_says_whether_hints_reach_it(self):
         host = SimpleNamespace(is_remote=True, is_available=lambda: True, recognition_support="model",
                                name="Whisper turbo on devbox", host_name="devbox")

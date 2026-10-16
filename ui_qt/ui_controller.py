@@ -1002,9 +1002,14 @@ class UIController(QObject):
 
     def open_engine_help_destination(self, destination: str) -> None:
         if destination == "api_keys":
+            from services import speech_endpoints
+
             dialog = self._prepare_settings_dialog()
             dialog.refresh()
-            dialog.focus_api_keys("OPENAI_API_KEY")
+            # The selected server's key; one that needs none opens the page.
+            dialog.focus_api_keys(
+                speech_endpoints.selected_endpoint().connection.api_key_env or None
+            )
             self._raise_dialog(dialog)
         elif destination == "remote_models":
             if self.remote_engine is None:

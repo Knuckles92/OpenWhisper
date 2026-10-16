@@ -1582,53 +1582,47 @@ class TestMainWindowUploadTabIntegration:
 
 
 class TestApiModelField:
-    def test_backend_switch_preserves_each_model_and_locks_api_choice(self, tmp_path, monkeypatch):
-        from services.settings import SettingsManager
-        from ui_qt.widgets import transcription_tab_base as module
+    def test_backend_switch_preserves_each_model_and_locks_api_choice(self):
+        from services.settings import settings_manager as manager
 
-        manager = SettingsManager(str(tmp_path / "settings.json"))
-        monkeypatch.setattr(module, "settings_manager", manager)
         tab = UploadFileTab()
         local_model = tab.local_engine.model_combo.currentText()
         expected_backends = [config.MODEL_VALUE_MAP[name] for name in sorted(config.MODEL_CHOICES, key=str.casefold)]
         assert [tab.model_combo.itemData(i) for i in range(tab.model_combo.count())] == expected_backends
         tab.choose_backend("API")
         assert tab.local_engine.isHidden()
-        assert not tab.api_model_field.isHidden()
-        combo = tab.api_model_combo
+        assert not tab.api_server.isHidden()
+        assert tab.api_server.server_combo.currentData() == "openai"
+        combo = tab.api_server.model_combo
         combo.setCurrentIndex(combo.findData("whisper-1"))
         assert manager.get(SettingsKey.API_TRANSCRIPTION_MODEL) == "whisper-1"
         tab.choose_backend("Local Whisper")
-        assert tab.api_model_field.isHidden()
+        assert tab.api_server.isHidden()
         assert tab.local_engine.model_combo.currentText() == local_model
         tab.choose_backend("API")
         assert combo.currentData() == "whisper-1"
         assert combo.currentText() == "whisper-1 (retiring Feb 26, 2027)"
         tab.set_backend_enabled(False)
-        assert not tab.api_model_combo.isEnabled()
+        assert not tab.api_server.model_combo.isEnabled()
         tab.set_backend_enabled(True)
-        assert tab.api_model_combo.isEnabled()
+        assert tab.api_server.model_combo.isEnabled()
 
-    def test_model_change_syncs_other_tab_without_feedback(self, tmp_path, monkeypatch):
-        from services.settings import SettingsManager
-        from ui_qt.widgets import transcription_tab_base as module
+    def test_model_change_syncs_other_tab_without_feedback(self):
+        from services.settings import settings_manager as manager
 
-        manager = SettingsManager(str(tmp_path / "settings.json"))
-        monkeypatch.setattr(module, "settings_manager", manager)
         first, second = UploadFileTab(), UploadFileTab()
         first.set_backend("API")
         second.set_backend("API")
         announcements = []
         second.model_changed.connect(announcements.append)
         first.model_changed.connect(second.set_backend)
-        first.api_model_combo.setCurrentIndex(
-            first.api_model_combo.findData("gpt-4o-mini-transcribe")
-        )
-        assert second.api_model_combo.currentData() == "gpt-4o-mini-transcribe"
+        first_models, second_models = first.api_server.model_combo, second.api_server.model_combo
+        first_models.setCurrentIndex(first_models.findData("gpt-4o-mini-transcribe"))
+        assert second_models.currentData() == "gpt-4o-mini-transcribe"
         assert announcements == []
         manager.save_setting(SettingsKey.API_TRANSCRIPTION_MODEL, "whisper-1")
         first.choose_backend("API")
-        assert first.api_model_combo.currentData() == second.api_model_combo.currentData() == "whisper-1"
+        assert first_models.currentData() == second_models.currentData() == "whisper-1"
 
 
 class TestRemoteModelField:
@@ -1672,7 +1666,7 @@ class TestRemoteModelField:
     def test_lists_the_hosts_models_by_engine_with_the_running_one_selected(self, paired_with):
         tab = self._remote_tab()
         assert tab.remote_model_field.isVisible()
-        assert not tab.api_model_field.isVisible()
+        assert not tab.api_server.isVisible()
         assert not tab.local_engine.isVisible()
         # Unlike the API, a remote engine has a connection for the dot to report.
         assert tab.status_dot.isVisible()
@@ -1751,7 +1745,7 @@ class TestRemoteModelField:
 
         tab.choose_backend("API")
         QApplication.processEvents()
-        assert tab.api_model_field.isVisible()
+        assert tab.api_server.isVisible()
         assert not tab.remote_model_field.isVisible()
 
     def test_card_height_is_the_same_as_for_a_local_backend(self, paired_with):

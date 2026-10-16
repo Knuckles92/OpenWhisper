@@ -66,11 +66,10 @@ class SpeechEndpoint:
     configurable: bool
     timeout_s: float
     description: str = ""
-    #: Catalog route under the base URL; None when the server has none.
+    #: Catalog route under the base URL; None when the server has none, or
+    #: when ``known_models`` already says what it serves.
     models_path: Optional[str] = "/models"
-    #: Substring a catalog id must contain to count as a speech model, for a
-    #: catalog that mixes in chat models without saying which is which.
-    model_marker: str = ""
+    known_models: Tuple[str, ...] = ()
     #: ``language`` value that asks for detection, for a server that assumes
     #: one language when the field is absent.
     auto_language: str = ""
@@ -128,7 +127,9 @@ ENDPOINTS: Tuple[SpeechEndpoint, ...] = (
     ),
     _endpoint(
         "groq", "Groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY",
-        "whisper-large-v3-turbo", hosted=True, model_marker="whisper",
+        # Groq's catalog mixes in its chat models without marking either.
+        "whisper-large-v3-turbo", hosted=True, models_path=None,
+        known_models=("whisper-large-v3-turbo", "whisper-large-v3"),
         description="Open-weights Whisper models hosted by Groq. Needs a Groq API key.",
     ),
     _endpoint(
@@ -307,6 +308,13 @@ def destination(endpoint: SpeechEndpoint) -> str:
     return consent_destination(endpoint.connection)
 
 
+def audio_destination_sentence(endpoint: SpeechEndpoint) -> str:
+    """One sentence saying where dictated audio goes."""
+    if endpoint.is_local:
+        return f"Audio stays on this computer: it goes to {destination(endpoint)}."
+    return f"Audio is uploaded to {destination(endpoint)}."
+
+
 def credential_owners(settings: Optional[Mapping[str, Any]] = None) -> List[Tuple[str, str]]:
     """``(variable, endpoint name)`` for every usable endpoint that sends a key."""
     settings = _settings(settings)
@@ -318,14 +326,12 @@ def credential_owners(settings: Optional[Mapping[str, Any]] = None) -> List[Tupl
     return owners
 
 
-def _is_speech_model(endpoint: SpeechEndpoint, item: Dict[str, Any]) -> bool:
+def _is_speech_model(item: Dict[str, Any]) -> bool:
     task = item.get("task")
     if task is not None and task != _SPEECH_TASK:
         return False
     capabilities = item.get("capabilities")
-    if isinstance(capabilities, list) and _SPEECH_CAPABILITY not in capabilities:
-        return False
-    return endpoint.model_marker in str(item.get("id", "")).lower()
+    return not isinstance(capabilities, list) or _SPEECH_CAPABILITY in capabilities
 
 
 def list_models(endpoint: SpeechEndpoint, *, timeout: float = 5.0) -> List[str]:
@@ -339,7 +345,7 @@ def list_models(endpoint: SpeechEndpoint, *, timeout: float = 5.0) -> List[str]:
     if endpoint.is_openai:
         return list(api_model_choices())
     if endpoint.models_path is None:
-        return []
+        return list(endpoint.known_models)
     import httpx
 
     key = api_key(endpoint)
@@ -355,5 +361,5 @@ def list_models(endpoint: SpeechEndpoint, *, timeout: float = 5.0) -> List[str]:
     return sorted(
         item["id"] for item in (data if isinstance(data, list) else ())
         if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"]
-        and _is_speech_model(endpoint, item)
+        and _is_speech_model(item)
     )
