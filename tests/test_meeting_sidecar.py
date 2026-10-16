@@ -429,6 +429,7 @@ class TestSidecarHandshake:
                 agent.shutdown()
         assert env["OPENWHISPER_LLM_API_KEY"] == "dummy"
         assert env["OPENWHISPER_LLM_BASE_URL"] == "http://127.0.0.1:1234/v1"
+        assert env["PI_TELEMETRY"] == "0"
         assert fields["base_url"] == "http://127.0.0.1:1234/v1"
         assert fields["kind"] == "custom"
         assert fields["api_key_env"] == "OPENWHISPER_LLM_API_KEY"

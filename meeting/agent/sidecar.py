@@ -792,7 +792,10 @@ class SidecarAgent:
         env = os.environ.copy()
         env["OPENWHISPER_SIDECAR_TOKEN"] = self._token or ""
         env[SIDECAR_API_KEY_ENV] = api_key
-        profile = profile_from_agent_config(self._cfg.provider, self._cfg.endpoint)
+        # Pi's install telemetry tags OpenRouter, NVIDIA and Cloudflare calls
+        # as coming from Pi; OpenWhisper sends its own attribution instead.
+        env["PI_TELEMETRY"] = "0"
+        profile =profile_from_agent_config(self._cfg.provider, self._cfg.endpoint)
         if profile.base_url:
             env["OPENWHISPER_LLM_BASE_URL"] = profile.base_url
         return env
