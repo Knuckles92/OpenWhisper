@@ -4,6 +4,8 @@ import os
 import unittest
 from unittest.mock import patch
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QPoint, QSize, Qt
@@ -49,7 +51,7 @@ from ui_qt.dialogs.settings_dialog import (
     VOICE_MODEL,
     SettingsDialog,
 )
-from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+from ui_qt.utils.font_scale import apply_ui_font_scale
 from ui_qt.utils.theme_manager import ThemeManager
 from ui_qt.widgets.setting_tile import FieldTile, InfoTile, SettingTile, TileBase
 from ui_qt.widgets.nav_rail import NavRail
@@ -493,10 +495,8 @@ class TestSettingsGeneralLayout(unittest.TestCase):
         finally:
             dialog.close()
 
+    @pytest.mark.usefixtures("isolated_app_theme")
     def test_tile_titles_and_descriptions_fit_after_font_and_width_changes(self):
-        previous_stylesheet = self.app.styleSheet()
-        previous_font = self.app.font()
-        previous_scale = current_ui_font_scale_percent()
         manager = ThemeManager()
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
@@ -553,6 +553,3 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                                     ))
         finally:
             dialog.close()
-            apply_ui_font_scale(previous_scale, app=self.app)
-            self.app.setStyleSheet(previous_stylesheet)
-            self.app.setFont(previous_font)

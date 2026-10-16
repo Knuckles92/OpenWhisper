@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication, QToolButton, QVBoxLayout, QWidget
 from services.settings import UiFontScale
 from ui_qt.main_window import CustomTitleBar
 from ui_qt.utils.font_scale import apply_ui_font_scale
+from ui_qt.utils.theme_manager import ThemeManager
 
 
 @pytest.fixture(scope="module")
@@ -17,7 +18,9 @@ def app():
 
 
 @pytest.fixture
-def title_bar(app):
+def title_bar(app, isolated_app_theme):
+    # Themed, as the app runs: the later scale changes rescale theme.qss too.
+    apply_ui_font_scale(UiFontScale.DEFAULT, app=app, theme_manager=ThemeManager())
     host = QWidget()
     layout = QVBoxLayout(host)
     layout.setContentsMargins(0, 0, 0, 0)
@@ -29,7 +32,6 @@ def title_bar(app):
     host.show()
     app.processEvents()
     yield bar
-    apply_ui_font_scale(UiFontScale.DEFAULT, app=app)
     host.close()
     app.processEvents()
 

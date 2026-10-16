@@ -26,7 +26,6 @@ from ui_qt.utils.palette import (
     Palette,
     current_palette,
     palette_for,
-    set_current_palette,
 )
 from ui_qt.utils.theme_manager import ThemeManager
 
@@ -58,6 +57,7 @@ class TestPalette:
         assert rgba.alpha() == 128
         assert palette.color("rgb", 40) == QColor(10, 132, 255, 40)
 
+    @pytest.mark.usefixtures("isolated_app_theme")
     def test_theme_stylesheet_has_no_unresolved_tokens_in_either_theme(self):
         for theme in (DARK, LIGHT):
             manager = ThemeManager(theme)
@@ -65,21 +65,18 @@ class TestPalette:
             assert sheet
             assert "@" not in sheet, theme
             assert manager.current_theme == theme
-        set_current_palette(DARK_PALETTE)
 
+    @pytest.mark.usefixtures("isolated_app_theme")
     @pytest.mark.parametrize("ui_mode", ["classic", "omarchy"])
     def test_themes_differ_only_in_colours_and_icon_variants(self, monkeypatch, ui_mode):
         """Why the narrow-window layout tests check one theme, not both."""
         monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
         colour = re.compile(r"#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)|\b\d{1,3},\s*\d{1,3},\s*\d{1,3}\b")
-        try:
-            dark, light = (
-                re.sub(r"-light\.svg", ".svg", colour.sub("C", ThemeManager(theme).stylesheet))
-                for theme in (DARK, LIGHT)
-            )
-            assert dark == light
-        finally:
-            set_current_palette(DARK_PALETTE)
+        dark, light = (
+            re.sub(r"-light\.svg", ".svg", colour.sub("C", ThemeManager(theme).stylesheet))
+            for theme in (DARK, LIGHT)
+        )
+        assert dark == light
 
     def test_light_icon_variants_exist(self):
         assets = os.path.join(
@@ -90,14 +87,11 @@ class TestPalette:
             assert os.path.exists(os.path.join(assets, f"{name}-light.svg")), name
 
 
+@pytest.mark.usefixtures("isolated_app_theme")
 class TestApplyUiTheme:
     @classmethod
     def setup_class(cls):
         cls.app = QApplication.instance() or QApplication([])
-
-    def teardown_method(self):
-        apply_ui_theme(UiTheme.DARK, app=self.app, theme_manager=ThemeManager())
-        set_current_palette(DARK_PALETTE)
 
     def test_switching_restyles_the_app_and_widget_stylesheets(self):
         manager = ThemeManager()

@@ -352,12 +352,12 @@ def test_windows_capture_removes_only_its_own_hook(_session_qt_application):
 # Fit: classic and Omarchy, narrow windows, large fonts
 
 
+@pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 720), ("omarchy", 460)])
 def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch, ui_mode, width):
     from PyQt6.QtWidgets import QAbstractButton, QLabel, QLineEdit
     from ui_qt.widgets.hotkey_row import ReflowCard
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
-    from ui_qt.utils.palette import current_palette, set_current_palette
+    from ui_qt.utils.font_scale import apply_ui_font_scale
     from ui_qt.utils.theme_manager import ThemeManager
 
     monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
@@ -365,8 +365,6 @@ def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch
     # none for a side button with modifiers.
     monkeypatch.setattr(hotkey_capture, "USE_PYNPUT_BACKEND", False)
     app = QApplication.instance()
-    previous_style, previous_font = app.styleSheet(), app.font()
-    previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
     manager = ThemeManager()
     dialog = None
     try:
@@ -413,7 +411,3 @@ def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch
     finally:
         if dialog is not None:
             dialog.close()
-        apply_ui_font_scale(previous_scale, app=app)
-        set_current_palette(previous_palette)
-        app.setFont(previous_font)
-        app.setStyleSheet(previous_style)

@@ -2,6 +2,8 @@
 import os
 from unittest.mock import patch
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QLabel
@@ -33,13 +35,11 @@ class TestScaleQssFonts:
         assert scale_qss_fonts("font-size: 10.5px;", 2.0) == "font-size: 21px;"
 
 
+@pytest.mark.usefixtures("isolated_app_theme")
 class TestApplyUiFontScale:
     @classmethod
     def setup_class(cls):
         cls.app = QApplication.instance() or QApplication([])
-
-    def teardown_method(self):
-        apply_ui_font_scale(UiFontScale.DEFAULT, app=self.app)
 
     def test_rewrites_widget_stylesheet_from_the_original(self):
         label = QLabel()

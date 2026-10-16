@@ -235,6 +235,38 @@ def _isolated_qt_widgets(
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
+@pytest.fixture
+def isolated_app_theme(_session_qt_application):
+    """Put the shared app's look back after a test themes or rescales it.
+
+    The session QApplication runs unstyled: no theme.qss, the platform font
+    and palette. apply_ui_theme and apply_ui_font_scale change that app's
+    stylesheet, font and QPalette and keep the scale, theme manager and
+    preference in font_scale; constructing a ThemeManager switches the
+    palette @tokens resolve against. Left behind, every later test on the
+    xdist worker runs themed, so size tests pass or fail by the order tests
+    land on workers. (The colour-scheme hint apply_ui_theme pins is a no-op
+    on the offscreen platform.)
+    """
+    from ui_qt.utils import font_scale, palette
+
+    app = _session_qt_application
+    sheet, font, qpalette = app.styleSheet(), app.font(), app.palette()
+    percent, manager, preference = (
+        font_scale._current_percent, font_scale._theme_manager, font_scale._theme_preference
+    )
+    tokens = palette.current_palette()
+    yield
+    palette.set_current_palette(tokens)
+    font_scale._theme_manager = manager
+    font_scale._theme_preference = preference
+    # Widgets that outlive the test are re-resolved at the old scale and palette.
+    font_scale.apply_ui_font_scale(percent, app=app)
+    app.setStyleSheet(sheet)
+    app.setFont(font)
+    app.setPalette(qpalette)
+
+
 @pytest.fixture(autouse=True)
 def _isolated_data_root(_session_data_root, tmp_path):
     """Make tmp_path this test's data root.
