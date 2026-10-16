@@ -1289,6 +1289,7 @@ QWidget#backupScheduleBody,
 QWidget#backupScheduleFields,
 QWidget#backupFieldGroup,
 QWidget#backupDestinationRow,
+QWidget#backupActionRow,
 QWidget#backupCalendar,
 QWidget#backupSettingsPage QLabel,
 QWidget#backupSettingsPage QCheckBox {

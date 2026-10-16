@@ -72,6 +72,7 @@ def _action_row() -> QWidget:
     (see ``_fits_side_by_side``) instead of growing a horizontal scroll bar.
     """
     row = QWidget()
+    row.setObjectName("backupActionRow")
     row.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
     return row
 
