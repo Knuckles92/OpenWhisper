@@ -6,11 +6,11 @@ collects choices, confirms replacement, and renders coordinator signals.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QDate, Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QBoxLayout,
     QCheckBox,
@@ -328,14 +328,14 @@ class BackupSettingsPage(QWidget):
 
     def _update_calendar(self) -> None:
         latest = _local_date(_field(self._last_backup, "created_at"))
-        latest_date = QDate(latest.year, latest.month, latest.day) if latest else QDate()
-        next_due = QDate()
+        latest_date = latest.date() if latest else None
+        next_due = None
         interval = {"daily": 1, "weekly": 7}.get(self._saved_frequency, 0)
         due = None
         if interval and self._next_backup_at is not None:
             try:
                 due = datetime.fromtimestamp(self._next_backup_at).astimezone()
-                next_due = QDate(due.year, due.month, due.day)
+                next_due = due.date()
             except (ValueError, TypeError, OverflowError, OSError):
                 pass
         self.calendar.set_dates(latest_date, next_due, interval)
@@ -345,7 +345,7 @@ class BackupSettingsPage(QWidget):
             summary = f"{self._saved_frequency.capitalize()} backups enabled"
         else:
             summary = (
-                "Next backup: when the app is idle" if next_due <= QDate.currentDate()
+                "Next backup: when the app is idle" if next_due <= date.today()
                 else f"Next backup: {_date_label(due)}"
             )
         self.schedule_summary_label.setText(summary)

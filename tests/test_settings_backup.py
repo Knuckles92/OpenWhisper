@@ -2,7 +2,7 @@
 
 import os
 from contextlib import ExitStack
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -11,7 +11,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QDate, QObject, QPoint, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QPoint, Qt, pyqtSignal
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QBoxLayout, QMessageBox
 
@@ -211,25 +211,26 @@ def test_calendar_shows_saved_schedule_and_latest_backup_only():
     )
     page = BackupSettingsPage(coordinator)
     calendar = page.calendar
-    due = datetime.fromtimestamp(coordinator.state["next_backup_at"])
-    due_date = QDate(due.year, due.month, due.day)
-    assert calendar.grid.latest == QDate(2026, 10, 4)
+    due_date = datetime.fromtimestamp(coordinator.state["next_backup_at"]).date()
+    assert calendar.grid.latest == date(2026, 10, 4)
     assert calendar.grid.is_planned(due_date)
-    assert calendar.grid.is_planned(due_date.addDays(7))
-    assert not calendar.grid.is_planned(due_date.addDays(-7))
-    assert not calendar.grid.is_planned(due_date.addDays(1))
+    assert calendar.grid.is_planned(due_date + timedelta(days=7))
+    assert not calendar.grid.is_planned(due_date - timedelta(days=7))
+    assert not calendar.grid.is_planned(due_date + timedelta(days=1))
 
     page.frequency_combo.setCurrentIndex(page.frequency_combo.findData("daily"))
-    assert not calendar.grid.is_planned(due_date.addDays(1))
-    calendar.grid.setSelectedDate(due_date)
+    assert not calendar.grid.is_planned(due_date + timedelta(days=1))
+    calendar.select_day(due_date)
     assert "Automatic backup planned" in calendar.detail_label.text()
-    calendar.grid.setSelectedDate(QDate(2026, 10, 4))
+    calendar.select_day(date(2026, 10, 4))
     assert "Latest backup saved" in calendar.detail_label.text()
+    calendar.show_month((2026, 10))
     calendar.next_button.click()
-    assert calendar.grid.monthShown() == 11
+    assert calendar.view == (2026, 11)
     calendar.today_button.click()
-    assert calendar.grid.selectedDate() == QDate.currentDate()
-    assert calendar.grid.monthShown() == QDate.currentDate().month()
+    today = date.today()
+    assert calendar.selected_date == today
+    assert calendar.view == (today.year, today.month)
     assert not coordinator.calls
 
     coordinator.state.update(frequency="off", next_backup_at=None)
@@ -237,55 +238,39 @@ def test_calendar_shows_saved_schedule_and_latest_backup_only():
     assert not calendar.grid.is_planned(due_date)
     assert "off" in page.schedule_summary_label.text()
     coordinator.backup_finished.emit(_info("/tmp/new.owbackup"), "")
-    assert calendar.grid.latest == QDate(2026, 10, 4)
+    assert calendar.grid.latest == date(2026, 10, 4)
 
 
-def test_calendar_title_jumps_by_month_and_year():
+def test_calendar_title_opens_picker_and_keys_move_the_month():
     calendar = BackupCalendar()
-    calendar.grid.setCurrentPage(2026, 10)
+    calendar.show_month((2026, 10))
+    calendar.set_dates(date(2026, 10, 4), date(2026, 10, 11), 7)
 
-    def page():
-        return calendar.grid.yearShown(), calendar.grid.monthShown()
-
-    calendar.title_button.click()
-    assert calendar.views.currentWidget() is calendar.picker
-    assert calendar.title_button.accessibleName() == "2026"
-    assert calendar.period_buttons[9].property("current")
-    calendar.next_button.click()
-    calendar.next_button.click()
-    assert calendar.title_button.accessibleName() == "2028"
-    assert not calendar.period_buttons[9].property("current")
-    assert page() == (2026, 10)
-    calendar.period_buttons[2].click()
-    assert calendar.views.currentWidget() is calendar.grid
-    assert page() == (2028, 3)
-
-    calendar.title_button.click()
-    calendar.title_button.click()
-    assert calendar.title_button.text() == "2020 – 2029"
-    assert not calendar.title_button.isEnabled()
-    assert calendar.period_buttons[9].property("current")
-    assert calendar.period_buttons[0].property("outside")
-    calendar.previous_button.click()
-    assert calendar.title_button.text() == "2010 – 2019"
-    calendar.period_buttons[6].click()
-    assert calendar.title_button.accessibleName() == "2015"
-    assert calendar.previous_button.accessibleName() == "Previous year"
-    calendar.period_buttons[0].click()
-    assert page() == (2015, 1)
+    calendar.open_month_picker()
+    picker = calendar.month_picker
+    assert picker.isVisible()
+    assert picker.year == 2026
+    picker.pick(2)
+    assert not picker.isVisible()
+    assert calendar.view == (2026, 3)
+    assert calendar.title_button.text() == "March 2026"
     assert calendar.previous_button.accessibleName() == "Previous month"
 
-    calendar.title_button.click()
-    calendar.next_button.click()
-    QTest.keyClick(calendar.period_buttons[4], Qt.Key.Key_Escape)
-    assert calendar.views.currentWidget() is calendar.grid
-    assert page() == (2015, 1)
+    QTest.keyClick(calendar.grid, Qt.Key.Key_PageDown)
+    assert calendar.view == (2026, 4)
+    calendar.select_day(date(2026, 4, 29))
+    QTest.keyClick(calendar.grid, Qt.Key.Key_Right)
+    QTest.keyClick(calendar.grid, Qt.Key.Key_Right)
+    assert calendar.view == (2026, 5)
+    assert calendar.selected_date == date(2026, 5, 1)
 
-    calendar.title_button.click()
-    calendar.today_button.click()
-    today = QDate.currentDate()
-    assert calendar.views.currentWidget() is calendar.grid
-    assert page() == (today.year(), today.month())
+    calendar.select_day(date(2026, 10, 11))
+    assert calendar.view == (2026, 10)
+    assert "planned" in calendar.detail_label.text()
+    calendar.show_month((2026, 1))
+    calendar.go_today()
+    today = date.today()
+    assert calendar.view == (today.year, today.month)
 
 
 @pytest.mark.parametrize("theme", ["dark", "light"])
