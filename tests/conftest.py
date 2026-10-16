@@ -242,13 +242,18 @@ def _isolated_data_root(_session_data_root, tmp_path):
     Direct ``data_root()`` callers and child processes follow the variable;
     config's paths, resolved once at import, move to the same names here.
     """
-    from config import DATA_DIR_ENV, config
+    from config import DATA_DIR_ENV, ENV_FILE_NAME, config
+    from services import credentials
     from services.settings import settings_manager
 
     with pytest.MonkeyPatch.context() as patcher:
         patcher.setenv(DATA_DIR_ENV, str(tmp_path))
         for name, relative in _session_data_root.items():
             patcher.setattr(config, name, str(tmp_path / relative))
+        # A source checkout's own .env is the lookup's fallback; it holds
+        # the developer's real keys, so only this test's root may answer.
+        env_file = str(tmp_path / ENV_FILE_NAME)
+        patcher.setattr(credentials, "env_file_path", lambda: env_file)
         patcher.setattr(settings_manager, "settings_file", config.SETTINGS_FILE)
         # Bind the real module now: some tests swap services.database in
         # sys.modules, and teardown must still reach this manager.
