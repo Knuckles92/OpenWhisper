@@ -761,6 +761,23 @@ def destination_is_remote(profile: TextLLMProfile) -> bool:
     return not profile.is_local
 
 
+def _profile_or_meeting_default(
+    provider: Optional[str], settings: Optional[Dict[str, Any]]
+) -> TextLLMProfile:
+    """Resolve ``provider``, or the meeting endpoint the user has chosen now.
+
+    An endpoint that no longer exists is never swapped for a fixed cloud
+    provider: a meeting recorded on a deleted local server would otherwise
+    send its transcript somewhere the user never picked.
+    """
+    profile = get_profile(provider, settings)
+    if profile is not None:
+        return profile
+    from services.settings import resolve_meeting_llm_profile
+
+    return resolve_meeting_llm_profile(_load_settings(settings))
+
+
 def snapshot_from_meeting(
     meeting: Optional[Dict[str, Any]],
     settings: Optional[Dict[str, Any]] = None,
@@ -771,17 +788,15 @@ def snapshot_from_meeting(
 
     Prefers the persisted ``agent_endpoint_json`` snapshot so deleted or
     renamed custom profiles can still be retried. Older rows reconstruct a
-    built-in snapshot from ``agent_provider``.
+    built-in snapshot from ``agent_provider``; rows that predate it were
+    all recorded on ``fallback_provider``.
     """
     meeting = meeting or {}
     snapshot = snapshot_from_mapping(meeting.get("agent_endpoint_json"))
     if snapshot is not None:
         return snapshot
     provider = meeting.get("agent_provider") or fallback_provider
-    profile = get_profile(provider, settings) or builtin_profile(
-        fallback_provider
-    ) or builtin_profiles()[1]
-    return snapshot_from_profile(profile)
+    return snapshot_from_profile(_profile_or_meeting_default(provider, settings))
 
 
 def profile_from_agent_config(
@@ -793,7 +808,4 @@ def profile_from_agent_config(
     snapshot = snapshot_from_mapping(endpoint)
     if snapshot is not None:
         return snapshot.to_profile()
-    profile = get_profile(provider, settings)
-    if profile is not None:
-        return profile
-    return builtin_profile(OPENROUTER_PROFILE_ID) or builtin_profiles()[1]
+    return _profile_or_meeting_default(provider, settings)

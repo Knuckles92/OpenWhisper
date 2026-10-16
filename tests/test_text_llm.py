@@ -272,6 +272,20 @@ class TestSnapshotsAndConsent:
         assert snapshot.kind == "openai"
         assert snapshot.base_url is None
 
+    def test_deleted_endpoint_uses_the_chosen_meeting_endpoint_not_a_cloud(self):
+        settings = {
+            "meeting_llm_provider": "ollama",
+            "meeting_llm_model": "llama3.2",
+        }
+        snapshot = snapshot_from_meeting(
+            {"agent_provider": "custom_deleted"}, settings,
+            fallback_provider="custom_deleted",
+        )
+        assert snapshot.profile_id == "ollama"
+        profile = profile_from_agent_config("custom_deleted", None, settings)
+        assert profile.id == "ollama"
+        assert profile.is_local
+
     def test_stored_snapshot_wins_over_current_settings(self):
         snapshot = snapshot_from_meeting(
             {

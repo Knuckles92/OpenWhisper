@@ -1504,14 +1504,9 @@ def resolve_meeting_llm_endpoint(
     settings: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Return a non-secret meeting endpoint snapshot dict."""
-    from services.text_llm import (
-        builtin_profiles,
-        snapshot_from_profile,
-    )
+    from services.text_llm import snapshot_from_profile
 
     profile = resolve_meeting_llm_profile(settings)
-    if profile is None:
-        profile = builtin_profiles()[1]
     return snapshot_from_profile(profile, resolve_meeting_llm_model(settings)).to_dict()
 
 
