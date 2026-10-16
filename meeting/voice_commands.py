@@ -9,8 +9,9 @@ evidence. Two gates keep ordinary speech out:
    meeting segments the semantic judge alone produced no false positives,
    but it does fire on person-directed requests such as "can you write that
    down for me", so the wake name is not optional.
-2. **TypeSafe decides which command it was**, returning ``none`` for speech
-   that merely mentions the assistant.
+2. **The Fast judgments judge decides which command it was** (Jev, or the
+   user's text model), returning ``none`` for speech that merely mentions
+   the assistant.
 
 Applied ops use the ``system`` actor with ``voice_command`` attribution and
 land as ``proposed`` items, so a mistaken trigger is one click to remove and
@@ -59,10 +60,14 @@ _TOPIC_TRAILERS = re.compile(
     r"\s*(?:please|now|thanks|thank you|okay|ok)?\s*[.!?,;:]*\s*$", re.IGNORECASE,
 )
 MAX_TOPIC_CHARS = 120
+#: Said when the judge would send the segment off this computer without the
+#: meeting's AI insights consent.
+NEEDS_CONSENT = ("Voice commands need AI insights on for this meeting, or Fast "
+                 "judgments on a model that runs on this computer.")
 
 
 def _missing_key_message() -> str:
-    """Name the key the chosen Fast judgments route needs (TypeSafe or OpenRouter)."""
+    """Name the key the chosen Fast judgments route needs."""
     from services.typesafe import route_from_settings
 
     return f"Add {route_from_settings().key_phrase} in Settings to use voice commands."
@@ -161,7 +166,7 @@ class VoiceCommandListener:
     """
 
     def __init__(self, store: Any, judge: Any, names: Sequence[str], *,
-                 cloud_enabled: Optional[Callable[[], bool]] = None,
+                 allowed: Optional[Callable[[], bool]] = None,
                  judge_provider: Optional[Callable[[], Any]] = None,
                  confidence: float = VOICE_COMMAND_CONFIDENCE,
                  on_applied: Optional[Callable[[str, List[Any]], None]] = None,
@@ -173,7 +178,7 @@ class VoiceCommandListener:
         self._judge_provider = judge_provider
         self._names = tuple(names)
         self._pattern = compile_wake_pattern(self._names)
-        self._cloud_enabled = cloud_enabled
+        self._allowed_now = allowed
         self._confidence = float(confidence)
         self._on_applied = on_applied
         self._on_command = on_command
@@ -207,7 +212,7 @@ class VoiceCommandListener:
 
     def _allowed(self) -> bool:
         try:
-            return self._cloud_enabled is None or bool(self._cloud_enabled())
+            return self._allowed_now is None or bool(self._allowed_now())
         except Exception:
             logger.exception("Voice command consent check failed")
             return False
@@ -352,7 +357,7 @@ class VoiceCommandListener:
             job = self._preview_pending.pop(channel)
         try:
             if not self._allowed():
-                self._feedback("unavailable", "Voice commands need cloud features enabled for this meeting.")
+                self._feedback("unavailable", NEEDS_CONSENT)
                 return
             judge = self._judge_provider() if self._judge_provider else self._judge
             if judge is None:
@@ -398,7 +403,7 @@ class VoiceCommandListener:
         if self._closed:
             return None
         if not self._allowed():
-            self._feedback("unavailable", "Voice commands need cloud features enabled for this meeting.")
+            self._feedback("unavailable", NEEDS_CONSENT)
             return None
         try:
             judge = self._judge_provider() if self._judge_provider else self._judge

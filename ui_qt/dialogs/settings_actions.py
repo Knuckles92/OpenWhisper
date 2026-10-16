@@ -15,12 +15,12 @@ _ON_DICTATION_COPY = "A normal dictation that starts with an action's name goes 
 _ROUTE_SHORTCUT_COPY = "Record, then send your words to the action they name, or paste them as usual."
 #: What Route by voice sends, by the ways it can be used.
 _PRIVACY_SHORTCUT = (
-    "Everything you record with the Route by voice shortcut is sent to TypeSafe or "
-    "OpenRouter to choose the action."
+    "Everything you record with the Route by voice shortcut is given to the Fast "
+    "judgments judge to choose the action."
 )
 _PRIVACY_SHORTCUT_AND_DICTATION = (
     "Everything you record with the Route by voice shortcut, and normal dictations that "
-    "start with an action's name, are sent to TypeSafe or OpenRouter to choose the action."
+    "start with an action's name, are given to the Fast judgments judge to choose the action."
 )
 
 SEARCH_FIELDS = [

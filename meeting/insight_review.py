@@ -1,4 +1,4 @@
-"""Opt-in TypeSafe checks of final insights, outside the recording lifecycle."""
+"""Opt-in Fast judgments checks of final insights, outside the recording lifecycle."""
 from __future__ import annotations
 
 import hashlib
@@ -9,11 +9,16 @@ from concurrent.futures import ThreadPoolExecutor
 
 from meeting.state.schema import new_id, now_iso
 from services.settings import resolve_typesafe_enabled
-from services.typesafe import MODEL, TYPESAFE_ROUTE, TypeSafeJudge, route_from_settings
+from services.typesafe import judge_from_settings, route_from_settings
 
+#: Saved with the opt-in since the review first shipped on TypeSafe; it now
+#: covers whichever Fast judgments route the opt-in dialog named.
 CONSENT = "typesafe-text-v1"
 MAX_ITEMS = 40
 MAX_CONTEXT_CHARS = 16000
+#: A review is a one-off after the meeting, so it may wait longer than a live judgment.
+REVIEW_TIMEOUT_S = 12.0
+_OFF = "Fast judgments are off. Turn them on under Meeting settings → Fast judgments."
 STOP_WORDS = frozenset("about after again also because been before could from have into just more should some that their them then there these they this those very were what when where which will with would".split())
 
 
@@ -26,15 +31,18 @@ def consented(snapshot):
     return bool(snapshot.get("cloud_enabled") and review.get("enabled") and review.get("consent") == CONSENT)
 
 
-class TypeSafeReviewer:
-    def __init__(self, api_key, route=TYPESAFE_ROUTE):
-        self._judge = TypeSafeJudge(api_key, route=route, timeout_s=12.0)
+class JudgeReviewer:
+    """Ask the review's yes/no questions of one Fast judgments judge."""
+
+    def __init__(self, judge):
+        self._judge = judge
+        self.model = judge.model
 
     def evaluate(self, state, questions, *, consent):
         if consent != CONSENT:
-            raise ReviewUnavailable("Enable TypeSafe sharing in Meeting settings before reviewing.")
+            raise ReviewUnavailable("Enable insight review in Meeting settings before reviewing.")
         if not resolve_typesafe_enabled():
-            raise ReviewUnavailable("TypeSafe fast judgments is off. Enable it under Meeting settings → Fast judgments.")
+            raise ReviewUnavailable(_OFF)
         answers = self._judge.ask(state, questions)
         if answers is None:
             # Shared transport failures never expose keys or provider bodies.
@@ -133,7 +141,7 @@ def assess(item, segments, participants, reviewer, sensitivity, *, consent):
     if issues:
         state = "unsupported" if scores.get("support", 1) <= .2 or scores.get("contradiction", 0) >= .65 else "provisional"
     assessment = {"item_id": item["id"], "revision": item["revision"],
-                  "review": {"state": state, "scores": scores, "model": MODEL,
+                  "review": {"state": state, "scores": scores, "model": reviewer.model,
                              "assessed_at": now_iso(), "revision": item["revision"]}}
     if not issues:
         return assessment, None
@@ -166,17 +174,16 @@ def run_review(store, repository, run_id, reviewer=None):
     finish = {"op": "review_finish", "run_id": run_id}
     try:
         if not consented(snapshot):
-            raise ReviewUnavailable("TypeSafe sharing is not enabled for this meeting.")
+            raise ReviewUnavailable("Insight review is not enabled for this meeting.")
         review = snapshot["insight_review"]
         if reviewer is None:
             if not resolve_typesafe_enabled():
-                raise ReviewUnavailable("TypeSafe fast judgments is off. Enable it under Meeting settings → Fast judgments.")
-            from services.credentials import resolve_credential
+                raise ReviewUnavailable(_OFF)
             route = route_from_settings()
-            key = resolve_credential(route.credential_env)
-            if not key:
+            judge = judge_from_settings(timeout_s=max(REVIEW_TIMEOUT_S, route.timeout_s))
+            if judge is None:
                 raise ReviewUnavailable(f"Add {route.key_phrase} in Settings → API keys or {route.credential_env} in your environment, then retry.")
-            reviewer = TypeSafeReviewer(key, route)
+            reviewer = JudgeReviewer(judge)
         segments = repository.get_segments(snapshot["meeting_id"])
         fingerprint = _fingerprint(segments)
         participants = list(snapshot["participants"].values())

@@ -75,3 +75,22 @@ class TestCloudConsentCopy(_QtTestCase):
         assert "Work gateway (llm.example.com)" in text
         assert "leaves this computer" in text
         assert "OpenRouter" not in text
+
+    def test_cloud_consent_names_a_fast_judgments_judge_elsewhere(self, monkeypatch):
+        from services import settings
+
+        values = {"typesafe_enabled": True}
+        monkeypatch.setattr(settings.settings_manager, "load_all_settings", lambda: dict(values))
+
+        def text():
+            dialog = MeetingConsentDialog(destination="your local server at 127.0.0.1:1234",
+                                          remote=False, agent_id="")
+            return dialog.findChild(QLabel, "consentBodyLabel").text()
+
+        assert "also go to TypeSafe (api.typesafe.ai)" in text()
+        assert "does not leave this machine" not in text()
+        # A judge on this computer sends nothing, so the claim stands.
+        values.update(typesafe_provider="text_model", meeting_llm_provider="ollama",
+                      meeting_llm_model="qwen3:4b")
+        assert "does not leave this machine" in text()
+        assert "Fast judgments" not in text()

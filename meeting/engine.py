@@ -2921,6 +2921,9 @@ class MeetingEngine:
             self._maybe_start_intelligence()
         else:
             self._stop_intelligence()
+        # Highlights from a judge elsewhere follow this switch at once.
+        if self._refresh_live_highlights_status():
+            self._emit_status()
 
     def regenerate_tokens(self) -> Dict[str, str]:
         """Rotate host/guest capability links and disconnect old sessions."""
@@ -3004,13 +3007,36 @@ class MeetingEngine:
         if callable(notify):
             notify()
 
-    # -- TypeSafe fast judgments ----------------------------------------------
+    # -- Fast judgments ------------------------------------------------------
     # Disabled or unkeyed lookups are retried so settings changes take effect
     # during a meeting. Workers also recheck consent before sending text.
+    # A judge on this computer needs no consent to share: only a judge that
+    # sends excerpts elsewhere waits for the meeting's AI insights switch.
+
+    def _judgments_consented(self):
+        from services.typesafe import route_is_local
+        try:
+            local = route_is_local()
+        except Exception:
+            logger.exception("Fast judgments route lookup failed")
+            local = False
+        return local or self._cloud_enabled_now()
 
     def _fast_features_allowed(self):
         from services.settings import resolve_typesafe_enabled
-        return self._cloud_enabled_now() and resolve_typesafe_enabled()
+        return resolve_typesafe_enabled() and self._judgments_consented()
+
+    def _consented_judge(self):
+        """The judge to ask now, or None when it would send excerpts without consent.
+
+        Decided on the judge that will answer, so a route switched between
+        the consent check and the question cannot carry text off this
+        computer unannounced.
+        """
+        judge = self._typesafe_judge()
+        if judge is None or not (judge.is_local or self._cloud_enabled_now()):
+            return None
+        return judge
 
     def _refresh_live_highlights_status(self) -> bool:
         from services.settings import resolve_typesafe_feature_enabled
@@ -3025,8 +3051,10 @@ class MeetingEngine:
                 return False
             if not resolve_typesafe_feature_enabled("highlights"):
                 status = "off"
-            elif self._typesafe_judge() is None:
+            elif (judge := self._typesafe_judge()) is None:
                 status = "unavailable"
+            elif not (judge.is_local or self._cloud_enabled_now()):
+                status = "needs_insights"
             else:
                 status = "on"
             return status != previous and self.store.update_runtime_fields(
@@ -3044,7 +3072,7 @@ class MeetingEngine:
         from meeting.live_signals import LiveSignals
         from services.typesafe import FollowingJudge
 
-        worker = LiveSignals(self.store, self.repository, FollowingJudge(self._typesafe_judge),
+        worker = LiveSignals(self.store, self.repository, FollowingJudge(self._consented_judge),
                              self._fast_features_allowed)
         try:
             worker.finalize()
@@ -3066,8 +3094,8 @@ class MeetingEngine:
             from meeting.citation_verifier import CitationVerifier
             from services.typesafe import FollowingJudge
             # The workers outlive this call, so they look the route up per
-            # question: switching TypeSafe/OpenRouter applies mid-meeting.
-            judge = FollowingJudge(self._typesafe_judge)
+            # question: switching routes applies mid-meeting.
+            judge = FollowingJudge(self._consented_judge)
             self._live_signals = LiveSignals(self.store, self.repository, judge, self._fast_features_allowed)
             self._citation_verifier = CitationVerifier(self.store, self.repository, judge, self._fast_features_allowed)
 
@@ -3090,7 +3118,7 @@ class MeetingEngine:
             self._on_voice_feedback({"phase": phase, "message": message})
 
     def _apply_spoken_action(self, command, row, previous):
-        if not self._cloud_enabled_now() or self.store is None:
+        if not self._voice_commands_allowed() or self.store is None:
             return []
         if command == "fix_transcript":
             from meeting.voice_actions import correction_op
@@ -3124,10 +3152,11 @@ class MeetingEngine:
         return []
 
     def _typesafe_judge(self):
-        """Shared TypeSafe client for this meeting, or None when disabled or unkeyed.
+        """Shared Fast judgments client for this meeting, or None when disabled or unkeyed.
 
-        Rebuilt when the chosen route or its key changes, so a switch between
-        TypeSafe and OpenRouter in Settings takes effect on the next judgment.
+        Rebuilt when the chosen route, model or key changes, so a switch in
+        Settings takes effect on the next judgment. Callers that send text
+        go through :meth:`_consented_judge`.
         """
         with self._fast_features_lock:
             try:
@@ -3164,13 +3193,13 @@ class MeetingEngine:
         from meeting.agent.typesafe_signals import topic_shift_probability
 
         def probability(previous_window: str, window: str):
-            if not self._cloud_enabled_now() or not resolve_typesafe_topic_shift_enabled():
+            if not resolve_typesafe_topic_shift_enabled():
                 return None
-            judge = self._typesafe_judge()
+            judge = self._consented_judge()
             if judge is None:
                 return None
             result = topic_shift_probability(judge, previous_window, window)
-            if not self._cloud_enabled_now() or not resolve_typesafe_topic_shift_enabled():
+            if not self._judgments_consented() or not resolve_typesafe_topic_shift_enabled():
                 return None
             return result
 
@@ -3178,7 +3207,7 @@ class MeetingEngine:
 
     def _voice_commands_allowed(self):
         from services.settings import resolve_typesafe_voice_commands_enabled
-        return self._cloud_enabled_now() and resolve_typesafe_voice_commands_enabled()
+        return resolve_typesafe_voice_commands_enabled() and self._judgments_consented()
 
     def _voice_command_listener(self):
         with self._voice_listener_lock:
@@ -3202,8 +3231,8 @@ class MeetingEngine:
                 from meeting.voice_commands import VoiceCommandListener
                 listener = VoiceCommandListener(
                     self.store, None, resolve_typesafe_voice_command_names(),
-                    judge_provider=self._typesafe_judge,
-                    cloud_enabled=self._voice_commands_allowed,
+                    judge_provider=self._consented_judge,
+                    allowed=self._voice_commands_allowed,
                     on_applied=self._on_voice_command_applied,
                     on_command=self._apply_spoken_action,
                     on_feedback=self._on_voice_feedback,

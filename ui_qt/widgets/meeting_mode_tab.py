@@ -128,7 +128,10 @@ def ai_insights_destination(
             return installed_agent_destination(core, settings)
         profile = resolve_meeting_llm_profile(settings)
         model = resolve_meeting_llm_model(settings)
-        typesafe = resolve_typesafe_enabled(settings)
+        from services.typesafe import route_is_local
+
+        # Fast judgments elsewhere still receive excerpts under the same switch.
+        judged_elsewhere = resolve_typesafe_enabled(settings) and not route_is_local(settings)
     except Exception:
         logger.debug("Could not resolve the meeting AI model", exc_info=True)
         profile = None
@@ -139,11 +142,11 @@ def ai_insights_destination(
         )
     if profile.is_local:
         where = f"{profile.name} on this PC"
-        # TypeSafe judgments are a separate service that still receives
-        # excerpts, so only claim the text stays here when they are off.
+        # Fast judgments on Jev or a hosted model still receive excerpts, so
+        # only claim the text stays here when they are off or local too.
         privacy = (
             "the model runs on this computer"
-            if typesafe
+            if judged_elsewhere
             else "transcript text stays on this computer"
         )
     else:

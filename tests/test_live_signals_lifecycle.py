@@ -51,7 +51,7 @@ def signals(monkeypatch):
         sid = next(iter(state["passages"]))
         return {"number": {"noul": .95}, "number_anchor": {"choice": sid}}
 
-    worker = LiveSignals(target, repository, SimpleNamespace(ask=ask), lambda: True, executor=queue)
+    worker = LiveSignals(target, repository, SimpleNamespace(ask=ask, is_local=False), lambda: True, executor=queue)
     return worker, repository, queue, calls
 
 
@@ -173,8 +173,10 @@ def test_only_final_system_pulses_can_write_after_end(signals):
     op["final"] = True
     assert not worker.store.apply("host", "me", [op])[0].ok
     assert worker.store.apply("system", "live-signals", [op])[0].ok
+    # Consent belongs to the worker that sent the text (a local judge needs
+    # none); test_minute_consent_revoked_in_flight_discards_answers pins it.
     worker.store.update_runtime_fields(cloud_enabled=False)
-    assert not worker.store.apply("system", "live-signals", [op])[0].ok
+    assert worker.store.apply("system", "live-signals", [op])[0].ok
 
 
 def test_engine_final_pulses_do_not_require_the_notes_agent(signals, monkeypatch):

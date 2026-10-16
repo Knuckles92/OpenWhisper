@@ -1214,6 +1214,27 @@ class TestAiInsightsDestination(unittest.TestCase):
         })
         self.assertEqual(privacy, "the model runs on this computer")
 
+    def test_local_fast_judgments_keep_the_privacy_claim(self):
+        """Judgments by the same local model send nothing anywhere."""
+        _, privacy = ai_insights_destination({
+            "meeting_llm_provider": "ollama",
+            "meeting_llm_model": "llama3.1:8b",
+            SettingsKey.TYPESAFE_ENABLED: True,
+            SettingsKey.TYPESAFE_PROVIDER: "text_model",
+        })
+        self.assertEqual(privacy, "transcript text stays on this computer")
+        # The cleanup model is hosted here, so judging with it sends excerpts.
+        _, privacy = ai_insights_destination({
+            "meeting_llm_provider": "ollama",
+            "meeting_llm_model": "llama3.1:8b",
+            "transcript_cleanup_provider": "openrouter",
+            "transcript_cleanup_model": "vendor/model",
+            SettingsKey.TYPESAFE_ENABLED: True,
+            SettingsKey.TYPESAFE_PROVIDER: "text_model",
+            SettingsKey.TYPESAFE_TEXT_MODEL: "cleanup",
+        })
+        self.assertEqual(privacy, "the model runs on this computer")
+
     def test_unresolvable_profile_points_to_settings(self):
         with patch(
             "services.settings.resolve_meeting_llm_profile", return_value=None

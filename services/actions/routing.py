@@ -17,8 +17,9 @@ Two gates, as with the meeting note taker's voice commands
    pasted as a normal dictation.
 
 Only words that passed the gate, or were recorded with Route by voice, are
-sent, to TypeSafe or OpenRouter as Settings → Fast judgments says, along with
-each candidate action's name, spoken names, description and kind (never its
+sent to the judge Settings → Fast judgments names (TypeSafe, OpenRouter, or
+the user's own text model, which may run on this computer), along with each
+candidate action's name, spoken names, description and kind (never its
 link, address, program or folder). Nothing here logs the words.
 
 Contract: docs/design/automation/design.md, decision 4 and
@@ -41,6 +42,11 @@ from services.automation import catalog, events
 logger = logging.getLogger(__name__)
 
 ROUTE_TIMEOUT_S = 1.5
+#: The same wait when the user's text model judges. The dictation is held
+#: until it answers, and a text model writes the two answers token by token
+#: instead of returning them in Jev's 0.2 s; a slower answer pastes the
+#: words as dictated, as a Jev timeout does.
+TEXT_MODEL_ROUTE_TIMEOUT_S = 4.0
 #: A route needs the judge's confidence in its chosen action at least this
 #: high. Measured on synthetic utterances (benchmarks/voice_routing,
 #: jev-1.13.0, October 10, 2026): on the first 104, no false route at 0.4 or
@@ -717,7 +723,7 @@ FIX_ACTIONS = "actions"
 FIX_TRIGGER = "trigger"
 
 
-#: ``RouteDecision.failure``: no answer within ``ROUTE_TIMEOUT_S``.
+#: ``RouteDecision.failure``: no answer within :func:`route_budget`.
 FAILURE_TIMEOUT = "timeout"
 #: ``RouteDecision.failure``: no usable answer (Fast judgments off or without
 #: a key at that moment, a network or HTTP error, a malformed answer).
@@ -736,10 +742,10 @@ def decide(text: str, job, settings: Mapping, *, judge=None,
         don't name an action, the judge chose none or wasn't confident
         enough, or ``cancel`` was set); or ``RouteDecision("", "", 0.0,
         failure=…)`` when the judge couldn't answer: "timeout" after
-        ``ROUTE_TIMEOUT_S`` of wall-clock time, else "unreachable".
+        :func:`route_budget` of wall-clock time, else "unreachable".
 
     The judge is asked on a helper thread, so neither a slow answer nor
-    reading its key holds the dictation past ``ROUTE_TIMEOUT_S``; a set
+    reading its key holds the dictation past :func:`route_budget`; a set
     ``cancel`` ends the wait at once and nothing is sent once it is set.
     Publishes ``route.decided`` whenever the words were to be judged and the
     dictation wasn't canceled: with the action when they were routed, else
@@ -753,9 +759,18 @@ def decide(text: str, job, settings: Mapping, *, judge=None,
         return None
 
 
+def route_budget(settings: Mapping) -> float:
+    """How long a dictation waits for the judge Settings → Fast judgments names."""
+    from services.typesafe import route_from_settings
+
+    route = route_from_settings(dict(settings))
+    return ROUTE_TIMEOUT_S if route.profile is None else TEXT_MODEL_ROUTE_TIMEOUT_S
+
+
 def _ask(request: RoutePlan, settings: Mapping, judge,
          cancel: Optional[threading.Event]) -> tuple[Optional[Mapping], str]:
     """``(answers, "")``, or ``(None, failure)`` with a ``FAILURE_*`` or ``_CANCELED``."""
+    budget = route_budget(settings)
     done = threading.Event()
     outcome: dict[str, Any] = {}
 
@@ -770,14 +785,14 @@ def _ask(request: RoutePlan, settings: Mapping, judge,
                 logger.debug("Route by voice couldn't ask: Fast judgments aren't set up")
             else:
                 outcome["answers"] = asking.ask(request.state, request.questions,
-                                                timeout_s=ROUTE_TIMEOUT_S)
+                                                timeout_s=budget)
         except Exception as exc:
             logger.warning("Route by voice judgment failed (%s)", type(exc).__name__)
         finally:
             done.set()
 
     threading.Thread(target=work, name="route-by-voice", daemon=True).start()
-    deadline = time.monotonic() + ROUTE_TIMEOUT_S
+    deadline = time.monotonic() + budget
     while True:
         if cancel is not None and cancel.is_set():
             return None, _CANCELED
@@ -887,12 +902,13 @@ def _status(settings: Mapping) -> RoutingStatus:
         return RoutingStatus(True, False, (
             "Route by voice is on, but has nothing to listen to yet. Set a Route by voice "
             "shortcut below, or turn on Also listen to normal dictations."), FIX_TRIGGER)
-    to = f"to {judge_route.name} to choose the action."
+    to = (f"checked on this computer by {judge_route.name}" if judge_route.is_local
+          else f"sent to {judge_route.name}") + " to choose the action."
     if shortcut and on_dictation:
         sent = ("Everything you record with the Route by voice shortcut, and dictations "
-                f"that start with an action's name, are sent {to}")
+                f"that start with an action's name, are {to}")
     elif shortcut:
-        sent = f"Everything you record with the Route by voice shortcut is sent {to}"
+        sent = f"Everything you record with the Route by voice shortcut is {to}"
     else:
-        sent = f"Dictations that start with an action's name are sent {to}"
+        sent = f"Dictations that start with an action's name are {to}"
     return RoutingStatus(True, True, f"Route by voice is on. {sent}")

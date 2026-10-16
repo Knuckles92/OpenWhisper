@@ -8,16 +8,18 @@ credential, the pinned model, HTTP transport, response validation and the
 failure policy, so that every feature built on it degrades to "no judgment"
 instead of raising into capture, scheduler or UI code.
 
-Text sent here leaves the machine. Every caller must be gated by the
-``typesafe_enabled`` setting and, inside a meeting, by that meeting's cloud
-consent. Nothing in this module reads settings implicitly except the
-``*_from_settings`` helpers and :func:`key_present`.
+Every caller must be gated by the ``typesafe_enabled`` setting and, inside a
+meeting, by that meeting's AI insights consent unless the judge runs on this
+computer (:attr:`JudgeRoute.is_local`). Nothing in this module reads settings
+implicitly except the ``*_from_settings`` helpers and :func:`key_present`.
 
 The same pinned model is reachable two ways (:class:`JudgeRoute`): directly
 at TypeSafe with a TypeSafe key, or through OpenRouter's System One API with
 the OpenRouter key the text features already use. OpenRouter implements
 TypeSafe's request and response shapes, so only the endpoint, key, model id
-and an attribution header differ.
+and an attribution header differ. A third route asks the same questions of
+one of the user's own text models instead (:mod:`services.text_judge`),
+which can keep every judgment on this computer.
 
 Measured on September 18, 2026 against AMI human labels: median request
 latency 0.14 to 0.17 s, p95 under 0.3 s, roughly 1,300 input tokens per
@@ -42,10 +44,24 @@ from services.credentials import resolve_credential
 from services.http_tls import verified_context
 from services.settings import (
     TypeSafeProvider,
+    TypeSafeTextModel,
+    resolve_meeting_llm_model,
+    resolve_meeting_llm_profile,
+    resolve_transcript_cleanup_model,
+    resolve_transcript_cleanup_provider,
     resolve_typesafe_enabled,
     resolve_typesafe_provider,
+    resolve_typesafe_text_model,
+    settings_manager,
 )
-from services.text_llm import OPENROUTER_PROFILE_ID, builtin_profile, provider_headers
+from services.text_llm import (
+    AUTH_FREE_API_KEY,
+    OPENROUTER_PROFILE_ID,
+    TextLLMProfile,
+    builtin_profile,
+    get_profile,
+    provider_headers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,18 +74,37 @@ MODEL = "jev-1.13.0"
 OPENROUTER_MODEL = "typesafe/jev-1.13"
 CREDENTIAL_ENV = "TYPESAFE_API_KEY"
 
+#: Long enough for the p95 plus a slow network, short enough that a stalled
+#: judgment cannot hold a worker thread for a noticeable stretch.
+DEFAULT_TIMEOUT_S = 4.0
+#: A text model writes its answer token by token: a minute of transcript
+#: with a dozen questions takes seconds on a small local model, not Jev's
+#: 0.2 s. Kept under a minute so live highlights, asked once per completed
+#: minute, can never fall behind the meeting.
+TEXT_MODEL_TIMEOUT_S = 30.0
+
 
 @dataclass(frozen=True)
 class JudgeRoute:
-    """One way to reach the pinned model: endpoint, key, and model id there."""
+    """One way to reach a judge: endpoint, key, and model id there."""
 
     id: str
     name: str
     endpoint: str
     model: str
+    #: Empty when the endpoint takes no key (a local server).
     credential_env: str
     #: Sent with every request on top of auth and content headers.
     headers: Mapping[str, str] = field(default_factory=dict)
+    #: Budget for one judgment unless the caller allows less.
+    timeout_s: float = DEFAULT_TIMEOUT_S
+    #: The text model profile that answers on the text-model route; None for Jev.
+    profile: Optional[TextLLMProfile] = None
+
+    @property
+    def is_local(self) -> bool:
+        """True when judgments are answered on this computer and never leave it."""
+        return self.profile is not None and self.profile.is_local
 
     @property
     def host(self) -> str:
@@ -110,11 +145,11 @@ def _openrouter_route() -> JudgeRoute:
 
 
 OPENROUTER_ROUTE = _openrouter_route()
+#: The two routes to Jev itself; the text-model route depends on Settings.
 ROUTES: Dict[str, JudgeRoute] = {route.id: route for route in (TYPESAFE_ROUTE, OPENROUTER_ROUTE)}
+#: Where a profile without a base URL (OpenAI's) sends requests.
+_OPENAI_BASE_URL = "https://api.openai.com/v1"
 
-#: Long enough for the p95 plus a slow network, short enough that a stalled
-#: judgment cannot hold a worker thread for a noticeable stretch.
-DEFAULT_TIMEOUT_S = 4.0
 #: Bound on the JSON body so a runaway caller cannot exceed the documented
 #: 32k-token state budget or ship a whole transcript by accident.
 MAX_STATE_CHARS = 24_000
@@ -388,12 +423,13 @@ class _Primitives:
         raise NotImplementedError
 
     def noul(self, state: Any, instructions: Any,
-             criteria: Optional[Mapping[str, str]] = None) -> Optional[float]:
+             criteria: Optional[Mapping[str, str]] = None, *,
+             timeout_s: Optional[float] = None) -> Optional[float]:
         """Probability that the yes/no ``instructions`` hold for ``state``."""
         question: Dict[str, Any] = {"type": "noul", "instructions": instructions}
         if criteria:
             question["criteria"] = dict(criteria)
-        answers = self.ask(state, {"q": question})
+        answers = self.ask(state, {"q": question}, timeout_s=timeout_s)
         return None if answers is None else answers["q"]["noul"]
 
     def choice(self, state: Any, instructions: Any,
@@ -407,7 +443,56 @@ class _Primitives:
         return ChoiceAnswer(answer["choice"], answer["confidence"], answer["probabilities"])
 
 
-class TypeSafeJudge(_Primitives):
+#: Anything callers can ask: a concrete judge or a :class:`FollowingJudge`.
+Judge = _Primitives
+
+
+class _RouteJudge(_Primitives):
+    """What every concrete judge shares: its route, budget, usage and sparse warnings.
+
+    ``ask`` takes an optional ``timeout_s`` that can only shorten the judge's
+    own budget: callers pass what their situation allows (a dictation waiting
+    to paste, a final pass running out of time), never more than the route
+    is given.
+    """
+
+    def __init__(self, route: JudgeRoute, model: Optional[str],
+                 timeout_s: Optional[float],
+                 monotonic: Optional[Callable[[], float]]) -> None:
+        self.route = route
+        self.model = model or route.model
+        self.timeout_s = float(route.timeout_s if timeout_s is None else timeout_s)
+        self._monotonic = monotonic or time.monotonic
+        self._lock = threading.Lock()
+        self._last_warn_mono = -_WARN_SPACING_S
+        self.usage = JudgeUsage()
+
+    @property
+    def is_local(self) -> bool:
+        return self.route.is_local
+
+    def _budget(self, timeout_s: Optional[float]) -> float:
+        return self.timeout_s if timeout_s is None else min(float(timeout_s), self.timeout_s)
+
+    def _record(self, started: float, *, ok: bool, tokens: int = 0) -> None:
+        with self._lock:
+            self.usage.requests += 1
+            if not ok:
+                self.usage.failures += 1
+            self.usage.input_tokens += tokens
+            self.usage.last_latency_s = self._monotonic() - started
+
+    def _warn(self, message: str, *args: Any) -> None:
+        now = self._monotonic()
+        with self._lock:
+            if now - self._last_warn_mono < _WARN_SPACING_S:
+                logger.debug(message, *args)
+                return
+            self._last_warn_mono = now
+        logger.warning(message, *args)
+
+
+class TypeSafeJudge(_RouteJudge):
     """Ask narrow typed questions; every failure returns ``None`` and is logged sparsely.
 
     Instances are safe to share between threads: each call is one blocking
@@ -417,23 +502,17 @@ class TypeSafeJudge(_Primitives):
 
     def __init__(self, api_key: str, *, route: JudgeRoute = TYPESAFE_ROUTE,
                  model: Optional[str] = None,
-                 timeout_s: float = DEFAULT_TIMEOUT_S,
+                 timeout_s: Optional[float] = None,
                  endpoint: Optional[str] = None,
                  transport: Optional[Transport] = None,
                  monotonic: Optional[Callable[[], float]] = None) -> None:
         if not api_key:
             raise ValueError(f"{route.key_label} is required")
+        super().__init__(route, model, timeout_s, monotonic)
         self._api_key = api_key
-        self.route = route
-        self.model = model or route.model
-        self.timeout_s = float(timeout_s)
         self.endpoint = endpoint or route.endpoint
         self._transport = transport
-        self._monotonic = monotonic or time.monotonic
-        self._lock = threading.Lock()
-        self._last_warn_mono = -_WARN_SPACING_S
         self._label = "TypeSafe" if route is TYPESAFE_ROUTE else f"TypeSafe via {route.name}"
-        self.usage = JudgeUsage()
 
     # -- public API ---------------------------------------------------------
 
@@ -442,6 +521,7 @@ class TypeSafeJudge(_Primitives):
         """Return validated answers keyed by question id, or ``None`` on any failure."""
         if not questions:
             return None
+        timeout_s = self._budget(timeout_s)
         payload = {"model": self.model, "state": state, "questions": dict(questions)}
         try:
             encoded = json.dumps(payload)
@@ -455,9 +535,9 @@ class TypeSafeJudge(_Primitives):
         started = self._monotonic()
         try:
             if self._transport is not None:
-                status, text = self._transport(payload, timeout_s or self.timeout_s)
+                status, text = self._transport(payload, timeout_s)
             else:
-                status, text = _http_post(payload, timeout_s or self.timeout_s,
+                status, text = _http_post(payload, timeout_s,
                                           api_key=self._api_key, endpoint=self.endpoint,
                                           extra_headers=self.route.headers)
         except Exception as exc:  # network, timeout, TLS
@@ -486,37 +566,24 @@ class TypeSafeJudge(_Primitives):
                 and (self.endpoint, self.model, self._api_key)
                 == (other.endpoint, other.model, other._api_key))
 
-    # -- internals ------------------------------------------------------------
-
-    def _record(self, started: float, *, ok: bool, tokens: int = 0) -> None:
-        with self._lock:
-            self.usage.requests += 1
-            if not ok:
-                self.usage.failures += 1
-            self.usage.input_tokens += tokens
-            self.usage.last_latency_s = self._monotonic() - started
-
-    def _warn(self, message: str, *args: Any) -> None:
-        now = self._monotonic()
-        with self._lock:
-            if now - self._last_warn_mono < _WARN_SPACING_S:
-                logger.debug(message, *args)
-                return
-            self._last_warn_mono = now
-        logger.warning(message, *args)
-
 
 class FollowingJudge(_Primitives):
     """Ask through whichever judge ``provider`` returns at the moment of asking.
 
     Meeting workers live as long as the meeting. A worker holding one fixed
     client would keep sending excerpts over the route chosen when it started,
-    even after Fast judgments were switched between TypeSafe and OpenRouter;
-    this looks the route up per question instead.
+    even after Fast judgments were switched to another route; this looks the
+    route up per question instead.
     """
 
-    def __init__(self, provider: Callable[[], Optional[TypeSafeJudge]]) -> None:
+    def __init__(self, provider: Callable[[], Optional[_RouteJudge]]) -> None:
         self._provider = provider
+
+    @property
+    def model(self) -> str:
+        """The model that answers the next question, "" when none would."""
+        judge = self._provider()
+        return judge.model if judge is not None else ""
 
     def ask(self, state: Any, questions: Mapping[str, Mapping[str, Any]],
             timeout_s: Optional[float] = None) -> Optional[Dict[str, Dict[str, Any]]]:
@@ -528,9 +595,54 @@ class FollowingJudge(_Primitives):
         return judge.ask(state, questions, timeout_s=timeout_s)
 
 
+def text_model_route(settings: Optional[Dict[str, Any]] = None) -> JudgeRoute:
+    """The text-model route over the model Settings → Fast judgments names.
+
+    That is the AI insights model unless AI cleanup's was chosen, so the
+    profile, base URL, key and model are the ones the user already set up on
+    the Models page.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    if resolve_typesafe_text_model(settings) == TypeSafeTextModel.CLEANUP:
+        profile = get_profile(resolve_transcript_cleanup_provider(settings), settings)
+        model = resolve_transcript_cleanup_model(settings)
+    else:
+        profile = resolve_meeting_llm_profile(settings)
+        model = resolve_meeting_llm_model(settings)
+    # Both resolvers fall back to OpenRouter for an unknown profile id.
+    profile = profile or builtin_profile(OPENROUTER_PROFILE_ID)
+    return JudgeRoute(
+        id=TypeSafeProvider.TEXT_MODEL,
+        name=profile.name,
+        endpoint=profile.base_url or _OPENAI_BASE_URL,
+        model=model,
+        credential_env=profile.api_key_env,
+        headers=provider_headers(profile) or {},
+        timeout_s=TEXT_MODEL_TIMEOUT_S,
+        profile=profile,
+    )
+
+
 def route_from_settings(settings: Optional[Dict[str, Any]] = None) -> JudgeRoute:
-    """The route Settings → Fast judgments names, TypeSafe unless OpenRouter was chosen."""
-    return ROUTES[resolve_typesafe_provider(settings)]
+    """The route Settings → Fast judgments names, TypeSafe unless another was chosen."""
+    provider = resolve_typesafe_provider(settings)
+    if provider == TypeSafeProvider.TEXT_MODEL:
+        return text_model_route(settings)
+    return ROUTES[provider]
+
+
+def route_is_local(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """True when the chosen route answers on this computer, so no consent to share is needed."""
+    return route_from_settings(settings).is_local
+
+
+def route_key(route: JudgeRoute) -> Optional[str]:
+    """The key ``route`` sends, or None when it needs one that cannot be resolved."""
+    if not route.credential_env:
+        # The OpenAI client insists on some key even for a server without auth.
+        return AUTH_FREE_API_KEY
+    return resolve_credential(route.credential_env)
 
 
 def key_present(settings: Optional[Dict[str, Any]] = None, *,
@@ -540,9 +652,10 @@ def key_present(settings: Optional[Dict[str, Any]] = None, *,
     Separate from :func:`is_configured` so the UI can tell "switched off" from
     "switched on but unusable" — the two need different copy and a different
     next step. Pass ``route`` to ask about one route regardless of Settings.
+    A route whose endpoint takes no key always has what it needs.
     """
     route = route or route_from_settings(settings)
-    return bool(resolve_credential(route.credential_env))
+    return bool(route_key(route))
 
 
 def is_configured(settings: Optional[Dict[str, Any]] = None) -> bool:
@@ -551,16 +664,20 @@ def is_configured(settings: Optional[Dict[str, Any]] = None) -> bool:
 
 
 def judge_from_settings(settings: Optional[Dict[str, Any]] = None,
-                        **kwargs: Any) -> Optional[TypeSafeJudge]:
-    """Build a judge on the chosen route when TypeSafe is enabled and its key exists, else ``None``."""
+                        **kwargs: Any) -> Optional[_RouteJudge]:
+    """Build a judge on the chosen route when Fast judgments are on and its key exists, else ``None``."""
     if not resolve_typesafe_enabled(settings):
         return None
     route = route_from_settings(settings)
-    key = resolve_credential(route.credential_env)
+    key = route_key(route)
     if not key:
-        logger.debug("TypeSafe enabled but %s is not set", route.credential_env)
+        logger.debug("Fast judgments enabled but %s is not set", route.credential_env)
         return None
-    return TypeSafeJudge(key, route=route, **kwargs)
+    if route.profile is None:
+        return TypeSafeJudge(key, route=route, **kwargs)
+    from services.text_judge import TextModelJudge
+
+    return TextModelJudge(key, route=route, **kwargs)
 
 
 #: Host shown in verification copy, so the user knows who answered.
@@ -589,6 +706,11 @@ def verify_key(api_key: str, *, route: JudgeRoute = TYPESAFE_ROUTE,
     key = (api_key or "").strip()
     if not key:
         return False, "Paste a key first."
+    if route.profile is not None:
+        from services.text_judge import verify_text_model
+
+        # A local server may first have to load the model into memory.
+        return verify_text_model(key, route=route, timeout_s=max(timeout_s, route.timeout_s))
     endpoint = endpoint or route.endpoint
     host = urllib.parse.urlsplit(endpoint).hostname or route.host
     payload = {"model": route.model, "state": _VERIFY_STATE, "questions": dict(_VERIFY_QUESTIONS)}

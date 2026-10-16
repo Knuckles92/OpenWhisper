@@ -324,7 +324,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
             <div className="workspace-ruler">
               <HighlightPulseStrip pulses={ui.state.live_highlights ?? []}
                 highlightStatus={ui.state.live_highlights_status} meetingStatus={ui.state.status}
-                cloudEnabled={ui.state.cloud_enabled} isHost={isHost}
+                isHost={isHost}
                 chapters={chapters} segments={segments} participants={participants}
                 durationS={meetingSpan} nowEdge={meetingRunning}
                 onSelect={pulse => {
