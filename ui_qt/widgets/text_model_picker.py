@@ -31,8 +31,8 @@ from services.settings import (
 )
 from services.text_llm import (
     LOCAL_SERVER_PROFILE_IDS,
+    PROFILE_KIND_OPENAI,
     PROFILE_KIND_OPENROUTER,
-    NEW_PROFILE_IDS,
     TextLLMProfile,
     builtin_profiles,
     credential_status,
@@ -402,7 +402,8 @@ class TextModelPicker(QWidget):
                 "Key needed in Settings → API keys, or choose "
                 f"{running[0].name}, running on this computer"
             )
-        elif profile is not None and profile.id in NEW_PROFILE_IDS and not available:
+        elif (profile is not None and profile.builtin and not available
+              and profile.kind not in (PROFILE_KIND_OPENAI, PROFILE_KIND_OPENROUTER)):
             text = "Key needed in Settings → API keys"
         self.provider_requirement.setText(text)
         credential_icon = design_icon(

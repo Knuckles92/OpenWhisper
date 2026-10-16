@@ -406,6 +406,57 @@ def test_no_tool_support_uses_validated_json_and_rejects_prose(provider, model, 
         assert "signed-reasoning" in requests[-1].content.decode()
 
 
+LOCAL_BOX = upsert_custom_profile({}, name="Box", base_url="http://localhost:5000/v1")
+
+
+def _prose_client(profile, requests):
+    """A chat endpoint that answers every request in prose, never calling a tool."""
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=reply("chat"))
+    return OpenAI(api_key="test-secret", base_url=profile.base_url, max_retries=0,
+                  http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+@pytest.mark.parametrize("profile,must_call", [
+    (LOCAL_BOX, True),
+    (upsert_custom_profile({}, name="Gateway", base_url="https://gateway.test/v1"), True),
+    (get_profile("openrouter", {}), False),
+])
+def test_direct_agent_probe_needs_a_tool_call_unless_the_api_rejects_tools(profile, must_call):
+    from meeting.agent.openrouter_direct import DirectOpenRouterAgent
+    requests = []
+    agent = DirectOpenRouterAgent()
+    agent._profile = profile
+    agent._model = "qwen3"
+    with _prose_client(profile, requests) as client:
+        agent._probe_tool_support(client)
+    assert agent._json_mode is must_call
+    assert requests[0]["tools"][0]["function"]["name"] == "noop"
+    assert requests[0]["max_tokens"] == (512 if must_call else 16)
+
+
+def test_pi_has_a_custom_localhost_model_call_the_test_tool():
+    from meeting.agent.pi_sidecar import PiSidecarAgent
+    from meeting.interfaces import AgentConfig
+
+    def config(profile):
+        return AgentConfig(meeting_id="meeting-1", provider=profile.id, model="qwen3", api_key=None,
+                           system_prompt="Use evidence.",
+                           endpoint=snapshot_from_profile(profile, "qwen3").to_dict())
+
+    agent = PiSidecarAgent(payload_dir="unused-test-payload")
+    agent._cfg = config(LOCAL_BOX)
+    requests = []
+    with patch("services.text_llm.create_openai_client", return_value=_prose_client(LOCAL_BOX, requests)):
+        with pytest.raises(RuntimeError, match="did not call the test tool"):
+            agent._require_tool_calls("dummy")
+    assert len(requests) == 1
+    agent._cfg = config(get_profile("openrouter", {}))
+    with patch("services.text_llm.create_openai_client", side_effect=AssertionError("probed")):
+        agent._require_tool_calls("key")
+
+
 @pytest.mark.parametrize("level", ["light", "medium", "high", "custom"])
 @pytest.mark.parametrize("reasoning,effort", [("off", "none"), ("low", "low"), ("medium", "medium"), ("high", "high")])
 def test_luna_cleanup_serializes_presets_custom_prompts_and_reasoning(level, reasoning, effort):

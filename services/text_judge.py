@@ -36,7 +36,8 @@ import time
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 from services.text_generation import TextGenerationError, generate
-from services.text_llm import create_openai_client
+from services.text_llm import create_openai_client, discover_server_models, learn_server_models
+from services.text_model_catalog import model_spec
 from services.typesafe import (
     _VERIFY_QUESTIONS,
     _VERIFY_STATE,
@@ -53,6 +54,9 @@ logger = logging.getLogger(__name__)
 #: option number and a probability, about twenty tokens.
 _BASE_TOKENS = 64
 _TOKENS_PER_QUESTION = 40
+#: The most of a judgment's budget spent asking a server the user runs what
+#: its models are, once per session (see ``learn_server_models``).
+_LEARN_TIMEOUT_S = 3.0
 
 SYSTEM_PROMPT = (
     "You are a judgment function. The user message is JSON with `state` and "
@@ -68,6 +72,47 @@ SYSTEM_PROMPT = (
 )
 
 _THINKING = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+#: Characters per token when checking a judgment against the model's context.
+#: English prose averages about four; JSON punctuation, numbers and most other
+#: languages run denser, so three overestimates and a request that passes fits.
+_CHARS_PER_TOKEN = 3
+#: The chat template's framing around the system and user messages.
+_TEMPLATE_TOKENS = 32
+#: How to give a model more context on each server preset.
+_MORE_CONTEXT = {
+    "ollama": "In Ollama, give the model a num_ctx of {tokens} or more (PARAMETER num_ctx in its Modelfile).",
+    "lm_studio": "In LM Studio, load the model with a context length of {tokens} or more.",
+    "vllm": "Start vLLM with --max-model-len {tokens} or more.",
+    "llama_cpp": "Start llama-server with --ctx-size {tokens} or more.",
+    "localai": "In LocalAI, set context_size to {tokens} or more in the model's configuration.",
+}
+
+
+class ContextTooSmall(ValueError):
+    """The model's context window cannot hold a judgment and its answer."""
+
+    def __init__(self, window: int, needed: int) -> None:
+        super().__init__(f"the model's context of {window:,} tokens is too small "
+                         f"for a judgment of about {needed:,} tokens")
+        self.window = window
+        self.needed = needed
+
+
+def _fit_context(profile: Any, model: str, content_chars: int, max_tokens: int) -> None:
+    """Refuse a judgment that would overflow the model's context window.
+
+    A server truncates an overlong prompt without saying so, and the model
+    then judges part of the state. Every spec has a window: what a server
+    the user runs reported, a reviewed catalog's, or a default of at least
+    32,768 tokens, more than anything ``MAX_STATE_CHARS`` lets through, so
+    only a reported or reviewed window ever refuses.
+    """
+    window = model_spec(profile, model).context_window
+    needed = ((len(SYSTEM_PROMPT) + content_chars) // _CHARS_PER_TOKEN
+              + _TEMPLATE_TOKENS + max_tokens)
+    if needed > window:
+        raise ContextTooSmall(window, needed)
 
 #: One OpenAI client per endpoint and key, shared by every judge in the
 #: process, so a judge built per dictation or per search reuses connections.
@@ -238,15 +283,23 @@ class TextModelJudge(_RouteJudge):
     def request(self, state: Any, questions: Mapping[str, Mapping[str, Any]],
                 timeout_s: float) -> Tuple[Dict[str, Dict[str, Any]], int]:
         """One judgment that raises instead of returning ``None``; ``(answers, input tokens)``."""
+        deadline = time.monotonic() + timeout_s
         shown, labels, schema = render(questions)
         content = json.dumps({"state": state, "questions": shown}, ensure_ascii=False)
         if len(content) > MAX_STATE_CHARS:
             raise ValueError(f"request of {len(content)} chars exceeds the {MAX_STATE_CHARS} bound")
-        deadline = time.monotonic() + timeout_s
+        learn_server_models(self.profile, self._api_key, timeout=min(_LEARN_TIMEOUT_S, timeout_s))
         options: Dict[str, Any] = {
             "temperature": 0,
+            # A thinking model would spend the answer's small budget thinking;
+            # generate sends whatever turns thinking off where the model has it.
+            "reasoning_level": "off",
             "max_tokens": _BASE_TOKENS + _TOKENS_PER_QUESTION * len(questions),
         }
+        _fit_context(self.profile, self.model, len(content), options["max_tokens"])
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("no time left after reading the server's model list")
         target = (self.profile.base_url, self.model)
         if target not in _NO_SCHEMA:
             options["response_format"] = {"type": "json_schema", "json_schema": {
@@ -255,7 +308,7 @@ class TextModelJudge(_RouteJudge):
                     {"role": "user", "content": content}]
         client = _client(self.route, self._api_key)
         try:
-            result = generate(client.with_options(timeout=timeout_s), self.profile,
+            result = generate(client.with_options(timeout=left), self.profile,
                               model=self.model, messages=messages, **options)
         except Exception as exc:
             left = deadline - time.monotonic()
@@ -286,9 +339,24 @@ def verify_text_model(api_key: str, *, route: JudgeRoute, timeout_s: float) -> T
     if not route.model:
         return False, f"Choose a model for {route.name} on the Models page first."
     judge = TextModelJudge(api_key, route=route, timeout_s=timeout_s)
+    if route.profile.self_hosted:
+        # Read afresh: the user may just have given the model more context.
+        try:
+            discover_server_models(route.profile, api_key=api_key, timeout=_LEARN_TIMEOUT_S)
+        except Exception as exc:  # the judgment below says why the server is unusable
+            logger.debug("Couldn't read %s's model list: %s", route.name, type(exc).__name__)
     started = time.monotonic()
     try:
         judge.request(_VERIFY_STATE, _VERIFY_QUESTIONS, timeout_s)
+        elapsed = time.monotonic() - started
+        # The test judgment is tiny; the ones features send reach MAX_STATE_CHARS.
+        _fit_context(route.profile, route.model, MAX_STATE_CHARS,
+                     _BASE_TOKENS + _TOKENS_PER_QUESTION)
+    except ContextTooSmall as exc:
+        tokens = 1 << (exc.needed - 1).bit_length()
+        advice = _MORE_CONTEXT.get(
+            route.profile.kind, "Load the model with a context window of {tokens} tokens or more.")
+        return False, f"{where}: {exc}. " + advice.format(tokens=tokens)
     except TypeSafeError as exc:
         return False, (f"{where} answered, but not with a usable judgment ({exc}). "
                        "Models that follow JSON instructions, with thinking off, work best.")
@@ -306,4 +374,4 @@ def verify_text_model(api_key: str, *, route: JudgeRoute, timeout_s: float) -> T
             return False, f"{where} did not answer within {timeout_s:.0f} s."
         logger.debug("Text model judgment check failed: %s", type(exc).__name__)
         return False, f"Couldn't reach {route.host} ({type(exc).__name__})."
-    return True, f"{where} answered in {time.monotonic() - started:.2f} s."
+    return True, f"{where} answered in {elapsed:.2f} s."

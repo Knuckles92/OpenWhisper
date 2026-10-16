@@ -395,7 +395,7 @@ class SidecarAgent:
 
         # Resolve and validate protocol metadata before spawning a process.
         self._endpoint_fields()
-        self._validate_new_provider_tools(api_key)
+        self._require_tool_calls(api_key)
         self._ensure_tool_executor()
         self._spawn_and_handshake(api_key)
         self._send_initialize()
@@ -756,14 +756,17 @@ class SidecarAgent:
             "headers": provider_headers(profile, self._cfg.meeting_id) or {},
         }
 
-    def _validate_new_provider_tools(self, api_key: str) -> None:
-        from services.text_llm import NEW_PROFILE_IDS, create_openai_client, profile_from_agent_config
+    def _require_tool_calls(self, api_key: str) -> None:
+        """Have the model call a test tool where only that proves it can."""
+        from services.text_llm import create_openai_client, profile_from_agent_config
         from services.text_generation import generate
 
         cfg = self._cfg
-        if cfg is None or cfg.provider not in NEW_PROFILE_IDS:
+        if cfg is None:
             return
         profile = profile_from_agent_config(cfg.provider, cfg.endpoint)
+        if profile.refuses_unsupported_tools:
+            return
         client = create_openai_client(profile, api_key=api_key, timeout=10.0,
                                       session_id=cfg.meeting_id)
         try:
@@ -894,12 +897,9 @@ class SidecarAgent:
         return "unknown" if code is None else code
 
     def _check_sidecar_text_support(self) -> None:
-        from services.text_llm import NEW_PROFILE_IDS
-        if self._cfg and self._cfg.provider in NEW_PROFILE_IDS:
-            protocol = self._endpoint_fields()["model_metadata"]["protocol"]
-            if protocol not in self._text_protocols:
-                raise RuntimeError("Update the Pi sidecar component to use this text provider, "
-                                   "or select the standard meeting engine for your next meeting.")
+        if self._endpoint_fields()["model_metadata"]["protocol"] not in self._text_protocols:
+            raise RuntimeError("Update the Pi sidecar component to use this text provider, "
+                               "or select the standard meeting engine for your next meeting.")
 
     def _send_initialize(self) -> None:
         """Send the ``initialize`` RPC after a successful hello."""

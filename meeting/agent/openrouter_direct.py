@@ -48,7 +48,6 @@ from meeting.agent.tool_specs import MEETING_TOOLS as _TOOLS, NOOP_TOOL as _NOOP
 
 from services.text_generation import TextGenerationError, generate
 from services.text_llm import (
-    NEW_PROFILE_IDS,
     profile_from_agent_config,
     provider_headers,
     resolve_api_key,
@@ -230,7 +229,9 @@ class DirectOpenRouterAgent:
             return self._client
 
     def _probe_tool_support(self, client: Any) -> None:
-        new_provider = self._profile.kind in NEW_PROFILE_IDS
+        # Where the API rejects tools a model cannot call, being accepted is
+        # proof enough; elsewhere the model has to actually call the tool.
+        must_call = not self._profile.refuses_unsupported_tools
         try:
             result = self._generate_before(
                 time.monotonic() + _PROBE_TIMEOUT_S,
@@ -239,9 +240,9 @@ class DirectOpenRouterAgent:
                 messages=[{"role": "user", "content": "Call the noop tool."}],
                 tools=[_NOOP_TOOL],
                 tool_choice="auto",
-                max_tokens=512 if new_provider else 16,
+                max_tokens=512 if must_call else 16,
             )
-            self._json_mode = new_provider and not any(
+            self._json_mode = must_call and not any(
                 call.function.name == "noop" for call in result.tool_calls
             )
         except Exception as exc:

@@ -68,7 +68,7 @@ class OpenCodeSidecarAgent(SidecarAgent):
         if self._endpoint_fields()["model_metadata"]["protocol"] not in self._text_protocols:
             raise RuntimeError("Update OpenCode from Downloads to use this text provider.")
 
-    def _validate_new_provider_tools(self, api_key: str) -> None:
+    def _require_tool_calls(self, api_key: str) -> None:
         # Actual SDK tool calls validate capability; no separate model probe.
         pass
 
