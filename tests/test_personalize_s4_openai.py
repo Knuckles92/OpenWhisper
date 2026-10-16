@@ -9,8 +9,10 @@ from config import config
 from services import isolated, isolated_worker
 from services.recognition_context import RecognitionContext
 from tests.test_openai_backend import LARGE_FILE, chunks, make_backend, split  # noqa: F401  (fixtures)
+from services.speech_endpoints import OPENAI_ENDPOINT_ID, configured_endpoint
 from transcriber.openai_backend import transcription_hints
 
+OPENAI = configured_endpoint(OPENAI_ENDPOINT_ID)
 CONTEXT = RecognitionContext(language="de-DE", phrases=("Ksenia", "Kubernetes"))
 
 
@@ -44,22 +46,22 @@ def hints_of(call):
 
 class TestHintFields:
     def test_gpt_transcribe_takes_keywords_and_languages(self):
-        assert transcription_hints("gpt-transcribe", CONTEXT) == {
+        assert transcription_hints(OPENAI, "gpt-transcribe", CONTEXT) == {
             "keywords": ["Ksenia", "Kubernetes"], "languages": ["de"],
         }
 
     @pytest.mark.parametrize("model", ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"])
     def test_older_models_take_a_prompt_and_language(self, model):
-        assert transcription_hints(model, CONTEXT) == {"prompt": "Ksenia, Kubernetes.", "language": "de"}
+        assert transcription_hints(OPENAI, model, CONTEXT) == {"prompt": "Ksenia, Kubernetes.", "language": "de"}
 
     @pytest.mark.parametrize("recognition", [None, RecognitionContext(), RecognitionContext(language="auto")])
     def test_nothing_without_hints(self, recognition):
-        assert transcription_hints("gpt-transcribe", recognition) == {}
-        assert transcription_hints("whisper-1", recognition) == {}
+        assert transcription_hints(OPENAI, "gpt-transcribe", recognition) == {}
+        assert transcription_hints(OPENAI, "whisper-1", recognition) == {}
 
     def test_keywords_are_capped(self):
         context = RecognitionContext(phrases=tuple(f"w{i}" for i in range(80)) + ("x" * 70,))
-        assert len(transcription_hints("gpt-transcribe", context)["keywords"]) == 50
+        assert len(transcription_hints(OPENAI, "gpt-transcribe", context)["keywords"]) == 50
 
 
 class TestRequests:
@@ -77,7 +79,7 @@ class TestRequests:
         backend = self.backend(transcriptions, model)
         assert backend.supports_recognition and backend.recognition_support == "model"
         backend.transcribe(str(path), recognition=CONTEXT)
-        assert hints_of(transcriptions.calls[0]) == transcription_hints(model, CONTEXT)
+        assert hints_of(transcriptions.calls[0]) == transcription_hints(OPENAI, model, CONTEXT)
 
     def test_no_context_sends_exactly_what_it_did(self, tmp_path):
         path = tmp_path / "a.wav"
@@ -134,7 +136,7 @@ class TestRequests:
         split(chunks)
         backend.transcribe(LARGE_FILE, recognition=CONTEXT)
         assert len(transcriptions.calls) == len(chunks)
-        assert all(hints_of(call) == transcription_hints("gpt-transcribe", CONTEXT)
+        assert all(hints_of(call) == transcription_hints(OPENAI, "gpt-transcribe", CONTEXT)
                    for call in transcriptions.calls)
 
 
@@ -238,7 +240,8 @@ def test_worker_op_passes_hints_to_the_sdk(monkeypatch, tmp_path):
     monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
     path = tmp_path / "a.wav"
     path.write_bytes(b"RIFF")
-    base = {"api_key": "sk", "audio_path": str(path), "model": "whisper-1", "response_format": "text"}
+    base = {"api_key": "sk", "audio_path": str(path), "model": "whisper-1", "response_format": "text",
+            "read_timeout": 120.}
     assert isolated_worker.openai_transcribe(base) == {"text": "done"}
     isolated_worker.openai_transcribe({**base, "prompt": "Ksenia.", "language": "de", "keywords": []})
     assert set(created[0]) == {"file", "model", "response_format"}

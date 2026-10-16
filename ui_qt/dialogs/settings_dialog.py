@@ -2514,10 +2514,13 @@ class SettingsDialog(QDialog):
     @staticmethod
     def _api_key_entries(settings: dict) -> list:
         """One row per distinct variable; profiles sharing a variable share it."""
+        from services import speech_endpoints
+
         names: Dict[str, list] = {}
-        for profile in list_profiles(settings):
-            if profile.api_key_env:
-                names.setdefault(profile.api_key_env, []).append(profile.name)
+        owners = [(p.api_key_env, p.name) for p in list_profiles(settings) if p.api_key_env]
+        for env_name, owner in owners + speech_endpoints.credential_owners(settings):
+            if owner not in names.setdefault(env_name, []):
+                names[env_name].append(owner)
         entries = [
             (env_name, f"{' / '.join(owners)} · {env_name}")
             for env_name, owners in names.items()
@@ -2553,7 +2556,15 @@ class SettingsDialog(QDialog):
         return self.api_key_combo.currentData() or ""
 
     def _api_key_profile(self, env_name: str):
-        for profile in list_profiles(settings_manager.load_all_settings()):
+        """The text endpoint, else the speech server, that sends ``env_name``."""
+        from services import speech_endpoints
+
+        settings = settings_manager.load_all_settings()
+        speech = [
+            speech_endpoints.configured_endpoint(endpoint_id, settings).connection
+            for endpoint_id in speech_endpoints.ENDPOINT_IDS
+        ]
+        for profile in [*list_profiles(settings), *speech]:
             if profile.api_key_env == env_name:
                 return profile
         return None
@@ -2611,9 +2622,9 @@ class SettingsDialog(QDialog):
     def _render_api_key_uses(self, env_name: str) -> None:
         if env_name == "OPENAI_API_KEY":
             text = (
-                "Used for cloud transcription (Whisper, GPT-4o), OpenAI "
-                "transcript cleanup and meeting intelligence, and cloud "
-                "speaker identification."
+                "Used for API transcription with OpenAI, OpenAI transcript "
+                "cleanup and meeting intelligence, and cloud speaker "
+                "identification."
             )
         elif env_name == JEV_OPENROUTER_ROUTE.credential_env:
             text = (
@@ -2630,15 +2641,17 @@ class SettingsDialog(QDialog):
                 "run the same model instead."
             )
         elif env_name:
-            owners = [
-                profile.name
-                for profile in list_profiles(settings_manager.load_all_settings())
-                if profile.api_key_env == env_name
-            ]
-            text = (
-                f"Sent as the API key to {' and '.join(owners)} for transcript "
-                "cleanup and meeting intelligence."
-            )
+            from services import speech_endpoints
+
+            settings = settings_manager.load_all_settings()
+            uses = []
+            owners = [p.name for p in list_profiles(settings) if p.api_key_env == env_name]
+            if owners:
+                uses.append(f"to {' and '.join(owners)} for transcript cleanup and meeting intelligence")
+            speech = [name for env, name in speech_endpoints.credential_owners(settings) if env == env_name]
+            if speech:
+                uses.append(f"to {' and '.join(speech)} for API transcription")
+            text = f"Sent as the API key {', and '.join(uses)}."
         else:
             text = ""
         self.api_key_uses_caption.setText(text)
@@ -4327,7 +4340,12 @@ class SettingsDialog(QDialog):
         """Where the dictation engine runs, named as the rail names it."""
         summary = self.models.voice_summary()
         if self.models.voice_is_cloud():
-            return f"Sent to OpenAI · {summary.split(' · ', 1)[-1]}"
+            from services import speech_endpoints
+
+            settings = self._settings_snapshot()
+            endpoint = speech_endpoints.selected_endpoint(settings)
+            where = "On this computer" if endpoint.is_local else f"Sent to {endpoint.name}"
+            return f"{where} · {speech_endpoints.endpoint_model(endpoint, settings)}"
         if self.models.voice_is_remote():
             return self.models.voice_detail()
         return f"On this computer · {summary}"

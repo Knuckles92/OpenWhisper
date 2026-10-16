@@ -63,7 +63,7 @@ CONTROL_ATTRS = (
     "dictionary_cleanup_gate_tile",
 )
 
-_ENGINE_NAMES = {"local_whisper": "Whisper", "api": "OpenAI"}
+_ENGINE_NAMES = {"local_whisper": "Whisper"}
 
 #: Returns the app's current transcription backend, so the page can say
 #: whether a paired host's engine takes hints. Without it the page goes by
@@ -109,7 +109,14 @@ def _engine_support(settings: dict, backend=None) -> tuple[str, str, str]:
     engine = setting_value(SettingsKey.SELECTED_MODEL, settings)
     support = engine_support(engine)
     name = _ENGINE_NAMES.get(engine) or BACKENDS.get(engine, "")
-    destination = "OpenAI" if engine == "api" else ""
+    destination = ""
+    if engine == "api":
+        from services import speech_endpoints
+
+        endpoint = speech_endpoints.selected_endpoint(settings)
+        name = endpoint.name
+        # Words for a server on this computer stay here with the audio.
+        destination = "" if endpoint.is_local else endpoint.name
     if engine == "remote" and getattr(backend, "is_remote", False) is True and backend.is_available():
         support = backend.recognition_support
         name = backend.name

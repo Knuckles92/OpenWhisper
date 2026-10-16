@@ -119,13 +119,9 @@ class TestTranscriptionRetry:
 
     @staticmethod
     def _backend(client, model_type):
-        from transcriber.openai_backend import OpenAIBackend
+        from tests.test_openai_backend import make_backend
 
-        backend = OpenAIBackend.__new__(OpenAIBackend)
-        backend.model_type = model_type
-        backend.api_key = "sk-test"
-        backend.is_transcribing = False
-        backend.should_cancel = False
+        backend = make_backend(None, model_type)
         backend.client = client
         return backend
 

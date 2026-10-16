@@ -88,6 +88,28 @@ class TestApiKeysSettingsPage(unittest.TestCase):
         self.assertEqual(names, list(KEY_NAMES))
         self.assertEqual(combo.itemText(combo.findData("LMSTUDIO_API_KEY")), "LM Studio · LMSTUDIO_API_KEY")
         self.assertEqual(combo.itemText(combo.findData("TYPESAFE_API_KEY")), "TypeSafe · TYPESAFE_API_KEY")
+
+    def test_lists_a_speech_server_key_and_what_uses_it(self):
+        self.manager.save_all_settings({"api_transcription_servers": {
+            "speaches": {"base_url": "http://gpu-box:8000/v1", "api_key_env": "SPEACHES_API_KEY"},
+        }})
+        self.dialog.refresh()
+        combo = self.dialog.api_key_combo
+        self.assertEqual(combo.itemText(combo.findData("SPEACHES_API_KEY")), "Speaches · SPEACHES_API_KEY")
+        # Groq's key serves both its chat models and its speech models.
+        self.assertEqual(combo.itemText(combo.findData("GROQ_API_KEY")), "Groq · GROQ_API_KEY")
+        self._select("GROQ_API_KEY")
+        self.assertEqual(
+            self.dialog.api_key_uses_caption.text(),
+            "Sent as the API key to Groq for transcript cleanup and meeting "
+            "intelligence, and to Groq for API transcription.",
+        )
+        self._select("SPEACHES_API_KEY")
+        self.assertEqual(
+            self.dialog.api_key_uses_caption.text(),
+            "Sent as the API key to Speaches for API transcription.",
+        )
+        self.assertEqual(self.dialog._api_key_profile("SPEACHES_API_KEY").base_url, "http://gpu-box:8000/v1")
         self.assertEqual(self.dialog.rail.value(API_KEYS), "0 of 7 set")
         self.assertIn("No key set", self.dialog.api_key_status.text())
 

@@ -51,12 +51,21 @@ def test_startup_clients_with_saved_keys_leave_openai_unloaded():
     assert _fresh_interpreter(
         "from transcriber.openai_backend import OpenAIBackend;"
         "from services.transcript_cleanup import TranscriptCleanup;"
-        "backend = OpenAIBackend('api', api_key='sk-test');"
+        "from services import credentials;"
+        "credentials.set_store(credentials.CredentialStore(backend_factory=credentials.memory_backend));"
+        "credentials.store().set('OPENAI_API_KEY', 'sk-test');"
+        "backend = OpenAIBackend('api');"
         "TranscriptCleanup(provider='openai', api_key='sk-test', defer_client=True);"
         "print(int('openai' in sys.modules), int(backend.is_available()));"
         "backend.prepare_client();"
         "print(int('openai' in sys.modules), int(backend.client is not None))"
     ) == ["0", "1", "0", "1"]
+
+
+def _save_key(name, value):
+    from services import credentials
+
+    credentials.store().set(name, value)
 
 
 @pytest.fixture
@@ -65,58 +74,78 @@ def built(monkeypatch):
     keys = []
 
     class FakeOpenAI:
-        def __init__(self, api_key):
+        def __init__(self, api_key, base_url=None, read_timeout=None):
             keys.append(api_key)
             self.api_key = api_key
+            self.base_url = base_url
+            self.read_timeout = read_timeout
 
         def close(self):
             pass
 
     monkeypatch.setattr("services.isolated.IsolatedOpenAIClient", FakeOpenAI)
+    _save_key("OPENAI_API_KEY", "sk-test")
     return keys
 
 
 class TestApiBackendClient:
     def test_available_before_the_client_exists(self, built):
-        backend = OpenAIBackend("api", api_key="sk-test")
+        backend = OpenAIBackend("api")
         # Recording start asks on the UI thread; that must not build it.
         assert backend.is_available()
         assert built == []
         assert backend.client is None
 
     def test_first_request_builds_it_once(self, built, monkeypatch):
-        backend = OpenAIBackend("api", api_key="sk-test")
-        monkeypatch.setattr(backend, "_get_api_model_name", lambda: "gpt-transcribe")
+        backend = OpenAIBackend("api")
         monkeypatch.setattr(backend, "large_file_size_mb", lambda _path: None)
         monkeypatch.setattr(
-            backend, "_transcribe_file", lambda _path, _model: backend.client.api_key
+            backend, "_transcribe_file",
+            lambda _path, _endpoint, _model: backend.client.api_key,
         )
         assert backend.transcribe("a.wav") == "sk-test"
         assert backend.transcribe("b.wav") == "sk-test"
         assert built == ["sk-test"]
 
     def test_saved_key_reaches_the_next_request(self, built):
-        backend = OpenAIBackend("api", api_key="sk-old")
+        backend = OpenAIBackend("api")
         backend.prepare_client()
-        backend.update_api_key("sk-new")
+        _save_key("OPENAI_API_KEY", "sk-new")
         # Saving in Settings neither imports nor builds anything.
-        assert built == ["sk-old"]
+        assert built == ["sk-test"]
         assert backend.is_available()
         backend.prepare_client()
         assert backend.client.api_key == "sk-new"
 
     def test_removed_key_is_unavailable(self, built):
-        backend = OpenAIBackend("api", api_key="sk-old")
+        from services import credentials
+
+        backend = OpenAIBackend("api")
         backend.prepare_client()
-        backend.update_api_key(None)
+        credentials.store().delete("OPENAI_API_KEY")
         assert not backend.is_available()
 
+    def test_chosen_server_reaches_the_next_request(self, built):
+        from services import speech_endpoints
+
+        backend = OpenAIBackend("api")
+        backend.prepare_client()
+        speech_endpoints.save_selection("speaches")
+        # A local server needs no key; the client is rebuilt for its address.
+        assert backend.is_available()
+        backend.prepare_client()
+        assert backend.client.base_url == "http://127.0.0.1:8000/v1"
+        assert backend.client.read_timeout == speech_endpoints.SELF_HOSTED_TIMEOUT_S
+        assert built == ["sk-test", speech_endpoints.api_key(
+            speech_endpoints.selected_endpoint())]
+
     def test_failed_build_is_unavailable(self, monkeypatch):
-        def broken(api_key):
+        def broken(**_connection):
             raise RuntimeError("no SDK")
 
         monkeypatch.setattr("services.isolated.IsolatedOpenAIClient", broken)
-        backend = OpenAIBackend("api", api_key="sk-test")
+        _save_key("OPENAI_API_KEY", "sk-test")
+        backend = OpenAIBackend("api")
         backend.prepare_client()
         assert not backend.is_available()
         with pytest.raises(Exception, match="not available"):
@@ -127,13 +156,14 @@ class TestApiBackendClient:
         started, release, keys = threading.Event(), threading.Event(), []
 
         class SlowOpenAI:
-            def __init__(self, api_key):
+            def __init__(self, api_key, **_connection):
                 keys.append(api_key)
                 started.set()
                 release.wait(5)
 
         monkeypatch.setattr("services.isolated.IsolatedOpenAIClient", SlowOpenAI)
-        backend = OpenAIBackend("api", api_key="sk-test")
+        _save_key("OPENAI_API_KEY", "sk-test")
+        backend = OpenAIBackend("api")
         workers = [threading.Thread(target=backend.prepare_client) for _ in range(2)]
         for worker in workers:
             worker.start()

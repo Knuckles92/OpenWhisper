@@ -73,6 +73,10 @@ class SettingsKey:
     HOTKEYS: Final[str] = "hotkeys"
     SELECTED_MODEL: Final[str] = "selected_model"
     API_TRANSCRIPTION_MODEL: Final[str] = "api_transcription_model"
+    # The API backend's server and the self-hosted servers' overrides; see
+    # services/speech_endpoints.py.
+    API_TRANSCRIPTION_ENDPOINT: Final[str] = "api_transcription_endpoint"
+    API_TRANSCRIPTION_SERVERS: Final[str] = "api_transcription_servers"
     AUDIO_INPUT_DEVICE: Final[str] = "audio_input_device"
     WINDOW_GEOMETRY: Final[str] = "window_geometry"
     COMPACT_WINDOW_GEOMETRY: Final[str] = "compact_window_geometry"
@@ -612,6 +616,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     # Dictation and window
     SettingsKey.SELECTED_MODEL: config.DEFAULT_BACKEND,
     SettingsKey.API_TRANSCRIPTION_MODEL: config.DEFAULT_API_MODEL,
+    SettingsKey.API_TRANSCRIPTION_ENDPOINT: "openai",
     SettingsKey.AUTO_PASTE: True,
     SettingsKey.COPY_CLIPBOARD: True,
     SettingsKey.RESTORE_CLIPBOARD: True,
