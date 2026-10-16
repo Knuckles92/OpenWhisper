@@ -473,12 +473,12 @@ def test_the_privacy_line_says_what_each_way_of_routing_sends(make_dialog, routi
     privacy = dialog.actions_routing_privacy
     assert privacy.isVisible()
     assert privacy.text() == (
-        "Everything you record with the Route by voice shortcut is sent to TypeSafe or "
-        "OpenRouter to choose the action.")
+        "Everything you record with the Route by voice shortcut is given to the Fast "
+        "judgments judge to choose the action.")
     dialog.actions_routing_dictation_tile.checkbox.click()
     assert privacy.text() == (
         "Everything you record with the Route by voice shortcut, and normal dictations that "
-        "start with an action's name, are sent to TypeSafe or OpenRouter to choose the action.")
+        "start with an action's name, are given to the Fast judgments judge to choose the action.")
     # Ready, routing's own words say what is sent.
     routing_status.fixed = routing.RoutingStatus(True, True, "Route by voice is on.")
     settings_actions.refresh(dialog)

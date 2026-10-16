@@ -96,6 +96,7 @@ CONTROL_DESTINATIONS = {'mcp_page': 'mcp',
  'typesafe_switch_route_btn': 'meeting_fast',
  'typesafe_route_tile': 'meeting_fast',
  'typesafe_route_bar': 'meeting_fast',
+ 'typesafe_text_model_bar': 'meeting_fast',
  'typesafe_route_test_btn': 'meeting_fast',
  'typesafe_route_status': 'meeting_fast',
  'typesafe_destination_label': 'meeting_fast',
@@ -274,13 +275,15 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                           ('meeting_agent_core_combo', 'Agent core', '')],
  'meeting_fast': [('typesafe_key_notice', 'No TypeSafe API key', ''),
                   ('typesafe_route_tile',
-                   'Jev connection',
-                   'Run fast judgments with a TypeSafe key, or with your OpenRouter key through '
-                   'OpenRouter. Same Jev model either way. Test sends one tiny judgment.'),
+                   'Judge',
+                   'Run fast judgments on Jev with a TypeSafe key or through OpenRouter, or on '
+                   'your own text model (the AI insights or AI cleanup one), which can run on '
+                   'this computer with Ollama, LM Studio, vLLM or llama.cpp. Test sends one tiny '
+                   'judgment.'),
                   ('typesafe_enabled_tile',
-                   'TypeSafe fast judgments (Experimental)',
+                   'Fast judgments (Experimental)',
                    'Off by default. Answers narrow yes/no questions about a minute of transcript '
-                   'in about 0.2 s; never writes text. Key: API keys → TypeSafe or OpenRouter.'),
+                   'in about 0.2 s with Jev, seconds with a text model; never writes text.'),
                   ('typesafe_topic_shift_tile',
                    'Semantic topic changes (Experimental)',
                    'Fire early checkpoints on a judged topic change instead of word overlap. '
@@ -306,11 +309,11 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                     'insights on for the meeting.'),
                    ('meeting_review_tile',
                     'Review uncertain insights at the end (Experimental)',
-                    'Optional, for new meetings. Sends relevant transcript excerpts, speaker '
-                    'names, and insights to TypeSafe to identify ambiguities. Start with the three '
-                    'highest-priority questions, then choose Review more to see the rest. No audio '
-                    'is sent. Requires AI insights, TypeSafe fast judgments on the Fast judgments '
-                    'page, and a TypeSafe or OpenRouter API key (Settings → API keys).'),
+                    'Optional, for new meetings. Gives the Fast judgments judge relevant transcript '
+                    'excerpts, speaker names, and insights to identify ambiguities. Start with the '
+                    'three highest-priority questions, then choose Review more to see the rest. No '
+                    'audio is sent. Requires AI insights and Fast judgments on the Fast judgments '
+                    'page.'),
                    ('meeting_report_ribbon_tile',
                     'Ribbon',
                     'Timeline walk. Adds timeline beats and polished minutes, which is the main '
