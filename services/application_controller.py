@@ -1089,10 +1089,10 @@ class ApplicationController(QObject):
     def _on_restore_staged(self, _path, error):
         if not error and not self._shutting_down:
             from PyQt6.QtWidgets import QApplication
-            from services.backup_startup import RESTART_FOR_RESTORE_EXIT_CODE
+            from services.backup_startup import RESTART_EXIT_CODE
 
             # main.py relaunches only after bootstrap closes every data writer.
-            QApplication.exit(RESTART_FOR_RESTORE_EXIT_CODE)
+            QApplication.exit(RESTART_EXIT_CODE)
 
     def notify_main_ui_ready(self) -> None:
         """Called by bootstrap once the main window is shown.

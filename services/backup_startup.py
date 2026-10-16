@@ -41,7 +41,7 @@ if os.name == "nt":
     _kernel32.UnlockFileEx.restype = wintypes.BOOL
 
 
-RESTART_FOR_RESTORE_EXIT_CODE = 73
+RESTART_EXIT_CODE = 73
 LOCK_FILENAME = ".openwhisper-data.lock"
 
 
@@ -228,7 +228,7 @@ def _restart_environment() -> dict[str, str]:
     return environment
 
 
-def spawn_restore_restart(main_path: str) -> None:
+def spawn_restart(main_path: str) -> None:
     """Start a clean copy after callers close the app and release the lease."""
     options = {"close_fds": True, "env": _restart_environment()}
     if os.name == "nt":

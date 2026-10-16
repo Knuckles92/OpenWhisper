@@ -292,14 +292,14 @@ _handle_package_self_test()
 # the shared data lease for the process lifetime after any pending restore.
 from config import data_root
 from services.backup_startup import (
-    RESTART_FOR_RESTORE_EXIT_CODE,
+    RESTART_EXIT_CODE,
     acquire_startup_data_lease,
     release_startup_data_lease,
-    spawn_restore_restart,
+    spawn_restart,
 )
 
 
-def _show_restore_startup_error(message: str) -> None:
+def _show_startup_error(message: str) -> None:
     print(f"OpenWhisper: {message}", file=sys.stderr)
     if not getattr(sys, "frozen", False):
         return
@@ -307,7 +307,7 @@ def _show_restore_startup_error(message: str) -> None:
         from PyQt6.QtWidgets import QApplication, QMessageBox
 
         app = QApplication.instance() or QApplication([])
-        QMessageBox.critical(None, "OpenWhisper backup restore", message)
+        QMessageBox.critical(None, "OpenWhisper", message)
         del app
     except Exception:
         # The stderr message remains available when Qt itself cannot start.
@@ -317,7 +317,7 @@ def _show_restore_startup_error(message: str) -> None:
 try:
     _APP_DATA_LEASE = acquire_startup_data_lease(data_root())
 except Exception as exc:
-    _show_restore_startup_error(
+    _show_startup_error(
         f"Could not safely open application data: {exc} "
         "The backup restore remains pending. Close other OpenWhisper processes "
         "and start the app again."
@@ -330,6 +330,10 @@ __all__ = ["main"]
 
 
 if __name__ == "__main__":
+    from services.code_identity import remember_launch
+
+    # What a later change on disk is measured against: see code_identity.
+    remember_launch()
     try:
         exit_code = main()
     finally:
@@ -341,7 +345,7 @@ if __name__ == "__main__":
     # thread — which cannot be stopped — instead produced access violations in
     # openwhisper.crash.log on the way out. Nothing is left to lose here.
     logging.shutdown()
-    if exit_code == RESTART_FOR_RESTORE_EXIT_CODE:
+    if exit_code == RESTART_EXIT_CODE:
         try:
             if sys.platform == "win32" and getattr(sys, "frozen", False):
                 # The fresh process acquires these mutexes without waiting.
@@ -350,10 +354,10 @@ if __name__ == "__main__":
                 from services.app_update_apply import release_application_mutex_for_setup
 
                 release_application_mutex_for_setup()
-            spawn_restore_restart(__file__)
+            spawn_restart(__file__)
         except Exception as exc:
-            _show_restore_startup_error(
-                f"Could not restart to apply the backup restore: {exc} "
+            _show_startup_error(
+                f"Could not restart OpenWhisper: {exc} "
                 "Please start OpenWhisper again manually."
             )
             exit_code = 1

@@ -27,6 +27,10 @@ from services.app_update_apply import (
     release_application_mutex_for_setup,
 )
 from services.update_contract import decode_native_result
+# Imported up front: a restart offer must not load anything new from a disk
+# that has changed under the app.
+from services.backup_startup import RESTART_EXIT_CODE
+from services.code_identity import changed_since_launch
 from services.hotkey_manager import format_hotkey_display
 from ui_qt.clipboard import ClipboardStageResult, TemporaryClipboard
 from ui_qt.overlay_state import OverlayState
@@ -51,6 +55,8 @@ from services.settings import SettingsKey, resolve_ui_theme, settings_manager
 logger = logging.getLogger(__name__)
 
 HANDOFF_EXIT_GRACE_S = 10.0
+#: How often to look for code that changed on disk under the running app.
+CODE_CHANGE_POLL_MS = 10_000
 
 
 def _hard_exit() -> None:
@@ -192,6 +198,10 @@ class UIController(QObject):
         self._last_update_result: Optional[UpdateCheckResult] = None
         self._update_dialog: Optional[AppUpdateDialog] = None
         self._update_canceled = False
+        self._code_change_timer = QTimer(self)
+        self._code_change_timer.setInterval(CODE_CHANGE_POLL_MS)
+        self._code_change_timer.timeout.connect(self._on_code_change_poll)
+        self._code_change_timer.start()
 
         self.on_meeting_start: Optional[Callable] = None  # (cloud: Optional[bool])
         self.on_meeting_start_demo: Optional[Callable] = None  # (cloud: Optional[bool])
@@ -1641,11 +1651,17 @@ class UIController(QObject):
     def on_meeting_error(self, message: str) -> None:
         """Surface a meeting error in status and a modal warning.
 
+        After the code on disk changed, the warning offers a restart instead:
+        the meeting engine loads on first use, from the newer code.
+
         Args:
             message: Error description from MeetingRuntime.
         """
         text = message or "Meeting error"
         self.set_meeting_status(text)
+        if changed_since_launch():
+            self.offer_restart_for_code_change(failure=text)
+            return
         QMessageBox.warning(self.main_window, "Meeting Error", text)
 
     def on_meeting_server_started(self, result: Any) -> None:
@@ -2168,6 +2184,55 @@ class UIController(QObject):
         arm_handoff_watchdog()
         QApplication.instance().exit(0)
 
+    def _on_code_change_poll(self) -> None:
+        if changed_since_launch() and not self._update_work_is_busy():
+            self.offer_restart_for_code_change()
+
+    def offer_restart_for_code_change(self, failure: str = "") -> None:
+        """Say the code changed under the running app, and offer to restart.
+
+        Asked unprompted once per run; after Later, only a failure asks again.
+
+        Args:
+            failure: An error the change likely caused, kept under Show Details.
+        """
+        self._code_change_timer.stop()
+        box = QMessageBox(self.main_window)
+        box.setWindowTitle("Restart OpenWhisper")
+        if failure:
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setText(
+                "OpenWhisper was updated while it was running, which likely "
+                "caused this error."
+            )
+            box.setInformativeText("Restart to finish the update, then try again.")
+            box.setDetailedText(failure)
+        else:
+            box.setIcon(QMessageBox.Icon.Information)
+            box.setText("OpenWhisper was updated while it was running.")
+            box.setInformativeText(
+                "Restart to finish the update. Until you do, parts of the app "
+                "that haven't loaded yet may not work."
+            )
+        restart = box.addButton("Restart now", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(restart)
+        box.exec()
+        if box.clickedButton() is restart and self._confirm_quit_while_busy():
+            self.restart_app()
+
+    def restart_app(self) -> None:
+        """Close OpenWhisper and start a fresh copy of it.
+
+        main.py relaunches on ``RESTART_EXIT_CODE`` once every data writer has
+        closed. ``exit()`` because windows can veto ``quit()``; see
+        :meth:`exit_for_update`.
+        """
+        logger.info("Restarting OpenWhisper")
+        self.main_window._save_geometry()
+        self.main_window._force_quit = True
+        QApplication.instance().exit(RESTART_EXIT_CODE)
+
     def show_apply_error_if_any(self) -> None:
         """Show a leftover native-update error from the previous launch."""
         message = consume_apply_error()
@@ -2237,6 +2302,7 @@ class UIController(QObject):
             logger.debug(f"Error restoring clipboard during cleanup: {e}")
 
         try:
+            self._code_change_timer.stop()
             if self.cancel_animation_timer.isActive():
                 self.cancel_animation_timer.stop()
         except Exception as e:

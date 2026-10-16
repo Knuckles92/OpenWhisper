@@ -24,6 +24,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 - **The final highlight pass checks the newest minutes first.**
 
 ### Fixed
+- **An update made while OpenWhisper runs asks for a restart** — when a pull or merge moves a source checkout to a new commit, or a package upgrade replaces an installed build, the running app now offers **Restart now** within a few seconds, waiting until no recording, meeting or transcription is in progress. Before, features loaded later mixed old and new code and failed with errors such as "cannot import name". A meeting that fails after such an update offers the restart too, with the original error under **Show Details**.
 - **Local servers get requests they can serve** — LM Studio, vLLM, llama.cpp and LocalAI no longer receive a forced 16,384-token output limit (vLLM rejected it for models with a smaller context), and AI cleanup keeps temperature 0 on them, the same as a custom endpoint on the same server.
 - **Every server you run gets the two-minute model-load timeout** — a custom endpoint on this computer now waits as long as the presets do for its first cleanup.
 - **Meetings on a custom endpoint check that the model really calls tools** — including endpoints on this computer. The standard engine falls back to JSON answers, and Pi asks for a tool-capable model.
