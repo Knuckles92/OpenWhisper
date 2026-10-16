@@ -114,13 +114,12 @@ def make_dialog():
 
 
 class TestRouting:
+    @pytest.mark.usefixtures("isolated_app_theme")
     def test_page_transitions_keep_sidebar_rows_over_their_click_targets(self, make_dialog):
-        from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+        from ui_qt.utils.font_scale import apply_ui_font_scale
         from ui_qt.utils.theme_manager import ThemeManager
 
         app = QApplication.instance()
-        previous_style, previous_font = app.styleSheet(), app.font()
-        previous_scale = current_ui_font_scale_percent()
         apply_ui_font_scale(115, app=app, theme_manager=ThemeManager())
         dialog, _store = make_dialog()
         dialog.show()
@@ -140,20 +139,15 @@ class TestRouting:
                     assert row.geometry().bottom() == expected.bottom(), (key, destination, row.geometry(), expected)
         finally:
             dialog.close()
-            apply_ui_font_scale(previous_scale, app=app)
-            app.setFont(previous_font)
-            app.setStyleSheet(previous_style)
 
+    @pytest.mark.usefixtures("isolated_app_theme")
     @pytest.mark.parametrize("scale", [100, 115, 130])
     @pytest.mark.parametrize("target", ["name_label", "value_label", "icon_label", "row"])
     def test_scrolled_sidebar_clicks_open_the_visible_destination(self, make_dialog, scale, target):
-        from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+        from ui_qt.utils.font_scale import apply_ui_font_scale
         from ui_qt.utils.theme_manager import ThemeManager
 
         app = QApplication.instance()
-        previous_style = app.styleSheet()
-        previous_font = app.font()
-        previous_scale = current_ui_font_scale_percent()
         apply_ui_font_scale(scale, app=app, theme_manager=ThemeManager())
         dialog, _store = make_dialog()
         dialog.show()
@@ -187,9 +181,6 @@ class TestRouting:
                 assert dialog.page_title.text() == dialog._headings[key][0]
         finally:
             dialog.close()
-            apply_ui_font_scale(previous_scale, app=app)
-            app.setFont(previous_font)
-            app.setStyleSheet(previous_style)
 
     def test_window_opens_on_home(self, make_dialog):
         dialog, _store = make_dialog()
@@ -473,16 +464,14 @@ class TestHome:
         assert dialog.hotkey_inputs["record_toggle"].text() == field.text()
         dialog.close()
 
+    @pytest.mark.usefixtures("isolated_app_theme")
     @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("classic", 1315), ("omarchy", 460)])
     def test_home_rows_fit_narrow_windows_and_large_fonts(self, make_dialog, monkeypatch, ui_mode, width):
         from PyQt6.QtWidgets import QAbstractButton, QComboBox, QLineEdit, QLabel
-        from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
-        from ui_qt.utils.palette import current_palette, set_current_palette
+        from ui_qt.utils.font_scale import apply_ui_font_scale
         from ui_qt.utils.theme_manager import ThemeManager
         monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
         app = QApplication.instance()
-        previous_style, previous_font = app.styleSheet(), app.font()
-        previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
         manager = ThemeManager()
         dialog = None
         try:
@@ -513,10 +502,6 @@ class TestHome:
         finally:
             if dialog is not None:
                 dialog.close()
-            apply_ui_font_scale(previous_scale, app=app)
-            set_current_palette(previous_palette)
-            app.setFont(previous_font)
-            app.setStyleSheet(previous_style)
 
     def test_cards_sit_in_two_columns_when_the_page_is_wide(self, make_dialog):
         dialog, _store = make_dialog()

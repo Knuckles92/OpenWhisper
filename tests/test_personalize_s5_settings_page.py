@@ -312,75 +312,61 @@ def test_home_counts_snippets_and_adds_one(make_dialog):
     assert detail.text() == "Off · 2 snippets"
 
 
+@pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
 def test_the_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
-    from ui_qt.utils.palette import current_palette, set_current_palette
+    from ui_qt.utils.font_scale import apply_ui_font_scale
     from ui_qt.utils.theme_manager import ThemeManager
 
     monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
     app = QApplication.instance()
-    previous_style, previous_font = app.styleSheet(), app.font()
-    previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
-    try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
-        dialog, _store, panel = _open(make_dialog, CAL, ADDRESS, SIGN_OFF)
-        dialog.show()
-        dialog.resize(width, 600)
-        for _ in range(8):
-            app.processEvents()
-        page = dialog._pages[SNIPPETS]
-        assert dialog.width() == width
-        for control in page.findChildren(QAbstractButton) + page.findChildren(QLineEdit):
-            if control.isVisible():
-                assert control.mapTo(page, control.rect().topLeft()).x() >= 0
-                assert control.mapTo(page, control.rect().bottomRight()).x() < page.width()
-        for label in page.findChildren(QLabel):
-            if label.isVisible() and label.wordWrap():
-                assert label.height() >= label.heightForWidth(label.width())
-        buttons = [panel.new_button, panel.duplicate_button, panel.delete_button, panel.save_button]
-        for index, button in enumerate(buttons):
-            box = button.rect().translated(button.mapTo(page, button.rect().topLeft()))
-            for other in buttons[index + 1:]:
-                other_box = other.rect().translated(other.mapTo(page, other.rect().topLeft()))
-                assert not box.intersects(other_box)
-            assert button.width() >= button.minimumSizeHint().width()
-        assert panel.text_edit.height() >= panel.text_edit.minimumHeight()
-        scroll = dialog._page_scrolls[SNIPPETS]
-        scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
+    apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
+    dialog, _store, panel = _open(make_dialog, CAL, ADDRESS, SIGN_OFF)
+    dialog.show()
+    dialog.resize(width, 600)
+    for _ in range(8):
         app.processEvents()
-        assert page.mapTo(scroll.viewport(), page.rect().bottomRight()).y() <= scroll.viewport().height()
-    finally:
-        apply_ui_font_scale(previous_scale, app=app)
-        set_current_palette(previous_palette)
-        app.setFont(previous_font)
-        app.setStyleSheet(previous_style)
+    page = dialog._pages[SNIPPETS]
+    assert dialog.width() == width
+    for control in page.findChildren(QAbstractButton) + page.findChildren(QLineEdit):
+        if control.isVisible():
+            assert control.mapTo(page, control.rect().topLeft()).x() >= 0
+            assert control.mapTo(page, control.rect().bottomRight()).x() < page.width()
+    for label in page.findChildren(QLabel):
+        if label.isVisible() and label.wordWrap():
+            assert label.height() >= label.heightForWidth(label.width())
+    buttons = [panel.new_button, panel.duplicate_button, panel.delete_button, panel.save_button]
+    for index, button in enumerate(buttons):
+        box = button.rect().translated(button.mapTo(page, button.rect().topLeft()))
+        for other in buttons[index + 1:]:
+            other_box = other.rect().translated(other.mapTo(page, other.rect().topLeft()))
+            assert not box.intersects(other_box)
+        assert button.width() >= button.minimumSizeHint().width()
+    assert panel.text_edit.height() >= panel.text_edit.minimumHeight()
+    scroll = dialog._page_scrolls[SNIPPETS]
+    scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
+    app.processEvents()
+    assert page.mapTo(scroll.viewport(), page.rect().bottomRight()).y() <= scroll.viewport().height()
 
 
+@pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 460)])
 def test_the_home_row_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+    from ui_qt.utils.font_scale import apply_ui_font_scale
     from ui_qt.utils.theme_manager import ThemeManager
 
     monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
     app = QApplication.instance()
-    previous_style, previous_font = app.styleSheet(), app.font()
-    previous_scale = current_ui_font_scale_percent()
-    try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
-        dialog, _store = make_dialog(_library(CAL))
-        dialog.show()
-        dialog._fit_to_screen()
-        dialog.resize(width, 600)
-        for _ in range(8):
-            app.processEvents()
-        page = dialog.home
-        add = next(b for b in page.findChildren(QPushButton) if b.accessibleName() == "Add a snippet")
-        assert add.isVisible()
-        assert add.mapTo(page, add.rect().topLeft()).x() >= 0
-        assert add.mapTo(page, add.rect().bottomRight()).x() < page.width()
-        assert add.width() >= add.minimumSizeHint().width()
-    finally:
-        apply_ui_font_scale(previous_scale, app=app)
-        app.setFont(previous_font)
-        app.setStyleSheet(previous_style)
+    apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
+    dialog, _store = make_dialog(_library(CAL))
+    dialog.show()
+    dialog._fit_to_screen()
+    dialog.resize(width, 600)
+    for _ in range(8):
+        app.processEvents()
+    page = dialog.home
+    add = next(b for b in page.findChildren(QPushButton) if b.accessibleName() == "Add a snippet")
+    assert add.isVisible()
+    assert add.mapTo(page, add.rect().topLeft()).x() >= 0
+    assert add.mapTo(page, add.rect().bottomRight()).x() < page.width()
+    assert add.width() >= add.minimumSizeHint().width()

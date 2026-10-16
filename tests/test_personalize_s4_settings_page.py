@@ -339,16 +339,14 @@ class TestBasicRow:
         assert "Names and terms dictation should always get right." in labels
 
 
+@pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
 def test_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
-    from ui_qt.utils.palette import current_palette, set_current_palette
+    from ui_qt.utils.font_scale import apply_ui_font_scale
     from ui_qt.utils.theme_manager import ThemeManager
 
     monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
     app = QApplication.instance()
-    previous_style, previous_font = app.styleSheet(), app.font()
-    previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
     dialog = None
     try:
         apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
@@ -383,7 +381,3 @@ def test_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mo
     finally:
         if dialog is not None:
             dialog.close()
-        apply_ui_font_scale(previous_scale, app=app)
-        set_current_palette(previous_palette)
-        app.setFont(previous_font)
-        app.setStyleSheet(previous_style)

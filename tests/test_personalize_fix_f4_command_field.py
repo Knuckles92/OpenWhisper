@@ -35,14 +35,11 @@ def _restore_metadata():
 
 
 @pytest.fixture
-def scaled_dialog(monkeypatch):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
-    from ui_qt.utils.palette import current_palette, set_current_palette
+def scaled_dialog(monkeypatch, isolated_app_theme):
+    from ui_qt.utils.font_scale import apply_ui_font_scale
     from ui_qt.utils.theme_manager import ThemeManager
 
     app = QApplication.instance()
-    previous_style, previous_font = app.styleSheet(), app.font()
-    previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
     temp = tempfile.TemporaryDirectory()
     opened = []
 
@@ -73,10 +70,6 @@ def scaled_dialog(monkeypatch):
         dialog.close()
         stack.close()
     temp.cleanup()
-    apply_ui_font_scale(previous_scale, app=app)
-    set_current_palette(previous_palette)
-    app.setFont(previous_font)
-    app.setStyleSheet(previous_style)
 
 
 def _settle(dialog, width):

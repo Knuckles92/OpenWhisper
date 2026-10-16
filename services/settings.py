@@ -124,6 +124,8 @@ class SettingsKey:
     UI_FONT_SCALE: Final[str] = "ui_font_scale"
     # Colour theme: "dark", "light", or "system" (follow the OS setting).
     UI_THEME: Final[str] = "ui_theme"
+    # Optional dictation onboarding; absence on an established install is not new.
+    GUIDED_SETUP_STATE: Final[str] = "guided_setup_state"
     # Legacy keys kept for reading/migrating older settings files
     STREAMING_OVERLAY_ENABLED: Final[str] = "streaming_overlay_enabled"
     STREAMING_PASTE_ENABLED: Final[str] = "streaming_paste_enabled"

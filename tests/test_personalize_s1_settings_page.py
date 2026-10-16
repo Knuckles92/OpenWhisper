@@ -360,49 +360,41 @@ def test_home_row_matches_tone_and_explains_when_it_cannot(make_dialog):
 # --- layout ----------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 720), ("omarchy", 560)])
 def test_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
-    from ui_qt.utils.palette import current_palette, set_current_palette
+    from ui_qt.utils.font_scale import apply_ui_font_scale
     from ui_qt.utils.theme_manager import ThemeManager
 
     monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
     app = QApplication.instance()
-    previous_style, previous_font = app.styleSheet(), app.font()
-    previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
-    try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
-        dialog, _store = make_dialog({
-            **CLEANUP_ON,
-            SettingsKey.APP_CONTEXT_READ_TEXT: True,
-            SettingsKey.APP_CONTEXT_EXCLUDED_APPS: ["A password manager with a long name"],
-            SettingsKey.APP_STYLE_OVERRIDES: [{"match": "Notion", "category": "personal"}],
-        })
-        dialog.show()
-        dialog.resize(width, 600)
-        dialog.select_destination(STYLES)
-        for _ in range(10):
-            app.processEvents()
-        assert dialog.width() == width
-        page = dialog._pages[STYLES]
-        controls = (page.findChildren(QAbstractButton) + page.findChildren(QComboBox)
-                    + page.findChildren(QLineEdit))
-        for control in controls:
-            if control.isVisible():
-                assert control.mapTo(page, control.rect().topLeft()).x() >= 0
-                assert control.mapTo(page, control.rect().bottomRight()).x() < page.width()
-        for label in page.findChildren(QLabel):
-            if label.isVisible() and label.wordWrap():
-                assert label.height() >= label.heightForWidth(label.width())
-        for tile in page.findChildren(TileBase):
-            if tile.isVisible():
-                assert page.rect().contains(tile.geometry())
-        scroll = dialog._page_scrolls[STYLES]
-        scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
+    apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
+    dialog, _store = make_dialog({
+        **CLEANUP_ON,
+        SettingsKey.APP_CONTEXT_READ_TEXT: True,
+        SettingsKey.APP_CONTEXT_EXCLUDED_APPS: ["A password manager with a long name"],
+        SettingsKey.APP_STYLE_OVERRIDES: [{"match": "Notion", "category": "personal"}],
+    })
+    dialog.show()
+    dialog.resize(width, 600)
+    dialog.select_destination(STYLES)
+    for _ in range(10):
         app.processEvents()
-        assert page.mapTo(scroll.viewport(), page.rect().bottomRight()).y() <= scroll.viewport().height()
-    finally:
-        apply_ui_font_scale(previous_scale, app=app)
-        set_current_palette(previous_palette)
-        app.setFont(previous_font)
-        app.setStyleSheet(previous_style)
+    assert dialog.width() == width
+    page = dialog._pages[STYLES]
+    controls = (page.findChildren(QAbstractButton) + page.findChildren(QComboBox)
+                + page.findChildren(QLineEdit))
+    for control in controls:
+        if control.isVisible():
+            assert control.mapTo(page, control.rect().topLeft()).x() >= 0
+            assert control.mapTo(page, control.rect().bottomRight()).x() < page.width()
+    for label in page.findChildren(QLabel):
+        if label.isVisible() and label.wordWrap():
+            assert label.height() >= label.heightForWidth(label.width())
+    for tile in page.findChildren(TileBase):
+        if tile.isVisible():
+            assert page.rect().contains(tile.geometry())
+    scroll = dialog._page_scrolls[STYLES]
+    scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
+    app.processEvents()
+    assert page.mapTo(scroll.viewport(), page.rect().bottomRight()).y() <= scroll.viewport().height()

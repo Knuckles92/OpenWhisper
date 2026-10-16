@@ -4225,7 +4225,10 @@ QFrame#homeDivider {
     border: none;
 }
 
-QComboBox#homeCombo {
+/* basicSettingsCombo: guided setup's microphone, named for the retired
+   Basic view; drop it once guided_setup.py uses homeCombo. */
+QComboBox#homeCombo,
+QComboBox#basicSettingsCombo {
     background-color: @slate-field;
     color: @slate-text;
     border: 1px solid @slate-border-strong;
@@ -4234,7 +4237,8 @@ QComboBox#homeCombo {
     font-size: 13px;
 }
 
-QComboBox#homeCombo:focus {
+QComboBox#homeCombo:focus,
+QComboBox#basicSettingsCombo:focus {
     border-color: @accent;
 }
 

@@ -776,18 +776,15 @@ def test_result_text_and_clock():
     assert set(hooks_panel.event_types()) == set(catalog.PUBLIC_TYPES)
 
 
+@pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode", ["classic", "omarchy"])
 @pytest.mark.parametrize("font_percent", [100, 130])
 def test_sections_fit_narrow_columns_at_every_scale(store, monkeypatch, ui_mode, font_percent):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
-    from ui_qt.utils.palette import current_palette, set_current_palette
+    from ui_qt.utils.font_scale import apply_ui_font_scale
     from ui_qt.utils.theme_manager import ThemeManager
 
     monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
     app = QApplication.instance()
-    previous_scale, previous_palette, previous_sheet = (
-        current_ui_font_scale_percent(), current_palette(), app.styleSheet())
-    previous_font = app.font()
     manager = ThemeManager()
     store.mutate_settings(lambda s: s.update({
         SettingsKey.AUTOMATION_WEBHOOKS: [HOOK],
@@ -831,7 +828,3 @@ def test_sections_fit_narrow_columns_at_every_scale(store, monkeypatch, ui_mode,
     finally:
         scroll.close()
         scroll.deleteLater()
-        apply_ui_font_scale(previous_scale, app=app)
-        set_current_palette(previous_palette)
-        app.setStyleSheet(previous_sheet)
-        app.setFont(previous_font)

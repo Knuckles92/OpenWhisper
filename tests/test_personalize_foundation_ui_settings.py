@@ -407,15 +407,14 @@ class TestHomePersonalize:
             reopened.close()
 
 
+@pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
 def test_new_pages_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
+    from ui_qt.utils.font_scale import apply_ui_font_scale
     from ui_qt.utils.theme_manager import ThemeManager
 
     monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
     app = QApplication.instance()
-    previous_style, previous_font = app.styleSheet(), app.font()
-    previous_scale = current_ui_font_scale_percent()
     dialog = None
     try:
         apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
@@ -449,6 +448,3 @@ def test_new_pages_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatch, u
     finally:
         if dialog is not None:
             dialog.close()
-        apply_ui_font_scale(previous_scale, app=app)
-        app.setFont(previous_font)
-        app.setStyleSheet(previous_style)

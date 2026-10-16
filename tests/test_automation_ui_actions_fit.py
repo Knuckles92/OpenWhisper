@@ -115,55 +115,46 @@ def _open(dialog, state):
         panel.start_from_preset(panel.gallery.tile(state).preset)
 
 
+@pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("state", ["list", "new-folder", "gallery", "quick-answer", "webhook", "program"])
 @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 720), ("omarchy", 460)])
 def test_the_actions_page_fits_narrow_windows_and_large_fonts(make_dialog, monkeypatch,
                                                               ui_mode, width, state):
-    from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
-    from ui_qt.utils.palette import current_palette, set_current_palette
+    from ui_qt.utils.font_scale import apply_ui_font_scale
     from ui_qt.utils.theme_manager import ThemeManager
 
     monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
     app = QApplication.instance()
-    previous_style, previous_font = app.styleSheet(), app.font()
-    previous_scale, previous_palette = current_ui_font_scale_percent(), current_palette()
-    manager = ThemeManager()
-    try:
-        apply_ui_font_scale(130, app=app, theme_manager=manager)
-        dialog = make_dialog({SettingsKey.ACTIONS: ACTIONS_LIST})
-        _open(dialog, state)
-        dialog.show()
-        dialog._fit_to_screen()
-        dialog.resize(width, 600)
-        for _ in range(12):
-            app.processEvents()
-        page = dialog._pages[ACTIONS]
-        assert dialog.actions_agent_card.isVisible()
-        tiles = [tile for tile in page.findChildren(TileBase) if tile.isVisible()]
-        assert tiles
-        # Below the classic minimum width only the Advanced rail is too wide;
-        # the cards themselves must still hold their controls.
-        for tile in tiles:
-            for control in _controls(tile):
-                left, _top, right, _bottom = _rect_in(control, tile)
-                assert left >= 0 and right < tile.width(), (
-                    tile.title_label.text(), control.objectName() or control.text()
-                    if isinstance(control, QAbstractButton) else control.accessibleName())
-        if width > 460:
-            for control in _controls(page):
-                assert _rect_in(control, page)[2] < page.width(), (
-                    control.objectName(), control.accessibleName())
-        # Nothing is squeezed below the height its text needs: Settings pages
-        # lay out at their minimum height.
-        assert page.height() >= page.minimumSizeHint().height()
-        for label in page.findChildren(QLabel):
-            if label.isVisible() and label.wordWrap():
-                assert label.height() >= label.heightForWidth(label.width()), label.text()
+    apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
+    dialog = make_dialog({SettingsKey.ACTIONS: ACTIONS_LIST})
+    _open(dialog, state)
+    dialog.show()
+    dialog._fit_to_screen()
+    dialog.resize(width, 600)
+    for _ in range(12):
+        app.processEvents()
+    page = dialog._pages[ACTIONS]
+    assert dialog.actions_agent_card.isVisible()
+    tiles = [tile for tile in page.findChildren(TileBase) if tile.isVisible()]
+    assert tiles
+    # Below the classic minimum width only the Advanced rail is too wide;
+    # the cards themselves must still hold their controls.
+    for tile in tiles:
+        for control in _controls(tile):
+            left, _top, right, _bottom = _rect_in(control, tile)
+            assert left >= 0 and right < tile.width(), (
+                tile.title_label.text(), control.objectName() or control.text()
+                if isinstance(control, QAbstractButton) else control.accessibleName())
+    if width > 460:
         for control in _controls(page):
-            if isinstance(control, QAbstractButton) and control.text():
-                assert control.height() >= control.minimumSizeHint().height(), control.text()
-    finally:
-        apply_ui_font_scale(previous_scale, app=app)
-        set_current_palette(previous_palette)
-        app.setFont(previous_font)
-        app.setStyleSheet(previous_style)
+            assert _rect_in(control, page)[2] < page.width(), (
+                control.objectName(), control.accessibleName())
+    # Nothing is squeezed below the height its text needs: Settings pages
+    # lay out at their minimum height.
+    assert page.height() >= page.minimumSizeHint().height()
+    for label in page.findChildren(QLabel):
+        if label.isVisible() and label.wordWrap():
+            assert label.height() >= label.heightForWidth(label.width()), label.text()
+    for control in _controls(page):
+        if isinstance(control, QAbstractButton) and control.text():
+            assert control.height() >= control.minimumSizeHint().height(), control.text()
