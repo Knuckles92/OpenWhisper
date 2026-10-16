@@ -1,0 +1,49 @@
+name: Feature request
+description: Suggest a new feature or a change to how OpenWhisper works.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the task or situation, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help?
+      description: Describe the change you have in mind. Rough is fine.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds or alternatives
+      description: Anything you tried, or other ways this could work.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Dictation
+        - Meeting Mode
+        - Speech engines and models
+        - AI cleanup and text models
+        - Automation, API and MCP
+        - Remote engines and Host Mode
+        - History and export
+        - Settings and appearance
+        - Installation and updates
+        - Other
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      multiple: true
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Any
