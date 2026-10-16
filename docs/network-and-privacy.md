@@ -12,7 +12,7 @@ In short:
 
 | Destination | What starts it | Default | What is sent |
 | --- | --- | --- | --- |
-| `api.github.com` (GitHub releases API) | Update check, 8 seconds after launch, at most once a day; **Help → Check for Updates** | **On** | A `GET` for the latest release, with `User-Agent: OpenWhisper/<version>`. No account, device ID, or settings. |
+| `api.github.com` (GitHub releases API) | Update check, 8 seconds after launch and then every 4 hours while running (an hour after a failed check), never automatically in a git checkout; **Help → Check for Updates** | **On** | A `GET` for the latest release, with `User-Agent: OpenWhisper/<version>`. No account, device ID, or settings. |
 | `github.com`, `release-assets.githubusercontent.com` | Update check when GitHub's API is rate-limited (reads the latest-release redirect and its `SHA256SUMS.txt`); downloading an update you accepted | Follows the update check | Same user agent. |
 | `files.pythonhosted.org`, `download.pytorch.org`, `www.python.org`, `nodejs.org`, `github.com` (NVIDIA NeMo-Speech.cpp and OpenWhisper releases) | Installing a component from **Downloads → Components**, or accepting a runtime prompt | Off until you install | Same user agent; resumed downloads send a `Range` header. Each file is pinned to a size and SHA-256. |
 | `huggingface.co`, `download.moonshine.ai` | Downloading a speech model, subject to **Settings → Downloads → When a model is missing from this computer** (Ask by default) | Ask | `huggingface_hub`'s standard user agent for Whisper models; the app's user agent for the others. |

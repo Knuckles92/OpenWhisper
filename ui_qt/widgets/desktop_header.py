@@ -49,6 +49,10 @@ class DesktopHeader(QFrame):
         self.menu_bar.setNativeMenuBar(False)
         layout.addWidget(self.menu_bar, 0, Qt.AlignmentFlag.AlignVCenter)
 
+    def add_notice(self, widget) -> None:
+        """Place ``widget`` after the menus, at the trailing edge."""
+        self.layout().addWidget(widget, 0, Qt.AlignmentFlag.AlignVCenter)
+
     def resizeEvent(self, event):
         self.badge.setVisible(use_omarchy_ui() and event.size().width() >= 520)
         super().resizeEvent(event)

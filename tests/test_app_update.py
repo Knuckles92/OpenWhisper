@@ -31,8 +31,8 @@ from services.app_update import (
     persist_prompt_choices,
     prune_stale_downloads,
     resolve_release_apply_mode,
-    should_auto_check,
-    should_auto_notify,
+    seconds_until_auto_check,
+    shows_update_notice,
     source_update_hint,
     update_check_failure_status,
 )
@@ -169,71 +169,73 @@ class TestCompareVersions:
         assert normalize_version("  V2.1.1  ") == "2.1.1"
 
 
-class TestShouldAutoCheck:
+class TestSecondsUntilAutoCheck:
+    NOW = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
+
+    def _wait(self, settings, channel=InstallChannel.INSTALLER):
+        return seconds_until_auto_check(
+            settings, now=self.NOW, interval_s=4 * 3600, channel=channel
+        )
+
+    def _ago(self, **delta):
+        return (self.NOW - timedelta(**delta)).isoformat()
+
     def test_disabled_never_checks(self):
-        settings = {SettingsKey.UPDATE_CHECK_ENABLED: False}
-        assert not should_auto_check(settings)
+        assert self._wait({SettingsKey.UPDATE_CHECK_ENABLED: False}) is None
 
-    def test_missing_timestamp_checks(self):
-        settings = {SettingsKey.UPDATE_CHECK_ENABLED: True}
-        assert should_auto_check(settings)
+    def test_git_checkout_never_checks(self):
+        assert self._wait({}, channel=InstallChannel.GIT) is None
 
-    def test_recent_check_is_throttled(self):
-        now = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
+    def test_source_copy_checks(self):
+        assert self._wait({}, channel=InstallChannel.SOURCE) == 0
+
+    def test_missing_timestamp_is_due(self):
+        assert self._wait({SettingsKey.UPDATE_CHECK_ENABLED: True}) == 0
+
+    def test_waits_out_the_interval_from_the_last_success(self):
+        settings = {SettingsKey.UPDATE_LAST_CHECK_AT: self._ago(hours=1)}
+        assert self._wait(settings) == 3 * 3600
+
+    def test_stale_check_is_due(self):
+        settings = {SettingsKey.UPDATE_LAST_CHECK_AT: self._ago(hours=5)}
+        assert self._wait(settings) == 0
+
+    def test_recent_failure_waits_an_hour_even_when_success_is_stale(self):
         settings = {
-            SettingsKey.UPDATE_CHECK_ENABLED: True,
-            SettingsKey.UPDATE_LAST_CHECK_AT: now.isoformat(),
+            SettingsKey.UPDATE_LAST_CHECK_AT: self._ago(hours=5),
+            SettingsKey.UPDATE_LAST_FAILED_CHECK_AT: self._ago(minutes=20),
         }
-        assert not should_auto_check(settings, now=now, interval_s=86400)
+        assert self._wait(settings) == 40 * 60
 
-    def test_stale_check_runs_again(self):
-        now = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
-        earlier = now - timedelta(hours=25)
+    def test_future_times_from_a_moved_clock_are_ignored(self):
         settings = {
-            SettingsKey.UPDATE_CHECK_ENABLED: True,
-            SettingsKey.UPDATE_LAST_CHECK_AT: earlier.isoformat(),
+            SettingsKey.UPDATE_LAST_CHECK_AT: (self.NOW + timedelta(days=2)).isoformat(),
         }
-        assert should_auto_check(settings, now=now, interval_s=86400)
+        assert self._wait(settings) == 0
 
     def test_invalid_timestamp_is_treated_as_missing(self):
-        settings = {
-            SettingsKey.UPDATE_CHECK_ENABLED: True,
-            SettingsKey.UPDATE_LAST_CHECK_AT: "not-a-date",
-        }
-        assert should_auto_check(settings)
+        settings = {SettingsKey.UPDATE_LAST_CHECK_AT: "not-a-date"}
+        assert self._wait(settings) == 0
         assert parse_last_check_at("not-a-date") is None
 
 
-class TestShouldAutoNotify:
-    def test_update_available_notifies_by_default(self):
-        assert should_auto_notify(UpdateStatus.UPDATE_AVAILABLE, "2.2.0", {})
+class TestShowsUpdateNotice:
+    def test_update_available_shows_by_default(self):
+        assert shows_update_notice(UpdateStatus.UPDATE_AVAILABLE, {})
 
-    def test_up_to_date_does_not_notify(self):
-        assert not should_auto_notify(UpdateStatus.UP_TO_DATE, "2.1.1", {})
+    def test_up_to_date_shows_nothing(self):
+        assert not shows_update_notice(UpdateStatus.UP_TO_DATE, {})
 
-    def test_development_does_not_notify(self):
-        assert not should_auto_notify(UpdateStatus.DEVELOPMENT, "2.1.1", {})
+    def test_development_shows_nothing(self):
+        assert not shows_update_notice(UpdateStatus.DEVELOPMENT, {})
 
     def test_notify_off(self):
         settings = {SettingsKey.UPDATE_NOTIFY_ENABLED: False}
-        assert not should_auto_notify(
-            UpdateStatus.UPDATE_AVAILABLE, "2.2.0", settings
-        )
+        assert not shows_update_notice(UpdateStatus.UPDATE_AVAILABLE, settings)
 
     def test_check_off(self):
         settings = {SettingsKey.UPDATE_CHECK_ENABLED: False}
-        assert not should_auto_notify(
-            UpdateStatus.UPDATE_AVAILABLE, "2.2.0", settings
-        )
-
-    def test_skipped_version(self):
-        settings = {SettingsKey.UPDATE_SKIPPED_VERSION: "2.2.0"}
-        assert not should_auto_notify(
-            UpdateStatus.UPDATE_AVAILABLE, "v2.2.0", settings
-        )
-        assert should_auto_notify(
-            UpdateStatus.UPDATE_AVAILABLE, "2.3.0", settings
-        )
+        assert not shows_update_notice(UpdateStatus.UPDATE_AVAILABLE, settings)
 
 
 class TestParseReleasePayload:
@@ -502,15 +504,10 @@ class TestPersistPromptChoices:
     def test_writes_independent_prefs(self, tmp_path, monkeypatch):
         manager = SettingsManager(str(tmp_path / "settings.json"))
         monkeypatch.setattr(app_update, "settings_manager", manager)
-        persist_prompt_choices(
-            notify_enabled=False,
-            check_enabled=True,
-            skipped_version="v2.2.0",
-        )
+        persist_prompt_choices(notify_enabled=False, check_enabled=True)
         saved = manager.load_all_settings()
         assert saved[SettingsKey.UPDATE_NOTIFY_ENABLED] is False
         assert saved[SettingsKey.UPDATE_CHECK_ENABLED] is True
-        assert saved[SettingsKey.UPDATE_SKIPPED_VERSION] == "2.2.0"
 
 
 class TestDownloadInstaller:

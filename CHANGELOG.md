@@ -20,7 +20,8 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 - **Privacy wording names where audio and text go** — the API engine's tooltips, the Dictionary page, the Overview's privacy summary and dictation rules say which server receives audio, and say it stays on this computer for a local server. The AI insights consent dialog says when Fast judgments also send excerpts elsewhere.
 - **The meeting dashboard ships its own fonts** — DM Sans and Instrument Serif are bundled instead of loaded from Google Fonts each time the dashboard opens.
 - **The meeting agent no longer identifies itself as Pi** — the Pi agent core runs with its install telemetry off, so its OpenRouter requests carry only OpenWhisper's attribution.
-- **The update-check switch says what it contacts** — Settings explains that OpenWhisper asks GitHub's API for the latest release at most once a day when it starts, sending only the app version. The check is still on by default.
+- **New releases are noticed while OpenWhisper runs** — the app asks GitHub for the latest release when it starts and every 4 hours after that, instead of only at launch and at most once a day. A newer release appears as an **Update to x.y.z** button in the title bar and in the tray menu, and both stay until you update, in place of a dialog at startup. **Later** in the update dialog no longer hides that release; **Don't notify me again** turns the notice off. Git checkouts no longer check on their own, but **Help → Check for Updates** still works there.
+- **The update-check switch says what it contacts** — Settings explains that OpenWhisper asks GitHub's API for the latest release when it starts and every 4 hours while it runs, sending only the app version. The check is still on by default.
 - **The final highlight pass checks the newest minutes first.**
 
 ### Fixed

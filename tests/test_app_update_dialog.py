@@ -1,4 +1,4 @@
-"""Qt tests for the first update-available prompt and its opt-out boxes."""
+"""Qt tests for the update dialog and its opt-out boxes."""
 import os
 from unittest.mock import patch
 
@@ -106,7 +106,7 @@ class TestAppUpdateDialog(_QtTestCase):
         )
         assert "Download size" not in dialog.body_label.text()
 
-    def test_later_persists_opt_outs_and_skipped_version(self):
+    def test_later_persists_opt_outs(self):
         dialog = AppUpdateDialog(_result())
         self._box(dialog, "updateDontNotifyCheck").setChecked(True)
         self._box(dialog, "updateDontCheckCheck").setChecked(True)
@@ -114,11 +114,7 @@ class TestAppUpdateDialog(_QtTestCase):
             "ui_qt.dialogs.app_update_dialog.persist_prompt_choices"
         ) as persist:
             self._button(dialog, "updateLaterButton").click()
-        persist.assert_called_once_with(
-            notify_enabled=False,
-            check_enabled=False,
-            skipped_version="2.2.0",
-        )
+        persist.assert_called_once_with(notify_enabled=False, check_enabled=False)
         assert dialog.result_action == AppUpdateDialog.RESULT_LATER
 
     def test_dont_notify_only(self):
@@ -128,23 +124,15 @@ class TestAppUpdateDialog(_QtTestCase):
             "ui_qt.dialogs.app_update_dialog.persist_prompt_choices"
         ) as persist:
             self._button(dialog, "updateLaterButton").click()
-        persist.assert_called_once_with(
-            notify_enabled=False,
-            check_enabled=True,
-            skipped_version="2.2.0",
-        )
+        persist.assert_called_once_with(notify_enabled=False, check_enabled=True)
 
-    def test_primary_does_not_skip_version(self):
+    def test_primary_persists_opt_outs(self):
         dialog = AppUpdateDialog(_result())
         with patch(
             "ui_qt.dialogs.app_update_dialog.persist_prompt_choices"
         ) as persist:
             self._button(dialog, "updatePrimaryButton").click()
-        persist.assert_called_once_with(
-            notify_enabled=True,
-            check_enabled=True,
-            skipped_version=None,
-        )
+        persist.assert_called_once_with(notify_enabled=True, check_enabled=True)
         assert dialog.result_action == AppUpdateDialog.RESULT_PRIMARY
 
     def test_failed_check_offers_releases_page(self):
@@ -158,21 +146,12 @@ class TestAppUpdateDialog(_QtTestCase):
         )
         assert not self._button(dialog, "updatePrimaryButton").isHidden()
 
-    def test_up_to_date_has_no_primary_and_does_not_skip(self):
+    def test_up_to_date_has_no_primary(self):
         dialog = AppUpdateDialog(
             _result(status=UpdateStatus.UP_TO_DATE, version="2.1.1")
         )
         assert self._button(dialog, "updatePrimaryButton").isHidden()
         assert self._button(dialog, "updateLaterButton").text() == "Close"
-        with patch(
-            "ui_qt.dialogs.app_update_dialog.persist_prompt_choices"
-        ) as persist:
-            self._button(dialog, "updateLaterButton").click()
-        persist.assert_called_once_with(
-            notify_enabled=True,
-            check_enabled=True,
-            skipped_version=None,
-        )
 
     def test_progress_copy_uses_update_not_installer(self):
         dialog = AppUpdateDialog(

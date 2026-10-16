@@ -457,7 +457,7 @@ class BasicSettingsPage(QWidget):
         self._toggle(
             updates,
             "Check for updates automatically",
-            "Ask GitHub for the latest release at most once a day. "
+            "Ask GitHub for the latest release at launch and every 4 hours. "
             "Sends the app version, no IDs.",
             GENERAL,
             "update_check_check",
@@ -467,7 +467,7 @@ class BasicSettingsPage(QWidget):
         self.update_notify = self._toggle(
             updates,
             "Notify me about updates",
-            "Let me know when a new version is available.",
+            "Show an Update button when a new version is available.",
             GENERAL,
             "update_notify_check",
             SettingsKey.UPDATE_NOTIFY_ENABLED,

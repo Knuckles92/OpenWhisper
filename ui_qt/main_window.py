@@ -169,6 +169,13 @@ class CustomTitleBar(QFrame):
         layout.addWidget(self.maximize_btn)
         layout.addWidget(self.close_btn)
 
+    def add_notice(self, widget: QWidget) -> None:
+        """Place ``widget`` just before the window buttons."""
+        layout = self.layout()
+        layout.insertWidget(
+            layout.indexOf(self.minimize_btn), widget, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+
     def _sync_height(self) -> None:
         border = self.height() - self.contentsRect().height()
         height = max(self.BASE_HEIGHT, self.menu_bar.sizeHint().height() + border)
@@ -259,6 +266,7 @@ from ui_qt.widgets import (
     TabbedContentWidget, QuickRecordTab,
     CompactRecordController,
 )
+from ui_qt.widgets.update_notice import UpdateNoticeButton
 from services.history_manager import history_manager
 from ui_qt.dialogs.history_entry_dialog import HistoryEntryDialog
 
@@ -290,6 +298,8 @@ class MainWindow(QMainWindow):
     hotkeys_requested = pyqtSignal()
     about_requested = pyqtSignal()
     check_for_updates_requested = pyqtSignal()
+    #: The title bar's update notice was clicked.
+    update_notice_requested = pyqtSignal()
     retranscribe_requested = pyqtSignal(str)  # audio_path
     upload_file_requested = pyqtSignal(str, float)
     upload_files_requested = pyqtSignal(object)  # BatchUploadRequest
@@ -429,6 +439,9 @@ class MainWindow(QMainWindow):
         else:
             self.title_bar = CustomTitleBar(self)
         outer_layout.addWidget(self.title_bar)
+        self.update_notice = UpdateNoticeButton()
+        self.update_notice.clicked.connect(self.update_notice_requested.emit)
+        self.title_bar.add_notice(self.update_notice)
 
         content_wrapper = QWidget()
         root_layout = QHBoxLayout(content_wrapper)
@@ -1244,6 +1257,10 @@ class MainWindow(QMainWindow):
         logger.info("Showing about dialog")
         self.about_requested.emit()
 
+    def set_update_notice(self, version: str) -> None:
+        """Offer the newer release ``version`` in the title bar; "" hides it."""
+        self.update_notice.show_version(version)
+
     def set_tray_available(self, available: bool) -> None:
         """Enable tray-only UI only when the desktop actually has a tray."""
         self._tray_available = bool(available)
@@ -1301,6 +1318,7 @@ class MainWindow(QMainWindow):
             self.history_edge_tab.hide()
             self.history_sidebar.hide()
             self.title_bar.title_label.hide()
+            self.update_notice.set_compact(True)
             if not self._compositor_managed:
                 self.title_bar.maximize_btn.hide()
                 self.setMinimumSize(0, 0)
@@ -1325,6 +1343,7 @@ class MainWindow(QMainWindow):
             self.history_edge_tab.show()
             self.history_sidebar.show()
             self.title_bar.title_label.show()
+            self.update_notice.set_compact(False)
             if not self._compositor_managed:
                 self.title_bar.maximize_btn.show()
 

@@ -193,12 +193,13 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
               'stay available.'),
              ('update_check_tile',
               'Check for updates automatically',
-              'When OpenWhisper starts, at most once a day, asks GitHub (api.github.com) for the '
-              'latest release. The request includes the app version, no account or device ID. '
-              'Nothing is installed without your approval.'),
+              'When OpenWhisper starts and every 4 hours while it runs, asks GitHub '
+              '(api.github.com) for the latest release. The request includes the app version, no '
+              'account or device ID. Nothing is installed without your approval.'),
              ('update_notify_tile',
               'Notify me about updates',
-              'Opens the update dialog when a newer release is found. Requires automatic checks.')],
+              'Shows an Update button in the title bar and the tray menu when a newer release is '
+              'found. Requires automatic checks.')],
  'appearance': [('ui_theme_tile', 'Theme', 'Dark, light, or match your operating system.'),
                 ('ui_font_scale_tile',
                  'Font size',

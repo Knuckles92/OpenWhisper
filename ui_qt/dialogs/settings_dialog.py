@@ -1089,7 +1089,7 @@ class SettingsDialog(QDialog):
 
         Args:
             kind: "transforms", "hotkeys", "dictionary", "snippets",
-                "styles", "languages", or "microphones".
+                "styles", "languages", "microphones", or "updates".
         """
         self._refresh_rail_values()
         if self.on_settings_changed:
@@ -1321,10 +1321,10 @@ class SettingsDialog(QDialog):
 
         self.update_check_tile = SettingTile(
             "Check for updates automatically",
-            "When OpenWhisper starts, at most once a day, asks GitHub "
-            "(api.github.com) for the latest release. The request includes "
-            "the app version, no account or device ID. Nothing is installed "
-            "without your approval.",
+            "When OpenWhisper starts and every 4 hours while it runs, asks "
+            "GitHub (api.github.com) for the latest release. The request "
+            "includes the app version, no account or device ID. Nothing is "
+            "installed without your approval.",
             design_icon("refresh-blue.svg"),
         )
         self.update_check_check = self.update_check_tile.checkbox
@@ -1332,8 +1332,8 @@ class SettingsDialog(QDialog):
 
         self.update_notify_tile = SettingTile(
             "Notify me about updates",
-            "Opens the update dialog when a newer release is found. Requires "
-            "automatic checks.",
+            "Shows an Update button in the title bar and the tray menu when "
+            "a newer release is found. Requires automatic checks.",
             design_icon("info-blue.svg"),
         )
         self.update_notify_check = self.update_notify_tile.checkbox
@@ -1391,6 +1391,7 @@ class SettingsDialog(QDialog):
             SettingsKey.UPDATE_NOTIFY_ENABLED,
             resolve_update_notify_enabled,
         )
+        self.update_notify_check.toggled.connect(self._on_update_notify_toggled)
 
     def _refresh_accessibility_status(self):
         from services.hotkey_manager import is_accessibility_trusted
@@ -3720,7 +3721,13 @@ class SettingsDialog(QDialog):
 
     def _on_update_check_toggled(self, checked: bool) -> None:
         self.update_notify_tile.setEnabled(bool(checked))
-        self._persist(SettingsKey.UPDATE_CHECK_ENABLED, bool(checked))
+        if self._persist(SettingsKey.UPDATE_CHECK_ENABLED, bool(checked)):
+            self.notify_changed("updates")
+
+    def _on_update_notify_toggled(self, _checked: bool) -> None:
+        # The binding connected first, so the choice is already saved.
+        if not self._loading:
+            self.notify_changed("updates")
 
     def _on_audio_device_changed(self, _index: int = 0) -> None:
         if self._loading or self._microphones is None:

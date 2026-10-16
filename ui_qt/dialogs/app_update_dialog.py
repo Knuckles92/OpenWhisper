@@ -1,8 +1,8 @@
 """Dialog for application update checks.
 
-Shown automatically the first time a newer GitHub release exists, and from
-Check for Updates. Opt-out checkboxes persist the same Settings keys
-as Settings → General.
+Opened from the title bar's or tray's update notice, and from Check for
+Updates. Opt-out checkboxes persist the same Settings keys as Settings →
+General.
 """
 from __future__ import annotations
 
@@ -396,7 +396,7 @@ class AppUpdateDialog(QDialog):
             self._on_cancel()
             return
         self.result_action = self.RESULT_LATER
-        self._persist(skipped=True)
+        self._persist()
         self.reject()
 
     def _on_cancel(self) -> None:
@@ -429,7 +429,7 @@ class AppUpdateDialog(QDialog):
 
     def _on_primary(self) -> None:
         self.result_action = self.RESULT_PRIMARY
-        self._persist(skipped=False)
+        self._persist()
         if (
             self._result is not None
             and self._result.can_apply
@@ -450,26 +450,17 @@ class AppUpdateDialog(QDialog):
             self.RESULT_USE_SETUP,
         ):
             self.result_action = self.RESULT_LATER
-            self._persist(skipped=True)
+            self._persist()
         super().reject()
 
-    def _persist(self, skipped: bool) -> None:
+    def _persist(self) -> None:
         if self._persisted:
             return
         self._persisted = True
-        skipped_version = None
-        if (
-            skipped
-            and self._result is not None
-            and self._result.status == UpdateStatus.UPDATE_AVAILABLE
-            and self._result.release is not None
-        ):
-            skipped_version = self._result.release.version
         try:
             persist_prompt_choices(
                 notify_enabled=not self.dont_notify_check.isChecked(),
                 check_enabled=not self.dont_check_check.isChecked(),
-                skipped_version=skipped_version,
             )
         except Exception as exc:
             logger.warning("Could not persist update preferences: %s", exc)

@@ -50,6 +50,8 @@ class _QTimer:
     def __init__(self):
         self.timeout = _BoundSignal()
         self.single_shot = False
+        #: The interval of the last start(interval) call.
+        self.started_ms = None
 
     def setTimerType(self, _timer_type):
         pass
@@ -63,8 +65,9 @@ class _QTimer:
     def isActive(self):
         return False
 
-    def start(self, _interval=None):
-        pass
+    def start(self, interval=None):
+        if interval is not None:
+            self.started_ms = interval
 
     def stop(self):
         pass
@@ -2852,6 +2855,38 @@ class TestApplicationController:
         assert controller.ui_controller.update_checks[-1] == (
             None, "GitHub rate-limited this update check.", False
         )
+
+    def test_finished_check_arms_the_next_one_from_the_saved_times(self):
+        controller = self._create_controller()
+        with patch(
+            "services.app_update.seconds_until_auto_check", return_value=3 * 3600
+        ):
+            controller._on_update_check_finished(None, "", False)
+        assert controller._update_check_timer.started_ms == 3 * 3600 * 1000
+
+    def test_unsaved_check_times_never_mean_checking_again_at_once(self):
+        controller = self._create_controller()
+        with patch("services.app_update.seconds_until_auto_check", return_value=0):
+            controller._on_update_check_finished(None, "offline", False)
+        assert controller._update_check_timer.started_ms == (
+            self.app_controller_module.UPDATE_RECHECK_FLOOR_MS
+        )
+
+    def test_update_tick_checks_when_due_and_otherwise_waits(self):
+        controller = self._create_controller()
+        timer = controller._update_check_timer
+        timer.started_ms = None
+        with patch.object(controller, "request_update_check") as request:
+            with patch("services.app_update.seconds_until_auto_check", return_value=None):
+                controller._maybe_start_update_check()
+            assert timer.started_ms is None
+            with patch("services.app_update.seconds_until_auto_check", return_value=90.0):
+                controller._maybe_start_update_check()
+            request.assert_not_called()
+            assert timer.started_ms == 90_000
+            with patch("services.app_update.seconds_until_auto_check", return_value=0):
+                controller._maybe_start_update_check()
+            request.assert_called_once_with(manual=False)
 
     def test_gpu_fallback_reverts_device_setting_and_names_the_fix(self):
         controller = self._create_controller()
