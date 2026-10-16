@@ -26,7 +26,7 @@
   --clay-soft: rgba(176,84,14,.10);
   --hair: rgba(84,58,34,.09);
   --hair-2: rgba(84,58,34,.15);
-  --font: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --font: 'DM Sans Variable', system-ui, -apple-system, sans-serif;
   --font-display: 'Instrument Serif',Georgia,serif;
   --font-mono: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace;
   --bg: transparent;
@@ -196,7 +196,7 @@
   --clay-soft: rgba(162, 96, 60, 0.10);
   --hair: rgba(26, 36, 32, 0.09);
   --hair-2: rgba(26, 36, 32, 0.16);
-  --font: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --font: 'DM Sans Variable', system-ui, -apple-system, sans-serif;
   --font-display: 'Instrument Serif', Georgia, serif;
   --font-mono: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace;
   --bg: transparent;
@@ -352,7 +352,7 @@
   --clay-soft: rgba(162, 96, 60, 0.10);
   --hair: rgba(26, 36, 32, 0.09);
   --hair-2: rgba(26, 36, 32, 0.16);
-  --font: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --font: 'DM Sans Variable', system-ui, -apple-system, sans-serif;
   --font-display: 'Instrument Serif', Georgia, serif;
   --font-mono: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace;
   --bg: transparent;

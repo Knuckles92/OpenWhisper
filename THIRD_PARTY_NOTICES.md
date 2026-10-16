@@ -16,6 +16,10 @@ The native Windows and Linux distributions include, among other dependencies:
   icons and their license are in `ui_qt/assets/tabler`.
 - **React and React DOM** — MIT License, built into the meeting dashboard
   bundle in `webui/dist`. Versions are pinned in `webui/package-lock.json`.
+- **DM Sans and Instrument Serif fonts** — SIL Open Font License 1.1,
+  Copyright 2014 The DM Sans Project Authors and Copyright 2022 The
+  Instrument Serif Project Authors. Bundled into the meeting dashboard from
+  the Fontsource packages; the license texts ship in `webui/dist/licenses`.
 
 Additional Python distributions retain their upstream license files under
 `_internal` (typically in `*.dist-info/licenses`, package-specific `LICENSE`

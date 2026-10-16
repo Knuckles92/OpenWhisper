@@ -29,7 +29,6 @@ In short:
 | MCP Events callback URLs | An agent subscribing over MCP, with **MCP Events** on | Off | A signed verification challenge, then event payloads. HTTPS, or HTTP to this computer only. |
 | A paired computer, TCP 47821 | Using a **Remote computer** engine; storing records on the host | Off | Your recordings, model choices, history queries, and (if you choose Host or Both) history and meetings, over TLS pinned to the host's certificate. |
 | Local network, UDP 47821 broadcast; your Tailscale peers on TCP 47821 | Searching for computers in **Settings → Remote engine**; a paired client that cannot reach its host (at most every 30 seconds) | Off until you search or pair | A 512-byte discovery query with a random value. The optional local subnet scan connects to each address on your /24, only when you press it. |
-| `fonts.googleapis.com`, `fonts.gstatic.com` | Opening the meeting dashboard in a browser | Whenever the dashboard is opened | The browser fetches the dashboard's fonts from Google, as it would for any web page using them. |
 
 Links in the app, such as release notes and provider sign-up pages, only open your browser when you click them. **Open a link** actions (for example a ChatGPT or Perplexity search) open your browser or app at an address with your words in it, so that site receives them when the page loads.
 
