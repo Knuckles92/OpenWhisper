@@ -303,6 +303,25 @@ def test_first_judgment_learns_the_server_once(local_server, monkeypatch):
     assert len(chat) == 2
 
 
+@pytest.mark.parametrize("model,effort", [("qwen3", "none"), ("llama3.2", None)])
+def test_judgments_ask_a_thinking_model_not_to_think(local_server, monkeypatch, model, effort):
+    handler, chat = _ollama_with_chat('{"q": 0.9}')
+    local_server(handler)
+    assert _ollama_judge(monkeypatch, handler, model).noul({"text": "hi"}, "Is it?") == 0.9
+    assert chat[0].get("reasoning_effort") == effort
+    assert chat[0]["temperature"] == 0
+
+
+@pytest.mark.parametrize("provider,model", [
+    ("openrouter", "vendor/small-model"),
+    ("groq", "llama-3.3-70b-versatile"),
+    ("opencode_go", "glm-5.2"),
+])
+def test_thinking_off_adds_nothing_where_hosted_models_have_no_off_switch(provider, model):
+    body = _chat_body(get_profile(provider, {}), model, temperature=0, reasoning_level="off")
+    assert not {"reasoning_effort", "reasoning", "thinking"} & set(body)
+
+
 def test_a_meeting_snapshot_records_what_the_server_reports(local_server):
     from services.text_llm import snapshot_from_profile
 

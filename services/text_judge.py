@@ -252,6 +252,9 @@ class TextModelJudge(_RouteJudge):
             raise TimeoutError("no time left after reading the server's model list")
         options: Dict[str, Any] = {
             "temperature": 0,
+            # A thinking model would spend the answer's small budget thinking;
+            # generate sends whatever turns thinking off where the model has it.
+            "reasoning_level": "off",
             "max_tokens": _BASE_TOKENS + _TOKENS_PER_QUESTION * len(questions),
         }
         target = (self.profile.base_url, self.model)
