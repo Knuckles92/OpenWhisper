@@ -373,7 +373,11 @@ def test_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mo
                 assert label.height() >= label.heightForWidth(label.width())
             assert page.rect().contains(tile.geometry())
         rows = [page_state.library.row(word["id"]) for word in WORDS]
-        assert all(row.layout_row.stacked for row in rows) == (ui_mode == "omarchy")
+        # At 560 px a row stacks only when its buttons don't fit in the font in
+        # use: Segoe and DejaVu stack, the narrower macOS font fits side by side.
+        # The bounds checks above are what must hold either way.
+        if ui_mode == "classic":
+            assert not any(row.layout_row.stacked for row in rows)
         scroll = dialog._page_scrolls[DICTIONARY]
         scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
         app.processEvents()
