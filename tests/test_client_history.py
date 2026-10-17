@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 import time
 from types import SimpleNamespace
 
@@ -376,15 +377,40 @@ def test_multiple_clients_same_ids_and_cursor_device_set(live_history):
         history.close()
 
 
-def test_query_timeout_keeps_local_results_and_host_copies(live_history, monkeypatch):
+class _LateWakingEvent(threading.Event):
+    """A host wait that wakes well after its timeout, as macOS waits do.
+
+    On macos-14 a 20 ms Event.wait returned 40-85 ms late when idle and up to
+    250 ms late with other threads holding the GIL; a reply that lands before
+    the waiter runs again counts as in time.
+    """
+
+    def wait(self, timeout=None):
+        super().wait(0.3)
+        return super().wait(timeout)
+
+
+@pytest.mark.parametrize("late_wakeup", [False, True])
+def test_query_timeout_keeps_local_results_and_host_copies(
+    live_history, monkeypatch, late_wakeup
+):
     from services.remote_history import channel
 
     monkeypatch.setattr(channel, "QUERY_TIMEOUT", 0.02)
+    if late_wakeup:
+        monkeypatch.setattr(
+            channel,
+            "threading",
+            SimpleNamespace(Event=_LateWakingEvent, Lock=threading.Lock),
+        )
     original = HistoryReader.query
+    host_gave_up = threading.Event()
 
     def slow_query(reader, operation, params):
         if operation == "transcriptions":
-            time.sleep(0.15)
+            # Answer only once the host has returned: a fixed sleep raced the
+            # host's wait, and a late-waking host accepted the reply.
+            host_gave_up.wait(5)
         return original(reader, operation, params)
 
     monkeypatch.setattr(HistoryReader, "query", slow_query)
@@ -398,10 +424,11 @@ def test_query_timeout_keeps_local_results_and_host_copies(live_history, monkeyp
     history = FederatedHistory(HistoryStore(live.host_path), live.host.history)
     try:
         page = history.transcriptions(include_clients=True)
-        assert [i.id for i in page.items] == ["host"]
-        assert page.clients[0].status == "unavailable"
     finally:
+        host_gave_up.set()
         history.close()
+    assert [i.id for i in page.items] == ["host"]
+    assert page.clients[0].status == "unavailable"
 
 
 def test_history_channel_requires_authentication(live_history):
