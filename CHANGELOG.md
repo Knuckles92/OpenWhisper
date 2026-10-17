@@ -7,6 +7,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Changed
+- **"Chat model" is now named for its job** — the model picker is called **Cleanup model** in AI cleanup and **Insights model** in AI insights, and descriptions say "language model". Nothing is chatted with, so the old name described the API, not what the model does.
+
 ## [2.7.5] - 2026-10-16
 
 ### Added

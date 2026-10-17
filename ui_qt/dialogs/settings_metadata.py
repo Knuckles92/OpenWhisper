@@ -238,7 +238,7 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                 'size is under Appearance.')],
  'cleanup': [('transcript_cleanup_tile',
               'Clean up transcripts with AI',
-              'Runs the selected chat model on each dictated transcript after transcription, '
+              'Runs the selected language model on each dictated transcript after transcription, '
               "together with your learned rules. The provider's key lives under API keys."),
              ('cleanup_level_tile',
               'Cleanup level',
@@ -249,7 +249,7 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
               "Replaces the level's instructions with your own. Learned rules still apply. While "
               "it's empty, the box previews the level's instructions."),
              ('cleanup_model_tile',
-              'Chat model',
+              'Cleanup model',
               'The provider and model that rewrite each dictation. Cleanup profiles use it too. '
               "The provider's key lives under API keys."),
              ('cleanup_reasoning_combo', 'Thinking level', '')],
@@ -276,7 +276,7 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                            'leave this machine the same way the current transcript does. Images, '
                            'audio, and video are not read.'),
                           ('meeting_model_tile',
-                           'Chat model',
+                           'Insights model',
                            "Pi or OpenCode SDK runs live cards, the note taker, polish, "
                            'summaries, and the final report with this endpoint and your API key.'),
                           ('meeting_agent_core_combo', 'Agent core', '')],

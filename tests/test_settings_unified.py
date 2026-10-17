@@ -322,7 +322,7 @@ class TestRouting:
         assert dialog.rail.current_key() == DOWNLOADS
         assert dialog.downloads.backend_filter_combo.currentData() == "parakeet"
 
-    def test_cleanup_profiles_model_link_opens_the_cleanup_chat_model(self, make_dialog):
+    def test_cleanup_profiles_model_link_opens_the_cleanup_model(self, make_dialog):
         dialog, _store = make_dialog()
         dialog.cleanup_profiles_panel.model_requested.emit()
         assert dialog.rail.current_key() == CLEANUP
@@ -580,7 +580,7 @@ class TestControllerRouting:
         )
         return controller
 
-    def test_text_alias_scrolls_to_the_cleanup_chat_model(self):
+    def test_text_alias_scrolls_to_the_cleanup_model(self):
         dialog = MagicMock()
         controller = self._controller(dialog)
         UIController.open_settings_destination(controller, "text")

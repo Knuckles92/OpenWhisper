@@ -835,8 +835,8 @@ class SettingsDialog(QDialog):
         self._add_page(
             CLEANUP,
             "AI transcript cleanup",
-            "Rewrite a finished dictation with a chat model, together with your "
-            "learned rules.",
+            "Rewrite a finished dictation with a language model, together with "
+            "your learned rules.",
             self._build_cleanup_page,
         )
         self._add_page(
@@ -1750,7 +1750,7 @@ class SettingsDialog(QDialog):
     def _build_cleanup_page(self, layout: QVBoxLayout) -> None:
         self.transcript_cleanup_tile = SettingTile(
             "Clean up transcripts with AI",
-            "Runs the selected chat model on each dictated transcript after "
+            "Runs the selected language model on each dictated transcript after "
             "transcription, together with your learned rules. The provider's "
             "key lives under API keys.",
             design_icon("stack-purple.svg"),
@@ -2020,7 +2020,7 @@ class SettingsDialog(QDialog):
         self._update_cleanup_prompt_ui()
 
     def _build_meeting_intelligence_page(self, layout: QVBoxLayout) -> None:
-        # Who runs AI insights, then the packaged SDK's chat model.
+        # Who runs AI insights, then the packaged SDK's insights model.
         self.meeting_model_tile = self.models.build_meeting_model_section(layout)
         self.meeting_agent_picker = self.models.meeting_agent_picker
         layout.addSpacing(6)
@@ -3214,7 +3214,7 @@ class SettingsDialog(QDialog):
         self.hf_policy_combo.setFocus()
 
     def focus_cleanup_model(self) -> None:
-        """Open AI cleanup scrolled to its chat model."""
+        """Open AI cleanup scrolled to its cleanup model."""
         self.select_destination(CLEANUP)
         self._reveal(self.cleanup_model_tile)
 

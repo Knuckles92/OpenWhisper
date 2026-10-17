@@ -407,7 +407,7 @@ class ModelAssignments(QObject):
         self._built.add(VOICE_MODEL)
 
     def build_cleanup_model_section(self, layout: QVBoxLayout) -> InfoTile:
-        """The chat model AI cleanup runs, embedded in the AI cleanup page."""
+        """The language model AI cleanup runs, embedded in the AI cleanup page."""
         self.text_model_picker = TextModelPicker()
         self._connect_picker_profile_signals(self.text_model_picker)
         self.text_model_picker.provider_changed.connect(
@@ -435,7 +435,7 @@ class ModelAssignments(QObject):
         )
 
         self.cleanup_model_tile = InfoTile(
-            "Chat model",
+            "Cleanup model",
             "The provider and model that rewrite each dictation. Cleanup "
             "profiles use it too. The provider's key lives under API keys.",
             _design_icon("box-blue.svg"),
@@ -535,9 +535,9 @@ class ModelAssignments(QObject):
         self._built.add(MEETING_VOICE)
 
     def build_meeting_model_section(self, layout: QVBoxLayout) -> InfoTile:
-        """Who runs AI insights, then the built-in chat model, in Intelligence.
+        """Who runs AI insights, then the built-in insights model, in Intelligence.
 
-        The agent picker comes first. The chat model tile (endpoint, model,
+        The agent picker comes first. The insights model tile (endpoint, model,
         agent core) belongs to the packaged SDK tile (Pi by default), so it
         shows only while that tile is chosen.
         """
@@ -587,7 +587,7 @@ class ModelAssignments(QObject):
         )
 
         self.meeting_model_tile = InfoTile(
-            "Chat model",
+            "Insights model",
             "Pi or OpenCode SDK runs live cards, the note taker, "
             "polish, summaries, and the final report with this endpoint and "
             "your API key.",
@@ -877,7 +877,7 @@ class ModelAssignments(QObject):
         self._refresh_rail_values()
 
     def _on_meeting_agent_core_changed(self, _index: int) -> None:
-        """The packaged SDK inside OpenWhisper's chat model tile."""
+        """The packaged SDK inside OpenWhisper's insights model tile."""
         core = self.meeting_agent_core_combo.currentData()
         if core is None or self.meeting_agent_is_installed():
             return

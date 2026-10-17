@@ -102,7 +102,7 @@ _TICK_MS: Final[int] = 16
 #: More model choices than this get a type-to-filter combo.
 FILTER_THRESHOLD: Final[int] = 20
 
-_BUILTIN_DETAIL = "Your API key · the chat model below"
+_BUILTIN_DETAIL = "Your API key · the insights model below"
 _CHECKING_DETAIL = "Checking…"
 
 

@@ -1,7 +1,7 @@
 """Qt tests for the model assignments Settings hosts on its feature pages.
 
 ``ModelAssignments`` builds Voice model, Voice & speakers, Runtime, and the
-chat-model sections of AI cleanup and Intelligence. These tests host it in a
+language-model sections of AI cleanup and Intelligence. These tests host it in a
 minimal rail harness; ``test_settings_unified`` covers the real window.
 Catalog, download, and component behavior lives in ``test_settings_downloads``.
 """
@@ -938,7 +938,7 @@ class TestMeetingAgentChoice(_DialogTestCase):
                           return_value="C:/pi" if pi else None):
             return self._make_dialog(extra_settings=extra)
 
-    def test_saved_agent_is_chosen_and_hides_the_built_in_chat_model(self):
+    def test_saved_agent_is_chosen_and_hides_the_built_in_insights_model(self):
         dialog, _values = self._make_agent_dialog(
             MeetingAgentCore.CLAUDE_CODE, models={MeetingAgentCore.CLAUDE_CODE: "haiku"}
         )
@@ -951,7 +951,7 @@ class TestMeetingAgentChoice(_DialogTestCase):
         assert picker.model_combo().currentData() == "haiku"
         assert "Claude Team" in picker.usage_label.text()
 
-    def test_built_in_core_shows_the_chat_model_tile(self):
+    def test_built_in_core_shows_the_insights_model_tile(self):
         dialog, _values = self._make_agent_dialog(MeetingAgentCore.PI)
         assert dialog.meeting_agent_picker.choice() == agent_picker.BUILTIN
         assert dialog.meeting_agent_picker.tiles[agent_picker.BUILTIN].name_label.text() == "Pi"
@@ -1158,7 +1158,7 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
             assert saved[SettingsKey.TRANSCRIPT_CLEANUP_REASONING] == "high"
             assert saved[SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT] == TranscriptCleanupModelSort.NEWEST
 
-    def test_cleanup_page_hosts_the_chat_model_picker(self):
+    def test_cleanup_page_hosts_the_cleanup_model_picker(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             isolated = SettingsManager(os.path.join(temp_dir, "settings.json"))
             with _isolated_settings(isolated):
@@ -1244,7 +1244,7 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                 assert page.isAncestorOf(dialog.models.meeting_agent_core_combo)
                 assert page.isAncestorOf(dialog.meeting_past_recall_tile)
                 assert not hasattr(dialog, "open_meeting_model_manager_btn")
-                # Who runs AI insights comes first, above the chat model.
+                # Who runs AI insights comes first, above the insights model.
                 picker = dialog.meeting_agent_picker
                 assert page.isAncestorOf(picker)
                 assert picker.y() < dialog.meeting_model_tile.y()

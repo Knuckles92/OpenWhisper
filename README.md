@@ -224,7 +224,7 @@ The host's selected engine handles transcription. Traffic is encrypted and limit
 Use AI cleanup to polish dictation and meeting intelligence to generate notes and insights. Each has its own text-model settings.
 
 - **Dictation:** Enable **Settings → AI cleanup**, choose a cleanup level, and choose a text model. Add words to the **Dictionary**, pick a tone per kind of app in **Styles**, teach other behaviour in **Learned rules**, or use [Profiles](docs/cleanup-profiles.md) for reusable formats. See [Personalize dictation](docs/personalize.md).
-- **Providers:** OpenAI, OpenRouter, Ollama, LM Studio, vLLM, llama.cpp, LocalAI, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. Add keys in **Settings → API keys**; the local servers are preconfigured with their standard local addresses and need no key — just run the server. **Edit** changes its address or sets an optional API key variable. The picker marks local servers that are running, reads each model's context and thinking support from the server, and lists only chat models.
+- **Providers:** OpenAI, OpenRouter, Ollama, LM Studio, vLLM, llama.cpp, LocalAI, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. Add keys in **Settings → API keys**; the local servers are preconfigured with their standard local addresses and need no key — just run the server. **Edit** changes its address or sets an optional API key variable. The picker marks local servers that are running, reads each model's context and thinking support from the server, and lists only models that generate text.
 - **OpenAI cleanup:** The suggested model is `gpt-6-luna`. Saved OpenAI cleanup assignments using the old `gpt-4o-mini` default resolve to Luna; other models, providers, and saved meeting assignments are kept. Thinking **Off** explicitly requests `reasoning.effort: none` through the Responses API. Cleanup remains off by default, and fresh text-model assignments still use OpenRouter Free.
 - **Meetings:** Choose an engine in **Settings → Meeting Mode → Intelligence** using the options below.
 
@@ -256,7 +256,7 @@ Choose whether to ask, allow, or block missing-model downloads in **Settings →
 </p>
 
 <p align="center">
-  <img width="880" alt="Settings → AI cleanup: chat model, endpoint, and thinking level" src="docs/screenshots/03-settings-ai-cleanup.png" />
+  <img width="880" alt="Settings → AI cleanup: cleanup model, endpoint, and thinking level" src="docs/screenshots/03-settings-ai-cleanup.png" />
 </p>
 
 <p align="center">

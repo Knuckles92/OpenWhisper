@@ -355,7 +355,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             ):
                 self.assertFalse(tile.isEnabled())
             self.assertFalse(dialog.cleanup_rule_add_btn.isEnabled())
-            # The chat model stays editable so it can be set up before turning
+            # The cleanup model stays editable so it can be set up before turning
             # cleanup on.
             self.assertTrue(dialog.cleanup_model_tile.isEnabled())
             self.assertTrue(dialog.models.text_model_picker.isEnabled())
