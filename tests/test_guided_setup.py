@@ -1,5 +1,6 @@
 """Optional onboarding: eligibility, existing save paths, privacy and layout."""
 
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -578,7 +579,9 @@ def test_recording_shortcut_keyboard_capture_saves_and_keeps_record_step(make_se
         Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier,
     )
     assert not setup.shortcut._capturing
-    assert store.load_hotkey_settings()["record_toggle"] == "ctrl+alt+j"
+    # Qt reports ControlModifier for the Command key on macOS.
+    expected = "cmd+alt+j" if sys.platform == "darwin" else "ctrl+alt+j"
+    assert store.load_hotkey_settings()["record_toggle"] == expected
     assert setup.page == setup_ui.RECORD
 
 
