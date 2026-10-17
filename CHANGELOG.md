@@ -10,6 +10,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ### Changed
 - **"Chat model" is now named for its job** — the model picker is called **Cleanup model** in AI cleanup and **Insights model** in AI insights, and descriptions say "language model". Nothing is chatted with, so the old name described the API, not what the model does.
 
+### Fixed
+- **Settings opens quickly again the first time** — with a large runtime such as Qwen's installed, the first open after launch took about 4 seconds while it measured the runtime's files one by one. Sizes now come from the folder listing itself, so it takes about 1 second.
+
 ## [2.7.5] - 2026-10-16
 
 ### Added

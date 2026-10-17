@@ -1027,15 +1027,25 @@ def installed_size_bytes(component_id: str) -> int:
 
 
 def _walk_size_bytes(directory: str) -> int:
+    # Sizes come from the directory listing itself: on Windows a scandir entry
+    # carries them, where an lstat per file cost ~2.5 s on the Qwen runtime's
+    # 32k files. Native Mac libraries have multiple symlink aliases; count each
+    # link itself, rather than counting its target repeatedly.
     total = 0
-    for root, _dirs, files in os.walk(directory):
-        for name in files:
-            try:
-                # Native Mac libraries have multiple symlink aliases; count
-                # each link itself, rather than counting its target repeatedly.
-                total += os.lstat(os.path.join(root, name)).st_size
-            except OSError:
-                continue
+    pending = [directory]
+    while pending:
+        try:
+            with os.scandir(pending.pop()) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append(entry.path)
+                        else:
+                            total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
     return total
 
 
