@@ -12,6 +12,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ### Fixed
 - **Settings opens quickly again the first time** — with a large runtime such as Qwen's installed, the first open after launch took about 4 seconds while it measured the runtime's files one by one. Sizes now come from the folder listing itself, so it takes about 1 second.
+- **Numpad shortcuts work in other apps on Linux (X11)** — the default record shortcut, Num *, and Num − for cancel only worked while an OpenWhisper window had focus. The keyboard hook saw numpad * as the same key as Shift+8, so `kp *` never matched. Keypad keys now keep their numpad names, including with Ctrl or Alt held (such as Ctrl+Alt+Num *), and shortcuts set with the numpad save under the same names.
 
 ## [2.7.5] - 2026-10-16
 

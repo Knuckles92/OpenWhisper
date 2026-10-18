@@ -88,11 +88,68 @@ def _load_pynput_mouse():
 # X11 numbers the side buttons 8 (Back) and 9 (Forward).
 _X11_MOUSE_BUTTONS = {"button8": "mouse4", "button9": "mouse5"}
 
+# X11 keypad keysyms -> the suffix of their ``kp <name>`` hotkey name. The
+# names match what the Qt focused-window filter reports for the same key
+# (``services/runtime/hotkeys.py``), so both sources produce one hotkey.
+_X11_KEYPAD_NAMES: Dict[int, str] = {
+    0xFF80: "space",
+    0xFF89: "tab",
+    0xFF8D: "enter",
+    0xFF95: "home",
+    0xFF96: "left",
+    0xFF97: "up",
+    0xFF98: "right",
+    0xFF99: "down",
+    0xFF9A: "page_up",
+    0xFF9B: "page_down",
+    0xFF9C: "end",
+    0xFF9E: "insert",
+    0xFF9F: "delete",
+    0xFFAA: "*",
+    0xFFAB: "+",
+    0xFFAC: ",",
+    0xFFAD: "-",
+    0xFFAE: ".",
+    0xFFAF: "/",
+    0xFFBD: "=",
+    **{0xFFB0 + n: str(n) for n in range(10)},
+}
+
+
+def _x11_keypad_listener(listener_class):
+    """Report keypad keys as ``KeyCode(vk=<KP keysym>)``.
+
+    pynput's X11 backend folds keypad keys into the main-keyboard key they
+    type (``KP_Multiply`` arrives as ``KeyCode(char='*')``), so a ``kp *``
+    hotkey could never match. The keysym is only known inside the backend,
+    so keep it here and let ``key_to_name`` turn it into ``kp *``.
+    """
+    from pynput._util.xorg import numlock_mask
+
+    key_code = _load_pynput_keyboard().KeyCode
+
+    class X11HotkeyListener(listener_class):
+        def _event_to_key(self, display, event):
+            if self._keycode_to_keysym(display, event.detail, 0) in _X11_KEYPAD_NAMES:
+                # Like pynput, read the keypad at its Num Lock level: KP_1
+                # with Num Lock on, KP_End with it off.
+                keysym = self._keycode_to_keysym(
+                    display, event.detail, bool(event.state & numlock_mask(display))
+                )
+                if keysym in _X11_KEYPAD_NAMES:
+                    return key_code.from_vk(keysym)
+            return super()._event_to_key(display, event)
+
+    return X11HotkeyListener
+
 
 def get_listener_class():
-    """Return a pynput listener class that avoids unsafe macOS layout lookup.
+    """Return the pynput listener class for hotkey matching and capture.
 
     Used by both the global hotkey manager and the hotkey capture dialog.
+    On X11 the listener keeps keypad keys apart from the main keyboard (see
+    ``_x11_keypad_listener``).
+
     pynput's default macOS Listener enters ``keycode_context()`` on its
     background thread, which calls HIToolbox input-source APIs and triggers a
     SIGTRAP (``trace trap``) on macOS 26+. Hotkey matching and capture use
@@ -101,6 +158,8 @@ def get_listener_class():
     """
     keyboard_module = _load_pynput_keyboard()
     if sys.platform != "darwin":
+        if keyboard_module.Listener.__module__ == "pynput.keyboard._xorg":
+            return _x11_keypad_listener(keyboard_module.Listener)
         return keyboard_module.Listener
 
     try:
@@ -192,6 +251,9 @@ def key_to_name(key) -> Optional[str]:
     if isinstance(key, keyboard_module.Key):
         return key.name
     if isinstance(key, keyboard_module.KeyCode):
+        keypad = _X11_KEYPAD_NAMES.get(key.vk)
+        if keypad is not None:
+            return f"kp {keypad}"
         if key.char:
             return key.char.lower()
         if key.vk is not None:
