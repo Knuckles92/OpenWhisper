@@ -57,6 +57,41 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: timeout 20m xvfb-run -a python -m pytest -n auto -v --durations=20 -o faulthandler_timeout=120
 
+  macos:
+    # The full suite on Apple Silicon. Mac-only failures used to surface only
+    # in the release build, costing a whole rebuild; here they show on push.
+    name: macOS tests
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Configure loopback alias for MCP listener tests
+        # macOS needs an explicit alias for the second IPv4 loopback listener.
+        run: sudo ifconfig lo0 alias 127.0.0.2 netmask 255.255.255.255 up
+      - name: Install test runtime
+        # A clean venv: the runner image's own tools live in its Python and
+        # can require versions the release pins don't, failing pip check.
+        run: |
+          python -m venv venv
+          ./venv/bin/python -m pip install --upgrade pip
+          ./venv/bin/python -m pip install \
+            -r requirements.txt -r requirements-build.txt \
+            -c requirements-release-constraints.txt
+          ./venv/bin/python -m pip check
+      - name: Check ASGI test stack compatibility
+        run: ./venv/bin/python scripts/check_testclient_compat.py --timeout 15
+      - name: Run test suite
+        timeout-minutes: 20
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./venv/bin/python -m pytest -n auto -v --durations=20 -o faulthandler_timeout=120
+
   windows-updater:
     name: Windows updater and OpenCode regression tests
     runs-on: windows-2022

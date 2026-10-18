@@ -4,7 +4,8 @@ Every pull request now runs the core recording, audio decoding, cancellation,
 history and lifecycle regressions on Windows and Apple Silicon macOS. Each
 platform checks both the pinned release dependencies and an unconstrained
 `pip install -r requirements.txt` environment. Windows source coverage uses
-Python 3.11; the release runtime uses Python 3.12. Linux retains the full suite.
+Python 3.11; the release runtime uses Python 3.12. Linux and Apple Silicon
+macOS run the full suite.
 Dependency snapshots and synthetic timing reports are retained as CI artifacts.
 
 Native candidate builds resolve their source tag to one commit and run the full

@@ -173,12 +173,8 @@ jobs:
             -r requirements.txt -r requirements-build.txt \
             -c requirements-release-constraints.txt
           ./venv/bin/python -m pip check
-      - name: Check ASGI test stack compatibility
-        run: ./venv/bin/python scripts/check_testclient_compat.py --timeout 15
-      - name: Run Linux test suite
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: xvfb-run -a ./venv/bin/python -m pytest
+      # The full suite already ran on this commit, this OS and these pins in
+      # the qualification job, so the builder goes straight to packaging.
       - name: Build and verify
         run: ./scripts/build_installer.sh --clean
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -309,13 +305,8 @@ jobs:
             -r requirements.txt -r requirements-build.txt \
             -c requirements-release-constraints.txt
           ./venv/bin/python -m pip check
-      - name: Check ASGI test stack compatibility
-        run: ./venv/bin/python scripts/check_testclient_compat.py --timeout 15
-      - name: Run test suite
-        timeout-minutes: 20
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: ./venv/bin/python -m pytest -vv --maxfail=1
+      # The full macOS suite already ran on this commit in the qualification
+      # job (ci.yml "macOS tests"), so the builder goes straight to packaging.
       - name: Import Developer ID signing and notary credentials
         if: env.MACOS_CERTIFICATE_P12 != '' && env.MACOS_NOTARY_KEY_P8 != ''
         run: |
