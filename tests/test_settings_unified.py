@@ -524,16 +524,17 @@ class TestHome:
 
 
 class TestChapters:
-    def test_only_the_current_pages_chapter_is_open(self, make_dialog):
+    def test_going_to_a_page_opens_its_chapter_and_marks_it(self, make_dialog):
         dialog, _store = make_dialog()
-        assert dialog.rail.open_chapter() == ""
+        assert dialog.rail.active_chapter() == ""
         dialog.select_destination(CLEANUP)
-        assert dialog.rail.open_chapter() == "Dictation"
+        assert dialog.rail.active_chapter() == "Dictation"
         assert not dialog.rail._items[CLEANUP].isHidden()
         assert dialog.rail._items[MCP].isHidden()
         dialog.select_destination(MCP)
-        assert dialog.rail.open_chapter() == "Automate"
-        assert dialog.rail._items[CLEANUP].isHidden()
+        assert dialog.rail.active_chapter() == "Automate"
+        # The chapter you came from stays open, so nothing above shifts.
+        assert not dialog.rail._items[CLEANUP].isHidden()
 
     def test_the_crumb_names_the_chapter(self, make_dialog):
         dialog, _store = make_dialog()

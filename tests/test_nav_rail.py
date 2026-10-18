@@ -164,15 +164,56 @@ class TestChapters(unittest.TestCase):
                          pos=row.name_label.mapTo(self.host, row.name_label.rect().center()))
         self.app.processEvents()
 
-    def test_only_the_current_pages_chapter_shows_its_pages(self):
+    def _heading_tops(self):
+        return {title: self.rail.visualItemRect(chapter["item"]).top()
+                for title, chapter in self.rail._chapters.items()}
+
+    def _active(self):
+        return [title for title, chapter in self.rail._chapters.items()
+                if chapter["row"].property("active")]
+
+    def test_opening_a_chapter_leaves_the_others_open(self):
         self.assertEqual(self._visible(), ["home"])
         self.rail.select("d")
         self.assertEqual(self._visible(), ["home", "c", "d", "e"])
-        self.assertEqual(self.rail.open_chapter(), "Second")
         self.rail.select("a")
-        self.assertEqual(self._visible(), ["home", "a", "b"])
+        self.assertEqual(self._visible(), ["home", "a", "b", "c", "d", "e"])
         self.rail.select("home")
+        self.assertEqual(self._visible(), ["home", "a", "b", "c", "d", "e"])
+
+    def test_a_clicked_heading_stays_under_the_pointer(self):
+        self._click_chapter("First")
+        before = self._heading_tops()["Second"]
+        self._click_chapter("Second")
+        self.assertEqual(self._heading_tops()["Second"], before)
+        self.assertEqual(self.rail.current_key(), "c")
+
+    def test_the_current_pages_chapter_carries_the_pill(self):
+        self.assertEqual(self._active(), [])
+        self._click_chapter("Second")
+        self.assertEqual(self._active(), ["Second"])
+        self.assertTrue(self.rail._rows["c"].property("selected"))
+        self.rail.select("a")
+        self.assertEqual(self._active(), ["First"])
+        self.rail.select("home")
+        self.assertEqual(self._active(), [])
+
+    def test_clicking_the_chapter_you_are_in_folds_it_and_keeps_its_pill(self):
+        self._click_chapter("First")
+        self._click_chapter("First")
+        self.assertFalse(self.rail.is_expanded("First"))
         self.assertEqual(self._visible(), ["home"])
+        self.assertEqual((self.rail.current_key(), self._active()), ("a", ["First"]))
+        self._click_chapter("First")
+        self.assertTrue(self.rail.is_expanded("First"))
+        self.assertEqual(self.changes, ["a"])
+
+    def test_clicking_an_open_chapter_you_are_not_in_goes_there(self):
+        self._click_chapter("First")
+        self.rail.select("home")
+        self._click_chapter("First")
+        self.assertTrue(self.rail.is_expanded("First"))
+        self.assertEqual(self.rail.current_key(), "a")
 
     def test_a_chapter_click_reopens_its_last_page(self):
         self._click_chapter("Second")
@@ -194,7 +235,7 @@ class TestChapters(unittest.TestCase):
         walked = []
         for _ in range(6):
             QTest.keyClick(self.rail, Qt.Key.Key_Down)
-            walked.append((self.rail.current_key(), self.rail.open_chapter()))
+            walked.append((self.rail.current_key(), self.rail.active_chapter()))
         self.assertEqual(walked, [
             ("a", "First"), ("b", "First"), ("c", "Second"),
             ("d", "Second"), ("e", "Second"), ("e", "Second"),
@@ -202,9 +243,17 @@ class TestChapters(unittest.TestCase):
         QTest.keyClick(self.rail, Qt.Key.Key_Up)
         QTest.keyClick(self.rail, Qt.Key.Key_Up)
         QTest.keyClick(self.rail, Qt.Key.Key_Up)
-        self.assertEqual((self.rail.current_key(), self.rail.open_chapter()), ("b", "First"))
+        self.assertEqual((self.rail.current_key(), self.rail.active_chapter()), ("b", "First"))
         QTest.keyClick(self.rail, Qt.Key.Key_Home)
-        self.assertEqual((self.rail.current_key(), self.rail.open_chapter()), ("home", ""))
+        self.assertEqual((self.rail.current_key(), self.rail.active_chapter()), ("home", ""))
+
+    def test_arrow_keys_step_out_of_a_folded_chapter(self):
+        self._click_chapter("First")
+        self._click_chapter("First")
+        self.rail.setFocus()
+        QTest.keyClick(self.rail, Qt.Key.Key_Down)
+        self.assertEqual(self.rail.current_key(), "b")
+        self.assertTrue(self.rail.is_expanded("First"))
 
     def test_a_first_value_grows_a_closed_chapters_row(self):
         row, item = self.rail._rows["c"], self.rail._items["c"]

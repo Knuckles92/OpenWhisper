@@ -1,17 +1,21 @@
 """Left navigation rail: Home, then chapters whose pages report their value.
 
-Used by Settings instead of a tab bar. A chapter is a heading row, and only
-the chapter holding the current page shows its pages, so the rail stays short
-enough to read at a glance. Each page still shows its current assignment
-under its name. Keyboard steps walk every page in order and open chapters as
-they go, so a heading is never the current item.
+Used by Settings instead of a tab bar. A chapter is a heading row that opens
+to show its pages. Where you are reads at two levels: the top-level row you
+are in (Home, or the current page's chapter) carries the selection pill, and
+the current page is marked on its chapter's guide line. Chapters open and
+close on their own, never because another one opened, so the row you click
+stays under the pointer. Each page still shows its current assignment under
+its name. Keyboard steps walk every page in order and open chapters as they
+go, so a heading is never the current item.
 """
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QIcon, QTransform
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -43,25 +47,36 @@ class _RailItem(QWidget):
         # without this, so the selected pill would be invisible.
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setProperty("nested", nested)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._value = ""
 
         row = QHBoxLayout(self)
-        # A chapter's page lines its name up with the chapter's name, where a
-        # top-level page has its icon; both leave the value 47 px of margins.
-        row.setContentsMargins(37 if nested else 10, 6 if nested else 7, 10, 6 if nested else 7)
         row.setSpacing(9)
-
-        self.icon_label = QLabel()
+        self.icon_label = QLabel(self)
         self.icon_label.setObjectName("modelManagerRailIcon")
         self.icon_label.setFixedSize(18, 18)
-        if icon is not None and not icon.isNull():
-            self.icon_label.setPixmap(icon.pixmap(16, 16))
-        row.addWidget(self.icon_label, alignment=Qt.AlignmentFlag.AlignTop)
-        self.icon_label.setVisible(not nested)
-
         copy = QVBoxLayout()
-        copy.setContentsMargins(0, 0, 0, 0)
         copy.setSpacing(2)
+        # Both kinds of row leave the value 47 px of margins, and a chapter's
+        # page lines its name up with the chapter's name.
+        if nested:
+            # The guide runs the full row height, under the chapter's icon,
+            # so an open chapter's pages read as one connected group.
+            row.setContentsMargins(18, 0, 10, 0)
+            row.setSpacing(17)
+            self.guide = QFrame()
+            self.guide.setObjectName("settingsRailGuide")
+            self.guide.setFixedWidth(2)
+            row.addWidget(self.guide)
+            copy.setContentsMargins(0, 7, 0, 7)
+            self.icon_label.hide()
+        else:
+            self.guide = None
+            row.setContentsMargins(10, 8, 10, 8)
+            if icon is not None and not icon.isNull():
+                self.icon_label.setPixmap(icon.pixmap(16, 16))
+            row.addWidget(self.icon_label, alignment=Qt.AlignmentFlag.AlignTop)
+            copy.setContentsMargins(0, 0, 0, 0)
         self.name_label = QLabel(name)
         self.name_label.setObjectName("modelManagerRailName")
         self.value_label = QLabel("")
@@ -109,12 +124,17 @@ class _RailItem(QWidget):
         An item widget covers the view's own selection painting, so the state
         has to live on this widget for the stylesheet to see it.
         """
-        for widget in (self, self.name_label, self.value_label):
+        widgets = (self, self.name_label, self.value_label, self.guide)
+        for widget in filter(None, widgets):
             set_style_property(widget, "selected", selected)
 
 
 class _ChapterRow(QWidget):
-    """A chapter heading: its icon, its name, and whether its pages show."""
+    """A chapter heading: its icon, its name, and whether its pages show.
+
+    It carries the selection pill while the current page is one of its own,
+    open or closed, so the top level of the rail always says where you are.
+    """
 
     def __init__(self, title: str, icon: Optional[QIcon], parent=None):
         super().__init__(parent)
@@ -122,7 +142,7 @@ class _ChapterRow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         row = QHBoxLayout(self)
-        row.setContentsMargins(10, 8, 10, 8)
+        row.setContentsMargins(10, 9, 10, 9)
         row.setSpacing(9)
         self.icon_label = QLabel()
         self.icon_label.setObjectName("modelManagerRailIcon")
@@ -138,14 +158,18 @@ class _ChapterRow(QWidget):
         self.chevron.setFixedSize(12, 12)
         row.addWidget(self.chevron)
         self.set_open(False)
+        self.set_active(False)
 
     def set_open(self, is_open: bool) -> None:
         chevron = tabler_pixmap("chevron-down-slate.svg", 12)
         if not is_open:
             chevron = chevron.transformed(QTransform().rotate(-90))
         self.chevron.setPixmap(chevron)
+
+    def set_active(self, active: bool) -> None:
+        """Show whether the current page is one of this chapter's."""
         for widget in (self, self.name_label):
-            set_style_property(widget, "open", is_open)
+            set_style_property(widget, "active", active)
 
 
 class NavRail(QListWidget):
@@ -167,7 +191,8 @@ class NavRail(QListWidget):
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.setUniformItemSizes(False)
-        self.setSpacing(1)
+        # Rows space themselves, so an open chapter's guide line is unbroken.
+        self.setSpacing(0)
         self._rows: Dict[str, _RailItem] = {}
         self._items: Dict[str, QListWidgetItem] = {}
         # title -> {"item", "row", "keys", "last"}; "last" is the page the
@@ -176,7 +201,7 @@ class NavRail(QListWidget):
         self._chapter_of: Dict[str, str] = {}
         # The chapter new destinations join; "" adds top-level pages.
         self._adding = ""
-        self._open = ""
+        self._expanded: Set[str] = set()
         self.currentItemChanged.connect(self._on_current_changed)
 
     def updateGeometries(self) -> None:
@@ -222,7 +247,7 @@ class NavRail(QListWidget):
         if chapter:
             self._chapters[chapter]["keys"].append(key)
             self._chapter_of[key] = chapter
-            item.setHidden(chapter != self._open)
+            item.setHidden(chapter not in self._expanded)
 
     def set_value(self, key: str, text: str) -> None:
         row = self._rows.get(key)
@@ -259,14 +284,31 @@ class NavRail(QListWidget):
         chapter = self._chapters.get(title)
         return tuple(chapter["keys"]) if chapter else ()
 
-    def open_chapter(self) -> str:
-        """The chapter whose pages are showing, or ""."""
-        return self._open
+    def active_chapter(self) -> str:
+        """The current page's chapter, or "" on a top-level page."""
+        return self.chapter(self.current_key())
+
+    def is_expanded(self, title: str) -> bool:
+        """Whether a chapter's pages are showing."""
+        return title in self._expanded
+
+    def set_expanded(self, title: str, expanded: bool) -> None:
+        """Open or close one chapter, leaving every other one as it is."""
+        chapter = self._chapters.get(title)
+        if chapter is None or expanded == (title in self._expanded):
+            return
+        if expanded:
+            self._expanded.add(title)
+        else:
+            self._expanded.discard(title)
+        chapter["row"].set_open(expanded)
+        for key in chapter["keys"]:
+            self._items[key].setHidden(not expanded)
 
     def select(self, key: str) -> None:
         item = self._items.get(key)
         if item is not None:
-            self._show_chapter(self.chapter(key))
+            self.set_expanded(self.chapter(key), True)
             self.setCurrentItem(item)
 
     def select_chapter(self, title: str) -> None:
@@ -284,22 +326,25 @@ class NavRail(QListWidget):
     def keys(self) -> tuple:
         return tuple(self._items)
 
-    def _show_chapter(self, title: str) -> None:
-        if title == self._open:
-            return
-        self._open = title
-        for name, chapter in self._chapters.items():
-            showing = name == title
-            chapter["row"].set_open(showing)
-            for key in chapter["keys"]:
-                self._items[key].setHidden(not showing)
+    def _click_chapter(self, title: str) -> None:
+        """Go to a chapter, or fold it away when it is already where you are.
+
+        A closed chapter opens on its page. An open one you are elsewhere
+        than takes you there, so a click on a heading never hides the pages
+        you meant to reach; clicking the chapter you are in folds it, and its
+        heading keeps the pill to say where you are.
+        """
+        if title == self.active_chapter() and self.is_expanded(title):
+            self.set_expanded(title, False)
+        else:
+            self.select_chapter(title)
 
     def mousePressEvent(self, event) -> None:
         item = self.itemAt(event.position().toPoint())
         title = item.data(_CHAPTER_ROLE) if item is not None else None
         if title:
             if event.button() == Qt.MouseButton.LeftButton:
-                self.select_chapter(title)
+                self._click_chapter(title)
             event.accept()
             return
         super().mousePressEvent(event)
@@ -327,8 +372,8 @@ class NavRail(QListWidget):
         if cursorAction not in steps:
             return super().moveCursor(cursorAction, modifiers)
         target = keys[max(0, min(len(keys) - 1, index + steps[cursorAction]))]
-        # Show the target's chapter first: a hidden row can't be current.
-        self._show_chapter(self.chapter(target))
+        # Open the target's chapter first: a hidden row can't be current.
+        self.set_expanded(self.chapter(target), True)
         return self.indexFromItem(self._items[target])
 
     def _on_current_changed(
@@ -338,13 +383,13 @@ class NavRail(QListWidget):
     ) -> None:
         for key, row in self._rows.items():
             row.set_selected(self._items[key] is current)
-        if current is None:
-            return
-        key = current.data(_KEY_ROLE)
+        key = current.data(_KEY_ROLE) if current is not None else ""
+        title = self.chapter(key) if key else ""
+        for name, chapter in self._chapters.items():
+            chapter["row"].set_active(name == title)
         if not key:
             return
-        title = self.chapter(key)
         if title:
             self._chapters[title]["last"] = key
-        self._show_chapter(title)
+            self.set_expanded(title, True)
         self.destination_changed.emit(key)
