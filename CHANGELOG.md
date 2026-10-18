@@ -7,6 +7,8 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.7.6] - 2026-10-18
+
 ### Changed
 - **"Chat model" is now named for its job** — the model picker is called **Cleanup model** in AI cleanup and **Insights model** in AI insights, and descriptions say "language model". Nothing is chatted with, so the old name described the API, not what the model does.
 - **Settings sidebar chapters stay where you put them** — opening one chapter no longer closes the others, so the row you clicked stays under the pointer. The chapter you're in carries the highlight, and a mark on its guide line shows the current page.
