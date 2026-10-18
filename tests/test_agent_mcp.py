@@ -621,25 +621,51 @@ def test_tailscale_listener_keeps_local_access_and_releases_both_ports(
             sock.bind((host, port))
 
 
-def test_tailscale_bind_failure_releases_loopback_socket(mcp_database, monkeypatch):
+@pytest.fixture
+def bound_sockets(monkeypatch):
+    """Every socket bound in this process during the test, with its address.
+
+    Whether a port is free is shared with every other process, so binding it
+    afterwards fails whenever another xdist worker's listener or TIME_WAIT sits
+    on the same number. These tests ask about the runtime's own sockets.
+    """
+    bound = []
+
+    class RecordingSocket(socket.socket):
+        def bind(self, address):
+            bound.append((address, self))
+            super().bind(address)
+
+    monkeypatch.setattr(socket, "socket", RecordingSocket)
+    return bound
+
+
+def test_tailscale_bind_failure_releases_loopback_socket(
+    mcp_database, monkeypatch, bound_sockets
+):
     import services.agent_mcp.runtime as runtime_module
 
+    # TEST-NET-1 is on no interface, so the second bind fails the way it does
+    # when the Tailscale address vanishes between status and listen.
     monkeypatch.setattr(
-        runtime_module, "_tailscale_address", lambda: ("127.0.0.2", "jed.example")
+        runtime_module, "_tailscale_address", lambda: ("192.0.2.1", "jed.example")
     )
-    with socket.socket() as occupied:
-        occupied.bind(("127.0.0.2", 0))
-        occupied.listen()
-        port = occupied.getsockname()[1]
-        server = McpRuntime(mcp_database, credentials=CredentialStore(memory_backend))
-        server.start(port, tailscale=True)
-        assert wait_for(server, "error").state == "error"
-        server.stop()
-        with socket.socket() as released:
-            released.bind(("127.0.0.1", port))
+    port = free_port()
+    server = McpRuntime(mcp_database, credentials=CredentialStore(memory_backend))
+    server.start(port, tailscale=True)
+    assert "port" in wait_for(server, "error").message
+    server.stop()
+    listeners = [(address, sock) for address, sock in bound_sockets if address[1] == port]
+    assert [address for address, _ in listeners] == [
+        ("127.0.0.1", port),
+        ("192.0.2.1", port),
+    ]
+    assert all(sock.fileno() == -1 for _, sock in listeners)
 
 
-def test_unavailable_tailscale_does_not_start_or_fall_back(mcp_database, monkeypatch):
+def test_unavailable_tailscale_does_not_start_or_fall_back(
+    mcp_database, monkeypatch, bound_sockets
+):
     from services.remote_asr import tailscale
 
     for status in (
@@ -652,5 +678,4 @@ def test_unavailable_tailscale_does_not_start_or_fall_back(mcp_database, monkeyp
         server.start(port, tailscale=True)
         assert "Tailscale" in wait_for(server, "error").message
         assert not server.token() and not server.status().remote_url
-        with socket.socket() as sock:
-            sock.bind(("127.0.0.1", port))
+        assert not [address for address, _ in bound_sockets if address[1] == port]
