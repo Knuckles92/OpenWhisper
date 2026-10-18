@@ -10,11 +10,17 @@ literal in the module, so it is checked everywhere. Named keys (space, esc,
 F-keys) are read out of ``pynput``'s ``Key`` enum, whose ``vk`` values are the
 *current* platform's -- X11 keysyms on Linux, macOS virtual keycodes on Darwin
 -- so those assertions only hold on Darwin.
+
+The backend is imported when the first test runs, not at collection: importing
+pynput on Linux opens an X connection, and collection must not depend on the
+display, or one xdist worker's failed connect aborts the whole session with
+"Different tests were collected".
 """
 from __future__ import annotations
 
 import ast
 import ctypes
+import importlib
 import sys
 import unittest
 import unittest.mock
@@ -22,14 +28,18 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip(
-    "pynput.keyboard",
-    reason="the Carbon backend imports pynput's keyboard backend at import time",
-)
-
-from services import _hotkey_carbon as carbon  # noqa: E402
-
 ROOT = Path(__file__).resolve().parents[1]
+
+carbon = None
+
+
+def setUpModule():
+    global carbon
+    pytest.importorskip(
+        "pynput.keyboard",
+        reason="the Carbon backend imports pynput's keyboard backend at import time",
+    )
+    carbon = importlib.import_module("services._hotkey_carbon")
 
 
 class FakeCarbon:
