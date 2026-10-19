@@ -620,7 +620,7 @@ def credential_status(profile: TextLLMProfile) -> Tuple[bool, str]:
     label = credential_label(profile)
     if lookup_env_value(profile.api_key_env):
         return True, f"{label} found"
-    return False, f"Requires {label} — add it in Settings → API keys"
+    return False, f"Requires {label} — add it in Settings → App → API keys"
 
 
 def connection_fingerprint(profile: TextLLMProfile) -> Tuple[Any, ...]:

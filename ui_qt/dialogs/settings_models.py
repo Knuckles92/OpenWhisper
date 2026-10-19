@@ -114,7 +114,7 @@ _ENGINE_CAPTIONS = {
     "local_whisper": "Local faster-whisper on this computer.",
     "api": (
         "OpenAI, Groq, or an OpenAI-compatible speech server you run. Hosted "
-        "services need an API key in Settings → API keys."
+        "services need an API key in Settings → App → API keys."
     ),
     "remote": (
         "Another computer's engine, over your network. Pair with it in "
@@ -1649,7 +1649,7 @@ class ModelAssignments(QObject):
         if backend == MeetingSpeakerIdBackend.OPENAI:
             self.speaker_id_status.setText(
                 "Uploads system audio after End and relabels speakers on the "
-                "saved transcript. Requires an OpenAI API key (Settings → API "
+                "saved transcript. Requires an OpenAI API key (Settings → App → API "
                 "keys). This speaker pass does not upload microphone audio. OpenAI "
                 "retires the model this uses (gpt-4o-transcribe-diarize) on "
                 "February 26, 2027; after that, on-device labels are used."

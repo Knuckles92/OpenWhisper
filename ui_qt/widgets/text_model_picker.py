@@ -399,12 +399,12 @@ class TextModelPicker(QWidget):
         running = self._running_profiles()
         if profile is not None and not available and not profile.self_hosted and running:
             text = (
-                "Key needed in Settings → API keys, or choose "
+                "Key needed in Settings → App → API keys, or choose "
                 f"{running[0].name}, running on this computer"
             )
         elif (profile is not None and profile.builtin and not available
               and profile.kind not in (PROFILE_KIND_OPENAI, PROFILE_KIND_OPENROUTER)):
-            text = "Key needed in Settings → API keys"
+            text = "Key needed in Settings → App → API keys"
         self.provider_requirement.setText(text)
         credential_icon = design_icon(
             "check-green.svg" if available else "info-warning.svg"

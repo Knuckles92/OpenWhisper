@@ -48,7 +48,7 @@ Change the hotkey anytime in **Settings → Hotkeys**.
 | Dictate hotkey | Settings → Hotkeys |
 | Local vs cloud speech models | Model Manager |
 | Cleanup model (Gemini, OpenRouter, …) | Model Manager → Text cleanup |
-| API keys | Settings → API keys (saved in Windows Credential Manager) |
+| API keys | Settings → App → API keys (saved in Windows Credential Manager) |
 | What happens after End | Settings → After the meeting |
 | Dashboard on the LAN | Settings → Dashboard |
 
