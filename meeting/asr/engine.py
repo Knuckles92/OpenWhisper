@@ -81,6 +81,30 @@ class PermanentChunkError(RuntimeError):
 
 _STOP = object()
 
+# Outcomes of one counted decode attempt in ``_process_chunk``.
+_ATTEMPT_DONE = "done"
+_ATTEMPT_RETRY = "retry"
+_ATTEMPT_REMOTE_DEFERRED = "remote_deferred"
+
+
+def _release_backend(backend: Any) -> None:
+    """Best-effort cleanup of a backend that never became available."""
+    cleanup = getattr(backend, "cleanup", None)
+    if callable(cleanup):
+        try:
+            cleanup()
+        except Exception:
+            logger.exception("Error releasing unavailable meeting ASR backend")
+
+
+def _chunk_from_row(row: Dict[str, Any]) -> SpooledChunk:
+    return SpooledChunk(
+        chunk_id=row["id"], meeting_id=row["meeting_id"],
+        channel=row["channel"], seq=row["seq"],
+        file_path=row["file_path"], start_s=row["start_s"],
+        duration_s=row["duration_s"], sample_rate=row["sample_rate"],
+    )
+
 
 class MeetingAsrEngine:
     """Transcribes spooled meeting chunks on a dedicated speech backend.
@@ -188,25 +212,9 @@ class MeetingAsrEngine:
                     return False
                 if self.is_available:
                     return True
-                if self._remote is not None:
-                    from meeting.asr.remote import MeetingRemoteBackend
-                    backend = MeetingRemoteBackend(self._remote)
-                elif self._model_name in MODELS:
-                    from transcriber.optional_backend import LocalSpeechBackend
-                    backend = LocalSpeechBackend(
-                        MODELS[self._model_name].backend, model_name=self._model_name)
-                elif self._defer_load:
-                    backend = LocalWhisperBackend(model_name=self._model_name, load=False)
-                else:
-                    backend = LocalWhisperBackend(model_name=self._model_name)
+                backend = self._construct_backend(LocalWhisperBackend, MODELS)
                 self._backend = backend
-            if self._remote is not None or self._model_name in MODELS:
-                if self._defer_load:
-                    backend.reload_model(cancel_event=self._stop_event)
-                else:
-                    backend.reload_model()
-            elif self._defer_load:
-                backend._load_model(cancel_event=self._stop_event)
+            self._load_backend_model(backend, MODELS)
             with self._backend_lock:
                 if self._stop_event.is_set() or self._backend is not backend:
                     return False
@@ -219,23 +227,43 @@ class MeetingAsrEngine:
             logger.error("Meeting ASR model '%s' failed to load (missing=%s); engine unavailable",
                          self._model_name, getattr(backend, "is_model_missing", "?"))
         except Exception as exc:
-            if not self._stop_event.is_set():
-                self.last_error = str(exc)
-                logger.exception("Meeting ASR backend construction failed for model '%s'; engine unavailable",
-                                 self._model_name)
-            with self._backend_lock:
-                if self._backend is backend:
-                    self._backend = None
-                self.is_available = False
+            self._forget_failed_backend(backend, exc)
         finally:
             if backend is not None and not self.is_available:
-                cleanup = getattr(backend, "cleanup", None)
-                if callable(cleanup):
-                    try:
-                        cleanup()
-                    except Exception:
-                        logger.exception("Error releasing unavailable meeting ASR backend")
+                _release_backend(backend)
         return False
+
+    def _construct_backend(self, local_whisper_cls: Any, models: Dict[str, Any]) -> Any:
+        """Build (without loading) the backend this engine was configured for."""
+        if self._remote is not None:
+            from meeting.asr.remote import MeetingRemoteBackend
+            return MeetingRemoteBackend(self._remote)
+        if self._model_name in models:
+            from transcriber.optional_backend import LocalSpeechBackend
+            return LocalSpeechBackend(models[self._model_name].backend, model_name=self._model_name)
+        if self._defer_load:
+            return local_whisper_cls(model_name=self._model_name, load=False)
+        return local_whisper_cls(model_name=self._model_name)
+
+    def _load_backend_model(self, backend: Any, models: Dict[str, Any]) -> None:
+        """Load weights outside the lock; a deferred load stays cancellable by stop()."""
+        if self._remote is not None or self._model_name in models:
+            if self._defer_load:
+                backend.reload_model(cancel_event=self._stop_event)
+            else:
+                backend.reload_model()
+        elif self._defer_load:
+            backend._load_model(cancel_event=self._stop_event)
+
+    def _forget_failed_backend(self, backend: Any, exc: Exception) -> None:
+        if not self._stop_event.is_set():
+            self.last_error = str(exc)
+            logger.exception("Meeting ASR backend construction failed for model '%s'; engine unavailable",
+                             self._model_name)
+        with self._backend_lock:
+            if self._backend is backend:
+                self._backend = None
+            self.is_available = False
 
     def start(
         self,
@@ -500,29 +528,10 @@ class MeetingAsrEngine:
         has_extra = False
         failed = False
         try:
-            if rows is None:
-                try:
-                    rows = self._repository.get_pending_chunks(
-                        self.meeting_id, limit=free + 1, exclude_ids=excluded)
-                except TypeError:
-                    # Older test/custom repositories may not support paging;
-                    # the app's SQL repository always does.
-                    rows = [row for row in self._repository.get_pending_chunks(self.meeting_id)
-                            if row["id"] not in excluded][:free + 1]
-            rows = sorted(
-                (row for row in rows if row["id"] not in excluded),
-                key=lambda row: (float(row.get("start_s") or 0),
-                                 int(row.get("seq") or 0),
-                                 str(row.get("channel") or ""), int(row["id"])),
-            )
+            rows = self._pending_refill_rows(rows, free, excluded)
             has_extra = len(rows) > free
             for row in rows[:free]:
-                chunk = SpooledChunk(
-                    chunk_id=row["id"], meeting_id=row["meeting_id"],
-                    channel=row["channel"], seq=row["seq"],
-                    file_path=row["file_path"], start_s=row["start_s"],
-                    duration_s=row["duration_s"], sample_rate=row["sample_rate"],
-                )
+                chunk = _chunk_from_row(row)
                 with self._idle_cond:
                     if chunk.chunk_id in self._queued_ids:
                         continue
@@ -536,15 +545,7 @@ class MeetingAsrEngine:
             has_extra = True
             logger.exception("Could not refill saved ASR chunks for %s", self.meeting_id)
         finally:
-            with self._idle_cond:
-                self._refilling = False
-                self._refill_needed = has_extra
-                self._next_refill_at = (time.monotonic() + REFILL_RETRY_S
-                                        if failed else 0.0)
-                self._deferred_known = has_extra
-                quiet = (not has_extra and self._outstanding <=
-                         FAST_MODE_BACKLOG_CHUNKS)
-                self._idle_cond.notify_all()
+            quiet = self._finish_refill(has_extra, failed)
         if has_extra:
             self._report_backlog(True)
         elif quiet:
@@ -553,6 +554,44 @@ class MeetingAsrEngine:
             logger.info("Queued %d saved ASR chunk(s) for meeting %s",
                         requeued, self.meeting_id)
         return requeued
+
+    def _pending_refill_rows(
+        self,
+        rows: Optional[List[Dict[str, Any]]],
+        free: int,
+        excluded: tuple,
+    ) -> List[Dict[str, Any]]:
+        """Saved pending rows not already queued, in meeting-time order."""
+        if rows is None:
+            try:
+                rows = self._repository.get_pending_chunks(
+                    self.meeting_id, limit=free + 1, exclude_ids=excluded)
+            except TypeError:
+                # Older test/custom repositories may not support paging;
+                # the app's SQL repository always does.
+                rows = [row for row in self._repository.get_pending_chunks(self.meeting_id)
+                        if row["id"] not in excluded][:free + 1]
+        return sorted(
+            (row for row in rows if row["id"] not in excluded),
+            key=lambda row: (float(row.get("start_s") or 0),
+                             int(row.get("seq") or 0),
+                             str(row.get("channel") or ""), int(row["id"])),
+        )
+
+    def _finish_refill(self, has_extra: bool, failed: bool) -> bool:
+        """Publish the refill outcome; True when the backlog is now quiet."""
+        with self._idle_cond:
+            self._refilling = False
+            self._refill_needed = has_extra
+            next_refill_at = 0.0
+            if failed:
+                next_refill_at = time.monotonic() + REFILL_RETRY_S
+            self._next_refill_at = next_refill_at
+            self._deferred_known = has_extra
+            quiet = (not has_extra and self._outstanding <=
+                     FAST_MODE_BACKLOG_CHUNKS)
+            self._idle_cond.notify_all()
+        return quiet
 
     def _worker(self) -> None:
         while not self._stop_event.is_set():
@@ -606,102 +645,124 @@ class MeetingAsrEngine:
             if remote:
                 # A disconnected host never spends the decode budget. The
                 # saved chunk stays pending while capture continues to spool.
-                from meeting.asr.remote import RemoteMeetingUnavailable
-                try:
-                    self._backend.ensure_ready()
-                    self._report_connection(f"Transcribing on {self._backend.host_name}", True)
-                except RemoteMeetingUnavailable as exc:
-                    self._set_status(chunk.chunk_id, "pending", str(exc))
-                    self._report_connection(
-                        f"{exc} Audio is saved locally; retrying the remote connection.", False
-                    )
-                    delay = self._remote_retry_delay(exc, remote_failures)
-                    remote_failures += 1
-                    if self._stop_event.wait(delay):
+                unavailable = self._check_remote_ready(chunk)
+                if unavailable is not None:
+                    if self._wait_remote_retry(unavailable, remote_failures):
                         return
-                    continue
-                except Exception as exc:
-                    if not getattr(exc, "retryable", False):
-                        raise
-                    self._set_status(chunk.chunk_id, "pending", str(exc))
-                    self._report_connection(
-                        f"{exc} Audio is saved locally; waiting for host capacity.",
-                        True,
-                    )
-                    delay = self._remote_retry_delay(exc, remote_failures)
                     remote_failures += 1
-                    if self._stop_event.wait(delay):
-                        return
                     continue
             if self._backend is None or not self._backend.is_available():
-                self._set_status(
-                    chunk.chunk_id, "blocked",
-                    "Speech engine unavailable; select or install a model, then retry saved audio",
-                )
-                self._report_chunk_failure(
-                    chunk.chunk_id,
-                    "Speech engine unavailable. Select or install a model, then retry saved audio.",
-                )
-                logger.warning("ASR engine unavailable; chunk %s needs manual retry",
-                               chunk.chunk_id)
+                self._block_on_unavailable_engine(chunk)
                 return
 
             attempts += 1
             self._attempts[chunk.chunk_id] = attempts
-            try:
-                self._set_status(chunk.chunk_id, "processing")
-                self._log_queue_wait(chunk)
-                segments = self._transcribe_chunk(
-                    chunk, beam_size=self._beam_size_for_backlog(),
-                    initial_prompt=self._draft_prompt(chunk),
-                )
-                if self._on_chunk_result is None:
-                    raise RuntimeError("No durable ASR result callback is registered")
-                self._on_chunk_result(chunk, segments)
-                # The callback is the durability boundary. A failed commit
-                # retries with the same preceding transcript prompt.
-                self._remember_draft_segments(chunk, segments)
+            outcome, remote_error = self._attempt_chunk(chunk, remote, attempts)
+            if outcome == _ATTEMPT_DONE:
                 return
-            except PermanentChunkError as exc:
-                logger.error("Saved ASR chunk %s needs repair: %s", chunk.chunk_id, exc)
-                self._set_status(chunk.chunk_id, "blocked", str(exc))
-                self._report_chunk_failure(chunk.chunk_id, str(exc))
-                return
-            except Exception as exc:
-                disconnected = remote and isinstance(exc, RemoteMeetingUnavailable)
-                if disconnected or (remote and getattr(exc, "retryable", False)):
-                    self._defer_remote_chunk(chunk.chunk_id, str(exc))
-                    attempts -= 1
-                    self._attempts[chunk.chunk_id] = attempts
-                    self._report_connection(
-                        (f"{exc} Audio is saved locally; retrying the remote connection."
-                         if disconnected else
-                         f"{exc} Audio is saved locally; waiting for host capacity."),
-                        not disconnected,
-                    )
-                    delay = self._remote_retry_delay(exc, remote_failures)
-                    remote_failures += 1
-                    if self._stop_event.wait(delay):
-                        return
-                    continue
-                logger.exception(
-                    "Transcription failed for chunk %s (attempt %d/%d)",
-                    chunk.chunk_id, attempts, MAX_ATTEMPTS,
-                )
-                self._set_status(chunk.chunk_id, "failed", str(exc))
-                if attempts >= MAX_ATTEMPTS:
-                    logger.error("Giving up on chunk %s after %d attempts; audio remains saved",
-                                 chunk.chunk_id, attempts)
-                    self._report_chunk_failure(
-                        chunk.chunk_id,
-                        "Transcription failed after three attempts. Audio is saved; "
-                        "check the speech engine and retry this meeting.",
-                    )
+            if outcome == _ATTEMPT_REMOTE_DEFERRED:
+                attempts -= 1
+                if self._wait_remote_retry(remote_error, remote_failures):
                     return
-                delay = RETRY_BACKOFF_S[min(attempts - 1,
-                                            len(RETRY_BACKOFF_S) - 1)]
-                if self._stop_event.wait(delay):
-                    return
+                remote_failures += 1
+
+    def _check_remote_ready(self, chunk: SpooledChunk) -> Optional[Exception]:
+        """Return the retryable connection error, or None once the host is ready."""
+        try:
+            self._backend.ensure_ready()
+            self._report_connection(f"Transcribing on {self._backend.host_name}", True)
+        except Exception as exc:
+            deferral = self._remote_deferral(True, exc)
+            if deferral is None:
+                raise
+            self._set_status(chunk.chunk_id, "pending", str(exc))
+            self._report_connection(*deferral)
+            return exc
+        return None
+
+    @staticmethod
+    def _remote_deferral(remote: bool, exc: Exception) -> Optional[tuple[str, bool]]:
+        """Connection status ``(message, connected)`` when ``exc`` should wait, not count."""
+        if not remote:
+            return None
+        from meeting.asr.remote import RemoteMeetingUnavailable
+        if isinstance(exc, RemoteMeetingUnavailable):
+            return f"{exc} Audio is saved locally; retrying the remote connection.", False
+        if getattr(exc, "retryable", False):
+            return f"{exc} Audio is saved locally; waiting for host capacity.", True
+        return None
+
+    def _wait_remote_retry(self, error: Exception, failures: int) -> bool:
+        """Back off before reconnecting; True when the meeting stopped meanwhile."""
+        delay = self._remote_retry_delay(error, failures)
+        return self._stop_event.wait(delay)
+
+    def _block_on_unavailable_engine(self, chunk: SpooledChunk) -> None:
+        self._set_status(
+            chunk.chunk_id, "blocked",
+            "Speech engine unavailable; select or install a model, then retry saved audio",
+        )
+        self._report_chunk_failure(
+            chunk.chunk_id,
+            "Speech engine unavailable. Select or install a model, then retry saved audio.",
+        )
+        logger.warning("ASR engine unavailable; chunk %s needs manual retry",
+                       chunk.chunk_id)
+
+    def _attempt_chunk(
+        self, chunk: SpooledChunk, remote: bool, attempts: int,
+    ) -> tuple[str, Optional[Exception]]:
+        """Run one counted decode and commit; classify a failure for the retry loop."""
+        try:
+            self._set_status(chunk.chunk_id, "processing")
+            self._log_queue_wait(chunk)
+            segments = self._transcribe_chunk(
+                chunk, beam_size=self._beam_size_for_backlog(),
+                initial_prompt=self._draft_prompt(chunk),
+            )
+            if self._on_chunk_result is None:
+                raise RuntimeError("No durable ASR result callback is registered")
+            self._on_chunk_result(chunk, segments)
+            # The callback is the durability boundary. A failed commit
+            # retries with the same preceding transcript prompt.
+            self._remember_draft_segments(chunk, segments)
+            return _ATTEMPT_DONE, None
+        except PermanentChunkError as exc:
+            logger.error("Saved ASR chunk %s needs repair: %s", chunk.chunk_id, exc)
+            self._set_status(chunk.chunk_id, "blocked", str(exc))
+            self._report_chunk_failure(chunk.chunk_id, str(exc))
+            return _ATTEMPT_DONE, None
+        except Exception as exc:
+            deferral = self._remote_deferral(remote, exc)
+            if deferral is not None:
+                # A remote outage refunds the attempt it just counted.
+                self._defer_remote_chunk(chunk.chunk_id, str(exc))
+                self._attempts[chunk.chunk_id] = attempts - 1
+                self._report_connection(*deferral)
+                return _ATTEMPT_REMOTE_DEFERRED, exc
+            if self._retry_after_failure(chunk, exc, attempts):
+                return _ATTEMPT_RETRY, None
+            return _ATTEMPT_DONE, None
+
+    def _retry_after_failure(self, chunk: SpooledChunk, exc: Exception, attempts: int) -> bool:
+        """Record a failed attempt; True to try again after the backoff."""
+        logger.exception(
+            "Transcription failed for chunk %s (attempt %d/%d)",
+            chunk.chunk_id, attempts, MAX_ATTEMPTS,
+        )
+        self._set_status(chunk.chunk_id, "failed", str(exc))
+        if attempts >= MAX_ATTEMPTS:
+            logger.error("Giving up on chunk %s after %d attempts; audio remains saved",
+                         chunk.chunk_id, attempts)
+            self._report_chunk_failure(
+                chunk.chunk_id,
+                "Transcription failed after three attempts. Audio is saved; "
+                "check the speech engine and retry this meeting.",
+            )
+            return False
+        delay = RETRY_BACKOFF_S[min(attempts - 1,
+                                    len(RETRY_BACKOFF_S) - 1)]
+        return not self._stop_event.wait(delay)
 
     def _defer_remote_chunk(self, chunk_id: int, error: str) -> None:
         defer = getattr(self._repository, "defer_chunk_after_connection_failure", None)

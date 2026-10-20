@@ -372,11 +372,26 @@ def _run_step(step: _Step, body: bytes, timeout_s: float,
     return _run_program(step.argv, body, timeout_s, cancel)
 
 
+def _step_verdict(step: _Step, body: bytes, timeout_s: float,
+                  cancel: Optional[threading.Event]) -> _Verdict:
+    """``_run_step``, with a step that raised counted as failed."""
+    try:
+        return _run_step(step, body, timeout_s, cancel)
+    except Exception as exc:
+        return _Verdict(_FAILED, reason=f"The filter couldn't run ({type(exc).__name__})")
+
+
 def _failed(step: _Step, stage: str, reason: str) -> None:
     from services.automation import catalog, events
 
     logger.info("Text filter %s at %s kept the text: %s", step.id, stage, reason)
     events.publish(catalog.FILTER_FAILED, catalog.filter_failed(step.id, step.name, stage, reason))
+
+
+def _skip_out_of_time(steps: list[_Step], stage: str) -> None:
+    for skipped in steps:
+        _failed(skipped, stage,
+                f"Skipped: this stage's {STAGE_BUDGET_S:g} s for filters ran out")
 
 
 def _leases_apply(job, settings: Mapping) -> bool:
@@ -404,10 +419,12 @@ def _steps(stage: str, job, settings: Mapping, *, saved: bool = True,
            leased: bool = True) -> list[_Step]:
     from services.automation.models import FILTER_HTTP, load_filters
 
-    steps = [
-        _Step(f.id, f.name, f.kind, f.url, (f.program, *f.args), f.timeout_ms / 1000)
-        for f in load_filters(settings) if f.enabled and f.stage == stage
-    ] if saved else []
+    steps = []
+    if saved:
+        steps = [
+            _Step(f.id, f.name, f.kind, f.url, (f.program, *f.args), f.timeout_ms / 1000)
+            for f in load_filters(settings) if f.enabled and f.stage == stage
+        ]
     if leased and _leases_apply(job, settings):
         steps.extend(
             _Step(lease.id, "API filter", FILTER_HTTP, lease.url, (), lease.timeout_ms / 1000,
@@ -428,6 +445,21 @@ def _context(job, settings: Mapping) -> tuple[Optional[str], Optional[dict]]:
         logger.debug("Filter context unavailable", exc_info=True)
         return None, None
     return fields.get("language") or None, app_from_fields(fields)
+
+
+def _filter_request(stage: str, job, settings: Mapping, text: str) -> dict:
+    """The JSON request every filter of this stage gets; ``text`` changes per step."""
+    language, app = _context(job, settings)
+    return {
+        "v": REQUEST_VERSION,
+        "stage": stage,
+        "job_id": getattr(job, "id", "") or "",
+        "mode": job.mode,
+        "action_id": getattr(job, "action_id", "") or None,
+        "text": text,
+        "language": language,
+        "app": app,
+    }
 
 
 def _prepare_clients(steps: list[_Step]) -> None:
@@ -515,17 +547,7 @@ class StageRun:
     def _run_steps(self, steps: list[_Step], text: str, job, settings: Mapping,
                    deadline: float) -> FilterOutcome:
         stage, cancel = self.stage, self.cancel
-        language, app = _context(job, settings)
-        request = {
-            "v": REQUEST_VERSION,
-            "stage": stage,
-            "job_id": getattr(job, "id", "") or "",
-            "mode": job.mode,
-            "action_id": getattr(job, "action_id", "") or None,
-            "text": text,
-            "language": language,
-            "app": app,
-        }
+        request = _filter_request(stage, job, settings, text)
         # Saved filters run before leases: what they leave is still the user's.
         current = users_text = text
         for index, step in enumerate(steps):
@@ -533,16 +555,11 @@ class StageRun:
                 return FilterOutcome(text)
             remaining = deadline - time.monotonic()
             if remaining < MIN_SLICE_S:
-                for skipped in steps[index:]:
-                    _failed(skipped, stage,
-                            f"Skipped: this stage's {STAGE_BUDGET_S:g} s for filters ran out")
+                _skip_out_of_time(steps[index:], stage)
                 break
             request["text"] = current
             body = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            try:
-                verdict = _run_step(step, body, min(step.timeout_s, remaining), cancel)
-            except Exception as exc:
-                verdict = _Verdict(_FAILED, reason=f"The filter couldn't run ({type(exc).__name__})")
+            verdict = _step_verdict(step, body, min(step.timeout_s, remaining), cancel)
             if verdict is _CANCELED:
                 return FilterOutcome(text)
             if verdict.kind == _FAILED:

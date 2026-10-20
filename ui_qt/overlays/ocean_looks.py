@@ -116,60 +116,81 @@ class _School(Visual):
             return
         self._t += dt
         if not self.working:
-            shown = max(0.0, self.ribbon.shown - self.VOICE_FLOOR) / (1.0 - self.VOICE_FLOOR)
-            tau = self.ATTACK_S if shown > self.level else self.RELEASE_S
-            self.level += (shown - self.level) * (1 - math.exp(-dt / tau))
+            self._follow_voice(dt)
         lift = 4 + 40 * self.level
         speed = 18 + 70 * self.level
-        w = self.width
         morph = self.morph() if self.working else 0.0
+        # Each fish moves in turn, so later fish flock to where earlier ones went.
         for f in self.fish:
-            ax = ay = cx = cy = avx = avy = 0.0
-            n = 0
-            for o in self.fish:
-                if o is f:
-                    continue
-                dx, dy = o["x"] - f["x"], o["y"] - f["y"]
-                d2 = dx * dx + dy * dy
-                if d2 < self.RANGE ** 2:
-                    n += 1
-                    cx += o["x"]
-                    cy += o["y"]
-                    avx += o["vx"]
-                    avy += o["vy"]
-                    if 0.01 < d2 < 49:
-                        d = math.sqrt(d2)
-                        ax -= dx / d * self.SEPARATE * (1 - d / 7)
-                        ay -= dy / d * self.SEPARATE * (1 - d / 7)
-            if n:
-                ax += (cx / n - f["x"]) * self.COHESION + (avx / n - f["vx"]) * self.ALIGN
-                ay += (cy / n - f["y"]) * self.COHESION + (avy / n - f["vy"]) * self.ALIGN
-            if self.working:
-                rx, ry = self.steer(f, lift, speed)
-                wx, wy = self.steer_work(f, morph)
-                sx, sy = rx + (wx - rx) * morph, ry + (wy - ry) * morph
-            else:
-                sx, sy = self.steer(f, lift, speed)
+            ax, ay = self._flock(f)
+            sx, sy = self._heading(f, lift, speed, morph)
             f["vx"] += (ax + sx) * dt
             f["vy"] += (ay + sy) * dt
             f["vx"] *= 0.94 ** (dt * 30)
             f["vy"] *= 0.9 ** (dt * 30)
-            cap = (speed * 1.6 + 50) if not self.working else 140 * self.rate
-            sp = math.hypot(f["vx"], f["vy"])
-            if sp > cap:
-                f["vx"] *= cap / sp
-                f["vy"] *= cap / sp
-            if self.TRAIL:
-                f["trail"].append((f["x"], f["y"]))
-                del f["trail"][:-self.TRAIL]
-            f["x"] += f["vx"] * dt
-            f["y"] += f["vy"] * dt
-            if f["x"] < EDGE:
-                f["x"], f["vx"] = EDGE, abs(f["vx"])
-            elif f["x"] > w - EDGE:
-                f["x"], f["vx"] = w - EDGE, -abs(f["vx"])
-            f["y"] = min(self.BASE - f["r"], max(self.TOP, f["y"]))
+            self._cap_speed(f, speed)
+            self._move(f, dt)
         self._lift_layers(dt)
+
+    def _follow_voice(self, dt):
+        """Ease ``level`` toward the voice: fast on a rise, slow on a fall."""
+        shown = max(0.0, self.ribbon.shown - self.VOICE_FLOOR) / (1.0 - self.VOICE_FLOOR)
+        tau = self.ATTACK_S if shown > self.level else self.RELEASE_S
+        self.level += (shown - self.level) * (1 - math.exp(-dt / tau))
+
+    def _flock(self, f):
+        """The pull of the fish within RANGE: keep apart, match heading, hold together."""
+        ax = ay = cx = cy = avx = avy = 0.0
+        n = 0
+        for o in self.fish:
+            if o is f:
+                continue
+            dx, dy = o["x"] - f["x"], o["y"] - f["y"]
+            d2 = dx * dx + dy * dy
+            if d2 >= self.RANGE ** 2:
+                continue
+            n += 1
+            cx += o["x"]
+            cy += o["y"]
+            avx += o["vx"]
+            avy += o["vy"]
+            if 0.01 < d2 < 49:
+                d = math.sqrt(d2)
+                ax -= dx / d * self.SEPARATE * (1 - d / 7)
+                ay -= dy / d * self.SEPARATE * (1 - d / 7)
+        if n:
+            ax += (cx / n - f["x"]) * self.COHESION + (avx / n - f["vx"]) * self.ALIGN
+            ay += (cy / n - f["y"]) * self.COHESION + (avy / n - f["vy"]) * self.ALIGN
+        return ax, ay
+
+    def _heading(self, f, lift, speed, morph):
+        """Where the fish swims for: the voice's steer, blending into the work's."""
+        if not self.working:
+            return self.steer(f, lift, speed)
+        rx, ry = self.steer(f, lift, speed)
+        wx, wy = self.steer_work(f, morph)
+        return rx + (wx - rx) * morph, ry + (wy - ry) * morph
+
+    def _cap_speed(self, f, speed):
+        cap = (speed * 1.6 + 50) if not self.working else 140 * self.rate
+        sp = math.hypot(f["vx"], f["vy"])
+        if sp > cap:
+            f["vx"] *= cap / sp
+            f["vy"] *= cap / sp
+
+    def _move(self, f, dt):
+        """Step the fish, bouncing off the side edges and kept inside the water."""
+        if self.TRAIL:
+            f["trail"].append((f["x"], f["y"]))
+            del f["trail"][:-self.TRAIL]
+        f["x"] += f["vx"] * dt
+        f["y"] += f["vy"] * dt
+        w = self.width
+        if f["x"] < EDGE:
+            f["x"], f["vx"] = EDGE, abs(f["vx"])
+        elif f["x"] > w - EDGE:
+            f["x"], f["vx"] = w - EDGE, -abs(f["vx"])
+        f["y"] = min(self.BASE - f["r"], max(self.TOP, f["y"]))
 
     # -- the swell ----------------------------------------------------------------
     def x_of(self, p):
@@ -192,6 +213,15 @@ class _School(Visual):
                 - self.extra_lift(layer, x))
 
     def _lift_layers(self, dt):
+        tops = self._school_tops()
+        for _ in range(2):
+            self._roll_springs(dt / 2)
+            for i in range(self.POINTS):
+                self._push_column(i, tops[i])
+                self._clamp_column(i)
+
+    def _school_tops(self):
+        """The highest the school reaches under each swell point."""
         span = (self.width - 2 * EDGE) / (self.POINTS - 1)
         tops = [self.BASE] * self.POINTS
         for f in self.fish:
@@ -199,45 +229,54 @@ class _School(Visual):
             for q in (p - 1, p, p + 1):
                 if 0 <= q < self.POINTS:
                     tops[q] = min(tops[q], f["y"] - f["r"] - 1)
+        return tops
+
+    def _roll_springs(self, h):
+        """Step every layer's row of springs by ``h`` seconds."""
         n = self.POINTS
-        for _ in range(2):
-            h = dt / 2
-            for layer in range(self.LAYERS):
-                u, v = self.u[layer], self.uv[layer]
-                acc = [-26.0 * u[i] + 700.0 / 9.0 * ((u[i - 1] if i else u[i]) + (u[i + 1] if i < n - 1 else u[i])
-                                                     - 2 * u[i]) - 3.2 * v[i] for i in range(n)]
-                for i in range(n):
-                    v[i] += acc[i] * h
-                    u[i] += v[i] * h
+        for layer in range(self.LAYERS):
+            u, v = self.u[layer], self.uv[layer]
+            acc = []
             for i in range(n):
-                # The school under the bottom layer, then each layer under the next.
-                y = self.y_of(0, i)
-                if tops[i] < y:
-                    # Move out of the fish's way, with a little momentum, so a
-                    # school that keeps nudging does not pump the layer up.
-                    push = y - tops[i]
-                    self.u[0][i] += push * 0.4
-                    self.uv[0][i] = max(self.uv[0][i], push * 5)
-                for layer in range(1, self.LAYERS):
-                    below, above = self.y_of(layer - 1, i), self.y_of(layer, i)
-                    if above > below - self.GAP_MIN:
-                        self.u[layer][i] += above - (below - self.GAP_MIN)
-                        self.uv[layer][i] = max(self.uv[layer][i], self.uv[layer - 1][i] * 0.85)
-                # The stack never leaves the top: clamp in screen space, from
-                # the bottom layer up, so layers keep their order there too.
-                for layer in range(self.LAYERS):
-                    ceiling = self.TOP + (self.LAYERS - 1 - layer) * self.GAP_MIN
-                    over = ceiling - self.y_of(layer, i)
-                    if over > 0:
-                        self.u[layer][i] -= over
-                        self.uv[layer][i] = min(self.uv[layer][i], 0.0)
-                    self.u[layer][i] = max(-4.0, self.u[layer][i])
+                left = u[i - 1] if i else u[i]
+                right = u[i + 1] if i < n - 1 else u[i]
+                acc.append(-26.0 * u[i] + 700.0 / 9.0 * (left + right - 2 * u[i]) - 3.2 * v[i])
+            for i in range(n):
+                v[i] += acc[i] * h
+                u[i] += v[i] * h
+
+    def _push_column(self, i, top):
+        """The school under the bottom layer, then each layer under the next."""
+        y = self.y_of(0, i)
+        if top < y:
+            # Move out of the fish's way, with a little momentum, so a
+            # school that keeps nudging does not pump the layer up.
+            push = y - top
+            self.u[0][i] += push * 0.4
+            self.uv[0][i] = max(self.uv[0][i], push * 5)
+        for layer in range(1, self.LAYERS):
+            below, above = self.y_of(layer - 1, i), self.y_of(layer, i)
+            if above > below - self.GAP_MIN:
+                self.u[layer][i] += above - (below - self.GAP_MIN)
+                self.uv[layer][i] = max(self.uv[layer][i], self.uv[layer - 1][i] * 0.85)
+
+    def _clamp_column(self, i):
+        # The stack never leaves the top: clamp in screen space, from
+        # the bottom layer up, so layers keep their order there too.
+        for layer in range(self.LAYERS):
+            ceiling = self.TOP + (self.LAYERS - 1 - layer) * self.GAP_MIN
+            over = ceiling - self.y_of(layer, i)
+            if over > 0:
+                self.u[layer][i] -= over
+                self.uv[layer][i] = min(self.uv[layer][i], 0.0)
+            self.u[layer][i] = max(-4.0, self.u[layer][i])
 
     def ocean(self, layer, alpha=255, light=0.0) -> QColor:
         """Deep blue at the bottom of the stack to bright sea-glass at the top."""
         hue = 205 - layer * 9 + 10 * math.sin(self._t * 0.4)
         if current_palette().is_dark:
-            color = QColor.fromHsv(int(hue) % 360, int(200 - layer * 18), int(min(255, 200 + layer * 11 + 30 * light)))
+            value = min(255, 200 + layer * 11 + 30 * light)
+            color = QColor.fromHsv(int(hue) % 360, int(200 - layer * 18), int(value))
         else:
             color = QColor.fromHsv(int(hue) % 360, int(235 - layer * 12), int(170 + layer * 8))
         color.setAlpha(max(0, min(255, int(alpha))))
@@ -262,7 +301,8 @@ class _School(Visual):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         for layer in range(self.LAYERS):
             path = self.layer_path(layer)
-            painter.setPen(QPen(self.faded(layer, 60 * grow * strength), 4.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.setPen(QPen(self.faded(layer, 60 * grow * strength), 4.5,
+                                Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             painter.drawPath(path)
             painter.setPen(QPen(self.faded(layer, (150 + 20 * layer) * grow * strength), 1.6,
                                 Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
@@ -581,7 +621,8 @@ class Fizz(Visual):
             for k in range(4):
                 foam_x = glass.left() + 3 + k * (w - 6) / 3
                 painter.setBrush(hue_color(hue + 40, 200 * grow))
-                painter.drawEllipse(QPointF(foam_x, level - 1), 1.8 + 0.6 * math.sin(self._t * foam_speed + k + i), 1.6)
+                foam_rx = 1.8 + 0.6 * math.sin(self._t * foam_speed + k + i)
+                painter.drawEllipse(QPointF(foam_x, level - 1), foam_rx, 1.6)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(hue_color(hue + i / self.LANES * 60, 150 * grow), 1))
             painter.drawRoundedRect(glass, 3, 3)

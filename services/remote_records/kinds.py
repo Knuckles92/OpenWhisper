@@ -63,37 +63,61 @@ def _move(src: str, dest: str) -> None:
         shutil.move(src, dest)
 
 
+def _coerce_boolean(value, label: str, kind: type):
+    if not isinstance(value, bool):
+        raise ValueError(f"{label} must be true or false.")
+    return value
+
+
+def _coerce_integer(value, label: str, kind: type):
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be a whole number.")
+    return value
+
+
+def _coerce_float(value, label: str, kind: type):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be a number.")
+    return float(value)
+
+
+def _coerce_binary(value, label: str, kind: type):
+    if not isinstance(value, dict) or not isinstance(value.get("$b64"), str):
+        raise ValueError(f"{label} must be base64 bytes.")
+    return base64.b64decode(value["$b64"], validate=True)
+
+
+def _coerce_text(value, label: str, kind: type):
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be text.")
+    limit = _MAX_TEXT if issubclass(kind, Text) else _MAX_STRING
+    if len(value) > limit:
+        raise ValueError(f"{label} is too long.")
+    return value
+
+
+#: Column types, checked in order, and how a value becomes one.
+_COERCIONS = (
+    (Boolean, _coerce_boolean),
+    (Integer, _coerce_integer),
+    (Float, _coerce_float),
+    (LargeBinary, _coerce_binary),
+    ((Text, String), _coerce_text),
+)
+
+
 def _coerce(column, value, what: str):
     """``value`` for ``column``, or ValueError when it can't be one."""
+    label = f"{what}.{column.name}"
     if value is None:
         if not column.nullable and not column.primary_key:
-            raise ValueError(f"{what}.{column.name} is required.")
+            raise ValueError(f"{label} is required.")
         return None
     kind = type(column.type)
-    if issubclass(kind, Boolean):
-        if not isinstance(value, bool):
-            raise ValueError(f"{what}.{column.name} must be true or false.")
-        return value
-    if issubclass(kind, Integer):
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f"{what}.{column.name} must be a whole number.")
-        return value
-    if issubclass(kind, Float):
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"{what}.{column.name} must be a number.")
-        return float(value)
-    if issubclass(kind, LargeBinary):
-        if not isinstance(value, dict) or not isinstance(value.get("$b64"), str):
-            raise ValueError(f"{what}.{column.name} must be base64 bytes.")
-        return base64.b64decode(value["$b64"], validate=True)
-    if issubclass(kind, (Text, String)):
-        if not isinstance(value, str):
-            raise ValueError(f"{what}.{column.name} must be text.")
-        limit = _MAX_TEXT if issubclass(kind, Text) else _MAX_STRING
-        if len(value) > limit:
-            raise ValueError(f"{what}.{column.name} is too long.")
-        return value
-    raise ValueError(f"{what}.{column.name} can't be imported.")
+    for types, coerce in _COERCIONS:
+        if issubclass(kind, types):
+            return coerce(value, label, kind)
+    raise ValueError(f"{label} can't be imported.")
 
 
 def _row_from_json(model, data, what: str, *, drop=(), fixed=None, ignore_unknown=False) -> dict:
@@ -138,6 +162,24 @@ _ENTRY_FIELDS = (
 #: expect it, or they would refuse the record. Which app an entry was
 #: dictated into stays on this computer.
 ENTRY_EXT_FIELDS = ("entry_kind", "cleanup_level", "cleaned_text", "language")
+
+
+def _origin_name(device: Optional[dict]) -> Optional[str]:
+    """The name a paired computer's records show; None for this computer's own."""
+    if not device:
+        return None
+    return str(device.get("name") or "")[:120]
+
+
+def _free_path(folder: str, filename: str) -> str:
+    """``folder/filename``, numbered ``stem-2.ext`` and up until nothing is there."""
+    dest = os.path.join(folder, filename)
+    stem, ext = os.path.splitext(filename)
+    suffix = 2
+    while os.path.exists(dest):
+        dest = os.path.join(folder, f"{stem}-{suffix}{ext}")
+        suffix += 1
+    return dest
 
 
 def _entry_ext(entry) -> dict:
@@ -315,33 +357,31 @@ class DictationRecords:
         audio_file = existing.audio_file if existing is not None else None
         audio_name = record.get("audio")
         if audio_name is not None:
-            name = safe_name(audio_name)
-            parts = name.split("/")
-            if len(parts) != 2 or parts[0] != "audio" or not parts[1].lower().endswith(".wav"):
-                raise ValueError("The entry's audio must be one WAV file.")
-            source = os.path.join(files_dir, *parts)
-            if not _is_wav(source):
-                raise ValueError("The entry's audio isn't a WAV file.")
-            current = self._audio_path(existing) if existing is not None else None
-            dest = current or os.path.join(folder, parts[1])
-            if current is None:
-                stem, ext = os.path.splitext(parts[1])
-                suffix = 2
-                while os.path.exists(dest):
-                    dest = os.path.join(folder, f"{stem}-{suffix}{ext}")
-                    suffix += 1
-            _move(source, dest)
-            rel = os.path.relpath(dest, self.root).replace(os.sep, "/")
-            audio_file = rel
+            audio_file = self._import_audio(audio_name, files_dir, existing, folder)
         values.update(
             audio_file=audio_file,
             origin_device_id=origin,
-            origin_device_name=(str(device.get("name") or "")[:120] if device else None),
+            origin_device_name=_origin_name(device),
         )
         self.db.put_history_entry(TranscriptionHistory(**values))
         if origin:
             self._apply_retention(origin, record.get("retention"))
         return {"audio": bool(audio_file)}
+
+    def _import_audio(self, audio_name, files_dir: str, existing, folder: str) -> str:
+        """Move the record's WAV into place; its path relative to ``root``."""
+        name = safe_name(audio_name)
+        parts = name.split("/")
+        if len(parts) != 2 or parts[0] != "audio" or not parts[1].lower().endswith(".wav"):
+            raise ValueError("The entry's audio must be one WAV file.")
+        source = os.path.join(files_dir, *parts)
+        if not _is_wav(source):
+            raise ValueError("The entry's audio isn't a WAV file.")
+        # An entry seen before keeps its audio file; a new one gets an unused name.
+        current = self._audio_path(existing) if existing is not None else None
+        dest = current if current is not None else _free_path(folder, parts[1])
+        _move(source, dest)
+        return os.path.relpath(dest, self.root).replace(os.sep, "/")
 
     def _apply_retention(self, device_id: str, retention) -> None:
         """The device's own recording limits, applied to what it keeps here."""
@@ -642,24 +682,8 @@ class MeetingRecords:
 
         models = _meeting_models()
         origin = device.get("id") if device else None
-        session_values = _row_from_json(
-            models["session"], record.get("session"), "session", drop=_LOCAL_SESSION_COLUMNS,
-        )
-        if session_values.get("id") != record_id:
-            raise ValueError("The meeting's id doesn't match the record.")
-        if session_values.get("status") not in _SYNCABLE_STATUSES:
-            raise ValueError("Only finished meetings can be stored.")
-        declared = record.get("files")
-        if not isinstance(declared, dict):
-            raise ValueError("The meeting's file list is missing.")
-        sizes: Dict[str, int] = {}
-        for name, size in declared.items():
-            parts = safe_name(name).split("/")
-            if len(parts) != 2 or parts[0] != "audio":
-                raise ValueError("A meeting's files must be its audio folder.")
-            if isinstance(size, bool) or not isinstance(size, int) or size < 0:
-                raise ValueError("A meeting file's size is invalid.")
-            sizes[parts[1]] = size
+        session_values = _meeting_session_values(models["session"], record, record_id)
+        sizes = _declared_audio_sizes(record.get("files"))
         update = record.get("update") is True
 
         existing = self.repository.get_meeting(record_id)
@@ -669,64 +693,41 @@ class MeetingRecords:
             raise LookupError("Send the whole meeting; this computer doesn't have it yet.")
         staged = os.path.join(files_dir, "audio")
         old_spool = self._spool(existing)
-        for name, size in sizes.items():
-            source = os.path.join(staged, name)
-            if os.path.isfile(source):
-                if name.lower().endswith(".wav") and not _is_wav(source):
-                    raise ValueError(f"The meeting's {name} isn't a WAV file.")
-                continue
-            kept = os.path.join(old_spool, name) if (update and old_spool) else ""
-            if not kept or not os.path.isfile(kept) or os.path.getsize(kept) != size:
-                raise ValueError(f"The meeting's {name} is missing.")
+        # An update sends only the files that changed; the rest must be here already.
+        _check_meeting_audio(sizes, staged, old_spool if update else None)
 
         os.makedirs(self.root, exist_ok=True)
-        if update and old_spool:
-            spool = old_spool
-        else:
-            spool = os.path.join(self.root, record_id[:12])
-            if os.path.exists(spool) and spool != old_spool:
-                spool = os.path.join(self.root, f"{record_id[:12]}-{uuid.uuid4().hex[:6]}")
+        spool = self._import_spool(record_id, old_spool, update)
         host_token, guest_token = generate_token_pair()
         session_values.update(
             host_token=host_token, guest_token=guest_token,
             app_pid=None, app_heartbeat_at=None, spool_dir=spool,
             origin_device_id=origin,
-            origin_device_name=(str(device.get("name") or "")[:120] if device else None),
+            origin_device_name=_origin_name(device),
         )
         rows = self._children(record, record_id, spool, models)
 
-        tombstone = None
-        placed = False
+        audio = _SpoolSwap(self.root, record_id, staged, spool, old_spool)
         try:
             if update and old_spool:
-                for name in sizes:
-                    source = os.path.join(staged, name)
-                    if os.path.isfile(source):
-                        _move(source, os.path.join(spool, name))
+                audio.add_files(sizes)
             else:
-                if old_spool and os.path.isdir(old_spool):
-                    tombstone = os.path.join(self.root, f".deleting-{record_id}-{uuid.uuid4().hex}")
-                    os.replace(old_spool, tombstone)
-                    os.utime(tombstone, None)
-                if os.path.isdir(staged):
-                    _move(staged, spool)
-                else:
-                    os.makedirs(spool, exist_ok=True)
-                placed = True
+                audio.replace()
             self.repository.replace_meeting_rows(record_id, session_values, rows)
         except BaseException:
-            if placed:
-                shutil.rmtree(spool, ignore_errors=True)
-            if tombstone and not os.path.exists(old_spool):
-                try:
-                    os.replace(tombstone, old_spool)
-                    tombstone = None
-                except OSError:
-                    logger.exception("Could not restore a meeting's audio after a failed import")
+            audio.roll_back()
             raise
-        if tombstone:
-            shutil.rmtree(tombstone, ignore_errors=True)
+        audio.discard_old()
         return {"files": len(sizes)}
+
+    def _import_spool(self, record_id: str, old_spool: Optional[str], update: bool) -> str:
+        """The folder an imported meeting's audio goes in."""
+        if update and old_spool:
+            return old_spool
+        spool = os.path.join(self.root, record_id[:12])
+        if os.path.exists(spool) and spool != old_spool:
+            spool = os.path.join(self.root, f"{record_id[:12]}-{uuid.uuid4().hex[:6]}")
+        return spool
 
     def _children(self, record: dict, record_id: str, spool: str, models: dict) -> dict:
         rows: Dict[str, list] = {}
@@ -745,15 +746,7 @@ class MeetingRecords:
                 values = _row_from_json(models[key], item, key, fixed=fixed,
                                         drop=("id",) if key in ("chunks", "events") else ())
                 if key == "chunks":
-                    ref = record[key][len(validated)].get("id")
-                    if isinstance(ref, bool) or not isinstance(ref, int):
-                        raise ValueError("A meeting chunk has no id.")
-                    name = values.get("file_path") or ""
-                    if not name or os.path.basename(name) != name:
-                        raise ValueError("A meeting chunk's file isn't in its folder.")
-                    values["file_path"] = os.path.join(spool, name)
-                    values["chunk_ref"] = ref
-                    refs.add(ref)
+                    refs.add(_place_chunk(values, record[key][len(validated)], spool))
                 validated.append(values)
             rows[key] = validated
         for segment in rows["segments"]:
@@ -794,6 +787,108 @@ class MeetingRecords:
                 with os.scandir(spool) as entries:
                     size += sum(item.stat().st_size for item in entries if item.is_file())
         return {"count": len(spools), "bytes": size}
+
+
+def _meeting_session_values(model, record: dict, record_id: str) -> dict:
+    """The meeting row from ``record``'s session, checked to be this finished meeting."""
+    session_values = _row_from_json(
+        model, record.get("session"), "session", drop=_LOCAL_SESSION_COLUMNS,
+    )
+    if session_values.get("id") != record_id:
+        raise ValueError("The meeting's id doesn't match the record.")
+    if session_values.get("status") not in _SYNCABLE_STATUSES:
+        raise ValueError("Only finished meetings can be stored.")
+    return session_values
+
+
+def _declared_audio_sizes(declared) -> Dict[str, int]:
+    """record.json's ``files`` as {audio file name: size}, or ValueError."""
+    if not isinstance(declared, dict):
+        raise ValueError("The meeting's file list is missing.")
+    sizes: Dict[str, int] = {}
+    for name, size in declared.items():
+        parts = safe_name(name).split("/")
+        if len(parts) != 2 or parts[0] != "audio":
+            raise ValueError("A meeting's files must be its audio folder.")
+        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+            raise ValueError("A meeting file's size is invalid.")
+        sizes[parts[1]] = size
+    return sizes
+
+
+def _check_meeting_audio(sizes: Dict[str, int], staged: str, kept_spool: Optional[str]) -> None:
+    """Each declared file was sent (and a WAV is one) or is kept in ``kept_spool`` at its size."""
+    for name, size in sizes.items():
+        source = os.path.join(staged, name)
+        if os.path.isfile(source):
+            if name.lower().endswith(".wav") and not _is_wav(source):
+                raise ValueError(f"The meeting's {name} isn't a WAV file.")
+            continue
+        kept = os.path.join(kept_spool, name) if kept_spool else ""
+        if not kept or not os.path.isfile(kept) or os.path.getsize(kept) != size:
+            raise ValueError(f"The meeting's {name} is missing.")
+
+
+def _place_chunk(values: dict, raw_chunk: dict, spool: str) -> int:
+    """Point a chunk row at its file in ``spool``; returns the id the sender gave it."""
+    ref = raw_chunk.get("id")
+    if isinstance(ref, bool) or not isinstance(ref, int):
+        raise ValueError("A meeting chunk has no id.")
+    name = values.get("file_path") or ""
+    if not name or os.path.basename(name) != name:
+        raise ValueError("A meeting chunk's file isn't in its folder.")
+    values["file_path"] = os.path.join(spool, name)
+    values["chunk_ref"] = ref
+    return ref
+
+
+class _SpoolSwap:
+    """Puts an imported meeting's audio in its folder, and takes it back out on failure.
+
+    A whole meeting replaces the folder, keeping the old one as a tombstone
+    until its rows are saved; an update only moves in the files it sent.
+    """
+
+    def __init__(self, root: str, record_id: str, staged: str, spool: str,
+                 old_spool: Optional[str]) -> None:
+        self.root = root
+        self.record_id = record_id
+        self.staged = staged
+        self.spool = spool
+        self.old_spool = old_spool
+        self.tombstone: Optional[str] = None
+        self.placed = False
+
+    def add_files(self, names) -> None:
+        for name in names:
+            source = os.path.join(self.staged, name)
+            if os.path.isfile(source):
+                _move(source, os.path.join(self.spool, name))
+
+    def replace(self) -> None:
+        if self.old_spool and os.path.isdir(self.old_spool):
+            self.tombstone = os.path.join(self.root, f".deleting-{self.record_id}-{uuid.uuid4().hex}")
+            os.replace(self.old_spool, self.tombstone)
+            os.utime(self.tombstone, None)
+        if os.path.isdir(self.staged):
+            _move(self.staged, self.spool)
+        else:
+            os.makedirs(self.spool, exist_ok=True)
+        self.placed = True
+
+    def roll_back(self) -> None:
+        if self.placed:
+            shutil.rmtree(self.spool, ignore_errors=True)
+        if self.tombstone and not os.path.exists(self.old_spool):
+            try:
+                os.replace(self.tombstone, self.old_spool)
+                self.tombstone = None
+            except OSError:
+                logger.exception("Could not restore a meeting's audio after a failed import")
+
+    def discard_old(self) -> None:
+        if self.tombstone:
+            shutil.rmtree(self.tombstone, ignore_errors=True)
 
 
 def _meeting_summary(meeting: dict) -> dict:

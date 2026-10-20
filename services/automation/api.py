@@ -29,7 +29,7 @@ the stream ends, so reconnecting with ``Last-Event-ID`` resumes it. A
 """
 
 # No ``from __future__ import annotations``: FastAPI reads the route
-# signatures, whose types are imported inside create_live_router.
+# signatures, whose types are imported inside the _register_*_routes functions.
 import asyncio
 import ipaddress
 import json
@@ -293,9 +293,49 @@ class EventStream:
             self._pending.append(event)
         self._ready.set()
 
+    def _replay(self, events_bus) -> tuple:
+        """The frames that catch this stream up, and the position they leave it at."""
+        last = events_bus.last_seq()
+        replay, gap = events_bus.since(self.replay_from, types=self.types)
+        from_other_session = self.replay_from > last
+        frames = []
+        if gap:
+            # A position past the newest event is from another app
+            # session, whose numbering this one doesn't continue.
+            missed = 1 if from_other_session else self.replay_from + 1
+            frames.append(sse_frame(gap_event(missed, gap), with_id=False))
+        # The stream's position only rises: a live event at or below it
+        # was replayed, or came before the stream's start (the bus's
+        # dispatch can lag behind publishing), and sending it now would
+        # repeat it or put it after newer ones.
+        position = 0 if from_other_session else self.replay_from
+        for event in replay:
+            position = max(position, event.seq)
+            frames.append(sse_frame(event))
+        return frames, position
+
+    def _slow_gap_frame(self, position: int) -> bytes:
+        """The ``events.gap`` that ends a stream whose client fell too far behind."""
+        from services.automation.catalog import GAP_SLOW
+
+        missed = next(
+            (e.seq for e in self._pending if e.seq > position),
+            self._overflow_seq,
+        )
+        self._pending.clear()
+        return sse_frame(gap_event(missed, GAP_SLOW), with_id=False)
+
+    async def _wait_for_events(self, now: float, next_ping: float, next_permission: float) -> None:
+        """Sleep until an event arrives or the next ping, permission or enabled check."""
+        self._ready.clear()
+        wait = min(next_ping, next_permission, now + ENABLED_CHECK_S) - now
+        try:
+            await asyncio.wait_for(self._ready.wait(), timeout=max(0.0, wait))
+        except asyncio.TimeoutError:
+            pass
+
     async def body(self):
         """The response body: bytes of SSE messages."""
-        from services.automation.catalog import GAP_SLOW
         from services.automation.events import bus
 
         loop = self._loop = asyncio.get_running_loop()
@@ -308,22 +348,9 @@ class EventStream:
         )
         try:
             yield b"retry: 2000\n\n"
-            last = events_bus.last_seq()
-            replay, gap = events_bus.since(self.replay_from, types=self.types)
-            from_other_session = self.replay_from > last
-            if gap:
-                # A position past the newest event is from another app
-                # session, whose numbering this one doesn't continue.
-                missed = 1 if from_other_session else self.replay_from + 1
-                yield sse_frame(gap_event(missed, gap), with_id=False)
-            # The stream's position only rises: a live event at or below it
-            # was replayed, or came before the stream's start (the bus's
-            # dispatch can lag behind publishing), and sending it now would
-            # repeat it or put it after newer ones.
-            position = 0 if from_other_session else self.replay_from
-            for event in replay:
-                position = max(position, event.seq)
-                yield sse_frame(event)
+            frames, position = self._replay(events_bus)
+            for frame in frames:
+                yield frame
 
             next_ping = loop.time() + PING_INTERVAL_S
             next_permission = loop.time() + PERMISSION_CHECK_S
@@ -336,12 +363,7 @@ class EventStream:
                 if self._overflow_seq:
                     # The client fell too far behind: say where it lost track
                     # and end, so it reconnects with Last-Event-ID and replays.
-                    missed = next(
-                        (e.seq for e in self._pending if e.seq > position),
-                        self._overflow_seq,
-                    )
-                    self._pending.clear()
-                    yield sse_frame(gap_event(missed, GAP_SLOW), with_id=False)
+                    yield self._slow_gap_frame(position)
                     return
                 if self._pending:
                     event = self._pending.popleft()
@@ -353,43 +375,26 @@ class EventStream:
                     next_ping = now + PING_INTERVAL_S
                     yield b": ping\n\n"
                     continue
-                self._ready.clear()
-                wait = min(next_ping, next_permission, now + ENABLED_CHECK_S) - now
-                try:
-                    await asyncio.wait_for(self._ready.wait(), timeout=max(0.0, wait))
-                except asyncio.TimeoutError:
-                    pass
+                await self._wait_for_events(now, next_ping, next_permission)
         finally:
             self._subscription.close()
 
 
-def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None):
-    """The live routes.
+class _LiveRoutes:
+    """What every live route shares: the saved settings and how failures answer."""
 
-    Args:
-        settings: The app's SettingsManager; None means default settings
-            (live events on, every other permission off).
-        enabled: False once MCP is switched off or the listener is stopping;
-            open event streams end within half a second.
-    """
-    from typing import Annotated
+    def __init__(self, settings, enabled: Optional[Callable[[], bool]]) -> None:
+        self.settings = settings
+        self.is_enabled = enabled if enabled is not None else (lambda: True)
 
-    from fastapi import APIRouter, Header, Path, Query, Request
-    from fastapi.responses import JSONResponse, Response, StreamingResponse
+    def saved(self) -> Mapping[str, Any]:
+        return self.settings.load_all_settings() if self.settings is not None else {}
 
-    from services.agent_api.app import _error
-    from services.automation import filters, permissions
-    from services.automation.control import ControlError, require_app_control
-    from services.automation.events import bus
+    def failure(self, route: str, exc: BaseException):
+        from services.agent_api.app import _error
+        from services.automation import permissions
+        from services.automation.control import ControlError
 
-    router = APIRouter()
-    is_enabled = enabled if enabled is not None else (lambda: True)
-    Id = Annotated[str, Path(min_length=1, max_length=MAX_ID_CHARS)]
-
-    def saved() -> Mapping[str, Any]:
-        return settings.load_all_settings() if settings is not None else {}
-
-    def failure(route: str, exc: BaseException):
         if isinstance(exc, permissions.PermissionDenied):
             return _error(403, "permission_denied", exc.message)
         if isinstance(exc, ControlError):
@@ -399,15 +404,41 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
         _log_failure(route, exc)
         return _error(503, "unavailable", "OpenWhisper couldn't do that right now. Try again.")
 
-    async def respond(route: str, work: Callable[[], Any], *, status: int = 202):
+    async def respond(self, route: str, work: Callable[[], Any], *, status: int = 202):
         """Run ``work`` on a worker thread and answer with its JSON result."""
+        from fastapi.responses import JSONResponse, Response
+
         try:
             result = await asyncio.to_thread(work)
         except Exception as exc:
-            return failure(route, exc)
+            return self.failure(route, exc)
         if result is None:
             return Response(status_code=status)
         return JSONResponse(result, status_code=status)
+
+
+def _id_param():
+    """A path id, as every live route with one takes it."""
+    from typing import Annotated
+
+    from fastapi import Path
+
+    return Annotated[str, Path(min_length=1, max_length=MAX_ID_CHARS)]
+
+
+def _stream_label(client: Optional[str]) -> str:
+    return CHANNEL_LABEL if (client or "").strip() == CHANNEL_CLIENT else SSE_LABEL
+
+
+def _register_state_routes(router, live: _LiveRoutes) -> None:
+    from typing import Annotated
+
+    from fastapi import Header, Query
+    from fastapi.responses import StreamingResponse
+
+    from services.automation import permissions
+    from services.automation.control import require_app_control
+    from services.automation.events import bus
 
     @router.get("/v1/live/state", operation_id="get_live_state")
     async def live_state():
@@ -418,14 +449,14 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
             events_bus = bus()
             return {
                 **current.to_dict(),
-                "permissions": permissions.describe(saved()),
+                "permissions": permissions.describe(live.saved()),
                 "listeners": {
                     "events": events_bus.subscribers(SSE_LABEL),
                     "claude_channel": events_bus.subscribers(CHANNEL_LABEL),
                 },
             }
 
-        return await respond("state", work, status=200)
+        return await live.respond("state", work, status=200)
 
     @router.get("/v1/events", operation_id="stream_events")
     async def stream_events(
@@ -438,20 +469,19 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
         try:
             wanted = parse_types(types)
             resume = parse_last_event_id(last_event_id)
-            await asyncio.to_thread(lambda: permissions.require(saved(), permissions.LIVE_EVENTS))
+            await asyncio.to_thread(lambda: permissions.require(live.saved(), permissions.LIVE_EVENTS))
         except Exception as exc:
-            return failure("events", exc)
+            return live.failure("events", exc)
         # EventSource reconnects to the same URL, so the header is the newer
         # position. Without either, the stream starts at this request.
         if resume is None:
             resume = since if since is not None else bus().last_seq()
-        label = CHANNEL_LABEL if (x_openwhisper_client or "").strip() == CHANNEL_CLIENT else SSE_LABEL
         stream = EventStream(
             types=wanted,
             replay_from=resume,
-            label=label,
-            enabled=is_enabled,
-            allowed=lambda: permissions.granted(saved(), permissions.LIVE_EVENTS),
+            label=_stream_label(x_openwhisper_client),
+            enabled=live.is_enabled,
+            allowed=lambda: permissions.granted(live.saved(), permissions.LIVE_EVENTS),
         )
         return StreamingResponse(
             stream.body(),
@@ -459,10 +489,19 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
             headers={"X-Accel-Buffering": "no"},
         )
 
+
+def _register_action_routes(router, live: _LiveRoutes) -> None:
+    from fastapi import Request
+
+    from services.automation import permissions
+    from services.automation.control import require_app_control
+
+    Id = _id_param()
+
     @router.get("/v1/actions", operation_id="list_actions")
     async def list_actions():
         """The user's enabled actions: id, name, kind, description, spoken names."""
-        return await respond(
+        return await live.respond(
             "actions", lambda: {"actions": require_app_control().list_actions()}, status=200
         )
 
@@ -478,14 +517,21 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
         try:
             body = await read_json_body(request, MAX_RUN_BODY)
         except _Invalid as exc:
-            return failure("run", exc)
+            return live.failure("run", exc)
 
         def work():
-            permissions.require(saved(), permissions.RUN_ACTIONS)
+            permissions.require(live.saved(), permissions.RUN_ACTIONS)
             text = _string(body, "text", required=True, max_chars=MAX_ACTION_TEXT)
             return {"job_id": require_app_control().run_action(action_id, text, source="api")}
 
-        return await respond("run", work)
+        return await live.respond("run", work)
+
+
+def _register_recording_routes(router, live: _LiveRoutes) -> None:
+    from fastapi import Request
+
+    from services.automation import permissions
+    from services.automation.control import require_app_control
 
     @router.post(
         "/v1/recording/start", status_code=202, operation_id="start_recording",
@@ -498,37 +544,54 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
         try:
             body = await read_json_body(request, MAX_SMALL_BODY)
         except _Invalid as exc:
-            return failure("start", exc)
+            return live.failure("start", exc)
 
         def work():
-            permissions.require(saved(), permissions.CONTROL_RECORDING)
+            permissions.require(live.saved(), permissions.CONTROL_RECORDING)
             action_id = _string(body, "action_id", required=False, max_chars=MAX_ID_CHARS)
             job_id = require_app_control().start_recording(action_id=action_id, source="api")
             return {"job_id": job_id}
 
-        return await respond("start", work)
+        return await live.respond("start", work)
 
     @router.post("/v1/recording/stop", status_code=202, operation_id="stop_recording")
     async def stop_recording():
         """Stop the recording; its words are transcribed and delivered as usual."""
 
         def work():
-            permissions.require(saved(), permissions.CONTROL_RECORDING)
+            permissions.require(live.saved(), permissions.CONTROL_RECORDING)
             require_app_control().stop_recording()
             return {}
 
-        return await respond("stop", work)
+        return await live.respond("stop", work)
 
     @router.post("/v1/recording/cancel", status_code=202, operation_id="cancel_recording")
     async def cancel_recording():
         """Throw away the recording or the transcription in progress."""
 
         def work():
-            permissions.require(saved(), permissions.CONTROL_RECORDING)
+            permissions.require(live.saved(), permissions.CONTROL_RECORDING)
             require_app_control().cancel()
             return {}
 
-        return await respond("cancel", work)
+        return await live.respond("cancel", work)
+
+
+def _filter_options(body: Mapping[str, Any]) -> dict:
+    """``register_lease``'s keyword options from a lease request body."""
+    options = {}
+    if body.get("timeout_ms") is not None:
+        timeout_ms = body["timeout_ms"]
+        if not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool):
+            raise _Invalid("timeout_ms must be a whole number of milliseconds.")
+        options["timeout_ms"] = timeout_ms
+    return options
+
+
+def _register_filter_routes(router, live: _LiveRoutes) -> None:
+    from fastapi import Request
+
+    from services.automation import filters, permissions
 
     @router.post(
         "/v1/filters", status_code=201, operation_id="create_filter_lease",
@@ -546,56 +609,65 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
         if not peer_is_local(request):
             # A filter's address is on this computer, which a Tailscale peer
             # must not point OpenWhisper's dictations at.
-            return failure("filters", _Invalid(
+            return live.failure("filters", _Invalid(
                 "Only a program on this computer can lease a text filter.", 403, "forbidden"
             ))
         try:
             body = await read_json_body(request, MAX_SMALL_BODY)
         except _Invalid as exc:
-            return failure("filters", exc)
+            return live.failure("filters", exc)
 
         def work():
-            permissions.require(saved(), permissions.TEXT_FILTERS)
+            permissions.require(live.saved(), permissions.TEXT_FILTERS)
             url = _string(body, "url", required=True, max_chars=MAX_URL_CHARS)
             stage = _string(body, "stage", required=True, max_chars=MAX_ID_CHARS)
-            options = {}
-            if body.get("timeout_ms") is not None:
-                timeout_ms = body["timeout_ms"]
-                if not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool):
-                    raise _Invalid("timeout_ms must be a whole number of milliseconds.")
-                options["timeout_ms"] = timeout_ms
+            options = _filter_options(body)
             try:
                 lease = filters.register_lease(url, stage, **options)
             except ValueError as exc:
                 raise _Invalid(str(exc)) from None
             return _lease_dict(lease)
 
-        return await respond("filters", work, status=201)
+        return await live.respond("filters", work, status=201)
+
+
+def _register_filter_lease_routes(router, live: _LiveRoutes) -> None:
+    from services.automation import filters, permissions
+    from services.automation.control import ControlError
+
+    Id = _id_param()
 
     @router.post("/v1/filters/{lease_id}/renew", operation_id="renew_filter_lease")
     async def renew_filter(lease_id: Id):
         """Keep a leased text filter for another 60 seconds."""
 
         def work():
-            permissions.require(saved(), permissions.TEXT_FILTERS)
+            permissions.require(live.saved(), permissions.TEXT_FILTERS)
             try:
                 return _lease_dict(filters.renew_lease(lease_id))
             except KeyError:
                 raise ControlError("not_found", "That filter lease has expired. Create a new one.") from None
 
-        return await respond("filters", work, status=200)
+        return await live.respond("filters", work, status=200)
 
     @router.delete("/v1/filters/{lease_id}", status_code=204, operation_id="delete_filter_lease")
     async def delete_filter(lease_id: Id):
         """Stop a leased text filter now."""
 
         def work():
-            permissions.require(saved(), permissions.TEXT_FILTERS)
+            permissions.require(live.saved(), permissions.TEXT_FILTERS)
             if not filters.drop_lease(lease_id):
                 raise ControlError("not_found", "That filter lease has expired.")
             return None
 
-        return await respond("filters", work, status=204)
+        return await live.respond("filters", work, status=204)
+
+
+def _register_notify_routes(router, live: _LiveRoutes) -> None:
+    from fastapi import Request
+
+    from services.automation import permissions
+    from services.automation.control import require_app_control
 
     @router.post(
         "/v1/notify", status_code=202, operation_id="notify_user",
@@ -612,10 +684,10 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
         try:
             body = await read_json_body(request, MAX_SMALL_BODY)
         except _Invalid as exc:
-            return failure("notify", exc)
+            return live.failure("notify", exc)
 
         def work():
-            permissions.require(saved(), permissions.RUN_ACTIONS)
+            permissions.require(live.saved(), permissions.RUN_ACTIONS)
             text = _string(body, "text", required=True, max_chars=MAX_NOTICE_TEXT)
             title = _string(body, "title", required=False, max_chars=MAX_NOTICE_TITLE)
             if not text.strip():
@@ -623,6 +695,26 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
             require_app_control().notify(text, title=title)
             return {}
 
-        return await respond("notify", work)
+        return await live.respond("notify", work)
 
+
+def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None):
+    """The live routes.
+
+    Args:
+        settings: The app's SettingsManager; None means default settings
+            (live events on, every other permission off).
+        enabled: False once MCP is switched off or the listener is stopping;
+            open event streams end within half a second.
+    """
+    from fastapi import APIRouter
+
+    router = APIRouter()
+    live = _LiveRoutes(settings, enabled)
+    _register_state_routes(router, live)
+    _register_action_routes(router, live)
+    _register_recording_routes(router, live)
+    _register_filter_routes(router, live)
+    _register_filter_lease_routes(router, live)
+    _register_notify_routes(router, live)
     return router

@@ -87,6 +87,18 @@ _MAX_TOOL_ROUNDS_WITH_RECALL = 3
 #: Low temperature keeps dashboard ops stable across checkpoints; consolidation
 #: especially benefits from less paraphrase drift between runs.
 _TEMPERATURE = 0.0
+#: JSON mode makes one request plus up to two repair rounds.
+_JSON_MODE_ATTEMPTS = 3
+#: Rejections a JSON-mode repair round cannot fix: a person owns the item, or
+#: the agent may no longer write.
+_UNREPAIRABLE_REJECTIONS = frozenset({
+    "human_edited", "human_named", "agent_writes_revoked",
+})
+#: Poll interval while waiting on the network thread.
+_GENERATION_POLL_S = 0.05
+
+_CANCELED = "canceled"
+_DEADLINE_EXCEEDED = "meeting text deadline exceeded"
 
 _DEFAULT_MODELS = {
     "openrouter": config.MEETING_LLM_MODEL,
@@ -272,36 +284,40 @@ class DirectOpenRouterAgent:
                 done.set()
 
         with self._generation_lock:
-            if self._cancel_event.is_set():
-                raise TextGenerationError("canceled")
-            if time.monotonic() >= deadline:
-                raise TextGenerationError("meeting text deadline exceeded")
+            self._raise_if_unwanted(deadline)
             if self._generation_thread is not None and self._generation_thread.is_alive():
                 raise TextGenerationError("previous meeting text request is still ending")
             thread = threading.Thread(target=request, name="meeting-text-request", daemon=True)
             self._generation_thread = thread
             thread.start()
-        while True:
-            if self._cancel_event.is_set():
-                raise TextGenerationError("canceled")
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                # Avoid racing a synchronous socket close against a read.
-                # No tool runs on the network thread, so dropping its output
-                # also revokes every possible late write.
-                raise TextGenerationError("meeting text deadline exceeded")
-            if done.wait(min(0.05, remaining)):
-                break
-        if self._cancel_event.is_set():
-            raise TextGenerationError("canceled")
-        if time.monotonic() >= deadline:
-            raise TextGenerationError("meeting text deadline exceeded")
+        self._wait_for_generation(deadline, done)
+        self._raise_if_unwanted(deadline)
         if "error" in outcome:
             raise outcome["error"]
         # done is set immediately before return; join makes the next tool
         # round safe even when it starts without any scheduler delay.
         thread.join()
         return outcome["value"]
+
+    def _raise_if_unwanted(self, deadline: float) -> None:
+        """Raise when the pass was canceled or its deadline has passed."""
+        if self._cancel_event.is_set():
+            raise TextGenerationError(_CANCELED)
+        if time.monotonic() >= deadline:
+            raise TextGenerationError(_DEADLINE_EXCEEDED)
+
+    def _wait_for_generation(self, deadline: float, done: threading.Event) -> None:
+        while True:
+            if self._cancel_event.is_set():
+                raise TextGenerationError(_CANCELED)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                # Avoid racing a synchronous socket close against a read.
+                # No tool runs on the network thread, so dropping its output
+                # also revokes every possible late write.
+                raise TextGenerationError(_DEADLINE_EXCEEDED)
+            if done.wait(min(_GENERATION_POLL_S, remaining)):
+                return
 
     def _note_error(self, exc: Exception) -> None:
         status = getattr(exc, "status_code", None)
@@ -383,12 +399,12 @@ class DirectOpenRouterAgent:
         for round_index in range(max_rounds):
             if self._cancel_event.is_set():
                 return AgentResult(
-                    ok=False, op_results=op_results, error="canceled", usage=usage,
+                    ok=False, op_results=op_results, error=_CANCELED, usage=usage,
                 )
+            remaining = self._pass_remaining(timeout_s)
+            if remaining <= 0:
+                return AgentResult(ok=False, op_results=op_results, error=_DEADLINE_EXCEEDED, usage=usage)
             try:
-                remaining = min(timeout_s, getattr(self, "_pass_deadline", time.monotonic() + timeout_s) - time.monotonic())
-                if remaining <= 0:
-                    return AgentResult(ok=False, op_results=op_results, error="meeting text deadline exceeded", usage=usage)
                 response = self._generate_before(time.monotonic() + remaining,
                     client.with_options(timeout=remaining), self._profile,
                     cancel_event=self._cancel_event,
@@ -400,9 +416,8 @@ class DirectOpenRouterAgent:
                 )
             except Exception as exc:
                 self._note_error(exc)
-                error = "canceled" if self._cancel_event.is_set() else str(exc)
                 return AgentResult(
-                    ok=False, op_results=op_results, error=error, usage=usage,
+                    ok=False, op_results=op_results, error=self._failure_text(exc), usage=usage,
                 )
             merge_usage(usage, getattr(response, "usage", None))
 
@@ -416,34 +431,8 @@ class DirectOpenRouterAgent:
             messages.append(response.assistant_message)
             for call in tool_calls:
                 if self._cancel_event.is_set():
-                    return AgentResult(ok=False, op_results=op_results, error="canceled", usage=usage)
-                try:
-                    args = json.loads(call.function.arguments or "{}")
-                    if not isinstance(args, dict):
-                        raise ValueError("tool arguments must be a JSON object")
-                    result, results = run_tool(
-                        self._tools, call.function.name, args, scope,
-                    )
-                    op_results.extend(results)
-                    content = tool_result_text(call.function.name, result)
-                except json.JSONDecodeError as exc:
-                    logger.warning(
-                        "Tool call %s produced malformed JSON: %s",
-                        call.function.name, exc,
-                    )
-                    content = json.dumps({
-                        "error": (
-                            f"Your tool call was not valid JSON ({exc}). "
-                            "Re-emit the SAME operations as one valid JSON "
-                            "object, splitting into several smaller tool "
-                            "calls if the batch is long."
-                        ),
-                    })
-                except Exception as exc:
-                    logger.warning(
-                        "Tool call %s failed: %s", call.function.name, exc,
-                    )
-                    content = json.dumps({"error": str(exc)})
+                    return AgentResult(ok=False, op_results=op_results, error=_CANCELED, usage=usage)
+                content = self._run_tool_call(call, scope, op_results)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call.id,
@@ -453,6 +442,45 @@ class DirectOpenRouterAgent:
             # rejections; after the final round no further call is made.
 
         return AgentResult(ok=True, op_results=op_results, usage=usage)
+
+    def _pass_remaining(self, timeout_s: float) -> float:
+        """Seconds the next request may take: its own timeout, capped by the pass deadline."""
+        pass_deadline = getattr(self, "_pass_deadline", time.monotonic() + timeout_s)
+        return min(timeout_s, pass_deadline - time.monotonic())
+
+    def _failure_text(self, exc: Exception) -> str:
+        return _CANCELED if self._cancel_event.is_set() else str(exc)
+
+    def _run_tool_call(self, call: Any, scope: ToolScope,
+                       op_results: List[OpResult]) -> str:
+        """Run one model tool call; returns the tool message content for the model."""
+        try:
+            args = json.loads(call.function.arguments or "{}")
+            if not isinstance(args, dict):
+                raise ValueError("tool arguments must be a JSON object")
+            result, results = run_tool(
+                self._tools, call.function.name, args, scope,
+            )
+            op_results.extend(results)
+            return tool_result_text(call.function.name, result)
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "Tool call %s produced malformed JSON: %s",
+                call.function.name, exc,
+            )
+            return json.dumps({
+                "error": (
+                    f"Your tool call was not valid JSON ({exc}). "
+                    "Re-emit the SAME operations as one valid JSON "
+                    "object, splitting into several smaller tool "
+                    "calls if the batch is long."
+                ),
+            })
+        except Exception as exc:
+            logger.warning(
+                "Tool call %s failed: %s", call.function.name, exc,
+            )
+            return json.dumps({"error": str(exc)})
 
     def _run_json_mode(self, client: Any, system_prompt: str, user_prompt: str,
                        timeout_s: float, scope: ToolScope = ToolScope(),
@@ -468,60 +496,32 @@ class DirectOpenRouterAgent:
         usage: Dict[str, Any] = {}
         all_results: List[OpResult] = []
 
-        for attempt in range(3):
+        for attempt in range(_JSON_MODE_ATTEMPTS):
+            can_repair = attempt < _JSON_MODE_ATTEMPTS - 1
             if self._cancel_event.is_set():
-                return AgentResult(ok=False, op_results=all_results, error="canceled", usage=usage)
+                return AgentResult(ok=False, op_results=all_results, error=_CANCELED, usage=usage)
+            kwargs = self._json_request_kwargs(messages)
+            remaining = self._pass_remaining(timeout_s)
+            if remaining <= 0:
+                return AgentResult(ok=False, op_results=all_results, error=_DEADLINE_EXCEEDED, usage=usage)
             try:
-                kwargs: Dict[str, Any] = {
-                    "model": self._model,
-                    "messages": messages,
-                    "temperature": _TEMPERATURE,
-                }
-                if self._use_json_response_format:
-                    kwargs["response_format"] = {"type": "json_object"}
-                remaining = min(timeout_s, getattr(self, "_pass_deadline", time.monotonic() + timeout_s) - time.monotonic())
-                if remaining <= 0:
-                    return AgentResult(ok=False, op_results=all_results, error="meeting text deadline exceeded", usage=usage)
                 response = self._generate_before(time.monotonic() + remaining,
                                     client.with_options(timeout=remaining), self._profile,
                                     cancel_event=self._cancel_event, **kwargs)
             except Exception as exc:
-                retry_without_format = (
-                    self._use_json_response_format
-                    and self._looks_like_response_format_error(exc)
-                )
-                self._note_error(exc)
-                if retry_without_format:
-                    logger.warning(
-                        "Provider rejected response_format=json_object; "
-                        "retrying without it"
-                    )
-                    self._use_json_response_format = False
+                if self._drop_response_format_after(exc):
                     continue
-                error = "canceled" if self._cancel_event.is_set() else str(exc)
-                return AgentResult(ok=False, error=error, usage=usage)
+                return AgentResult(ok=False, error=self._failure_text(exc), usage=usage)
             merge_usage(usage, getattr(response, "usage", None))
 
             content = response.text
             try:
-                data = json.loads(content)
-                if not isinstance(data, dict):
-                    raise ValueError("response is not a JSON object")
-                ops = data.get("ops")
-                if not isinstance(ops, list):
-                    raise ValueError('missing "ops" list')
+                ops = _parse_ops(content)
             except ValueError as exc:  # includes json.JSONDecodeError
-                if attempt < 2:
+                if can_repair:
                     # One repair retry with the parse error in context.
                     messages.append(response.assistant_message)
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            f"Your previous response was invalid ({exc}). "
-                            'Respond ONLY with a valid JSON object of the '
-                            'form {"ops": [...]}.'
-                        ),
-                    })
+                    messages.append(_invalid_json_feedback(exc))
                     continue
                 return AgentResult(
                     ok=False, op_results=all_results, error=f"invalid JSON from model: {exc}",
@@ -537,27 +537,84 @@ class DirectOpenRouterAgent:
                 r for r in op_results
                 if not r.ok and r.reason not in PASS_REJECTIONS
             ]
-            repairable = [r for r in rejected if r.reason not in {
-                "human_edited", "human_named", "agent_writes_revoked",
-            }]
-            if repairable and attempt < 2:
+            repairable = [r for r in rejected if r.reason not in _UNREPAIRABLE_REJECTIONS]
+            if repairable and can_repair:
                 messages.append(response.assistant_message)
-                messages.append({"role": "user", "content": (
-                    "Operation results: " + json.dumps(op_results_payload(op_results))
-                    + "\nCorrect the rejected operations using these reasons and current "
-                    "revisions. Do not repeat successful operations or retry protected "
-                    "human items. Emit only the remaining warranted changes as "
-                    'a JSON object of the form {"ops": [...]}.'
-                )})
+                messages.append(_rejected_ops_feedback(op_results))
                 continue
-            failed = bool(repairable) or (
-                bool(rejected) and not any(r.ok for r in all_results)
-            )
-            return AgentResult(
-                ok=not failed, op_results=all_results, usage=usage,
-                error=("Unapplied operations: " + ", ".join(
-                    sorted({str(r.reason) for r in rejected})
-                )) if failed else None,
-            )
+            return _json_pass_result(rejected, repairable, all_results, usage)
 
         return AgentResult(ok=False, error="json_mode_exhausted", usage=usage)
+
+    def _json_request_kwargs(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": _TEMPERATURE,
+        }
+        if self._use_json_response_format:
+            kwargs["response_format"] = {"type": "json_object"}
+        return kwargs
+
+    def _drop_response_format_after(self, exc: Exception) -> bool:
+        """Record a failed JSON-mode request.
+
+        Returns True, having turned ``response_format`` off, when the provider
+        rejected it and the request should simply be retried without it.
+        """
+        retry_without_format = (
+            self._use_json_response_format
+            and self._looks_like_response_format_error(exc)
+        )
+        self._note_error(exc)
+        if retry_without_format:
+            logger.warning(
+                "Provider rejected response_format=json_object; "
+                "retrying without it"
+            )
+            self._use_json_response_format = False
+        return retry_without_format
+
+
+def _parse_ops(content: Any) -> List[Any]:
+    """The ``ops`` list of a JSON-mode response; ValueError when malformed."""
+    data = json.loads(content)
+    if not isinstance(data, dict):
+        raise ValueError("response is not a JSON object")
+    ops = data.get("ops")
+    if not isinstance(ops, list):
+        raise ValueError('missing "ops" list')
+    return ops
+
+
+def _invalid_json_feedback(exc: Exception) -> Dict[str, Any]:
+    return {
+        "role": "user",
+        "content": (
+            f"Your previous response was invalid ({exc}). "
+            'Respond ONLY with a valid JSON object of the '
+            'form {"ops": [...]}.'
+        ),
+    }
+
+
+def _rejected_ops_feedback(op_results: List[OpResult]) -> Dict[str, Any]:
+    return {"role": "user", "content": (
+        "Operation results: " + json.dumps(op_results_payload(op_results))
+        + "\nCorrect the rejected operations using these reasons and current "
+        "revisions. Do not repeat successful operations or retry protected "
+        "human items. Emit only the remaining warranted changes as "
+        'a JSON object of the form {"ops": [...]}.'
+    )}
+
+
+def _json_pass_result(rejected: List[OpResult], repairable: List[OpResult],
+                      all_results: List[OpResult], usage: Dict[str, Any]) -> AgentResult:
+    failed = bool(repairable) or (
+        bool(rejected) and not any(r.ok for r in all_results)
+    )
+    error = None
+    if failed:
+        reasons = sorted({str(r.reason) for r in rejected})
+        error = "Unapplied operations: " + ", ".join(reasons)
+    return AgentResult(ok=not failed, op_results=all_results, usage=usage, error=error)

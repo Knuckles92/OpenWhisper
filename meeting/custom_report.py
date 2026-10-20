@@ -286,6 +286,20 @@ def build_digest(meeting: Dict[str, Any], state: Dict[str, Any],
         A briefing-shaped rendering, clipped to ``DIGEST_CHARS``.
     """
     participants = state.get("participants") or {}
+    out = _digest_header(meeting, state, corpus, participants)
+    out += _digest_topic_and_summary(state)
+    out += _digest_corrections(state)
+    out += _digest_cards(state, participants)
+    out += _digest_questions(state)
+
+    digest = "\n".join(out)
+    if len(digest) <= DIGEST_CHARS:
+        return digest
+    return digest[:DIGEST_CHARS].rstrip() + "\n[… dashboard digest truncated …]"
+
+
+def _digest_header(meeting: Dict[str, Any], state: Dict[str, Any],
+                   corpus: TranscriptCorpus, participants: Dict[str, Any]) -> List[str]:
     out: List[str] = []
     title = state.get("title") or meeting.get("title") or "Untitled meeting"
     out.append(f"Meeting: {title}")
@@ -303,7 +317,11 @@ def build_digest(meeting: Dict[str, Any], state: Dict[str, Any],
     ]
     if names:
         out.append(f"People: {', '.join(names)}")
+    return out
 
+
+def _digest_topic_and_summary(state: Dict[str, Any]) -> List[str]:
+    out: List[str] = []
     topic = (state.get("topic") or {}).get("current")
     if topic:
         out.append("")
@@ -313,20 +331,28 @@ def build_digest(meeting: Dict[str, Any], state: Dict[str, Any],
         out.append("")
         out.append("Summary recorded at the end of the meeting:")
         out.append(str(summary))
+    return out
 
+
+def _digest_corrections(state: Dict[str, Any]) -> List[str]:
     corrections = [
         q.get("correction")
         for q in ((state.get("insight_review") or {}).get("questions") or [])
         if isinstance(q, dict) and q.get("correction") and not q.get("superseded")
     ]
-    if corrections:
-        out.append("")
-        out.append(
-            "Participant corrections (these supersede anything that "
-            "contradicts them):"
-        )
-        out.extend(f"- {text}" for text in corrections)
+    if not corrections:
+        return []
+    out = [
+        "",
+        "Participant corrections (these supersede anything that "
+        "contradicts them):",
+    ]
+    out.extend(f"- {text}" for text in corrections)
+    return out
 
+
+def _digest_cards(state: Dict[str, Any], participants: Dict[str, Any]) -> List[str]:
+    out: List[str] = []
     cards = state.get("cards") or {}
     for card, heading in _CARD_SECTIONS:
         items = _live(cards.get(card))
@@ -336,7 +362,11 @@ def build_digest(meeting: Dict[str, Any], state: Dict[str, Any],
         out.append(f"{heading}:")
         for item in items:
             out.append(f"- {_digest_item(item, card, participants)}")
+    return out
 
+
+def _digest_questions(state: Dict[str, Any]) -> List[str]:
+    out: List[str] = []
     questions = state.get("questions") or []
     answered = [
         q for q in questions
@@ -354,11 +384,7 @@ def build_digest(meeting: Dict[str, Any], state: Dict[str, Any],
         out.append("")
         out.append("Questions left unanswered:")
         out.extend(f"- {q.get('text')}" for q in open_questions)
-
-    digest = "\n".join(out)
-    if len(digest) <= DIGEST_CHARS:
-        return digest
-    return digest[:DIGEST_CHARS].rstrip() + "\n[… dashboard digest truncated …]"
+    return out
 
 
 def _digest_item(item: Dict[str, Any], card: str,
@@ -683,13 +709,7 @@ def generate_report(
     Raises:
         ReportUnavailable: With a message safe to show the participant.
     """
-    request = (request or "").strip()
-    if not request:
-        raise ReportUnavailable("Describe the report you want.")
-    if len(request) > MAX_REQUEST_CHARS:
-        raise ReportUnavailable(
-            f"Keep the request under {MAX_REQUEST_CHARS} characters."
-        )
+    request = _validated_request(request)
 
     from services.settings import MeetingAgentCore
 
@@ -698,9 +718,6 @@ def generate_report(
             meeting, state, segments, request, agent_id=provider, model=model,
             repository=repository, timeout_s=timeout_s, cancel_event=cancel_event,
         )
-
-    from meeting.agent.base import merge_usage
-    from services.text_generation import TextGenerationError, generate
 
     if client is None or profile is None:
         profile, client = _build_client(provider, model, endpoint, timeout_s)
@@ -729,58 +746,10 @@ def generate_report(
         },
     ]
     deadline = time.monotonic() + timeout_s
-    usage: Dict[str, Any] = {}
-    markdown = ""
+    report = _ReportPass(client, profile, model, tools, dispatch, cancel_event)
+    report.run(messages, deadline)
 
-    for round_index in range(MAX_TOOL_ROUNDS if tools else 1):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise ReportUnavailable(
-                "The report took too long to write. Try a narrower request."
-            )
-        last_round = tools and round_index == MAX_TOOL_ROUNDS - 1
-        if last_round:
-            messages.append({
-                "role": "user",
-                "content": (
-                    "Stop reading and write the report now from what you "
-                    "have, noting anything you could not confirm."
-                ),
-            })
-        try:
-            result = generate(
-                client.with_options(timeout=remaining)
-                if hasattr(client, "with_options") else client,
-                profile,
-                model=model,
-                messages=messages,
-                tools=tools if (tools and not last_round) else None,
-                cancel_event=cancel_event,
-                temperature=TEMPERATURE,
-            )
-        except TextGenerationError as exc:
-            raise ReportUnavailable(str(exc)) from exc
-        except Exception as exc:
-            logger.exception("Report generation call failed")
-            raise ReportUnavailable(
-                "The report model could not be reached. Check the meeting "
-                "text endpoint and retry."
-            ) from exc
-
-        merge_usage(usage, result.usage)
-        markdown = (result.text or "").strip() or markdown
-        calls = list(result.tool_calls or [])
-        if not calls:
-            break
-        messages.append(result.assistant_message)
-        for call in calls:
-            messages.append({
-                "role": "tool",
-                "tool_call_id": call.id,
-                "content": _run_tool(dispatch, call),
-            })
-
-    markdown = _clean_markdown(markdown)
+    markdown = _clean_markdown(report.markdown)
     if not markdown:
         raise ReportUnavailable(
             "The report came back empty. Try rephrasing the request."
@@ -799,8 +768,91 @@ def generate_report(
         "markdown": markdown,
         "title": report_title(markdown, request),
         "sources": sources,
-        "usage": usage,
+        "usage": report.usage,
     }
+
+
+def _validated_request(request: str) -> str:
+    request = (request or "").strip()
+    if not request:
+        raise ReportUnavailable("Describe the report you want.")
+    if len(request) > MAX_REQUEST_CHARS:
+        raise ReportUnavailable(
+            f"Keep the request under {MAX_REQUEST_CHARS} characters."
+        )
+    return request
+
+
+class _ReportPass:
+    """The model's read rounds for one report; its last text is the report."""
+
+    def __init__(self, client: Any, profile: Any, model: str, tools: List[Dict[str, Any]],
+                 dispatch: Callable[[str, Dict[str, Any]], str],
+                 cancel_event: Optional[threading.Event]) -> None:
+        self.client = client
+        self.profile = profile
+        self.model = model
+        self.tools = tools
+        self.dispatch = dispatch
+        self.cancel_event = cancel_event
+        self.usage: Dict[str, Any] = {}
+        self.markdown = ""
+
+    def run(self, messages: List[Dict[str, Any]], deadline: float) -> None:
+        from meeting.agent.base import merge_usage
+
+        for round_index in range(MAX_TOOL_ROUNDS if self.tools else 1):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ReportUnavailable(
+                    "The report took too long to write. Try a narrower request."
+                )
+            last_round = self.tools and round_index == MAX_TOOL_ROUNDS - 1
+            if last_round:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Stop reading and write the report now from what you "
+                        "have, noting anything you could not confirm."
+                    ),
+                })
+            result = self._generate(messages, remaining, last_round)
+            merge_usage(self.usage, result.usage)
+            self.markdown = (result.text or "").strip() or self.markdown
+            calls = list(result.tool_calls or [])
+            if not calls:
+                break
+            messages.append(result.assistant_message)
+            for call in calls:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": _run_tool(self.dispatch, call),
+                })
+
+    def _generate(self, messages: List[Dict[str, Any]], remaining: float, last_round: Any) -> Any:
+        from services.text_generation import TextGenerationError, generate
+
+        client = self.client
+        try:
+            return generate(
+                client.with_options(timeout=remaining)
+                if hasattr(client, "with_options") else client,
+                self.profile,
+                model=self.model,
+                messages=messages,
+                tools=self.tools if (self.tools and not last_round) else None,
+                cancel_event=self.cancel_event,
+                temperature=TEMPERATURE,
+            )
+        except TextGenerationError as exc:
+            raise ReportUnavailable(str(exc)) from exc
+        except Exception as exc:
+            logger.exception("Report generation call failed")
+            raise ReportUnavailable(
+                "The report model could not be reached. Check the meeting "
+                "text endpoint and retry."
+            ) from exc
 
 
 #: The report is the agent's closing reply, so it must be nothing else.

@@ -62,6 +62,20 @@ class AudioFilePreview:
 _SMOOTH_BLOCK_SAMPLES = 1 << 22
 
 
+def _raise_if_canceled(should_cancel: Optional[Callable[[], bool]]) -> None:
+    if should_cancel is not None and should_cancel():
+        raise RuntimeError("Transcription canceled")
+
+
+def _nonempty_samples(converted_frames, should_cancel=None):
+    """Yield each converted frame's samples as a flat array, skipping empty frames."""
+    for converted in converted_frames:
+        _raise_if_canceled(should_cancel)
+        samples = converted.to_ndarray().reshape(-1)
+        if samples.size:
+            yield samples
+
+
 def _moving_average(samples: np.ndarray, window: int) -> np.ndarray:
     """Centered boxcar mean — ``np.convolve(x, ones(w)/w, "same")``, in O(n).
 
@@ -210,14 +224,10 @@ class AudioProcessor:
         budget. One extra sample provides lookahead so an exact-sized final
         chunk does not create an extra chunk containing only overlap.
         """
-        def check_cancel():
-            if should_cancel is not None and should_cancel():
-                raise RuntimeError("Transcription canceled")
-
         chunk_files = []
         temp_dir = None
         try:
-            check_cancel()
+            _raise_if_canceled(should_cancel)
             if progress_callback:
                 progress_callback("Decoding and splitting audio...")
             temp_dir = tempfile.mkdtemp(prefix="audio_chunks_")
@@ -225,42 +235,16 @@ class AudioProcessor:
             self.temp_files.append(temp_dir)
 
             def save_chunk(samples, rate):
-                check_cancel()
+                _raise_if_canceled(should_cancel)
                 filename = os.path.join(temp_dir, f"chunk_{len(chunk_files):03d}.wav")
                 self._save_audio_chunk(samples, rate, filename)
                 chunk_files.append(filename)
                 if progress_callback:
                     progress_callback(f"Created audio chunk {len(chunk_files)}...")
 
-            pending = None
-            count = prefix = 0
             with closing(self._iter_audio_blocks(audio_path, should_cancel)) as blocks:
-                for samples, sample_rate, _channels in blocks:
-                    check_cancel()
-                    if pending is None:
-                        max_samples, overlap = self._chunk_limits(sample_rate)
-                        pending = np.empty(max_samples + 1, dtype=np.int16)
-                    cursor = 0
-                    while cursor < len(samples):
-                        check_cancel()
-                        take = min(len(pending) - count, len(samples) - cursor)
-                        pending[count:count + take] = samples[cursor:cursor + take]
-                        count += take
-                        cursor += take
-                        if count <= max_samples:
-                            continue
-                        boundary = self._chunk_boundary(
-                            pending[:max_samples], sample_rate, prefix, overlap, should_cancel
-                        )
-                        save_chunk(pending[:boundary + overlap], sample_rate)
-                        retain = boundary - overlap
-                        remaining = count - retain
-                        pending[:remaining] = pending[retain:count].copy()
-                        count = remaining
-                        prefix = overlap
-                if count:
-                    save_chunk(pending[:count], sample_rate)
-            check_cancel()
+                self._split_blocks(blocks, save_chunk, should_cancel)
+            _raise_if_canceled(should_cancel)
 
             logger.info(f"Successfully split audio into {len(chunk_files)} chunks")
             return chunk_files
@@ -270,10 +254,43 @@ class AudioProcessor:
             # Only this operation's files are owned here; another completed
             # operation may still be uploading files from the same processor.
             if temp_dir is not None:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                if temp_dir in self.temp_files:
-                    self.temp_files.remove(temp_dir)
+                self._discard_temp_dir(temp_dir)
             raise
+
+    def _split_blocks(self, blocks, save_chunk, should_cancel) -> None:
+        """Fill one upload window from ``blocks`` and cut it at a silence each time it overflows."""
+        pending = None
+        count = prefix = 0
+        for samples, sample_rate, _channels in blocks:
+            _raise_if_canceled(should_cancel)
+            if pending is None:
+                max_samples, overlap = self._chunk_limits(sample_rate)
+                pending = np.empty(max_samples + 1, dtype=np.int16)
+            cursor = 0
+            while cursor < len(samples):
+                _raise_if_canceled(should_cancel)
+                take = min(len(pending) - count, len(samples) - cursor)
+                pending[count:count + take] = samples[cursor:cursor + take]
+                count += take
+                cursor += take
+                if count <= max_samples:
+                    continue
+                boundary = self._chunk_boundary(
+                    pending[:max_samples], sample_rate, prefix, overlap, should_cancel
+                )
+                save_chunk(pending[:boundary + overlap], sample_rate)
+                retain = boundary - overlap
+                remaining = count - retain
+                pending[:remaining] = pending[retain:count].copy()
+                count = remaining
+                prefix = overlap
+        if count:
+            save_chunk(pending[:count], sample_rate)
+
+    def _discard_temp_dir(self, temp_dir: str) -> None:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        if temp_dir in self.temp_files:
+            self.temp_files.remove(temp_dir)
 
     def _load_audio_data(self, audio_path: str) -> Tuple[np.ndarray, int]:
         audio_data, sample_rate, _ = self._load_audio_metadata(audio_path)
@@ -334,21 +351,15 @@ class AudioProcessor:
                 raise ValueError("Invalid audio sample rate")
             converter = av.AudioResampler(format="s16", layout="mono", rate=sample_rate)
             for frame in container.decode(audio=0):
-                if should_cancel is not None and should_cancel():
-                    raise RuntimeError("Transcription canceled")
+                _raise_if_canceled(should_cancel)
                 frame.pts = None
-                for converted in converter.resample(frame):
-                    samples = converted.to_ndarray().reshape(-1)
-                    if samples.size:
-                        found_audio = True
-                        yield samples, sample_rate, channels
-            for converted in converter.resample(None):
-                if should_cancel is not None and should_cancel():
-                    raise RuntimeError("Transcription canceled")
-                samples = converted.to_ndarray().reshape(-1)
-                if samples.size:
+                for samples in _nonempty_samples(converter.resample(frame)):
                     found_audio = True
                     yield samples, sample_rate, channels
+            # Flushing the resampler drains what it buffered after the last frame.
+            for samples in _nonempty_samples(converter.resample(None), should_cancel):
+                found_audio = True
+                yield samples, sample_rate, channels
         if not found_audio:
             raise UnreadableAudioError("This file has no audio in it.")
 
@@ -409,8 +420,7 @@ class AudioProcessor:
         best_silence_quality = float('inf')
 
         for i in search_range:
-            if should_cancel is not None and should_cancel():
-                raise RuntimeError("Transcription canceled")
+            _raise_if_canceled(should_cancel)
             if i + silence_samples >= len(audio_smooth):
                 continue
 

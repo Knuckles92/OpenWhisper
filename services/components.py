@@ -60,6 +60,12 @@ COMPONENT_API: Final[int] = 1
 _SIDECAR_BUNDLE_NAME: Final[str] = "bundle.cjs"
 _NODE_EXE_NAME: Final[str] = "node.exe"
 _NODE_BIN_NAME: Final[str] = "node"
+# rwxr-xr-x: the extracted Node binary must be executable by the sidecar launcher.
+_NODE_BIN_MODE: Final[int] = (
+    stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
+    | stat.S_IRGRP | stat.S_IXGRP
+    | stat.S_IROTH | stat.S_IXOTH
+)
 
 # Pi bundle versions already reported as out of date. The payload is resolved
 # on every Settings open and meeting start; one warning per version is enough.
@@ -734,6 +740,68 @@ def _source_sidecar_payload_dir() -> Optional[str]:
     return None
 
 
+def _installed_pi_payload_dir() -> Optional[str]:
+    """The installed meeting-agent tree when it can run; otherwise log why and return None."""
+    installed = component_dir(ComponentId.MEETING_AGENT)
+    manifest = read_manifest(ComponentId.MEETING_AGENT)
+    if manifest is None:
+        # Sentinel-bearing trees with missing/malformed manifests are broken;
+        # never treat them as a runnable payload.
+        logger.warning(
+            "meeting-agent install is present but its manifest is missing "
+            "or invalid; checking the source sidecar build"
+        )
+        return None
+    if _installed_pi_payload_runnable(installed, manifest):
+        return installed
+    return None
+
+
+def _installed_pi_payload_runnable(installed: str, manifest: dict) -> bool:
+    incompatible = check_compatibility(manifest)
+    runtime = os.path.join(
+        installed, _node_runtime_name(manifest.get("platform"))
+    )
+    if incompatible:
+        logger.warning(
+            "meeting-agent install is incompatible: %s", incompatible
+        )
+        return False
+    if _pi_bundle_outdated(manifest.get("version")):
+        # The handshake would refuse it. AI insights need an updated
+        # component or another agent; recording remains available.
+        _warn_outdated_pi_once(str(manifest.get("version")))
+        return False
+    if not _payload_has_sidecar_bundle(installed):
+        logger.warning(
+            "meeting-agent component is installed but missing %s",
+            _SIDECAR_BUNDLE_NAME,
+        )
+        return False
+    if not os.path.isfile(runtime):
+        logger.warning(
+            "meeting-agent component is installed but missing %s",
+            os.path.basename(runtime),
+        )
+        return False
+    if not sys.platform.startswith("win") and not os.access(runtime, os.X_OK):
+        logger.warning(
+            "meeting-agent node runtime is not executable: %s", runtime
+        )
+        return False
+    return True
+
+
+def _warn_outdated_pi_once(version: str) -> None:
+    if version in _warned_outdated_pi_versions:
+        return
+    _warned_outdated_pi_versions.add(version)
+    logger.warning(
+        "meeting-agent %s is out of date; update it from "
+        "Downloads", version,
+    )
+
+
 def meeting_agent_payload_dir(kind: str = "pi") -> Optional[str]:
     """Resolve the selected harness payload (Pi by default).
 
@@ -757,53 +825,9 @@ def meeting_agent_payload_dir(kind: str = "pi") -> Optional[str]:
     if kind != "pi":
         return None
     if is_installed(ComponentId.MEETING_AGENT):
-        installed = component_dir(ComponentId.MEETING_AGENT)
-        manifest = read_manifest(ComponentId.MEETING_AGENT)
-        if manifest is None:
-            # Sentinel-bearing trees with missing/malformed manifests are broken;
-            # never treat them as a runnable payload.
-            logger.warning(
-                "meeting-agent install is present but its manifest is missing "
-                "or invalid; checking the source sidecar build"
-            )
-        else:
-            incompatible = check_compatibility(manifest)
-            runtime = os.path.join(
-                installed, _node_runtime_name(manifest.get("platform"))
-            )
-            if incompatible:
-                logger.warning(
-                    "meeting-agent install is incompatible: %s", incompatible
-                )
-            elif _pi_bundle_outdated(manifest.get("version")):
-                # The handshake would refuse it. AI insights need an updated
-                # component or another agent; recording remains available.
-                version = str(manifest.get("version"))
-                if version not in _warned_outdated_pi_versions:
-                    _warned_outdated_pi_versions.add(version)
-                    logger.warning(
-                        "meeting-agent %s is out of date; update it from "
-                        "Downloads", version,
-                    )
-            elif not _payload_has_sidecar_bundle(installed):
-                logger.warning(
-                    "meeting-agent component is installed but missing %s",
-                    _SIDECAR_BUNDLE_NAME,
-                )
-            elif not os.path.isfile(runtime):
-                logger.warning(
-                    "meeting-agent component is installed but missing %s",
-                    os.path.basename(runtime),
-                )
-            elif (
-                not sys.platform.startswith("win")
-                and not os.access(runtime, os.X_OK)
-            ):
-                logger.warning(
-                    "meeting-agent node runtime is not executable: %s", runtime
-                )
-            else:
-                return installed
+        installed = _installed_pi_payload_dir()
+        if installed is not None:
+            return installed
     return _source_sidecar_payload_dir()
 
 
@@ -1369,15 +1393,7 @@ def _safe_extract_node_exe(
         progress(InstallPhase.EXTRACTING, 1, 1)
 
 
-def _safe_extract_node_tar(
-    archive_path: str,
-    target_dir: str,
-    progress: ProgressCallback,
-    cancel: threading.Event,
-    *,
-    member_name: str,
-) -> None:
-    """Extract only the Node binary from an official Linux or macOS tar.xz."""
+def _checked_node_member_name(member_name: str) -> str:
     raw_member = (member_name or "").replace("\\", "/")
     # Reject absolute configured names before any stripping so the contract is
     # exact against the archive member path.
@@ -1388,26 +1404,79 @@ def _safe_extract_node_tar(
         or ".." in raw_member.split("/")
     ):
         raise ComponentError("The Node package path is invalid.")
-    expected = raw_member
+    return raw_member
 
+
+def _select_node_tar_member(archive: tarfile.TarFile, expected: str) -> tarfile.TarInfo:
+    """The one regular, non-empty member named ``expected``; every path is checked first."""
     selected = None
-    with tarfile.open(archive_path, mode="r:*") as archive:
-        for member in archive.getmembers():
-            name = str(member.name or "").replace("\\", "/")
-            if name.startswith("/") or ".." in name.split("/"):
-                raise ComponentError(f"Archive contains an unsafe path: {name}")
-            if name != expected:
-                continue
-            if selected is not None:
-                raise ComponentError("The Node package contained duplicate node binaries.")
-            if not member.isfile() or member.issym() or member.islnk():
-                raise ComponentError("The Node package node member is not a regular file.")
-            if member.size <= 0:
-                raise ComponentError("The Node package node member is empty.")
-            selected = member
+    for member in archive.getmembers():
+        name = str(member.name or "").replace("\\", "/")
+        if name.startswith("/") or ".." in name.split("/"):
+            raise ComponentError(f"Archive contains an unsafe path: {name}")
+        if name != expected:
+            continue
+        if selected is not None:
+            raise ComponentError("The Node package contained duplicate node binaries.")
+        if not member.isfile() or member.issym() or member.islnk():
+            raise ComponentError("The Node package node member is not a regular file.")
+        if member.size <= 0:
+            raise ComponentError("The Node package node member is empty.")
+        selected = member
 
-        if selected is None:
-            raise ComponentError("The Node package did not contain the expected node binary.")
+    if selected is None:
+        raise ComponentError("The Node package did not contain the expected node binary.")
+    return selected
+
+
+def _copy_node_binary(
+    source,
+    tmp_fd: int,
+    total: int,
+    progress: ProgressCallback,
+    cancel: threading.Event,
+) -> None:
+    copied = 0
+    with os.fdopen(tmp_fd, "wb") as out:
+        while True:
+            if cancel.is_set():
+                raise ComponentCanceled()
+            chunk = source.read(_CHUNK_BYTES)
+            if not chunk:
+                break
+            out.write(chunk)
+            copied += len(chunk)
+            progress(InstallPhase.EXTRACTING, min(copied, total), total)
+
+
+def _close_quietly(stream) -> None:
+    try:
+        stream.close()
+    except Exception:
+        pass
+
+
+def _unlink_if_exists(path: str) -> None:
+    if os.path.exists(path):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _safe_extract_node_tar(
+    archive_path: str,
+    target_dir: str,
+    progress: ProgressCallback,
+    cancel: threading.Event,
+    *,
+    member_name: str,
+) -> None:
+    """Extract only the Node binary from an official Linux or macOS tar.xz."""
+    expected = _checked_node_member_name(member_name)
+
+    with tarfile.open(archive_path, mode="r:*") as archive:
+        selected = _select_node_tar_member(archive, expected)
         if cancel.is_set():
             raise ComponentCanceled()
 
@@ -1419,36 +1488,14 @@ def _safe_extract_node_tar(
         destination = os.path.join(target_dir, _NODE_BIN_NAME)
         tmp_fd, tmp_path = tempfile.mkstemp(prefix="node.", dir=target_dir)
         try:
-            copied = 0
             total = int(selected.size)
-            with os.fdopen(tmp_fd, "wb") as out:
-                while True:
-                    if cancel.is_set():
-                        raise ComponentCanceled()
-                    chunk = source.read(_CHUNK_BYTES)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-                    copied += len(chunk)
-                    progress(InstallPhase.EXTRACTING, min(copied, total), total)
-            os.chmod(
-                tmp_path,
-                stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
-                | stat.S_IRGRP | stat.S_IXGRP
-                | stat.S_IROTH | stat.S_IXOTH,
-            )
+            _copy_node_binary(source, tmp_fd, total, progress, cancel)
+            os.chmod(tmp_path, _NODE_BIN_MODE)
             os.replace(tmp_path, destination)
             progress(InstallPhase.EXTRACTING, total, total)
         finally:
-            try:
-                source.close()
-            except Exception:
-                pass
-            if os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+            _close_quietly(source)
+            _unlink_if_exists(tmp_path)
 
 
 def _safe_extract_nemo_tar(
@@ -1506,81 +1553,138 @@ _MACOS_WHEEL_RUNTIME_FILES: Final[Mapping[str, Tuple[str, ...]]] = MappingProxyT
 })
 
 
+_SPEECH_RUNTIME_INCOMPLETE: Final[str] = "The speech runtime is missing required files."
+_MLX_RUNTIME_FILES: Final[Tuple[str, ...]] = (
+    "parakeet_mlx/__init__.py",
+    "mlx/nn/__init__.py",
+    "mlx/lib/libmlx.dylib",
+    "mlx/lib/mlx.metallib",
+    "librosa/__init__.py",
+    "dacite/__init__.py",
+)
+_NODE_PROBE_TIMEOUT_S: Final[int] = 10
+
+
+def _require_files(root: str, names, message: str) -> None:
+    if any(not os.path.isfile(os.path.join(root, name)) for name in names):
+        raise ComponentError(message)
+
+
 def _validate_component_payload(component_id: str, target_dir: str) -> None:
     if component_id == ComponentId.MEETING_AGENT_OPENCODE:
         from services.opencode_component import validate_payload
         validate_payload(target_dir)
         return
     if component_id in RUNTIME_IDS:
-        tag = current_platform_tag()
-        if tag in (PLATFORM_DARWIN_ARM64, PLATFORM_DARWIN_X86_64):
-            if component_id in _MACOS_WHEEL_RUNTIME_FILES:
-                packages = os.path.join(target_dir, "site-packages")
-                if any(
-                    not os.path.isfile(os.path.join(packages, name))
-                    for name in _MACOS_WHEEL_RUNTIME_FILES[component_id]
-                ):
-                    raise ComponentError("The speech runtime is missing required files.")
-                return
-            if component_id == ComponentId.ASR_PARAKEET_MLX:
-                packages = os.path.join(target_dir, "site-packages")
-                required = ("parakeet_mlx/__init__.py", "mlx/nn/__init__.py", "mlx/lib/libmlx.dylib", "mlx/lib/mlx.metallib", "librosa/__init__.py", "dacite/__init__.py")
-                if any(not os.path.isfile(os.path.join(packages, name)) for name in required):
-                    raise ComponentError("The MLX speech runtime is missing required files.")
-                if not any(name.startswith("core.") and name.endswith(".so") for name in os.listdir(os.path.join(packages, "mlx"))):
-                    raise ComponentError("The MLX speech runtime is missing its native extension.")
-                return
-            lib_dir = os.path.join(target_dir, "nemo-speech", "lib")
-            required = ["libnemo_speech_asr_c.dylib"]
-            if component_id == ComponentId.ASR_NVIDIA_METAL:
-                required.append("libggml-metal.dylib")
-            elif component_id != ComponentId.ASR_NVIDIA_CPU:
-                raise ComponentError("The speech runtime is missing required files.")
-            if any(not os.path.isfile(os.path.join(lib_dir, name)) for name in required):
-                raise ComponentError("The speech runtime is missing required files.")
-            return
-        if tag == PLATFORM_LINUX_X86_64:
-            library = os.path.join(target_dir, "nemo-speech", "lib", "libnemo_speech_asr_c.so")
-            if not component_id.startswith("asr-nvidia") or not os.path.isfile(library):
-                raise ComponentError("The speech runtime is missing required files.")
-            return
-        required = ["python.exe", "python312.dll", "python312.zip"]
-        if component_id.startswith("asr-nvidia"):
-            required.append("bin/nemo_speech_asr_c.dll")
-        elif component_id == "asr-qwen":
-            required.extend(["qwen_asr/__init__.py", "torch/__init__.py"])
-        else:
-            required.append("moonshine_voice/__init__.py")
-        if any(not os.path.isfile(os.path.join(target_dir, name)) for name in required):
-            raise ComponentError("The speech runtime is missing required files.")
-        # Embedded Python searches only the verified component, never the
-        # application's site-packages or PYTHONPATH.
-        with open(os.path.join(target_dir, "python312._pth"), "w", encoding="utf-8") as output:
-            output.write("python312.zip\n.\nimport site\n")
+        _validate_speech_runtime(component_id, target_dir)
         return
     if component_id == ComponentId.GPU_ACCEL:
-        linux = current_platform_tag() == PLATFORM_LINUX_X86_64
-        library_dir = os.path.join(target_dir, "lib" if linux else "bin")
-        required = _REQUIRED_GPU_SHARED_OBJECTS if linux else _REQUIRED_GPU_DLLS
-        try:
-            names = {name.casefold() for name in os.listdir(library_dir)}
-        except OSError as exc:
-            raise ComponentError("The GPU component has no library folder.") from exc
-
-        missing = [name for name in required if name.casefold() not in names]
-        if missing:
-            raise ComponentError(
-                "The GPU component is missing required libraries: "
-                + ", ".join(missing)
-            )
+        _validate_gpu_payload(target_dir)
         return
-
     if component_id != ComponentId.MEETING_AGENT:
         return
+    _validate_meeting_agent_payload(target_dir)
 
+
+def _validate_speech_runtime(component_id: str, target_dir: str) -> None:
+    tag = current_platform_tag()
+    if tag in (PLATFORM_DARWIN_ARM64, PLATFORM_DARWIN_X86_64):
+        _validate_macos_speech_runtime(component_id, target_dir)
+        return
+    if tag == PLATFORM_LINUX_X86_64:
+        library = os.path.join(target_dir, "nemo-speech", "lib", "libnemo_speech_asr_c.so")
+        if not component_id.startswith("asr-nvidia") or not os.path.isfile(library):
+            raise ComponentError(_SPEECH_RUNTIME_INCOMPLETE)
+        return
+    _validate_windows_speech_runtime(component_id, target_dir)
+
+
+def _validate_macos_speech_runtime(component_id: str, target_dir: str) -> None:
+    if component_id in _MACOS_WHEEL_RUNTIME_FILES:
+        packages = os.path.join(target_dir, "site-packages")
+        _require_files(packages, _MACOS_WHEEL_RUNTIME_FILES[component_id], _SPEECH_RUNTIME_INCOMPLETE)
+        return
+    if component_id == ComponentId.ASR_PARAKEET_MLX:
+        _validate_mlx_runtime(target_dir)
+        return
+    lib_dir = os.path.join(target_dir, "nemo-speech", "lib")
+    required = ["libnemo_speech_asr_c.dylib"]
+    if component_id == ComponentId.ASR_NVIDIA_METAL:
+        required.append("libggml-metal.dylib")
+    elif component_id != ComponentId.ASR_NVIDIA_CPU:
+        raise ComponentError(_SPEECH_RUNTIME_INCOMPLETE)
+    _require_files(lib_dir, required, _SPEECH_RUNTIME_INCOMPLETE)
+
+
+def _validate_mlx_runtime(target_dir: str) -> None:
+    packages = os.path.join(target_dir, "site-packages")
+    _require_files(packages, _MLX_RUNTIME_FILES, "The MLX speech runtime is missing required files.")
+    mlx_files = os.listdir(os.path.join(packages, "mlx"))
+    if not any(name.startswith("core.") and name.endswith(".so") for name in mlx_files):
+        raise ComponentError("The MLX speech runtime is missing its native extension.")
+
+
+def _validate_windows_speech_runtime(component_id: str, target_dir: str) -> None:
+    required = ["python.exe", "python312.dll", "python312.zip"]
+    if component_id.startswith("asr-nvidia"):
+        required.append("bin/nemo_speech_asr_c.dll")
+    elif component_id == "asr-qwen":
+        required.extend(["qwen_asr/__init__.py", "torch/__init__.py"])
+    else:
+        required.append("moonshine_voice/__init__.py")
+    _require_files(target_dir, required, _SPEECH_RUNTIME_INCOMPLETE)
+    # Embedded Python searches only the verified component, never the
+    # application's site-packages or PYTHONPATH.
+    with open(os.path.join(target_dir, "python312._pth"), "w", encoding="utf-8") as output:
+        output.write("python312.zip\n.\nimport site\n")
+
+
+def _validate_gpu_payload(target_dir: str) -> None:
+    linux = current_platform_tag() == PLATFORM_LINUX_X86_64
+    library_dir = os.path.join(target_dir, "lib" if linux else "bin")
+    required = _REQUIRED_GPU_SHARED_OBJECTS if linux else _REQUIRED_GPU_DLLS
+    try:
+        names = {name.casefold() for name in os.listdir(library_dir)}
+    except OSError as exc:
+        raise ComponentError("The GPU component has no library folder.") from exc
+
+    missing = [name for name in required if name.casefold() not in names]
+    if missing:
+        raise ComponentError(
+            "The GPU component is missing required libraries: "
+            + ", ".join(missing)
+        )
+
+
+def _validate_meeting_agent_payload(target_dir: str) -> None:
     runtime_name = _node_runtime_name()
     runtime_path = os.path.join(target_dir, runtime_name)
     bundle_path = os.path.join(target_dir, _SIDECAR_BUNDLE_NAME)
+    _check_meeting_agent_files(runtime_name, runtime_path, bundle_path)
+
+    # Bounded structural probes — never start the sidecar or leak secrets.
+    version = _run_node_probe(
+        [runtime_path, "--version"], "Could not start the bundled Node runtime"
+    )
+    if version.returncode != 0:
+        raise ComponentError("The bundled Node runtime failed --version.")
+    reported = (version.stdout or "").strip()
+    # node --version prints a single line like "v22.23.2". Require exact match
+    # (allowing only surrounding whitespace) — substring checks would accept
+    # v22.23.20 for a pin of 22.23.2.
+    expected_version = f"v{MEETING_AGENT_NODE_VERSION}"
+    if reported != expected_version:
+        raise ComponentError(
+            f"The bundled Node runtime reported {reported or 'an unexpected version'}."
+        )
+    checked = _run_node_probe(
+        [runtime_path, "--check", bundle_path], "Could not validate the sidecar bundle"
+    )
+    if checked.returncode != 0:
+        raise ComponentError("The sidecar bundle failed Node syntax validation.")
+
+
+def _check_meeting_agent_files(runtime_name: str, runtime_path: str, bundle_path: str) -> None:
     missing = [
         name for name, path in (
             (runtime_name, runtime_path),
@@ -1599,42 +1703,20 @@ def _validate_component_payload(component_id: str, target_dir: str) -> None:
     if not sys.platform.startswith("win") and not os.access(runtime_path, os.X_OK):
         raise ComponentError("The meeting agent node runtime is not executable.")
 
-    # Bounded structural probes — never start the sidecar or leak secrets.
+
+def _run_node_probe(command: list, failure: str) -> subprocess.CompletedProcess:
+    """Run one bounded Node check; failing to start it raises ``ComponentError("<failure>: <exc>")``."""
     try:
-        version = subprocess.run(
-            [runtime_path, "--version"],
+        return subprocess.run(
+            command,
             check=False,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=_NODE_PROBE_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
         )
     except Exception as exc:
-        raise ComponentError(f"Could not start the bundled Node runtime: {exc}") from exc
-    if version.returncode != 0:
-        raise ComponentError("The bundled Node runtime failed --version.")
-    reported = (version.stdout or "").strip()
-    # node --version prints a single line like "v22.23.2". Require exact match
-    # (allowing only surrounding whitespace) — substring checks would accept
-    # v22.23.20 for a pin of 22.23.2.
-    expected_version = f"v{MEETING_AGENT_NODE_VERSION}"
-    if reported != expected_version:
-        raise ComponentError(
-            f"The bundled Node runtime reported {reported or 'an unexpected version'}."
-        )
-    try:
-        checked = subprocess.run(
-            [runtime_path, "--check", bundle_path],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            stdin=subprocess.DEVNULL,
-        )
-    except Exception as exc:
-        raise ComponentError(f"Could not validate the sidecar bundle: {exc}") from exc
-    if checked.returncode != 0:
-        raise ComponentError("The sidecar bundle failed Node syntax validation.")
+        raise ComponentError(f"{failure}: {exc}") from exc
 
 
 def _replace_speech_runtime(source: str, destination: str, cancel: threading.Event) -> None:
@@ -1701,15 +1783,61 @@ def _install_component(
     install_bytes = int(entry.get("install_bytes", 0))
     _check_free_space(download_total + install_bytes)
 
+    archive_paths = _download_archives(component_id, archives, download_total, progress, cancel)
+
+    staging = os.path.join(staging_dir(), f"{component_id}.{os.getpid()}")
+    _rmtree(staging)
+    os.makedirs(staging, exist_ok=True)
+
+    destination = component_dir(component_id)
+    rollback = destination + ".old"
+    try:
+        for archive, archive_path in zip(archives, archive_paths):
+            _extract_archive(archive, archive_path, staging, progress, cancel)
+
+        _validate_component_payload(component_id, staging)
+        if cancel.is_set():
+            raise ComponentCanceled()
+
+        progress(InstallPhase.FINALIZING, 0, 0)
+        _write_install_markers(staging, entry)
+
+        _rmtree(rollback)
+        _swap_into_place(component_id, staging, destination, rollback, cancel)
+
+        # Only drop the previous tree and cached archives once the new install
+        # is committed in place.
+        _rmtree(rollback)
+        _discard_cached_archives(archive_paths)
+
+        logger.info(f"Installed component '{component_id}' version {entry.get('version')}")
+    except ComponentError:
+        raise
+    except OSError as exc:
+        raise ComponentError(_describe_disk_error(exc)) from exc
+    finally:
+        if os.path.isdir(staging):
+            _rmtree(staging)
+
+
+def _download_archives(
+    component_id: str,
+    archives: list,
+    download_total: int,
+    progress: ProgressCallback,
+    cancel: threading.Event,
+) -> list:
+    """Fetch every archive not already cached; returns their cache paths in order."""
+    # Speech runtimes and OpenCode re-check a cached archive before reusing it.
+    recheck_cached = (
+        component_id in RUNTIME_IDS or component_id == ComponentId.MEETING_AGENT_OPENCODE
+    )
     archive_paths = []
     consumed = 0
     for archive in archives:
         target = os.path.join(cache_dir(), archive["name"])
-        if (component_id in RUNTIME_IDS or component_id == ComponentId.MEETING_AGENT_OPENCODE) and os.path.exists(target):
-            with open(target, "rb") as cached_archive:
-                digest = hashlib.file_digest(cached_archive, "sha256").hexdigest()
-            if digest != archive["sha256"] or os.path.getsize(target) != archive["size_bytes"]:
-                os.unlink(target)
+        if recheck_cached and os.path.exists(target):
+            _discard_mismatched_archive(target, archive)
         if not os.path.exists(target):
             _download_verified(
                 archive["url"],
@@ -1723,104 +1851,111 @@ def _install_component(
             )
         consumed += int(archive.get("size_bytes", 0))
         archive_paths.append(target)
+    return archive_paths
 
-    staging = os.path.join(staging_dir(), f"{component_id}.{os.getpid()}")
-    _rmtree(staging)
-    os.makedirs(staging, exist_ok=True)
 
-    destination = component_dir(component_id)
-    rollback = destination + ".old"
-    try:
-        for archive, archive_path in zip(archives, archive_paths):
-            extract = archive.get("extract")
-            if extract == "nvidia-wheel":
-                _safe_extract_nvidia_wheel(
-                    archive_path, staging, progress, cancel
-                )
-            elif extract == "python-wheel":
-                _safe_extract(archive_path, os.path.join(staging, "site-packages"), progress, cancel)
-            elif extract == "node-exe":
-                _safe_extract_node_exe(
-                    archive_path, staging, progress, cancel
-                )
-            elif extract == "node-tar":
-                _safe_extract_node_tar(
-                    archive_path,
-                    staging,
-                    progress,
-                    cancel,
-                    member_name=str(archive.get("member") or ""),
-                )
-            elif extract == "nemo-tar":
-                _safe_extract_nemo_tar(
-                    archive_path,
-                    staging,
-                    progress,
-                    cancel,
-                    root=str(archive.get("root") or "nemo-speech"),
-                )
-            else:
-                _safe_extract(archive_path, staging, progress, cancel)
+def _discard_mismatched_archive(target: str, archive: Mapping) -> None:
+    with open(target, "rb") as cached_archive:
+        digest = hashlib.file_digest(cached_archive, "sha256").hexdigest()
+    if digest != archive["sha256"] or os.path.getsize(target) != archive["size_bytes"]:
+        os.unlink(target)
 
-        _validate_component_payload(component_id, staging)
-        if cancel.is_set():
-            raise ComponentCanceled()
 
-        progress(InstallPhase.FINALIZING, 0, 0)
-        with open(os.path.join(staging, _MANIFEST_NAME), "w", encoding="utf-8") as out:
-            json.dump(entry, out, indent=2)
-        # Sentinel last: its presence is what makes the tree count as complete.
-        with open(os.path.join(staging, _SENTINEL_NAME), "w", encoding="utf-8") as out:
-            out.write(str(entry.get("version", "")))
-
-        moved_aside = False
-        _rmtree(rollback)
+def _discard_cached_archives(archive_paths: list) -> None:
+    for archive_path in archive_paths:
         try:
-            if os.path.isdir(destination):
-                if component_id in RUNTIME_IDS:
-                    _replace_speech_runtime(destination, rollback, cancel)
-                else:
-                    os.replace(destination, rollback)
-                moved_aside = True
-            if component_id in RUNTIME_IDS:
-                _replace_speech_runtime(staging, destination, cancel)
-            else:
-                os.replace(staging, destination)
-        except (OSError, ComponentCanceled) as exc:
-            # Second rename failed after the live tree was moved aside: restore
-            # the previous install before surfacing the error.
-            if moved_aside and os.path.isdir(rollback) and not os.path.isdir(destination):
-                try:
-                    if component_id in RUNTIME_IDS:
-                        _replace_speech_runtime(rollback, destination, threading.Event())
-                    else:
-                        os.replace(rollback, destination)
-                except OSError:
-                    logger.exception(
-                        "Failed to restore previous %s install after swap error",
-                        component_id,
-                    )
-            if isinstance(exc, ComponentCanceled):
-                raise
-            raise ComponentError(_describe_disk_error(exc)) from exc
+            os.unlink(archive_path)
+        except OSError:
+            pass
 
-        # Only drop the previous tree and cached archives once the new install
-        # is committed in place.
-        _rmtree(rollback)
-        for archive_path in archive_paths:
-            try:
-                os.unlink(archive_path)
-            except OSError:
-                pass
 
-        logger.info(f"Installed component '{component_id}' version {entry.get('version')}")
-    except ComponentError:
-        raise
-    except OSError as exc:
+def _extract_archive(
+    archive: Mapping,
+    archive_path: str,
+    staging: str,
+    progress: ProgressCallback,
+    cancel: threading.Event,
+) -> None:
+    extract = archive.get("extract")
+    if extract == "nvidia-wheel":
+        _safe_extract_nvidia_wheel(
+            archive_path, staging, progress, cancel
+        )
+    elif extract == "python-wheel":
+        _safe_extract(archive_path, os.path.join(staging, "site-packages"), progress, cancel)
+    elif extract == "node-exe":
+        _safe_extract_node_exe(
+            archive_path, staging, progress, cancel
+        )
+    elif extract == "node-tar":
+        _safe_extract_node_tar(
+            archive_path,
+            staging,
+            progress,
+            cancel,
+            member_name=str(archive.get("member") or ""),
+        )
+    elif extract == "nemo-tar":
+        _safe_extract_nemo_tar(
+            archive_path,
+            staging,
+            progress,
+            cancel,
+            root=str(archive.get("root") or "nemo-speech"),
+        )
+    else:
+        _safe_extract(archive_path, staging, progress, cancel)
+
+
+def _write_install_markers(staging: str, entry: dict) -> None:
+    with open(os.path.join(staging, _MANIFEST_NAME), "w", encoding="utf-8") as out:
+        json.dump(entry, out, indent=2)
+    # Sentinel last: its presence is what makes the tree count as complete.
+    with open(os.path.join(staging, _SENTINEL_NAME), "w", encoding="utf-8") as out:
+        out.write(str(entry.get("version", "")))
+
+
+def _move_component_tree(
+    component_id: str, source: str, destination: str, cancel: threading.Event
+) -> None:
+    if component_id in RUNTIME_IDS:
+        _replace_speech_runtime(source, destination, cancel)
+    else:
+        os.replace(source, destination)
+
+
+def _swap_into_place(
+    component_id: str,
+    staging: str,
+    destination: str,
+    rollback: str,
+    cancel: threading.Event,
+) -> None:
+    """Move the live tree to ``rollback`` and ``staging`` into its place."""
+    moved_aside = False
+    try:
+        if os.path.isdir(destination):
+            _move_component_tree(component_id, destination, rollback, cancel)
+            moved_aside = True
+        _move_component_tree(component_id, staging, destination, cancel)
+    except (OSError, ComponentCanceled) as exc:
+        # Second rename failed after the live tree was moved aside: restore
+        # the previous install before surfacing the error.
+        if moved_aside and os.path.isdir(rollback) and not os.path.isdir(destination):
+            _restore_previous_install(component_id, rollback, destination)
+        if isinstance(exc, ComponentCanceled):
+            raise
         raise ComponentError(_describe_disk_error(exc)) from exc
-    finally:
-        if os.path.isdir(staging):
-            _rmtree(staging)
+
+
+def _restore_previous_install(component_id: str, rollback: str, destination: str) -> None:
+    try:
+        _move_component_tree(component_id, rollback, destination, threading.Event())
+    except OSError:
+        logger.exception(
+            "Failed to restore previous %s install after swap error",
+            component_id,
+        )
 
 
 def _uninstall_component(component_id: str) -> None:
@@ -2051,8 +2186,12 @@ class ComponentCoordinator:
         from services.opencode_component import runnable as opencode_runnable
         if incompatible:
             state, reason = ComponentState.INCOMPATIBLE, incompatible
-        elif component_id == ComponentId.MEETING_AGENT_OPENCODE and not opencode_runnable(component_dir(component_id)):
-            state, reason = ComponentState.BROKEN, "OpenCode files are missing or incompatible. Reinstall this component."
+        elif (
+            component_id == ComponentId.MEETING_AGENT_OPENCODE
+            and not opencode_runnable(component_dir(component_id))
+        ):
+            state = ComponentState.BROKEN
+            reason = "OpenCode files are missing or incompatible. Reinstall this component."
         elif outdated:
             # Say what the user gets, since an update is their choice: a slimmer
             # payload reclaims disk, and the row already shows the download size.

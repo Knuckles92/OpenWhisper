@@ -1338,7 +1338,9 @@ class HostDashboard(QWidget):
             self._pairing_code = ""
         self._show_pairing()
         tailnet = state.get("tailscale")
-        owner = getattr(tailnet, "owner", "") if tailnet is not None and getattr(tailnet, "running", False) else ""
+        owner = ""
+        if tailnet is not None and getattr(tailnet, "running", False):
+            owner = getattr(tailnet, "owner", "")
         if not running:
             note = "Start sharing to pair a computer."
         elif owner and state.get("tailscale_trust"):
@@ -1419,7 +1421,8 @@ class HostDashboard(QWidget):
             details = []
             paired = _paired_on(device.get("paired_at", ""))
             if paired:
-                details.append(f"Paired {paired}" + (" over Tailscale" if device.get("via") == "tailscale" else ""))
+                over = " over Tailscale" if device.get("via") == "tailscale" else ""
+                details.append(f"Paired {paired}{over}")
             # Counted even while keeping records is off: what's kept stays.
             stored = self._stored_phrase(self._device_records(device_id)) if device_id else ""
             if stored:
@@ -1591,7 +1594,8 @@ class HostDashboard(QWidget):
         remote_url = getattr(status, "remote_url", "")
         self.mcp_copy_prompt.setEnabled(state == "running")
         self.mcp_copy_token.setEnabled(state == "running")
-        intro = (("Agents on this computer and over Tailscale" if remote_url else "Agents on this computer") + ", such as Claude Code or Cursor, can search "
+        reach = "Agents on this computer and over Tailscale" if remote_url else "Agents on this computer"
+        intro = (reach + ", such as Claude Code or Cursor, can search "
                  "the dictations and meetings saved here. Choose permissions for title "
                  "and settings changes in Settings → MCP.")
         if (self._state or {}).get("keep_records"):
@@ -1601,7 +1605,10 @@ class HostDashboard(QWidget):
         if state == "running":
             text, dot = f"Running at {remote_url or status.url}", EngineStatus.READY
             if not remote_url:
-                detail = detail or "For an agent on another computer, enable Allow agents over Tailscale in Settings → MCP."
+                detail = detail or (
+                    "For an agent on another computer, "
+                    "enable Allow agents over Tailscale in Settings → MCP."
+                )
         elif state == "starting":
             text, dot = "Starting…", EngineStatus.UNKNOWN
         elif state == "stopping":

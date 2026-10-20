@@ -198,7 +198,7 @@ def transcribe_session_audio(
     collected: List[TranscriptSegment] = []
     keep_from_s = float(origin_s)
     total_windows = len(ranges)
-    channel_display = "Microphone" if channel == "mic" else "System Audio" if channel == "loopback" else channel.capitalize()
+    channel_display = _channel_display_name(channel)
 
     for idx, (start, end) in enumerate(ranges, 1):
         window = frames[start:end]
@@ -206,64 +206,32 @@ def transcribe_session_audio(
         if audio.size == 0:
             continue
         window_origin = float(origin_s) + start / float(sample_rate)
+        window_end = window_origin + (end - start) / float(sample_rate)
         prompt = " ".join(prompt_words[-DRAFT_PROMPT_WORDS:]).strip() or None
 
         if progress_cb is not None:
-            win_dur_s = (end - start) / float(sample_rate)
             detail = (
                 f"{channel_display}: decoding window {idx}/{total_windows} "
-                f"({window_origin:.1f}s - {window_origin + win_dur_s:.1f}s)"
+                f"({window_origin:.1f}s - {window_end:.1f}s)"
             )
-            try:
-                progress_cb(detail, idx, total_windows)
-            except Exception:
-                logger.exception("Offline ASR progress callback failed")
+            _report_progress(progress_cb, detail, idx, total_windows)
 
         try:
-            whisper_segments, _info = model.transcribe(
-                audio,
-                beam_size=int(beam_size),
-                vad_filter=True,
-                word_timestamps=False,
-                language=language,
-                # Same as live draft: prompt-tail continuity, no Whisper
-                # auto-feedback. True+long-prompt skipped most of IN1009.
-                condition_on_previous_text=False,
-                initial_prompt=prompt,
+            whisper_segments = _decode_window(
+                model, audio, beam_size=beam_size, language=language, prompt=prompt,
             )
-            # faster-whisper returns a lazy iterator, so consume it inside the
-            # guarded region.  A failure in any window must invalidate the
-            # entire offline pass; otherwise callers can mistake a transcript
-            # with a missing middle section for a complete replacement.
-            whisper_segments = list(whisper_segments)
         except Exception as exc:
             logger.exception(
                 "Offline ASR window failed (%s %.1f-%.1fs)",
-                channel, window_origin,
-                window_origin + (end - start) / float(sample_rate),
+                channel, window_origin, window_end,
             )
             raise OfflineWindowError(
                 f"Offline ASR failed for {channel} window "
                 f"{idx}/{total_windows} at {window_origin:.1f}s"
             ) from exc
-        decoded: List[TranscriptSegment] = []
-        for ordinal, seg in enumerate(whisper_segments):
-            text = (seg.text or "").strip()
-            if not text or is_hallucination(seg):
-                continue
-            start_s = window_origin + float(seg.start)
-            end_s = window_origin + float(seg.end)
-            decoded.append(TranscriptSegment(
-                segment_id=offline_segment_id(
-                    meeting_id, channel, start_s, ordinal
-                ),
-                meeting_id=meeting_id,
-                chunk_id=None,
-                channel=channel,
-                start_s=start_s,
-                end_s=end_s,
-                text=text,
-            ))
+        decoded = _window_transcript_segments(
+            whisper_segments, window_origin, meeting_id=meeting_id, channel=channel,
+        )
         kept = drop_overlapped_prefix(decoded, keep_from_s)
         if kept:
             # Later window owns the overlap: drop earlier segments that start
@@ -277,6 +245,81 @@ def transcribe_session_audio(
             prompt_words.extend(seg.text.split())
         keep_from_s = float(origin_s) + end / float(sample_rate)
     return collected
+
+
+_CHANNEL_DISPLAY_NAMES = {"mic": "Microphone", "loopback": "System Audio"}
+
+
+def _channel_display_name(channel: str) -> str:
+    name = _CHANNEL_DISPLAY_NAMES.get(channel)
+    if name is not None:
+        return name
+    return channel.capitalize()
+
+
+def _report_progress(
+    progress_cb: Callable[[str, int, int], None], detail: str, current: int, total: int,
+) -> None:
+    try:
+        progress_cb(detail, current, total)
+    except Exception:
+        logger.exception("Offline ASR progress callback failed")
+
+
+def _decode_window(
+    model: Any,
+    audio: np.ndarray,
+    *,
+    beam_size: int,
+    language: Optional[str],
+    prompt: Optional[str],
+) -> List[Any]:
+    """Decode one window and materialize every Whisper segment."""
+    whisper_segments, _info = model.transcribe(
+        audio,
+        beam_size=int(beam_size),
+        vad_filter=True,
+        word_timestamps=False,
+        language=language,
+        # Same as live draft: prompt-tail continuity, no Whisper
+        # auto-feedback. True+long-prompt skipped most of IN1009.
+        condition_on_previous_text=False,
+        initial_prompt=prompt,
+    )
+    # faster-whisper returns a lazy iterator, so consume it inside the
+    # caller's guarded region.  A failure in any window must invalidate the
+    # entire offline pass; otherwise callers can mistake a transcript
+    # with a missing middle section for a complete replacement.
+    return list(whisper_segments)
+
+
+def _window_transcript_segments(
+    whisper_segments: Sequence[Any],
+    window_origin: float,
+    *,
+    meeting_id: str,
+    channel: str,
+) -> List[TranscriptSegment]:
+    """Meeting-clock transcript segments for one window, minus hallucinations."""
+    decoded: List[TranscriptSegment] = []
+    for ordinal, seg in enumerate(whisper_segments):
+        text = (seg.text or "").strip()
+        if not text or is_hallucination(seg):
+            continue
+        start_s = window_origin + float(seg.start)
+        end_s = window_origin + float(seg.end)
+        decoded.append(TranscriptSegment(
+            segment_id=offline_segment_id(
+                meeting_id, channel, start_s, ordinal
+            ),
+            meeting_id=meeting_id,
+            chunk_id=None,
+            channel=channel,
+            start_s=start_s,
+            end_s=end_s,
+            text=text,
+        ))
+    return decoded
 
 
 def load_channel_session(

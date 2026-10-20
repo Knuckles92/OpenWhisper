@@ -229,13 +229,17 @@ class Bars(Visual):
             angle = f * math.tau - math.pi / 2
             glow = max(0.0, 1.0 - ((f - head) % 1.0) * 3.2)
             inner, length = 9.0, 4 + 9 * (0.35 * h + 0.65 * glow)
-            a = lerp_point(QPointF(x0, CENTER_Y - (1.5 + self.HALF * h)),
-                           QPointF(cx + inner * math.cos(angle), cy + inner * math.sin(angle)), morph)
-            b = lerp_point(QPointF(x0, CENTER_Y + (1.5 + self.HALF * h)),
-                           QPointF(cx + (inner + length) * math.cos(angle), cy + (inner + length) * math.sin(angle)),
-                           morph)
+            # Each bar's ends travel to a spoke's inner and outer ends.
+            cos_a, sin_a = math.cos(angle), math.sin(angle)
+            bar_top = QPointF(x0, CENTER_Y - (1.5 + self.HALF * h))
+            bar_bottom = QPointF(x0, CENTER_Y + (1.5 + self.HALF * h))
+            spoke_in = QPointF(cx + inner * cos_a, cy + inner * sin_a)
+            spoke_out = QPointF(cx + (inner + length) * cos_a, cy + (inner + length) * sin_a)
+            a = lerp_point(bar_top, spoke_in, morph)
+            b = lerp_point(bar_bottom, spoke_out, morph)
             alpha = 80 + 175 * max(glow * morph, (1 - morph) * (0.4 + h))
-            painter.setPen(QPen(hue_color(hue + f * 60, alpha), self.BAR, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.setPen(QPen(hue_color(hue + f * 60, alpha), self.BAR,
+                                Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             painter.drawLine(a, b)
 
 
@@ -344,14 +348,18 @@ class Aurora(Visual):
                 else:
                     path.moveTo(point)
             color = hue + k * 45 + hue_drift
-            painter.setPen(QPen(hue_color(color, 60), pen + 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.setPen(QPen(hue_color(color, 60), pen + 4,
+                                Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             painter.drawPath(path)
             painter.setPen(QPen(hue_color(color, 230), pen, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             painter.drawPath(path)
 
     def draw(self, painter, grow):
-        specs = [(freq, self._phase * (1 + 0.3 * k) + shift, (1.5 + 19.0 * self._amplitude * (1.0 - 0.22 * k)) * grow, pen)
-                 for k, (freq, shift, pen) in enumerate(self.WAVES)]
+        specs = []
+        for k, (freq, shift, pen) in enumerate(self.WAVES):
+            phase = self._phase * (1 + 0.3 * k) + shift
+            amplitude = (1.5 + 19.0 * self._amplitude * (1.0 - 0.22 * k)) * grow
+            specs.append((freq, phase, amplitude, pen))
         self._draw_waves(painter, specs)
 
     def draw_work(self, painter, morph, clock):

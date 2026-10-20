@@ -225,23 +225,13 @@ def plan_expansion(text: str, snippets: Sequence[Snippet]) -> SnippetPlan:
         # would replace the wrong text.
         return SnippetPlan(text)
 
-    by_first_word: dict[str, list[tuple[Snippet, list[str]]]] = {}
-    for position in sorted(
-        range(len(keyed)),
-        key=lambda i: (-len(keyed[i][1]), -len(" ".join(keyed[i][1])), i),
-    ):
-        snippet, trigger_words = keyed[position]
-        by_first_word.setdefault(trigger_words[0], []).append((snippet, trigger_words))
+    by_first_word = _triggers_by_first_word(keyed)
     pieces: list[str] = []
     placeholders: list[tuple[str, Snippet]] = []
     cursor = index = 0
     while index < len(words):
-        match = None
-        for snippet, trigger_words in by_first_word.get(spoken[index], ()):
-            count = len(trigger_words)
-            if spoken[index:index + count] == trigger_words and _contiguous(text, words, index, count):
-                match = snippet, count
-                break
+        candidates = by_first_word.get(spoken[index], ())
+        match = _trigger_at(text, words, spoken, index, candidates)
         if match is None:
             index += 1
             continue
@@ -255,6 +245,29 @@ def plan_expansion(text: str, snippets: Sequence[Snippet]) -> SnippetPlan:
         return SnippetPlan(text)
     pieces.append(text[cursor:])
     return SnippetPlan("".join(pieces), placeholders=tuple(placeholders))
+
+
+def _triggers_by_first_word(
+    keyed: list[tuple[Snippet, list[str]]],
+) -> dict[str, list[tuple[Snippet, list[str]]]]:
+    """Triggers grouped by their first word, longest first, then in list order."""
+    by_first_word: dict[str, list[tuple[Snippet, list[str]]]] = {}
+    for position in sorted(
+        range(len(keyed)),
+        key=lambda i: (-len(keyed[i][1]), -len(" ".join(keyed[i][1])), i),
+    ):
+        snippet, trigger_words = keyed[position]
+        by_first_word.setdefault(trigger_words[0], []).append((snippet, trigger_words))
+    return by_first_word
+
+
+def _trigger_at(text: str, words, spoken: list[str], index: int, candidates):
+    """``(snippet, word count)`` of the first candidate spoken at ``index``, or None."""
+    for snippet, trigger_words in candidates:
+        count = len(trigger_words)
+        if spoken[index:index + count] == trigger_words and _contiguous(text, words, index, count):
+            return snippet, count
+    return None
 
 
 def _contiguous(text: str, words, index: int, count: int) -> bool:

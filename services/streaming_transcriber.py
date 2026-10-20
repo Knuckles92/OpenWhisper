@@ -165,6 +165,14 @@ class StreamingTranscriber:
 
     # Queue poll while idle; stop and cancel wake the worker with _WAKE instead.
     _POLL_SEC = 0.1
+    # Words of the previous window the next one may repeat: about eight a
+    # second of overlap, capped.
+    _OVERLAP_WORDS_PER_SEC = 8
+    _MAX_OVERLAP_WORDS = 12
+    # A window slower than this is falling behind; warn after a few, rarely.
+    _SLOW_CHUNK_SEC = 5.0
+    _SLOW_CHUNKS_TO_WARN = 3
+    _SLOW_WARNING_INTERVAL_SEC = 30
 
     def __init__(
         self,
@@ -380,10 +388,7 @@ class StreamingTranscriber:
             start_time = time.time()
 
             new_audio = np.concatenate(new_chunks)
-            if self._overlap_tail is not None and len(self._overlap_tail) > 0:
-                audio_array = np.concatenate([self._overlap_tail, new_audio])
-            else:
-                audio_array = new_audio
+            audio_array = self._with_overlap_tail(new_audio)
 
             total_duration = len(audio_array) / self.sample_rate
             new_duration = len(new_audio) / self.sample_rate
@@ -397,27 +402,10 @@ class StreamingTranscriber:
             if prepared is None or len(prepared) == 0:
                 return
 
-            transcribe = getattr(model, "transcribe_cancelable", None)
-            options = {"should_cancel": lambda: self._discard_results} if callable(transcribe) else {}
-            if not callable(transcribe):
-                transcribe = model.transcribe
-            segments, _info = transcribe(
-                prepared,
-                beam_size=1,
-                vad_filter=False,
-                **options,
-            )
-
-            text_parts = []
-            for segment in segments:
-                if self._discard_results:
-                    return
-                text_parts.append(segment.text)
-
-            chunk_text = " ".join(text_parts).strip()
-            overlap_words = min(12, math.ceil(self.overlap_sec * 8)) if (
-                self._overlap_tail is not None and self._last_chunk_text
-            ) else 0
+            chunk_text = self._transcribe_window(model, prepared)
+            if chunk_text is None:
+                return
+            overlap_words = self._preview_overlap_words()
             with self._state_lock:
                 if self._discard_results:
                     return
@@ -425,11 +413,7 @@ class StreamingTranscriber:
                     self.preview_text, chunk_text, max_overlap_words=overlap_words)
                 self._last_chunk_text = chunk_text
 
-            overlap_samples = int(self.overlap_sec * self.sample_rate)
-            if overlap_samples > 0 and len(new_audio) > 0:
-                self._overlap_tail = new_audio[-overlap_samples:].copy()
-            else:
-                self._overlap_tail = None
+            self._keep_overlap_tail(new_audio)
 
             processing_time = time.time() - start_time
             self._chunk_count += 1
@@ -440,22 +424,69 @@ class StreamingTranscriber:
                 f"-> {processing_time:.2f}s processing ({len(chunk_text)} chars)"
             )
 
-            if processing_time > 5.0:
-                self._slow_chunks += 1
-                if self._slow_chunks >= 3 and time.time() - self._last_warning_time > 30:
-                    logger.warning("Incremental transcription falling behind (3+ slow chunks)")
-                    self._last_warning_time = time.time()
-
-            with self._state_lock:
-                # After stop the text is kept for finalize_preview only; the
-                # preview overlay is already gone.
-                if (not self._discard_results and not self._stop_requested
-                        and self.callback and self.preview_text):
-                    # is_final=True means replace the full preview in the UI.
-                    self.callback(self.preview_text, True)
+            self._note_processing_time(processing_time)
+            self._deliver_preview()
 
         except Exception as e:
             logger.error(f"Error in incremental transcription: {e}", exc_info=True)
+
+    def _with_overlap_tail(self, new_audio: np.ndarray) -> np.ndarray:
+        if self._overlap_tail is not None and len(self._overlap_tail) > 0:
+            return np.concatenate([self._overlap_tail, new_audio])
+        return new_audio
+
+    def _transcribe_window(self, model, prepared: np.ndarray) -> Optional[str]:
+        """The window's text, or None when results were discarded while it decoded."""
+        transcribe = getattr(model, "transcribe_cancelable", None)
+        if callable(transcribe):
+            options = {"should_cancel": lambda: self._discard_results}
+        else:
+            options = {}
+            transcribe = model.transcribe
+        segments, _info = transcribe(
+            prepared,
+            beam_size=1,
+            vad_filter=False,
+            **options,
+        )
+
+        text_parts = []
+        for segment in segments:
+            if self._discard_results:
+                return None
+            text_parts.append(segment.text)
+        return " ".join(text_parts).strip()
+
+    def _preview_overlap_words(self) -> int:
+        """How many leading words of the next window may repeat the last one's."""
+        if self._overlap_tail is None or not self._last_chunk_text:
+            return 0
+        return min(self._MAX_OVERLAP_WORDS, math.ceil(self.overlap_sec * self._OVERLAP_WORDS_PER_SEC))
+
+    def _keep_overlap_tail(self, new_audio: np.ndarray) -> None:
+        overlap_samples = int(self.overlap_sec * self.sample_rate)
+        if overlap_samples > 0 and len(new_audio) > 0:
+            self._overlap_tail = new_audio[-overlap_samples:].copy()
+        else:
+            self._overlap_tail = None
+
+    def _note_processing_time(self, processing_time: float) -> None:
+        if processing_time <= self._SLOW_CHUNK_SEC:
+            return
+        self._slow_chunks += 1
+        if (self._slow_chunks >= self._SLOW_CHUNKS_TO_WARN
+                and time.time() - self._last_warning_time > self._SLOW_WARNING_INTERVAL_SEC):
+            logger.warning("Incremental transcription falling behind (3+ slow chunks)")
+            self._last_warning_time = time.time()
+
+    def _deliver_preview(self) -> None:
+        with self._state_lock:
+            # After stop the text is kept for finalize_preview only; the
+            # preview overlay is already gone.
+            if (not self._discard_results and not self._stop_requested
+                    and self.callback and self.preview_text):
+                # is_final=True means replace the full preview in the UI.
+                self.callback(self.preview_text, True)
 
     def _prepare_audio_for_whisper(self, audio_array: np.ndarray) -> Optional[np.ndarray]:
         return prepare_preview_audio(audio_array, self.sample_rate)

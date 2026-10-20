@@ -181,7 +181,10 @@ class FieldHelp(QPushButton):
         over_caption = self.rect().contains(self.mapFromGlobal(point))
         over_card = self.card.rect().adjusted(-8, -8, 8, 8).contains(self.card.mapFromGlobal(point))
         focused = QApplication.focusWidget()
-        active = (focused is not None and self.card.isAncestorOf(focused)) if self.card._embedded else self.card.isActiveWindow()
+        if self.card._embedded:
+            active = focused is not None and self.card.isAncestorOf(focused)
+        else:
+            active = self.card.isActiveWindow()
         if not over_caption and not over_card and not active:
             self.card.hide()
             self._dismiss_timer.stop()

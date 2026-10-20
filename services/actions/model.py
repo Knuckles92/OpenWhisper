@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import secrets
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 from urllib.parse import quote
 
 from services.settings import SettingsKey
@@ -23,6 +23,7 @@ DESCRIPTION_MAX_CHARS = 300
 MAX_SPOKEN_NAMES = 8
 SPOKEN_NAME_MAX_CHARS = 40
 TEMPLATE_MAX_CHARS = 2000
+_PROGRAM_TIMEOUT_MAX_S = 300
 AGENT_ACTION_ID = "agent"
 
 
@@ -343,43 +344,62 @@ def _validate_shaping(shaping: str, settings: Mapping) -> None:
     raise ValueError("Choose how the words are prepared.")
 
 
-def _validate_params(action: Action) -> None:
-    kind, p = action.kind, action.param
-    if kind == ActionKind.OPEN_LINK:
-        template = p("template") or ""
-        if not template:
-            raise ValueError("Enter the link to open.")
-        if len(template) > TEMPLATE_MAX_CHARS:
-            raise ValueError(f"Use a link of {TEMPLATE_MAX_CHARS} characters or fewer.")
-        expand_link(template, "")
-    elif kind == ActionKind.AGENT:
-        if p("agent") not in AGENTS:
-            raise ValueError("Choose Claude Code, Codex or OpenCode.")
-        if p("mode") not in AgentMode.ALL:
-            raise ValueError("Choose whether to open a session or ask for an answer.")
-        if p("surface") not in AgentSurface.ALL:
-            raise ValueError("Choose where the session opens.")
-        folder = p("folder") or ""
-        if not p("new_folder") and folder and not os.path.isabs(folder):
-            raise ValueError("Choose the working folder with its full path.")
-        if p("output") not in Output.ALL:
-            raise ValueError("Choose where the answer goes.")
-    elif kind == ActionKind.WEBHOOK:
-        from services.automation.models import validate_url
+def _validate_link_params(p: Callable[[str], Any]) -> None:
+    template = p("template") or ""
+    if not template:
+        raise ValueError("Enter the link to open.")
+    if len(template) > TEMPLATE_MAX_CHARS:
+        raise ValueError(f"Use a link of {TEMPLATE_MAX_CHARS} characters or fewer.")
+    expand_link(template, "")
 
-        validate_url(p("url") or "")
-        if p("output") not in Output.ALL:
-            raise ValueError("Choose where the reply goes.")
-    elif kind == ActionKind.PROGRAM:
-        program = p("program") or ""
-        if not program:
-            raise ValueError("Choose the program to run.")
-        if not os.path.isabs(program):
-            raise ValueError("Choose the program with its full path.")
-        if p("output") not in Output.ALL:
-            raise ValueError("Choose where the program's output goes.")
-        if not 1 <= int(p("timeout_s")) <= 300:
-            raise ValueError("Use a time limit from 1 to 300 seconds.")
+
+def _validate_agent_params(p: Callable[[str], Any]) -> None:
+    if p("agent") not in AGENTS:
+        raise ValueError("Choose Claude Code, Codex or OpenCode.")
+    if p("mode") not in AgentMode.ALL:
+        raise ValueError("Choose whether to open a session or ask for an answer.")
+    if p("surface") not in AgentSurface.ALL:
+        raise ValueError("Choose where the session opens.")
+    folder = p("folder") or ""
+    if not p("new_folder") and folder and not os.path.isabs(folder):
+        raise ValueError("Choose the working folder with its full path.")
+    if p("output") not in Output.ALL:
+        raise ValueError("Choose where the answer goes.")
+
+
+def _validate_webhook_params(p: Callable[[str], Any]) -> None:
+    from services.automation.models import validate_url
+
+    validate_url(p("url") or "")
+    if p("output") not in Output.ALL:
+        raise ValueError("Choose where the reply goes.")
+
+
+def _validate_program_params(p: Callable[[str], Any]) -> None:
+    program = p("program") or ""
+    if not program:
+        raise ValueError("Choose the program to run.")
+    if not os.path.isabs(program):
+        raise ValueError("Choose the program with its full path.")
+    if p("output") not in Output.ALL:
+        raise ValueError("Choose where the program's output goes.")
+    if not 1 <= int(p("timeout_s")) <= _PROGRAM_TIMEOUT_MAX_S:
+        raise ValueError(f"Use a time limit from 1 to {_PROGRAM_TIMEOUT_MAX_S} seconds.")
+
+
+#: Each kind's parameter checks; the other kinds have no parameters to check.
+_PARAM_VALIDATORS: Mapping[str, Callable[[Callable[[str], Any]], None]] = {
+    ActionKind.OPEN_LINK: _validate_link_params,
+    ActionKind.AGENT: _validate_agent_params,
+    ActionKind.WEBHOOK: _validate_webhook_params,
+    ActionKind.PROGRAM: _validate_program_params,
+}
+
+
+def _validate_params(action: Action) -> None:
+    validate = _PARAM_VALIDATORS.get(action.kind)
+    if validate is not None:
+        validate(action.param)
 
 
 def validate_action(action: Action, settings: Mapping) -> None:

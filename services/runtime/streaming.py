@@ -196,73 +196,85 @@ class StreamingRuntime:
                 logger.info("Streaming transcription disabled")
                 return
 
-            backend = self.controller.current_backend
-            native = False
-            if isinstance(backend, LocalWhisperBackend):
-                streaming_backend = self._load_dedicated_preview_backend()
-                if streaming_backend is None:
-                    self.controller._streaming_enabled = False
-                    return
-            elif getattr(backend, "is_remote", False) and not backend.is_available():
-                # Until it connects, a remote engine has no family to check:
-                # the host says which engine it runs. The reload worker runs
-                # setup again once the connection settles.
-                logger.info("Streaming preview waits for the remote engine to connect")
-                self.controller._streaming_enabled = False
-                self.controller._pending_streaming_setup = True
+            chosen = self._preview_backend(initial_setup=initial_setup)
+            if chosen is None:
                 return
-            elif self._shares_preview_decoder(backend):
-                if not backend.is_available():
-                    # The engine is still loading or waiting on a download; the
-                    # reload worker runs setup again once it has finished.
-                    logger.info("Streaming preview waits for %s to load", backend.name)
-                    self.controller._streaming_enabled = False
-                    self.controller._pending_streaming_setup = True
-                    return
-                streaming_backend = backend
-                native = self._streams_natively(backend)
-                logger.info("Streaming preview shares the loaded %s engine", backend.name)
-            else:
-                logger.info("Streaming requested but not available for this backend")
-                if not initial_setup:
-                    self.controller.ui_controller.set_status(self._unavailable_status(backend))
-                self.controller._streaming_enabled = False
-                return
-
+            streaming_backend, native = chosen
             if native:
-                # The engine keeps its own decoder state, so the chunk-duration
-                # setting (a window size) does not apply here.
-                if not getattr(streaming_backend, "is_remote", False):
-                    # A remote host's first push is its own process's cost,
-                    # and waiting on the network here would block the Qt thread.
-                    self._warmup_native_stream(streaming_backend)
-                self.controller.streaming_transcriber = NativeStreamingTranscriber(
-                    backend=streaming_backend,
-                    update_interval_sec=config.STREAMING_NATIVE_UPDATE_SEC,
-                )
-                self._configured_for = self._engine_identity()
-                logger.info(
-                    "Streaming preview follows %s's native stream "
-                    f"(update_interval={config.STREAMING_NATIVE_UPDATE_SEC}s)",
-                    streaming_backend.name,
-                )
-                return
-
-            chunk_duration = setting_value(SettingsKey.STREAMING_CHUNK_DURATION, settings)
-            self.controller.streaming_transcriber = StreamingTranscriber(
-                backend=streaming_backend,
-                chunk_duration_sec=chunk_duration,
-                overlap_sec=config.STREAMING_OVERLAP_SEC,
-            )
-            self._configured_for = self._engine_identity()
-            logger.info(
-                f"Streaming transcription enabled (chunk_duration={chunk_duration}s)"
-            )
+                self._use_native_stream(streaming_backend)
+            else:
+                self._use_window_stream(streaming_backend, settings)
         except Exception as exc:
             logger.error(f"Failed to setup streaming: {exc}")
             self.controller._streaming_enabled = False
             if not initial_setup:
                 self.controller.ui_controller.set_status("Failed to reconfigure streaming")
+
+    def _preview_backend(self, *, initial_setup: bool):
+        """``(backend, native)`` for the preview, or None after switching streaming off."""
+        backend = self.controller.current_backend
+        if isinstance(backend, LocalWhisperBackend):
+            streaming_backend = self._load_dedicated_preview_backend()
+            if streaming_backend is None:
+                self.controller._streaming_enabled = False
+                return None
+            return streaming_backend, False
+        if getattr(backend, "is_remote", False) and not backend.is_available():
+            # Until it connects, a remote engine has no family to check:
+            # the host says which engine it runs. The reload worker runs
+            # setup again once the connection settles.
+            logger.info("Streaming preview waits for the remote engine to connect")
+            self._wait_for_engine()
+            return None
+        if self._shares_preview_decoder(backend):
+            if not backend.is_available():
+                # The engine is still loading or waiting on a download; the
+                # reload worker runs setup again once it has finished.
+                logger.info("Streaming preview waits for %s to load", backend.name)
+                self._wait_for_engine()
+                return None
+            native = self._streams_natively(backend)
+            logger.info("Streaming preview shares the loaded %s engine", backend.name)
+            return backend, native
+        logger.info("Streaming requested but not available for this backend")
+        if not initial_setup:
+            self.controller.ui_controller.set_status(self._unavailable_status(backend))
+        self.controller._streaming_enabled = False
+        return None
+
+    def _wait_for_engine(self) -> None:
+        self.controller._streaming_enabled = False
+        self.controller._pending_streaming_setup = True
+
+    def _use_native_stream(self, streaming_backend) -> None:
+        # The engine keeps its own decoder state, so the chunk-duration
+        # setting (a window size) does not apply here.
+        if not getattr(streaming_backend, "is_remote", False):
+            # A remote host's first push is its own process's cost,
+            # and waiting on the network here would block the Qt thread.
+            self._warmup_native_stream(streaming_backend)
+        self.controller.streaming_transcriber = NativeStreamingTranscriber(
+            backend=streaming_backend,
+            update_interval_sec=config.STREAMING_NATIVE_UPDATE_SEC,
+        )
+        self._configured_for = self._engine_identity()
+        logger.info(
+            "Streaming preview follows %s's native stream "
+            f"(update_interval={config.STREAMING_NATIVE_UPDATE_SEC}s)",
+            streaming_backend.name,
+        )
+
+    def _use_window_stream(self, streaming_backend, settings) -> None:
+        chunk_duration = setting_value(SettingsKey.STREAMING_CHUNK_DURATION, settings)
+        self.controller.streaming_transcriber = StreamingTranscriber(
+            backend=streaming_backend,
+            chunk_duration_sec=chunk_duration,
+            overlap_sec=config.STREAMING_OVERLAP_SEC,
+        )
+        self._configured_for = self._engine_identity()
+        logger.info(
+            f"Streaming transcription enabled (chunk_duration={chunk_duration}s)"
+        )
 
     @staticmethod
     def _unavailable_status(backend) -> str:

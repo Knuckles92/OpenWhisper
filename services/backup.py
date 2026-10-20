@@ -73,6 +73,12 @@ MAX_MANIFEST_BYTES = 8 << 20
 MAX_RATIO = 10_000
 CHUNK_SIZE = 1 << 20
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+#: Free space required beyond the data itself before writing an archive or stage.
+_FREE_SPACE_MARGIN = 32 << 20
+#: ZIP external attributes for a member: a regular file readable only by its owner.
+_REGULAR_FILE_ATTR = (stat.S_IFREG | 0o600) << 16
+_STAGE_NAME_PATTERN = r"stage-[0-9a-f]{32}"
+_PREVIOUS_NAME_PATTERN = r"previous-[A-Za-z0-9_-]+"
 
 
 class BackupError(RuntimeError):
@@ -135,7 +141,8 @@ def _inside(path: Path, parent: Path) -> bool:
         return False
 
 
-def _safe_member(name: str) -> str:
+def _member_parts(name: str) -> list[str]:
+    """Split a canonical, relative POSIX member name into its parts."""
     if not isinstance(name, str) or not name or "\\" in name or "\x00" in name:
         raise BackupError("Unsafe archive member name")
     if name.startswith("/") or any(ord(c) < 32 for c in name):
@@ -145,8 +152,18 @@ def _safe_member(name: str) -> str:
         raise BackupError("Unsafe archive member name")
     if str(PurePosixPath(name)) != name:
         raise BackupError("Noncanonical archive member name")
+    return parts
+
+
+def _safe_member(name: str) -> str:
+    parts = _member_parts(name)
     if name == MANIFEST_NAME:
         return name
+    _check_owned_member(parts)
+    return name
+
+
+def _check_owned_member(parts: list[str]) -> None:
     if len(parts) < 2 or parts[0] != "data" or parts[1] not in OWNED_NAMES:
         raise BackupError("Archive contains a file outside owned data")
     if parts[1] in LEGACY_HISTORY_NAMES or parts[1] == "remote_records":
@@ -157,7 +174,6 @@ def _safe_member(name: str) -> str:
         raise BackupError("Archive contains remote cache")
     if parts[1] == RESTORE_DIR:
         raise BackupError("Archive contains internal restore data")
-    return name
 
 
 def _safe_path(root: Path, name: str) -> Path:
@@ -177,16 +193,21 @@ def _safe_path(root: Path, name: str) -> Path:
     return path
 
 
+def _archived_separately(name: str, include_recordings: bool) -> bool:
+    """True for owned names whose live files are not copied into the archive as-is."""
+    if name in ("openwhisper.db", "openwhisper_settings.json"):
+        return True  # snapshot and sanitized copy are added separately
+    if name in LEGACY_HISTORY_NAMES:
+        return True  # live legacy entries are merged into the DB snapshot
+    if name == "remote_records":
+        return True  # staging, exports, and cache are transient sync data
+    return not include_recordings and name in RECORDING_NAMES
+
+
 def _owned_files(root: Path, include_recordings: bool) -> list[tuple[str, Path]]:
     files: list[tuple[str, Path]] = []
     for name in OWNED_NAMES:
-        if name in ("openwhisper.db", "openwhisper_settings.json"):
-            continue  # snapshot and sanitized copy are added separately
-        if name in LEGACY_HISTORY_NAMES:
-            continue  # live legacy entries are merged into the DB snapshot
-        if name == "remote_records":
-            continue  # staging, exports, and cache are transient sync data
-        if not include_recordings and name in RECORDING_NAMES:
+        if _archived_separately(name, include_recordings):
             continue
         base = _safe_path(root, name)
         if _is_link(base):
@@ -200,20 +221,26 @@ def _owned_files(root: Path, include_recordings: bool) -> list[tuple[str, Path]]
             continue
         if not base.is_dir():
             raise BackupError(f"Unsupported data path: {name}")
-        for folder, dirs, names in os.walk(base, followlinks=False):
-            folder_path = Path(folder)
-            dirs[:] = sorted(d for d in dirs if not (name == "remote_records" and
-                              folder_path == base and d == "cache"))
-            for directory in dirs:
-                if _is_link(folder_path / directory):
-                    raise BackupError("Symbolic links are not supported in backed-up data")
-            for filename in sorted(names):
-                path = folder_path / filename
-                if _is_link(path) or not stat.S_ISREG(path.stat().st_mode):
-                    raise BackupError("Symbolic links and special files cannot be backed up")
-                rel = path.relative_to(root).as_posix()
-                _safe_member("data/" + rel)
-                files.append(("data/" + rel, path))
+        files.extend(_owned_tree_files(root, base, name))
+    return files
+
+
+def _owned_tree_files(root: Path, base: Path, name: str) -> list[tuple[str, Path]]:
+    files: list[tuple[str, Path]] = []
+    for folder, dirs, names in os.walk(base, followlinks=False):
+        folder_path = Path(folder)
+        dirs[:] = sorted(d for d in dirs if not (name == "remote_records" and
+                          folder_path == base and d == "cache"))
+        for directory in dirs:
+            if _is_link(folder_path / directory):
+                raise BackupError("Symbolic links are not supported in backed-up data")
+        for filename in sorted(names):
+            path = folder_path / filename
+            if _is_link(path) or not stat.S_ISREG(path.stat().st_mode):
+                raise BackupError("Symbolic links and special files cannot be backed up")
+            rel = path.relative_to(root).as_posix()
+            _safe_member("data/" + rel)
+            files.append(("data/" + rel, path))
     return files
 
 
@@ -366,7 +393,9 @@ def _quick_check(conn: sqlite3.Connection) -> None:
 def _meeting_is_live(conn: sqlite3.Connection) -> bool:
     if not _table(conn, "meeting_sessions") or "status" not in _columns(conn, "meeting_sessions"):
         return False
-    return conn.execute("SELECT 1 FROM meeting_sessions WHERE status IN ('active','paused') LIMIT 1").fetchone() is not None
+    live = conn.execute(
+        "SELECT 1 FROM meeting_sessions WHERE status IN ('active','paused') LIMIT 1").fetchone()
+    return live is not None
 
 
 def _snapshot_database(source: Path, output: Path, cancel: Any) -> int:
@@ -418,91 +447,139 @@ def _relative_under(path_text: str, root: Path, group: str) -> str | None:
 
 def _sanitize_database(path: Path, source_root: Path,
                        include_recordings: bool) -> tuple[int, list[str], set[str]]:
-    warnings: list[str] = []
-    required_assets: set[str] = set()
     with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute("PRAGMA journal_mode=DELETE")
         version = _db_schema(conn)
         if version > _current_schema():
             raise BackupError("Database schema is newer than this app")
-        if _table(conn, "meeting_sessions"):
-            cols = _columns(conn, "meeting_sessions")
-            if {"id", "spool_dir"} <= cols:
-                rows = conn.execute("SELECT id, spool_dir FROM meeting_sessions").fetchall()
-                for meeting_id, spool in rows:
-                    rel = _relative_under(str(spool or ""), source_root, "meetings")
-                    if rel is None:
-                        if include_recordings:
-                            raise BackupError("A meeting stores audio outside the data directory")
-                        rel = f"meetings/{meeting_id}"
-                    updates: dict[str, Any] = {"spool_dir": PATH_MARKER + rel}
-                    if "host_token" in cols:
-                        updates["host_token"] = secrets.token_urlsafe(32)
-                    if "guest_token" in cols:
-                        updates["guest_token"] = secrets.token_urlsafe(32)
-                    if "asr_remote_json" in cols:
-                        updates["asr_remote_json"] = None
-                    if "agent_endpoint_json" in cols:
-                        updates["agent_endpoint_json"] = None
-                    if "app_pid" in cols:
-                        updates["app_pid"] = None
-                    if "app_heartbeat_at" in cols:
-                        updates["app_heartbeat_at"] = None
-                    sql = "UPDATE meeting_sessions SET " + ", ".join(f"{key}=?" for key in updates) + " WHERE id=?"
-                    conn.execute(sql, (*updates.values(), meeting_id))
-        if _table(conn, "meeting_audio_chunks"):
-            if include_recordings:
-                for chunk_id, file_path in conn.execute("SELECT id, file_path FROM meeting_audio_chunks").fetchall():
-                    rel = _relative_under(str(file_path or ""), source_root, "meetings")
-                    if rel is None:
-                        raise BackupError("A meeting chunk points outside the data directory")
-                    if not (source_root / Path(rel)).is_file():
-                        raise BackupError(f"Meeting chunk {chunk_id} has no local audio file")
-                    required_assets.add("data/" + rel)
-                    conn.execute("UPDATE meeting_audio_chunks SET file_path=? WHERE id=?",
-                                 (PATH_MARKER + rel, chunk_id))
-            else:
-                if _table(conn, "meeting_segments") and "chunk_id" in _columns(conn, "meeting_segments"):
-                    conn.execute("UPDATE meeting_segments SET chunk_id=NULL")
-                conn.execute("DELETE FROM meeting_audio_chunks")
-        if _table(conn, "transcription_history") and "audio_file" in _columns(conn, "transcription_history"):
-            if not include_recordings:
-                conn.execute("UPDATE transcription_history SET audio_file=NULL")
-            else:
-                for row_id, audio in conn.execute("SELECT id, audio_file FROM transcription_history WHERE audio_file IS NOT NULL").fetchall():
-                    if not isinstance(audio, str):
-                        conn.execute("UPDATE transcription_history SET audio_file=NULL WHERE id=?", (row_id,))
-                        continue
-                    if Path(audio).is_absolute():
-                        rel = _relative_under(audio, source_root, "recordings")
-                        if rel is None:
-                            warnings.append(f"History entry {row_id} refers to external audio")
-                            conn.execute("UPDATE transcription_history SET audio_file=NULL WHERE id=?", (row_id,))
-                        else:
-                            if (source_root / Path(rel)).is_file():
-                                required_assets.add("data/" + rel)
-                                conn.execute("UPDATE transcription_history SET audio_file=? WHERE id=?",
-                                             (rel.removeprefix("recordings/"), row_id))
-                            else:
-                                warnings.append(f"History entry {row_id} has no local audio file")
-                                conn.execute("UPDATE transcription_history SET audio_file=NULL WHERE id=?", (row_id,))
-                    else:
-                        try:
-                            _safe_member("data/recordings/" + audio)
-                        except BackupError:
-                            conn.execute("UPDATE transcription_history SET audio_file=NULL WHERE id=?", (row_id,))
-                        else:
-                            rel = "recordings/" + audio
-                            if (source_root / Path(rel)).is_file():
-                                required_assets.add("data/" + rel)
-                            else:
-                                warnings.append(f"History entry {row_id} has no local audio file")
-                                conn.execute("UPDATE transcription_history SET audio_file=NULL WHERE id=?", (row_id,))
+        sanitizer = _DatabaseSanitizer(conn, source_root, include_recordings)
+        sanitizer.meeting_sessions()
+        sanitizer.meeting_audio_chunks()
+        sanitizer.history_audio()
         if _table(conn, "record_sync"):
             conn.execute("DELETE FROM record_sync")
         conn.commit()
         _quick_check(conn)
-    return version, warnings, required_assets
+    return version, sanitizer.warnings, sanitizer.required_assets
+
+
+#: Meeting columns given a fresh random value, then ones cleared, in that order.
+_MEETING_TOKEN_COLUMNS = ("host_token", "guest_token")
+_MEETING_CLEARED_COLUMNS = ("asr_remote_json", "agent_endpoint_json", "app_pid", "app_heartbeat_at")
+
+
+def _meeting_session_updates(cols: set[str], rel: str) -> dict[str, Any]:
+    """Column values for one exported meeting: portable spool path, no live secrets."""
+    updates: dict[str, Any] = {"spool_dir": PATH_MARKER + rel}
+    for column in _MEETING_TOKEN_COLUMNS:
+        if column in cols:
+            updates[column] = secrets.token_urlsafe(32)
+    for column in _MEETING_CLEARED_COLUMNS:
+        if column in cols:
+            updates[column] = None
+    return updates
+
+
+class _DatabaseSanitizer:
+    """Rewrites a database snapshot's data paths for a portable archive.
+
+    Collects the warnings to show and the archive members the rewritten rows
+    now depend on.
+    """
+
+    def __init__(self, conn: sqlite3.Connection, source_root: Path, include_recordings: bool) -> None:
+        self.conn = conn
+        self.source_root = source_root
+        self.include_recordings = include_recordings
+        self.warnings: list[str] = []
+        self.required_assets: set[str] = set()
+
+    def meeting_sessions(self) -> None:
+        if not _table(self.conn, "meeting_sessions"):
+            return
+        cols = _columns(self.conn, "meeting_sessions")
+        if not {"id", "spool_dir"} <= cols:
+            return
+        rows = self.conn.execute("SELECT id, spool_dir FROM meeting_sessions").fetchall()
+        for meeting_id, spool in rows:
+            rel = _relative_under(str(spool or ""), self.source_root, "meetings")
+            if rel is None:
+                if self.include_recordings:
+                    raise BackupError("A meeting stores audio outside the data directory")
+                rel = f"meetings/{meeting_id}"
+            updates = _meeting_session_updates(cols, rel)
+            assignments = ", ".join(f"{key}=?" for key in updates)
+            sql = "UPDATE meeting_sessions SET " + assignments + " WHERE id=?"
+            self.conn.execute(sql, (*updates.values(), meeting_id))
+
+    def meeting_audio_chunks(self) -> None:
+        conn = self.conn
+        if not _table(conn, "meeting_audio_chunks"):
+            return
+        if not self.include_recordings:
+            if _table(conn, "meeting_segments") and "chunk_id" in _columns(conn, "meeting_segments"):
+                conn.execute("UPDATE meeting_segments SET chunk_id=NULL")
+            conn.execute("DELETE FROM meeting_audio_chunks")
+            return
+        chunks = conn.execute("SELECT id, file_path FROM meeting_audio_chunks").fetchall()
+        for chunk_id, file_path in chunks:
+            rel = _relative_under(str(file_path or ""), self.source_root, "meetings")
+            if rel is None:
+                raise BackupError("A meeting chunk points outside the data directory")
+            if not (self.source_root / Path(rel)).is_file():
+                raise BackupError(f"Meeting chunk {chunk_id} has no local audio file")
+            self.required_assets.add("data/" + rel)
+            conn.execute("UPDATE meeting_audio_chunks SET file_path=? WHERE id=?",
+                         (PATH_MARKER + rel, chunk_id))
+
+    def history_audio(self) -> None:
+        conn = self.conn
+        if not (_table(conn, "transcription_history")
+                and "audio_file" in _columns(conn, "transcription_history")):
+            return
+        if not self.include_recordings:
+            conn.execute("UPDATE transcription_history SET audio_file=NULL")
+            return
+        rows = conn.execute(
+            "SELECT id, audio_file FROM transcription_history WHERE audio_file IS NOT NULL").fetchall()
+        for row_id, audio in rows:
+            if not isinstance(audio, str):
+                self._clear_audio(row_id)
+            elif Path(audio).is_absolute():
+                self._absolute_history_audio(row_id, audio)
+            else:
+                self._relative_history_audio(row_id, audio)
+
+    def _absolute_history_audio(self, row_id: Any, audio: str) -> None:
+        rel = _relative_under(audio, self.source_root, "recordings")
+        if rel is None:
+            self.warnings.append(f"History entry {row_id} refers to external audio")
+            self._clear_audio(row_id)
+        elif (self.source_root / Path(rel)).is_file():
+            self.required_assets.add("data/" + rel)
+            self.conn.execute("UPDATE transcription_history SET audio_file=? WHERE id=?",
+                              (rel.removeprefix("recordings/"), row_id))
+        else:
+            self._missing_history_audio(row_id)
+
+    def _relative_history_audio(self, row_id: Any, audio: str) -> None:
+        try:
+            _safe_member("data/recordings/" + audio)
+        except BackupError:
+            self._clear_audio(row_id)
+            return
+        rel = "recordings/" + audio
+        if (self.source_root / Path(rel)).is_file():
+            self.required_assets.add("data/" + rel)
+        else:
+            self._missing_history_audio(row_id)
+
+    def _missing_history_audio(self, row_id: Any) -> None:
+        self.warnings.append(f"History entry {row_id} has no local audio file")
+        self._clear_audio(row_id)
+
+    def _clear_audio(self, row_id: Any) -> None:
+        self.conn.execute("UPDATE transcription_history SET audio_file=NULL WHERE id=?", (row_id,))
 
 
 def _merge_legacy_history(path: Path, source_root: Path) -> None:
@@ -516,28 +593,36 @@ def _merge_legacy_history(path: Path, source_root: Path) -> None:
             raise BackupError("Cannot merge legacy history into this database schema")
         if conn.execute("SELECT 1 FROM transcription_history LIMIT 1").fetchone():
             return  # matches DatabaseManager's first-run migration condition
-        try:
-            data = json.loads(legacy.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise BackupError("Legacy history JSON is invalid") from exc
-        entries = data.get("entries") if isinstance(data, dict) else None
-        if not isinstance(entries, list):
-            raise BackupError("Legacy history JSON has no valid entries list")
-        allowed = ("id", "text", "raw_text", "timestamp", "model", "audio_file",
-                   "transcription_time", "audio_duration", "file_size")
-        columns = _columns(conn, "transcription_history")
-        if not {"id", "text", "timestamp", "model"} <= columns:
-            raise BackupError("Cannot merge legacy history into this database schema")
-        for entry in entries:
-            if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
-                raise BackupError("Legacy history entry is invalid")
-            values = {key: entry.get(key) for key in allowed if key in columns}
-            for key in ("text", "timestamp", "model"):
-                values[key] = values.get(key) or ""
-            placeholders = ",".join("?" for _ in values)
-            conn.execute(
-                f"INSERT OR REPLACE INTO transcription_history ({','.join(values)}) VALUES ({placeholders})",
-                tuple(values.values()))
+        _insert_legacy_entries(conn, _load_legacy_entries(legacy))
+
+
+def _load_legacy_entries(legacy: Path) -> list[Any]:
+    try:
+        data = json.loads(legacy.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise BackupError("Legacy history JSON is invalid") from exc
+    entries = data.get("entries") if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        raise BackupError("Legacy history JSON has no valid entries list")
+    return entries
+
+
+def _insert_legacy_entries(conn: sqlite3.Connection, entries: list[Any]) -> None:
+    allowed = ("id", "text", "raw_text", "timestamp", "model", "audio_file",
+               "transcription_time", "audio_duration", "file_size")
+    columns = _columns(conn, "transcription_history")
+    if not {"id", "text", "timestamp", "model"} <= columns:
+        raise BackupError("Cannot merge legacy history into this database schema")
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+            raise BackupError("Legacy history entry is invalid")
+        values = {key: entry.get(key) for key in allowed if key in columns}
+        for key in ("text", "timestamp", "model"):
+            values[key] = values.get(key) or ""
+        placeholders = ",".join("?" for _ in values)
+        conn.execute(
+            f"INSERT OR REPLACE INTO transcription_history ({','.join(values)}) VALUES ({placeholders})",
+            tuple(values.values()))
 
 
 def _write_json_atomic(path: Path, value: Any) -> None:
@@ -611,7 +696,7 @@ def _archive_file(zf: zipfile.ZipFile, name: str, source: Path,
     info.compress_type = (zipfile.ZIP_STORED if source.suffix.lower() in
                           (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".mp4")
                           else zipfile.ZIP_DEFLATED)
-    info.external_attr = (stat.S_IFREG | 0o600) << 16
+    info.external_attr = _REGULAR_FILE_ATTR
     digest = hashlib.sha256()
     count = 0
     with source.open("rb") as read, zf.open(info, "w", force_zip64=True) as write:
@@ -644,6 +729,39 @@ def _manifest_info(path: Path, manifest: dict[str, Any]) -> BackupInfo:
     )
 
 
+def _check_destination(destination: Path, root: Path) -> None:
+    if destination.suffix.lower() != ARCHIVE_EXTENSION:
+        raise BackupError(f"Backup file must end in {ARCHIVE_EXTENSION}")
+    if any(_inside(destination, root / name) for name in
+           (*RECORDING_NAMES, RESTORE_DIR)):
+        raise BackupError("Choose a backup destination outside recorded data")
+
+
+def _read_source_settings(
+        settings_path: Path) -> tuple[tuple[int, int, int, int] | None, dict[str, Any]]:
+    """Return the live settings and the file signature they were read under."""
+    settings_signature = (_source_signature(settings_path)
+                          if settings_path.exists() else None)
+    source_settings = _read_settings(settings_path)
+    if settings_signature is not None and _source_signature(settings_path) != settings_signature:
+        raise BackupError("Settings changed during backup")
+    return settings_signature, source_settings
+
+
+def _check_sources_unchanged(source_signatures: list[tuple[Path, tuple[int, int, int, int]]],
+                             settings_path: Path,
+                             settings_signature: tuple[int, int, int, int] | None) -> None:
+    for path, signature in source_signatures:
+        if _source_signature(path) != signature:
+            raise BackupError(f"Data changed during backup: {path.name}")
+    if settings_signature is None:
+        settings_changed = settings_path.exists()
+    else:
+        settings_changed = _source_signature(settings_path) != settings_signature
+    if settings_changed:
+        raise BackupError("Settings changed during backup")
+
+
 def create_backup(destination: str | os.PathLike[str], *,
                   data_dir: str | os.PathLike[str] | None = None,
                   include_recordings: bool = True,
@@ -657,11 +775,7 @@ def create_backup(destination: str | os.PathLike[str], *,
     """
     root = _root(data_dir)
     destination = Path(destination).expanduser().absolute()
-    if destination.suffix.lower() != ARCHIVE_EXTENSION:
-        raise BackupError(f"Backup file must end in {ARCHIVE_EXTENSION}")
-    if any(_inside(destination, root / name) for name in
-           (*RECORDING_NAMES, RESTORE_DIR)):
-        raise BackupError("Choose a backup destination outside recorded data")
+    _check_destination(destination, root)
     destination.parent.mkdir(parents=True, exist_ok=True)
     _check_cancel(cancel)
     with tempfile.TemporaryDirectory(prefix=".owbackup-build-", dir=destination.parent) as work_text:
@@ -677,11 +791,7 @@ def create_backup(destination: str | os.PathLike[str], *,
             raise BackupError("Too many files to archive")
         _progress(progress, "scan", len(files), len(files))
         settings_path = _safe_path(root, "openwhisper_settings.json")
-        settings_signature = (_source_signature(settings_path)
-                              if settings_path.exists() else None)
-        source_settings = _read_settings(settings_path)
-        if settings_signature is not None and _source_signature(settings_path) != settings_signature:
-            raise BackupError("Settings changed during backup")
+        settings_signature, source_settings = _read_source_settings(settings_path)
         settings = _sanitize_settings(source_settings)
         if source_settings.get("remote_records_location") in ("host", "both"):
             warnings.append("Host-kept-only records are not in this local archive")
@@ -693,7 +803,7 @@ def create_backup(destination: str | os.PathLike[str], *,
         total = sum(path.stat().st_size for _, path in files)
         if total > MAX_TOTAL_BYTES:
             raise BackupError("Data exceeds backup size limit")
-        _check_space(destination.parent, total + (32 << 20))
+        _check_space(destination.parent, total + _FREE_SPACE_MARGIN)
         temp_archive = work / ("bundle" + ARCHIVE_EXTENSION)
         records: list[dict[str, Any]] = []
         source_signatures: list[tuple[Path, tuple[int, int, int, int]]] = []
@@ -719,18 +829,12 @@ def create_backup(destination: str | os.PathLike[str], *,
             }
             info = zipfile.ZipInfo(MANIFEST_NAME)
             info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = (stat.S_IFREG | 0o600) << 16
+            info.external_attr = _REGULAR_FILE_ATTR
             zf.writestr(info, json.dumps(manifest, ensure_ascii=False, separators=(",", ":")))
         _check_cancel(cancel)
         _inspect_backup(temp_archive, cancel)  # verify exact bytes before publication
         _check_cancel(cancel)
-        for path, signature in source_signatures:
-            if _source_signature(path) != signature:
-                raise BackupError(f"Data changed during backup: {path.name}")
-        if ((settings_signature is None and settings_path.exists()) or
-                (settings_signature is not None and
-                 _source_signature(settings_path) != settings_signature)):
-            raise BackupError("Settings changed during backup")
+        _check_sources_unchanged(source_signatures, settings_path, settings_signature)
         with temp_archive.open("r+b") as handle:
             os.fsync(handle.fileno())
         os.replace(temp_archive, destination)
@@ -748,60 +852,13 @@ def _validate_manifest(zf: zipfile.ZipFile) -> dict[str, Any]:
     infos = zf.infolist()
     if len(infos) > MAX_FILES + 1:
         raise BackupError("Archive has too many members")
-    seen: set[str] = set()
-    members: dict[str, zipfile.ZipInfo] = {}
-    total = 0
-    for info in infos:
-        name = _safe_member(info.filename)
-        folded = name.casefold()
-        if folded in seen or info.is_dir():
-            raise BackupError("Archive contains duplicate names or directories")
-        seen.add(folded)
-        mode = info.external_attr >> 16
-        if mode and stat.S_IFMT(mode) not in (0, stat.S_IFREG):
-            raise BackupError("Archive contains a symbolic link or special file")
-        if info.file_size < 0 or info.file_size > MAX_FILE_BYTES:
-            raise BackupError("Archive member exceeds size limit")
-        if info.file_size and (info.compress_size == 0 or
-                               info.file_size / info.compress_size > MAX_RATIO):
-            raise BackupError("Archive has an unsafe compression ratio")
-        total += info.file_size
-        if total > MAX_TOTAL_BYTES:
-            raise BackupError("Archive exceeds size limit")
-        members[name] = info
-    manifest_info = members.get(MANIFEST_NAME)
-    if manifest_info is None or manifest_info.file_size > MAX_MANIFEST_BYTES:
-        raise BackupError("Archive manifest is missing or too large")
-    try:
-        manifest = json.loads(zf.read(manifest_info))
-    except (ValueError, RuntimeError, zipfile.BadZipFile) as exc:
-        raise BackupError("Archive manifest is invalid") from exc
-    if not isinstance(manifest, dict) or manifest.get("format") != FORMAT or manifest.get("format_version") != FORMAT_VERSION:
-        raise BackupError("Unsupported backup format")
-    if not isinstance(manifest.get("created_at"), str) or not isinstance(manifest.get("app_version"), str):
-        raise BackupError("Archive metadata is invalid")
-    version = manifest.get("schema_version")
-    if isinstance(version, bool) or not isinstance(version, int) or version < 0 or version > _current_schema():
-        raise BackupError("Backup database schema is incompatible with this app")
-    if not isinstance(manifest.get("include_recordings"), bool):
-        raise BackupError("Archive recording flag is invalid")
+    members = _index_members(infos)
+    manifest = _read_manifest(zf, members)
+    _check_manifest_metadata(manifest)
     files = manifest.get("files")
     if not isinstance(files, list) or len(files) != len(infos) - 1:
         raise BackupError("Archive file list does not match its members")
-    expected: set[str] = set()
-    for item in files:
-        if not isinstance(item, dict):
-            raise BackupError("Archive file metadata is invalid")
-        name = _safe_member(item.get("path"))
-        size, digest = item.get("size"), item.get("sha256")
-        if (name == MANIFEST_NAME or name in expected or name not in members or
-                isinstance(size, bool) or not isinstance(size, int) or size < 0 or
-                members[name].file_size != size or not isinstance(digest, str) or
-                not _SHA256_RE.fullmatch(digest)):
-            raise BackupError("Archive file metadata is invalid")
-        expected.add(name)
-        if name == "data/openwhisper_settings.json" and size > MAX_MANIFEST_BYTES:
-            raise BackupError("Settings file is too large")
+    expected = _listed_members(files, members)
     if expected != set(members) - {MANIFEST_NAME}:
         raise BackupError("Archive contains unlisted files")
     if {"data/openwhisper.db", "data/openwhisper_settings.json"} - expected:
@@ -813,6 +870,87 @@ def _validate_manifest(zf: zipfile.ZipFile) -> dict[str, Any]:
     if not isinstance(warnings, list) or any(not isinstance(w, str) or len(w) > 500 for w in warnings):
         raise BackupError("Archive warnings are invalid")
     return manifest
+
+
+def _index_members(infos: list[zipfile.ZipInfo]) -> dict[str, zipfile.ZipInfo]:
+    """Map each safe member name to its entry, rejecting unsafe or oversized entries."""
+    seen: set[str] = set()
+    members: dict[str, zipfile.ZipInfo] = {}
+    total = 0
+    for info in infos:
+        name = _safe_member(info.filename)
+        folded = name.casefold()
+        if folded in seen or info.is_dir():
+            raise BackupError("Archive contains duplicate names or directories")
+        seen.add(folded)
+        _check_member_entry(info)
+        total += info.file_size
+        if total > MAX_TOTAL_BYTES:
+            raise BackupError("Archive exceeds size limit")
+        members[name] = info
+    return members
+
+
+def _check_member_entry(info: zipfile.ZipInfo) -> None:
+    mode = info.external_attr >> 16
+    if mode and stat.S_IFMT(mode) not in (0, stat.S_IFREG):
+        raise BackupError("Archive contains a symbolic link or special file")
+    if info.file_size < 0 or info.file_size > MAX_FILE_BYTES:
+        raise BackupError("Archive member exceeds size limit")
+    if info.file_size and (info.compress_size == 0 or
+                           info.file_size / info.compress_size > MAX_RATIO):
+        raise BackupError("Archive has an unsafe compression ratio")
+
+
+def _read_manifest(zf: zipfile.ZipFile, members: dict[str, zipfile.ZipInfo]) -> Any:
+    manifest_info = members.get(MANIFEST_NAME)
+    if manifest_info is None or manifest_info.file_size > MAX_MANIFEST_BYTES:
+        raise BackupError("Archive manifest is missing or too large")
+    try:
+        return json.loads(zf.read(manifest_info))
+    except (ValueError, RuntimeError, zipfile.BadZipFile) as exc:
+        raise BackupError("Archive manifest is invalid") from exc
+
+
+def _check_manifest_metadata(manifest: Any) -> None:
+    if not isinstance(manifest, dict):
+        raise BackupError("Unsupported backup format")
+    if manifest.get("format") != FORMAT or manifest.get("format_version") != FORMAT_VERSION:
+        raise BackupError("Unsupported backup format")
+    if not isinstance(manifest.get("created_at"), str) or not isinstance(manifest.get("app_version"), str):
+        raise BackupError("Archive metadata is invalid")
+    version = manifest.get("schema_version")
+    if isinstance(version, bool) or not isinstance(version, int) or version < 0 or version > _current_schema():
+        raise BackupError("Backup database schema is incompatible with this app")
+    if not isinstance(manifest.get("include_recordings"), bool):
+        raise BackupError("Archive recording flag is invalid")
+
+
+def _listed_members(files: list[Any], members: dict[str, zipfile.ZipInfo]) -> set[str]:
+    """Names the manifest lists, each checked against its archive entry."""
+    expected: set[str] = set()
+    for item in files:
+        if not isinstance(item, dict):
+            raise BackupError("Archive file metadata is invalid")
+        name = _safe_member(item.get("path"))
+        size, digest = item.get("size"), item.get("sha256")
+        if not _listed_file_valid(name, size, digest, expected, members):
+            raise BackupError("Archive file metadata is invalid")
+        expected.add(name)
+        if name == "data/openwhisper_settings.json" and size > MAX_MANIFEST_BYTES:
+            raise BackupError("Settings file is too large")
+    return expected
+
+
+def _listed_file_valid(name: str, size: Any, digest: Any, expected: set[str],
+                       members: dict[str, zipfile.ZipInfo]) -> bool:
+    if name == MANIFEST_NAME or name in expected or name not in members:
+        return False
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        return False
+    if members[name].file_size != size:
+        return False
+    return isinstance(digest, str) and bool(_SHA256_RE.fullmatch(digest))
 
 
 def _inspect_backup(path: str | os.PathLike[str], cancel: Any = None) -> BackupInfo:
@@ -828,36 +966,10 @@ def _inspect_backup(path: str | os.PathLike[str], cancel: Any = None) -> BackupI
                 settings_bytes: bytearray | None = None
                 for item in manifest["files"]:
                     _check_cancel(cancel)
-                    digest = hashlib.sha256()
-                    count = 0
-                    settings_output = (bytearray() if item["path"] ==
-                                       "data/openwhisper_settings.json" else None)
-                    with zf.open(item["path"]) as handle:
-                        output = db_path.open("wb") if item["path"] == "data/openwhisper.db" else None
-                        try:
-                            while block := handle.read(CHUNK_SIZE):
-                                _check_cancel(cancel)
-                                count += len(block)
-                                if count > item["size"]:
-                                    raise BackupError("Archive member exceeds declared size")
-                                digest.update(block)
-                                if output is not None:
-                                    output.write(block)
-                                if settings_output is not None:
-                                    settings_output.extend(block)
-                        finally:
-                            if output is not None:
-                                output.close()
-                    if count != item["size"] or digest.hexdigest() != item["sha256"]:
-                        raise BackupError(f"Archive checksum mismatch: {item['path']}")
+                    settings_output = _verify_member(zf, item, db_path, cancel)
                     if settings_output is not None:
                         settings_bytes = settings_output
-                try:
-                    settings_data = json.loads(settings_bytes)
-                except (ValueError, TypeError) as exc:
-                    raise BackupError("Backup settings JSON is invalid") from exc
-                if not isinstance(settings_data, dict):
-                    raise BackupError("Backup settings JSON must be an object")
+                _check_settings_json(settings_bytes)
             with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)) as conn:
                 _check_cancel(cancel)
                 _quick_check(conn)
@@ -865,30 +977,88 @@ def _inspect_backup(path: str | os.PathLike[str], cancel: Any = None) -> BackupI
                 if _db_schema(conn) != manifest["schema_version"] or _meeting_is_live(conn):
                     raise BackupError("Backup database metadata or meeting state is invalid")
                 assets = {item["path"] for item in manifest["files"]}
-                for table, column in (("meeting_sessions", "spool_dir"),
-                                      ("meeting_audio_chunks", "file_path")):
-                    if not _table(conn, table) or column not in _columns(conn, table):
-                        continue
-                    for (value,) in conn.execute(f"SELECT {column} FROM {table}"):
-                        if not isinstance(value, str) or not value.startswith(PATH_MARKER):
-                            raise BackupError("Backup database has an unsafe data path")
-                        rel = value[len(PATH_MARKER):]
-                        if not rel.startswith("meetings/"):
-                            raise BackupError("Backup database has an unsafe meeting path")
-                        _safe_member("data/" + rel)
-                        if table == "meeting_audio_chunks" and "data/" + rel not in assets:
-                            raise BackupError("Backup database references missing meeting audio")
-                if (_table(conn, "transcription_history") and
-                        "audio_file" in _columns(conn, "transcription_history")):
-                    for (audio,) in conn.execute("SELECT audio_file FROM transcription_history WHERE audio_file IS NOT NULL"):
-                        if not isinstance(audio, str) or Path(audio).is_absolute():
-                            raise BackupError("Backup database has an unsafe recording path")
-                        name = _safe_member("data/recordings/" + audio)
-                        if name not in assets:
-                            raise BackupError("Backup database references missing recording audio")
+                _check_archived_meeting_paths(conn, assets)
+                _check_history_audio(conn, assets,
+                                     "Backup database has an unsafe recording path",
+                                     "Backup database references missing recording audio")
     except (OSError, EOFError, zipfile.BadZipFile, zipfile.LargeZipFile) as exc:
         raise BackupError("Backup ZIP is corrupt") from exc
     return _manifest_info(archive, manifest)
+
+
+def _verify_member(zf: zipfile.ZipFile, item: dict[str, Any], db_path: Path,
+                   cancel: Any) -> bytearray | None:
+    """Stream one member through its checksum; copy out the database snapshot.
+
+    Returns the settings member's bytes, or None for any other member.
+    """
+    digest = hashlib.sha256()
+    count = 0
+    settings_output = (bytearray() if item["path"] ==
+                       "data/openwhisper_settings.json" else None)
+    with zf.open(item["path"]) as handle:
+        output = db_path.open("wb") if item["path"] == "data/openwhisper.db" else None
+        try:
+            while block := handle.read(CHUNK_SIZE):
+                _check_cancel(cancel)
+                count += len(block)
+                if count > item["size"]:
+                    raise BackupError("Archive member exceeds declared size")
+                digest.update(block)
+                if output is not None:
+                    output.write(block)
+                if settings_output is not None:
+                    settings_output.extend(block)
+        finally:
+            if output is not None:
+                output.close()
+    if count != item["size"] or digest.hexdigest() != item["sha256"]:
+        raise BackupError(f"Archive checksum mismatch: {item['path']}")
+    return settings_output
+
+
+def _check_settings_json(settings_bytes: bytearray | None) -> None:
+    try:
+        settings_data = json.loads(settings_bytes)
+    except (ValueError, TypeError) as exc:
+        raise BackupError("Backup settings JSON is invalid") from exc
+    if not isinstance(settings_data, dict):
+        raise BackupError("Backup settings JSON must be an object")
+
+
+#: Database columns that hold a path under the data root's ``meetings`` folder.
+_MEETING_PATH_COLUMNS = (("meeting_sessions", "spool_dir"),
+                         ("meeting_audio_chunks", "file_path"))
+
+
+def _check_archived_meeting_paths(conn: sqlite3.Connection, assets: set[str]) -> None:
+    for table, column in _MEETING_PATH_COLUMNS:
+        if not _table(conn, table) or column not in _columns(conn, table):
+            continue
+        for (value,) in conn.execute(f"SELECT {column} FROM {table}"):
+            if not isinstance(value, str) or not value.startswith(PATH_MARKER):
+                raise BackupError("Backup database has an unsafe data path")
+            rel = value[len(PATH_MARKER):]
+            if not rel.startswith("meetings/"):
+                raise BackupError("Backup database has an unsafe meeting path")
+            _safe_member("data/" + rel)
+            if table == "meeting_audio_chunks" and "data/" + rel not in assets:
+                raise BackupError("Backup database references missing meeting audio")
+
+
+def _check_history_audio(conn: sqlite3.Connection, available: set[str],
+                         unsafe_message: str, missing_message: str) -> None:
+    """Every history recording must be a safe relative path to an available member."""
+    if not (_table(conn, "transcription_history") and
+            "audio_file" in _columns(conn, "transcription_history")):
+        return
+    rows = conn.execute("SELECT audio_file FROM transcription_history WHERE audio_file IS NOT NULL")
+    for (audio,) in rows:
+        if not isinstance(audio, str) or Path(audio).is_absolute():
+            raise BackupError(unsafe_message)
+        name = _safe_member("data/recordings/" + audio)
+        if name not in available:
+            raise BackupError(missing_message)
 
 
 def inspect_backup(path: str | os.PathLike[str]) -> BackupInfo:
@@ -929,8 +1099,7 @@ def _rebase_database(path: Path, data_root: Path, expected_schema: int,
         _quick_check(conn)
         if _db_schema(conn) != expected_schema or _meeting_is_live(conn):
             raise BackupError("Backup database has incompatible or live meeting state")
-        for table, column in (("meeting_sessions", "spool_dir"),
-                              ("meeting_audio_chunks", "file_path")):
+        for table, column in _MEETING_PATH_COLUMNS:
             if not _table(conn, table) or column not in _columns(conn, table):
                 continue
             for row_id, value in conn.execute(f"SELECT id, {column} FROM {table}").fetchall():
@@ -967,7 +1136,7 @@ def previous_data_dir(data_dir: str | os.PathLike[str] | None = None) -> Path | 
         return None
     data = _read_json(path)
     name = data.get("previous")
-    if not isinstance(name, str) or not re.fullmatch(r"previous-[A-Za-z0-9_-]+", name):
+    if not isinstance(name, str) or not re.fullmatch(_PREVIOUS_NAME_PATTERN, name):
         raise BackupError("Restore history metadata is invalid")
     return _restore_home(root) / name
 
@@ -995,7 +1164,7 @@ def prepare_restore(path: str | os.PathLike[str], *,
         with closing(sqlite3.connect(current_db.as_uri() + "?mode=ro", uri=True, timeout=5)) as conn:
             if _meeting_is_live(conn):
                 raise BackupError("End the live meeting before preparing a restore")
-    _check_space(root, info.total_bytes + (32 << 20))
+    _check_space(root, info.total_bytes + _FREE_SPACE_MARGIN)
     stage_name = "stage-" + uuid.uuid4().hex
     stage = home / stage_name
     stage.mkdir()
@@ -1039,12 +1208,20 @@ def _file_sha256(path: Path) -> str:
 def _load_pending(home: Path) -> tuple[str, Path]:
     pending = _read_json(home / PENDING_NAME)
     name = pending.get("stage")
-    if not isinstance(name, str) or not re.fullmatch(r"stage-[0-9a-f]{32}", name):
+    if not isinstance(name, str) or not re.fullmatch(_STAGE_NAME_PATTERN, name):
         raise BackupError("Pending restore metadata is unsafe")
     stage = home / name
     if not stage.is_dir() or _is_link(stage):
         raise BackupError("Pending restore stage is missing")
     return name, stage
+
+
+#: Staged files rewritten during staging, with the manifest keys recording their
+#: new (size, sha256). Every other file keeps its archive entry's values.
+_RESTAGED_FILE_KEYS = {
+    "data/openwhisper.db": ("staged_db_size", "staged_db_sha256"),
+    "data/openwhisper_settings.json": ("staged_settings_size", "staged_settings_sha256"),
+}
 
 
 def _restore_stage_check(stage: Path, root: Path) -> None:
@@ -1060,33 +1237,46 @@ def _restore_stage_check(stage: Path, root: Path) -> None:
         raise BackupError("Staged data directory is a symbolic link")
     listed: set[str] = set()
     for item in files:
-        if not isinstance(item, dict):
-            raise BackupError("Staged restore manifest is invalid")
-        name = _safe_member(item.get("path"))
-        if name == MANIFEST_NAME:
-            raise BackupError("Staged restore manifest is invalid")
-        if name in listed:
-            raise BackupError("Staged restore has duplicate entries")
-        listed.add(name)
-        source = _safe_path(stage / "data", name.removeprefix("data/"))
-        expected_size = (manifest.get("staged_db_size") if name == "data/openwhisper.db"
-                         else manifest.get("staged_settings_size") if name == "data/openwhisper_settings.json"
-                         else item.get("size"))
-        if (isinstance(expected_size, bool) or not isinstance(expected_size, int)
-                or expected_size < 0 or not source.is_file()
-                or source.stat().st_size != expected_size):
-            raise BackupError("Staged restore file is missing or changed")
-        digest = hashlib.sha256()
-        with source.open("rb") as handle:
-            while block := handle.read(CHUNK_SIZE):
-                digest.update(block)
-        expected_hash = (manifest.get("staged_db_sha256") if name == "data/openwhisper.db"
-                         else manifest.get("staged_settings_sha256") if name == "data/openwhisper_settings.json"
-                         else item.get("sha256"))
-        if digest.hexdigest() != expected_hash:
-            raise BackupError("Staged restore checksum mismatch")
+        _check_staged_file(stage, manifest, item, listed)
+    found = _staged_tree_files(stage / "data")
+    if found != listed:
+        raise BackupError("Staged restore contains unlisted data")
+    with closing(sqlite3.connect(stage / "data" / "openwhisper.db")) as conn:
+        _quick_check(conn)
+        if _db_schema(conn) != manifest["schema_version"] or _meeting_is_live(conn):
+            raise BackupError("Staged database metadata is invalid")
+        _check_staged_meeting_paths(conn, root, found)
+        _check_history_audio(conn, found,
+                             "Staged database has an unsafe recording path",
+                             "Staged database references missing recording audio")
+
+
+def _check_staged_file(stage: Path, manifest: dict[str, Any], item: Any, listed: set[str]) -> None:
+    """Verify one listed staged file's size and checksum; record it in ``listed``."""
+    if not isinstance(item, dict):
+        raise BackupError("Staged restore manifest is invalid")
+    name = _safe_member(item.get("path"))
+    if name == MANIFEST_NAME:
+        raise BackupError("Staged restore manifest is invalid")
+    if name in listed:
+        raise BackupError("Staged restore has duplicate entries")
+    listed.add(name)
+    source = _safe_path(stage / "data", name.removeprefix("data/"))
+    if name in _RESTAGED_FILE_KEYS:
+        size_key, hash_key = _RESTAGED_FILE_KEYS[name]
+        expected_size, expected_hash = manifest.get(size_key), manifest.get(hash_key)
+    else:
+        expected_size, expected_hash = item.get("size"), item.get("sha256")
+    if (isinstance(expected_size, bool) or not isinstance(expected_size, int)
+            or expected_size < 0 or not source.is_file()
+            or source.stat().st_size != expected_size):
+        raise BackupError("Staged restore file is missing or changed")
+    if _file_sha256(source) != expected_hash:
+        raise BackupError("Staged restore checksum mismatch")
+
+
+def _staged_tree_files(data_stage: Path) -> set[str]:
     found: set[str] = set()
-    data_stage = stage / "data"
     for folder, dirs, names in os.walk(data_stage, followlinks=False):
         folder_path = Path(folder)
         if any(_is_link(folder_path / directory) for directory in dirs):
@@ -1096,36 +1286,25 @@ def _restore_stage_check(stage: Path, root: Path) -> None:
             if _is_link(path) or not stat.S_ISREG(path.stat().st_mode):
                 raise BackupError("Staged restore has a special file")
             found.add("data/" + path.relative_to(data_stage).as_posix())
-    if found != listed:
-        raise BackupError("Staged restore contains unlisted data")
-    with closing(sqlite3.connect(stage / "data" / "openwhisper.db")) as conn:
-        _quick_check(conn)
-        if _db_schema(conn) != manifest["schema_version"] or _meeting_is_live(conn):
-            raise BackupError("Staged database metadata is invalid")
-        for table, column in (("meeting_sessions", "spool_dir"),
-                              ("meeting_audio_chunks", "file_path")):
-            if not _table(conn, table) or column not in _columns(conn, table):
-                continue
-            for (value,) in conn.execute(f"SELECT {column} FROM {table}"):
-                if not isinstance(value, str):
-                    raise BackupError("Staged database has an unsafe path")
-                try:
-                    relative = Path(value).absolute().relative_to(root.absolute()).as_posix()
-                except ValueError as exc:
-                    raise BackupError("Staged database path escapes data root") from exc
-                if not relative.startswith("meetings/"):
-                    raise BackupError("Staged database path is outside meetings")
-                _safe_member("data/" + relative)
-                if table == "meeting_audio_chunks" and "data/" + relative not in found:
-                    raise BackupError("Staged database references missing meeting audio")
-        if (_table(conn, "transcription_history") and
-                "audio_file" in _columns(conn, "transcription_history")):
-            for (audio,) in conn.execute("SELECT audio_file FROM transcription_history WHERE audio_file IS NOT NULL"):
-                if not isinstance(audio, str) or Path(audio).is_absolute():
-                    raise BackupError("Staged database has an unsafe recording path")
-                name = _safe_member("data/recordings/" + audio)
-                if name not in found:
-                    raise BackupError("Staged database references missing recording audio")
+    return found
+
+
+def _check_staged_meeting_paths(conn: sqlite3.Connection, root: Path, found: set[str]) -> None:
+    for table, column in _MEETING_PATH_COLUMNS:
+        if not _table(conn, table) or column not in _columns(conn, table):
+            continue
+        for (value,) in conn.execute(f"SELECT {column} FROM {table}"):
+            if not isinstance(value, str):
+                raise BackupError("Staged database has an unsafe path")
+            try:
+                relative = Path(value).absolute().relative_to(root.absolute()).as_posix()
+            except ValueError as exc:
+                raise BackupError("Staged database path escapes data root") from exc
+            if not relative.startswith("meetings/"):
+                raise BackupError("Staged database path is outside meetings")
+            _safe_member("data/" + relative)
+            if table == "meeting_audio_chunks" and "data/" + relative not in found:
+                raise BackupError("Staged database references missing meeting audio")
 
 
 def _move_path(source: Path, destination: Path) -> None:
@@ -1169,61 +1348,78 @@ def apply_pending_restore(*, data_dir: str | os.PathLike[str] | None = None) -> 
         return False
     if _is_link(home):
         raise BackupError("Restore directory is a symbolic link")
-    if journal_path.exists():
-        journal = _read_json(journal_path)
-        stage_name = journal.get("stage")
-        previous_name = journal.get("previous")
-        if (not isinstance(stage_name, str) or not re.fullmatch(r"stage-[0-9a-f]{32}", stage_name)
-                or not isinstance(previous_name, str) or
-                not re.fullmatch(r"previous-[A-Za-z0-9_-]+", previous_name)):
-            raise BackupError("Restore journal is unsafe")
-        raw_names = journal.get("stage_names")
-        if (not isinstance(raw_names, list) or any(name not in RESTORE_NAMES for name in raw_names)
-                or len(set(raw_names)) != len(raw_names)):
-            raise BackupError("Restore journal has unsafe path metadata")
-        stage_names = set(raw_names)
-        stage, previous = home / stage_name, home / previous_name
-        if journal.get("phase") == "committed":
-            _write_json_atomic(home / LAST_NAME, {"previous": previous_name})
-            pending_path.unlink(missing_ok=True)
-            journal_path.unlink(missing_ok=True)
-            return True
-        if journal.get("phase") != "applying" or not stage.is_dir() or not previous.is_dir():
-            raise BackupError("Restore journal cannot be recovered automatically")
-        _rollback(root, stage, previous, stage_names)
-        journal_path.unlink()
-        # A complete stage is now available again; continue with a fresh pass.
+    if journal_path.exists() and _resume_journal(root, home, journal_path, pending_path):
+        return True
     if not pending_path.exists():
         return False
     stage_name, stage = _load_pending(home)
     _restore_stage_check(stage, root)
-    previous_name = "previous-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    previous_name = "previous-" + stamp + "-" + uuid.uuid4().hex[:8]
     previous = home / previous_name
     previous.mkdir()
     _fsync_directory(home)
     stage_names = {name for name in RESTORE_NAMES if (stage / "data" / name).exists()}
-    _write_json_atomic(journal_path, {"phase": "applying", "stage": stage_name,
-                                      "previous": previous_name,
-                                      "stage_names": sorted(stage_names)})
+    _write_journal(journal_path, "applying", stage_name, previous_name, stage_names)
     try:
-        for name in RESTORE_NAMES:
-            target = _safe_path(root, name)
-            staged = _safe_path(stage / "data", name)
-            old = _safe_path(previous, name)
-            if target.exists():
-                _move_path(target, old)
-            if staged.exists():
-                _move_path(staged, target)
-        _write_json_atomic(journal_path, {"phase": "committed", "stage": stage_name,
-                                          "previous": previous_name,
-                                          "stage_names": sorted(stage_names)})
+        _install_stage(root, stage, previous)
+        _write_journal(journal_path, "committed", stage_name, previous_name, stage_names)
     except BaseException:
         _rollback(root, stage, previous, stage_names)
         journal_path.unlink(missing_ok=True)
         raise
+    _finish_restore(home, previous_name, pending_path, journal_path)
+    shutil.rmtree(stage, ignore_errors=True)
+    return True
+
+
+def _resume_journal(root: Path, home: Path, journal_path: Path, pending_path: Path) -> bool:
+    """Finish a committed restore (True) or roll back an interrupted one (False)."""
+    journal = _read_json(journal_path)
+    stage_name = journal.get("stage")
+    previous_name = journal.get("previous")
+    if (not isinstance(stage_name, str) or not re.fullmatch(_STAGE_NAME_PATTERN, stage_name)
+            or not isinstance(previous_name, str) or
+            not re.fullmatch(_PREVIOUS_NAME_PATTERN, previous_name)):
+        raise BackupError("Restore journal is unsafe")
+    raw_names = journal.get("stage_names")
+    if (not isinstance(raw_names, list) or any(name not in RESTORE_NAMES for name in raw_names)
+            or len(set(raw_names)) != len(raw_names)):
+        raise BackupError("Restore journal has unsafe path metadata")
+    stage_names = set(raw_names)
+    stage, previous = home / stage_name, home / previous_name
+    if journal.get("phase") == "committed":
+        _finish_restore(home, previous_name, pending_path, journal_path)
+        return True
+    if journal.get("phase") != "applying" or not stage.is_dir() or not previous.is_dir():
+        raise BackupError("Restore journal cannot be recovered automatically")
+    _rollback(root, stage, previous, stage_names)
+    journal_path.unlink()
+    # A complete stage is now available again; continue with a fresh pass.
+    return False
+
+
+def _write_journal(journal_path: Path, phase: str, stage_name: str, previous_name: str,
+                   stage_names: set[str]) -> None:
+    _write_json_atomic(journal_path, {"phase": phase, "stage": stage_name,
+                                      "previous": previous_name,
+                                      "stage_names": sorted(stage_names)})
+
+
+def _install_stage(root: Path, stage: Path, previous: Path) -> None:
+    """Move current owned data into ``previous`` and staged data into place."""
+    for name in RESTORE_NAMES:
+        target = _safe_path(root, name)
+        staged = _safe_path(stage / "data", name)
+        old = _safe_path(previous, name)
+        if target.exists():
+            _move_path(target, old)
+        if staged.exists():
+            _move_path(staged, target)
+
+
+def _finish_restore(home: Path, previous_name: str, pending_path: Path, journal_path: Path) -> None:
     _write_json_atomic(home / LAST_NAME, {"previous": previous_name})
     pending_path.unlink(missing_ok=True)
     journal_path.unlink(missing_ok=True)
-    shutil.rmtree(stage, ignore_errors=True)
-    return True
 

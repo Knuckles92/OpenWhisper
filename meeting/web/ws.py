@@ -40,6 +40,9 @@ WS_CLOSE_NAME_REQUIRED = 4400
 WS_CLOSE_UNAUTHORIZED = 4401
 WS_CLOSE_RESYNC = 4409
 WS_CLOSE_TOO_MANY = 4429
+#: Standard close codes (RFC 6455).
+_WS_CLOSE_NORMAL = 1000
+_WS_CLOSE_SERVER_ERROR = 1011
 
 #: Number of trailing transcript segments included in the ``hello`` message.
 HELLO_SEGMENT_COUNT = 200
@@ -354,7 +357,7 @@ class WsHub:
         """Unregister and close a socket that can no longer be served."""
         self._connections.pop(websocket, None)
         logger.info("Dropping dashboard socket: %s", reason)
-        await self._close(websocket, 1011)
+        await self._close(websocket, _WS_CLOSE_SERVER_ERROR)
 
     async def _send(self, websocket: WebSocket, message: Dict[str, Any]) -> None:
         await websocket.send_text(
@@ -399,16 +402,9 @@ class WsHub:
         role = resolve_role(
             token, meeting.get("host_token"), meeting.get("guest_token")
         )
-        if role is None:
-            await self._close(websocket, WS_CLOSE_UNAUTHORIZED)
-            return
-        if role == "guest" and not name:
-            await self._close(websocket, WS_CLOSE_NAME_REQUIRED)
-            return
-        if len(self._connections) >= MAX_CONNECTIONS:
-            logger.warning("Refusing dashboard connection: %d already served",
-                           len(self._connections))
-            await self._close(websocket, WS_CLOSE_TOO_MANY)
+        refusal = self._admission_refusal(role, name)
+        if refusal is not None:
+            await self._close(websocket, refusal)
             return
 
         # Registered before any further I/O: every patch raised while the
@@ -417,28 +413,48 @@ class WsHub:
         conn = _Connection(role, name)
         self._connections[websocket] = conn
 
-        participant: Optional[Dict[str, Any]] = None
         try:
-            if role == "guest":
-                participant = await asyncio.to_thread(
-                    self._join_guest, guest_id, name
-                )
-                conn.participant_id = (participant or {}).get("id")
-            else:
-                conn.participant_id = await asyncio.to_thread(
-                    self._host_participant_id
-                )
+            participant = await self._identify(conn, guest_id, name)
             await self._send_hello(websocket, conn, store, meeting, meeting_id)
         except Exception:
             logger.exception("Dashboard handshake failed (meeting %s)", meeting_id)
             self._connections.pop(websocket, None)
-            await self._close(websocket, 1011)
+            await self._close(websocket, _WS_CLOSE_SERVER_ERROR)
             return
 
         if not await self._flush_pending(websocket, conn):
             return
+        await self._serve(websocket, conn, participant, meeting_id)
 
-        if role == "guest" and participant is not None:
+    def _admission_refusal(self, role: Optional[str], name: str) -> Optional[int]:
+        """The close code turning this socket away, or None to admit it."""
+        if role is None:
+            return WS_CLOSE_UNAUTHORIZED
+        if role == "guest" and not name:
+            return WS_CLOSE_NAME_REQUIRED
+        if len(self._connections) >= MAX_CONNECTIONS:
+            logger.warning("Refusing dashboard connection: %d already served",
+                           len(self._connections))
+            return WS_CLOSE_TOO_MANY
+        return None
+
+    async def _identify(self, conn: _Connection, guest_id: Optional[str],
+                        name: str) -> Optional[Dict[str, Any]]:
+        """Set ``conn.participant_id``; returns the joined guest (None for the host)."""
+        if conn.role != "guest":
+            conn.participant_id = await asyncio.to_thread(
+                self._host_participant_id
+            )
+            return None
+        participant = await asyncio.to_thread(self._join_guest, guest_id, name)
+        conn.participant_id = (participant or {}).get("id")
+        return participant
+
+    async def _serve(self, websocket: WebSocket, conn: _Connection,
+                     participant: Optional[Dict[str, Any]],
+                     meeting_id: Optional[str]) -> None:
+        """Announce a joined guest, run the receive loop, then clean up."""
+        if participant is not None:
             await self.broadcast_json({
                 "type": "presence", "event": "joined",
                 "participant": participant,
@@ -453,9 +469,9 @@ class WsHub:
                              meeting_id)
         finally:
             self._connections.pop(websocket, None)
-            if role == "guest" and participant is not None:
+            if participant is not None:
                 await self._announce_left(conn, participant)
-            await self._close(websocket, 1000)
+            await self._close(websocket, _WS_CLOSE_NORMAL)
 
     async def _send_hello(self, websocket: WebSocket, conn: _Connection,
                           store: Any, meeting: Dict[str, Any],
@@ -540,7 +556,7 @@ class WsHub:
             except Exception:
                 logger.debug("Buffered broadcast failed", exc_info=True)
                 self._connections.pop(websocket, None)
-                await self._close(websocket, 1011)
+                await self._close(websocket, _WS_CLOSE_SERVER_ERROR)
                 return False
         # No await between the drain and the flag, so nothing can slip in.
         conn.ready = True
@@ -641,7 +657,7 @@ class WsHub:
         while True:
             message = await websocket.receive()
             if message.get("type") == "websocket.disconnect":
-                raise WebSocketDisconnect(message.get("code", 1000))
+                raise WebSocketDisconnect(message.get("code", _WS_CLOSE_NORMAL))
             raw = message.get("text")
             if raw is None:
                 await self._send(websocket, {

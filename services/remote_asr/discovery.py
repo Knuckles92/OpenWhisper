@@ -49,6 +49,8 @@ REPLY_MAGIC = b"OWHISPER!1"
 NONCE_BYTES = 16
 #: Every query is this long, and no answer is longer.
 QUERY_BYTES = 512
+#: Receive buffer for one datagram, larger than anything valid.
+_DATAGRAM_MAX_BYTES = 2048
 #: How long a search listens for answers.
 SEARCH_S = 1.2
 #: When, within a search, the query goes out (UDP may drop any one of them).
@@ -238,7 +240,7 @@ class DiscoveryResponder:
     def _serve(self, sock: socket.socket) -> None:
         while not self._stop.is_set():
             try:
-                data, sender = sock.recvfrom(2048)
+                data, sender = sock.recvfrom(_DATAGRAM_MAX_BYTES)
             except socket.timeout:
                 continue
             except OSError:
@@ -312,18 +314,7 @@ def search(timeout: float = SEARCH_S, *, targets: Optional[Iterable[Target]] = N
     ``targets`` are addresses, or (address, port) pairs, to query instead
     of this network's broadcast addresses.
     """
-    if targets is None:
-        try:
-            plain = broadcast_targets()
-        except Exception:
-            logger.debug("Could not list broadcast addresses", exc_info=True)
-            plain = []
-        targets = plain
-    destinations = [
-        (target, DISCOVERY_PORT) if isinstance(target, str) else (str(target[0]), int(target[1]))
-        for target in targets
-    ]
-    destinations = [d for d in destinations if d[1]]
+    destinations = _destinations(targets)
     if not destinations:
         return []
     nonce = secrets.token_bytes(NONCE_BYTES)
@@ -337,31 +328,58 @@ def search(timeout: float = SEARCH_S, *, targets: Optional[Iterable[Target]] = N
         started = time.monotonic()
         while True:
             elapsed = time.monotonic() - started
-            while sends and sends[0] <= elapsed:
-                sends.pop(0)
-                for destination in destinations:
-                    try:
-                        sock.sendto(query, destination)
-                    except OSError:
-                        logger.debug("Discovery query to %s failed", destination, exc_info=True)
+            _send_due(sock, query, destinations, sends, elapsed)
             remaining = timeout - elapsed
             if remaining <= 0:
                 break
-            sock.settimeout(max(0.01, min(remaining, (sends[0] - elapsed) if sends else remaining)))
-            try:
-                data, sender = sock.recvfrom(2048)
-            except socket.timeout:
-                continue
-            except OSError:
-                # Windows: an ICMP "port unreachable" from a target with no host.
-                continue
-            host = parse_reply(data, nonce, sender[0])
+            until_next_send = (sends[0] - elapsed) if sends else remaining
+            sock.settimeout(max(0.01, min(remaining, until_next_send)))
+            host = _receive_reply(sock, nonce)
             if host is None or host.fingerprint in found:
                 continue
             found[host.fingerprint] = host
             if stop_when is not None and stop_when(host):
                 break
     return list(found.values())
+
+
+def _destinations(targets: Optional[Iterable[Target]]) -> List[Tuple[str, int]]:
+    """(address, port) pairs to query: ``targets``, or this network's broadcast addresses."""
+    if targets is None:
+        try:
+            targets = broadcast_targets()
+        except Exception:
+            logger.debug("Could not list broadcast addresses", exc_info=True)
+            targets = []
+    destinations = [
+        (target, DISCOVERY_PORT) if isinstance(target, str) else (str(target[0]), int(target[1]))
+        for target in targets
+    ]
+    return [d for d in destinations if d[1]]
+
+
+def _send_due(sock: socket.socket, query: bytes, destinations: List[Tuple[str, int]],
+              sends: List[float], elapsed: float) -> None:
+    """Send the query to every destination for each round in ``sends`` now due."""
+    while sends and sends[0] <= elapsed:
+        sends.pop(0)
+        for destination in destinations:
+            try:
+                sock.sendto(query, destination)
+            except OSError:
+                logger.debug("Discovery query to %s failed", destination, exc_info=True)
+
+
+def _receive_reply(sock: socket.socket, nonce: bytes) -> Optional[LanHost]:
+    """The host in the next datagram, or None for a timeout, an error or a stray packet."""
+    try:
+        data, sender = sock.recvfrom(_DATAGRAM_MAX_BYTES)
+    except socket.timeout:
+        return None
+    except OSError:
+        # Windows: an ICMP "port unreachable" from a target with no host.
+        return None
+    return parse_reply(data, nonce, sender[0])
 
 
 def find_host(fingerprint: str, timeout: float = SEARCH_S) -> Optional[LanHost]:

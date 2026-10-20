@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import case, func, or_, text as sql_text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -157,35 +157,12 @@ def _remap_state_evidence(
     which the engine's post-redecode strip uses to drop them. Ids in
     ``retained_ids`` (unmatched pinned rows kept as-is) stay valid anchors.
     """
-    from meeting.state.schema import CARD_KEYS
-
     def remap_list(values: Any) -> List[str]:
-        remapped: List[str] = []
-        seen: set = set()
-        if not isinstance(values, list):
-            return remapped
-        for item in values:
-            if not isinstance(item, str) or not item.startswith("sg_"):
-                continue
-            mapped = _best_evidence_match(
-                item, old_items, new_items, id_map, retained_ids,
-            )
-            if mapped and mapped not in seen:
-                remapped.append(mapped)
-                seen.add(mapped)
-        return remapped
+        return _remap_evidence_list(values, old_items, new_items, id_map, retained_ids)
 
     cards = state.get("cards") or {}
     if isinstance(cards, dict):
-        for key in CARD_KEYS:
-            items = cards.get(key) or []
-            if not isinstance(items, list):
-                continue
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                item["evidence"] = remap_list(item.get("evidence"))
-                item["citation_check"] = {}
+        _remap_card_evidence(cards, remap_list)
     pulses = []
     for pulse in state.get("live_highlights") or []:
         mapped = remap_list([pulse.get("segment_id")])
@@ -201,6 +178,350 @@ def _remap_state_evidence(
     state["rolling_summary_evidence"] = remap_list(
         state.get("rolling_summary_evidence")
     )
+
+
+def _remap_evidence_list(
+    values: Any,
+    old_items: Sequence[Dict[str, Any]],
+    new_items: Sequence[TranscriptSegment],
+    id_map: Dict[str, str],
+    retained_ids: frozenset,
+) -> List[str]:
+    """Remapped ``sg_`` ids of ``values``, deduplicated in order; others drop."""
+    remapped: List[str] = []
+    seen: set = set()
+    if not isinstance(values, list):
+        return remapped
+    for item in values:
+        if not isinstance(item, str) or not item.startswith("sg_"):
+            continue
+        mapped = _best_evidence_match(
+            item, old_items, new_items, id_map, retained_ids,
+        )
+        if mapped and mapped not in seen:
+            remapped.append(mapped)
+            seen.add(mapped)
+    return remapped
+
+
+def _remap_card_evidence(
+    cards: Dict[str, Any], remap_list: Callable[[Any], List[str]],
+) -> None:
+    """Remap every card item's evidence; its citation check is now stale."""
+    from meeting.state.schema import CARD_KEYS
+
+    for key in CARD_KEYS:
+        items = cards.get(key) or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item["evidence"] = remap_list(item.get("evidence"))
+            item["citation_check"] = {}
+
+
+def _search_filter(session: Any, sessions: Any, needle: str) -> Any:
+    """Match ``needle`` literally against meeting metadata, state and transcript."""
+    escaped = (
+        needle.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    pattern = f"%{escaped}%"
+    transcript_matches = session.query(
+        MeetingSegment.meeting_id
+    ).filter(
+        MeetingSegment.text.ilike(pattern, escape="\\")
+    ).distinct()
+    return sessions.filter(
+        or_(
+            MeetingSession.title.ilike(pattern, escape="\\"),
+            MeetingSession.started_at.ilike(pattern, escape="\\"),
+            MeetingSession.status.ilike(pattern, escape="\\"),
+            MeetingSession.state_json.ilike(pattern, escape="\\"),
+            MeetingSession.id.in_(transcript_matches),
+        )
+    )
+
+
+def _origin_filter(sessions: Any, origin: Any) -> Any:
+    """None keeps this computer's meetings; a device id keeps that paired computer's."""
+    if origin is None:
+        return sessions.filter(MeetingSession.origin_device_id.is_(None))
+    if origin is not ...:
+        return sessions.filter(MeetingSession.origin_device_id == origin)
+    return sessions
+
+
+def _content_aggregates(
+    session: Any, meeting_ids: List[str],
+) -> Tuple[Dict[str, Tuple[int, bool]], Dict[str, int], Dict[str, str]]:
+    """Per meeting: (audio chunk count, has loopback), transcript count, first line."""
+    audio_rows = session.query(
+        MeetingAudioChunk.meeting_id,
+        func.count(MeetingAudioChunk.id),
+        func.max(case((MeetingAudioChunk.channel == "loopback", 1), else_=0)),
+    ).filter(
+        MeetingAudioChunk.meeting_id.in_(meeting_ids),
+        MeetingAudioChunk.duration_s > 0.0,
+    ).group_by(MeetingAudioChunk.meeting_id).all()
+    audio_by_meeting = {
+        meeting_id: (int(count or 0), bool(has_loopback))
+        for meeting_id, count, has_loopback in audio_rows
+    }
+
+    transcript_rows = session.query(
+        MeetingSegment.meeting_id,
+        func.count(MeetingSegment.id),
+    ).filter(
+        MeetingSegment.meeting_id.in_(meeting_ids),
+        func.trim(MeetingSegment.text) != "",
+    ).group_by(MeetingSegment.meeting_id).all()
+    transcript_count = {
+        meeting_id: int(count or 0)
+        for meeting_id, count in transcript_rows
+    }
+
+    ranked = session.query(
+        MeetingSegment.meeting_id.label("meeting_id"),
+        MeetingSegment.text.label("text"),
+        func.row_number().over(
+            partition_by=MeetingSegment.meeting_id,
+            order_by=(MeetingSegment.start_s, MeetingSegment.id),
+        ).label("rank"),
+    ).filter(
+        MeetingSegment.meeting_id.in_(meeting_ids),
+        func.trim(MeetingSegment.text) != "",
+    ).subquery()
+    preview_by_meeting = {
+        meeting_id: str(text or "")
+        for meeting_id, text in session.query(
+            ranked.c.meeting_id, ranked.c.text
+        ).filter(ranked.c.rank == 1).all()
+    }
+    return audio_by_meeting, transcript_count, preview_by_meeting
+
+
+def _content_summary(
+    audio_count: int, has_loopback: bool, segment_count: int, preview: str,
+) -> Dict[str, Any]:
+    if len(preview) > 100:
+        preview = preview[:100].rstrip() + "…"
+    return {
+        "has_audio": audio_count > 0,
+        "has_loopback_audio": has_loopback,
+        "has_transcript": segment_count > 0,
+        "is_empty": audio_count == 0 and segment_count == 0,
+        "audio_chunks": audio_count,
+        "transcript_segments": segment_count,
+        "can_rerun_speakers": has_loopback,
+        "preview_text": preview,
+    }
+
+
+def _old_segment_items(old_rows: Sequence[Any]) -> List[Dict[str, Any]]:
+    """Plain snapshots of the live rows, safe to read after they are deleted."""
+    return [
+        {
+            "id": row.id,
+            "start_s": float(row.start_s),
+            "end_s": float(row.end_s),
+            "pinned": bool(row.speaker_pinned),
+            "speaker_participant_id": row.speaker_participant_id,
+            "speaker_source": row.speaker_source,
+            "channel": row.channel,
+        }
+        for row in old_rows
+    ]
+
+
+def _match_live_to_offline(
+    old_items: Sequence[Dict[str, Any]],
+    new_items: Sequence[TranscriptSegment],
+) -> Tuple[Dict[str, str], set]:
+    """Pair old and new rows one-to-one by best time IoU on the same channel.
+
+    Matched new rows inherit the old speaker label where it should win.
+    Returns ``old_id -> new_id`` and the matched old row indices.
+    """
+    pairs: List[Tuple[float, int, int]] = []
+    for oi, old in enumerate(old_items):
+        for ni, new in enumerate(new_items):
+            if old["channel"] != new.channel:
+                continue
+            score = interval_iou(
+                old["start_s"], old["end_s"], new.start_s, new.end_s,
+            )
+            if score >= MIN_MATCH_IOU:
+                pairs.append((score, oi, ni))
+    pairs.sort(reverse=True)
+    used_old: set = set()
+    used_new: set = set()
+    id_map: Dict[str, str] = {}
+    for _score, oi, ni in pairs:
+        if oi in used_old or ni in used_new:
+            continue
+        used_old.add(oi)
+        used_new.add(ni)
+        old = old_items[oi]
+        new = new_items[ni]
+        id_map[old["id"]] = new.segment_id
+        _inherit_speaker(old, new)
+    return id_map, used_old
+
+
+def _inherit_speaker(old: Dict[str, Any], new: TranscriptSegment) -> None:
+    # A human pin always wins. An unpinned live label only fills
+    # a gap; otherwise the offline diarization pass is kept.
+    if old["pinned"] or (
+        old["speaker_participant_id"]
+        and not new.speaker_participant_id
+    ):
+        new.speaker_participant_id = old["speaker_participant_id"]
+        new.speaker_source = old["speaker_source"]
+        new.speaker_pinned = bool(old["pinned"])
+
+
+def _retained_pinned_ids(
+    old_items: Sequence[Dict[str, Any]], used_old: set,
+) -> List[str]:
+    """Ids of pinned live rows no offline row matched; they stay as they are."""
+    return [
+        old["id"] for oi, old in enumerate(old_items)
+        if old["pinned"] and oi not in used_old
+    ]
+
+
+def _delete_replaced_rows(
+    session: Any, old_items: Sequence[Dict[str, Any]], used_old: set,
+) -> List[str]:
+    """Delete every live row except pinned rows no offline row matched."""
+    deleted: List[str] = []
+    for oi, old in enumerate(old_items):
+        if old["pinned"] and oi not in used_old:
+            continue
+        row = session.get(MeetingSegment, old["id"])
+        if row is None:
+            continue
+        session.delete(row)
+        deleted.append(old["id"])
+    return deleted
+
+
+def _store_offline_segments(
+    session: Any, meeting_id: str, new_items: Sequence[TranscriptSegment], created: str,
+) -> List[str]:
+    stored_ids: List[str] = []
+    for seg in new_items:
+        if seg.meeting_id != meeting_id:
+            raise ValueError("segment does not belong to meeting")
+        existing = session.get(MeetingSegment, seg.segment_id)
+        if existing is not None and existing.meeting_id != meeting_id:
+            raise ValueError("segment id already belongs to another meeting")
+        created_at = created
+        if existing is not None:
+            created_at = existing.created_at
+        session.merge(MeetingSegment(
+            id=seg.segment_id,
+            meeting_id=seg.meeting_id,
+            chunk_id=seg.chunk_id,
+            channel=seg.channel,
+            start_s=seg.start_s,
+            end_s=seg.end_s,
+            text=seg.text,
+            speaker_participant_id=seg.speaker_participant_id,
+            speaker_source=seg.speaker_source,
+            speaker_pinned=bool(seg.speaker_pinned),
+            embedding=seg.embedding,
+            created_at=created_at,
+        ))
+        stored_ids.append(seg.segment_id)
+    return stored_ids
+
+
+def _segment_dicts(session: Any, segment_ids: Iterable[str]) -> List[Dict[str, Any]]:
+    """Stored rows for ``segment_ids``, skipping any that no longer exist."""
+    rows = []
+    for seg_id in segment_ids:
+        row = session.get(MeetingSegment, seg_id)
+        if row is not None:
+            rows.append(_segment_to_dict(row))
+    return rows
+
+
+def _mirror_item(session: Any, meeting_id: str, item: Dict[str, Any]) -> None:
+    session.merge(MeetingStateItem(
+        id=item["id"], meeting_id=meeting_id, card=item["card"],
+        text=item["text"],
+        data_json=json.dumps(item.get("data") or {}, ensure_ascii=False),
+        status=item["status"], author_type=item["author_type"],
+        author_id=item.get("author_id"), pinned=item["pinned"],
+        revision=item["revision"],
+        evidence_json=json.dumps(item.get("evidence") or []),
+        created_at=item["created_at"], updated_at=item["updated_at"],
+    ))
+
+
+def _mirror_question(session: Any, meeting_id: str, q: Dict[str, Any]) -> None:
+    session.merge(MeetingQuestion(
+        id=q["id"], meeting_id=meeting_id, text=q["text"],
+        status=q["status"], answer_text=q.get("answer"),
+        answer_source=q.get("answer_source"),
+        answer_confidence=q.get("confidence"),
+        suggested_answer_text=q.get("suggested_answer"),
+        suggested_confidence=q.get("suggested_confidence"),
+        thread_json=json.dumps(q.get("thread") or [], ensure_ascii=False),
+        evidence_json=json.dumps(q.get("evidence") or []),
+        asked_at=q["asked_at"], resolved_at=q.get("resolved_at"),
+        resolved_by=q.get("resolved_by"),
+    ))
+
+
+def _mirror_participant(session: Any, meeting_id: str, p: Dict[str, Any]) -> None:
+    session.merge(MeetingParticipant(
+        id=p["id"], meeting_id=meeting_id,
+        display_name=p["display_name"], kind=p["kind"],
+        name_source=p["name_source"],
+        is_provisional=p["is_provisional"],
+        created_at=p["created_at"], updated_at=p["updated_at"],
+    ))
+
+
+def _meeting_segment_row(session: Any, meeting_id: str, segment_id: str) -> Any:
+    """The segment row, which must belong to ``meeting_id``."""
+    row = session.query(MeetingSegment).filter(
+        MeetingSegment.meeting_id == meeting_id,
+        MeetingSegment.id == segment_id,
+    ).one_or_none()
+    if row is None:
+        raise ValueError("segment does not belong to meeting")
+    return row
+
+
+def _mirror_segment_speaker(session: Any, meeting_id: str, effect: Dict[str, Any]) -> None:
+    row = _meeting_segment_row(session, meeting_id, effect["segment_id"])
+    participant_id = effect.get("participant_id")
+    if participant_id is not None:
+        participant = session.query(MeetingParticipant.id).filter(
+            MeetingParticipant.meeting_id == meeting_id,
+            MeetingParticipant.id == participant_id,
+        ).first()
+        if participant is None:
+            raise ValueError("participant does not belong to meeting")
+    row.speaker_participant_id = participant_id
+    row.speaker_source = effect.get("source", "human")
+    row.speaker_pinned = bool(effect.get("pinned"))
+
+
+def _mirror_segment_text(session: Any, meeting_id: str, effect: Dict[str, Any]) -> None:
+    row = _meeting_segment_row(session, meeting_id, effect["segment_id"])
+    text = (effect.get("text") or "").strip()
+    if not text:
+        raise ValueError("segment text must be non-empty")
+    row.text = text
+    # Keep the broadcast payload aligned with the persisted row.
+    effect["segment"] = _segment_to_dict(row)
 
 
 class SqlMeetingRepository:
@@ -317,31 +638,9 @@ class SqlMeetingRepository:
                 sessions = sessions.filter(MeetingSession.started_at >= started_from)
             if started_before:
                 sessions = sessions.filter(MeetingSession.started_at < started_before)
-            if origin is None:
-                sessions = sessions.filter(MeetingSession.origin_device_id.is_(None))
-            elif origin is not ...:
-                sessions = sessions.filter(MeetingSession.origin_device_id == origin)
+            sessions = _origin_filter(sessions, origin)
             if needle:
-                escaped = (
-                    needle.replace("\\", "\\\\")
-                    .replace("%", "\\%")
-                    .replace("_", "\\_")
-                )
-                pattern = f"%{escaped}%"
-                transcript_matches = session.query(
-                    MeetingSegment.meeting_id
-                ).filter(
-                    MeetingSegment.text.ilike(pattern, escape="\\")
-                ).distinct()
-                sessions = sessions.filter(
-                    or_(
-                        MeetingSession.title.ilike(pattern, escape="\\"),
-                        MeetingSession.started_at.ilike(pattern, escape="\\"),
-                        MeetingSession.status.ilike(pattern, escape="\\"),
-                        MeetingSession.state_json.ilike(pattern, escape="\\"),
-                        MeetingSession.id.in_(transcript_matches),
-                    )
-                )
+                sessions = _search_filter(session, sessions, needle)
             rows = sessions.order_by(
                 MeetingSession.started_at.desc(),
                 MeetingSession.id.desc(),
@@ -350,49 +649,9 @@ class SqlMeetingRepository:
             if not meeting_ids:
                 return []
 
-            audio_rows = session.query(
-                MeetingAudioChunk.meeting_id,
-                func.count(MeetingAudioChunk.id),
-                func.max(case((MeetingAudioChunk.channel == "loopback", 1), else_=0)),
-            ).filter(
-                MeetingAudioChunk.meeting_id.in_(meeting_ids),
-                MeetingAudioChunk.duration_s > 0.0,
-            ).group_by(MeetingAudioChunk.meeting_id).all()
-            audio_by_meeting = {
-                meeting_id: (int(count or 0), bool(has_loopback))
-                for meeting_id, count, has_loopback in audio_rows
-            }
-
-            transcript_rows = session.query(
-                MeetingSegment.meeting_id,
-                func.count(MeetingSegment.id),
-            ).filter(
-                MeetingSegment.meeting_id.in_(meeting_ids),
-                func.trim(MeetingSegment.text) != "",
-            ).group_by(MeetingSegment.meeting_id).all()
-            transcript_count = {
-                meeting_id: int(count or 0)
-                for meeting_id, count in transcript_rows
-            }
-
-            ranked = session.query(
-                MeetingSegment.meeting_id.label("meeting_id"),
-                MeetingSegment.text.label("text"),
-                func.row_number().over(
-                    partition_by=MeetingSegment.meeting_id,
-                    order_by=(MeetingSegment.start_s, MeetingSegment.id),
-                ).label("rank"),
-            ).filter(
-                MeetingSegment.meeting_id.in_(meeting_ids),
-                func.trim(MeetingSegment.text) != "",
-            ).subquery()
-            preview_by_meeting = {
-                meeting_id: str(text or "")
-                for meeting_id, text in session.query(
-                    ranked.c.meeting_id, ranked.c.text
-                ).filter(ranked.c.rank == 1).all()
-            }
-
+            audio_by_meeting, transcript_count, preview_by_meeting = (
+                _content_aggregates(session, meeting_ids)
+            )
             result: List[Dict[str, Any]] = []
             for row in rows:
                 audio_count, has_loopback = audio_by_meeting.get(
@@ -400,19 +659,10 @@ class SqlMeetingRepository:
                 )
                 segment_count = transcript_count.get(row.id, 0)
                 preview = preview_by_meeting.get(row.id, "").strip()
-                if len(preview) > 100:
-                    preview = preview[:100].rstrip() + "…"
                 meeting = _session_to_dict(row)
-                meeting["content_summary"] = {
-                    "has_audio": audio_count > 0,
-                    "has_loopback_audio": has_loopback,
-                    "has_transcript": segment_count > 0,
-                    "is_empty": audio_count == 0 and segment_count == 0,
-                    "audio_chunks": audio_count,
-                    "transcript_segments": segment_count,
-                    "can_rerun_speakers": has_loopback,
-                    "preview_text": preview,
-                }
+                meeting["content_summary"] = _content_summary(
+                    audio_count, has_loopback, segment_count, preview,
+                )
                 result.append(meeting)
             return result
 
@@ -967,108 +1217,26 @@ class SqlMeetingRepository:
             old_rows = session.query(MeetingSegment).filter(
                 MeetingSegment.meeting_id == meeting_id
             ).all()
-            old_items = [
-                {
-                    "id": row.id,
-                    "start_s": float(row.start_s),
-                    "end_s": float(row.end_s),
-                    "pinned": bool(row.speaker_pinned),
-                    "speaker_participant_id": row.speaker_participant_id,
-                    "speaker_source": row.speaker_source,
-                    "channel": row.channel,
-                }
-                for row in old_rows
-            ]
+            old_items = _old_segment_items(old_rows)
             new_items = list(segments)
-            pairs: List[Tuple[float, int, int]] = []
-            for oi, old in enumerate(old_items):
-                for ni, new in enumerate(new_items):
-                    if old["channel"] != new.channel:
-                        continue
-                    score = interval_iou(
-                        old["start_s"], old["end_s"], new.start_s, new.end_s,
-                    )
-                    if score >= MIN_MATCH_IOU:
-                        pairs.append((score, oi, ni))
-            pairs.sort(reverse=True)
-            used_old: set = set()
-            used_new: set = set()
-            id_map: Dict[str, str] = {}
-            for _score, oi, ni in pairs:
-                if oi in used_old or ni in used_new:
-                    continue
-                used_old.add(oi)
-                used_new.add(ni)
-                old = old_items[oi]
-                new = new_items[ni]
-                id_map[old["id"]] = new.segment_id
-                # A human pin always wins. An unpinned live label only fills
-                # a gap; otherwise the offline diarization pass is kept.
-                if old["pinned"] or (
-                    old["speaker_participant_id"]
-                    and not new.speaker_participant_id
-                ):
-                    new.speaker_participant_id = old["speaker_participant_id"]
-                    new.speaker_source = old["speaker_source"]
-                    new.speaker_pinned = bool(old["pinned"])
+            id_map, used_old = _match_live_to_offline(old_items, new_items)
 
-            deleted: List[str] = []
-            retained: set = set()
-            for oi, old in enumerate(old_items):
-                if old["pinned"] and oi not in used_old:
-                    retained.add(old["id"])
-                    continue
-                row = session.get(MeetingSegment, old["id"])
-                if row is None:
-                    continue
-                session.delete(row)
-                deleted.append(old["id"])
-
-            stored_ids: List[str] = []
-            for seg in new_items:
-                if seg.meeting_id != meeting_id:
-                    raise ValueError("segment does not belong to meeting")
-                existing = session.get(MeetingSegment, seg.segment_id)
-                if existing is not None and existing.meeting_id != meeting_id:
-                    raise ValueError("segment id already belongs to another meeting")
-                session.merge(MeetingSegment(
-                    id=seg.segment_id,
-                    meeting_id=seg.meeting_id,
-                    chunk_id=seg.chunk_id,
-                    channel=seg.channel,
-                    start_s=seg.start_s,
-                    end_s=seg.end_s,
-                    text=seg.text,
-                    speaker_participant_id=seg.speaker_participant_id,
-                    speaker_source=seg.speaker_source,
-                    speaker_pinned=bool(seg.speaker_pinned),
-                    embedding=seg.embedding,
-                    created_at=(
-                        existing.created_at if existing is not None else created
-                    ),
-                ))
-                stored_ids.append(seg.segment_id)
+            retained_ids = _retained_pinned_ids(old_items, used_old)
+            deleted = _delete_replaced_rows(session, old_items, used_old)
+            stored_ids = _store_offline_segments(session, meeting_id, new_items, created)
 
             if meeting is not None:
                 state = parse_state_json(meeting.state_json)
                 if state is not None:
                     _remap_state_evidence(
                         state, id_map, old_items, new_items,
-                        frozenset(retained),
+                        frozenset(retained_ids),
                     )
                     meeting.state_json = json.dumps(state, ensure_ascii=False)
 
             session.flush()
-            rows = []
-            for seg_id in stored_ids:
-                row = session.get(MeetingSegment, seg_id)
-                if row is not None:
-                    rows.append(_segment_to_dict(row))
-            for oi, old in enumerate(old_items):
-                if old["pinned"] and oi not in used_old:
-                    row = session.get(MeetingSegment, old["id"])
-                    if row is not None:
-                        rows.append(_segment_to_dict(row))
+            rows = _segment_dicts(session, stored_ids)
+            rows.extend(_segment_dicts(session, retained_ids))
             rows.sort(key=lambda item: (item["start_s"], item["id"]))
             return rows, deleted, id_map
 
@@ -1193,71 +1361,15 @@ class SqlMeetingRepository:
                 self._mirror_effect(session, meeting_id, OpResult(
                     ok=True, op={}, effect={"entity": "item", "item": item}))
         elif entity == "item":
-            item = effect["item"]
-            session.merge(MeetingStateItem(
-                id=item["id"], meeting_id=meeting_id, card=item["card"],
-                text=item["text"],
-                data_json=json.dumps(item.get("data") or {}, ensure_ascii=False),
-                status=item["status"], author_type=item["author_type"],
-                author_id=item.get("author_id"), pinned=item["pinned"],
-                revision=item["revision"],
-                evidence_json=json.dumps(item.get("evidence") or []),
-                created_at=item["created_at"], updated_at=item["updated_at"],
-            ))
+            _mirror_item(session, meeting_id, effect["item"])
         elif entity == "question":
-            q = effect["question"]
-            session.merge(MeetingQuestion(
-                id=q["id"], meeting_id=meeting_id, text=q["text"],
-                status=q["status"], answer_text=q.get("answer"),
-                answer_source=q.get("answer_source"),
-                answer_confidence=q.get("confidence"),
-                suggested_answer_text=q.get("suggested_answer"),
-                suggested_confidence=q.get("suggested_confidence"),
-                thread_json=json.dumps(q.get("thread") or [], ensure_ascii=False),
-                evidence_json=json.dumps(q.get("evidence") or []),
-                asked_at=q["asked_at"], resolved_at=q.get("resolved_at"),
-                resolved_by=q.get("resolved_by"),
-            ))
+            _mirror_question(session, meeting_id, effect["question"])
         elif entity == "participant":
-            p = effect["participant"]
-            session.merge(MeetingParticipant(
-                id=p["id"], meeting_id=meeting_id,
-                display_name=p["display_name"], kind=p["kind"],
-                name_source=p["name_source"],
-                is_provisional=p["is_provisional"],
-                created_at=p["created_at"], updated_at=p["updated_at"],
-            ))
+            _mirror_participant(session, meeting_id, effect["participant"])
         elif entity == "segment_speaker":
-            row = session.query(MeetingSegment).filter(
-                MeetingSegment.meeting_id == meeting_id,
-                MeetingSegment.id == effect["segment_id"],
-            ).one_or_none()
-            if row is None:
-                raise ValueError("segment does not belong to meeting")
-            participant_id = effect.get("participant_id")
-            if participant_id is not None:
-                participant = session.query(MeetingParticipant.id).filter(
-                    MeetingParticipant.meeting_id == meeting_id,
-                    MeetingParticipant.id == participant_id,
-                ).first()
-                if participant is None:
-                    raise ValueError("participant does not belong to meeting")
-            row.speaker_participant_id = participant_id
-            row.speaker_source = effect.get("source", "human")
-            row.speaker_pinned = bool(effect.get("pinned"))
+            _mirror_segment_speaker(session, meeting_id, effect)
         elif entity == "segment_text":
-            row = session.query(MeetingSegment).filter(
-                MeetingSegment.meeting_id == meeting_id,
-                MeetingSegment.id == effect["segment_id"],
-            ).one_or_none()
-            if row is None:
-                raise ValueError("segment does not belong to meeting")
-            text = (effect.get("text") or "").strip()
-            if not text:
-                raise ValueError("segment text must be non-empty")
-            row.text = text
-            # Keep the broadcast payload aligned with the persisted row.
-            effect["segment"] = _segment_to_dict(row)
+            _mirror_segment_text(session, meeting_id, effect)
 
     def get_event(self, meeting_id: str, seq: int) -> Optional[Dict[str, Any]]:
         with self._db.get_session() as session:

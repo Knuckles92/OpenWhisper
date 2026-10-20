@@ -19,14 +19,39 @@ class SpeechModel:
 
 MODELS = {
     m.key: m for m in (
-        SpeechModel("parakeet-v3", "parakeet", "Parakeet TDT 0.6B v3", "Fast dictation and files", "CC-BY-4.0", "25 European languages", meeting=True),
-        SpeechModel("orukeet-v0.1", "parakeet", "Orukeet TDT 0.6B", "Community adaptation of Parakeet for multilingual transcription", "CC-BY-SA-4.0", "25 European languages, including Russian and English", meeting=True),
-        SpeechModel("qwen-0.6b", "qwen_asr", "Qwen3-ASR 0.6B", "Efficient multilingual transcription", "Apache-2.0", "30 languages and 22 Chinese dialects"),
-        SpeechModel("qwen-1.7b", "qwen_asr", "Qwen3-ASR 1.7B", "Accuracy-focused transcription", "Apache-2.0", "30 languages and 22 Chinese dialects"),
-        SpeechModel("nemotron-3.5", "nemotron", "Nemotron 3.5 ASR 0.6B", "Live speech recognition", "OpenMDW-1.1", "Multilingual; coverage varies by locale", streaming=True, meeting=True),
-        SpeechModel("moonshine-small", "moonshine", "Moonshine Streaming Small", "Fast CPU transcription", "MIT", "English", streaming=True, meeting=True),
-        SpeechModel("moonshine-medium", "moonshine", "Moonshine Streaming Medium", "CPU transcription with a larger model", "MIT", "English", streaming=True, meeting=True),
-        SpeechModel("parakeet-v3-mlx", "parakeet_mlx", "Parakeet TDT 0.6B v3 (MLX)", "Apple Silicon dictation and files", "CC-BY-4.0", "25 European languages", meeting=True),
+        SpeechModel(
+            "parakeet-v3", "parakeet", "Parakeet TDT 0.6B v3", "Fast dictation and files",
+            "CC-BY-4.0", "25 European languages", meeting=True,
+        ),
+        SpeechModel(
+            "orukeet-v0.1", "parakeet", "Orukeet TDT 0.6B",
+            "Community adaptation of Parakeet for multilingual transcription",
+            "CC-BY-SA-4.0", "25 European languages, including Russian and English", meeting=True,
+        ),
+        SpeechModel(
+            "qwen-0.6b", "qwen_asr", "Qwen3-ASR 0.6B", "Efficient multilingual transcription",
+            "Apache-2.0", "30 languages and 22 Chinese dialects",
+        ),
+        SpeechModel(
+            "qwen-1.7b", "qwen_asr", "Qwen3-ASR 1.7B", "Accuracy-focused transcription",
+            "Apache-2.0", "30 languages and 22 Chinese dialects",
+        ),
+        SpeechModel(
+            "nemotron-3.5", "nemotron", "Nemotron 3.5 ASR 0.6B", "Live speech recognition",
+            "OpenMDW-1.1", "Multilingual; coverage varies by locale", streaming=True, meeting=True,
+        ),
+        SpeechModel(
+            "moonshine-small", "moonshine", "Moonshine Streaming Small", "Fast CPU transcription",
+            "MIT", "English", streaming=True, meeting=True,
+        ),
+        SpeechModel(
+            "moonshine-medium", "moonshine", "Moonshine Streaming Medium",
+            "CPU transcription with a larger model", "MIT", "English", streaming=True, meeting=True,
+        ),
+        SpeechModel(
+            "parakeet-v3-mlx", "parakeet_mlx", "Parakeet TDT 0.6B v3 (MLX)",
+            "Apple Silicon dictation and files", "CC-BY-4.0", "25 European languages", meeting=True,
+        ),
     )
 }
 BACKENDS = {
@@ -42,7 +67,10 @@ DEFAULT_MODELS = {key: next(m.key for m in MODELS.values() if m.backend == key) 
 MLX_RUNTIME = "asr-parakeet-mlx"
 #: NeMo-Speech.cpp's Metal release: Parakeet and Nemotron on the Apple GPU.
 NVIDIA_METAL_RUNTIME = "asr-nvidia-metal"
-RUNTIME_IDS = ("asr-nvidia-cpu", "asr-nvidia-cuda", "asr-nvidia-vulkan", NVIDIA_METAL_RUNTIME, "asr-qwen", "asr-moonshine", MLX_RUNTIME)
+RUNTIME_IDS = (
+    "asr-nvidia-cpu", "asr-nvidia-cuda", "asr-nvidia-vulkan", NVIDIA_METAL_RUNTIME,
+    "asr-qwen", "asr-moonshine", MLX_RUNTIME,
+)
 #: NVIDIA's CUDA release of NeMo-Speech.cpp runs on Turing and newer. Older
 #: NVIDIA GPUs, such as the GTX 10 series, run its Vulkan release instead.
 CUDA_MIN_COMPUTE_CAPABILITY = (7, 5)
@@ -60,7 +88,8 @@ def artifacts(key: str) -> dict:
 
 
 def selected_model(backend: str, settings: dict) -> str:
-    key = settings.get("local_asr_models", {}).get(backend) if isinstance(settings.get("local_asr_models"), dict) else None
+    chosen = settings.get("local_asr_models")
+    key = chosen.get(backend) if isinstance(chosen, dict) else None
     return key if key in MODELS and MODELS[key].backend == backend else DEFAULT_MODELS[backend]
 
 
@@ -69,7 +98,9 @@ def selected_device(backend: str, settings: dict) -> str:
     device = devices.get(backend) if isinstance(devices, dict) else None
     if backend == "parakeet_mlx":
         return device if device in ("auto", "cpu") else "auto"
-    return device if device in ("auto", "cpu", "cuda") and backend != "moonshine" else ("cpu" if backend == "moonshine" else "auto")
+    if backend == "moonshine":
+        return "cpu"
+    return device if device in ("auto", "cpu", "cuda") else "auto"
 
 
 def nvidia_gpu_runtime() -> str:
@@ -216,7 +247,12 @@ def missing_runtime(model_name: str, settings: dict) -> str | None:
 
 def runtime_catalog() -> dict:
     entries = {}
-    for key, filename in (("asr-qwen", "qwen_runtime.json"), ("asr-moonshine", "moonshine_runtime.json"), ("asr-nvidia-cpu", "nvidia_cpu_runtime.json"), ("asr-nvidia-cuda", "nvidia_cuda_runtime.json")):
+    for key, filename in (
+        ("asr-qwen", "qwen_runtime.json"),
+        ("asr-moonshine", "moonshine_runtime.json"),
+        ("asr-nvidia-cpu", "nvidia_cpu_runtime.json"),
+        ("asr-nvidia-cuda", "nvidia_cuda_runtime.json"),
+    ):
         with Path(__file__).with_name(filename).open(encoding="utf-8-sig") as stream:
             entries[key] = {"platforms": {"win_amd64": json.load(stream)}}
     # The app's interpreter runs workers on macOS/Linux, using downloaded

@@ -570,6 +570,35 @@ def _pick_exact_loopback(
     itself. That representation is accepted only when the device is a positive
     loopback and no other device claims the expected monitor ID.
     """
+    exact, sink_keyed = _scan_loopbacks(
+        soundcard_module, sink_id=sink_id, expected_monitor=expected_monitor
+    )
+    if exact is not None:
+        return exact
+
+    # Fall back to an explicit lookup by the proven monitor id.
+    by_monitor = _lookup_loopback(
+        soundcard_module, expected_monitor, accepted_ids=(expected_monitor,)
+    )
+    if by_monitor is not None:
+        return by_monitor
+
+    # SoundCard sink-id keying: only when the returned device is the sink id
+    # itself (not some other sink's monitor).
+    if sink_keyed is not None:
+        return sink_keyed
+    return _lookup_loopback(
+        soundcard_module, sink_id, accepted_ids={expected_monitor, sink_id}
+    )
+
+
+def _scan_loopbacks(
+    soundcard_module: Any,
+    *,
+    sink_id: str,
+    expected_monitor: str,
+) -> tuple[Any, Any]:
+    """Listed positive loopbacks keyed by the monitor id and by the sink id."""
     try:
         loopbacks = list(soundcard_module.all_microphones(include_loopback=True))
     except Exception:
@@ -585,40 +614,28 @@ def _pick_exact_loopback(
             exact = item
         elif item_id == sink_id:
             sink_keyed = item
+    return exact, sink_keyed
 
-    if exact is not None:
-        return exact
 
-    # Fall back to an explicit lookup by the proven monitor id.
+def _lookup_loopback(
+    soundcard_module: Any,
+    lookup_id: str,
+    *,
+    accepted_ids: Any,
+) -> Any:
+    """Look one device up by id; keep it only as a positive loopback with an accepted id."""
     try:
-        by_monitor = soundcard_module.get_microphone(
-            id=expected_monitor, include_loopback=True
+        device = soundcard_module.get_microphone(
+            id=lookup_id, include_loopback=True
         )
     except Exception:
-        by_monitor = None
+        device = None
     if (
-        by_monitor is not None
-        and _positive_loopback_flag(by_monitor)
-        and _device_id(by_monitor) == expected_monitor
+        device is not None
+        and _positive_loopback_flag(device)
+        and _device_id(device) in accepted_ids
     ):
-        return by_monitor
-
-    # SoundCard sink-id keying: only when the returned device is the sink id
-    # itself (not some other sink's monitor).
-    if sink_keyed is not None:
-        return sink_keyed
-    try:
-        by_sink = soundcard_module.get_microphone(
-            id=sink_id, include_loopback=True
-        )
-    except Exception:
-        by_sink = None
-    if (
-        by_sink is not None
-        and _positive_loopback_flag(by_sink)
-        and _device_id(by_sink) in {expected_monitor, sink_id}
-    ):
-        return by_sink
+        return device
     return None
 
 
@@ -635,13 +652,7 @@ def resolve_linux_monitor(
     if soundcard_module is None:
         soundcard_module = load_soundcard()
 
-    try:
-        speaker = soundcard_module.default_speaker()
-    except Exception as exc:
-        raise RuntimeError(REASON_DEFAULT_SINK_MISSING) from exc
-    if speaker is None:
-        raise RuntimeError(REASON_DEFAULT_SINK_MISSING)
-
+    speaker = _default_speaker(soundcard_module)
     sink_id = _device_id(speaker)
     sink_name = _device_name(speaker)
     if not sink_id:
@@ -661,12 +672,7 @@ def resolve_linux_monitor(
     # case only, let pactl prove the exact "Monitor of" association. Never use
     # fuzzy SoundCard matches or a monitor belonging to another sink.
     if monitor is None:
-        pactl_monitor = _pactl_monitor_for_sink(sink_id)
-        if not pactl_monitor:
-            if not shutil.which("pactl"):
-                raise RuntimeError(REASON_PACTL_MISSING)
-            raise RuntimeError(REASON_MONITOR_SOURCE_MISSING)
-        expected_monitor = pactl_monitor
+        expected_monitor = _pactl_monitor_or_raise(sink_id)
         monitor = _pick_exact_loopback(
             soundcard_module,
             sink_id=sink_id,
@@ -682,9 +688,7 @@ def resolve_linux_monitor(
         raise RuntimeError(REASON_MONITOR_SOURCE_MISSING)
     stable_monitor_id = expected_monitor
 
-    kind = server_kind or detect_linux_audio_server(soundcard_module)
-    if kind == SERVER_UNKNOWN:
-        kind = SERVER_PULSE
+    kind = _selection_server_kind(soundcard_module, server_kind)
     return LinuxMonitorSelection(
         sink_id=sink_id,
         sink_name=sink_name,
@@ -694,6 +698,33 @@ def resolve_linux_monitor(
         server_kind=kind,
         soundcard_id=sc_id or stable_monitor_id,
     )
+
+
+def _default_speaker(soundcard_module: Any) -> Any:
+    try:
+        speaker = soundcard_module.default_speaker()
+    except Exception as exc:
+        raise RuntimeError(REASON_DEFAULT_SINK_MISSING) from exc
+    if speaker is None:
+        raise RuntimeError(REASON_DEFAULT_SINK_MISSING)
+    return speaker
+
+
+def _pactl_monitor_or_raise(sink_id: str) -> str:
+    """The monitor pactl proves for ``sink_id``; raises a reason code otherwise."""
+    pactl_monitor = _pactl_monitor_for_sink(sink_id)
+    if pactl_monitor:
+        return pactl_monitor
+    if not shutil.which("pactl"):
+        raise RuntimeError(REASON_PACTL_MISSING)
+    raise RuntimeError(REASON_MONITOR_SOURCE_MISSING)
+
+
+def _selection_server_kind(soundcard_module: Any, server_kind: Optional[str]) -> str:
+    kind = server_kind or detect_linux_audio_server(soundcard_module)
+    if kind == SERVER_UNKNOWN:
+        kind = SERVER_PULSE
+    return kind
 
 
 def _soundcard_lookup_id(selection: LinuxMonitorSelection) -> str:
@@ -798,6 +829,25 @@ def _server_unavailable_capability() -> LinuxAudioCapability:
     )
 
 
+#: ``resolve_linux_monitor`` reasons the probe reports as-is; anything else
+#: is an unknown failure.
+_RESOLVE_REASONS = frozenset({
+    REASON_SOUNDCARD_MISSING,
+    REASON_DEFAULT_SINK_MISSING,
+    REASON_PACTL_MISSING,
+    REASON_MONITOR_SOURCE_MISSING,
+    REASON_MONITOR_OPEN_FAILED,
+})
+
+#: Resolution failures that, on an unidentified server, may really mean the
+#: Pulse-compatible server is not running.
+_SERVER_SUSPECT_REASONS = frozenset({
+    REASON_DEFAULT_SINK_MISSING,
+    REASON_MONITOR_SOURCE_MISSING,
+    REASON_MONITOR_OPEN_FAILED,
+})
+
+
 def probe_linux_audio(
     *,
     verify_open: bool = True,
@@ -809,21 +859,9 @@ def probe_linux_audio(
 ) -> LinuxAudioCapability:
     """Probe Linux system-audio readiness. Never raises."""
     try:
-        from meeting.platform import normalize_linux_machine
-
-        host = platform or sys.platform
-        if not str(host).startswith("linux"):
-            return _capability(
-                REASON_UNSUPPORTED_ARCHITECTURE,
-                detail=f"platform={host}",
-            )
-        if normalize_linux_machine(
-            machine if machine is not None else platform_module.machine()
-        ) is None:
-            return _capability(
-                REASON_UNSUPPORTED_ARCHITECTURE,
-                detail=f"machine={machine or platform_module.machine()}",
-            )
+        unsupported = _unsupported_host_capability(platform, machine)
+        if unsupported is not None:
+            return unsupported
 
         # Classify missing libpulse before importing SoundCard's Pulse backend.
         if not _libpulse_available(libpulse_loader):
@@ -833,14 +871,7 @@ def probe_linux_audio(
             try:
                 soundcard_module = load_soundcard()
             except RuntimeError as exc:
-                reason = str(exc) or REASON_UNKNOWN_FAILURE
-                if reason == REASON_AUDIO_SERVER_UNAVAILABLE:
-                    return _server_unavailable_capability()
-                cause = exc.__cause__
-                return _capability(
-                    reason,
-                    detail=type(cause).__name__ if cause is not None else "",
-                )
+                return _soundcard_load_failure(exc)
 
         server_kind = detect_linux_audio_server(soundcard_module)
         if server_kind == SERVER_UNAVAILABLE:
@@ -851,33 +882,7 @@ def probe_linux_audio(
                 soundcard_module, server_kind=server_kind
             )
         except RuntimeError as exc:
-            reason = str(exc) or REASON_UNKNOWN_FAILURE
-            if reason not in {
-                REASON_SOUNDCARD_MISSING,
-                REASON_DEFAULT_SINK_MISSING,
-                REASON_PACTL_MISSING,
-                REASON_MONITOR_SOURCE_MISSING,
-                REASON_MONITOR_OPEN_FAILED,
-            }:
-                reason = REASON_UNKNOWN_FAILURE
-            if reason in {
-                REASON_DEFAULT_SINK_MISSING,
-                REASON_MONITOR_SOURCE_MISSING,
-                REASON_MONITOR_OPEN_FAILED,
-            } and server_kind == SERVER_UNKNOWN:
-                pipewire = _unit_active("pipewire")
-                pipewire_pulse = _unit_active("pipewire-pulse")
-                if pipewire is True and pipewire_pulse is not True:
-                    return _capability(
-                        REASON_PIPEWIRE_PULSE_MISSING,
-                        server_kind=SERVER_UNAVAILABLE,
-                    )
-                if pipewire is not True and _unit_active("pulseaudio") is not True:
-                    return _capability(
-                        REASON_AUDIO_SERVER_UNAVAILABLE,
-                        server_kind=SERVER_UNAVAILABLE,
-                    )
-            return _capability(reason, server_kind=server_kind)
+            return _monitor_resolution_failure(exc, server_kind)
 
         if verify_open:
             try:
@@ -907,3 +912,59 @@ def probe_linux_audio(
             REASON_UNKNOWN_FAILURE,
             detail=type(exc).__name__,
         )
+
+
+def _unsupported_host_capability(
+    platform: Optional[str], machine: Optional[str],
+) -> Optional[LinuxAudioCapability]:
+    """The capability for a non-Linux platform or unsupported CPU, else None."""
+    from meeting.platform import normalize_linux_machine
+
+    host = platform or sys.platform
+    if not str(host).startswith("linux"):
+        return _capability(
+            REASON_UNSUPPORTED_ARCHITECTURE,
+            detail=f"platform={host}",
+        )
+    if normalize_linux_machine(
+        machine if machine is not None else platform_module.machine()
+    ) is None:
+        return _capability(
+            REASON_UNSUPPORTED_ARCHITECTURE,
+            detail=f"machine={machine or platform_module.machine()}",
+        )
+    return None
+
+
+def _soundcard_load_failure(exc: RuntimeError) -> LinuxAudioCapability:
+    reason = str(exc) or REASON_UNKNOWN_FAILURE
+    if reason == REASON_AUDIO_SERVER_UNAVAILABLE:
+        return _server_unavailable_capability()
+    cause = exc.__cause__
+    detail = ""
+    if cause is not None:
+        detail = type(cause).__name__
+    return _capability(reason, detail=detail)
+
+
+def _monitor_resolution_failure(
+    exc: RuntimeError, server_kind: str,
+) -> LinuxAudioCapability:
+    """Classify a ``resolve_linux_monitor`` failure, naming a missing server when likely."""
+    reason = str(exc) or REASON_UNKNOWN_FAILURE
+    if reason not in _RESOLVE_REASONS:
+        reason = REASON_UNKNOWN_FAILURE
+    if reason in _SERVER_SUSPECT_REASONS and server_kind == SERVER_UNKNOWN:
+        pipewire = _unit_active("pipewire")
+        pipewire_pulse = _unit_active("pipewire-pulse")
+        if pipewire is True and pipewire_pulse is not True:
+            return _capability(
+                REASON_PIPEWIRE_PULSE_MISSING,
+                server_kind=SERVER_UNAVAILABLE,
+            )
+        if pipewire is not True and _unit_active("pulseaudio") is not True:
+            return _capability(
+                REASON_AUDIO_SERVER_UNAVAILABLE,
+                server_kind=SERVER_UNAVAILABLE,
+            )
+    return _capability(reason, server_kind=server_kind)

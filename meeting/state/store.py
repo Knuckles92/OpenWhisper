@@ -146,6 +146,13 @@ def repository_segment_lookup(
         return None
     return lambda segment_ids: flags(meeting_id, segment_ids)
 
+def _fail_results(results: List[OpResult], reason: str) -> None:
+    for result in results:
+        result.ok = False
+        result.reason = reason
+        result.seq = None
+
+
 class MeetingStateStore:
     """Thread-safe owner of one meeting's ``MeetingState`` document."""
 
@@ -221,48 +228,56 @@ class MeetingStateStore:
             # Handlers may attach nested data from an incoming op to an item.
             # Own that small payload, independent of callers retaining it.
             results = apply_ops(candidate, deepcopy(ops), ctx)
-
-            for result in results:
-                if not result.ok:
-                    continue
-                if result.op.get("op") in SEGMENT_OPS:
-                    self._apply_segment_op(result)
-                    if not result.ok:
-                        continue
-                candidate.seq += 1
-                result.seq = candidate.seq
+            self._sequence_results(candidate, results)
 
             applied = [r for r in results if r.ok]
             if applied:
-                if self._repository is not None:
-                    try:
-                        persisted = self._repository.on_ops_applied(
-                            self._state.meeting_id, candidate.to_dict(), applied,
-                            actor_type, actor_id,
-                        )
-                        if isinstance(persisted, dict):
-                            candidate = self._reconcile_persisted(candidate, persisted)
-                    except StaleCorrectionSelection:
-                        for result in applied:
-                            result.ok = False
-                            result.reason = "stale_selection"
-                            result.seq = None
-                        return results
-                    except Exception:
-                        logger.exception(
-                            "State persistence failed (meeting %s)",
-                            self._state.meeting_id,
-                        )
-                        for result in applied:
-                            result.ok = False
-                            result.reason = "persistence_error"
-                            result.seq = None
-                        return results
+                candidate = self._persist_batch(candidate, applied, actor_type, actor_id)
+                if candidate is None:
+                    return results
                 self._state = candidate
                 # Notified under the lock: two concurrent writers can never
                 # hand their batches to subscribers out of seq order.
                 self._notify(max(r.seq or 0 for r in applied), applied)
         return results
+
+    def _sequence_results(self, candidate: MeetingState,
+                          results: List[OpResult]) -> None:
+        """Apply segment ops and number every op that is still accepted."""
+        for result in results:
+            if not result.ok:
+                continue
+            if result.op.get("op") in SEGMENT_OPS:
+                self._apply_segment_op(result)
+                if not result.ok:
+                    continue
+            candidate.seq += 1
+            result.seq = candidate.seq
+
+    def _persist_batch(self, candidate: MeetingState, applied: List[OpResult],
+                       actor_type: str, actor_id: Optional[str]) -> Optional[MeetingState]:
+        """Persist an applied batch; returns the state to adopt, or None after
+        marking every op in it failed."""
+        if self._repository is None:
+            return candidate
+        try:
+            persisted = self._repository.on_ops_applied(
+                self._state.meeting_id, candidate.to_dict(), applied,
+                actor_type, actor_id,
+            )
+            if isinstance(persisted, dict):
+                candidate = self._reconcile_persisted(candidate, persisted)
+        except StaleCorrectionSelection:
+            _fail_results(applied, "stale_selection")
+            return None
+        except Exception:
+            logger.exception(
+                "State persistence failed (meeting %s)",
+                self._state.meeting_id,
+            )
+            _fail_results(applied, "persistence_error")
+            return None
+        return candidate
 
     def update_runtime_fields(self, **fields: Any) -> bool:
         """Persist lifecycle/status fields before making them observable."""

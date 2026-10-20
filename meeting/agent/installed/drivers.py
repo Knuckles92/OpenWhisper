@@ -68,6 +68,16 @@ _STDERR_TAIL = 20
 _HELP_TIMEOUT_S = 15.0
 #: How long a headless run may linger after reporting its result.
 _DONE_GRACE_S = 5.0
+#: How often the supervisor wakes to check deadlines while the agent runs.
+_SUPERVISE_POLL_S = 0.25
+#: Waits for a finished headless process and its stderr reader.
+_EXIT_WAIT_S = 5.0
+_STDERR_JOIN_S = 1.0
+#: Longest stderr line kept for an error message.
+_STDERR_LINE_CHARS = 400
+#: ACP request timeouts for OpenCode session configuration and cleanup.
+_ACP_CONFIG_TIMEOUT_S = 30.0
+_ACP_DELETE_TIMEOUT_S = 15.0
 
 
 class AgentUnavailable(RuntimeError):
@@ -332,48 +342,54 @@ class HeadlessDriver:
     def _supervise(self, proc: subprocess.Popen, request: PassRequest) -> PassOutcome:
         state = _RunState()
         stderr_tail: Deque[str] = deque(maxlen=_STDERR_TAIL)
-
-        def feed_stdin() -> None:
-            try:
-                assert proc.stdin is not None
-                proc.stdin.write(request.user_prompt)
-                proc.stdin.close()
-            except (OSError, ValueError):
-                pass
-
-        def read_stdout() -> None:
-            assert proc.stdout is not None
-            for raw in proc.stdout:
-                line = raw.strip()
-                if not line:
-                    continue
-                request.heartbeat.touch()
-                try:
-                    event = json.loads(line)
-                except ValueError:
-                    continue
-                if isinstance(event, dict):
-                    try:
-                        self.handle_event(event, state, request)
-                    except Exception:
-                        logger.debug("Could not read an agent event", exc_info=True)
-
-        def read_stderr() -> None:
-            assert proc.stderr is not None
-            for raw in proc.stderr:
-                text = raw.rstrip()
-                if text:
-                    stderr_tail.append(text[:400])
-
-        threads = [threading.Thread(target=fn, daemon=True, name=f"agent-{fn.__name__}")
-                   for fn in (feed_stdin, read_stdout, read_stderr)]
+        threads = [
+            threading.Thread(target=_feed_stdin, args=(proc, request),
+                             daemon=True, name="agent-feed_stdin"),
+            threading.Thread(target=self._read_stdout, args=(proc, state, request),
+                             daemon=True, name="agent-read_stdout"),
+            threading.Thread(target=_read_stderr, args=(proc, stderr_tail),
+                             daemon=True, name="agent-read_stderr"),
+        ]
         for thread in threads:
             thread.start()
+        aborted = self._watch(proc, request, state, reader=threads[1])
+        if aborted is not None:
+            return aborted
+        try:
+            returncode = proc.wait(timeout=_EXIT_WAIT_S)
+        except subprocess.TimeoutExpired:
+            returncode = None
+        threads[2].join(_STDERR_JOIN_S)
+        if request.cancel_event.is_set():
+            return PassOutcome(ok=False, canceled=True, error="canceled", usage=state.usage)
+        return self.finish(state, returncode, "\n".join(stderr_tail))
+
+    def _read_stdout(self, proc: subprocess.Popen, state: _RunState,
+                     request: PassRequest) -> None:
+        """Feed each JSON event line to :meth:`handle_event`; any line is a heartbeat."""
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = raw.strip()
+            if not line:
+                continue
+            request.heartbeat.touch()
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(event, dict):
+                try:
+                    self.handle_event(event, state, request)
+                except Exception:
+                    logger.debug("Could not read an agent event", exc_info=True)
+
+    def _watch(self, proc: subprocess.Popen, request: PassRequest, state: _RunState,
+               reader: threading.Thread) -> Optional[PassOutcome]:
+        """Wait for stdout to end; returns the outcome when the pass is cut short."""
         started = time.monotonic()
         done_at: Optional[float] = None
-        reader = threads[1]
         while reader.is_alive():
-            reader.join(0.25)
+            reader.join(_SUPERVISE_POLL_S)
             now = time.monotonic()
             if state.done:
                 # A helper the agent started can hold stdout open after the
@@ -381,31 +397,50 @@ class HeadlessDriver:
                 done_at = done_at or now
                 if now - done_at >= _DONE_GRACE_S:
                     kill_process_tree(proc)
-                    break
-            if request.cancel_event.is_set():
-                kill_process_tree(proc)
-                return PassOutcome(ok=False, canceled=True, error="canceled",
-                                   usage=state.usage)
-            if state.fatal:
-                kill_process_tree(proc)
-                return PassOutcome(ok=False, error=state.fatal, usage=state.usage)
-            if now - started >= request.timeout_s:
-                kill_process_tree(proc)
-                return PassOutcome(ok=False, usage=state.usage, error=(
-                    f"{self.name} did not finish the pass within {request.timeout_s:.0f}s"))
-            if (request.stall_s is not None
-                    and now - max(request.heartbeat.last, started) >= request.stall_s):
-                kill_process_tree(proc)
-                return PassOutcome(ok=False, usage=state.usage, error=(
-                    f"{self.name} stalled for {request.stall_s:.0f}s without progress"))
-        try:
-            returncode = proc.wait(timeout=5.0)
-        except subprocess.TimeoutExpired:
-            returncode = None
-        threads[2].join(1.0)
+                    return None
+            aborted = self._abort_if_due(proc, request, state, started, now)
+            if aborted is not None:
+                return aborted
+        return None
+
+    def _abort_if_due(self, proc: subprocess.Popen, request: PassRequest,
+                      state: _RunState, started: float,
+                      now: float) -> Optional[PassOutcome]:
+        """Kill the run when it was canceled, failed, timed out or stalled."""
         if request.cancel_event.is_set():
-            return PassOutcome(ok=False, canceled=True, error="canceled", usage=state.usage)
-        return self.finish(state, returncode, "\n".join(stderr_tail))
+            kill_process_tree(proc)
+            return PassOutcome(ok=False, canceled=True, error="canceled",
+                               usage=state.usage)
+        if state.fatal:
+            kill_process_tree(proc)
+            return PassOutcome(ok=False, error=state.fatal, usage=state.usage)
+        if now - started >= request.timeout_s:
+            kill_process_tree(proc)
+            return PassOutcome(ok=False, usage=state.usage, error=(
+                f"{self.name} did not finish the pass within {request.timeout_s:.0f}s"))
+        if (request.stall_s is not None
+                and now - max(request.heartbeat.last, started) >= request.stall_s):
+            kill_process_tree(proc)
+            return PassOutcome(ok=False, usage=state.usage, error=(
+                f"{self.name} stalled for {request.stall_s:.0f}s without progress"))
+        return None
+
+
+def _feed_stdin(proc: subprocess.Popen, request: PassRequest) -> None:
+    try:
+        assert proc.stdin is not None
+        proc.stdin.write(request.user_prompt)
+        proc.stdin.close()
+    except (OSError, ValueError):
+        pass
+
+
+def _read_stderr(proc: subprocess.Popen, stderr_tail: Deque[str]) -> None:
+    assert proc.stderr is not None
+    for raw in proc.stderr:
+        text = raw.rstrip()
+        if text:
+            stderr_tail.append(text[:_STDERR_LINE_CHARS])
 
 
 def _tail_detail(stderr_tail: str) -> str:
@@ -482,54 +517,34 @@ class ClaudeCodeDriver(HeadlessDriver):
                      request: PassRequest) -> None:
         kind = event.get("type")
         if kind == "system":
-            subtype = str(event.get("subtype") or "")
-            if subtype == "init":
-                servers = event.get("mcp_servers") or []
-                ours = next((s for s in servers if isinstance(s, dict)
-                             and s.get("name") == SERVER_NAME), None)
-                status = str((ours or {}).get("status") or "missing")
-                if status not in ("connected", "pending"):
-                    state.fatal = ("Claude Code could not reach OpenWhisper's meeting "
-                                   f"tools ({status}).")
-                request.emit("start")
-            elif "thinking" in subtype:
-                request.emit("thinking")
-            elif "retry" in subtype:
-                request.emit("retry")
+            self._on_system(event, state, request)
         elif kind == "stream_event":
-            inner = event.get("event") or {}
-            block = inner.get("content_block") or inner.get("delta") or {}
-            block_type = str(block.get("type") or "")
-            if "thinking" in block_type:
-                request.emit("thinking")
-            elif "text" in block_type:
-                request.emit("writing")
-            elif "tool" in block_type or "json" in block_type:
-                request.emit("tool", str(block.get("name") or ""))
+            _emit_stream_block(event, request)
         elif kind == "assistant":
             for block in (event.get("message") or {}).get("content") or []:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
                     name = str(block.get("name") or "")
                     request.emit("tool", name.split("__")[-1])
         elif kind == "result":
-            state.done = True
-            usage = event.get("usage") or {}
-            prompt = sum(int(usage.get(k) or 0) for k in (
-                "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
-            completion = int(usage.get("output_tokens") or 0)
-            state.usage = {
-                "prompt_tokens": prompt, "completion_tokens": completion,
-                "total_tokens": prompt + completion,
-                "requests": int(event.get("num_turns") or 1),
-            }
-            if isinstance(event.get("total_cost_usd"), (int, float)):
-                state.usage["cost_usd"] = float(event["total_cost_usd"])
-            text = str(event.get("result") or "")
-            if event.get("is_error") or event.get("subtype") not in (None, "success"):
-                state.error = text or str(event.get("subtype") or "error")
-            else:
-                state.text = text
-            request.emit("settled")
+            _on_claude_result(event, state, request)
+
+    @staticmethod
+    def _on_system(event: Dict[str, Any], state: _RunState,
+                   request: PassRequest) -> None:
+        subtype = str(event.get("subtype") or "")
+        if subtype == "init":
+            servers = event.get("mcp_servers") or []
+            ours = next((s for s in servers if isinstance(s, dict)
+                         and s.get("name") == SERVER_NAME), None)
+            status = str((ours or {}).get("status") or "missing")
+            if status not in ("connected", "pending"):
+                state.fatal = ("Claude Code could not reach OpenWhisper's meeting "
+                               f"tools ({status}).")
+            request.emit("start")
+        elif "thinking" in subtype:
+            request.emit("thinking")
+        elif "retry" in subtype:
+            request.emit("retry")
 
     def finish(self, state: _RunState, returncode: Optional[int],
                stderr_tail: str) -> PassOutcome:
@@ -541,6 +556,50 @@ class ClaudeCodeDriver(HeadlessDriver):
                 f"Claude Code exited (code {returncode}) before finishing the pass"
                 + _tail_detail(stderr_tail)))
         return PassOutcome(ok=True, text=state.text, usage=state.usage)
+
+
+def _emit_stream_block(event: Dict[str, Any], request: PassRequest) -> None:
+    """Report what a Claude Code partial message is producing."""
+    inner = event.get("event") or {}
+    block = inner.get("content_block") or inner.get("delta") or {}
+    block_type = str(block.get("type") or "")
+    if "thinking" in block_type:
+        request.emit("thinking")
+    elif "text" in block_type:
+        request.emit("writing")
+    elif "tool" in block_type or "json" in block_type:
+        request.emit("tool", str(block.get("name") or ""))
+
+
+_CLAUDE_PROMPT_TOKEN_KEYS = (
+    "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
+)
+
+
+def _claude_usage(event: Dict[str, Any]) -> Dict[str, Any]:
+    usage = event.get("usage") or {}
+    prompt = sum(int(usage.get(k) or 0) for k in _CLAUDE_PROMPT_TOKEN_KEYS)
+    completion = int(usage.get("output_tokens") or 0)
+    result: Dict[str, Any] = {
+        "prompt_tokens": prompt, "completion_tokens": completion,
+        "total_tokens": prompt + completion,
+        "requests": int(event.get("num_turns") or 1),
+    }
+    if isinstance(event.get("total_cost_usd"), (int, float)):
+        result["cost_usd"] = float(event["total_cost_usd"])
+    return result
+
+
+def _on_claude_result(event: Dict[str, Any], state: _RunState,
+                      request: PassRequest) -> None:
+    state.done = True
+    state.usage = _claude_usage(event)
+    text = str(event.get("result") or "")
+    if event.get("is_error") or event.get("subtype") not in (None, "success"):
+        state.error = text or str(event.get("subtype") or "error")
+    else:
+        state.text = text
+    request.emit("settled")
 
 
 def _claude_error(message: str) -> str:
@@ -655,30 +714,10 @@ class CodexDriver(HeadlessDriver):
         elif kind == "turn.started":
             request.emit("turn")
         elif kind in ("item.started", "item.updated", "item.completed"):
-            item = event.get("item") or {}
-            item_type = item.get("type")
-            if item_type == "reasoning":
-                request.emit("thinking")
-            elif item_type == "agent_message":
-                request.emit("writing")
-                if kind == "item.completed":
-                    state.text = str(item.get("text") or "")
-            elif item_type == "mcp_tool_call":
-                request.emit("tool", str(item.get("tool") or ""))
-            elif item_type == "error":
-                logger.info("Codex: %s", str(item.get("message") or "")[:300])
-            elif item_type in ("command_execution", "file_change", "web_search"):
-                logger.warning("Codex used %s during a meeting pass", item_type)
+            _on_codex_item(kind, event.get("item") or {}, state, request)
         elif kind == "turn.completed":
             state.done = True
-            usage = event.get("usage") or {}
-            prompt = int(usage.get("input_tokens") or 0)
-            completion = int(usage.get("output_tokens") or 0)
-            state.usage = {
-                "prompt_tokens": prompt, "completion_tokens": completion,
-                "total_tokens": prompt + completion, "requests": 1,
-                "cached_tokens": int(usage.get("cached_input_tokens") or 0),
-            }
+            state.usage = _codex_usage(event.get("usage") or {})
             request.emit("settled")
         elif kind == "turn.failed":
             state.error = str((event.get("error") or {}).get("message") or "turn failed")
@@ -694,6 +733,33 @@ class CodexDriver(HeadlessDriver):
                 f"Codex exited (code {returncode}) before finishing the pass"
                 + _tail_detail(stderr_tail)))
         return PassOutcome(ok=True, text=state.text, usage=state.usage)
+
+
+def _on_codex_item(kind: str, item: Dict[str, Any], state: _RunState,
+                   request: PassRequest) -> None:
+    item_type = item.get("type")
+    if item_type == "reasoning":
+        request.emit("thinking")
+    elif item_type == "agent_message":
+        request.emit("writing")
+        if kind == "item.completed":
+            state.text = str(item.get("text") or "")
+    elif item_type == "mcp_tool_call":
+        request.emit("tool", str(item.get("tool") or ""))
+    elif item_type == "error":
+        logger.info("Codex: %s", str(item.get("message") or "")[:300])
+    elif item_type in ("command_execution", "file_change", "web_search"):
+        logger.warning("Codex used %s during a meeting pass", item_type)
+
+
+def _codex_usage(usage: Dict[str, Any]) -> Dict[str, Any]:
+    prompt = int(usage.get("input_tokens") or 0)
+    completion = int(usage.get("output_tokens") or 0)
+    return {
+        "prompt_tokens": prompt, "completion_tokens": completion,
+        "total_tokens": prompt + completion, "requests": 1,
+        "cached_tokens": int(usage.get("cached_input_tokens") or 0),
+    }
 
 
 def _codex_error(message: str) -> str:
@@ -1020,28 +1086,17 @@ class OpenCodeDriver:
                 self._await_tools()
             except AgentUnavailable as exc:
                 return str(exc)
-        mode = (config_option(session, "mode") or {}).get("currentValue")
-        if request.persona in self._personas and request.persona != mode:
-            try:
-                conn.request("session/set_config_option", {
-                    "sessionId": session_id, "configId": "mode", "value": request.persona,
-                }, 30.0)
-            except AcpError as exc:
-                return f"OpenCode could not switch to the {request.persona} agent: {exc}"
-        models = {value for value, _label in model_choices(session)}
-        model = request.model or self._user_default
-        if model and model not in models:
-            if request.model:
-                return (f"OpenCode has no model {request.model!r} with your current "
-                        "providers. Pick another in Settings.")
-            model = ""
+        error = self._set_persona(conn, session, session_id, request)
+        if error:
+            return error
+        model, error = self._pass_model(session, request)
+        if error:
+            return error
         current = (config_option(session, "model") or {}).get("currentValue")
         options = session
         if model and model != current:
             try:
-                changed = conn.request("session/set_config_option", {
-                    "sessionId": session_id, "configId": "model", "value": model,
-                }, 30.0)
+                changed = self._set_config(conn, session_id, "model", model)
             except AcpError as exc:
                 return f"OpenCode: {exc}"
             # Effort levels differ per model; the reply lists the new model's.
@@ -1049,12 +1104,45 @@ class OpenCodeDriver:
                 options = changed
         if request.effort and request.effort in option_values(options, "effort"):
             try:
-                conn.request("session/set_config_option", {
-                    "sessionId": session_id, "configId": "effort", "value": request.effort,
-                }, 30.0)
+                self._set_config(conn, session_id, "effort", request.effort)
             except AcpError:
                 logger.info("OpenCode kept its default effort for %s", model or "its model")
         return ""
+
+    @staticmethod
+    def _set_config(conn: AcpConnection, session_id: str, config_id: str,
+                    value: str) -> Any:
+        return conn.request("session/set_config_option", {
+            "sessionId": session_id, "configId": config_id, "value": value,
+        }, _ACP_CONFIG_TIMEOUT_S)
+
+    def _set_persona(self, conn: AcpConnection, session: Dict[str, Any],
+                     session_id: str, request: PassRequest) -> str:
+        """Switch to the pass's persona agent; returns an error or ""."""
+        mode = (config_option(session, "mode") or {}).get("currentValue")
+        if request.persona not in self._personas or request.persona == mode:
+            return ""
+        try:
+            self._set_config(conn, session_id, "mode", request.persona)
+        except AcpError as exc:
+            return f"OpenCode could not switch to the {request.persona} agent: {exc}"
+        return ""
+
+    def _pass_model(self, session: Dict[str, Any],
+                    request: PassRequest) -> Tuple[str, str]:
+        """``(model, error)``: the model to select, "" to keep the session's.
+
+        A requested model the providers lack is an error; an unavailable
+        user default quietly falls back to the session's model.
+        """
+        models = {value for value, _label in model_choices(session)}
+        model = request.model or self._user_default
+        if model and model not in models:
+            if request.model:
+                return "", (f"OpenCode has no model {request.model!r} with your current "
+                            "providers. Pick another in Settings.")
+            model = ""
+        return model, ""
 
     def _forget(self, conn: AcpConnection, session_id: str) -> None:
         """Delete the pass's session in the background; best effort."""
@@ -1063,7 +1151,7 @@ class OpenCodeDriver:
 
         def delete() -> None:
             try:
-                conn.request("session/delete", {"sessionId": session_id}, 15.0)
+                conn.request("session/delete", {"sessionId": session_id}, _ACP_DELETE_TIMEOUT_S)
             except AcpError:
                 logger.debug("Could not delete OpenCode session %s", session_id)
 

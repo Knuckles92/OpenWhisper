@@ -83,6 +83,8 @@ _ENV_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 _OPENROUTER_HEADERS = {"X-Title": "OpenWhisper"}
+# Groq lists speech, safety and agent models beside its chat models.
+_GROQ_NON_CHAT_MARKERS = ("whisper", "tts", "orpheus", "guard", "compound")
 _OPENAI_CHAT_PREFIXES = ("gpt-", "chatgpt-", "o1", "o3", "o4")
 _OPENAI_NON_CHAT_MARKERS = (
     "audio", "realtime", "tts", "whisper", "embedding", "moderation",
@@ -198,8 +200,14 @@ def builtin_profiles() -> Tuple[TextLLMProfile, ...]:
             for server, name in LOCAL_SERVER_NAMES.items()
         ),
         TextLLMProfile("groq", "Groq", "groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY", True),
-        TextLLMProfile("opencode_go", "OpenCode Go", "opencode_go", "https://opencode.ai/zen/go/v1", "OPENCODE_GO_API_KEY", True),
-        TextLLMProfile("opencode_zen", "OpenCode Zen", "opencode_zen", "https://opencode.ai/zen/v1", "OPENCODE_ZEN_API_KEY", True),
+        TextLLMProfile(
+            "opencode_go", "OpenCode Go", "opencode_go", "https://opencode.ai/zen/go/v1",
+            "OPENCODE_GO_API_KEY", True,
+        ),
+        TextLLMProfile(
+            "opencode_zen", "OpenCode Zen", "opencode_zen", "https://opencode.ai/zen/v1",
+            "OPENCODE_ZEN_API_KEY", True,
+        ),
     )
 
 
@@ -284,7 +292,8 @@ def snapshot_from_profile(profile: TextLLMProfile, model: str = "") -> TextLLMSn
     )
 
 
-def snapshot_from_mapping(raw: Any) -> Optional[TextLLMSnapshot]:
+def _decoded_mapping(raw: Any) -> Optional[Dict[str, Any]]:
+    """``raw`` as a dict, decoding a non-blank JSON string first; None otherwise."""
     if isinstance(raw, str) and raw.strip():
         try:
             import json
@@ -293,6 +302,32 @@ def snapshot_from_mapping(raw: Any) -> Optional[TextLLMSnapshot]:
         except Exception:
             return None
     if not isinstance(raw, dict):
+        return None
+    return raw
+
+
+def _saved_api_key_env(api_key_env: Any) -> str:
+    if not isinstance(api_key_env, str):
+        return ""
+    try:
+        return validate_api_key_env(api_key_env)
+    except ValueError:
+        return ""
+
+
+def _saved_model_metadata(metadata: Any) -> Optional[Dict[str, Any]]:
+    if metadata is None:
+        return None
+    from services.text_model_catalog import spec_from_mapping
+
+    if not isinstance(metadata, dict) or not isinstance(metadata.get("model"), str):
+        raise ValueError("Invalid saved text model metadata")
+    return {"model": metadata["model"], **spec_from_mapping(metadata).to_dict()}
+
+
+def snapshot_from_mapping(raw: Any) -> Optional[TextLLMSnapshot]:
+    raw = _decoded_mapping(raw)
+    if raw is None:
         return None
     profile_id = raw.get("profile_id") or raw.get("id")
     name = raw.get("name")
@@ -313,21 +348,10 @@ def snapshot_from_mapping(raw: Any) -> Optional[TextLLMSnapshot]:
             return None
     if kind != PROFILE_KIND_OPENAI and not url:
         return None
-    if not isinstance(api_key_env, str):
-        api_key_env = ""
-    else:
-        try:
-            api_key_env = validate_api_key_env(api_key_env)
-        except ValueError:
-            api_key_env = ""
+    api_key_env = _saved_api_key_env(api_key_env)
     metadata = raw.get("model_metadata")
     protocol = validate_text_protocol(raw.get("protocol", "chat"))
-    if metadata is not None:
-        from services.text_model_catalog import spec_from_mapping
-
-        if not isinstance(metadata, dict) or not isinstance(metadata.get("model"), str):
-            raise ValueError("Invalid saved text model metadata")
-        metadata = {"model": metadata["model"], **spec_from_mapping(metadata).to_dict()}
+    metadata = _saved_model_metadata(metadata)
     return TextLLMSnapshot(
         model_metadata=metadata,
         protocol=protocol,
@@ -756,7 +780,7 @@ def list_chat_models(
     if profile.kind == PROFILE_KIND_OPENAI:
         model_ids = filter_openai_chat_models(model_ids)
     if profile.kind == "groq":
-        model_ids = [m for m in model_ids if not any(x in m.lower() for x in ("whisper", "tts", "orpheus", "guard", "compound"))]
+        model_ids = [m for m in model_ids if not any(x in m.lower() for x in _GROQ_NON_CHAT_MARKERS)]
     return sorted(model_ids)
 
 

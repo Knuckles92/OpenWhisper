@@ -53,6 +53,32 @@ def _request_relay() -> _RequestRelay:
     return _relay
 
 
+def _model_state(model, active) -> str:
+    """The second line of a model's list entry."""
+    if active:
+        return "Active"
+    if model.get("cached"):
+        return "Downloaded"
+    return model.get("download_size") or "Not downloaded"
+
+
+def _engine_summary(engine, runtime) -> str:
+    """One line naming the host's engine, its device, and any GPU."""
+    gpu = runtime.get("gpu") or {}
+    hardware = (
+        f" · {gpu['name']} ({gpu.get('total_mib', 0) / 1024:g} GB VRAM)"
+        if gpu
+        else ""
+    )
+    device = _DEVICE_LABELS.get(
+        engine.get("device"), engine.get("device") or "device not reported"
+    )
+    return (
+        f"{'Running' if engine.get('available') else 'Not ready'}: "
+        f"{engine.get('label') or 'No engine'} · {device}{hardware}"
+    )
+
+
 class RemoteModelsDialog(QDialog):
     def __init__(self, service, host_name: str, parent=None):
         super().__init__(parent)
@@ -354,7 +380,10 @@ class RemoteModelsDialog(QDialog):
                     if dependency.get("download_bytes")
                     else "size unknown"
                 )
-                text = f"{dependency['label']} runtime is missing. Install it on the host ({size}) to use this device."
+                text = (
+                    f"{dependency['label']} runtime is missing. "
+                    f"Install it on the host ({size}) to use this device."
+                )
             self.runtime_detail.setText(text)
         else:
             self.runtime_detail.setText(
@@ -414,106 +443,99 @@ class RemoteModelsDialog(QDialog):
             self._valid = False
             self.status.setText(f"{error} Refresh to check the host's current state.")
         elif op == "model_catalog":
-            self._valid = True
-            choice = self._choice()
-            key = f"{choice.get('family')}:{choice.get('model')}"
-            self._catalog = result
-            engine = result.get("engine") or {}
-            self.model_list.blockSignals(True)
-            scroll = self.model_list.verticalScrollBar().value()
-            self.model_list.clear()
-            selected = None
-            for model in result.get("models", []):
-                active = engine.get("available") and (
-                    model["family"],
-                    model["model"],
-                ) == (engine.get("family"), engine.get("model"))
-                state = (
-                    "Active"
-                    if active
-                    else "Downloaded"
-                    if model.get("cached")
-                    else model.get("download_size") or "Not downloaded"
-                )
-                item = QListWidgetItem(f"{model['label']}\n{state}")
-                item.setData(
-                    Qt.ItemDataRole.UserRole, f"{model['family']}:{model['model']}"
-                )
-                self.model_list.addItem(item)
-                if item.data(Qt.ItemDataRole.UserRole) == key:
-                    selected = item
-                elif not choice and active:
-                    selected = item
-            if selected:
-                self.model_list.setCurrentItem(selected)
-            elif self.model_list.count():
-                self.model_list.setCurrentRow(0)
-            self.model_list.verticalScrollBar().setValue(scroll)
-            self.model_list.blockSignals(False)
-            self._filter_models()
-            runtime = result.get("runtime") or {}
-            gpu = runtime.get("gpu") or {}
-            hardware = (
-                f" · {gpu['name']} ({gpu.get('total_mib', 0) / 1024:g} GB VRAM)"
-                if gpu
-                else ""
-            )
-            device = _DEVICE_LABELS.get(
-                engine.get("device"), engine.get("device") or "device not reported"
-            )
-            self.engine_label.setText(
-                f"{'Running' if engine.get('available') else 'Not ready'}: "
-                f"{engine.get('label') or 'No engine'} · {device}{hardware}"
-            )
-            job = result.get("download") or {}
-            installation = result.get("installation") or {}
-            self.install_status.setVisible(bool(installation))
-            downloading = self._progress(self.download_progress, job, "downloading")
-            installing = self._progress(
-                self.install_progress, installation, "installing"
-            )
-            if downloading:
-                percent = (
-                    f" ({self.download_progress.value()}%)"
-                    if job.get("total", 0) > 0
-                    else ""
-                )
-                self.status.setText(
-                    f"Downloading {job.get('label', 'model')} on host{percent}…"
-                )
-            elif job.get("state") == "failed":
-                self.status.setText(
-                    job.get("error") or "Model download failed. Retry the download."
-                )
-            elif job.get("state") == "complete":
-                self.status.setText(
-                    f"{job.get('label', 'Model')} downloaded. Choose a device, then Use on host."
-                )
-            else:
-                self.status.setText(
-                    "Download a model, prepare its device, then choose Use on host."
-                )
-            if installing:
-                phase = installation.get("phase") or "Installing"
-                self.install_status.setText(
-                    f"{installation.get('label', 'Runtime')} · {phase}…"
-                )
-            elif installation.get("state") in ("failed", "restart_required"):
-                self.install_status.setText(
-                    installation.get("error")
-                    or "Runtime setup needs attention on the host."
-                )
-            elif installation.get("state") == "complete":
-                self.install_status.setText(
-                    f"{installation.get('label', 'Runtime')} installed. Ready to use on the host."
-                )
-            else:
-                self.install_status.clear()
-            if self.isVisible() and (downloading or installing):
-                self._poll.start()
+            self._apply_catalog(result)
         else:
             self._request("model_catalog")
         self._update_actions()
+
+    def _apply_catalog(self, result):
+        self._valid = True
+        choice = self._choice()
+        key = f"{choice.get('family')}:{choice.get('model')}"
+        self._catalog = result
+        engine = result.get("engine") or {}
+        self._populate_models(result, engine, choice, key)
+        self._filter_models()
+        self.engine_label.setText(_engine_summary(engine, result.get("runtime") or {}))
+        job = result.get("download") or {}
+        installation = result.get("installation") or {}
+        self.install_status.setVisible(bool(installation))
+        downloading = self._progress(self.download_progress, job, "downloading")
+        installing = self._progress(
+            self.install_progress, installation, "installing"
+        )
+        self._show_download_status(job, downloading)
+        self._show_install_status(installation, installing)
+        if self.isVisible() and (downloading or installing):
+            self._poll.start()
+
+    def _populate_models(self, result, engine, choice, key):
+        """Refill the model list, keeping the scroll position and the selection."""
+        self.model_list.blockSignals(True)
+        scroll = self.model_list.verticalScrollBar().value()
+        self.model_list.clear()
+        selected = None
+        for model in result.get("models", []):
+            active = engine.get("available") and (
+                model["family"],
+                model["model"],
+            ) == (engine.get("family"), engine.get("model"))
+            item = QListWidgetItem(f"{model['label']}\n{_model_state(model, active)}")
+            item.setData(
+                Qt.ItemDataRole.UserRole, f"{model['family']}:{model['model']}"
+            )
+            self.model_list.addItem(item)
+            if item.data(Qt.ItemDataRole.UserRole) == key:
+                selected = item
+            elif not choice and active:
+                selected = item
+        if selected:
+            self.model_list.setCurrentItem(selected)
+        elif self.model_list.count():
+            self.model_list.setCurrentRow(0)
+        self.model_list.verticalScrollBar().setValue(scroll)
+        self.model_list.blockSignals(False)
+
+    def _show_download_status(self, job, downloading):
+        if downloading:
+            percent = (
+                f" ({self.download_progress.value()}%)"
+                if job.get("total", 0) > 0
+                else ""
+            )
+            self.status.setText(
+                f"Downloading {job.get('label', 'model')} on host{percent}…"
+            )
+        elif job.get("state") == "failed":
+            self.status.setText(
+                job.get("error") or "Model download failed. Retry the download."
+            )
+        elif job.get("state") == "complete":
+            self.status.setText(
+                f"{job.get('label', 'Model')} downloaded. Choose a device, then Use on host."
+            )
+        else:
+            self.status.setText(
+                "Download a model, prepare its device, then choose Use on host."
+            )
+
+    def _show_install_status(self, installation, installing):
+        if installing:
+            phase = installation.get("phase") or "Installing"
+            self.install_status.setText(
+                f"{installation.get('label', 'Runtime')} · {phase}…"
+            )
+        elif installation.get("state") in ("failed", "restart_required"):
+            self.install_status.setText(
+                installation.get("error")
+                or "Runtime setup needs attention on the host."
+            )
+        elif installation.get("state") == "complete":
+            self.install_status.setText(
+                f"{installation.get('label', 'Runtime')} installed. Ready to use on the host."
+            )
+        else:
+            self.install_status.clear()
 
     def _download(self):
         choice = self._choice()

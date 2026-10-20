@@ -199,13 +199,20 @@ def _distilled_model(
 _CATALOG = {
     "tiny": _standard_model(
         "tiny",
-        description="The smallest multilingual Whisper model, optimized for very fast transcription and minimal resource use.",
+        description=(
+            "The smallest multilingual Whisper model, optimized for very fast transcription and minimal resource use."
+        ),
         parameters="39 million",
         relative_speed="~10x",
         download_size_mb=76,
-        best_for="Fast drafts, lightweight devices, and workflows where responsiveness matters more than maximum accuracy.",
+        best_for=(
+            "Fast drafts, lightweight devices, and workflows where responsiveness matters more than maximum accuracy."
+        ),
         limitations=(
-            "Lowest accuracy in the standard Whisper family, especially with noise, accents, or specialized vocabulary.",
+            (
+                "Lowest accuracy in the standard Whisper family, especially "
+                "with noise, accents, or specialized vocabulary."
+            ),
             "Multilingual quality varies significantly by language.",
         ),
     ),
@@ -223,7 +230,9 @@ _CATALOG = {
     ),
     "base": _standard_model(
         "base",
-        description="A compact multilingual model that improves accuracy over tiny while remaining suitable for CPU use.",
+        description=(
+            "A compact multilingual model that improves accuracy over tiny while remaining suitable for CPU use."
+        ),
         parameters="74 million",
         relative_speed="~7x",
         download_size_mb=145,
@@ -235,7 +244,9 @@ _CATALOG = {
     ),
     "base.en": _standard_model(
         "base.en",
-        description="An English-only compact model offering a practical balance of CPU speed and transcription quality.",
+        description=(
+            "An English-only compact model offering a practical balance of CPU speed and transcription quality."
+        ),
         parameters="74 million",
         relative_speed="~7x",
         download_size_mb=145,
@@ -247,7 +258,9 @@ _CATALOG = {
     ),
     "small": _standard_model(
         "small",
-        description="A mid-sized multilingual Whisper model with a stronger accuracy and speed balance than tiny or base.",
+        description=(
+            "A mid-sized multilingual Whisper model with a stronger accuracy and speed balance than tiny or base."
+        ),
         parameters="244 million",
         relative_speed="~4x",
         download_size_mb=484,
@@ -259,7 +272,9 @@ _CATALOG = {
     ),
     "small.en": _standard_model(
         "small.en",
-        description="The English-only small model, providing stronger recognition than compact variants at moderate cost.",
+        description=(
+            "The English-only small model, providing stronger recognition than compact variants at moderate cost."
+        ),
         parameters="244 million",
         relative_speed="~4x",
         download_size_mb=484,
@@ -271,7 +286,9 @@ _CATALOG = {
     ),
     "medium": _standard_model(
         "medium",
-        description="A high-accuracy multilingual model that approaches large-model quality with lower resource requirements.",
+        description=(
+            "A high-accuracy multilingual model that approaches large-model quality with lower resource requirements."
+        ),
         parameters="769 million",
         relative_speed="~2x",
         download_size_mb=1530,
@@ -295,7 +312,10 @@ _CATALOG = {
     ),
     "large-v1": _standard_model(
         "large-v1",
-        description="The first-generation full-size multilingual Whisper checkpoint, retained for compatibility and comparison.",
+        description=(
+            "The first-generation full-size multilingual Whisper "
+            "checkpoint, retained for compatibility and comparison."
+        ),
         parameters="1.55 billion",
         relative_speed="1x",
         download_size_mb=3090,
@@ -319,7 +339,10 @@ _CATALOG = {
     ),
     "large-v3": _standard_model(
         "large-v3",
-        description="The third-generation full-size multilingual Whisper model and the most capable standard checkpoint in this catalog.",
+        description=(
+            "The third-generation full-size multilingual Whisper model and "
+            "the most capable standard checkpoint in this catalog."
+        ),
         parameters="1.55 billion",
         relative_speed="1x",
         download_size_mb=3090,
@@ -331,7 +354,10 @@ _CATALOG = {
     ),
     "turbo": _standard_model(
         "turbo",
-        description="An optimized large-v3 variant designed for much faster multilingual transcription with minimal accuracy loss.",
+        description=(
+            "An optimized large-v3 variant designed for much faster "
+            "multilingual transcription with minimal accuracy loss."
+        ),
         parameters="809 million",
         relative_speed="~8x",
         download_size_mb=1620,
@@ -347,7 +373,10 @@ _CATALOG = {
     ),
     "distil-small.en": _distilled_model(
         "distil-small.en",
-        description="The smallest English Distil-Whisper checkpoint, distilled from Whisper small.en for memory-constrained use.",
+        description=(
+            "The smallest English Distil-Whisper checkpoint, distilled "
+            "from Whisper small.en for memory-constrained use."
+        ),
         origin_name="distil-whisper/distil-small.en",
         parameters="166 million",
         relative_latency="~5.6x faster",
@@ -360,7 +389,10 @@ _CATALOG = {
     ),
     "distil-medium.en": _distilled_model(
         "distil-medium.en",
-        description="An English model distilled from Whisper medium.en, targeting strong quality with substantially lower latency.",
+        description=(
+            "An English model distilled from Whisper medium.en, "
+            "targeting strong quality with substantially lower latency."
+        ),
         origin_name="distil-whisper/distil-medium.en",
         parameters="394 million",
         relative_latency="~6.8x faster",
@@ -386,7 +418,10 @@ _CATALOG = {
     ),
     "distil-large-v3": _distilled_model(
         "distil-large-v3",
-        description="The latest English Distil-Whisper checkpoint, distilled from large-v3 and optimized for long-form transcription.",
+        description=(
+            "The latest English Distil-Whisper checkpoint, distilled from"
+            " large-v3 and optimized for long-form transcription."
+        ),
         origin_name="distil-whisper/distil-large-v3",
         parameters="756 million",
         relative_latency="~6.3x faster",
@@ -400,32 +435,89 @@ _CATALOG = {
 }
 
 from services.local_asr.catalog import MODELS as SPEECH_MODELS, artifacts as speech_artifacts
-for _key, _model in SPEECH_MODELS.items():
-    _spec = speech_artifacts(_key)
-    _source = ("https://github.com/moonshine-ai/moonshine" if _model.backend == "moonshine"
-               else "https://huggingface.co/" + _spec["repo"])
-    _CATALOG[_key] = ModelDetails(
-        model_name=_key, description=_model.purpose, origin_name=_model.label,
-        origin_url=_source, repository_id=_spec["repo"], repository_url=_source,
-        maintainer=_spec["repo"].split("/")[0], family=_model.backend,
-        language_support=_model.languages, task_support="Speech transcription",
-        parameter_count=("123 million" if _key == "moonshine-small" else "245 million" if _key == "moonshine-medium" else "1.7 billion" if _key == "qwen-1.7b" else "600 million"), relative_performance="Measure on your hardware; published throughput is not dictation latency.",
+
+_MOONSHINE_SOURCE: Final[str] = "https://github.com/moonshine-ai/moonshine"
+_NATIVE_BACKENDS: Final[Tuple[str, ...]] = ("parakeet", "nemotron")
+_SPEECH_PARAMETER_COUNTS: Final[Mapping[str, str]] = MappingProxyType({
+    "moonshine-small": "123 million",
+    "moonshine-medium": "245 million",
+    "qwen-1.7b": "1.7 billion",
+})
+_SPEECH_RUNTIME_FORMATS: Final[Mapping[str, str]] = MappingProxyType({
+    "parakeet_mlx": "MLX Safetensors",
+    **{backend: "GGUF Q8" for backend in _NATIVE_BACKENDS},
+    "moonshine": "ORT quantized",
+})
+#: What each backend needs installed before it can run.
+_SPEECH_RUNTIME_NOTES: Final[Mapping[str, str]] = MappingProxyType({
+    "parakeet_mlx": (
+        "Requires its optional MLX runtime from Downloads and an Apple Silicon Mac "
+        "running macOS 14 or newer."
+    ),
+    **{
+        backend: (
+            "Requires its optional runtime from Downloads (Windows x64, Linux x86_64, "
+            "or Apple Silicon Mac CPU)."
+        )
+        for backend in _NATIVE_BACKENDS
+    },
+})
+#: Where each backend runs, and what that costs.
+_SPEECH_DEVICE_NOTES: Final[Mapping[str, str]] = MappingProxyType({
+    "parakeet_mlx": (
+        "Auto uses the Apple GPU through Metal; CPU uses the same MLX weights. "
+        "Language is detected automatically."
+    ),
+    "qwen_asr": (
+        "Qwen CPU needs substantially more memory than the native engines; "
+        "1.7B is best suited to a GPU."
+    ),
+    "moonshine": "English only; CPU execution.",
+})
+_SPEECH_UPSTREAM_URLS: Final[Mapping[str, str]] = MappingProxyType({
+    "parakeet_mlx": "https://github.com/senstella/parakeet-mlx",
+    **{backend: "https://github.com/NVIDIA/NeMo-Speech.cpp" for backend in _NATIVE_BACKENDS},
+    "qwen_asr": "https://github.com/QwenLM/Qwen3-ASR",
+})
+
+
+def _speech_model_details(key: str, model) -> ModelDetails:
+    spec = speech_artifacts(key)
+    backend = model.backend
+    if backend == "moonshine":
+        source = _MOONSHINE_SOURCE
+    else:
+        source = "https://huggingface.co/" + spec["repo"]
+    if key == "orukeet-v0.1":
+        license_url = "https://huggingface.co/oruk/orukeet/blob/main/NOTICE.md"
+    else:
+        license_url = source + "#license"
+    files = spec["files"]
+    return ModelDetails(
+        model_name=key, description=model.purpose, origin_name=model.label,
+        origin_url=source, repository_id=spec["repo"], repository_url=source,
+        maintainer=spec["repo"].split("/")[0], family=backend,
+        language_support=model.languages, task_support="Speech transcription",
+        parameter_count=_SPEECH_PARAMETER_COUNTS.get(key, "600 million"),
+        relative_performance="Measure on your hardware; published throughput is not dictation latency.",
         memory_guidance="CPU RAM / GPU memory use depends on model and audio length.",
-        download_size_mb=round(sum(f["size_bytes"] for f in _spec["files"])/1_000_000),
-        runtime_format="MLX Safetensors" if _model.backend == "parakeet_mlx" else "GGUF Q8" if _model.backend in ("parakeet", "nemotron") else ("ORT quantized" if _model.backend == "moonshine" else "Safetensors"),
-        license=_model.license, best_for=_model.purpose,
-        limitations=(("Requires its optional MLX runtime from Downloads and an Apple Silicon Mac running macOS 14 or newer." if _model.backend == "parakeet_mlx" else "Requires its optional runtime from Downloads (Windows x64, Linux x86_64, or Apple Silicon Mac CPU)." if _model.backend in ("parakeet", "nemotron") else "Requires its optional Windows x64 runtime from Downloads."),
-                     "Auto uses the Apple GPU through Metal; CPU uses the same MLX weights. Language is detected automatically." if _model.backend == "parakeet_mlx" else
-                     "Qwen CPU needs substantially more memory than the native engines; 1.7B is best suited to a GPU." if _model.backend == "qwen_asr" else
-                     "English only; CPU execution." if _model.backend == "moonshine" else
-                     "CPU and NVIDIA GPU use separately installed runtimes."),
-        license_url=("https://huggingface.co/oruk/orukeet/blob/main/NOTICE.md" if _key == "orukeet-v0.1"
-                     else _source + "#license"),
-        revision=_spec["revision"],
-        download_hosts=tuple(sorted({urlparse(f["url"]).hostname for f in _spec["files"]})),
+        download_size_mb=round(sum(f["size_bytes"] for f in files) / 1_000_000),
+        runtime_format=_SPEECH_RUNTIME_FORMATS.get(backend, "Safetensors"),
+        license=model.license, best_for=model.purpose,
+        limitations=(
+            _SPEECH_RUNTIME_NOTES.get(backend, "Requires its optional Windows x64 runtime from Downloads."),
+            _SPEECH_DEVICE_NOTES.get(backend, "CPU and NVIDIA GPU use separately installed runtimes."),
+        ),
+        license_url=license_url,
+        revision=spec["revision"],
+        download_hosts=tuple(sorted({urlparse(f["url"]).hostname for f in files})),
         verification="Pinned version; size and SHA-256 checked during download",
-        source_urls=(_source, "https://github.com/senstella/parakeet-mlx" if _model.backend == "parakeet_mlx" else "https://github.com/NVIDIA/NeMo-Speech.cpp" if _model.backend in ("parakeet", "nemotron") else ("https://github.com/QwenLM/Qwen3-ASR" if _model.backend == "qwen_asr" else "https://moonshine-voice.readthedocs.io/")),
+        source_urls=(source, _SPEECH_UPSTREAM_URLS.get(backend, "https://moonshine-voice.readthedocs.io/")),
     )
+
+
+for _key, _model in SPEECH_MODELS.items():
+    _CATALOG[_key] = _speech_model_details(_key, _model)
 _CATALOG["parakeet-v3-mlx"] = replace(
     _CATALOG["parakeet-v3-mlx"],
     limitations=(*_CATALOG["parakeet-v3-mlx"].limitations,
@@ -475,9 +567,12 @@ def custom_model_details(model_name: str) -> ModelDetails:
     from services.whisper_sources import parse_source
 
     source = parse_source(model_name)
-    url = (Path(source.local_path).as_uri() if source.local_path
-           else f"https://huggingface.co/{source.repo_id}"
-           + (f"/tree/main/{quote(source.subfolder)}" if source.subfolder else ""))
+    if source.local_path:
+        url = Path(source.local_path).as_uri()
+    else:
+        url = f"https://huggingface.co/{source.repo_id}"
+        if source.subfolder:
+            url += f"/tree/main/{quote(source.subfolder)}"
     return ModelDetails(
         model_name=model_name, description="A custom CTranslate2 Whisper model you added.",
         origin_name=source.local_path or source.repo_id, origin_url=url,

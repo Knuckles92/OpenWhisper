@@ -106,28 +106,36 @@ def _then(output: str, it: str) -> str:
     return f", then {phrase.format(it=it)}" if phrase else ""
 
 
+def _agent_summary(p) -> str:
+    name = agent_name(p("agent"))
+    if p("mode") == AgentMode.ASK:
+        phrase = _THE_RESULT.get(p("output"), "")
+        return (f"Asks {name} and {phrase.format(it='the answer')}" if phrase
+                else f"Asks {name} quietly")
+    if p("new_folder"):
+        return f"Opens a {name} session in a new folder with your words"
+    return f"Opens a {name} session with your words"
+
+
+def _webhook_summary(p) -> str:
+    try:
+        host = urlsplit(p("url") or "").hostname or ""
+    except ValueError:
+        host = ""
+    return f"Sends your words to {host or 'a web address'}{_then(p('output'), 'the reply')}"
+
+
 def summary(action: Action) -> str:
     """One line on what ``action`` does with the words, without a full stop."""
     kind, p = action.kind, action.param
     if kind == ActionKind.OPEN_LINK:
         return f"Opens {link_destination(p('template') or '')} with your words"
     if kind == ActionKind.AGENT:
-        name = agent_name(p("agent"))
-        if p("mode") == AgentMode.ASK:
-            phrase = _THE_RESULT.get(p("output"), "")
-            return (f"Asks {name} and {phrase.format(it='the answer')}" if phrase
-                    else f"Asks {name} quietly")
-        if p("new_folder"):
-            return f"Opens a {name} session in a new folder with your words"
-        return f"Opens a {name} session with your words"
+        return _agent_summary(p)
     if kind == ActionKind.CHANNEL:
         return "Sends your words to your Claude Code session"
     if kind == ActionKind.WEBHOOK:
-        try:
-            host = urlsplit(p("url") or "").hostname or ""
-        except ValueError:
-            host = ""
-        return f"Sends your words to {host or 'a web address'}{_then(p('output'), 'the reply')}"
+        return _webhook_summary(p)
     if kind == ActionKind.PROGRAM:
         program = os.path.basename(p("program") or "") or "a program"
         return f"Runs {program} with your words{_then(p('output'), 'its output')}"

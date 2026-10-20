@@ -53,12 +53,18 @@ def topic_shift_probability(judge: Judge, previous_window: str,
 #: on a wake name in code before asking.
 VOICE_COMMAND_CONFIDENCE = 0.6
 VOICE_COMMAND_CRITERIA: Mapping[str, str] = {
-    "none": "Ordinary meeting speech between participants, including talking about notes, decisions or topics without instructing the assistant.",
+    "none": (
+        "Ordinary meeting speech between participants, including talking about "
+        "notes, decisions or topics without instructing the assistant."
+    ),
     "mark_decision": "Instructs the note-taking assistant to record the preceding point as a decision.",
     "mark_action": "Instructs the assistant to record an action item or to-do, possibly with an owner or deadline.",
     "note_this": "Instructs the assistant to write down or capture the preceding point in the notes.",
     "recap": "Asks the assistant to summarize, read back, or recap decisions, actions or progress.",
-    "fix_transcript": "Tells the assistant that a word, name or number in the transcript is wrong and gives the correction.",
+    "fix_transcript": (
+        "Tells the assistant that a word, name or number in the transcript is "
+        "wrong and gives the correction."
+    ),
     "set_topic": "Tells the assistant that the meeting is moving to a new topic or section.",
 }
 VOICE_COMMAND_INSTRUCTIONS = (

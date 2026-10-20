@@ -81,10 +81,18 @@ QLabel#guidedDetail { color: @slate-text-3; font-size: 13px; border: none; backg
 QLabel#guidedDetail[tone="ready"] { color: @success-text; }
 QLabel#guidedDetail[tone="attention"] { color: @warning-text; }
 QLabel#guidedSample { color: @slate-text; font-size: 17px; border: none; background: transparent; }
-QLabel#guidedPrivacy { color: @slate-text-2; background: @slate-raised; border: 1px solid @slate-border; border-radius: 8px; padding: 10px 12px; font-size: 13px; }
-QLabel#guidedPrivacy[remote="true"] { color: @warning-text; background: @warning-tint; border-color: @warning-tint-border; }
+QLabel#guidedPrivacy {
+    color: @slate-text-2; background: @slate-raised; border: 1px solid @slate-border;
+    border-radius: 8px; padding: 10px 12px; font-size: 13px;
+}
+QLabel#guidedPrivacy[remote="true"] {
+    color: @warning-text; background: @warning-tint; border-color: @warning-tint-border;
+}
 QLabel#guidedError { color: @danger-text; font-size: 13px; background: transparent; border: none; }
-QLabel#guidedStep { color: @slate-text-3; padding: 8px 6px; border: none; border-bottom: 2px solid @slate-border; font-size: 13px; background: transparent; }
+QLabel#guidedStep {
+    color: @slate-text-3; padding: 8px 6px; border: none; border-bottom: 2px solid @slate-border;
+    font-size: 13px; background: transparent;
+}
 QLabel#guidedStep[active="true"] { color: @accent; border-color: @accent; font-weight: 600; }
 QLabel#guidedStep[done="true"] { color: @slate-text-2; border-color: @accent; }
 QLabel#guidedKeycap {
@@ -99,10 +107,16 @@ QPlainTextEdit#guidedTry:focus { border-color: @accent; }
 QPushButton#guidedLink { color: @accent; background: transparent; border: none; padding: 6px 8px; font-size: 13px; }
 QPushButton#guidedLink:hover { color: @accent-hover; text-decoration: underline; }
 QPushButton#guidedLink:focus { border: 1px solid @accent; border-radius: 5px; }
-QPushButton#guidedButton { color: @slate-text; background: @slate-field; border: 1px solid @slate-border-strong; border-radius: 8px; padding: 9px 18px; font-size: 13px; }
+QPushButton#guidedButton {
+    color: @slate-text; background: @slate-field; border: 1px solid @slate-border-strong;
+    border-radius: 8px; padding: 9px 18px; font-size: 13px;
+}
 QPushButton#guidedButton:hover { background: @slate-raised; }
 QPushButton#guidedButton:focus { border-color: @accent; }
-QPushButton#guidedPrimary { color: @on-accent; background: @accent; border: 1px solid @accent; border-radius: 8px; padding: 9px 22px; font-size: 13px; font-weight: 600; }
+QPushButton#guidedPrimary {
+    color: @on-accent; background: @accent; border: 1px solid @accent; border-radius: 8px;
+    padding: 9px 22px; font-size: 13px; font-weight: 600;
+}
 QPushButton#guidedPrimary:hover { background: @accent-hover; }
 QPushButton#guidedPrimary:focus { border: 2px solid @slate-text; }
 QScrollArea#guidedScroll { background: transparent; border: none; }
@@ -612,7 +626,10 @@ class GuidedSetupDialog(QDialog):
         self.cleanup_detail.setText(
             "Fixes punctuation and formatting after transcription."
             if enabled
-            else "Off: you get exactly what the speech engine heard, and no text is sent anywhere for cleanup."
+            else (
+                "Off: you get exactly what the speech engine heard, "
+                "and no text is sent anywhere for cleanup."
+            )
         )
         custom = bool(cleanup_prompts.custom_prompt(settings))
         level = resolve_transcript_cleanup_level(settings)
@@ -673,9 +690,11 @@ class GuidedSetupDialog(QDialog):
     def _refresh_ready(self, settings, hotkey):
         shown = format_hotkey_display(hotkey)
         self.keycap.setText(shown or "No shortcut")
-        self.keycap_help.setText(
-            shortcut_help(hotkey, settings) if shown else "Set a shortcut on the Record step, or use the Record button."
-        )
+        if shown:
+            keycap_help = shortcut_help(hotkey, settings)
+        else:
+            keycap_help = "Set a shortcut on the Record step, or use the Record button."
+        self.keycap_help.setText(keycap_help)
         self.try_box.setPlaceholderText(
             f"Try it here: press {shown} and say something." if shown else "Try it here."
         )

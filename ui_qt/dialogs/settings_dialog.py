@@ -227,6 +227,9 @@ logger = logging.getLogger(__name__)
 #: A dictated rule stops recording on its own after this long.
 _RULE_DICTATION_CAP_MS = 60_000
 
+#: The consent version saved when the meeting insight review is turned on.
+_INSIGHT_REVIEW_CONSENT = "typesafe-text-v1"
+
 
 def is_native_wayland_session(
     platform_name: Optional[str] = None,
@@ -390,6 +393,89 @@ def _thread_relay() -> _ThreadRelay:
     if _relay is None:
         _relay = _ThreadRelay()
     return _relay
+
+
+def _select_combo_data(combo, value) -> None:
+    """Select the combo entry carrying ``value``, or the first entry."""
+    combo.setCurrentIndex(max(0, combo.findData(value)))
+
+
+def _general_rail_value(settings: dict) -> str:
+    if setting_value(SettingsKey.AUTO_PASTE, settings):
+        return "Auto-paste on"
+    if setting_value(SettingsKey.COPY_CLIPBOARD, settings):
+        return "Clipboard"
+    return "Manual"
+
+
+def _rule_count_label(rule_count: int) -> str:
+    if rule_count == 0:
+        return "No rules"
+    return f"{rule_count} rule{'' if rule_count == 1 else 's'}"
+
+
+def _meeting_after_rail_value(settings: dict) -> str:
+    if resolve_meeting_end_report(settings):
+        return "Report"
+    if resolve_meeting_end_polish(settings):
+        return "Polish"
+    if resolve_meeting_end_redecode(settings):
+        return "Re-decode"
+    return "Off"
+
+
+def _meeting_dashboard_rail_value(settings: dict) -> str:
+    bind = resolve_meeting_server_bind(settings)
+    port = resolve_meeting_server_port(settings)
+    if bind != MeetingServerBind.LAN:
+        return "Localhost"
+    return f"LAN · {'auto' if port == 0 else port}"
+
+
+def _rule_capture_problem(recorder, audio_path: str) -> Optional[str]:
+    """Why a stopped rule dictation can't be transcribed, or None once it's saved."""
+    if not recorder.wait_for_stop_completion():
+        return "Recording did not finish stopping; audio kept for recovery."
+    if getattr(recorder, "last_capture_error", None):
+        return str(recorder.last_capture_error)
+    if not recorder.has_recording_data():
+        return "No audio was captured."
+    if not recorder.save_recording(audio_path):
+        return "Couldn't save the dictation audio."
+    return None
+
+
+def _remove_dictation_audio(audio_path: str) -> None:
+    try:
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+    except OSError:
+        pass
+
+
+def _transcribe_rule_dictation(recorder, transcribe, audio_path: str):
+    """Stop, save and transcribe a rule dictation; returns ``(text, error)``.
+
+    Runs on a worker thread. The recording and its audio file are discarded
+    either way.
+    """
+    text = ""
+    error = ""
+    try:
+        recorder.stop_recording()
+        problem = _rule_capture_problem(recorder, audio_path)
+        if problem is not None:
+            error = problem
+        else:
+            text = transcribe(audio_path) or ""
+            if not text.strip():
+                error = "Nothing was transcribed."
+    except Exception as exc:
+        error = str(exc) or "Transcription failed."
+    finally:
+        recorder.clear_recording_data()
+        _remove_dictation_audio(audio_path)
+    return text, error
 
 
 class _SettingsPage(QWidget):
@@ -2202,13 +2288,18 @@ class SettingsDialog(QDialog):
         self.typesafe_feature_tiles = {}
         for feature, key, title, description in (
             ("citations", SettingsKey.TYPESAFE_CITATIONS_ENABLED, "Advisory citation checks",
-             "Gives the judge generated claims and their cited excerpts. Flags weak evidence without changing the claim."),
+             "Gives the judge generated claims and their cited excerpts. "
+             "Flags weak evidence without changing the claim."),
             ("semantic_search", SettingsKey.TYPESAFE_SEMANTIC_SEARCH_ENABLED, "Semantic history search",
-             "Gives the judge your search and shortlisted past excerpts to rank by meaning: only from AI-insight meetings unless it runs on this computer. Keyword search stays available."),
+             "Gives the judge your search and shortlisted past excerpts to rank by meaning: "
+             "only from AI-insight meetings unless it runs on this computer. "
+             "Keyword search stays available."),
             ("question_radar", SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED, "Open questions radar",
-             "Gives the judge a minute of transcript and tracked questions to find unanswered questions and suggest answers."),
+             "Gives the judge a minute of transcript and tracked questions "
+             "to find unanswered questions and suggest answers."),
             ("highlights", SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED, "Live highlight pulses",
-             "Gives the judge a minute of transcript to mark decisions, disagreements, dated commitments, numbers and takeaways. Click a pulse to play that moment."),
+             "Gives the judge a minute of transcript to mark decisions, disagreements, "
+             "dated commitments, numbers and takeaways. Click a pulse to play that moment."),
         ):
             tile = SettingTile(title, description, design_icon("bolt-green.svg"))
             self._meeting_bindings.checkbox(
@@ -3290,7 +3381,8 @@ class SettingsDialog(QDialog):
                 key, self._crumb(key), title, subtitle, self._pages[key],
                 self._rail_icons.get(key, "box-blue.svg"),
             ))
-        entries = build_index(pages, self.downloads, keyword_entries(_SEARCH_ALIASES) + self._agent_search_entries())
+        keywords = keyword_entries(_SEARCH_ALIASES) + self._agent_search_entries()
+        entries = build_index(pages, self.downloads, keywords)
         for key in self.rail.keys():
             if key in self._built_pages:
                 continue
@@ -3298,7 +3390,10 @@ class SettingsDialog(QDialog):
             crumb = self._crumb(key)
             icon = self._rail_icons.get(key, "box-blue.svg")
             for target_name, label, description in PAGE_SEARCH_FIELDS.get(key, ()):
-                entries.append(SearchEntry(SETTING, label, crumb, key, target_name=target_name, keywords=description, icon=icon))
+                entries.append(SearchEntry(
+                    SETTING, label, crumb, key,
+                    target_name=target_name, keywords=description, icon=icon,
+                ))
             for text in PAGE_HELP_TEXT.get(key, ()):
                 entries.append(SearchEntry(HELP, title, text, key, icon="info-blue.svg"))
         return entries
@@ -3499,9 +3594,7 @@ class SettingsDialog(QDialog):
         settings = self._settings_snapshot()
         profile_count = len(load_cleanup_profiles(settings))
         self.rail.set_value(CLEANUP_PROFILES, f"{profile_count} profile{'' if profile_count == 1 else 's'}")
-        general = ("Auto-paste on" if setting_value(SettingsKey.AUTO_PASTE, settings)
-                   else "Clipboard" if setting_value(SettingsKey.COPY_CLIPBOARD, settings) else "Manual")
-        self.rail.set_value(GENERAL, general)
+        self.rail.set_value(GENERAL, _general_rail_value(settings))
         self.rail.set_value(APPEARANCE, f"{UiTheme.LABELS[resolve_ui_theme(settings)]} · "
                             f"{RecordingOverlayLook.LABELS[resolve_recording_overlay_look(settings)]}")
         self.rail.set_value(RECORDING, settings_microphones.rail_value(settings))
@@ -3511,16 +3604,15 @@ class SettingsDialog(QDialog):
             cleanup = f"{cleanup} · {model}"
         self.rail.set_value(CLEANUP, cleanup)
         rule_list = self.__dict__.get("cleanup_rules_list")
-        rule_count = rule_list.count() if rule_list is not None else len(resolve_transcript_cleanup_rules(settings))
-        self.rail.set_value(CLEANUP_RULES, "No rules" if rule_count == 0 else f"{rule_count} rule{'' if rule_count == 1 else 's'}")
-        after = ("Report" if resolve_meeting_end_report(settings) else "Polish" if resolve_meeting_end_polish(settings)
-                 else "Re-decode" if resolve_meeting_end_redecode(settings) else "Off")
-        self.rail.set_value(MEETING_AFTER, after)
+        if rule_list is not None:
+            rule_count = rule_list.count()
+        else:
+            rule_count = len(resolve_transcript_cleanup_rules(settings))
+        self.rail.set_value(CLEANUP_RULES, _rule_count_label(rule_count))
+        self.rail.set_value(MEETING_AFTER, _meeting_after_rail_value(settings))
         self._render_typesafe_key_state()
         self.rail.set_value(MEETING_FAST, self._meeting_fast_rail_value())
-        bind = resolve_meeting_server_bind(settings)
-        port = resolve_meeting_server_port(settings)
-        self.rail.set_value(MEETING_DASHBOARD, f"LAN · {'auto' if port == 0 else port}" if bind == MeetingServerBind.LAN else "Localhost")
+        self.rail.set_value(MEETING_DASHBOARD, _meeting_dashboard_rail_value(settings))
         self.rail.set_value(API_KEYS, self._api_key_rail_value())
         self.rail.set_value(HOTKEYS, self._hotkey_rail_value())
         self.rail.set_value(DOWNLOADS, self.downloads.rail_value())
@@ -3943,7 +4035,7 @@ class SettingsDialog(QDialog):
                 self.meeting_review_check.blockSignals(False)
                 return
         self._persist(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT,
-                      "typesafe-text-v1" if checked else "")
+                      _INSIGHT_REVIEW_CONSENT if checked else "")
         self._persist(SettingsKey.MEETING_INSIGHT_REVIEW, bool(checked))
 
     def _on_end_report_toggled(self, checked: bool) -> None:
@@ -4573,31 +4665,7 @@ class SettingsDialog(QDialog):
         done = _thread_relay().rule_dictation_finished
 
         def worker():
-            text = ""
-            error = ""
-            try:
-                recorder.stop_recording()
-                if not recorder.wait_for_stop_completion():
-                    error = "Recording did not finish stopping; audio kept for recovery."
-                elif getattr(recorder, "last_capture_error", None):
-                    error = str(recorder.last_capture_error)
-                elif not recorder.has_recording_data():
-                    error = "No audio was captured."
-                elif not recorder.save_recording(audio_path):
-                    error = "Couldn't save the dictation audio."
-                else:
-                    text = transcribe(audio_path) or ""
-                    if not text.strip():
-                        error = "Nothing was transcribed."
-            except Exception as exc:
-                error = str(exc) or "Transcription failed."
-            finally:
-                recorder.clear_recording_data()
-                try:
-                    if os.path.exists(audio_path):
-                        os.remove(audio_path)
-                except OSError:
-                    pass
+            text, error = _transcribe_rule_dictation(recorder, transcribe, audio_path)
             done.emit(token, text.strip(), error)
 
         threading.Thread(
@@ -4704,7 +4772,11 @@ class SettingsDialog(QDialog):
     def _load_meeting_settings(self, settings: dict) -> None:
         self._meeting_bindings.load(settings, start=self._initial_meeting_binding_start)
         if self._page_is_loading(MEETING_AFTER):
-            self.meeting_review_check.setChecked(settings.get(SettingsKey.MEETING_INSIGHT_REVIEW) is True and settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == "typesafe-text-v1")
+            review_on = (
+                settings.get(SettingsKey.MEETING_INSIGHT_REVIEW) is True
+                and settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == _INSIGHT_REVIEW_CONSENT
+            )
+            self.meeting_review_check.setChecked(review_on)
             self.meeting_end_report_check.setChecked(resolve_meeting_end_report(settings))
             self.meeting_report_ribbon_check.setChecked(resolve_meeting_report_ribbon(settings))
             self.meeting_report_brief_check.setChecked(resolve_meeting_report_brief(settings))
@@ -4712,7 +4784,7 @@ class SettingsDialog(QDialog):
             self._guard_report_views()
             self._update_report_views_enabled()
         if self._page_is_loading(MEETING_DASHBOARD):
-            self.meeting_bind_combo.setCurrentIndex(max(0, self.meeting_bind_combo.findData(resolve_meeting_server_bind(settings))))
+            _select_combo_data(self.meeting_bind_combo, resolve_meeting_server_bind(settings))
             self._update_meeting_bind_ui()
         if self._page_is_loading(MEETING_FAST):
             self.typesafe_enabled_check.setChecked(resolve_typesafe_enabled(settings))
@@ -4859,7 +4931,10 @@ class SettingsDialog(QDialog):
                     standard_hotkeys=updated,
                 )
                 if conflict:
-                    raise ValueError(f"{profile.name}'s shortcut is already used by {conflict}. Choose another.")
+                    raise ValueError(
+                        f"{profile.name}'s shortcut is already used by {conflict}. "
+                        "Choose another."
+                    )
             if self.on_hotkeys_changed:
                 self.on_hotkeys_changed(updated.copy())
             else:
@@ -4925,6 +5000,31 @@ class SettingsDialog(QDialog):
         if not self.current_hotkeys or self._initializing_page in (None, HOTKEYS):
             self._load_hotkey_settings()
         self._bindings.load(settings, start=self._initial_binding_start)
+        self._load_cleanup_pages(settings)
+        if self._page_is_loading(GENERAL):
+            self.update_check_check.setChecked(resolve_update_check_enabled(settings))
+            self.update_notify_tile.setEnabled(self.update_check_check.isChecked())
+        if self._page_is_loading(RECORDING):
+            self._load_retention_settings(settings)
+            self.streaming_enabled_check.setChecked(setting_value(SettingsKey.STREAMING_ENABLED, settings))
+            self._microphones.load(settings)
+        if self._page_is_loading(APPEARANCE):
+            self._load_appearance_settings(settings)
+        self._load_meeting_settings(settings)
+        if self._page_is_loading(API_KEYS):
+            self._load_api_key_settings(settings)
+        if self._page_is_loading(ADVANCED):
+            self.developer_mode_check.setChecked(resolve_developer_mode(settings))
+        if self._page_is_loading(DOWNLOADS):
+            policy = settings_manager.load_hf_access_policy()
+            _select_combo_data(self.hf_policy_combo, policy)
+        if self._page_is_loading(HOTKEYS):
+            trigger_mode = resolve_recording_trigger_mode(settings)
+            _select_combo_data(self.record_mode_combo, trigger_mode)
+            self._load_hands_free_latch(settings)
+        self._load_page_modules(settings)
+
+    def _load_cleanup_pages(self, settings: dict) -> None:
         if self._page_is_loading(CLEANUP):
             self.transcript_cleanup_check.setChecked(setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings))
             # Empty unless a real custom prompt is saved; the preset shows
@@ -4936,36 +5036,20 @@ class SettingsDialog(QDialog):
             self.cleanup_rules_list.clear()
             self.cleanup_rules_list.addItems(resolve_transcript_cleanup_rules(settings))
         self._update_cleanup_prompt_ui()
-        if self._page_is_loading(GENERAL):
-            self.update_check_check.setChecked(resolve_update_check_enabled(settings))
-            self.update_notify_tile.setEnabled(self.update_check_check.isChecked())
-        if self._page_is_loading(RECORDING):
-            self._load_retention_settings(settings)
-            self.streaming_enabled_check.setChecked(setting_value(SettingsKey.STREAMING_ENABLED, settings))
-            self._microphones.load(settings)
-        if self._page_is_loading(APPEARANCE):
-            self.ui_font_scale_combo.setCurrentIndex(max(0, self.ui_font_scale_combo.findData(resolve_ui_font_scale(settings))))
-            self.ui_theme_combo.setCurrentIndex(max(0, self.ui_theme_combo.findData(resolve_ui_theme(settings))))
-            self.streaming_font_size_spinbox.setValue(resolve_streaming_overlay_font_size(settings))
-            look = resolve_recording_overlay_look(settings)
-            self.recording_look_bar.setCurrentIndex(RecordingOverlayLook.ALL.index(look))
-            self.recording_look_preview.set_look(look)
-            self.recording_dot_switch.setChecked(resolve_recording_overlay_dot(settings))
-            self.recording_text_switch.setChecked(resolve_recording_overlay_text(settings))
-            self.recording_clock_switch.setChecked(resolve_recording_overlay_clock(settings))
-            self._show_overlay_parts()
-        self._load_meeting_settings(settings)
-        if self._page_is_loading(API_KEYS):
-            self._load_api_key_settings(settings)
-        if self._page_is_loading(ADVANCED):
-            self.developer_mode_check.setChecked(resolve_developer_mode(settings))
-        if self._page_is_loading(DOWNLOADS):
-            policy = settings_manager.load_hf_access_policy()
-            self.hf_policy_combo.setCurrentIndex(max(0, self.hf_policy_combo.findData(policy)))
-        if self._page_is_loading(HOTKEYS):
-            trigger_mode = resolve_recording_trigger_mode(settings)
-            self.record_mode_combo.setCurrentIndex(max(0, self.record_mode_combo.findData(trigger_mode)))
-            self._load_hands_free_latch(settings)
+
+    def _load_appearance_settings(self, settings: dict) -> None:
+        _select_combo_data(self.ui_font_scale_combo, resolve_ui_font_scale(settings))
+        _select_combo_data(self.ui_theme_combo, resolve_ui_theme(settings))
+        self.streaming_font_size_spinbox.setValue(resolve_streaming_overlay_font_size(settings))
+        look = resolve_recording_overlay_look(settings)
+        self.recording_look_bar.setCurrentIndex(RecordingOverlayLook.ALL.index(look))
+        self.recording_look_preview.set_look(look)
+        self.recording_dot_switch.setChecked(resolve_recording_overlay_dot(settings))
+        self.recording_text_switch.setChecked(resolve_recording_overlay_text(settings))
+        self.recording_clock_switch.setChecked(resolve_recording_overlay_clock(settings))
+        self._show_overlay_parts()
+
+    def _load_page_modules(self, settings: dict) -> None:
         for key, module in self._page_modules.items():
             if not self._page_is_loading(key):
                 continue

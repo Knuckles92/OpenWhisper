@@ -54,6 +54,7 @@ logger = logging.getLogger(__name__)
 #: are gone, so a longer wait would only hang an invisible process.
 SHUTDOWN_JOIN_TIMEOUT_S = 5.0
 RETRY_BUSY_MESSAGE = "Post-meeting steps are already running for this meeting."
+RETRY_FAILED_MESSAGE = "Post-meeting retry failed."
 
 
 def _with_history_target(url: str, meeting_id: str, *, view: str = "") -> str:
@@ -84,6 +85,49 @@ def redact_meeting_url(url: Optional[str]) -> str:
     if not parts.scheme or not parts.netloc:
         return "<redacted>"
     return f"{parts.scheme}://{parts.netloc}/<redacted>"
+
+
+def _require_dashboard_address(engine, result) -> None:
+    """Abort a start whose result has no dashboard URL, and raise."""
+    if not (result.get("host_url") or result.get("url")):
+        abort = getattr(engine, "_abort_start", None)
+        if callable(abort):
+            abort()
+        raise RuntimeError(
+            "Meeting dashboard did not provide an address."
+        )
+
+
+def _engine_runs(engine, meeting_id: str) -> bool:
+    """Whether ``engine`` is the live engine of ``meeting_id``."""
+    return engine is not None and getattr(engine, "meeting_id", None) == meeting_id
+
+
+def _ended_message(payload: Dict[str, Any], status: str, *, finalizing: bool) -> str:
+    """The status line when a meeting ends."""
+    if finalizing:
+        return "Meeting ended — preparing final insights…"
+    if payload.get("capture_error"):
+        return (
+            "Meeting ended — audio capture was incomplete; "
+            "partial audio was kept in Meeting History"
+        )
+    if status == "needs_recovery":
+        return "Meeting ended — transcription recovery needed"
+    return "Meeting ended"
+
+
+class _FinalizationRetry:
+    """One retry of a meeting's post-meeting steps, as its worker thread sees it."""
+
+    def __init__(self, engine, meeting_id: str, step_key: str, generation: int) -> None:
+        self.engine = engine
+        self.meeting_id = meeting_id
+        self.step_key = step_key
+        self.generation = generation
+        self.claim = None
+        # Where the outcome is published; None once another run owns the meeting.
+        self.publish_engine = engine
 
 
 class MeetingRuntime:
@@ -842,53 +886,60 @@ class MeetingRuntime:
             if getattr(options, "asr_remote", None) is None:
                 self.controller.release_local_engine()
             result = engine.start()
-            if not (result.get("host_url") or result.get("url")):
-                abort = getattr(engine, "_abort_start", None)
-                if callable(abort):
-                    abort()
-                raise RuntimeError(
-                    "Meeting dashboard did not provide an address."
-                )
+            _require_dashboard_address(engine, result)
         except Exception as exc:
-            logger.error("Failed to start meeting", exc_info=True)
-            with self._lock:
-                self._starting = False
-                if engine is not None and self._engine is engine:
-                    self._engine = None
-                self._host_url = None
-                self._guest_url = None
-                self._finalizing = False
-                self._finalization = None
-                self._card_meeting_id = None
-                self._deferred_start_errors = []
-            self.controller.meeting_active = False
-            # A start that failed before _start_asr ran emits no
-            # "asr_released", so the lease has to be released here.
-            # restore_local_engine is flag-guarded, so a duplicate call from
-            # the event is a no-op.
-            self.controller.restore_local_engine()
-            message = str(exc)
-            if message.startswith("LINUX_SYSTEM_AUDIO_REQUIRED:"):
-                message = (
-                    "System audio became unavailable while starting. "
-                    "Retry detection or continue microphone-only."
-                )
-            self.controller.meeting_error.emit(
-                f"Could not start the meeting: {message}"
-            )
-            self.controller.meeting_state_changed.emit(
-                {
-                    "active": False,
-                    "paused": False,
-                    "status": "failed",
-                    "dashboard_available": False,
-                    "finalization": None,
-                    "meeting_id": None,
-                }
-            )
-            self._refresh_past_meetings()
+            self._start_failed(engine, exc)
             return
 
+        deferred_errors = self._adopt_started_engine(engine, result)
+        if deferred_errors is None:
+            return
+        self._announce_started(engine, result, cloud=cloud, demo=demo)
+        for message in deferred_errors:
+            self.controller.meeting_error.emit(message)
+
+    def _start_failed(self, engine, exc: Exception) -> None:
+        """Undo a start that raised; called from its ``except`` block."""
+        logger.error("Failed to start meeting", exc_info=True)
+        with self._lock:
+            self._starting = False
+            if engine is not None and self._engine is engine:
+                self._engine = None
+            self._host_url = None
+            self._guest_url = None
+            self._finalizing = False
+            self._finalization = None
+            self._card_meeting_id = None
+            self._deferred_start_errors = []
+        self.controller.meeting_active = False
+        # A start that failed before _start_asr ran emits no
+        # "asr_released", so the lease has to be released here.
+        # restore_local_engine is flag-guarded, so a duplicate call from
+        # the event is a no-op.
+        self.controller.restore_local_engine()
+        message = str(exc)
+        if message.startswith("LINUX_SYSTEM_AUDIO_REQUIRED:"):
+            message = (
+                "System audio became unavailable while starting. "
+                "Retry detection or continue microphone-only."
+            )
+        self.controller.meeting_error.emit(
+            f"Could not start the meeting: {message}"
+        )
+        self.controller.meeting_state_changed.emit(
+            {
+                "active": False,
+                "paused": False,
+                "status": "failed",
+                "dashboard_available": False,
+                "finalization": None,
+                "meeting_id": None,
+            }
+        )
+        self._refresh_past_meetings()
+
+    def _adopt_started_engine(self, engine, result) -> Optional[list]:
+        """Record a finished start; the errors it deferred, or None if it already ended."""
         with self._lock:
             self._starting = False
             stop = getattr(engine, "_processing_stop", None)
@@ -897,7 +948,7 @@ class MeetingRuntime:
                 # terminal events own the UI; this delayed start completion
                 # must not announce an already-ended meeting as active.
                 self._deferred_start_errors = []
-                return
+                return None
             self._engine = engine
             # The engine's server_started event usually landed first (and
             # already announced the URLs); keep those values when the start
@@ -908,7 +959,9 @@ class MeetingRuntime:
             self._guest_url = result.get("guest_url") or self._guest_url
             deferred_errors = list(self._deferred_start_errors)
             self._deferred_start_errors = []
+        return deferred_errors
 
+    def _announce_started(self, engine, result, *, cloud: bool, demo: bool) -> None:
         # No meeting_server_started emit here: the engine's own server_started
         # event already carried the URLs to the UI, and a second emit opens a
         # second dashboard tab.
@@ -937,8 +990,6 @@ class MeetingRuntime:
             from services.remote_records.sync import record_sync
 
             record_sync.record_saved("meeting", str(result["meeting_id"]))
-        for message in deferred_errors:
-            self.controller.meeting_error.emit(message)
 
     def _build_options(
         self,
@@ -1076,14 +1127,32 @@ class MeetingRuntime:
             meeting_id: Meeting to retry; defaults to the current engine's
                 meeting, then the Past Meetings card, then the newest meeting.
         """
-        from meeting.refinalize import (
-            FinalizationBusyError, FinalizationClaim, is_running,
-        )
-
         step_key = str(from_step or "failed").strip() or "failed"
+        if self._retry_refused(step_key):
+            return
+        retry = self._claim_retry(meeting_id, step_key)
+        if retry is None:
+            return
+
+        if step_key in {"failed", "redecode"}:
+            ensure = getattr(self.controller, "ensure_local_model_available", None)
+            if callable(ensure):
+                try:
+                    ensure()
+                except Exception:
+                    logger.exception("Could not ensure the local Whisper model")
+
+        self.controller.meeting_status_update.emit("Retrying post-meeting steps…")
+        threading.Thread(
+            target=self._retry_worker, args=(retry,),
+            name="meeting-retry-finalization", daemon=True,
+        ).start()
+
+    def _retry_refused(self, step_key: str) -> bool:
+        """Whether a retry can't start now; the status line says why."""
         if getattr(self.controller, "_backup_in_progress", False) is True:
             self.controller.meeting_status_update.emit("Wait for backup or restore preparation to finish")
-            return
+            return True
         if step_key == "speaker_id":
             # The retry skips a refused speaker pass anyway; refusing here
             # also spares re-running the steps after it for nothing.
@@ -1091,7 +1160,15 @@ class MeetingRuntime:
             if reason:
                 logger.info("Speaker re-run refused: %s", reason)
                 self.controller.meeting_status_update.emit(reason)
-                return
+                return True
+        return False
+
+    def _claim_retry(
+        self, meeting_id: Optional[str], step_key: str,
+    ) -> Optional[_FinalizationRetry]:
+        """Mark the meeting as finalizing for a retry, or None when it can't be."""
+        from meeting.refinalize import is_running
+
         with self._lock:
             if (
                 self._starting
@@ -1104,34 +1181,29 @@ class MeetingRuntime:
                     "Cannot retry finalization: meeting is active, starting, "
                     "or already finalizing"
                 )
-                return
+                return None
             engine = self._engine
             meeting_id = (
                 meeting_id
                 or getattr(engine, "meeting_id", None)
                 or self._card_meeting_id
+                or self._newest_meeting_id()
             )
             if not meeting_id:
-                repo = self._repository()
-                recent = repo.list_meetings()
-                if recent:
-                    meeting_id = recent[0].get("id")
-            if not meeting_id:
                 logger.warning("Cannot retry finalization: no meeting found")
-                return
+                return None
             if meeting_id in self._background_engines:
                 self.controller.meeting_status_update.emit(
                     "This meeting is still finishing in the background."
                 )
-                return
+                return None
             if is_running(meeting_id):
                 # The dashboard (or recovery) holds the one-run claim; a
                 # second run would only fail and overwrite its progress.
                 self.controller.meeting_status_update.emit(RETRY_BUSY_MESSAGE)
-                return
+                return None
             self._card_meeting_id = meeting_id
             self._retry_generation += 1
-            retry_generation = self._retry_generation
             self._retry_meeting_id = meeting_id
             self._background_ready = False
             self.controller.meeting_state_changed.emit({"background_available": False})
@@ -1140,150 +1212,143 @@ class MeetingRuntime:
                 "status": "running",
                 "message": "Retrying post-meeting steps…",
             }
+            return _FinalizationRetry(engine, meeting_id, step_key, self._retry_generation)
 
-        if step_key in {"failed", "redecode"}:
-            ensure = getattr(self.controller, "ensure_local_model_available", None)
-            if callable(ensure):
+    def _newest_meeting_id(self) -> Optional[str]:
+        recent = self._repository().list_meetings()
+        return recent[0].get("id") if recent else None
+
+    def _retry_worker(self, retry: _FinalizationRetry) -> None:
+        from meeting.refinalize import FinalizationBusyError, FinalizationClaim
+
+        meeting_id = retry.meeting_id
+        message = RETRY_FAILED_MESSAGE
+        finalization: Dict[str, Any] = {"status": "failed", "message": message}
+        try:
+            retry.claim = FinalizationClaim(meeting_id)
+            with self._lock:
+                self._retry_claim = retry.claim
+            self._publish_finalization(
+                meeting_id,
+                {"status": "running", "message": "Retrying post-meeting steps…"},
+                engine=retry.engine,
+                retry_generation=retry.generation,
+            )
+            finalization = self._rerun_finalization(retry)
+            message = finalization["message"]
+        except FinalizationBusyError:
+            # Another run won admission. Do not publish an unowned
+            # snapshot over its progress.
+            message = RETRY_BUSY_MESSAGE
+            finalization = self._stored_finalization(meeting_id)
+            retry.publish_engine = None
+        except Exception as exc:
+            logger.exception(
+                "Retry finalization worker raised for meeting %s", meeting_id
+            )
+            message = f"Post-meeting retry failed: {exc}"
+            finalization = {"status": "failed", "message": message}
+        finally:
+            if retry.claim is not None and _engine_runs(retry.engine, meeting_id):
                 try:
-                    ensure()
+                    retry.engine.revoke_agent_writes()
                 except Exception:
-                    logger.exception("Could not ensure the local Whisper model")
-
-        self.controller.meeting_status_update.emit("Retrying post-meeting steps…")
-
-        def _worker() -> None:
-            status = "failed"
-            message = "Post-meeting retry failed."
-            finalization: Dict[str, Any] = {
-                "status": status,
-                "message": message,
-            }
-            publish_engine = engine
-            claim = None
-            try:
-                claim = FinalizationClaim(meeting_id)
-                with self._lock:
-                    self._retry_claim = claim
-                self._publish_finalization(
-                    meeting_id,
-                    {"status": "running", "message": "Retrying post-meeting steps…"},
-                    engine=engine,
-                    retry_generation=retry_generation,
-                )
-                from meeting.refinalize import rerun_finalization
-                from services.meeting_rerun import rerun_options
-
-                repo = self._repository()
-                meeting = repo.get_meeting(meeting_id) or {}
-                store = None
-                if (
-                    engine is not None
-                    and getattr(engine, "meeting_id", None) == meeting_id
-                ):
-                    store = getattr(engine, "store", None)
-                    try:
-                        engine.allow_agent_writes()
-                    except Exception:
-                        logger.exception(
-                            "Could not allow agent writes for finalization retry"
-                        )
-
-                def _progress(snapshot: Dict[str, Any]) -> None:
-                    if not claim.is_active:
-                        return
-                    self._publish_finalization(
-                        meeting_id, snapshot, engine=engine,
-                        retry_generation=retry_generation,
+                    logger.exception(
+                        "Could not revoke agent writes after finalization retry"
                     )
+        self._finish_retry(retry, finalization, message)
 
-                result = rerun_finalization(
-                    repo,
-                    meeting_id,
-                    from_step=step_key,
-                    store=store,
-                    _claim=claim,
-                    progress_cb=_progress,
-                    # Only the redecode step loads a model, and only it takes
-                    # the lease — a polish-only retry never touches the
-                    # dictation engine.
-                    model_lease=self._model_lease(),
-                    **rerun_options(meeting),
-                )
-                finalization = dict(result.get("finalization") or {})
-                status = str(finalization.get("status") or (
-                    "completed" if result.get("ok") else "failed"
-                ))
-                message = str(
-                    finalization.get("message")
-                    or result.get("error")
-                    or message
-                )
-                finalization["status"] = status
-                finalization["message"] = message
-            except FinalizationBusyError:
-                # Another run won admission. Do not publish an unowned
-                # snapshot over its progress.
-                message = RETRY_BUSY_MESSAGE
-                finalization = self._stored_finalization(meeting_id)
-                publish_engine = None
-            except Exception as exc:
-                logger.exception(
-                    "Retry finalization worker raised for meeting %s", meeting_id
-                )
-                status = "failed"
-                message = f"Post-meeting retry failed: {exc}"
-                finalization = {"status": status, "message": message}
-            finally:
-                if (
-                    claim is not None
-                    and engine is not None
-                    and getattr(engine, "meeting_id", None) == meeting_id
-                ):
-                    try:
-                        engine.revoke_agent_writes()
-                    except Exception:
-                        logger.exception(
-                            "Could not revoke agent writes after finalization retry"
-                        )
+    def _rerun_finalization(self, retry: _FinalizationRetry) -> Dict[str, Any]:
+        """Run the post-meeting steps; their final snapshot, with status and message set."""
+        from meeting.refinalize import rerun_finalization
+        from services.meeting_rerun import rerun_options
 
+        engine, meeting_id, claim = retry.engine, retry.meeting_id, retry.claim
+        repo = self._repository()
+        meeting = repo.get_meeting(meeting_id) or {}
+        store = None
+        if _engine_runs(engine, meeting_id):
+            store = getattr(engine, "store", None)
             try:
-                if claim is not None:
-                    self._publish_finalization(
-                        meeting_id, finalization, engine=publish_engine,
-                        retry_generation=retry_generation,
-                    )
-                self._queue_engine_event(
-                    engine, "retry_status",
-                    {"message": message, "meeting_id": meeting_id},
-                    retry_generation=retry_generation,
-                )
-                self._refresh_past_meetings()
+                engine.allow_agent_writes()
             except Exception:
-                logger.exception("Could not publish retry outcome for %s", meeting_id)
-                if claim is not None:
-                    self._queue_engine_event(
-                        engine, "retry_finalization",
-                        {"active": False, "meeting_id": meeting_id,
-                         "finalization": {**finalization, "content_summary": {}}},
-                        retry_generation=retry_generation,
-                    )
-            finally:
-                # A terminal progress callback is not the worker's completion:
-                # retain ownership until cleanup and publication have finished.
-                with self._lock:
-                    if retry_generation == self._retry_generation:
-                        self._finalization = finalization
-                        self._card_meeting_id = meeting_id
-                        self._retry_meeting_id = None
-                        self._retry_claim = None
-                        self._finalizing = False
-                if claim is not None:
-                    claim.release()
-                self._wake_record_sync(meeting_id)
+                logger.exception(
+                    "Could not allow agent writes for finalization retry"
+                )
 
-        threading.Thread(
-            target=_worker, name="meeting-retry-finalization", daemon=True
-        ).start()
+        def _progress(snapshot: Dict[str, Any]) -> None:
+            if not claim.is_active:
+                return
+            self._publish_finalization(
+                meeting_id, snapshot, engine=engine,
+                retry_generation=retry.generation,
+            )
+
+        result = rerun_finalization(
+            repo,
+            meeting_id,
+            from_step=retry.step_key,
+            store=store,
+            _claim=claim,
+            progress_cb=_progress,
+            # Only the redecode step loads a model, and only it takes
+            # the lease — a polish-only retry never touches the
+            # dictation engine.
+            model_lease=self._model_lease(),
+            **rerun_options(meeting),
+        )
+        finalization = dict(result.get("finalization") or {})
+        status = str(finalization.get("status") or (
+            "completed" if result.get("ok") else "failed"
+        ))
+        message = str(
+            finalization.get("message")
+            or result.get("error")
+            or RETRY_FAILED_MESSAGE
+        )
+        finalization["status"] = status
+        finalization["message"] = message
+        return finalization
+
+    def _finish_retry(
+        self, retry: _FinalizationRetry, finalization: Dict[str, Any], message: str,
+    ) -> None:
+        """Publish a retry's outcome and give up its ownership of the meeting."""
+        engine, meeting_id, claim = retry.engine, retry.meeting_id, retry.claim
+        try:
+            if claim is not None:
+                self._publish_finalization(
+                    meeting_id, finalization, engine=retry.publish_engine,
+                    retry_generation=retry.generation,
+                )
+            self._queue_engine_event(
+                engine, "retry_status",
+                {"message": message, "meeting_id": meeting_id},
+                retry_generation=retry.generation,
+            )
+            self._refresh_past_meetings()
+        except Exception:
+            logger.exception("Could not publish retry outcome for %s", meeting_id)
+            if claim is not None:
+                self._queue_engine_event(
+                    engine, "retry_finalization",
+                    {"active": False, "meeting_id": meeting_id,
+                     "finalization": {**finalization, "content_summary": {}}},
+                    retry_generation=retry.generation,
+                )
+        finally:
+            # A terminal progress callback is not the worker's completion:
+            # retain ownership until cleanup and publication have finished.
+            with self._lock:
+                if retry.generation == self._retry_generation:
+                    self._finalization = finalization
+                    self._card_meeting_id = meeting_id
+                    self._retry_meeting_id = None
+                    self._retry_claim = None
+                    self._finalizing = False
+            if claim is not None:
+                claim.release()
+            self._wake_record_sync(meeting_id)
 
     def _stored_finalization(self, meeting_id: str) -> Dict[str, Any]:
         """The finalization persisted for ``meeting_id`` right now."""
@@ -1887,6 +1952,22 @@ class MeetingRuntime:
         except Exception:
             logger.debug("Could not publish a meeting event", exc_info=True)
 
+    #: Engine events and the method that bridges each one to controller signals.
+    _ENGINE_EVENT_HANDLERS = {
+        "status": "_on_status_event",
+        "server_started": "_on_server_started_event",
+        "error": "_on_error_event",
+        "background_ready": "_on_background_ready_event",
+        "asr_released": "_on_asr_released_event",
+        "ended": "_on_ended_event",
+        "intelligence": "_on_intelligence_event",
+    }
+    #: Engine events only the browser dashboard shows. Command acknowledgements
+    #: (voice_feedback) reach it over its own socket, so the desktop app shows
+    #: no second bubble of its own; segments stream to it, and the Qt panel
+    #: does not render them.
+    _DASHBOARD_ONLY_EVENTS = ("voice_feedback", "segments")
+
     def _on_engine_event(self, kind: str, payload: Dict[str, Any]) -> None:
         """Bridge one engine listener event to controller signals.
 
@@ -1895,105 +1976,99 @@ class MeetingRuntime:
         """
         try:
             payload = payload or {}
-            if kind == "status":
-                status = payload.get("status", "")
-                finalization = payload.get("finalization")
-                state_payload: Dict[str, Any] = {}
-                if isinstance(payload.get("speech"), dict):
-                    state_payload["speech"] = dict(payload["speech"])
-                if status:
-                    state_payload["status"] = str(status)
-                    # Pause/resume can come from the dashboard, which only
-                    # changes the engine status; mirror it onto the tab.
-                    if status in ("active", "paused"):
-                        state_payload["paused"] = status == "paused"
-                    # Prefer human notes when present; otherwise keep the short
-                    # lifecycle status for the status line.
-                    note = payload.get("note")
-                    self.controller.meeting_status_update.emit(
-                        str(note or status)
-                    )
-                if isinstance(finalization, dict):
-                    self._apply_finalization(finalization, state_payload)
-                elif finalization is None and "finalization" in payload:
-                    with self._lock:
-                        self._finalizing = self._retry_meeting_id is not None
-                        self._finalization = None
-                    state_payload["finalization"] = None
-                if state_payload:
-                    # Capture ownership is engine-derived; status alone must not
-                    # flip active. Finalization rides along for the Meeting tab.
-                    if "active" not in state_payload and not self.is_active:
-                        # After end, keep active=False while finalization updates.
-                        if self.controller.meeting_active is False:
-                            state_payload.setdefault("active", False)
-                    self.controller.meeting_state_changed.emit(state_payload)
-            elif kind == "server_started":
-                with self._lock:
-                    self._host_url = payload.get("host_url") or self._host_url
-                    self._guest_url = payload.get("guest_url") or self._guest_url
-                self.controller.meeting_server_started.emit(dict(payload))
-            elif kind == "error":
-                message = payload.get("message") or str(payload)
-                with self._lock:
-                    if self._starting:
-                        self._deferred_start_errors.append(str(message))
-                        return
-                self.controller.meeting_error.emit(str(message))
-            elif kind == "background_ready":
-                with self._lock:
-                    self._background_ready = True
-                self.controller.restore_local_engine()
-                self.controller.meeting_state_changed.emit({
-                    "background_available": True,
-                })
-            elif kind == "asr_released":
-                # Not on "ended": that fires before the offline final pass,
-                # which still decodes on the meeting's model.
-                self.controller.restore_local_engine()
-            elif kind == "ended":
-                self.controller.meeting_active = False
-                status = str(payload.get("status") or "ended")
-                with self._lock:
-                    finalization = dict(self._finalization or {})
-                    finalizing = self._finalizing
-                if finalizing:
-                    message = "Meeting ended — preparing final insights…"
-                elif payload.get("capture_error"):
-                    message = (
-                        "Meeting ended — audio capture was incomplete; "
-                        "partial audio was kept in Meeting History"
-                    )
-                elif status == "needs_recovery":
-                    message = "Meeting ended — transcription recovery needed"
-                else:
-                    message = "Meeting ended"
-                self.controller.meeting_status_update.emit(message)
-                state_payload = {"active": False, "status": status}
-                if finalization:
-                    state_payload["finalization"] = finalization
-                self.controller.meeting_state_changed.emit(state_payload)
-            elif kind == "intelligence":
-                online = bool(
-                    payload.get("online", payload.get("intelligence_online", False))
-                )
-                self.controller.meeting_status_update.emit(
-                    "Meeting intelligence online" if online
-                    else "Meeting intelligence offline — transcript-only"
-                )
-            elif kind == "voice_feedback":
-                # Command acknowledgements belong to the browser dashboard,
-                # which receives them over its own socket. The desktop app
-                # deliberately shows no second bubble of its own.
-                pass
-            elif kind == "segments":
-                # Segments stream to the browser dashboard; the Qt panel does
-                # not render them.
-                pass
-            else:
+            if kind in self._DASHBOARD_ONLY_EVENTS:
+                return
+            handler = self._ENGINE_EVENT_HANDLERS.get(kind)
+            if handler is None:
                 logger.debug(f"Unhandled meeting engine event: {kind}")
+                return
+            getattr(self, handler)(payload)
         except Exception as exc:  # never propagate into engine threads
             logger.error(f"Error bridging meeting event '{kind}': {exc}")
+
+    def _on_status_event(self, payload: Dict[str, Any]) -> None:
+        status = payload.get("status", "")
+        finalization = payload.get("finalization")
+        state_payload: Dict[str, Any] = {}
+        if isinstance(payload.get("speech"), dict):
+            state_payload["speech"] = dict(payload["speech"])
+        if status:
+            state_payload["status"] = str(status)
+            # Pause/resume can come from the dashboard, which only
+            # changes the engine status; mirror it onto the tab.
+            if status in ("active", "paused"):
+                state_payload["paused"] = status == "paused"
+            # Prefer human notes when present; otherwise keep the short
+            # lifecycle status for the status line.
+            note = payload.get("note")
+            self.controller.meeting_status_update.emit(
+                str(note or status)
+            )
+        if isinstance(finalization, dict):
+            self._apply_finalization(finalization, state_payload)
+        elif finalization is None and "finalization" in payload:
+            with self._lock:
+                self._finalizing = self._retry_meeting_id is not None
+                self._finalization = None
+            state_payload["finalization"] = None
+        if state_payload:
+            # Capture ownership is engine-derived; status alone must not
+            # flip active. Finalization rides along for the Meeting tab.
+            if "active" not in state_payload and not self.is_active:
+                # After end, keep active=False while finalization updates.
+                if self.controller.meeting_active is False:
+                    state_payload.setdefault("active", False)
+            self.controller.meeting_state_changed.emit(state_payload)
+
+    def _on_server_started_event(self, payload: Dict[str, Any]) -> None:
+        with self._lock:
+            self._host_url = payload.get("host_url") or self._host_url
+            self._guest_url = payload.get("guest_url") or self._guest_url
+        self.controller.meeting_server_started.emit(dict(payload))
+
+    def _on_error_event(self, payload: Dict[str, Any]) -> None:
+        message = payload.get("message") or str(payload)
+        with self._lock:
+            if self._starting:
+                self._deferred_start_errors.append(str(message))
+                return
+        self.controller.meeting_error.emit(str(message))
+
+    def _on_background_ready_event(self, payload: Dict[str, Any]) -> None:
+        with self._lock:
+            self._background_ready = True
+        self.controller.restore_local_engine()
+        self.controller.meeting_state_changed.emit({
+            "background_available": True,
+        })
+
+    def _on_asr_released_event(self, payload: Dict[str, Any]) -> None:
+        # Not on "ended": that fires before the offline final pass,
+        # which still decodes on the meeting's model.
+        self.controller.restore_local_engine()
+
+    def _on_ended_event(self, payload: Dict[str, Any]) -> None:
+        self.controller.meeting_active = False
+        status = str(payload.get("status") or "ended")
+        with self._lock:
+            finalization = dict(self._finalization or {})
+            finalizing = self._finalizing
+        self.controller.meeting_status_update.emit(
+            _ended_message(payload, status, finalizing=finalizing)
+        )
+        state_payload = {"active": False, "status": status}
+        if finalization:
+            state_payload["finalization"] = finalization
+        self.controller.meeting_state_changed.emit(state_payload)
+
+    def _on_intelligence_event(self, payload: Dict[str, Any]) -> None:
+        online = bool(
+            payload.get("online", payload.get("intelligence_online", False))
+        )
+        self.controller.meeting_status_update.emit(
+            "Meeting intelligence online" if online
+            else "Meeting intelligence offline — transcript-only"
+        )
 
     def _apply_finalization(
         self,

@@ -890,32 +890,27 @@ class MainWindow(QMainWindow):
             self.sidebar_action.setText(panel_name)
 
         self._schedule_history_sidebar_refresh()
-
-        if prev_index != index:
-            if (
-                prev_index != TabbedContentWidget.TAB_MEETING_MODE
-                and meeting_mode
-            ):
-                if not self._compact_mode and self.isVisible():
-                    self._transcription_tab_height = self.height()
-                    self._schedule_meeting_mode_height_sync()
-            elif (
-                prev_index == TabbedContentWidget.TAB_MEETING_MODE
-                and not meeting_mode
-            ):
-                if not self._compact_mode and self.isVisible():
-                    target = (
-                        self._transcription_tab_height
-                        or config.MAIN_WINDOW_DEFAULT_HEIGHT
-                    )
-                    self._animate_resize(self.width(), target)
-            elif meeting_mode:
-                self._schedule_meeting_mode_height_sync()
-        elif meeting_mode:
-            self._schedule_meeting_mode_height_sync()
+        self._resize_for_tab_switch(prev_index, meeting_mode)
 
         if meeting_mode:
             self._schedule_meeting_mode_intro()
+
+    def _resize_for_tab_switch(self, prev_index: int, meeting_mode: bool) -> None:
+        """Grow into Meeting Mode, and give the other tabs their height back."""
+        was_meeting_mode = prev_index == TabbedContentWidget.TAB_MEETING_MODE
+        if meeting_mode and not was_meeting_mode:
+            if not self._compact_mode and self.isVisible():
+                self._transcription_tab_height = self.height()
+                self._schedule_meeting_mode_height_sync()
+        elif was_meeting_mode and not meeting_mode:
+            if not self._compact_mode and self.isVisible():
+                target = (
+                    self._transcription_tab_height
+                    or config.MAIN_WINDOW_DEFAULT_HEIGHT
+                )
+                self._animate_resize(self.width(), target)
+        elif meeting_mode:
+            self._schedule_meeting_mode_height_sync()
 
     def _schedule_meeting_mode_intro(self) -> None:
         """Queue the first-visit Meeting Mode overview after the tab is up."""
@@ -1307,55 +1302,9 @@ class MainWindow(QMainWindow):
             self._resize_animation.stop()
 
         if compact:
-            if not self._compositor_managed and self.title_bar._is_maximized:
-                self.title_bar._toggle_maximize()
-            elif not self._compositor_managed and self.isMaximized():
-                self.showNormal()
-
-            self._full_geometry = QRect(self.geometry())
-            self._save_geometry()
-            self._compact_mode = True
-
-            self.tabbed_content.hide()
-            self.compact_controller.show()
-            self.history_edge_tab.hide()
-            self.history_sidebar.hide()
-            self.title_bar.title_label.hide()
-            self.update_notice.set_compact(True)
-            if not self._compositor_managed:
-                self.title_bar.maximize_btn.hide()
-                self.setMinimumSize(0, 0)
-                self.setMaximumSize(UNLIMITED_HEIGHT, UNLIMITED_HEIGHT)
-                self.setFixedSize(
-                    config.MAIN_WINDOW_COMPACT_WIDTH,
-                    config.MAIN_WINDOW_COMPACT_HEIGHT,
-                )
-            self._restore_compact_geometry()
+            self._enter_compact_mode()
         else:
-            self._save_compact_geometry()
-            self._compact_mode = False
-
-            if not self._compositor_managed:
-                self.setMinimumSize(
-                    config.MAIN_WINDOW_MIN_WIDTH,
-                    config.MAIN_WINDOW_MIN_HEIGHT,
-                )
-                self.setMaximumSize(config.MAIN_WINDOW_MAX_WIDTH, UNLIMITED_HEIGHT)
-            self.compact_controller.hide()
-            self.tabbed_content.show()
-            self.history_edge_tab.show()
-            self.history_sidebar.show()
-            self.title_bar.title_label.show()
-            self.update_notice.set_compact(False)
-            if not self._compositor_managed:
-                self.title_bar.maximize_btn.show()
-
-            if self._full_geometry is not None and not self._compositor_managed:
-                self.setGeometry(self._full_geometry)
-            else:
-                self._restore_window_geometry()
-
-            self._schedule_meeting_mode_height_sync()
+            self._leave_compact_mode()
 
         if persist:
             try:
@@ -1363,9 +1312,62 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 logger.warning(f"Failed to save compact mode: {e}")
 
+    def _enter_compact_mode(self) -> None:
+        if not self._compositor_managed and self.title_bar._is_maximized:
+            self.title_bar._toggle_maximize()
+        elif not self._compositor_managed and self.isMaximized():
+            self.showNormal()
+
+        self._full_geometry = QRect(self.geometry())
+        self._save_geometry()
+        self._compact_mode = True
+
+        self.tabbed_content.hide()
+        self.compact_controller.show()
+        self.history_edge_tab.hide()
+        self.history_sidebar.hide()
+        self.title_bar.title_label.hide()
+        self.update_notice.set_compact(True)
+        if not self._compositor_managed:
+            self.title_bar.maximize_btn.hide()
+            self.setMinimumSize(0, 0)
+            self.setMaximumSize(UNLIMITED_HEIGHT, UNLIMITED_HEIGHT)
+            self.setFixedSize(
+                config.MAIN_WINDOW_COMPACT_WIDTH,
+                config.MAIN_WINDOW_COMPACT_HEIGHT,
+            )
+        self._restore_compact_geometry()
+
+    def _leave_compact_mode(self) -> None:
+        self._save_compact_geometry()
+        self._compact_mode = False
+
+        if not self._compositor_managed:
+            self.setMinimumSize(
+                config.MAIN_WINDOW_MIN_WIDTH,
+                config.MAIN_WINDOW_MIN_HEIGHT,
+            )
+            self.setMaximumSize(config.MAIN_WINDOW_MAX_WIDTH, UNLIMITED_HEIGHT)
+        self.compact_controller.hide()
+        self.tabbed_content.show()
+        self.history_edge_tab.show()
+        self.history_sidebar.show()
+        self.title_bar.title_label.show()
+        self.update_notice.set_compact(False)
+        if not self._compositor_managed:
+            self.title_bar.maximize_btn.show()
+
+        if self._full_geometry is not None and not self._compositor_managed:
+            self.setGeometry(self._full_geometry)
+        else:
+            self._restore_window_geometry()
+
+        self._schedule_meeting_mode_height_sync()
+
     def _restore_compact_mode(self) -> None:
         try:
-            if settings_manager.get(SettingsKey.COMPACT_MODE, SETTING_DEFAULTS[SettingsKey.COMPACT_MODE]) is True:
+            default = SETTING_DEFAULTS[SettingsKey.COMPACT_MODE]
+            if settings_manager.get(SettingsKey.COMPACT_MODE, default) is True:
                 self.set_compact_mode(True, persist=False)
         except Exception as e:
             logger.warning(f"Failed to restore compact mode: {e}")
@@ -2021,75 +2023,91 @@ class MainWindow(QMainWindow):
             return
         try:
             geo = settings_manager.get(SettingsKey.WINDOW_GEOMETRY)
-            if isinstance(geo, dict) and {'x', 'y', 'width', 'height'}.issubset(geo.keys()):
-                from PyQt6.QtWidgets import QApplication
-                from PyQt6.QtCore import QRect
-
-                screen = QApplication.primaryScreen()
-                if screen:
-                    screen_geo = screen.availableGeometry()
-                    saved_rect = QRect(geo['x'], geo['y'], geo['width'], geo['height'])
-                    if screen_geo.intersects(saved_rect):
-                        raw_width = geo['width']
-                        migrated_expanded_width = False
-                        legacy_expanded_width = (
-                            config.MAIN_WINDOW_DEFAULT_WIDTH
-                            + config.MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH
-                            - config.MAIN_WINDOW_HISTORY_EDGE_TAB_WIDTH
-                        )
-                        if (
-                            geo.get('format') != self._geometry_format
-                            and raw_width >= legacy_expanded_width
-                        ):
-                            raw_width -= config.MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH
-                            migrated_expanded_width = True
-
-                        width = max(self.minimumWidth(), min(raw_width, self.maximumWidth()))
-                        max_height = screen_geo.height()
-
-                        # The transcript starts collapsed, so geometry saved while it
-                        # was expanded must not leave its now-hidden body as blank
-                        # vertical space. Apply this independently of window width
-                        # (users can resize the main workspace horizontally).
-                        tabs = MainWindow.existing_transcription_tabs(self)
-                        transcript_collapsed = (
-                            bool(tabs) and all(
-                                tab.is_transcription_collapsed()
-                                for tab in tabs
-                            )
-                        )
-                        if transcript_collapsed:
-                            max_height = min(
-                                max_height,
-                                config.MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT,
-                            )
-
-                        # Normalize narrow and legacy sidebar-width restores.
-                        if width <= config.MAIN_WINDOW_DEFAULT_WIDTH or migrated_expanded_width:
-                            width = config.MAIN_WINDOW_DEFAULT_WIDTH
-                        height = max(self.minimumHeight(), min(geo['height'], max_height))
-                        self._transcription_tab_height = height
-                        restore_width = width
-                        if (
-                            hasattr(self, "history_sidebar")
-                            and self.history_sidebar.is_expanded
-                        ):
-                            restore_width = min(
-                                self.maximumWidth(),
-                                width + self._sidebar_width,
-                            )
-                        clamped = self._clamp_geometry(
-                            geo["x"], geo["y"], restore_width, height
-                        )
-                        self.setGeometry(clamped)
-                        logger.info(f"Restored window geometry: {geo}")
-                        return
+            if self._apply_saved_geometry(geo):
+                return
 
             logger.debug("No valid saved geometry, using default")
             self._center_on_screen()
         except Exception as e:
             logger.warning(f"Failed to restore window geometry: {e}")
             self._center_on_screen()
+
+    def _apply_saved_geometry(self, geo) -> bool:
+        """Restore ``geo`` when it's complete and still on screen; returns whether it was."""
+        if not (isinstance(geo, dict) and {'x', 'y', 'width', 'height'}.issubset(geo.keys())):
+            return False
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import QRect
+
+        screen = QApplication.primaryScreen()
+        if not screen:
+            return False
+        screen_geo = screen.availableGeometry()
+        saved_rect = QRect(geo['x'], geo['y'], geo['width'], geo['height'])
+        if not screen_geo.intersects(saved_rect):
+            return False
+        width = self._restored_width(geo)
+        max_height = self._restored_max_height(screen_geo)
+        height = max(self.minimumHeight(), min(geo['height'], max_height))
+        self._transcription_tab_height = height
+        restore_width = width
+        if (
+            hasattr(self, "history_sidebar")
+            and self.history_sidebar.is_expanded
+        ):
+            restore_width = min(
+                self.maximumWidth(),
+                width + self._sidebar_width,
+            )
+        clamped = self._clamp_geometry(
+            geo["x"], geo["y"], restore_width, height
+        )
+        self.setGeometry(clamped)
+        logger.info(f"Restored window geometry: {geo}")
+        return True
+
+    def _restored_width(self, geo: dict) -> int:
+        """The saved width, without a legacy expanded sidebar, clamped to the window's limits."""
+        raw_width = geo['width']
+        migrated_expanded_width = False
+        legacy_expanded_width = (
+            config.MAIN_WINDOW_DEFAULT_WIDTH
+            + config.MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH
+            - config.MAIN_WINDOW_HISTORY_EDGE_TAB_WIDTH
+        )
+        if (
+            geo.get('format') != self._geometry_format
+            and raw_width >= legacy_expanded_width
+        ):
+            raw_width -= config.MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH
+            migrated_expanded_width = True
+
+        width = max(self.minimumWidth(), min(raw_width, self.maximumWidth()))
+        # Normalize narrow and legacy sidebar-width restores.
+        if width <= config.MAIN_WINDOW_DEFAULT_WIDTH or migrated_expanded_width:
+            width = config.MAIN_WINDOW_DEFAULT_WIDTH
+        return width
+
+    def _restored_max_height(self, screen_geo) -> int:
+        max_height = screen_geo.height()
+
+        # The transcript starts collapsed, so geometry saved while it
+        # was expanded must not leave its now-hidden body as blank
+        # vertical space. Apply this independently of window width
+        # (users can resize the main workspace horizontally).
+        tabs = MainWindow.existing_transcription_tabs(self)
+        transcript_collapsed = (
+            bool(tabs) and all(
+                tab.is_transcription_collapsed()
+                for tab in tabs
+            )
+        )
+        if transcript_collapsed:
+            max_height = min(
+                max_height,
+                config.MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT,
+            )
+        return max_height
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

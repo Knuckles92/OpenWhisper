@@ -14,6 +14,20 @@ from meeting.asr.audio import prepare_for_whisper
 
 logger = logging.getLogger(__name__)
 
+#: A block further than this from its channel's previous one, in media or
+#: wall-clock time, starts a new preview stream.
+_MEDIA_GAP_S = .15
+_WALL_GAP_S = .25
+
+#: Longest single preview stream, in seconds of audio.
+_MAX_STREAM_S = 30
+
+#: 16 kHz samples buffered before a chunk is streamed (0.75 s).
+_MIN_STREAM_SAMPLES = 12000
+
+#: While durable decoding is busy, drop a stream that buffered over 5 s.
+_BUSY_CANCEL_SAMPLES = 5 * 16000
+
 
 class MeetingSpeechPreview:
     """Capture never waits for inference; dropped previews leave the WAV spool intact."""
@@ -46,44 +60,7 @@ class MeetingSpeechPreview:
                     block, start_s = self._queue.get(timeout=.1)
                 except queue.Empty:
                     continue
-                channel = block.channel
-                state = sessions.get(channel)
-                end_s = start_s + len(block.frames) / block.sample_rate
-                if state and (abs(start_s-state["end"]) > .15 or
-                              abs(block.t_mono-state["wall_end"]) > .25 or
-                              end_s-state["start"] > 30):
-                    if state.get("sent"):
-                        self.backend.stream_audio(channel, np.empty(0, np.float32), self.language, finish=True)
-                    sessions.pop(channel)
-                    state = None
-                if state is None:
-                    state = dict(start=start_s, end=start_s, wall_end=block.t_mono,
-                                 pending=deque(), samples=0)
-                    sessions[channel] = state
-                audio = prepare_for_whisper(block.frames, block.sample_rate)
-                state["pending"].append(audio)
-                state["samples"] += len(audio)
-                state["end"] = end_s
-                state["wall_end"] = block.t_mono + len(block.frames) / block.sample_rate
-                if state["samples"] < 12000:
-                    continue
-                if self.busy():
-                    # Do not let speculative text delay a durable decode.
-                    if state["samples"] > 5*16000:
-                        self.backend.cancel_stream(channel)
-                        sessions.pop(channel)
-                    continue
-                samples = np.concatenate(state["pending"])
-                state["pending"].clear()
-                state["samples"] = 0
-                events = self.backend.stream_audio(channel, samples, self.language)
-                state["sent"] = True
-                if events and not self._stop.is_set():
-                    for event in events:
-                        self.callback(dict(channel=channel, text=event["text"],
-                                           start_s=state["start"] + event.get("start", 0),
-                                           end_s=min(end_s, state["start"] + event.get("end", end_s - state["start"])),
-                                           final=event.get("final", False)))
+                self._handle_block(sessions, block, start_s)
         except Exception:
             logger.exception("Live speech preview stopped; durable chunk transcription continues")
         finally:
@@ -94,6 +71,61 @@ class MeetingSpeechPreview:
                 except Exception:
                     logger.debug("Preview final flush failed", exc_info=True)
 
+    def _handle_block(self, sessions, block, start_s):
+        channel = block.channel
+        end_s = start_s + len(block.frames) / block.sample_rate
+        state = self._channel_session(sessions, block, start_s, end_s)
+        audio = prepare_for_whisper(block.frames, block.sample_rate)
+        state["pending"].append(audio)
+        state["samples"] += len(audio)
+        state["end"] = end_s
+        state["wall_end"] = block.t_mono + len(block.frames) / block.sample_rate
+        if state["samples"] < _MIN_STREAM_SAMPLES:
+            return
+        if self.busy():
+            # Do not let speculative text delay a durable decode.
+            if state["samples"] > _BUSY_CANCEL_SAMPLES:
+                self.backend.cancel_stream(channel)
+                sessions.pop(channel)
+            return
+        samples = np.concatenate(state["pending"])
+        state["pending"].clear()
+        state["samples"] = 0
+        events = self.backend.stream_audio(channel, samples, self.language)
+        state["sent"] = True
+        if events and not self._stop.is_set():
+            self._emit_events(channel, state, events, end_s)
+
+    def _channel_session(self, sessions, block, start_s, end_s):
+        """The channel's stream session, restarted after a gap or at the length cap."""
+        channel = block.channel
+        state = sessions.get(channel)
+        if state and _session_broken(state, block, start_s, end_s):
+            if state.get("sent"):
+                self.backend.stream_audio(channel, np.empty(0, np.float32), self.language, finish=True)
+            sessions.pop(channel)
+            state = None
+        if state is None:
+            state = dict(start=start_s, end=start_s, wall_end=block.t_mono,
+                         pending=deque(), samples=0)
+            sessions[channel] = state
+        return state
+
+    def _emit_events(self, channel, state, events, end_s):
+        for event in events:
+            start = state["start"] + event.get("start", 0)
+            end = state["start"] + event.get("end", end_s - state["start"])
+            self.callback(dict(channel=channel, text=event["text"],
+                               start_s=start,
+                               end_s=min(end_s, end),
+                               final=event.get("final", False)))
+
+
+def _session_broken(state, block, start_s, end_s):
+    """True when this block cannot continue the channel's current stream."""
+    return (abs(start_s - state["end"]) > _MEDIA_GAP_S or
+            abs(block.t_mono - state["wall_end"]) > _WALL_GAP_S or
+            end_s - state["start"] > _MAX_STREAM_S)
 
 
 class WindowSpeechPreview:
@@ -132,7 +164,8 @@ class WindowSpeechPreview:
     def _accept(self, block, start_s):
         end_s = start_s + len(block.frames) / block.sample_rate
         state = self._sessions.get(block.channel)
-        if state is None or abs(start_s - state["end"]) > .15 or abs(block.t_mono - state["wall_end"]) > .25:
+        if (state is None or abs(start_s - state["end"]) > _MEDIA_GAP_S
+                or abs(block.t_mono - state["wall_end"]) > _WALL_GAP_S):
             state = dict(audio=np.empty(0, np.float32), end=start_s, decoded=start_s)
             self._sessions[block.channel] = state
         audio = prepare_for_whisper(block.frames, block.sample_rate)

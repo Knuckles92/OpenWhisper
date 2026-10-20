@@ -273,6 +273,55 @@ def _names(command: str) -> List[str]:
     return [command]
 
 
+def _codex_locations(home: str, local: str, dirs: List[str], patterns: List[str]) -> None:
+    if sys.platform == "win32" and local:
+        # The Codex desktop app keeps versioned CLIs under bin\<hash>\.
+        patterns.append(os.path.join(local, "OpenAI", "Codex", "bin", "*", "codex.exe"))
+        dirs.append(os.path.join(local, "OpenAI", "Codex", "bin"))
+        dirs.append(os.path.join(local, "Programs", "OpenAI", "Codex", "bin"))
+    elif sys.platform == "darwin":
+        for root in ("/Applications", os.path.join(home, "Applications")):
+            dirs.append(os.path.join(root, "Codex.app", "Contents", "Resources"))
+
+
+def _opencode_locations(home: str, local: str, dirs: List[str]) -> None:
+    dirs.append(os.path.join(home, ".opencode", "bin"))
+    if sys.platform == "win32":
+        dirs.append(os.path.join(home, "scoop", "shims"))
+        if local:
+            dirs.append(os.path.join(local, "Microsoft", "WinGet", "Links"))
+
+
+def _install_locations(agent_id: str, home: str, local: str) -> Tuple[List[str], List[str]]:
+    """The directories and glob patterns ``agent_id`` may be installed in, off PATH."""
+    dirs: List[str] = [os.path.join(home, ".local", "bin")]
+    patterns: List[str] = []
+    if agent_id == CLAUDE_CODE:
+        dirs.append(os.path.join(home, ".claude", "local"))
+    elif agent_id == CODEX:
+        _codex_locations(home, local, dirs, patterns)
+    elif agent_id == OPENCODE:
+        _opencode_locations(home, local, dirs)
+    dirs.extend(_npm_global_bins())
+    return dirs, patterns
+
+
+def _unique_executables(found: List[str]) -> List[str]:
+    """Existing executables in ``found``, each real file once, as absolute paths."""
+    unique: List[str] = []
+    seen = set()
+    for path in found:
+        if not path or not os.path.isfile(path):
+            continue
+        if sys.platform != "win32" and not os.access(path, os.X_OK):
+            continue
+        key = os.path.normcase(os.path.realpath(path))
+        if key not in seen:
+            seen.add(key)
+            unique.append(os.path.abspath(path))
+    return unique
+
+
 def candidate_paths(agent_id: str) -> List[str]:
     """Every existing executable that could be ``agent_id``, PATH first.
 
@@ -287,45 +336,14 @@ def candidate_paths(agent_id: str) -> List[str]:
         path = shutil.which(command)
         if path:
             found.append(path)
-    dirs: List[str] = [os.path.join(home, ".local", "bin")]
-    patterns: List[str] = []
-    if agent_id == CLAUDE_CODE:
-        dirs.append(os.path.join(home, ".claude", "local"))
-    elif agent_id == CODEX:
-        if sys.platform == "win32" and local:
-            # The Codex desktop app keeps versioned CLIs under bin\<hash>\.
-            patterns.append(os.path.join(local, "OpenAI", "Codex", "bin", "*", "codex.exe"))
-            dirs.append(os.path.join(local, "OpenAI", "Codex", "bin"))
-            dirs.append(os.path.join(local, "Programs", "OpenAI", "Codex", "bin"))
-        elif sys.platform == "darwin":
-            for root in ("/Applications", os.path.join(home, "Applications")):
-                dirs.append(os.path.join(root, "Codex.app", "Contents", "Resources"))
-    elif agent_id == OPENCODE:
-        dirs.append(os.path.join(home, ".opencode", "bin"))
-        if sys.platform == "win32":
-            dirs.append(os.path.join(home, "scoop", "shims"))
-            if local:
-                dirs.append(os.path.join(local, "Microsoft", "WinGet", "Links"))
-    dirs.extend(_npm_global_bins())
+    dirs, patterns = _install_locations(agent_id, home, local)
     for directory in dirs:
         for command in spec.commands:
             for name in _names(command):
                 found.append(os.path.join(directory, name))
     for pattern in patterns:
         found.extend(sorted(glob.glob(pattern)))
-
-    unique: List[str] = []
-    seen = set()
-    for path in found:
-        if not path or not os.path.isfile(path):
-            continue
-        if sys.platform != "win32" and not os.access(path, os.X_OK):
-            continue
-        key = os.path.normcase(os.path.realpath(path))
-        if key not in seen:
-            seen.add(key)
-            unique.append(os.path.abspath(path))
-    return unique
+    return _unique_executables(found)
 
 
 def _probe_version(path: str) -> Tuple[Tuple[int, ...], str]:

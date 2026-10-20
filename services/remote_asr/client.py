@@ -176,6 +176,14 @@ def _quiet_close(ws) -> None:
         logger.debug("Remote engine socket close raised", exc_info=True)
 
 
+def _host_seconds(reply: dict) -> Optional[float]:
+    """The time the host says it spent on a request; None from a host too old to say."""
+    host_ms = reply.get("host_ms")
+    if isinstance(host_ms, (int, float)) and host_ms >= 0:
+        return host_ms / 1000
+    return None
+
+
 def _read_json(ws, timeout: float) -> dict:
     from websockets.exceptions import ConnectionClosed
 
@@ -672,68 +680,85 @@ class RemoteConnection:
         The host's time is None from a host too old to report it.
         ``payload`` sends raw bytes (a record's file) in place of audio.
         """
+        with self._lock:
+            ws, serial = self._send_request(op, audio, payload, fields)
+            deadline = time.monotonic() + timeout
+            reply = self._await_reply(ws, serial, deadline)
+            result = reply.get("result")
+            return (result if isinstance(result, dict) else {}), _host_seconds(reply)
+
+    def _send_request(self, op: str, audio, payload: Optional[bytes], fields: dict):
+        """Send one request; returns the socket it went out on and its serial."""
         from websockets.exceptions import ConnectionClosed
 
-        with self._lock:
-            with self._state_lock:
-                if self._closed or self._ws is None:
-                    raise RuntimeError("Transcription canceled")
-                ws = self._ws
-                self._serial += 1
-                serial = self._serial
+        with self._state_lock:
+            if self._closed or self._ws is None:
+                raise RuntimeError("Transcription canceled")
+            ws = self._ws
+            self._serial += 1
+            serial = self._serial
+        try:
+            ws.send(protocol.pack_request({"id": serial, "op": op, **fields}, audio,
+                                          payload=payload))
+        except (ConnectionClosed, OSError) as exc:
+            self._mark_closed()
+            raise RemoteConnectionLost(
+                f"Lost the connection to {self.where}.", sent=False
+            ) from exc
+        return ws, serial
+
+    def _await_reply(self, ws, serial: int, deadline: float) -> dict:
+        """The reply to request ``serial``; host errors are raised."""
+        while True:
+            raw = self._receive(ws, serial, deadline)
+            if raw is None:
+                continue
             try:
-                ws.send(protocol.pack_request({"id": serial, "op": op, **fields}, audio,
-                                              payload=payload))
-            except (ConnectionClosed, OSError) as exc:
+                reply = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+            # A reply to an abandoned request arrives late and is skipped
+            # here, by the next request, since its id is older.
+            if not isinstance(reply, dict) or reply.get("id") != serial:
+                continue
+            if reply.get("code") == "engine_changed":
                 self._mark_closed()
-                raise RemoteConnectionLost(
-                    f"Lost the connection to {self.where}.", sent=False
-                ) from exc
-            deadline = time.monotonic() + timeout
-            while True:
-                if self._abandoned >= serial:
-                    raise RuntimeError("Transcription canceled")
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    self.close()
-                    raise RuntimeError(
-                        f"The remote engine on {self.where} timed out; the connection was closed."
-                    )
-                try:
-                    raw = ws.recv(timeout=min(_REQUEST_POLL_S, remaining))
-                except TimeoutError:
-                    if self._closed:
-                        raise RuntimeError("Transcription canceled")
-                    continue
-                except (ConnectionClosed, OSError) as exc:
-                    if self._closed:
-                        raise RuntimeError("Transcription canceled")
-                    self._mark_closed()
-                    raise RemoteConnectionLost(
-                        f"Lost the connection to {self.where}.", sent=True
-                    ) from exc
-                if self._closed:
-                    raise RuntimeError("Transcription canceled")
-                try:
-                    reply = json.loads(raw)
-                except (TypeError, ValueError):
-                    continue
-                # A reply to an abandoned request arrives late and is skipped
-                # here, by the next request, since its id is older.
-                if not isinstance(reply, dict) or reply.get("id") != serial:
-                    continue
-                if reply.get("code") == "engine_changed":
-                    self._mark_closed()
-                    raise RemoteConnectionLost(str(reply.get("error")), sent=True)
-                if "error" in reply:
-                    raise RemoteRequestError(
-                        str(reply["error"]), code=reply.get("code"),
-                        retry_after_ms=reply.get("retry_after_ms"),
-                    )
-                result = reply.get("result")
-                host_ms = reply.get("host_ms")
-                host_s = host_ms / 1000 if isinstance(host_ms, (int, float)) and host_ms >= 0 else None
-                return (result if isinstance(result, dict) else {}), host_s
+                raise RemoteConnectionLost(str(reply.get("error")), sent=True)
+            if "error" in reply:
+                raise RemoteRequestError(
+                    str(reply["error"]), code=reply.get("code"),
+                    retry_after_ms=reply.get("retry_after_ms"),
+                )
+            return reply
+
+    def _receive(self, ws, serial: int, deadline: float):
+        """The next frame, or None when a poll interval passed without one."""
+        from websockets.exceptions import ConnectionClosed
+
+        if self._abandoned >= serial:
+            raise RuntimeError("Transcription canceled")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            self.close()
+            raise RuntimeError(
+                f"The remote engine on {self.where} timed out; the connection was closed."
+            )
+        try:
+            raw = ws.recv(timeout=min(_REQUEST_POLL_S, remaining))
+        except TimeoutError:
+            if self._closed:
+                raise RuntimeError("Transcription canceled")
+            return None
+        except (ConnectionClosed, OSError) as exc:
+            if self._closed:
+                raise RuntimeError("Transcription canceled")
+            self._mark_closed()
+            raise RemoteConnectionLost(
+                f"Lost the connection to {self.where}.", sent=True
+            ) from exc
+        if self._closed:
+            raise RuntimeError("Transcription canceled")
+        return raw
 
     def abandon(self) -> None:
         """Stop waiting for the request in flight, but keep the connection.

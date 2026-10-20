@@ -19,6 +19,9 @@ _NON_HISTORICAL_STATUSES = frozenset({"active", "paused", "ending"})
 # tombstones left by a crash instead of leaking meeting audio indefinitely.
 DELETION_TOMBSTONE_STALE_S = 60 * 60
 
+# Directory-name prefix of a spool renamed aside by an in-flight delete.
+_TOMBSTONE_PREFIX = ".deleting-"
+
 
 def _validated_spool_path(spool_dir: str, meetings_root: str) -> Optional[str]:
     """Return a direct child spool path, rejecting traversal and broad paths."""
@@ -57,33 +60,12 @@ def delete_meeting_data(
     )
     tombstone = None
     if spool and os.path.isdir(spool):
-        tombstone = os.path.join(
-            os.path.dirname(spool), f".deleting-{meeting_id}-{uuid.uuid4().hex}"
-        )
-        try:
-            os.replace(spool, tombstone)
-            # A rename preserves the directory's old mtime.  Refresh it so
-            # orphan cleanup measures the age of this deletion transaction,
-            # not the age of the meeting's last audio chunk.
-            os.utime(tombstone, None)
-        except Exception:
-            if os.path.isdir(tombstone) and not os.path.exists(spool):
-                try:
-                    os.replace(tombstone, spool)
-                except Exception:
-                    logger.exception(
-                        "Could not restore meeting spool after tombstone setup failed: %s",
-                        meeting_id,
-                    )
-            raise
+        tombstone = _tombstone_spool(spool, meeting_id)
     try:
         repository.delete_meeting(meeting_id)
     except Exception:
-        if tombstone and os.path.isdir(tombstone) and not os.path.exists(spool):
-            try:
-                os.replace(tombstone, spool)
-            except Exception:
-                logger.exception("Could not restore meeting spool %s", meeting_id)
+        if tombstone:
+            _restore_spool(tombstone, spool, "Could not restore meeting spool %s", meeting_id)
         raise
     if tombstone:
         try:
@@ -92,6 +74,36 @@ def delete_meeting_data(
             logger.exception("Could not purge tombstoned spool for %s", meeting_id)
     _deleted(meeting)
     return True
+
+
+def _tombstone_spool(spool: str, meeting_id: str) -> str:
+    """Rename ``spool`` aside so the database delete is the commit point."""
+    tombstone = os.path.join(
+        os.path.dirname(spool), f"{_TOMBSTONE_PREFIX}{meeting_id}-{uuid.uuid4().hex}"
+    )
+    try:
+        os.replace(spool, tombstone)
+        # A rename preserves the directory's old mtime.  Refresh it so
+        # orphan cleanup measures the age of this deletion transaction,
+        # not the age of the meeting's last audio chunk.
+        os.utime(tombstone, None)
+    except Exception:
+        _restore_spool(
+            tombstone, spool,
+            "Could not restore meeting spool after tombstone setup failed: %s",
+            meeting_id,
+        )
+        raise
+    return tombstone
+
+
+def _restore_spool(tombstone: str, spool: str, failure_message: str, meeting_id: str) -> None:
+    """Move a tombstoned spool back unless something already took its place."""
+    if os.path.isdir(tombstone) and not os.path.exists(spool):
+        try:
+            os.replace(tombstone, spool)
+        except Exception:
+            logger.exception(failure_message, meeting_id)
 
 
 def _deleted(meeting: dict) -> None:
@@ -129,36 +141,44 @@ def _purge_orphan_spools(
         logger.exception("Could not list meeting spools in %s", root)
         return
     for name in names:
+        path = os.path.join(root, name)
         # Concurrent single-meeting deletes rename the spool to this prefix
         # before the database commit.  Leave recent ones alone, but a crash can
         # strand the renamed audio forever, so collect stale tombstones.
-        if name.startswith(".deleting-"):
-            path = os.path.join(root, name)
-            try:
-                age_s = max(0.0, time.time() - os.stat(path).st_mtime)
-            except OSError:
-                continue
-            if age_s < DELETION_TOMBSTONE_STALE_S:
-                continue
-            try:
-                shutil.rmtree(path)
-            except Exception:
-                logger.exception(
-                    "Could not purge abandoned deletion tombstone %s", path
-                )
-            continue
-        path = os.path.join(root, name)
-        if not os.path.isdir(path):
-            continue
-        real = os.path.realpath(os.path.abspath(path))
-        if real == root or os.path.dirname(real) != root:
-            continue
-        if real in keep:
-            continue
-        try:
-            shutil.rmtree(real)
-        except Exception:
-            logger.exception("Could not purge leftover meeting spool %s", real)
+        if name.startswith(_TOMBSTONE_PREFIX):
+            _purge_stale_tombstone(path)
+        else:
+            _purge_unkept_spool(path, root, keep)
+
+
+def _purge_stale_tombstone(path: str) -> None:
+    try:
+        age_s = max(0.0, time.time() - os.stat(path).st_mtime)
+    except OSError:
+        return
+    if age_s < DELETION_TOMBSTONE_STALE_S:
+        return
+    try:
+        shutil.rmtree(path)
+    except Exception:
+        logger.exception(
+            "Could not purge abandoned deletion tombstone %s", path
+        )
+
+
+def _purge_unkept_spool(path: str, root: str, keep: Set[str]) -> None:
+    """Remove a direct-child spool directory of ``root`` that is not kept."""
+    if not os.path.isdir(path):
+        return
+    real = os.path.realpath(os.path.abspath(path))
+    if real == root or os.path.dirname(real) != root:
+        return
+    if real in keep:
+        return
+    try:
+        shutil.rmtree(real)
+    except Exception:
+        logger.exception("Could not purge leftover meeting spool %s", real)
 
 
 def clear_meetings(

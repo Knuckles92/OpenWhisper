@@ -6,7 +6,7 @@ space, so each editor asks here before saving a shortcut.
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Callable, Iterable, Mapping
 
 from config import config
 from services.cleanup_profiles import load_cleanup_profiles, normalize_hotkey
@@ -64,6 +64,39 @@ def hotkey_conflict(
     if not hotkey:
         return ""
     signature = _signature(hotkey)
+    conflict = _standard_conflict(signature, settings, exclude, standard_hotkeys)
+    if conflict is not None:
+        return conflict
+    conflict = _binding_conflict(
+        load_cleanup_profiles(settings), PROFILE, signature, exclude, parse_hotkey
+    )
+    if conflict is not None:
+        return conflict
+    # Imported on use, so text_transforms may validate its own shortcuts
+    # through this module.
+    from services import text_transforms
+
+    conflict = _binding_conflict(
+        text_transforms.load_transforms(settings), TRANSFORM, signature, exclude, _signature
+    )
+    if conflict is not None:
+        return conflict
+    from services.actions.model import load_actions
+
+    conflict = _binding_conflict(
+        load_actions(settings), ACTION, signature, exclude, _signature
+    )
+    if conflict is not None:
+        return conflict
+    return ""
+
+
+def _standard_conflict(
+    signature,
+    settings: Mapping,
+    exclude: tuple[str, str],
+    standard_hotkeys: Mapping[str, str] | None,
+) -> str | None:
     saved = standard_hotkeys
     if saved is None:
         saved = settings.get(SettingsKey.HOTKEYS) or {}
@@ -73,25 +106,20 @@ def hotkey_conflict(
             continue
         if value and _signature(value) == signature:
             return STANDARD_LABELS.get(action, action.replace("_", " "))
-    for profile in load_cleanup_profiles(settings):
-        if exclude == (PROFILE, profile.id):
-            continue
-        if profile.hotkey and parse_hotkey(profile.hotkey) == signature:
-            return profile.name
-    # Imported on use, so text_transforms may validate its own shortcuts
-    # through this module.
-    from services import text_transforms
+    return None
 
-    for transform in text_transforms.load_transforms(settings):
-        if exclude == (TRANSFORM, transform.id):
-            continue
-        if transform.hotkey and _signature(transform.hotkey) == signature:
-            return transform.name
-    from services.actions.model import load_actions
 
-    for action in load_actions(settings):
-        if exclude == (ACTION, action.id):
+def _binding_conflict(
+    bindings: Iterable,
+    kind: str,
+    signature,
+    exclude: tuple[str, str],
+    signature_of: Callable,
+) -> str | None:
+    """Return the name of the first binding of ``kind`` that uses ``signature``."""
+    for binding in bindings:
+        if exclude == (kind, binding.id):
             continue
-        if action.hotkey and _signature(action.hotkey) == signature:
-            return action.name
-    return ""
+        if binding.hotkey and signature_of(binding.hotkey) == signature:
+            return binding.name
+    return None

@@ -204,41 +204,14 @@ class WaveformOverlay(QWidget):
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             if self._fading_since is not None:
-                painter.setOpacity(max(0.0, 1.0 - (time.monotonic() - self._fading_since) / _FADE_OUT_S))
+                faded = (time.monotonic() - self._fading_since) / _FADE_OUT_S
+                painter.setOpacity(max(0.0, 1.0 - faded))
 
             self._draw_background(painter)
 
             rect = self.rect()
 
-            if self.current_state == self.STATE_RECORDING:
-                if self._visual is not None:
-                    self._draw_live_listening(painter, "Recording")
-                else:
-                    self.style.draw_recording_state(painter, rect, "" if self._caption else "Recording...")
-            elif self.current_state == self.STATE_STREAMING:
-                self._draw_streaming_state(painter, rect)
-            elif self.current_state == self.STATE_COMMAND_LISTENING:
-                self._draw_streaming_state(painter, rect, "Listening for an edit...", "accent-soft")
-            elif self.current_state in self._WORK_STATES:
-                self._draw_work(painter, rect)
-            elif self.current_state == self.STATE_CLEANING:
-                self._draw_cleaning_state(painter)
-            elif self.current_state == self.STATE_REWRITING:
-                self._draw_cleaning_state(painter, "Rewriting...")
-            elif self.current_state == self.STATE_CANCELING:
-                self._draw_canceled(painter)
-            elif self.current_state == self.STATE_STT_ENABLE:
-                self._draw_moment(painter, "Enabled")
-            elif self.current_state == self.STATE_STT_DISABLE:
-                self._draw_moment(painter, "Disabled")
-            elif self.current_state == self.STATE_COPIED:
-                self._draw_moment(painter, "Copied!")
-            elif self.current_state == self.STATE_LANGUAGE:
-                self._draw_language_state(painter)
-            elif self.current_state == self.STATE_NOTICE:
-                self._draw_notice_state(painter)
-            elif self.current_state == self.STATE_LARGE_FILE_SPLITTING:
-                self._draw_large_file_splitting_state(painter)
+            self._draw_state(painter, rect)
             self._draw_listening_extras(painter)
         except Exception as e:
             logger.error(f"Error drawing waveform frame: {e}", exc_info=True)
@@ -250,6 +223,39 @@ class WaveformOverlay(QWidget):
                 painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Error")
             except Exception:
                 pass
+
+    def _draw_state(self, painter: QPainter, rect: QRect) -> None:
+        """Paint what the current state shows over the background."""
+        if self.current_state in self._WORK_STATES:
+            self._draw_work(painter, rect)
+            return
+        draw = self._STATE_PAINTERS.get(self.current_state)
+        if draw is not None:
+            draw(self, painter, rect)
+
+    def _draw_recording(self, painter: QPainter, rect: QRect) -> None:
+        if self._visual is not None:
+            self._draw_live_listening(painter, "Recording")
+        else:
+            self.style.draw_recording_state(painter, rect, "" if self._caption else "Recording...")
+
+    #: How each state other than the work states paints; idle draws nothing.
+    _STATE_PAINTERS = {
+        STATE_RECORDING: lambda self, painter, rect: self._draw_recording(painter, rect),
+        STATE_STREAMING: lambda self, painter, rect: self._draw_streaming_state(painter, rect),
+        STATE_COMMAND_LISTENING: lambda self, painter, rect: self._draw_streaming_state(
+            painter, rect, "Listening for an edit...", "accent-soft"
+        ),
+        STATE_CLEANING: lambda self, painter, rect: self._draw_cleaning_state(painter),
+        STATE_REWRITING: lambda self, painter, rect: self._draw_cleaning_state(painter, "Rewriting..."),
+        STATE_CANCELING: lambda self, painter, rect: self._draw_canceled(painter),
+        STATE_STT_ENABLE: lambda self, painter, rect: self._draw_moment(painter, "Enabled"),
+        STATE_STT_DISABLE: lambda self, painter, rect: self._draw_moment(painter, "Disabled"),
+        STATE_COPIED: lambda self, painter, rect: self._draw_moment(painter, "Copied!"),
+        STATE_LANGUAGE: lambda self, painter, rect: self._draw_language_state(painter),
+        STATE_NOTICE: lambda self, painter, rect: self._draw_notice_state(painter),
+        STATE_LARGE_FILE_SPLITTING: lambda self, painter, rect: self._draw_large_file_splitting_state(painter),
+    }
 
     def _draw_streaming_state(self, painter: QPainter, rect: QRect,
                               status: str = "Listening...", status_token: str = "overlay-text"):
@@ -430,7 +436,9 @@ class WaveformOverlay(QWidget):
             return
         if self._embedded:
             parent = self.parentWidget()
-            self.move(max(0, parent.width() - self.width() - 16), max(0, parent.height() - self.height() - 64))
+            x = max(0, parent.width() - self.width() - 16)
+            y = max(0, parent.height() - self.height() - 64)
+            self.move(x, y)
             return
         if self._anchor_pos is None:
             return
@@ -616,7 +624,8 @@ class WaveformOverlay(QWidget):
         if self.current_state not in self.LISTENING_STATES:
             self._chip_rect = QRectF()
             return
-        if not self._recording_destination and (self._hands_free or self.current_state == self.STATE_COMMAND_LISTENING):
+        latched = self._hands_free or self.current_state == self.STATE_COMMAND_LISTENING
+        if not self._recording_destination and latched:
             self._draw_mode_badge(painter)
         self._chip_rect = self._draw_language_chip(painter) if self._chip_visible() else QRectF()
         if self._caption:
@@ -879,66 +888,81 @@ class WaveformOverlay(QWidget):
             # Something new arrived while the last result faded: show it.
             self._fading_since = None
             self.update()
-        if self.current_state != state:
-            was_listening = self.current_state in self.LISTENING_STATES
-            was_working = self.current_state in self._WORK_STATES
-            if state in self._WORK_STATES:
-                if was_working:
-                    self._label_from = _WORK_LABELS[self.current_state]
-                    self._label_changed = time.monotonic()
-                else:
-                    self._work_started = time.monotonic()
-                    self._work_rate, self._work_clock, self._label_from = 1.0, 0.0, ""
-                    if self._visual is not None:
-                        self._visual.begin_work()
-            self.current_state = state
-            if state not in self.LISTENING_STATES | self._FADING_STATES or state == self.STATE_COMMAND_LISTENING:
-                self._recording_destination = ""
-            self.animation_time = 0.0
-            self.cancel_progress = 0.0
-            self.last_frame_time = time.monotonic()  # Reset to prevent huge delta on first frame
+        if self.current_state == state:
+            return
+        was_listening = self.current_state in self.LISTENING_STATES
+        if state in self._WORK_STATES:
+            self._begin_work_stage()
+        self.current_state = state
+        keeps_destination = (state in self.LISTENING_STATES | self._FADING_STATES
+                             and state != self.STATE_COMMAND_LISTENING)
+        if not keeps_destination:
+            self._recording_destination = ""
+        self._restart_animation(state)
 
-            if state == self.STATE_CANCELING:
-                # What was on screen when the user canceled implodes.
-                self._collapse_from = [
-                    (p.x, p.y, p.get_qcolor(), p.size * p.life)
-                    for p in self.style.particles if p.life > 0.05
-                ]
+        if state not in self._PREVIEW_STATES:
+            self._clear_streaming_preview()
 
-            self.stt_particles = []
-            self._burst_fired = False
+        self._follow_listening(state, was_listening)
 
-            if state == self.STATE_IDLE:
-                self.timer.stop()
-            else:
-                self.timer.start(1000 // self.frame_rate)
+        self.state_changed.emit(state)
+        logger.debug(f"Overlay state changed to: {state}")
 
-            if state not in self._PREVIEW_STATES:
-                self._streaming_preview_text = ""
-                if self.overlay_height != self._base_height:
-                    self.overlay_height = self._base_height
-                    self.setFixedSize(self.overlay_width, self.overlay_height)
+        if state in self._TRANSIENT_STATES:
+            self.hidden_timer.start(self._transient_ms())
+        else:
+            # A recording that starts during a short notice (a language
+            # switch just before dictating) must not be hidden by it.
+            self.hidden_timer.stop()
 
-            if state not in self.LISTENING_STATES:
-                self._end_listening_extras()
-            elif not was_listening:
-                # A new recording: no latch yet, and the language as saved now.
-                self._hands_free = False
-                self._refresh_language()
-                self._ribbon.reset()
-                if self._visual is not None:
-                    self._visual.reset()
-                self._listen_started = time.monotonic()
+    def _begin_work_stage(self) -> None:
+        """Entering Processing or Transcribing, before ``current_state`` changes."""
+        if self.current_state in self._WORK_STATES:
+            self._label_from = _WORK_LABELS[self.current_state]
+            self._label_changed = time.monotonic()
+        else:
+            self._work_started = time.monotonic()
+            self._work_rate, self._work_clock, self._label_from = 1.0, 0.0, ""
+            if self._visual is not None:
+                self._visual.begin_work()
 
-            self.state_changed.emit(state)
-            logger.debug(f"Overlay state changed to: {state}")
+    def _restart_animation(self, state: str) -> None:
+        self.animation_time = 0.0
+        self.cancel_progress = 0.0
+        self.last_frame_time = time.monotonic()  # Reset to prevent huge delta on first frame
 
-            if state in self._TRANSIENT_STATES:
-                self.hidden_timer.start(self._transient_ms())
-            else:
-                # A recording that starts during a short notice (a language
-                # switch just before dictating) must not be hidden by it.
-                self.hidden_timer.stop()
+        if state == self.STATE_CANCELING:
+            # What was on screen when the user canceled implodes.
+            self._collapse_from = [
+                (p.x, p.y, p.get_qcolor(), p.size * p.life)
+                for p in self.style.particles if p.life > 0.05
+            ]
+
+        self.stt_particles = []
+        self._burst_fired = False
+
+        if state == self.STATE_IDLE:
+            self.timer.stop()
+        else:
+            self.timer.start(1000 // self.frame_rate)
+
+    def _clear_streaming_preview(self) -> None:
+        self._streaming_preview_text = ""
+        if self.overlay_height != self._base_height:
+            self.overlay_height = self._base_height
+            self.setFixedSize(self.overlay_width, self.overlay_height)
+
+    def _follow_listening(self, state: str, was_listening: bool) -> None:
+        if state not in self.LISTENING_STATES:
+            self._end_listening_extras()
+        elif not was_listening:
+            # A new recording: no latch yet, and the language as saved now.
+            self._hands_free = False
+            self._refresh_language()
+            self._ribbon.reset()
+            if self._visual is not None:
+                self._visual.reset()
+            self._listen_started = time.monotonic()
 
     def update_audio_levels(self, levels: List[float]):
         self.audio_levels = levels[:20]

@@ -12,6 +12,9 @@ from services.local_asr.catalog import (
 from services.settings import SettingsKey, setting_value, settings_manager
 from services.local_asr.languages import language_choices, selected_language
 
+#: The settings a paired computer may change on the host's engine.
+_RUNTIME_FIELDS = {"device", "compute_type", "language"}
+
 
 def runtime_state(engine: dict) -> dict:
     """Describe saved choices separately from the device actually running."""
@@ -84,7 +87,7 @@ def validate_runtime(engine: dict, family: str, model: str, changes: dict) -> di
     """Reject stale, unsupported or arbitrary settings before persisting any."""
     if (engine.get("family"), engine.get("model")) != (family, model):
         raise ValueError("The host changed engines. Reconnect before changing its runtime.")
-    if not isinstance(changes, dict) or not changes or set(changes) - {"device", "compute_type", "language"}:
+    if not isinstance(changes, dict) or not changes or set(changes) - _RUNTIME_FIELDS:
         raise ValueError("Choose a device or precision supported by the host.")
     state = runtime_state(engine)
     if not state:
@@ -94,16 +97,24 @@ def validate_runtime(engine: dict, family: str, model: str, changes: dict) -> di
         raise ValueError("That device isn't ready on the host. Check its hardware and installed runtimes.")
     selected = {**state["selected"], **changes}
     if family == WHISPER_BACKEND:
-        if "language" in changes:
-            raise ValueError("This engine doesn't expose a host language setting.")
-        # Moving between CPU and GPU should choose an appropriate precision.
-        if "device" in changes and "compute_type" not in changes:
-            selected["compute_type"] = "auto"
-        compute = selected["compute_type"]
-        if not isinstance(compute, str) or compute not in state["compute_types"].get(device, []):
-            raise ValueError("That precision isn't supported by the selected device on the host.")
-        return {SettingsKey.WHISPER_DEVICE: device,
-                SettingsKey.WHISPER_COMPUTE_TYPE: compute}
+        return _whisper_settings(state, device, selected, changes)
+    return _local_settings(state, family, device, selected, changes)
+
+
+def _whisper_settings(state: dict, device: str, selected: dict, changes: dict) -> dict:
+    if "language" in changes:
+        raise ValueError("This engine doesn't expose a host language setting.")
+    # Moving between CPU and GPU should choose an appropriate precision.
+    if "device" in changes and "compute_type" not in changes:
+        selected["compute_type"] = "auto"
+    compute = selected["compute_type"]
+    if not isinstance(compute, str) or compute not in state["compute_types"].get(device, []):
+        raise ValueError("That precision isn't supported by the selected device on the host.")
+    return {SettingsKey.WHISPER_DEVICE: device,
+            SettingsKey.WHISPER_COMPUTE_TYPE: compute}
+
+
+def _local_settings(state: dict, family: str, device: str, selected: dict, changes: dict) -> dict:
     if "compute_type" in changes:
         raise ValueError("This engine manages its own precision on the host.")
     if selected["language"] not in state["languages"]:

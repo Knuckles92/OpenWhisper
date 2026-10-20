@@ -154,7 +154,10 @@ def run_workflow_smoke(*, repeats: int = 5) -> dict:
             while not delivery.values and time.monotonic() < deadline:
                 qt_app.processEvents()
                 time.sleep(.001)
-            _require(delivery.values == [("synthetic fixture", True)], "Restart did not deliver exactly one queued Qt result")
+            _require(
+                delivery.values == [("synthetic fixture", True)],
+                "Restart did not deliver exactly one queued Qt result",
+            )
             restart_s = time.perf_counter() - restart_started
             with _isolated_legacy_history(root / "absent-legacy.json"):
                 database = DatabaseManager(str(root / "history.db"))

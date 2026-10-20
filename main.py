@@ -30,8 +30,9 @@ def _run_package_self_test() -> None:
         # Source spawn reimports this entrypoint as __mp_main__, retaining
         # --self-test in argv. Use a clean interpreter so the probe cannot
         # recursively launch self-tests during its own bootstrap.
+        probe = "from services.package_checks import check_multiprocessing; check_multiprocessing()"
         subprocess.run(
-            [sys.executable, "-c", "from services.package_checks import check_multiprocessing; check_multiprocessing()"],
+            [sys.executable, "-c", probe],
             cwd=Path(__file__).resolve().parent,
             check=True, timeout=35,
         )

@@ -22,6 +22,11 @@ QUEUE_BLOCKS = 512
 CHECKPOINT_SECONDS = 1.0
 FINISH_TIMEOUT = 3.0
 COPY_BYTES = 1024 * 1024
+# Sample formats a recovered session may claim; anything else is not ours.
+_MIN_RECOVERY_RATE = 8000
+_MAX_RECOVERY_RATE = 384000
+_RECOVERY_CHANNELS = (1, 2)
+_RECOVERY_SAMPLE_WIDTHS = (1, 2, 3, 4)
 
 
 def recovery_directory(output_file: str) -> Path:
@@ -102,9 +107,7 @@ class RecordingJournal:
     def _run(self):
         checkpoint = time.monotonic()
         try:
-            while True:
-                if self._discard:
-                    break
+            while not self._discard:
                 try:
                     payload = self._queue.get(timeout=0.05)
                 except queue.Empty:
@@ -112,13 +115,7 @@ class RecordingJournal:
                         break
                     continue
                 try:
-                    written = self._file.write(payload)
-                    self.written_bytes += written or 0
-                    if written != len(payload):
-                        raise OSError('Incomplete recording write')
-                    if time.monotonic() - checkpoint >= CHECKPOINT_SECONDS:
-                        os.fsync(self._file.fileno())
-                        checkpoint = time.monotonic()
+                    checkpoint = self._write_block(payload, checkpoint)
                 finally:
                     self._queue.task_done()
             if not self._discard:
@@ -127,14 +124,29 @@ class RecordingJournal:
             self.error = f'Recording could not be saved: {exc}'
             self._stop.set()
         finally:
-            if self.error and not self._discard:
-                try:
-                    self._on_error(self.error)
-                except Exception:
-                    logger.exception('Could not report recording failure')
+            self._report_error()
             self._done.set()
             if self._discard:
                 self._release_resources(discard=True)
+
+    def _write_block(self, payload: bytes, checkpoint: float) -> float:
+        """Write one block; fsync at most every CHECKPOINT_SECONDS. Returns the last checkpoint."""
+        written = self._file.write(payload)
+        self.written_bytes += written or 0
+        if written != len(payload):
+            raise OSError('Incomplete recording write')
+        if time.monotonic() - checkpoint >= CHECKPOINT_SECONDS:
+            os.fsync(self._file.fileno())
+            return time.monotonic()
+        return checkpoint
+
+    def _report_error(self):
+        if not self.error or self._discard:
+            return
+        try:
+            self._on_error(self.error)
+        except Exception:
+            logger.exception('Could not report recording failure')
 
     def finish(self, timeout=FINISH_TIMEOUT) -> bool:
         self._stop.set()
@@ -153,14 +165,9 @@ class RecordingJournal:
         # the file, and never hold a lock the audio callback needs.
         if not self.finish():
             raise TimeoutError('Recording storage did not finish; audio kept for recovery')
-        remaining = self.written_bytes // self.frame_bytes * self.frame_bytes
+        size = self.written_bytes // self.frame_bytes * self.frame_bytes
         with open(self.path, 'rb') as source:
-            while remaining:
-                block = source.read(min(COPY_BYTES, remaining))
-                if not block:
-                    raise OSError('Recording ended before the saved audio was read')
-                destination.writeframesraw(block)
-                remaining -= len(block)
+            _copy_pcm(source, destination, size, 'Recording ended before the saved audio was read')
 
     def close(self, *, discard=False) -> bool:
         with self._release_lock:
@@ -201,6 +208,84 @@ def _remove_session(directory):
     directory.rmdir()
 
 
+def _copy_pcm(source, wav, size: int, short_message: str) -> None:
+    """Copy ``size`` bytes of PCM in bounded blocks; a short source raises OSError."""
+    remaining = size
+    while remaining:
+        block = source.read(min(COPY_BYTES, remaining))
+        if not block:
+            raise OSError(short_message)
+        wav.writeframesraw(block)
+        remaining -= len(block)
+
+
+def _session_format(directory: Path):
+    """The session's metadata and its ``(rate, channels, sample_width)``, validated."""
+    with open(directory / 'session.json', encoding='utf-8') as handle:
+        meta = json.load(handle)
+    rate, channels, width = (meta[k] for k in ('rate', 'channels', 'sample_width'))
+    if not (isinstance(rate, int) and _MIN_RECOVERY_RATE <= rate <= _MAX_RECOVERY_RATE
+            and channels in _RECOVERY_CHANNELS and width in _RECOVERY_SAMPLE_WIDTHS):
+        raise ValueError('Invalid recovery audio format')
+    return meta, (rate, channels, width)
+
+
+def _recovered_wav_path(meta, recordings_folder: str, directory: Path) -> Path:
+    stamp = datetime.fromisoformat(meta['created']).strftime('%Y%m%d_%H%M%S')
+    folder = Path(recordings_folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / f'recording_{stamp}-recovered-{directory.name}.wav'
+
+
+def _write_recovered_wav(temporary: Path, source_path: Path, size: int, audio_format) -> None:
+    rate, channels, width = audio_format
+    with open(temporary, 'wb') as destination:
+        with wave.open(destination, 'wb') as wav:
+            wav.setnchannels(channels)
+            wav.setsampwidth(width)
+            wav.setframerate(rate)
+            with open(source_path, 'rb') as source:
+                _copy_pcm(source, wav, size, 'Incomplete recovery audio')
+        destination.flush()
+        os.fsync(destination.fileno())
+
+
+def _recover_session(directory: Path, recordings_folder: str, recovered: list[str]) -> None:
+    """Recover one abandoned session into ``recovered``; a live or broken one is left alone."""
+    lease = None
+    temporary = None
+    try:
+        lease = _Lease(directory / 'active.lock')
+        if (directory / 'discarded').exists():
+            lease.close()
+            lease = None
+            _remove_session(directory)
+            return
+        meta, audio_format = _session_format(directory)
+        _rate, channels, width = audio_format
+        source_path = directory / 'audio.pcm'
+        size = source_path.stat().st_size // (channels * width) * (channels * width)
+        if size:
+            target = _recovered_wav_path(meta, recordings_folder, directory)
+            temporary = target.with_suffix('.wav.tmp')
+            if not target.exists():
+                _write_recovered_wav(temporary, source_path, size, audio_format)
+                os.replace(temporary, target)
+            recovered.append(str(target))
+        lease.close()
+        lease = None
+        _remove_session(directory)
+    except (BlockingIOError, PermissionError):
+        pass  # active session, including another app process
+    except Exception:
+        logger.warning('Could not recover interrupted dictation', exc_info=True)
+    finally:
+        if lease is not None:
+            lease.close()
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def recover_recordings(output_file: str, recordings_folder: str) -> list[str]:
     """Convert abandoned journals to ordinary retained WAVs; live ones are skipped.
 
@@ -214,57 +299,5 @@ def recover_recordings(output_file: str, recordings_folder: str) -> list[str]:
     for directory in root.iterdir():
         if directory.is_symlink() or not directory.is_dir():
             continue
-        lease = None
-        target = temporary = None
-        try:
-            lease = _Lease(directory / 'active.lock')
-            if (directory / 'discarded').exists():
-                lease.close()
-                lease = None
-                _remove_session(directory)
-                continue
-            with open(directory / 'session.json', encoding='utf-8') as handle:
-                meta = json.load(handle)
-            rate, channels, width = (meta[k] for k in ('rate', 'channels', 'sample_width'))
-            if not (isinstance(rate, int) and 8000 <= rate <= 384000
-                    and channels in (1, 2) and width in (1, 2, 3, 4)):
-                raise ValueError('Invalid recovery audio format')
-            source_path = directory / 'audio.pcm'
-            size = source_path.stat().st_size // (channels * width) * (channels * width)
-            if size:
-                stamp = datetime.fromisoformat(meta['created']).strftime('%Y%m%d_%H%M%S')
-                folder = Path(recordings_folder)
-                folder.mkdir(parents=True, exist_ok=True)
-                target = folder / f'recording_{stamp}-recovered-{directory.name}.wav'
-                temporary = target.with_suffix('.wav.tmp')
-                if not target.exists():
-                    with open(temporary, 'wb') as destination:
-                        with wave.open(destination, 'wb') as wav:
-                            wav.setnchannels(channels)
-                            wav.setsampwidth(width)
-                            wav.setframerate(rate)
-                            with open(source_path, 'rb') as source:
-                                remaining = size
-                                while remaining:
-                                    block = source.read(min(COPY_BYTES, remaining))
-                                    if not block:
-                                        raise OSError('Incomplete recovery audio')
-                                    wav.writeframesraw(block)
-                                    remaining -= len(block)
-                        destination.flush()
-                        os.fsync(destination.fileno())
-                    os.replace(temporary, target)
-                recovered.append(str(target))
-            lease.close()
-            lease = None
-            _remove_session(directory)
-        except (BlockingIOError, PermissionError):
-            pass  # active session, including another app process
-        except Exception:
-            logger.warning('Could not recover interrupted dictation', exc_info=True)
-        finally:
-            if lease is not None:
-                lease.close()
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+        _recover_session(directory, recordings_folder, recovered)
     return recovered

@@ -160,7 +160,12 @@ def draw_live_label(painter: QPainter, rect: QRectF, label: str, elapsed: float,
     if dot:
         parts.append(("dot", dot_d))
     if text:
-        room = rect.width() - (dot_d + gap if dot else 0) - (clock_metrics.horizontalAdvance("00:00") + gap if clock else 0)
+        reserved = 0.0
+        if dot:
+            reserved += dot_d + gap
+        if clock:
+            reserved += clock_metrics.horizontalAdvance("00:00") + gap
+        room = rect.width() - reserved
         label = metrics.elidedText(label, Qt.TextElideMode.ElideRight, int(max(0, room)))
         parts.append(("text", metrics.horizontalAdvance(label)))
     if clock:
@@ -182,7 +187,8 @@ def draw_live_label(painter: QPainter, rect: QRectF, label: str, elapsed: float,
         else:
             painter.setFont(clock_font)
             # On its own the clock reads at full strength; beside the words it recedes.
-            painter.setPen(QPen(token_color(text_tone, int((150 if text else 230) * rise))))
+            clock_alpha = 150 if text else 230
+            painter.setPen(QPen(token_color(text_tone, int(clock_alpha * rise))))
             painter.drawText(QRectF(x, top, part_w + 2, rect.height()), flags, clock_text)
         x += part_w + gap
 

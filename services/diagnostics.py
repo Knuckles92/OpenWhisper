@@ -238,6 +238,14 @@ def record_metrics(**values) -> None:
         _metrics.record(values)
 
 
+_WHISPER_COMPUTE_TYPES = {
+    "auto", "default", "float16", "float32", "int8", "int8_float16", "int8_float32", "bfloat16",
+}
+_REPORTED_PACKAGES = (
+    "PyQt6", "numpy", "av", "faster-whisper", "ctranslate2", "openai", "sounddevice", "SQLAlchemy",
+)
+
+
 def collect_report(*, root: Path | None = None) -> dict:
     from _version import __version__
     from config import SETTINGS_FILENAME, config, data_root
@@ -250,17 +258,19 @@ def collect_report(*, root: Path | None = None) -> dict:
         "selected_model": {"local_whisper", "api", "remote", *[model.backend for model in MODELS.values()]},
         "whisper_model": set(config.WHISPER_MODEL_CHOICES),
         "whisper_device": {"auto", "cpu", "cuda"},
-        "whisper_compute_type": {"auto", "default", "float16", "float32", "int8", "int8_float16", "int8_float32", "bfloat16"},
+        "whisper_compute_type": _WHISPER_COMPUTE_TYPES,
     }
     # Catalog identifiers are public constants; never export custom model paths.
-    engine = {key: value if isinstance(value, str) and value in choices else "default_or_custom"
-              for key, choices in allowed.items() for value in [settings.get(key)]}
+    engine = {}
+    for key, choices in allowed.items():
+        value = settings.get(key)
+        engine[key] = value if isinstance(value, str) and value in choices else "default_or_custom"
     models = settings.get("local_asr_models", {})
     if isinstance(models, dict):
         engine["local_models"] = sorted({value for value in models.values()
                                          if isinstance(value, str) and value in MODELS})
     packages = {}
-    for name in ("PyQt6", "numpy", "av", "faster-whisper", "ctranslate2", "openai", "sounddevice", "SQLAlchemy"):
+    for name in _REPORTED_PACKAGES:
         try:
             packages[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
@@ -281,7 +291,8 @@ def collect_report(*, root: Path | None = None) -> dict:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Export a local, sanitized OpenWhisper support report. Nothing is uploaded.")
+    parser = argparse.ArgumentParser(
+        description="Export a local, sanitized OpenWhisper support report. Nothing is uploaded.")
     parser.add_argument("output", type=Path, help="New JSON file to create (existing files are not overwritten)")
     args = parser.parse_args(argv)
     report = collect_report()

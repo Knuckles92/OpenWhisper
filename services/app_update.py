@@ -358,7 +358,8 @@ def resolve_release_apply_mode(
     if platform_id == "darwin":
         import platform
 
-        if platform.machine().lower() in {"arm64", "aarch64"} and _asset_ready(release.macos_asset if release else None):
+        apple_silicon = platform.machine().lower() in {"arm64", "aarch64"}
+        if apple_silicon and _asset_ready(release.macos_asset if release else None):
             return ApplyMode.MACOS_DMG
         return ApplyMode.NOTIFY_ONLY
     if platform_id.startswith("linux"):
@@ -688,6 +689,19 @@ def _remember_api_rate_limit(exc: urllib.error.HTTPError) -> None:
 
 def _fetch_latest_release_from_web() -> ReleaseInfo:
     """Use GitHub's API-free endpoints; missing hashes permit notification only."""
+    tag, release_url = _latest_public_release_tag()
+    version = normalize_version(tag)
+    assets = _public_release_assets(tag, version)
+    return parse_release_payload({
+        "tag_name": tag,
+        "html_url": release_url,
+        "body": f"[Read the release notes on GitHub]({release_url}).",
+        "assets": assets,
+    })
+
+
+def _latest_public_release_tag() -> Tuple[str, str]:
+    """Return the stable tag and release page URL GitHub's latest redirect names."""
     try:
         with _open(LATEST_RELEASE_PAGE_URL, method="HEAD") as response:
             release_url = response.geturl()
@@ -701,22 +715,31 @@ def _fetch_latest_release_from_web() -> ReleaseInfo:
         raise
     except Exception as exc:
         raise AppUpdateError(_describe_update_error(exc)) from exc
-    tag = match.group(1)
-    version = normalize_version(tag)
+    return match.group(1), release_url
+
+
+def _fetch_release_checksums(tag: str) -> Dict[str, str]:
+    """Return ``{asset name: lowercase sha256}`` from the release's SHA256SUMS.txt."""
+    with _open(_expected_asset_url(tag, "SHA256SUMS.txt")) as response:
+        raw = response.read(_MAX_CHECKSUM_BYTES + 1)
+    if len(raw) > _MAX_CHECKSUM_BYTES:
+        raise ValueError("Release checksums exceed the size limit")
+    hashes = {}
+    for line in raw.decode("utf-8").splitlines():
+        entry = re.fullmatch(
+            r"([a-fA-F0-9]{64}) [ *]([A-Za-z0-9_.-]+)", line
+        )
+        if entry is None or entry[2] in hashes:
+            raise ValueError("Release checksums are invalid or duplicated")
+        hashes[entry[2]] = entry[1].lower()
+    return hashes
+
+
+def _public_release_assets(tag: str, version: str) -> List[dict]:
+    """Return API-style asset entries for checksummed assets this app can install."""
     assets = []
     try:
-        with _open(_expected_asset_url(tag, "SHA256SUMS.txt")) as response:
-            raw = response.read(_MAX_CHECKSUM_BYTES + 1)
-        if len(raw) > _MAX_CHECKSUM_BYTES:
-            raise ValueError("Release checksums exceed the size limit")
-        hashes = {}
-        for line in raw.decode("utf-8").splitlines():
-            entry = re.fullmatch(
-                r"([a-fA-F0-9]{64}) [ *]([A-Za-z0-9_.-]+)", line
-            )
-            if entry is None or entry[2] in hashes:
-                raise ValueError("Release checksums are invalid or duplicated")
-            hashes[entry[2]] = entry[1].lower()
+        hashes = _fetch_release_checksums(tag)
         names = (
             setup_asset_name(version),
             archive_asset_name(version),
@@ -734,12 +757,7 @@ def _fetch_latest_release_from_web() -> ReleaseInfo:
         logger.info(
             "Public release checksums unavailable: %s", _describe_update_error(exc)
         )
-    return parse_release_payload({
-        "tag_name": tag,
-        "html_url": release_url,
-        "body": f"[Read the release notes on GitHub]({release_url}).",
-        "assets": assets,
-    })
+    return assets
 
 
 def _release_asset_from_checksum(tag: str, name: str, digest: str) -> dict | None:
@@ -882,6 +900,46 @@ def _regular_file_stat(path: str) -> Optional[os.stat_result]:
     return info
 
 
+def _validated_asset_digest(asset: ReleaseAsset) -> str:
+    """Return the asset's lowercase SHA-256 after checking its name and size."""
+    digest = (asset.sha256 or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise AppUpdateError("The update package is missing an integrity digest.")
+    if asset.name != os.path.basename(asset.name) or not asset.name:
+        raise AppUpdateError("The update package has an invalid filename.")
+    if asset.size_bytes <= 0 or asset.size_bytes > _MAX_ASSET_BYTES:
+        raise AppUpdateError("The update package has an invalid size.")
+    return digest
+
+
+def _reuse_verified_download(
+    destination: str,
+    asset: ReleaseAsset,
+    digest: str,
+    progress: ProgressCallback,
+    cancel: threading.Event,
+) -> bool:
+    """True when ``destination`` already holds the asset; otherwise clear it."""
+    info = _regular_file_stat(destination)
+    if info is None:
+        return False
+    existing = (
+        _file_sha256(destination)
+        if info.st_size == asset.size_bytes
+        else ""
+    )
+    if cancel.is_set():
+        raise AppUpdateError("The download was canceled.")
+    if existing == digest:
+        progress(DownloadPhase.VERIFYING, asset.size_bytes, asset.size_bytes)
+        return True
+    try:
+        os.unlink(destination)
+    except OSError as exc:
+        raise AppUpdateError("The old update download could not be replaced.") from exc
+    return False
+
+
 def download_release_asset(
     asset: ReleaseAsset,
     progress: Optional[ProgressCallback] = None,
@@ -890,13 +948,7 @@ def download_release_asset(
     destination_dir: Optional[str] = None,
 ) -> str:
     """Download and SHA-256-verify one authorized release asset."""
-    digest = (asset.sha256 or "").lower()
-    if not re.fullmatch(r"[0-9a-f]{64}", digest):
-        raise AppUpdateError("The update package is missing an integrity digest.")
-    if asset.name != os.path.basename(asset.name) or not asset.name:
-        raise AppUpdateError("The update package has an invalid filename.")
-    if asset.size_bytes <= 0 or asset.size_bytes > _MAX_ASSET_BYTES:
-        raise AppUpdateError("The update package has an invalid size.")
+    digest = _validated_asset_digest(asset)
     if not progress:
         progress = lambda _phase, _done, _total: None
     if cancel is None:
@@ -906,22 +958,8 @@ def download_release_asset(
 
     directory = destination_dir if destination_dir is not None else updates_dir()
     destination = os.path.join(directory, asset.name)
-    info = _regular_file_stat(destination)
-    if info is not None:
-        existing = (
-            _file_sha256(destination)
-            if info.st_size == asset.size_bytes
-            else ""
-        )
-        if cancel.is_set():
-            raise AppUpdateError("The download was canceled.")
-        if existing == digest:
-            progress(DownloadPhase.VERIFYING, asset.size_bytes, asset.size_bytes)
-            return destination
-        try:
-            os.unlink(destination)
-        except OSError as exc:
-            raise AppUpdateError("The old update download could not be replaced.") from exc
+    if _reuse_verified_download(destination, asset, digest, progress, cancel):
+        return destination
 
     _download_verified(
         url=asset.url,
@@ -956,6 +994,61 @@ def download_installer(
     return download_release_asset(release.setup_asset, progress=progress, cancel=cancel)
 
 
+def _apply_macos_update(
+    result: UpdateCheckResult,
+    release: ReleaseInfo,
+    progress: Optional[ProgressCallback],
+    cancel: Optional[threading.Event],
+) -> str:
+    if resolve_release_apply_mode(detect_channel(), release) != ApplyMode.MACOS_DMG:
+        raise AppUpdateError("This copy of OpenWhisper cannot install the Mac update.")
+    image = download_release_asset(release.macos_asset, progress=progress, cancel=cancel)
+    from services.app_update_macos import prepare_in_place_update
+
+    # The staged app installs itself on restart; a copy that cannot
+    # replace itself gets the disk image back to install by hand.
+    return prepare_in_place_update(
+        image, release.version, result.current_version, cancel=cancel
+    )
+
+
+def _apply_native_update(
+    result: UpdateCheckResult,
+    release: ReleaseInfo,
+    progress: Optional[ProgressCallback],
+    cancel: Optional[threading.Event],
+) -> str:
+    try:
+        archive_path = download_release_asset(
+            release.native_asset, progress=progress, cancel=cancel
+        )
+        registration = discover_install_registration()
+        if registration is None:
+            raise UpdateApplyError(
+                "This installation is not registered for native updates."
+            )
+        journal = prepare_candidate(
+            archive_path,
+            release_version=release.version,
+            current_version=result.current_version,
+            app_dir=running_app_dir(),
+            registration=registration,
+            progress=progress,
+            cancel=cancel,
+            parent_pid=os.getpid(),
+        )
+        return encode_native_result(journal.transaction_id)
+    except UpdateRequiresSetup:
+        if _asset_ready(release.setup_asset):
+            logger.info("Using setup for an incompatible native payload")
+            return download_installer(release, progress=progress, cancel=cancel)
+        raise
+    except UpdateCanceled:
+        raise AppUpdateError("The update was canceled.") from None
+    except UpdateApplyError as exc:
+        raise AppUpdateError(str(exc)) from exc
+
+
 def apply_update(
     result: UpdateCheckResult,
     progress: Optional[ProgressCallback] = None,
@@ -973,46 +1066,9 @@ def apply_update(
         raise AppUpdateError("No installer is available.")
     mode = ApplyMode.SETUP if force_setup else result.apply_mode
     if mode == ApplyMode.MACOS_DMG:
-        if resolve_release_apply_mode(detect_channel(), release) != ApplyMode.MACOS_DMG:
-            raise AppUpdateError("This copy of OpenWhisper cannot install the Mac update.")
-        image = download_release_asset(release.macos_asset, progress=progress, cancel=cancel)
-        from services.app_update_macos import prepare_in_place_update
-
-        # The staged app installs itself on restart; a copy that cannot
-        # replace itself gets the disk image back to install by hand.
-        return prepare_in_place_update(
-            image, release.version, result.current_version, cancel=cancel
-        )
+        return _apply_macos_update(result, release, progress, cancel)
     if mode == ApplyMode.NATIVE and release.native_asset is not None:
-        try:
-            archive_path = download_release_asset(
-                release.native_asset, progress=progress, cancel=cancel
-            )
-            registration = discover_install_registration()
-            if registration is None:
-                raise UpdateApplyError(
-                    "This installation is not registered for native updates."
-                )
-            journal = prepare_candidate(
-                archive_path,
-                release_version=release.version,
-                current_version=result.current_version,
-                app_dir=running_app_dir(),
-                registration=registration,
-                progress=progress,
-                cancel=cancel,
-                parent_pid=os.getpid(),
-            )
-            return encode_native_result(journal.transaction_id)
-        except UpdateRequiresSetup:
-            if _asset_ready(release.setup_asset):
-                logger.info("Using setup for an incompatible native payload")
-                return download_installer(release, progress=progress, cancel=cancel)
-            raise
-        except UpdateCanceled:
-            raise AppUpdateError("The update was canceled.") from None
-        except UpdateApplyError as exc:
-            raise AppUpdateError(str(exc)) from exc
+        return _apply_native_update(result, release, progress, cancel)
     if mode in (ApplyMode.SETUP, ApplyMode.NATIVE) and _asset_ready(release.setup_asset):
         return download_installer(release, progress=progress, cancel=cancel)
     raise AppUpdateError(

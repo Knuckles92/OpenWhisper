@@ -209,7 +209,8 @@ class RecordingLookPreview(QWidget):
     def _update_source_label(self) -> None:
         if self.mic_button.isChecked():
             name = self._microphone_name() if self._microphone_name else ""
-            text = f"Listening to {name}. Nothing is recorded." if name else "Listening to your microphone. Nothing is recorded."
+            source = name or "your microphone"
+            text = f"Listening to {source}. Nothing is recorded."
         else:
             text = "Playing a sample voice."
         self.source_label.setText(text)

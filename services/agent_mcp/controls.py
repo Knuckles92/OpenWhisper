@@ -251,6 +251,41 @@ def writable_settings(settings):
     return {key for key in CONTROLS_BY_KEY if granted.get(key) is True}
 
 
+def _validated_changes(changes):
+    """``changes`` checked against SETTING_CONTROLS, or ControlError for the whole update."""
+    if (
+        not isinstance(changes, dict)
+        or not changes
+        or len(changes) > len(SETTING_CONTROLS)
+    ):
+        raise ControlError(
+            "invalid_parameters: Supply a nonempty object of supported settings."
+        )
+    validated = {}
+    for key, value in changes.items():
+        control = CONTROLS_BY_KEY.get(key)
+        if control is None:
+            raise ControlError(
+                "unsupported_setting: This setting is not available to agents."
+            )
+        validated[key] = control.validate(value)
+    return validated
+
+
+def _save_changes(saved, validated):
+    """Write ``validated`` into ``saved``; None removes a saved override."""
+    for key, value in validated.items():
+        if value is None:
+            saved.pop(key, None)
+        else:
+            saved[key] = value
+    if SettingsKey.STREAMING_ENABLED in validated:
+        from services.settings import LEGACY_STREAMING_KEYS
+
+        for key in LEGACY_STREAMING_KEYS:
+            saved.pop(key, None)
+
+
 class AgentControls:
     def __init__(
         self, database, settings, *, enabled=None, on_change=None, meeting_renamer=None
@@ -301,22 +336,7 @@ class AgentControls:
         return {"settings": result}
 
     def update_settings(self, changes):
-        if (
-            not isinstance(changes, dict)
-            or not changes
-            or len(changes) > len(SETTING_CONTROLS)
-        ):
-            raise ControlError(
-                "invalid_parameters: Supply a nonempty object of supported settings."
-            )
-        validated = {}
-        for key, value in changes.items():
-            control = CONTROLS_BY_KEY.get(key)
-            if control is None:
-                raise ControlError(
-                    "unsupported_setting: This setting is not available to agents."
-                )
-            validated[key] = control.validate(value)
+        validated = _validated_changes(changes)
         if self.settings is None:
             raise ControlError("permission_denied: Settings access is not enabled.")
 
@@ -336,16 +356,7 @@ class AgentControls:
                 else previous[key]
                 for key in validated
             }
-            for key, value in validated.items():
-                if value is None:
-                    saved.pop(key, None)
-                else:
-                    saved[key] = value
-            if SettingsKey.STREAMING_ENABLED in validated:
-                from services.settings import LEGACY_STREAMING_KEYS
-
-                for key in LEGACY_STREAMING_KEYS:
-                    saved.pop(key, None)
+            _save_changes(saved, validated)
             updated = {
                 key: CONTROLS_BY_KEY[key].resolve(saved) for key in validated
             }

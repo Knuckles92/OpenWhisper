@@ -299,14 +299,7 @@ class HotkeyManager:
                 return False
 
             if matches(self.hotkeys.get('record_toggle')):
-                if not self._record_key_held:
-                    self._record_key_held = True
-                    self._hold_on('record_toggle', key)
-                    if self.record_mode == RecordingTriggerMode.PUSH_HOLD:
-                        if self.on_record_press:
-                            self.on_record_press(at)
-                    elif self._should_trigger_record_toggle() and self.on_record_toggle:
-                        _spawn(self.on_record_toggle)
+                self._press_record(at, key)
                 return True
 
             if matches(self.hotkeys.get('command_mode')):
@@ -317,30 +310,46 @@ class HotkeyManager:
                         self.on_command_press(at)
                 return True
 
-            for action, attribute in PRESS_ACTIONS:
-                hotkey = self.hotkeys.get(action)
-                if matches(hotkey):
-                    self._press_held[action] = hotkey
-                    self._hold_on(action, key)
-                    callback = getattr(self, attribute)
-                    if callback:
-                        _spawn(callback)
-                    return True
+            return self._press_action(matches, key) or self._press_dynamic(matches, key)
 
-            for namespace, hotkeys in self._dynamic_hotkeys.items():
-                for item_id, hotkey in hotkeys.items():
-                    if not matches(hotkey):
-                        continue
-                    hold = (namespace, item_id)
-                    if hold not in self._dynamic_held:
-                        self._dynamic_held[hold] = hotkey
-                        self._hold_on(hold, key)
-                        debouncer = self._dynamic_debouncers.get(hold)
-                        callback = self._dynamic_callbacks.get(namespace)
-                        if debouncer and debouncer.should_trigger() and callback:
-                            _spawn(callback, item_id)
-                    return True
-            return False
+    def _press_record(self, at: float, key: Optional[tuple]) -> None:
+        if self._record_key_held:
+            return
+        self._record_key_held = True
+        self._hold_on('record_toggle', key)
+        if self.record_mode == RecordingTriggerMode.PUSH_HOLD:
+            if self.on_record_press:
+                self.on_record_press(at)
+        elif self._should_trigger_record_toggle() and self.on_record_toggle:
+            _spawn(self.on_record_toggle)
+
+    def _press_action(self, matches: Callable[[Optional[str]], bool], key: Optional[tuple]) -> bool:
+        for action, attribute in PRESS_ACTIONS:
+            hotkey = self.hotkeys.get(action)
+            if matches(hotkey):
+                self._press_held[action] = hotkey
+                self._hold_on(action, key)
+                callback = getattr(self, attribute)
+                if callback:
+                    _spawn(callback)
+                return True
+        return False
+
+    def _press_dynamic(self, matches: Callable[[Optional[str]], bool], key: Optional[tuple]) -> bool:
+        for namespace, hotkeys in self._dynamic_hotkeys.items():
+            for item_id, hotkey in hotkeys.items():
+                if not matches(hotkey):
+                    continue
+                hold = (namespace, item_id)
+                if hold not in self._dynamic_held:
+                    self._dynamic_held[hold] = hotkey
+                    self._hold_on(hold, key)
+                    debouncer = self._dynamic_debouncers.get(hold)
+                    callback = self._dynamic_callbacks.get(namespace)
+                    if debouncer and debouncer.should_trigger() and callback:
+                        _spawn(callback, item_id)
+                return True
+        return False
 
     def _release(self, is_on_key: Callable[[object, Optional[str]], bool], at: float) -> bool:
         """Dispatch a release; True when it belongs to a claimed press.

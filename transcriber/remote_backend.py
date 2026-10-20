@@ -343,7 +343,6 @@ class RemoteSpeechBackend(LocalSpeechBackend):
 
     def reload_model(self, model_name=None, *, cancel_event=None):
         from services.remote_asr.client import RemoteEngineError
-        from services.remote_asr.settings import load_client_pairing, load_client_token
 
         with self._state_lock:
             if cancel_event is not None and cancel_event.is_set():
@@ -354,30 +353,16 @@ class RemoteSpeechBackend(LocalSpeechBackend):
             requested, self._requested = self._requested, None
             runtime, self._requested_runtime = self._requested_runtime, None
         self.switch_error = ""
-        pairing = load_client_pairing()
-        self._unpaired = pairing is None
-        if pairing is None:
-            self.last_error = "Pair with a host in Settings → Remote engine."
-            self.host_models = None
-            self._notify_link()
+        link = self._load_link()
+        if link is None:
             return
-        token = load_client_token()
-        if not token:
-            self.last_error = (
-                f"This computer's pairing with {pairing.host_name} is missing its "
-                "token. Pair again in Settings → Remote engine."
-            )
-            self.host_models = None
-            self._notify_link()
-            return
+        pairing, token = link
         self.host_name = self.host_name or pairing.host_name
         self._set_connecting(True)
         try:
             if cancel_event is not None and cancel_event.is_set():
                 return
-            connection, ready = self._connect(pairing, token, generation)
-            if requested is not None and (runtime is not None or not _serves(ready, requested)):
-                connection, ready = self._switch_host(connection, pairing, token, requested, generation, runtime)
+            connection, ready = self._connect_serving(pairing, token, generation, requested, runtime)
         except RemoteEngineError as exc:
             with self._state_lock:
                 if generation == self._generation:
@@ -402,6 +387,36 @@ class RemoteSpeechBackend(LocalSpeechBackend):
                 return
             self._adopt(pairing, connection, ready)
         self._notify_link()
+
+    def _load_link(self):
+        """This computer's (pairing, token), or None after saying why there is none."""
+        from services.remote_asr.settings import load_client_pairing, load_client_token
+
+        pairing = load_client_pairing()
+        self._unpaired = pairing is None
+        if pairing is None:
+            self._unlinked("Pair with a host in Settings → Remote engine.")
+            return None
+        token = load_client_token()
+        if not token:
+            self._unlinked(
+                f"This computer's pairing with {pairing.host_name} is missing its "
+                "token. Pair again in Settings → Remote engine."
+            )
+            return None
+        return pairing, token
+
+    def _unlinked(self, message: str) -> None:
+        self.last_error = message
+        self.host_models = None
+        self._notify_link()
+
+    def _connect_serving(self, pairing, token, generation, requested, runtime):
+        """Connect, then switch the host to ``requested`` when it runs something else."""
+        connection, ready = self._connect(pairing, token, generation)
+        if requested is not None and (runtime is not None or not _serves(ready, requested)):
+            connection, ready = self._switch_host(connection, pairing, token, requested, generation, runtime)
+        return connection, ready
 
     def check_link(self) -> bool:
         """Notice a connection that closed between requests; True when it just did.

@@ -75,32 +75,11 @@ def export_markdown(
     _append_intent(out, state)
 
     if include_intelligence:
-        corrections = [q.get("correction") for q in (state.get("insight_review") or {}).get("questions", []) if q.get("correction") and not q.get("superseded")]
-        if corrections:
-            out += ["", "## User Clarifications", "", "These corrections supersede earlier wording on the same points.", ""]
-            out.extend(f"- {text}" for text in corrections)
+        _append_clarifications(out, state)
         _append_topic(out, state)
         _append_summary(out, state)
         _append_highlights(out, state)
-
-        for card, heading in _CARD_SECTIONS:
-            items = _live_items(state, card)
-            if not items:
-                continue
-            out += ["", f"## {heading}", ""]
-            if card == "action_items":
-                out.extend(_action_item_lines(items, participants))
-            elif card == "risks":
-                out.extend(_risk_lines(items))
-            elif card == "timeline":
-                out.extend(_timeline_lines(items))
-            elif card == "key_points":
-                out.extend(_key_point_lines(items, segments))
-            elif card == "live_notes":
-                out.extend(_live_note_lines(items))
-            else:
-                out.extend(f"- {item['text'].strip()}" for item in items)
-
+        _append_cards(out, state, participants, segments)
         _append_questions(out, state, participants)
         _append_custom_reports(out, state)
 
@@ -112,6 +91,50 @@ def export_markdown(
             out.extend(line + "  " for line in lines)
 
     return "\n".join(out) + "\n"
+
+
+def _append_clarifications(out: List[str], state: Dict[str, Any]) -> None:
+    """Append the user's standing corrections from the insight review."""
+    questions = (state.get("insight_review") or {}).get("questions", [])
+    corrections = [
+        q.get("correction") for q in questions
+        if q.get("correction") and not q.get("superseded")
+    ]
+    if not corrections:
+        return
+    out += [
+        "", "## User Clarifications", "",
+        "These corrections supersede earlier wording on the same points.", "",
+    ]
+    out.extend(f"- {text}" for text in corrections)
+
+
+def _append_cards(out: List[str], state: Dict[str, Any],
+                  participants: Dict[str, Any],
+                  segments: List[Dict[str, Any]]) -> None:
+    """Append one section per non-empty dashboard card, in render order."""
+    for card, heading in _CARD_SECTIONS:
+        items = _live_items(state, card)
+        if not items:
+            continue
+        out += ["", f"## {heading}", ""]
+        out.extend(_card_lines(card, items, participants, segments))
+
+
+def _card_lines(card: str, items: List[Dict[str, Any]],
+                participants: Dict[str, Any],
+                segments: List[Dict[str, Any]]) -> List[str]:
+    if card == "action_items":
+        return _action_item_lines(items, participants)
+    if card == "risks":
+        return _risk_lines(items)
+    if card == "timeline":
+        return _timeline_lines(items)
+    if card == "key_points":
+        return _key_point_lines(items, segments)
+    if card == "live_notes":
+        return _live_note_lines(items)
+    return [f"- {item['text'].strip()}" for item in items]
 
 
 # Header

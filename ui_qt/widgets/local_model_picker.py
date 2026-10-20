@@ -20,6 +20,19 @@ from ui_qt.widgets.speech_backend_picker import (
 )
 
 
+def _option_label(name: str) -> str:
+    """How a model reads in the picker."""
+    from services.local_asr.catalog import MODELS
+    from services.whisper_sources import custom_model_label, is_custom_model
+    if name == "auto":
+        return "auto — turbo on GPU · base on CPU"
+    if name in MODELS:
+        return speech_model_picker_label(name)
+    if is_custom_model(name):
+        return custom_model_label(name)
+    return name
+
+
 class LocalModelPicker(QWidget):
     """Assign a local model from Whisper sizes and optional speech engines.
 
@@ -107,7 +120,6 @@ class LocalModelPicker(QWidget):
             resolved: Concrete model ``auto`` currently maps to, if known.
         """
         from services.local_asr.catalog import MODELS
-        from services.whisper_sources import custom_model_label, is_custom_model
         choices = [*config.WHISPER_MODEL_CHOICES]
         choices.extend(custom or [])
         if self.include_speech_models:
@@ -132,18 +144,16 @@ class LocalModelPicker(QWidget):
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         for name in names:
-            if name == "auto":
-                label = "auto — turbo on GPU · base on CPU"
-            else:
-                label = (speech_model_picker_label(name) if name in MODELS else
-                         custom_model_label(name) if is_custom_model(name) else name)
-            self.model_combo.addItem(label, name)
+            self.model_combo.addItem(_option_label(name), name)
             self.model_combo.setItemData(self.model_combo.count() - 1, name,
                                          Qt.ItemDataRole.ToolTipRole)
         index = self.model_combo.findData(selected)
         self.model_combo.setCurrentIndex(max(0, index))
         self.model_combo.blockSignals(False)
+        self._show_selection_caption(selected, resolved)
 
+    def _show_selection_caption(self, selected: str, resolved: Optional[str]) -> None:
+        from services.local_asr.catalog import MODELS
         if selected == "auto" and resolved:
             self.set_caption(f"Automatic selection currently resolves to {resolved}.")
         elif selected == "auto":

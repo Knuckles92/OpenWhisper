@@ -716,34 +716,46 @@ class _Engine:
                 if picked is None:
                     return
                 hook, item = picked
-                try:
-                    record, delay = _deliver(hook, item.event, item.attempt, client_for)
-                except Exception as exc:
-                    logger.warning("Webhook delivery failed: %s", type(exc).__name__)
-                    record, delay = DeliveryRecord(
-                        item.event.id, item.event.type, _iso_now(), False, None, 0,
-                        f"The delivery failed ({type(exc).__name__}).", item.attempt,
-                    ), None
+                record, delay = _attempt(hook, item, client_for)
                 _remember(hook.id, record)
-                if delay is None:
-                    continue
-                with self._lock:
-                    current = self._hooks.get(hook.id)
-                    if (self._stopping or self._lanes.get(hook.id) is not lane
-                            or current is None or item.event.type not in current.events):
-                        continue
-                    item.attempt += 1
-                    item.not_before = time.monotonic() + delay
-                    self._enqueue(hook.id, item, front=True)
+                if delay is not None:
+                    self._retry_later(hook, lane, item, delay)
         finally:
-            with self._lock:
-                if lane.thread is threading.current_thread():
-                    lane.thread = None
-            for client in clients.values():
-                try:
-                    client.close()
-                except Exception:
-                    pass
+            self._end_lane(lane, clients)
+
+    def _retry_later(self, hook: Webhook, lane: _Lane, item: _Item, delay: float) -> None:
+        """Put ``item`` back at the front of its lane, unless the hook or lane changed meanwhile."""
+        with self._lock:
+            current = self._hooks.get(hook.id)
+            if (self._stopping or self._lanes.get(hook.id) is not lane
+                    or current is None or item.event.type not in current.events):
+                return
+            item.attempt += 1
+            item.not_before = time.monotonic() + delay
+            self._enqueue(hook.id, item, front=True)
+
+    def _end_lane(self, lane: _Lane, clients: dict[bool, httpx.Client]) -> None:
+        with self._lock:
+            if lane.thread is threading.current_thread():
+                lane.thread = None
+        for client in clients.values():
+            try:
+                client.close()
+            except Exception:
+                pass
+
+
+def _attempt(hook: Webhook, item: _Item, client_for: Callable[[bool], httpx.Client]
+             ) -> tuple[DeliveryRecord, Optional[float]]:
+    """One delivery of ``item``: its record and the retry delay (None for no retry)."""
+    try:
+        return _deliver(hook, item.event, item.attempt, client_for)
+    except Exception as exc:
+        logger.warning("Webhook delivery failed: %s", type(exc).__name__)
+        return DeliveryRecord(
+            item.event.id, item.event.type, _iso_now(), False, None, 0,
+            f"The delivery failed ({type(exc).__name__}).", item.attempt,
+        ), None
 
 
 _engine_lock = threading.Lock()

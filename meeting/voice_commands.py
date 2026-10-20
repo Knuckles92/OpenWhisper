@@ -60,6 +60,25 @@ _TOPIC_TRAILERS = re.compile(
     r"\s*(?:please|now|thanks|thank you|okay|ok)?\s*[.!?,;:]*\s*$", re.IGNORECASE,
 )
 MAX_TOPIC_CHARS = 120
+#: Commands handed to the meeting's own handlers instead of applied as card ops.
+_SPOKEN_ACTIONS = ("recap", "fix_transcript")
+_WORKING_MESSAGES: Mapping[str, str] = {
+    "mark_decision": "Recording the decision…", "mark_action": "Adding an action item…",
+    "note_this": "Taking a note…", "set_topic": "Updating the topic…",
+    "recap": "Preparing a recap…", "fix_transcript": "Correcting the transcript…",
+}
+_SAVED_MESSAGES: Mapping[str, str] = {
+    "mark_decision": "Decision noted", "mark_action": "Action item added",
+    "note_this": "Added to Meeting Notes", "set_topic": "Topic updated",
+}
+# Explicit argument forms whose text is copied as the note's content.
+_INLINE_CONTENT_RE = re.compile(
+    r"^(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:note that|note this:|remember that|"
+    r"(?:take|make|add) a note(?: that)?|"
+    r"add (?:an action item|a decision)(?: that)?|write down|capture this:)"
+    r"\s*[.:,-]?\s+(.+)$",
+    re.I,
+)
 #: Said when the judge would send the segment off this computer without the
 #: meeting's AI insights consent.
 NEEDS_CONSENT = ("Voice commands need AI insights on for this meeting, or Fast "
@@ -241,9 +260,7 @@ class VoiceCommandListener:
             row["_prefix"] = ""
         body = text[match.end():].lstrip(" .,!?:;").strip()
         # Copy only explicit argument forms. Deictic commands still use referents.
-        inline = re.search(r"^(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:note that|note this:|remember that|(?:take|make|add) a note(?: that)?|"
-                           r"add (?:an action item|a decision)(?: that)?|write down|capture this:)"
-                           r"\s*[.:,-]?\s+(.+)$", body, re.I)
+        inline = _INLINE_CONTENT_RE.search(body)
         if inline:
             row["_content"] = inline.group(1).strip()
         return row
@@ -342,11 +359,7 @@ class VoiceCommandListener:
             self._preview_running = True
         self._feedback("heard", "Heard you — listening…")
         if not running:
-            try:
-                self._executor.submit(self._preview_job)
-            except RuntimeError:
-                with self._lock:
-                    self._preview_running = False
+            self._submit_preview()
 
     def _preview_job(self):
         with self._lock:
@@ -356,27 +369,7 @@ class VoiceCommandListener:
             channel = next(iter(self._preview_pending))
             job = self._preview_pending.pop(channel)
         try:
-            if not self._allowed():
-                self._feedback("unavailable", NEEDS_CONSENT)
-                return
-            judge = self._judge_provider() if self._judge_provider else self._judge
-            if judge is None:
-                self._feedback("unavailable", _missing_key_message())
-                return
-            row = job["row"]
-            if self._is_wake_stub(row.get("text", "")):
-                return
-            answer = voice_command_choice(judge, row.get("text", ""),
-                                          [p.get("text", "") for p in job["previous"]], self._names)
-            allowed = self._allowed()
-            with self._lock:
-                # Keep the freshness check and feedback ordered with commits.
-                # Otherwise a saved callback could be overtaken by this preview.
-                if self._versions.get(channel) == job["version"] and not self._closed and allowed:
-                    if answer is None:
-                        self._feedback("error", "Voice recognition is unavailable. Please try again.")
-                    elif answer.choice != "none" and answer.confidence >= self._confidence:
-                        self._feedback("recognized", "Got it — waiting for the transcript…", answer.choice)
+            self._judge_preview(channel, job)
         except Exception:
             logger.exception("Voice command preview failed")
         finally:
@@ -385,11 +378,40 @@ class VoiceCommandListener:
                 if not again:
                     self._preview_running = False
             if again:
-                try:
-                    self._executor.submit(self._preview_job)
-                except RuntimeError:
-                    with self._lock:
-                        self._preview_running = False
+                self._submit_preview()
+
+    def _submit_preview(self) -> None:
+        try:
+            self._executor.submit(self._preview_job)
+        except RuntimeError:
+            with self._lock:
+                self._preview_running = False
+
+    def _current_judge(self):
+        return self._judge_provider() if self._judge_provider else self._judge
+
+    def _judge_preview(self, channel: str, job: Dict[str, Any]) -> None:
+        if not self._allowed():
+            self._feedback("unavailable", NEEDS_CONSENT)
+            return
+        judge = self._current_judge()
+        if judge is None:
+            self._feedback("unavailable", _missing_key_message())
+            return
+        row = job["row"]
+        if self._is_wake_stub(row.get("text", "")):
+            return
+        answer = voice_command_choice(judge, row.get("text", ""),
+                                      [p.get("text", "") for p in job["previous"]], self._names)
+        allowed = self._allowed()
+        with self._lock:
+            # Keep the freshness check and feedback ordered with commits.
+            # Otherwise a saved callback could be overtaken by this preview.
+            if self._versions.get(channel) == job["version"] and not self._closed and allowed:
+                if answer is None:
+                    self._feedback("error", "Voice recognition is unavailable. Please try again.")
+                elif answer.choice != "none" and answer.confidence >= self._confidence:
+                    self._feedback("recognized", "Got it — waiting for the transcript…", answer.choice)
 
     def shutdown(self) -> None:
         self._closed = True
@@ -405,8 +427,20 @@ class VoiceCommandListener:
         if not self._allowed():
             self._feedback("unavailable", NEEDS_CONSENT)
             return None
+        answer = self._accepted_answer(row, previous)
+        if answer is None:
+            return None
+        if self._closed or not self._allowed():
+            return None
+        self._feedback("working", _WORKING_MESSAGES.get(answer.choice, "Working on it…"), answer.choice)
+        if answer.choice in _SPOKEN_ACTIONS:
+            return self._run_spoken_action(answer.choice, row, previous)
+        return self._apply_card_command(answer, row, previous, excluded)
+
+    def _accepted_answer(self, row: Dict[str, Any], previous: List[Dict[str, Any]]):
+        """The judged command, or None after reporting why nothing will be applied."""
         try:
-            judge = self._judge_provider() if self._judge_provider else self._judge
+            judge = self._current_judge()
             if judge is None:
                 self._feedback("unavailable", _missing_key_message())
                 return None
@@ -422,25 +456,25 @@ class VoiceCommandListener:
             return None
         if answer is None or answer.choice == "none" or answer.confidence < self._confidence:
             logger.debug("Voice command not applied: %s", answer)
-            self._feedback("error" if answer is None else "uncertain",
-                           "Voice recognition is unavailable. Please try again." if answer is None else
-                           "No command saved. Try ‘assistant, note that…’.")
+            if answer is None:
+                self._feedback("error", "Voice recognition is unavailable. Please try again.")
+            else:
+                self._feedback("uncertain", "No command saved. Try ‘assistant, note that…’.")
             return None
-        if self._closed or not self._allowed():
-            return None
-        self._feedback("working", {
-            "mark_decision": "Recording the decision…", "mark_action": "Adding an action item…",
-            "note_this": "Taking a note…", "set_topic": "Updating the topic…",
-            "recap": "Preparing a recap…", "fix_transcript": "Correcting the transcript…",
-        }.get(answer.choice, "Working on it…"), answer.choice)
-        if answer.choice in ("recap", "fix_transcript"):
-            if self._on_command is not None:
-                try:
-                    return self._on_command(answer.choice, row, previous)
-                except Exception:
-                    logger.exception("Spoken action failed")
-            self._feedback("error", "This command is currently unavailable.", answer.choice)
-            return None
+        return answer
+
+    def _run_spoken_action(self, choice: str, row: Dict[str, Any],
+                           previous: List[Dict[str, Any]]) -> Optional[List[Any]]:
+        if self._on_command is not None:
+            try:
+                return self._on_command(choice, row, previous)
+            except Exception:
+                logger.exception("Spoken action failed")
+        self._feedback("error", "This command is currently unavailable.", choice)
+        return None
+
+    def _apply_card_command(self, answer, row: Dict[str, Any], previous: List[Dict[str, Any]],
+                            excluded: List[str]) -> Optional[List[Any]]:
         ops = build_ops(answer.choice, row, referent_rows(previous, row, exclude_ids=excluded))
         if not ops:
             logger.info("Voice command %r had nothing to apply", answer.choice)
@@ -457,10 +491,10 @@ class VoiceCommandListener:
             "Voice command %s (confidence %.2f): %d of %d ops applied",
             answer.choice, answer.confidence, len(applied), len(results),
         )
-        self._feedback("saved" if applied else "error", {
-            "mark_decision": "Decision noted", "mark_action": "Action item added",
-            "note_this": "Added to Meeting Notes", "set_topic": "Topic updated",
-        }.get(answer.choice, "Saved") if applied else "The command could not be saved.", answer.choice)
+        if applied:
+            self._feedback("saved", _SAVED_MESSAGES.get(answer.choice, "Saved"), answer.choice)
+        else:
+            self._feedback("error", "The command could not be saved.", answer.choice)
         if self._on_applied is not None:
             try:
                 self._on_applied(answer.choice, list(results))

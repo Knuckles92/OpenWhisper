@@ -180,7 +180,8 @@ _CATALOG: dict[str, ComponentDetails] = {
         limitations=(
             "The app pins a tested OpenCode SDK and Bun version; updates arrive as new "
             "component versions.",
-            "Offered on Windows x64, Linux x86_64/aarch64 and macOS (Apple Silicon, and Intel Macs running from source).",
+            "Offered on Windows x64, Linux x86_64/aarch64 and macOS (Apple Silicon, and "
+            "Intel Macs running from source).",
             "Larger than the Pi agent: up to 130 MB to download and 470 MB installed.",
             "If the engine fails, recording continues and meeting intelligence is marked "
             "unavailable; it does not switch to another agent core.",
@@ -192,40 +193,90 @@ _CATALOG: dict[str, ComponentDetails] = {
     ),
 }
 
-for _id, _name, _source, _license, _description in (
-    ("asr-nvidia-cpu", "NVIDIA Speech CPU", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0; Python PSF", "CPU runtime shared by Parakeet and Nemotron."),
-    ("asr-nvidia-cuda", "NVIDIA Speech GPU", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0; NVIDIA CUDA; Python PSF", "NVIDIA GPU runtime shared by Parakeet and Nemotron."),
-    ("asr-nvidia-vulkan", "NVIDIA Speech GPU (Vulkan)", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0", "Vulkan GPU runtime shared by Parakeet and Nemotron, for NVIDIA GPUs older than Turing, such as the GTX 10 series."),
-    ("asr-nvidia-metal", "NVIDIA Speech GPU (Metal)", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0", "Apple GPU runtime shared by Parakeet and Nemotron on Apple Silicon Macs. Auto uses it once installed."),
-    ("asr-qwen", "Qwen3-ASR runtime", "https://github.com/QwenLM/Qwen3-ASR", "Apache-2.0 and bundled dependency licenses", "PyTorch and Qwen3-ASR: CUDA 12.8 on Windows (GTX 10 series through RTX 50 series), the Apple GPU on Apple Silicon Macs. Also supports CPU."),
-    ("asr-moonshine", "Moonshine runtime", "https://github.com/moonshine-ai/moonshine", "MIT and bundled dependency licenses", "Isolated Moonshine Voice runtime for CPU transcription."),
-    ("asr-parakeet-mlx", "Parakeet MLX runtime", "https://github.com/senstella/parakeet-mlx", "Apache-2.0; MIT and bundled dependency licenses", "Parakeet MLX on Apple Silicon. Auto uses the Apple GPU; CPU is also available."),
-):
+_NVIDIA_SPEECH_SOURCE = "https://github.com/NVIDIA/NeMo-Speech.cpp"
+_SPEECH_RUNTIMES = (
+    (
+        "asr-nvidia-cpu", "NVIDIA Speech CPU", _NVIDIA_SPEECH_SOURCE,
+        "Apache-2.0; Python PSF",
+        "CPU runtime shared by Parakeet and Nemotron.",
+    ),
+    (
+        "asr-nvidia-cuda", "NVIDIA Speech GPU", _NVIDIA_SPEECH_SOURCE,
+        "Apache-2.0; NVIDIA CUDA; Python PSF",
+        "NVIDIA GPU runtime shared by Parakeet and Nemotron.",
+    ),
+    (
+        "asr-nvidia-vulkan", "NVIDIA Speech GPU (Vulkan)", _NVIDIA_SPEECH_SOURCE,
+        "Apache-2.0",
+        "Vulkan GPU runtime shared by Parakeet and Nemotron, for NVIDIA GPUs older than "
+        "Turing, such as the GTX 10 series.",
+    ),
+    (
+        "asr-nvidia-metal", "NVIDIA Speech GPU (Metal)", _NVIDIA_SPEECH_SOURCE,
+        "Apache-2.0",
+        "Apple GPU runtime shared by Parakeet and Nemotron on Apple Silicon Macs. Auto "
+        "uses it once installed.",
+    ),
+    (
+        "asr-qwen", "Qwen3-ASR runtime", "https://github.com/QwenLM/Qwen3-ASR",
+        "Apache-2.0 and bundled dependency licenses",
+        "PyTorch and Qwen3-ASR: CUDA 12.8 on Windows (GTX 10 series through RTX 50 "
+        "series), the Apple GPU on Apple Silicon Macs. Also supports CPU.",
+    ),
+    (
+        "asr-moonshine", "Moonshine runtime", "https://github.com/moonshine-ai/moonshine",
+        "MIT and bundled dependency licenses",
+        "Isolated Moonshine Voice runtime for CPU transcription.",
+    ),
+    (
+        "asr-parakeet-mlx", "Parakeet MLX runtime", "https://github.com/senstella/parakeet-mlx",
+        "Apache-2.0; MIT and bundled dependency licenses",
+        "Parakeet MLX on Apple Silicon. Auto uses the Apple GPU; CPU is also available.",
+    ),
+)
+_SPEECH_RUNTIME_REQUIRES = {
+    "asr-parakeet-mlx": "Apple Silicon Mac, macOS 14 or newer, Python 3.12",
+    "asr-nvidia-cpu": "Windows x64, Linux x86_64 (glibc 2.31+), or macOS (Apple Silicon or Intel)",
+    "asr-nvidia-cuda": (
+        "Windows x64 or Linux x86_64 (glibc 2.31+), and an NVIDIA GPU (Turing or newer) with its driver"
+    ),
+    "asr-nvidia-vulkan": (
+        "Linux x86_64 (glibc 2.31+), and an NVIDIA GPU older than Turing with its driver and the "
+        "Vulkan loader"
+    ),
+    "asr-nvidia-metal": "Apple Silicon Mac, macOS 14 or newer",
+    "asr-qwen": "Windows x64, or an Apple Silicon Mac with macOS 14 or newer",
+    "asr-moonshine": "Windows x64, or an Apple Silicon Mac with macOS 15 or newer",
+}
+_SPEECH_RUNTIME_SOURCE_NOTE = (
+    _SOURCE_NOTE + " Speech runtimes install third-party executable software. Integrity "
+    "checks do not guarantee security; keep runtimes updated."
+)
+
+
+def _speech_runtime_payload(component_id: str) -> str:
+    if component_id == "asr-parakeet-mlx":
+        return "Verified macOS arm64 Python wheels, MLX and Metal libraries"
+    if component_id in ("asr-nvidia-vulkan", "asr-nvidia-metal"):
+        return "Verified native libraries"
+    if component_id.startswith("asr-nvidia"):
+        return "Verified native libraries; portable Python on Windows"
+    return "Portable Python 3.12 and verified runtime binaries on Windows; verified Python wheels on a Mac"
+
+
+for _id, _name, _source, _license, _description in _SPEECH_RUNTIMES:
     _CATALOG[_id] = ComponentDetails(
         component_id=_id, display_name=_name, summary=_description,
         description=_description + " Models download separately. Runs in a dedicated process.",
         origin_name=_name, origin_url=_source, origin_label="Project",
         source_name="Pinned upstream archives", source_url=_source, source_label="Project",
         maintainer="Upstream publishers; packaged by OpenWhisper", family="Speech runtime",
-        requires=(
-            "Apple Silicon Mac, macOS 14 or newer, Python 3.12" if _id == "asr-parakeet-mlx"
-            else "Windows x64, Linux x86_64 (glibc 2.31+), or macOS (Apple Silicon or Intel)" if _id == "asr-nvidia-cpu"
-            else "Windows x64 or Linux x86_64 (glibc 2.31+), and an NVIDIA GPU (Turing or newer) with its driver" if _id == "asr-nvidia-cuda"
-            else "Linux x86_64 (glibc 2.31+), and an NVIDIA GPU older than Turing with its driver and the Vulkan loader" if _id == "asr-nvidia-vulkan"
-            else "Apple Silicon Mac, macOS 14 or newer" if _id == "asr-nvidia-metal"
-            else "Windows x64, or an Apple Silicon Mac with macOS 14 or newer" if _id == "asr-qwen"
-            else "Windows x64, or an Apple Silicon Mac with macOS 15 or newer" if _id == "asr-moonshine"
-            else "Windows x64"
-        ),
-        payload=(
-            "Verified macOS arm64 Python wheels, MLX and Metal libraries" if _id == "asr-parakeet-mlx"
-            else "Verified native libraries" if _id in ("asr-nvidia-vulkan", "asr-nvidia-metal")
-            else "Verified native libraries; portable Python on Windows" if _id.startswith("asr-nvidia")
-            else "Portable Python 3.12 and verified runtime binaries on Windows; verified Python wheels on a Mac"
-        ),
+        requires=_SPEECH_RUNTIME_REQUIRES.get(_id, "Windows x64"),
+        payload=_speech_runtime_payload(_id),
         local_format="Isolated worker process", license=_license,
         best_for=_description, limitations=("Model weights are a separate download.",),
-        compact_tags="Local speech", source_note=_SOURCE_NOTE + " Speech runtimes install third-party executable software. Integrity checks do not guarantee security; keep runtimes updated.", source_urls=(_source, "https://www.python.org/downloads/release/python-31210/"),
+        compact_tags="Local speech", source_note=_SPEECH_RUNTIME_SOURCE_NOTE,
+        source_urls=(_source, "https://www.python.org/downloads/release/python-31210/"),
     )
 COMPONENT_CATALOG: Final[Mapping[str, ComponentDetails]] = MappingProxyType(_CATALOG)
 

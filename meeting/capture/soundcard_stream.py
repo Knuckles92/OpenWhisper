@@ -231,86 +231,22 @@ class SoundcardLoopbackSource:
         if sys.platform.startswith("win"):
             _coinitialize()
         linux = sys.platform.startswith("linux")
-        monitor = None
-        sc: Any = None
-        sink_label = ""
-        monitor_label = ""
-        server_kind = "unknown"
         try:
             if linux:
-                from meeting.capture.linux_audio import (
-                    load_soundcard,
-                    resolve_linux_monitor,
-                )
-                sc = load_soundcard()
-                selection = self._selection or resolve_linux_monitor(sc)
-                self.device_id = selection.sink_id
-                sink_label = selection.sink_name or selection.sink_id
-                monitor_label = selection.monitor_name or selection.monitor_id
-                server_kind = selection.server_kind
-                lookup_id = (
-                    getattr(selection, "soundcard_id", None)
-                    or selection.monitor_id
-                    or selection.sink_id
-                )
-                try:
-                    monitor = sc.get_microphone(
-                        id=lookup_id, include_loopback=True
-                    )
-                except Exception:
-                    monitor = None
-                if monitor is None and lookup_id != selection.monitor_id:
-                    try:
-                        monitor = sc.get_microphone(
-                            id=selection.monitor_id, include_loopback=True
-                        )
-                    except Exception:
-                        monitor = None
-                if monitor is None or not bool(
-                    getattr(monitor, "isloopback", False)
-                ):
-                    raise RuntimeError("selected Linux monitor is not loopback")
-                monitor_identity = str(
-                    getattr(monitor, "id", None)
-                    or getattr(monitor, "name", "")
-                    or ""
-                )
-                if monitor_identity not in {
-                    str(selection.monitor_id),
-                    str(selection.sink_id),
-                    str(lookup_id),
-                }:
-                    raise RuntimeError("selected Linux monitor identity mismatch")
+                opened = self._open_linux_monitor()
             else:
-                import soundcard as sc
-
-                speaker = sc.default_speaker()
-                self.device_id = str(getattr(speaker, "id", None) or speaker.name)
-                sink_label = str(speaker.name)
-                monitor = sc.get_microphone(
-                    id=str(speaker.name), include_loopback=True
-                )
-                monitor_label = str(getattr(monitor, "name", monitor))
-                server_kind = "wasapi"
+                opened = self._open_default_loopback()
         except Exception:
             logger.exception("Soundcard loopback device unavailable")
             self._failure = "device_unavailable"
             self._running = False
             self._settled.set()
             return
+        sc, monitor, sink_label, monitor_label, server_kind = opened
 
         try:
             channels = max(1, int(getattr(monitor, "channels", 2) or 2))
-            if linux:
-                from meeting.capture.linux_audio import open_monitor_recorder
-                recorder_cm = open_monitor_recorder(
-                    sc, monitor, samplerate=SAMPLERATE,
-                    channels=min(2, channels),
-                )
-            else:
-                recorder_cm = monitor.recorder(
-                    samplerate=SAMPLERATE, channels=min(2, channels)
-                )
+            recorder_cm = _monitor_recorder(linux, sc, monitor, channels)
             with recorder_cm as recorder:
                 self._recorder_opened = True
                 logger.info(
@@ -330,6 +266,45 @@ class SoundcardLoopbackSource:
             self._active = False
             self._recorder_opened = False
             self._settled.set()
+
+    def _open_linux_monitor(self) -> tuple[Any, Any, str, str, str]:
+        """Resolve and validate the Linux monitor.
+
+        Returns ``(soundcard, monitor, sink_label, monitor_label, server_kind)``.
+        """
+        from meeting.capture.linux_audio import (
+            load_soundcard,
+            resolve_linux_monitor,
+        )
+        sc = load_soundcard()
+        selection = self._selection or resolve_linux_monitor(sc)
+        self.device_id = selection.sink_id
+        sink_label = selection.sink_name or selection.sink_id
+        monitor_label = selection.monitor_name or selection.monitor_id
+        server_kind = selection.server_kind
+        lookup_id = (
+            getattr(selection, "soundcard_id", None)
+            or selection.monitor_id
+            or selection.sink_id
+        )
+        monitor = _loopback_or_none(sc, lookup_id)
+        if monitor is None and lookup_id != selection.monitor_id:
+            monitor = _loopback_or_none(sc, selection.monitor_id)
+        _check_linux_monitor(monitor, selection, lookup_id)
+        return sc, monitor, sink_label, monitor_label, server_kind
+
+    def _open_default_loopback(self) -> tuple[Any, Any, str, str, str]:
+        """The default speaker's loopback, outside Linux (same tuple as above)."""
+        import soundcard as sc
+
+        speaker = sc.default_speaker()
+        self.device_id = str(getattr(speaker, "id", None) or speaker.name)
+        sink_label = str(speaker.name)
+        monitor = sc.get_microphone(
+            id=str(speaker.name), include_loopback=True
+        )
+        monitor_label = str(getattr(monitor, "name", monitor))
+        return sc, monitor, sink_label, monitor_label, "wasapi"
 
     def _emit(self, data) -> None:
         if not self._running:
@@ -370,6 +345,45 @@ class SoundcardLoopbackSource:
             self._callback_errors += 1
             if self._callback_errors <= _MAX_LOGGED_CALLBACK_ERRORS:
                 logger.exception("Soundcard loopback block delivery failed")
+
+
+def _loopback_or_none(sc: Any, device_id: Any) -> Any:
+    try:
+        return sc.get_microphone(id=device_id, include_loopback=True)
+    except Exception:
+        return None
+
+
+def _check_linux_monitor(monitor: Any, selection: Any, lookup_id: Any) -> None:
+    """Refuse a device that is not a loopback for the selected monitor."""
+    if monitor is None or not bool(
+        getattr(monitor, "isloopback", False)
+    ):
+        raise RuntimeError("selected Linux monitor is not loopback")
+    monitor_identity = str(
+        getattr(monitor, "id", None)
+        or getattr(monitor, "name", "")
+        or ""
+    )
+    if monitor_identity not in {
+        str(selection.monitor_id),
+        str(selection.sink_id),
+        str(lookup_id),
+    }:
+        raise RuntimeError("selected Linux monitor identity mismatch")
+
+
+def _monitor_recorder(linux: bool, sc: Any, monitor: Any, channels: int) -> Any:
+    """Recorder context for ``monitor``; Linux pins the stream to that monitor."""
+    if linux:
+        from meeting.capture.linux_audio import open_monitor_recorder
+        return open_monitor_recorder(
+            sc, monitor, samplerate=SAMPLERATE,
+            channels=min(2, channels),
+        )
+    return monitor.recorder(
+        samplerate=SAMPLERATE, channels=min(2, channels)
+    )
 
 
 def _coinitialize() -> None:

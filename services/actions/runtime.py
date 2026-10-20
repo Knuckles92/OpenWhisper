@@ -628,49 +628,70 @@ class ActionRuntime:
     # -- running -------------------------------------------------------------
 
     def _start(self, run: _Run) -> None:
-        action, kind = run.action, run.action.kind
-        if kind == ActionKind.CLIPBOARD and not _users_own(run.job):
+        starters = {
+            ActionKind.CLIPBOARD: self._start_clipboard,
+            ActionKind.SCRIPTS: self._start_scripts,
+            ActionKind.CHANNEL: self._start_channel,
+            ActionKind.OPEN_LINK: self._start_link,
+            ActionKind.WEBHOOK: self._start_webhook,
+            ActionKind.PROGRAM: self._start_program,
+            ActionKind.AGENT: self._start_agent,
+        }
+        start = starters.get(run.action.kind)
+        if start is None:
+            self._finish(run, ActionResult(False, "OpenWhisper can't run this kind of action"))
+            return
+        start(run)
+
+    def _start_clipboard(self, run: _Run) -> None:
+        if not _users_own(run.job):
             # Like an answer a program's run would copy (_output_of).
             self.controller.ui_controller.show_in_scratchpad(run.text)
             self._finish(run, ActionResult(True, "Put in the Scratchpad"))
-        elif kind == ActionKind.CLIPBOARD:
-            copied = self._copy(run.text, run.html)
-            self._finish(run, ActionResult(copied, "Copied" if copied else "Couldn't copy the words"))
-        elif kind == ActionKind.SCRIPTS:
-            # action.ran carries the words to whatever listens.
-            if scripts_listening(run.settings):
-                self._finish(run, ActionResult(True, "Sent to your scripts"))
-            else:
-                self._finish(run, ActionResult(False, NO_SCRIPTS_MESSAGE))
-        elif kind == ActionKind.CHANNEL:
-            self._finish(run, self._send_to_channel(run))
-        elif kind == ActionKind.OPEN_LINK:
-            try:
-                uri = expand_link(action.param("template") or "", run.text)
-            except ValueError as exc:
-                self._finish(run, ActionResult(False, str(exc)))
-                return
-            self._submit(run, partial(_open_link, uri, run.text))
-        elif kind == ActionKind.WEBHOOK:
-            self._submit(run, partial(
-                _webhook, action.param("url") or "", self._webhook_payload(run), action.id))
-        elif kind == ActionKind.PROGRAM:
-            argv = [action.param("program") or "", *(action.param("args") or [])]
-            # The user's environment minus OpenWhisper's own keys and tokens.
-            env = _program_env({
-                "OPENWHISPER_ACTION_ID": action.id,
-                "OPENWHISPER_ACTION_NAME": action.name,
-                "OPENWHISPER_JOB_ID": run.job.id,
-            })
-            self._submit(run, partial(
-                _program, argv, run.text.encode("utf-8"), float(action.param("timeout_s")), env,
-                run.cancel))
-        elif kind == ActionKind.AGENT:
-            params = {key: action.param(key) for key in (
-                "agent", "mode", "surface", "folder", "new_folder", "include_selection", "model")}
-            self._submit(run, partial(_agent, params, run.text, run.job, run.cancel))
+            return
+        copied = self._copy(run.text, run.html)
+        self._finish(run, ActionResult(copied, "Copied" if copied else "Couldn't copy the words"))
+
+    def _start_scripts(self, run: _Run) -> None:
+        # action.ran carries the words to whatever listens.
+        if scripts_listening(run.settings):
+            self._finish(run, ActionResult(True, "Sent to your scripts"))
         else:
-            self._finish(run, ActionResult(False, "OpenWhisper can't run this kind of action"))
+            self._finish(run, ActionResult(False, NO_SCRIPTS_MESSAGE))
+
+    def _start_channel(self, run: _Run) -> None:
+        self._finish(run, self._send_to_channel(run))
+
+    def _start_link(self, run: _Run) -> None:
+        try:
+            uri = expand_link(run.action.param("template") or "", run.text)
+        except ValueError as exc:
+            self._finish(run, ActionResult(False, str(exc)))
+            return
+        self._submit(run, partial(_open_link, uri, run.text))
+
+    def _start_webhook(self, run: _Run) -> None:
+        action = run.action
+        self._submit(run, partial(
+            _webhook, action.param("url") or "", self._webhook_payload(run), action.id))
+
+    def _start_program(self, run: _Run) -> None:
+        action = run.action
+        argv = [action.param("program") or "", *(action.param("args") or [])]
+        # The user's environment minus OpenWhisper's own keys and tokens.
+        env = _program_env({
+            "OPENWHISPER_ACTION_ID": action.id,
+            "OPENWHISPER_ACTION_NAME": action.name,
+            "OPENWHISPER_JOB_ID": run.job.id,
+        })
+        self._submit(run, partial(
+            _program, argv, run.text.encode("utf-8"), float(action.param("timeout_s")), env,
+            run.cancel))
+
+    def _start_agent(self, run: _Run) -> None:
+        params = {key: run.action.param(key) for key in (
+            "agent", "mode", "surface", "folder", "new_folder", "include_selection", "model")}
+        self._submit(run, partial(_agent, params, run.text, run.job, run.cancel))
 
     def _submit(self, run: _Run, work: Callable[[], ActionResult]) -> None:
         """Run ``work`` on the pool and finish ``run`` with it on the Qt thread."""

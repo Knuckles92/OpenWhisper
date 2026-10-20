@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 _workers = weakref.WeakSet()
 _workers_lock = threading.Lock()
 
+_OPERATION_CANCELED = "Operation canceled"
+_TRANSCRIPTION_CANCELED = "Transcription canceled"
+_TIMED_OUT = "Speech engine timed out and was stopped. Reload the engine."
+
 
 def close_all_workers():
     """Interrupt workers owned by preview, remote-host, and download paths too."""
@@ -175,60 +179,78 @@ class SpeechProcess:
     def request(self, op: str, *, timeout=180., cancel=None, progress=None, **payload) -> dict:
         with self._lock:
             deadline = time.monotonic() + timeout
-            while not self._connected.wait(.05):
-                if self._closed or (cancel is not None and cancel.is_set()):
-                    self.close()
-                    raise RuntimeError("Operation canceled")
-                if time.monotonic() >= deadline:
-                    self.close()
-                    raise RuntimeError("Speech engine timed out and was stopped. Reload the engine.")
-            if cancel is not None and cancel.is_set():
-                self.close()
-                raise RuntimeError("Operation canceled")
-            with self._state_lock:
+            self._await_connection(deadline, cancel)
+            serial = self._send(op, payload)
+            return self._await_reply(serial, deadline, cancel, progress)
+
+    def _stop(self, message: str) -> RuntimeError:
+        """Close the worker; the caller raises the returned error."""
+        self.close()
+        return RuntimeError(message)
+
+    def _await_connection(self, deadline: float, cancel) -> None:
+        while not self._connected.wait(.05):
+            if self._closed or (cancel is not None and cancel.is_set()):
+                raise self._stop(_OPERATION_CANCELED)
+            if time.monotonic() >= deadline:
+                raise self._stop(_TIMED_OUT)
+        if cancel is not None and cancel.is_set():
+            raise self._stop(_OPERATION_CANCELED)
+
+    def _send(self, op: str, payload: dict) -> int:
+        """Write one request line; returns its serial."""
+        with self._state_lock:
+            if self._closed:
+                raise RuntimeError(_TRANSCRIPTION_CANCELED)
+            if self._input is None:
+                raise self._worker_stopped()
+            self._serial += 1
+            serial = self._serial
+            try:
+                self._input.write(json.dumps(dict(id=serial, op=op, **payload)) + "\n")
+                self._input.flush()
+            except (BrokenPipeError, OSError, ValueError) as exc:
+                raise RuntimeError("Speech worker stopped. Reload the engine.") from exc
+        return serial
+
+    def _time_left(self, deadline: float, cancel) -> float:
+        if cancel is not None and cancel.is_set():
+            raise self._stop(_OPERATION_CANCELED)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise self._stop(_TIMED_OUT)
+        return remaining
+
+    def _await_reply(self, serial: int, deadline: float, cancel, progress):
+        while True:
+            remaining = self._time_left(deadline, cancel)
+            try:
+                response = self._replies.get(timeout=min(.2, remaining))
+            except queue.Empty:
                 if self._closed:
-                    raise RuntimeError("Transcription canceled")
-                if self._input is None:
-                    raise self._worker_stopped()
-                self._serial += 1
-                serial = self._serial
-                try:
-                    self._input.write(json.dumps(dict(id=serial, op=op, **payload)) + "\n")
-                    self._input.flush()
-                except (BrokenPipeError, OSError, ValueError) as exc:
-                    raise RuntimeError("Speech worker stopped. Reload the engine.") from exc
-            while True:
-                if cancel is not None and cancel.is_set():
-                    self.close()
-                    raise RuntimeError("Operation canceled")
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    self.close()
-                    raise RuntimeError("Speech engine timed out and was stopped. Reload the engine.")
-                try:
-                    response = self._replies.get(timeout=min(.2, remaining))
-                except queue.Empty:
-                    if self._closed:
-                        raise RuntimeError("Transcription canceled")
-                    continue
-                if self._closed:
-                    raise RuntimeError("Transcription canceled")
-                if response is None:
-                    raise self._worker_stopped()
-                if response.get("id") != serial:
-                    continue
-                if "progress" in response:
-                    if progress is not None:
-                        progress(*response["progress"])
-                    continue
-                if self._closed:
-                    raise RuntimeError("Transcription canceled")
-                if response.get("error"):
-                    error = RuntimeError(response["error"])
-                    error.status_code = response.get("status_code")
-                    error.code = response.get("code")
-                    raise error
-                return response["result"]
+                    raise RuntimeError(_TRANSCRIPTION_CANCELED)
+                continue
+            if self._closed:
+                raise RuntimeError(_TRANSCRIPTION_CANCELED)
+            if response is None:
+                raise self._worker_stopped()
+            if response.get("id") != serial:
+                continue
+            if "progress" in response:
+                if progress is not None:
+                    progress(*response["progress"])
+                continue
+            return self._result_of(response)
+
+    def _result_of(self, response: dict):
+        if self._closed:
+            raise RuntimeError(_TRANSCRIPTION_CANCELED)
+        if response.get("error"):
+            error = RuntimeError(response["error"])
+            error.status_code = response.get("status_code")
+            error.code = response.get("code")
+            raise error
+        return response["result"]
 
     def close(self):
         """Terminate and reap within a two-second budget, including stuck native calls."""
@@ -236,15 +258,7 @@ class SpeechProcess:
             if self._closed:
                 return
             self._closed = True
-            if self._listener is not None:
-                self._listener.close()
-            if self._connection is not None:
-                try:
-                    self._connection.shutdown(socket.SHUT_RDWR)
-                except OSError:
-                    pass
-            if self.process.poll() is None:
-                self.process.terminate()
+            self._interrupt()
         try:
             self.process.wait(timeout=1.5)
         except subprocess.TimeoutExpired:
@@ -254,11 +268,26 @@ class SpeechProcess:
         self._replies.put(None)
         for reader in self._readers:
             reader.join(timeout=.1)
+        self._close_pipes()
+        with _workers_lock:
+            _workers.discard(self)
+
+    def _interrupt(self) -> None:
+        """Stop accepting the worker, cut its connection and ask it to exit."""
+        if self._listener is not None:
+            self._listener.close()
+        if self._connection is not None:
+            try:
+                self._connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        if self.process.poll() is None:
+            self.process.terminate()
+
+    def _close_pipes(self) -> None:
         for pipe in (self.process.stdin, self.process.stdout, self.process.stderr):
             pipe.close()
         if self._connection is not None:
             for pipe in (self._input, self._output):
                 pipe.close()
             self._connection.close()
-        with _workers_lock:
-            _workers.discard(self)

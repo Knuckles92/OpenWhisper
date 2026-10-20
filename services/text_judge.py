@@ -57,6 +57,9 @@ _TOKENS_PER_QUESTION = 40
 #: The most of a judgment's budget spent asking a server the user runs what
 #: its models are, once per session (see ``learn_server_models``).
 _LEARN_TIMEOUT_S = 3.0
+#: HTTP statuses the verification check names: a refused key, an unknown model.
+_KEY_REJECTED_STATUSES = (401, 403)
+_HTTP_NOT_FOUND = 404
 
 SYSTEM_PROMPT = (
     "You are a judgment function. The user message is JSON with `state` and "
@@ -340,11 +343,7 @@ def verify_text_model(api_key: str, *, route: JudgeRoute, timeout_s: float) -> T
         return False, f"Choose a model for {route.name} on the Models page first."
     judge = TextModelJudge(api_key, route=route, timeout_s=timeout_s)
     if route.profile.self_hosted:
-        # Read afresh: the user may just have given the model more context.
-        try:
-            discover_server_models(route.profile, api_key=api_key, timeout=_LEARN_TIMEOUT_S)
-        except Exception as exc:  # the judgment below says why the server is unusable
-            logger.debug("Couldn't read %s's model list: %s", route.name, type(exc).__name__)
+        _refresh_server_models(route, api_key)
     started = time.monotonic()
     try:
         judge.request(_VERIFY_STATE, _VERIFY_QUESTIONS, timeout_s)
@@ -363,15 +362,28 @@ def verify_text_model(api_key: str, *, route: JudgeRoute, timeout_s: float) -> T
     except TextGenerationError as exc:
         return False, f"{where} did not finish an answer ({exc})."
     except Exception as exc:
-        status = getattr(exc, "status_code", None)
-        if status in (401, 403):
-            return False, f"{route.host} rejected the key (HTTP {status})."
-        if status == 404:
-            return False, f"{route.host} has no model {route.model} (HTTP 404)."
-        if status:
-            return False, f"{route.host} answered HTTP {status}."
-        if "timeout" in type(exc).__name__.lower():
-            return False, f"{where} did not answer within {timeout_s:.0f} s."
-        logger.debug("Text model judgment check failed: %s", type(exc).__name__)
-        return False, f"Couldn't reach {route.host} ({type(exc).__name__})."
+        return False, _failure_reason(exc, route, where, timeout_s)
     return True, f"{where} answered in {elapsed:.2f} s."
+
+
+def _refresh_server_models(route: JudgeRoute, api_key: str) -> None:
+    # Read afresh: the user may just have given the model more context.
+    try:
+        discover_server_models(route.profile, api_key=api_key, timeout=_LEARN_TIMEOUT_S)
+    except Exception as exc:  # the judgment below says why the server is unusable
+        logger.debug("Couldn't read %s's model list: %s", route.name, type(exc).__name__)
+
+
+def _failure_reason(exc: Exception, route: JudgeRoute, where: str, timeout_s: float) -> str:
+    """Say why the judgment failed from its HTTP status or exception name only."""
+    status = getattr(exc, "status_code", None)
+    if status in _KEY_REJECTED_STATUSES:
+        return f"{route.host} rejected the key (HTTP {status})."
+    if status == _HTTP_NOT_FOUND:
+        return f"{route.host} has no model {route.model} (HTTP 404)."
+    if status:
+        return f"{route.host} answered HTTP {status}."
+    if "timeout" in type(exc).__name__.lower():
+        return f"{where} did not answer within {timeout_s:.0f} s."
+    logger.debug("Text model judgment check failed: %s", type(exc).__name__)
+    return f"Couldn't reach {route.host} ({type(exc).__name__})."
