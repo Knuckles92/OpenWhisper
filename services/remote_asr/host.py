@@ -365,6 +365,10 @@ class SpeechHost:
 
     # ---- lifecycle ----
 
+    def admission_snapshot(self) -> dict:
+        """Current running and waiting work, independent of connection count."""
+        return self._work_admission.snapshot()
+
     @property
     def running(self) -> bool:
         return self._server is not None
@@ -1080,6 +1084,7 @@ class SpeechHost:
     def _dispatch(self, frame, engine: HostEngine, identity: tuple,
                   connection_id: str, streams: set, device_name: str = "",
                    device_id: str = "", ws=None) -> dict:
+        started = time.perf_counter()
         try:
             header, payload = protocol.unpack_frame(frame)
         except protocol.ProtocolError as exc:
@@ -1097,25 +1102,40 @@ class SpeechHost:
 
             preview = op == "transcribe" and header.get("preview") is True
             priority = 0 if op == "transcribe" or op == "stream" and header.get("finish") else 1
-            if not self._work_admission.acquire(
+            waiting = time.perf_counter()
+            admitted = self._work_admission.acquire(
                 still_connected, device_id=device_id, priority=priority, preview=preview,
-            ):
-                if preview:
-                    return {"id": request_id, "result": {"preview_skipped": True}}
-                return {"id": request_id, "code": "busy",
-                        "error": "The host is busy. Try again shortly.",
-                        "retry_after_ms": 1000}
-            try:
-                return self._dispatch_unpacked(
-                    header, payload, engine, identity, connection_id, streams,
-                    device_name, device_id,
-                )
-            finally:
-                self._work_admission.release(device_id)
+            )
+            queue_s = time.perf_counter() - waiting
+            if not admitted:
+                reply = ({"id": request_id, "result": {"preview_skipped": True}} if preview else
+                         {"id": request_id, "code": "busy",
+                          "error": "The host is busy. Try again shortly.", "retry_after_ms": 1000})
+            else:
+                try:
+                    reply = self._dispatch_unpacked(
+                        header, payload, engine, identity, connection_id, streams,
+                        device_name, device_id,
+                    )
+                finally:
+                    self._work_admission.release(device_id)
+            return self._timed_reply(reply, device_id, device_name, queue_s, started)
         return self._dispatch_unpacked(
             header, payload, engine, identity, connection_id, streams,
             device_name, device_id,
         )
+
+    def _timed_reply(self, reply: dict, device_id: str, device_name: str,
+                     queue_s: float, started: float) -> dict:
+        """Report admission separately, without changing legacy engine timing."""
+        server_s = time.perf_counter() - started
+        reply["queue_ms"] = round(queue_s * 1000, 1)
+        reply["server_total_ms"] = round(server_s * 1000, 1)
+        outcome = "busy" if reply.get("code") == "busy" else "ok"
+        if isinstance(reply.get("result"), dict) and reply["result"].get("preview_skipped"):
+            outcome = "preview_skipped"
+        self.activity.request_finished(device_id, device_name, queue_s, server_s, outcome)
+        return reply
 
     def _dispatch_unpacked(self, header: dict, payload: bytes, engine: HostEngine,
                            identity: tuple, connection_id: str, streams: set,
@@ -1177,11 +1197,11 @@ class SpeechHost:
                 raise ValueError(f"Unknown operation: {op!r}")
             # Counted before the busy flag clears, so the "activity" event
             # that clearing sends already sees it.
-            if op == "transcribe":
+            if op == "transcribe" and header.get("preview") is not True:
                 self.activity.transcribed(device_id, device_name,
                                           len(audio) / protocol.SAMPLE_RATE,
                                           time.perf_counter() - started)
-            elif op == "stream":
+            elif op in ("stream", "transcribe"):
                 self.activity.previewed(device_id, device_name)
         except Exception as exc:
             error = str(exc) or type(exc).__name__

@@ -647,6 +647,8 @@ def test_a_host_that_doesnt_time_requests_gives_no_split(paired_backend, host, m
     def untimed(*args, **kwargs):
         reply = original(*args, **kwargs)
         reply.pop("host_ms", None)
+        reply.pop("server_total_ms", None)
+        reply.pop("queue_ms", None)
         return reply
 
     monkeypatch.setattr(host, "_dispatch", untimed)

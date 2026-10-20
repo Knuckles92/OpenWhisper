@@ -6,6 +6,7 @@ into it from its connection threads; the host dashboard reads snapshots.
 """
 from __future__ import annotations
 
+import math
 import threading
 import time
 from collections import deque
@@ -14,6 +15,8 @@ from typing import Callable, Deque, Dict, Optional
 
 #: Events kept for the dashboard's recent activity list.
 MAX_EVENTS = 60
+#: Recent costly requests retained for bounded latency summaries.
+MAX_REQUEST_SAMPLES = 256
 #: A failure's reason is cut to this many characters in the event list.
 MAX_REASON_CHARS = 160
 
@@ -29,12 +32,20 @@ class DeviceActivity:
     previews: int = 0
     errors: int = 0
     last_at: float = 0.0
+    requests: int = 0
+    work_rejections: int = 0
+    preview_skips: int = 0
+    queue_s: float = 0.0
+    server_s: float = 0.0
 
 
 def empty_snapshot(since: float = 0.0) -> dict:
     return {"since": since, "transcriptions": 0, "audio_s": 0.0, "host_s": 0.0,
             "previews": 0, "errors": 0, "last_at": 0.0, "serial": 0,
-            "devices": {}, "events": []}
+            "devices": {}, "events": [],
+            "load": {"requests": 0, "work_rejections": 0, "preview_skips": 0,
+                     "sample_count": 0, "queue_p95_ms": 0.0, "server_p95_ms": 0.0,
+                     "connection_rejections": {}}}
 
 
 class HostActivity:
@@ -53,6 +64,8 @@ class HostActivity:
         self._max_events = max_events
         self._events: Deque[dict] = deque(maxlen=max_events)
         self._devices: Dict[str, DeviceActivity] = {}
+        self._request_samples: Deque[tuple] = deque(maxlen=MAX_REQUEST_SAMPLES)
+        self._connection_rejections: Dict[str, int] = {}
         #: Open connections per device; a computer's dictation and a meeting
         #: each hold one, so "connected" is logged for the first only.
         self._connections: Dict[str, int] = {}
@@ -64,6 +77,8 @@ class HostActivity:
         with self._lock:
             self._events.clear()
             self._devices.clear()
+            self._request_samples.clear()
+            self._connection_rejections.clear()
             self._connections.clear()
             self.started_at = self._clock()
 
@@ -97,6 +112,25 @@ class HostActivity:
             device = self._device(device_id, name)
             device.previews += 1
             device.last_at = self._clock()
+
+    def request_finished(self, device_id: str, name: str, queue_s: float,
+                         server_s: float, outcome: str) -> None:
+        """Admission and total dispatch time, separate from engine-only totals."""
+        with self._lock:
+            device = self._device(device_id, name)
+            device.requests += 1
+            device.queue_s += max(0.0, queue_s)
+            device.server_s += max(0.0, server_s)
+            device.work_rejections += outcome == "busy"
+            device.preview_skips += outcome == "preview_skipped"
+            self._request_samples.append((max(0.0, queue_s), max(0.0, server_s)))
+
+    def connection_rejected(self, reason: str) -> None:
+        """Capacity refusals, without recording unauthenticated peer identities."""
+        if reason not in ("authenticated_capacity", "anonymous_handshake_capacity"):
+            reason = "other"
+        with self._lock:
+            self._connection_rejections[reason] = self._connection_rejections.get(reason, 0) + 1
 
     def failed(self, device_id: str, name: str, reason: str) -> None:
         with self._lock:
@@ -154,6 +188,8 @@ class HostActivity:
             recent = list(self._events)
             since = self.started_at
             serial = self._serial
+            samples = list(self._request_samples)
+            connection_rejections = dict(self._connection_rejections)
         recent.reverse()
         if events is not None:
             recent = recent[:max(0, events)]
@@ -167,4 +203,20 @@ class HostActivity:
             snapshot["audio_s"] += device["audio_s"]
             snapshot["host_s"] += device["host_s"]
             snapshot["last_at"] = max(snapshot["last_at"], device["last_at"])
+        snapshot["load"] = {
+            **{key: sum(device[key] for device in devices.values())
+               for key in ("requests", "work_rejections", "preview_skips")},
+            "sample_count": len(samples),
+            "queue_p95_ms": _p95_ms([sample[0] for sample in samples]),
+            "server_p95_ms": _p95_ms([sample[1] for sample in samples]),
+            "connection_rejections": connection_rejections,
+        }
         return snapshot
+
+
+def _p95_ms(values: list) -> float:
+    """Nearest-rank p95 over the retained request window, not a lifetime p95."""
+    if not values:
+        return 0.0
+    values.sort()
+    return round(values[math.ceil(len(values) * 0.95) - 1] * 1000, 1)

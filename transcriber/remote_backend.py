@@ -86,6 +86,11 @@ class RemoteTiming:
 
     @property
     def network_s(self) -> Optional[float]:
+        """Transport/client overhead outside reported server time.
+
+        Older hosts report only execution, so their remainder also includes
+        admission wait. This is not an independent network-latency measurement.
+        """
         if self.host_s is None:
             return None
         return max(0.0, self.round_trip_s - self.host_s)

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+import math
 import secrets
 import socket
 import threading
@@ -201,9 +202,11 @@ def _quiet_close(ws) -> None:
 
 def _host_seconds(reply: dict) -> Optional[float]:
     """The time the host says it spent on a request; None from a host too old to say."""
-    host_ms = reply.get("host_ms")
-    if isinstance(host_ms, (int, float)) and host_ms >= 0:
-        return host_ms / 1000
+    for field in ("server_total_ms", "host_ms"):
+        elapsed = reply.get(field)
+        if (isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool)
+                and math.isfinite(elapsed) and elapsed >= 0):
+            return elapsed / 1000
     return None
 
 

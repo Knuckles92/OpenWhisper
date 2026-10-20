@@ -847,7 +847,11 @@ class RemoteEngineService:
 
         with self._lock:
             host = self._host
-        return host.activity.snapshot(events) if host is not None else empty_snapshot()
+        if host is None:
+            return empty_snapshot()
+        snapshot = host.activity.snapshot(events)
+        snapshot["admission"] = host.admission_snapshot()
+        return snapshot
 
     def engine_state(self) -> dict:
         """``describe()`` of the engine this computer would share, even while sharing is off."""

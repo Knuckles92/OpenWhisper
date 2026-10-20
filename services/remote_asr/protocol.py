@@ -11,7 +11,10 @@ local speech worker takes over stdin (services/local_asr/worker.py):
 answers once the model has loaded; the client then reconnects. Hosts from
 before model switching send no ``models`` and answer ``select_model`` with
 an unknown-operation error. A successful reply carries ``host_ms``, the time
-the host spent on the request, which older hosts leave out.
+the host spent executing the request after admission, which older hosts leave
+out. Newer hosts also report ``queue_ms`` for admission and ``server_total_ms``
+for admission plus dispatch. Clients prefer the total for their server/transport
+split. These optional fields do not change protocol version 1.
 
 A disposable window preview may add ``preview: true`` to ``transcribe``.
 Hosts that understand it use idle work capacity only and reply with
