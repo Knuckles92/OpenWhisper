@@ -541,7 +541,9 @@ class McpSettingsPage(QWidget):
         )
         self.preferences.body_layout.addWidget(
             self._detail(
-                "Each checkbox allows changes to that preference. Permissions apply to every assistant using this token; turning one off blocks future changes immediately."
+                "Each checkbox allows changes to that preference. "
+                "Permissions apply to every assistant using this token; "
+                "turning one off blocks future changes immediately."
             )
         )
         self.settings_permissions = QWidget()
@@ -570,7 +572,8 @@ class McpSettingsPage(QWidget):
         self.preferences.body_layout.addWidget(self.settings_permissions)
         permissions_layout.addWidget(self.preferences)
         limits = self._detail(
-            "Never allowed: deletion, transcript edits, audio access or permission changes. A cloud-powered assistant may send saved text to its provider."
+            "Never allowed: deletion, transcript edits, audio access or permission changes. "
+            "A cloud-powered assistant may send saved text to its provider."
         )
         limits.setObjectName("mcpNote")
         permissions_layout.addWidget(limits)
