@@ -282,6 +282,28 @@ def _block(name: str, build) -> str:
         return ""
 
 
+def _base_cleanup_prompt(settings: Mapping, profile, rules: list[str]) -> str:
+    """A profile's prompt, or the level preset (or custom prompt) with the learned rules."""
+    if profile is not None:
+        return compose_profile_prompt(profile, rules)
+    try:
+        base = cleanup_prompts.base_prompt(
+            settings, cleanup_prompts.resolve_level(settings)
+        )
+    except Exception:
+        logger.debug("Cleanup preset unavailable", exc_info=True)
+        base = resolve_transcript_cleanup_prompt(settings)
+    return compose_transcript_cleanup_prompt(base, rules)
+
+
+def _app_style(snapshot, settings: Mapping):
+    try:
+        return app_styles.style_for(snapshot, settings)
+    except Exception:
+        logger.debug("App style unavailable", exc_info=True)
+        return None
+
+
 def compose_cleanup_prompt(
     *,
     job: Optional[DictationJob],
@@ -301,17 +323,7 @@ def compose_cleanup_prompt(
     by a blank line and left out when empty.
     """
     settings = settings or {}
-    if profile is not None:
-        prompt = compose_profile_prompt(profile, rules)
-    else:
-        try:
-            base = cleanup_prompts.base_prompt(
-                settings, cleanup_prompts.resolve_level(settings)
-            )
-        except Exception:
-            logger.debug("Cleanup preset unavailable", exc_info=True)
-            base = resolve_transcript_cleanup_prompt(settings)
-        prompt = compose_transcript_cleanup_prompt(base, rules)
+    prompt = _base_cleanup_prompt(settings, profile, rules)
 
     use_style = profile is None and resolve_app_styles_enabled(settings)
     use_caret_text = resolve_app_context_read_text(settings)
@@ -324,10 +336,7 @@ def compose_cleanup_prompt(
     blocks = []
     style = None
     if use_style:
-        try:
-            style = app_styles.style_for(snapshot, settings)
-        except Exception:
-            logger.debug("App style unavailable", exc_info=True)
+        style = _app_style(snapshot, settings)
         blocks.append(_block("style", lambda: app_styles.prompt_block(style)))
     # The style block already tells a terminal to stay on one line.
     terminal_covered = style is not None and style.surface == app_styles.Surface.TERMINAL
