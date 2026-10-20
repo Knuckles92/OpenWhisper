@@ -225,13 +225,15 @@ def _catalog_entries(downloads) -> list[SearchEntry]:
             if name == "auto":
                 continue
             label = MODELS[name].label if name in MODELS else name
-            entries.append(SearchEntry(MODEL, label, f"Downloads · {resolve_model_repo(name) or name}",
-                                       "downloads", model_name=name, keywords=f"{name} model", icon="download-blue.svg"))
+            crumb = f"Downloads · {resolve_model_repo(name) or name}"
+            entries.append(SearchEntry(MODEL, label, crumb, "downloads", model_name=name,
+                                       keywords=f"{name} model", icon="download-blue.svg"))
         from services.components import component_coordinator, available_component_ids
         for component_id in available_component_ids():
             info = component_coordinator.describe(component_id)
-            entries.append(SearchEntry(MODEL, info.display_name, f"Downloads › Components · {info.summary}",
-                                       "downloads", component_id=component_id, keywords="component runtime add-on", icon="box-blue.svg"))
+            crumb = f"Downloads › Components · {info.summary}"
+            entries.append(SearchEntry(MODEL, info.display_name, crumb, "downloads", component_id=component_id,
+                                       keywords="component runtime add-on", icon="box-blue.svg"))
         return entries
     for name, row in downloads.rows.items():
         label = MODELS[name].label if name in MODELS else name
