@@ -673,44 +673,16 @@ class ApplicationController(QObject):
         to warm and finish, or None when the reload has finished here.
         """
         with self._engine_lock:
-            if self._shutting_down or self.is_meeting_active() or self.recorder.is_recording or self.is_transcribing():
+            if (self._shutting_down or self.is_meeting_active()
+                    or self.recorder.is_recording or self.is_transcribing()):
                 self._reload_in_flight = False
                 self.engine_busy_changed.emit(False)
                 return None
             from transcriber.optional_backend import LocalSpeechBackend
-            from services.local_asr.catalog import BACKENDS
             selected = self.current_backend
-            for key in ("local_whisper", *BACKENDS, "remote"):
-                other = self.transcription_backends.get(key)
-                if other is not None and other is not selected:
-                    other.cleanup()
+            _release_unselected_engines(self, selected)
             if isinstance(selected, LocalSpeechBackend):
-                warm = None
-                try:
-                    selected.reload_model()
-                    if selected is not self.current_backend:
-                        selected.cleanup()
-                        return None
-                    self.device_info_update.emit(selected.device_info, selected.is_available())
-                    self.status_update.emit(selected.device_info)
-                    # A paired computer that kept its model says why.
-                    if getattr(selected, "switch_error", ""):
-                        self.status_update.emit(selected.switch_error)
-                    # Auto fell back to the CPU; say why after the ready line.
-                    if getattr(selected, "cpu_fallback_note", ""):
-                        self.status_update.emit(selected.cpu_fallback_note)
-                    if selected.is_model_missing:
-                        self.ensure_local_model_available()
-                    elif selected.is_available() and selected.backend_id in config.SPEECH_WARMUP_BACKENDS:
-                        warm = selected
-                except Exception as exc:
-                    logger.error("Engine load failed: %s", exc)
-                    self.status_update.emit(f"Engine load failed: {exc}")
-                    self.device_info_update.emit(str(exc), False)
-                finally:
-                    if warm is None:
-                        self._finish_speech_reload(selected)
-                return warm
+                return _reload_speech_engine(self, selected)
             if self._current_model_name == "local_whisper":
                 self._reload_whisper_worker()
             else:
@@ -872,22 +844,7 @@ class ApplicationController(QObject):
 
         from transcriber.optional_backend import LocalSpeechBackend
         if isinstance(backend, LocalSpeechBackend):
-            if self._reload_in_flight:
-                return "Speech engine is still loading..."
-            if getattr(backend, "is_remote", False):
-                # The host may be back (woke up, came into range): try now
-                # rather than at the next scheduled retry.
-                self.retry_remote_now()
-                host = backend.host_name or "the remote engine"
-                if self._remote_restoring or not backend.last_error:
-                    return f"Connecting to {host}..."
-                return f"{backend.last_error} Trying again..."
-            if backend.is_model_missing:
-                self.ensure_local_model_available()
-            elif backend.should_cancel or not backend.last_error:
-                self.reload_whisper_model()
-                return "Reloading speech engine..."
-            return backend.device_info
+            return _speech_engine_readiness_message(self, backend)
         loading = self.local_whisper_loading_message()
         if loading:
             return loading
@@ -1247,7 +1204,9 @@ class ApplicationController(QObject):
         self._reload_note = f"Switching {host} to {choice.label}..."
         self.reload_whisper_model()
 
-    def _switch_engine_for_client(self, family: str, model: str, device_name: str, device: Optional[str] = None) -> None:
+    def _switch_engine_for_client(
+        self, family: str, model: str, device_name: str, device: Optional[str] = None
+    ) -> None:
         """Host: switch to a model a paired computer chose, and wait for the answer.
 
         Called on that computer's connection thread. The switch itself runs
@@ -1295,7 +1254,8 @@ class ApplicationController(QObject):
             elif request.runtime is None:
                 request.error = self._switch_engine_to(request.family, request.model, request.device_name)
             else:
-                request.error = self._switch_engine_to(request.family, request.model, request.device_name, runtime=request.runtime)
+                request.error = self._switch_engine_to(request.family, request.model, request.device_name,
+                                                      runtime=request.runtime)
         except Exception as exc:
             logger.exception("Switching models for a paired computer failed")
             request.error = f"{socket.gethostname()} couldn't switch models: {exc}"
@@ -1324,57 +1284,24 @@ class ApplicationController(QObject):
         whose end ``_engine_settled`` reports. ``device_name`` is the paired
         computer that asked, or None when it was asked for on this computer.
         """
-        from services.local_asr.catalog import BACKENDS, MODELS, WHISPER_BACKEND
-
         name = socket.gethostname() if device_name else "This computer"
-        if self.is_meeting_active():
-            return f"{name} is running a meeting. Change its model after the meeting ends."
-        if self.recorder.is_recording or self.is_transcribing():
-            return f"{name} is transcribing right now. Try again in a moment."
-        if target_device is not None:
-            from services.remote_asr.dependencies import validate_model_device
-
-            if self._reload_in_flight or self._reload_pending:
-                return f"{name} is loading its engine. Try again in a moment."
-            validate_model_device(family, model, target_device)
-            if family == WHISPER_BACKEND:
-                settings_manager.update_settings({SettingsKey.WHISPER_DEVICE: target_device,
-                                                  SettingsKey.WHISPER_COMPUTE_TYPE: "auto"})
-            else:
-                devices = dict(settings_manager.get(SettingsKey.LOCAL_ASR_DEVICES, {}) or {})
-                devices[family] = target_device
-                settings_manager.save_setting(SettingsKey.LOCAL_ASR_DEVICES, devices)
-        if runtime is not None:
-            from services.remote_asr.engines import host_engine_for
-            from services.remote_asr.runtime import validate_runtime
-
-            if self._reload_in_flight or self._reload_pending:
-                return f"{name} is loading its engine. Try again in a moment."
-            updates = validate_runtime(host_engine_for(self.current_backend).describe(), family, model, runtime)
-            settings_manager.update_settings(updates)
-        if family in BACKENDS and model in MODELS and MODELS[model].backend == family:
-            models = dict(settings_manager.load_all_settings().get(SettingsKey.LOCAL_ASR_MODELS) or {})
-            models[family] = model
-            settings_manager.save_setting(SettingsKey.LOCAL_ASR_MODELS, models)
-            label = MODELS[model].label
-        elif family == WHISPER_BACKEND and model in config.WHISPER_MODEL_CHOICES and model != "auto":
-            settings_manager.save_setting(SettingsKey.WHISPER_MODEL, model)
-            label = f"Whisper {model}"
-        else:
+        refusal = _engine_switch_refusal(self, name)
+        if refusal is not None:
+            return refusal
+        refusal = _apply_engine_overrides(self, name, family, model, runtime, target_device)
+        if refusal is not None:
+            return refusal
+        label = _save_engine_model(family, model)
+        if label is None:
             return f"{name} can't run {model}."
         if device_name:
             logger.info("Paired computer %s switched this computer to %s", device_name, label)
         else:
             logger.info("Host Mode switched this computer to %s", label)
-        if self._current_model_name != family:
-            display = next(key for key, value in config.MODEL_VALUE_MAP.items() if value == family)
-            self.ui_controller.select_transcription_backend(display)
-            if self._current_model_name != family:
-                return f"{name} couldn't switch to {label} right now."
+        if not _select_backend_family(self, family):
+            return f"{name} couldn't switch to {label} right now."
         self.ui_controller.refresh_local_engine_controls()
-        whisper = self.transcription_backends.get(WHISPER_BACKEND)
-        if (runtime is None and target_device is None and family == WHISPER_BACKEND and whisper is not None and whisper.is_available()
-                and whisper.last_loaded_model == model and not self._reload_pending):
+        if runtime is None and target_device is None and _whisper_already_serves(self, family, model):
             return None  # Selecting the backend was all it took.
         self._reload_note = (f"Switching to {label} for {device_name}..." if device_name
                              else f"Switching to {label}...")
@@ -1611,6 +1538,12 @@ class ApplicationController(QObject):
         ):
             self.ensure_local_model_available()
 
+    def _local_model_backend(self):
+        """The engine whose local model is in play; Whisper while the API engine is selected."""
+        if self._current_model_name != "api":
+            return self.current_backend
+        return self.transcription_backends.get("local_whisper")
+
     def ensure_local_model_available(self) -> None:
         """Make sure the local Whisper model is loaded, requesting consent if needed.
 
@@ -1619,7 +1552,7 @@ class ApplicationController(QObject):
         executor. Concurrent calls for the same model are deduplicated by the
         access coordinator so at most one dialog and one download exist.
         """
-        backend = self.current_backend if self._current_model_name != "api" else self.transcription_backends.get("local_whisper")
+        backend = self._local_model_backend()
         if backend is None or backend.is_available():
             return
         if not getattr(backend, "is_model_missing", False):
@@ -1668,7 +1601,7 @@ class ApplicationController(QObject):
 
     def get_loaded_local_model(self) -> Optional[str]:
         """Return the loaded model so its memory-mapped files cannot be deleted."""
-        backend = self.current_backend if self._current_model_name != "api" else self.transcription_backends.get("local_whisper")
+        backend = self._local_model_backend()
         if backend is not None and backend.is_available():
             return getattr(backend, "last_loaded_model", None)
         return None
@@ -1779,7 +1712,9 @@ class ApplicationController(QObject):
                 from services.local_asr.catalog import MODELS
                 if model_name in MODELS:
                     backend = self.transcription_backends.get(MODELS[model_name].backend)
-                    if self.is_meeting_active() or (backend and backend.is_available() and backend.last_loaded_model == model_name):
+                    if self.is_meeting_active() or (
+                        backend and backend.is_available() and backend.last_loaded_model == model_name
+                    ):
                         raise RuntimeError("Model is in use — switch models first")
                 delete_model_from_cache(model_name)
         except (PermissionError, OSError) as exc:
@@ -2262,19 +2197,14 @@ class ApplicationController(QObject):
                 return
             if self._refuse_engine_load_during_meeting():
                 return
-            decision = hf_access_coordinator.evaluate_access(model_name)
-            if decision == AccessDecision.DOWNLOAD_ALLOWED:
-                self.status_update.emit(f"Downloading model '{model_name}'...")
-                download_model_files(model_name, progress_callback=self._hf_download_progress(model_name),
-                                     cancel=self._shutdown_cancel)
-            elif decision != AccessDecision.LOAD_CACHED:
-                self.status_update.emit(f"Model '{model_name}' is unavailable")
+            if not self._fetch_model_for_engine(model_name):
                 return
             downloaded = success = True
             # A download can finish after the user switched engines or started
             # a meeting. Only the selected engine may acquire resident weights.
             with self._engine_lock:
-                if self._shutting_down or self._refuse_engine_load_during_meeting() or self.current_backend is not backend:
+                if (self._shutting_down or self._refuse_engine_load_during_meeting()
+                        or self.current_backend is not backend):
                     return
                 backend.reload_model(model_name)
                 success = backend.is_available()
@@ -2295,6 +2225,18 @@ class ApplicationController(QObject):
                 self.model_cache_changed.emit()
             if requested_load:
                 self.engine_busy_changed.emit(False)
+
+    def _fetch_model_for_engine(self, model_name: str) -> bool:
+        """Download ``model_name`` if access allows; False when it is unavailable."""
+        decision = hf_access_coordinator.evaluate_access(model_name)
+        if decision == AccessDecision.DOWNLOAD_ALLOWED:
+            self.status_update.emit(f"Downloading model '{model_name}'...")
+            download_model_files(model_name, progress_callback=self._hf_download_progress(model_name),
+                                 cancel=self._shutdown_cancel)
+        elif decision != AccessDecision.LOAD_CACHED:
+            self.status_update.emit(f"Model '{model_name}' is unavailable")
+            return False
+        return True
 
     def _download_model_to_cache(self, model_name: str) -> bool:
         """Fetch-only worker body shared by single and batched downloads.
@@ -2872,52 +2814,69 @@ class ApplicationController(QObject):
         self._batch_stop_requested = True
         self.transcription_runtime.begin_shutdown()
 
-        try:
-            self.command_runtime.cleanup()
-        except Exception as exc:
-            logger.debug(f"Error during command runtime cleanup: {exc}")
-        try:
-            self.action_runtime.close()
-            from services.automation import service as automation_service
-
-            automation_service.stop()
-        except Exception as exc:
-            logger.debug(f"Error stopping automation: {exc}")
-        try:
-            from services import audio_player, focus_context
-
-            audio_player.stop_playback()
-            # Its capture threads hold accessibility (COM) objects that must
-            # be released before the interpreter shuts down.
-            focus_context.shutdown_service()
-        except Exception as exc:
-            logger.debug(f"Error stopping playback or focus capture: {exc}")
-
-        try:
-            if self.current_backend and self.current_backend.is_transcribing:
-                logger.info("Canceling ongoing transcription...")
-                self.current_backend.cancel_transcription()
-        except Exception as exc:
-            logger.debug(f"Error canceling transcription: {exc}")
-
-        try:
-            if hasattr(self, "_watchdog_timer") and self._watchdog_timer:
-                self._watchdog_timer.stop()
-            if hasattr(self, "_reload_timer") and self._reload_timer:
-                self._reload_timer.stop()
-            if hasattr(self, "_periodic_refresh_timer") and self._periodic_refresh_timer:
-                self._periodic_refresh_timer.stop()
-            if hasattr(self, "_update_check_timer") and self._update_check_timer:
-                self._update_check_timer.stop()
-            if hasattr(self, "_update_cancel"):
-                self._update_cancel.set()
-        except Exception as exc:
-            logger.debug(f"Error stopping watchdog timers: {exc}")
+        _attempt(lambda: self.command_runtime.cleanup(), "Error during command runtime cleanup")
+        _attempt(self._stop_automation, "Error stopping automation")
+        _attempt(_stop_playback_and_focus_capture, "Error stopping playback or focus capture")
+        _attempt(self._cancel_active_transcription, "Error canceling transcription")
+        _attempt(self._stop_timers, "Error stopping watchdog timers")
 
         # Close every backend before joining the executor: it may be waiting
         # inside model construction, preview warmup, or a network request, even
         # when is_transcribing is False. These process/connection boundaries
         # interrupt running work; cancel_futures alone cannot do that.
+        self._interrupt_backends()
+
+        # Shut the meeting engine down early: it owns capture streams, a
+        # web server, and possibly a sidecar process.
+        _attempt(lambda: self.meeting_runtime.cleanup(), "Error during meeting runtime cleanup")
+        _attempt(lambda: self.hotkey_runtime.cleanup(), "Error during hotkey runtime cleanup")
+        _attempt(lambda: _cleanup_if_present(self.hotkey_manager), "Error during hotkey cleanup")
+        _attempt(lambda: _cleanup_if_present(self.recorder), "Error during recorder cleanup")
+        _attempt(lambda: self.streaming_runtime.cleanup(), "Error during streaming cleanup")
+        # Must happen before the shutdown below: cancel_futures only
+        # cancels futures that have not started, so an in-flight
+        # multi-gigabyte download would hold shutdown open for minutes.
+        # The download loop checks its cancel event once per MiB.
+        _attempt(lambda: component_coordinator.cancel_all(), "Error cancelling component installs")
+        # An upload in progress resumes from where it stopped next time.
+        _attempt(lambda: self.record_sync.stop(timeout=2.0), "Error stopping the record sync")
+        _attempt(self._stop_remote_engine, "Error stopping the remote engine host")
+
+        for executor in (self.executor, self.component_executor):
+            _attempt(lambda: executor.shutdown(wait=True, cancel_futures=True),
+                     "Error during executor shutdown")
+
+        # Accepted transcripts must survive Quit even while another history
+        # save is running. Drain this queue before SQLite or UI resources close.
+        self.persistence_executor.shutdown(wait=True, cancel_futures=False)
+
+        _attempt(self._cleanup_backends, "Error during transcription backends cleanup")
+        _attempt(lambda: self.ui_controller.cleanup(), "Error during UI controller cleanup")
+        _attempt(lambda: db.close(), "Error closing database")
+
+        logger.info("Application controller cleaned up")
+        from services.diagnostics import record_metrics
+        record_metrics(shutdown_s=time.perf_counter() - shutdown_started)
+
+    def _stop_automation(self) -> None:
+        self.action_runtime.close()
+        from services.automation import service as automation_service
+
+        automation_service.stop()
+
+    def _cancel_active_transcription(self) -> None:
+        if self.current_backend and self.current_backend.is_transcribing:
+            logger.info("Canceling ongoing transcription...")
+            self.current_backend.cancel_transcription()
+
+    def _stop_timers(self) -> None:
+        for name in ("_watchdog_timer", "_reload_timer", "_periodic_refresh_timer", "_update_check_timer"):
+            if hasattr(self, name) and getattr(self, name):
+                getattr(self, name).stop()
+        if hasattr(self, "_update_cancel"):
+            self._update_cancel.set()
+
+    def _interrupt_backends(self) -> None:
         for name, backend in self.transcription_backends.items():
             try:
                 backend.cancel_transcription()
@@ -2927,92 +2886,187 @@ class ApplicationController(QObject):
         from services.local_asr.process import close_all_workers
         close_all_workers()
 
-        try:
-            # Shut the meeting engine down early: it owns capture streams, a
-            # web server, and possibly a sidecar process.
-            self.meeting_runtime.cleanup()
-        except Exception as exc:
-            logger.debug(f"Error during meeting runtime cleanup: {exc}")
+    def _stop_remote_engine(self) -> None:
+        self.remote_engine.shutdown()
+        # A model switch waits minutes for the host; the executor below
+        # would wait with it, so end the connection first.
+        remote = self.transcription_backends.get("remote")
+        if remote is not None:
+            remote.cleanup()
 
-        try:
-            self.hotkey_runtime.cleanup()
-        except Exception as exc:
-            logger.debug(f"Error during hotkey runtime cleanup: {exc}")
-
-        try:
-            if self.hotkey_manager:
-                self.hotkey_manager.cleanup()
-        except Exception as exc:
-            logger.debug(f"Error during hotkey cleanup: {exc}")
-
-        try:
-            if self.recorder:
-                self.recorder.cleanup()
-        except Exception as exc:
-            logger.debug(f"Error during recorder cleanup: {exc}")
-
-        try:
-            self.streaming_runtime.cleanup()
-        except Exception as exc:
-            logger.debug(f"Error during streaming cleanup: {exc}")
-
-        try:
-            # Must happen before the shutdown below: cancel_futures only
-            # cancels futures that have not started, so an in-flight
-            # multi-gigabyte download would hold shutdown open for minutes.
-            # The download loop checks its cancel event once per MiB.
-            component_coordinator.cancel_all()
-        except Exception as exc:
-            logger.debug(f"Error cancelling component installs: {exc}")
-
-        try:
-            # An upload in progress resumes from where it stopped next time.
-            self.record_sync.stop(timeout=2.0)
-        except Exception as exc:
-            logger.debug(f"Error stopping the record sync: {exc}")
-
-        try:
-            self.remote_engine.shutdown()
-            # A model switch waits minutes for the host; the executor below
-            # would wait with it, so end the connection first.
-            remote = self.transcription_backends.get("remote")
-            if remote is not None:
-                remote.cleanup()
-        except Exception as exc:
-            logger.debug(f"Error stopping the remote engine host: {exc}")
-
-        for executor in (self.executor, self.component_executor):
+    def _cleanup_backends(self) -> None:
+        for backend_name, backend in self.transcription_backends.items():
             try:
-                executor.shutdown(wait=True, cancel_futures=True)
+                logger.info(f"Cleaning up transcription backend: {backend_name}")
+                backend.cleanup()
             except Exception as exc:
-                logger.debug(f"Error during executor shutdown: {exc}")
+                logger.debug(f"Error cleaning up {backend_name} backend: {exc}")
+        self.transcription_backends.clear()
+        self.current_backend = None
 
-        # Accepted transcripts must survive Quit even while another history
-        # save is running. Drain this queue before SQLite or UI resources close.
-        self.persistence_executor.shutdown(wait=True, cancel_futures=False)
 
-        try:
-            for backend_name, backend in self.transcription_backends.items():
-                try:
-                    logger.info(f"Cleaning up transcription backend: {backend_name}")
-                    backend.cleanup()
-                except Exception as exc:
-                    logger.debug(f"Error cleaning up {backend_name} backend: {exc}")
-            self.transcription_backends.clear()
-            self.current_backend = None
-        except Exception as exc:
-            logger.debug(f"Error during transcription backends cleanup: {exc}")
+def _attempt(step: Callable[[], object], failure: str) -> None:
+    """Run one shutdown step; a failure is logged as ``failure: error`` and skipped."""
+    try:
+        step()
+    except Exception as exc:
+        logger.debug(f"{failure}: {exc}")
 
-        try:
-            self.ui_controller.cleanup()
-        except Exception as exc:
-            logger.debug(f"Error during UI controller cleanup: {exc}")
 
-        try:
-            db.close()
-        except Exception as exc:
-            logger.debug(f"Error closing database: {exc}")
+def _cleanup_if_present(resource) -> None:
+    if resource:
+        resource.cleanup()
 
-        logger.info("Application controller cleaned up")
-        from services.diagnostics import record_metrics
-        record_metrics(shutdown_s=time.perf_counter() - shutdown_started)
+
+def _stop_playback_and_focus_capture() -> None:
+    from services import audio_player, focus_context
+
+    audio_player.stop_playback()
+    # Its capture threads hold accessibility (COM) objects that must
+    # be released before the interpreter shuts down.
+    focus_context.shutdown_service()
+
+# ---- ApplicationController helpers taking the controller explicitly ----
+# Tests bind the methods that call these onto minimal stand-ins, which carry
+# only the methods they bind, so these helpers live outside the class.
+
+
+def _release_unselected_engines(controller, selected) -> None:
+    from services.local_asr.catalog import BACKENDS
+    for key in ("local_whisper", *BACKENDS, "remote"):
+        other = controller.transcription_backends.get(key)
+        if other is not None and other is not selected:
+            other.cleanup()
+
+
+def _reload_speech_engine(controller, selected) -> Optional[TranscriptionBackend]:
+    """Reload an optional speech engine; return it when it still has to be warmed."""
+    warm = None
+    try:
+        selected.reload_model()
+        if selected is not controller.current_backend:
+            selected.cleanup()
+            return None
+        _announce_speech_engine(controller, selected)
+        if selected.is_model_missing:
+            controller.ensure_local_model_available()
+        elif selected.is_available() and selected.backend_id in config.SPEECH_WARMUP_BACKENDS:
+            warm = selected
+    except Exception as exc:
+        logger.error("Engine load failed: %s", exc)
+        controller.status_update.emit(f"Engine load failed: {exc}")
+        controller.device_info_update.emit(str(exc), False)
+    finally:
+        if warm is None:
+            controller._finish_speech_reload(selected)
+    return warm
+
+
+def _announce_speech_engine(controller, selected) -> None:
+    controller.device_info_update.emit(selected.device_info, selected.is_available())
+    controller.status_update.emit(selected.device_info)
+    # A paired computer that kept its model says why.
+    if getattr(selected, "switch_error", ""):
+        controller.status_update.emit(selected.switch_error)
+    # Auto fell back to the CPU; say why after the ready line.
+    if getattr(selected, "cpu_fallback_note", ""):
+        controller.status_update.emit(selected.cpu_fallback_note)
+
+
+def _speech_engine_readiness_message(controller, backend) -> Optional[str]:
+    if controller._reload_in_flight:
+        return "Speech engine is still loading..."
+    if getattr(backend, "is_remote", False):
+        return _remote_engine_readiness_message(controller, backend)
+    if backend.is_model_missing:
+        controller.ensure_local_model_available()
+    elif backend.should_cancel or not backend.last_error:
+        controller.reload_whisper_model()
+        return "Reloading speech engine..."
+    return backend.device_info
+
+
+def _remote_engine_readiness_message(controller, backend) -> str:
+    # The host may be back (woke up, came into range): try now
+    # rather than at the next scheduled retry.
+    controller.retry_remote_now()
+    host = backend.host_name or "the remote engine"
+    if controller._remote_restoring or not backend.last_error:
+        return f"Connecting to {host}..."
+    return f"{backend.last_error} Trying again..."
+
+
+def _engine_switch_refusal(controller, name: str) -> Optional[str]:
+    if controller.is_meeting_active():
+        return f"{name} is running a meeting. Change its model after the meeting ends."
+    if controller.recorder.is_recording or controller.is_transcribing():
+        return f"{name} is transcribing right now. Try again in a moment."
+    return None
+
+
+def _apply_engine_overrides(controller, name: str, family: str, model: str, runtime: Optional[dict],
+                            target_device: Optional[str]) -> Optional[str]:
+    """Save a requested device and runtime settings; returns why not, or None."""
+    if target_device is not None:
+        refusal = _save_engine_device(controller, name, family, model, target_device)
+        if refusal is not None:
+            return refusal
+    if runtime is not None:
+        from services.remote_asr.engines import host_engine_for
+        from services.remote_asr.runtime import validate_runtime
+
+        if controller._reload_in_flight or controller._reload_pending:
+            return f"{name} is loading its engine. Try again in a moment."
+        description = host_engine_for(controller.current_backend).describe()
+        updates = validate_runtime(description, family, model, runtime)
+        settings_manager.update_settings(updates)
+    return None
+
+
+def _save_engine_device(controller, name: str, family: str, model: str, target_device: str) -> Optional[str]:
+    from services.local_asr.catalog import WHISPER_BACKEND
+    from services.remote_asr.dependencies import validate_model_device
+
+    if controller._reload_in_flight or controller._reload_pending:
+        return f"{name} is loading its engine. Try again in a moment."
+    validate_model_device(family, model, target_device)
+    if family == WHISPER_BACKEND:
+        settings_manager.update_settings({SettingsKey.WHISPER_DEVICE: target_device,
+                                          SettingsKey.WHISPER_COMPUTE_TYPE: "auto"})
+    else:
+        devices = dict(settings_manager.get(SettingsKey.LOCAL_ASR_DEVICES, {}) or {})
+        devices[family] = target_device
+        settings_manager.save_setting(SettingsKey.LOCAL_ASR_DEVICES, devices)
+    return None
+
+
+def _save_engine_model(family: str, model: str) -> Optional[str]:
+    """Persist ``model`` as ``family``'s model; returns its label, or None if it can't run it."""
+    from services.local_asr.catalog import BACKENDS, MODELS, WHISPER_BACKEND
+
+    if family in BACKENDS and model in MODELS and MODELS[model].backend == family:
+        models = dict(settings_manager.load_all_settings().get(SettingsKey.LOCAL_ASR_MODELS) or {})
+        models[family] = model
+        settings_manager.save_setting(SettingsKey.LOCAL_ASR_MODELS, models)
+        return MODELS[model].label
+    if family == WHISPER_BACKEND and model in config.WHISPER_MODEL_CHOICES and model != "auto":
+        settings_manager.save_setting(SettingsKey.WHISPER_MODEL, model)
+        return f"Whisper {model}"
+    return None
+
+
+def _select_backend_family(controller, family: str) -> bool:
+    """Select ``family``'s backend through the main window; False when it didn't take."""
+    if controller._current_model_name == family:
+        return True
+    display = next(key for key, value in config.MODEL_VALUE_MAP.items() if value == family)
+    controller.ui_controller.select_transcription_backend(display)
+    return controller._current_model_name == family
+
+
+def _whisper_already_serves(controller, family: str, model: str) -> bool:
+    from services.local_asr.catalog import WHISPER_BACKEND
+
+    whisper = controller.transcription_backends.get(WHISPER_BACKEND)
+    return (family == WHISPER_BACKEND and whisper is not None and whisper.is_available()
+            and whisper.last_loaded_model == model and not controller._reload_pending)
