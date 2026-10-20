@@ -373,7 +373,8 @@ class AppLink:
             connection, target = self.connect(NOTIFY_TIMEOUT_S)
         except LinkError as exc:
             if exc.state == "unreachable":
-                raise LinkError(exc.state, f"{exc.message} The reply wasn't shown; tell the user here instead.") from None
+                message = f"{exc.message} The reply wasn't shown; tell the user here instead."
+                raise LinkError(exc.state, message) from None
             raise
         try:
             connection.request(
@@ -636,7 +637,8 @@ class EventStream:
         try:
             connection, target = self._link.connect(self._read_timeout)
         except LinkError as exc:
-            self._report(exc.state, exc.message, logging.WARNING if exc.state == "bad_url" else logging.INFO)
+            level = logging.WARNING if exc.state == "bad_url" else logging.INFO
+            self._report(exc.state, exc.message, level)
             return False, exc.state
         with self._lock:
             self._socket = connection.sock
@@ -644,12 +646,7 @@ class EventStream:
         try:
             if self._stop.is_set():
                 return False, "stopped"
-            headers = self._link.headers(
-                self._link.token(), Accept="text/event-stream", **{"Cache-Control": "no-cache"}
-            )
-            if self.last_id and self.last_id.isascii() and self.last_id.isprintable():
-                headers["Last-Event-ID"] = self.last_id
-            connection.request("GET", target.base_path + EVENTS_PATH, headers=headers)
+            connection.request("GET", target.base_path + EVENTS_PATH, headers=self._stream_headers())
             response = connection.getresponse()
             content_type = response.getheader("Content-Type", "")
             if response.status != 200 or not content_type.startswith("text/event-stream"):
@@ -672,17 +669,29 @@ class EventStream:
                 self._report("silent", "OpenWhisper stopped sending events; reconnecting.")
             return opened, "silent"
         except (OSError, http.client.HTTPException, ValueError):
-            if self._stop.is_set():
-                return opened, "stopped"
-            if opened:
-                self._report("dropped", "The connection to OpenWhisper dropped; reconnecting.")
-                return True, "dropped"
-            self._report("unreachable", self._link.unreachable_message())
-            return False, "unreachable"
+            return self._connection_lost(opened)
         finally:
             with self._lock:
                 self._socket = None
             connection.close()
+
+    def _stream_headers(self) -> dict:
+        headers = self._link.headers(
+            self._link.token(), Accept="text/event-stream", **{"Cache-Control": "no-cache"}
+        )
+        if self.last_id and self.last_id.isascii() and self.last_id.isprintable():
+            headers["Last-Event-ID"] = self.last_id
+        return headers
+
+    def _connection_lost(self, opened: bool) -> tuple[bool, str]:
+        """How a connection that failed or dropped ended, reported once."""
+        if self._stop.is_set():
+            return opened, "stopped"
+        if opened:
+            self._report("dropped", "The connection to OpenWhisper dropped; reconnecting.")
+            return True, "dropped"
+        self._report("unreachable", self._link.unreachable_message())
+        return False, "unreachable"
 
     def _read(self, response: http.client.HTTPResponse) -> None:
         parser = SseParser(self.last_id)
@@ -855,17 +864,8 @@ class ChannelServer:
     # -- input
 
     def _handle_line(self, line: bytes) -> None:
-        try:
-            message = json.loads(line)
-        except ValueError:
-            self._error(None, PARSE_ERROR, "Parse error")
-            return
-        if isinstance(message, list):
-            # JSON-RPC batches left MCP in 2025-06-18; no client of this server sends them.
-            self._error(None, INVALID_REQUEST, "Batches are not supported")
-            return
-        if not isinstance(message, dict):
-            self._error(None, INVALID_REQUEST, "Invalid Request")
+        message = self._parse_message(line)
+        if message is None:
             return
         method = message.get("method")
         if not isinstance(method, str):
@@ -883,6 +883,25 @@ class ChannelServer:
         if not isinstance(params, dict):
             self._error(request_id, INVALID_PARAMS, "params must be an object")
             return
+        self._request(request_id, method, params)
+
+    def _parse_message(self, line: bytes) -> Optional[dict]:
+        """The JSON-RPC message object on ``line``; None after answering one that isn't."""
+        try:
+            message = json.loads(line)
+        except ValueError:
+            self._error(None, PARSE_ERROR, "Parse error")
+            return None
+        if isinstance(message, list):
+            # JSON-RPC batches left MCP in 2025-06-18; no client of this server sends them.
+            self._error(None, INVALID_REQUEST, "Batches are not supported")
+            return None
+        if not isinstance(message, dict):
+            self._error(None, INVALID_REQUEST, "Invalid Request")
+            return None
+        return message
+
+    def _request(self, request_id: Any, method: str, params: dict) -> None:
         if method == "initialize":
             self._result(request_id, self._initialize(params))
         elif method == "ping":
