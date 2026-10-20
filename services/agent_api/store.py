@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import sqlite3
 from pathlib import Path
 from urllib.parse import quote
@@ -44,6 +45,8 @@ CARDS = {
     "live_notes",
     "user_notes",
 }
+_CURSOR_MAX_CHARS = 2048
+_FINGERPRINT_CHARS = 24
 
 
 class InvalidQuery(ValueError):
@@ -89,6 +92,55 @@ def _filters(table, timestamp, include_remote=False, since=None, before=None, or
     if before is not None:
         clauses.append(_time(timestamp) < func.julianday(before))
     return clauses
+
+
+def _fingerprint(scope):
+    return hashlib.sha256(json.dumps(scope, sort_keys=True).encode()).hexdigest()[:_FINGERPRINT_CHARS]
+
+
+def _cursor_keys(cursor, valid_fingerprints, key_count):
+    """The sort-key values a cursor resumes after.
+
+    Raises:
+        InvalidQuery: The cursor is malformed or was issued for other filters.
+    """
+    try:
+        if len(cursor) > _CURSOR_MAX_CHARS:
+            raise ValueError
+        decoded = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
+        values = decoded["keys"]
+        if decoded["scope"] not in valid_fingerprints or len(values) != key_count:
+            raise ValueError
+        if not isinstance(values, list) or any(
+            not isinstance(v, (str, int, float)) for v in values
+        ):
+            raise ValueError
+        # First key is always a finite timestamp/start time, then IDs.
+        if (
+            isinstance(values[0], bool)
+            or not isinstance(values[0], (int, float))
+            or not math.isfinite(values[0])
+        ):
+            raise ValueError
+        if any(not isinstance(v, str) for v in values[1:]):
+            raise ValueError
+    except (ValueError, TypeError, KeyError, OverflowError) as exc:
+        raise InvalidQuery(
+            "Invalid cursor or cursor used with different filters."
+        ) from exc
+    return values
+
+
+def _after(query, keys, descending, values):
+    """Rows that sort after ``values`` in the order ``keys`` and ``descending`` give."""
+    terms = []
+    for i, (name, desc) in enumerate(zip(keys, descending, strict=True)):
+        column = query.c[name]
+        comparison = column < values[i] if desc else column > values[i]
+        terms.append(
+            and_(*(query.c[keys[j]] == values[j] for j in range(i)), comparison)
+        )
+    return or_(*terms)
 
 
 class HistoryStore:
@@ -153,52 +205,15 @@ class HistoryStore:
     ):
         if not 1 <= limit <= 100:
             raise InvalidQuery("limit must be between 1 and 100.")
-        fingerprint = hashlib.sha256(
-            json.dumps(scope, sort_keys=True).encode()
-        ).hexdigest()[:24]
+        fingerprint = _fingerprint(scope)
         valid_fingerprints = {fingerprint} | {
-            hashlib.sha256(json.dumps(previous, sort_keys=True).encode()).hexdigest()[:24]
-            for previous in compatible_scopes
+            _fingerprint(previous) for previous in compatible_scopes
         }
         query = statement.subquery()
         statement = select(query)
         if cursor:
-            try:
-                if len(cursor) > 2048:
-                    raise ValueError
-                decoded = json.loads(
-                    base64.b64decode(cursor, altchars=b"-_", validate=True)
-                )
-                values = decoded["keys"]
-                if decoded["scope"] not in valid_fingerprints or len(values) != len(keys):
-                    raise ValueError
-                if not isinstance(values, list) or any(
-                    not isinstance(v, (str, int, float)) for v in values
-                ):
-                    raise ValueError
-                # First key is always a finite timestamp/start time, then IDs.
-                import math
-
-                if (
-                    isinstance(values[0], bool)
-                    or not isinstance(values[0], (int, float))
-                    or not math.isfinite(values[0])
-                ):
-                    raise ValueError
-                if any(not isinstance(v, str) for v in values[1:]):
-                    raise ValueError
-            except (ValueError, TypeError, KeyError, OverflowError) as exc:
-                raise InvalidQuery(
-                    "Invalid cursor or cursor used with different filters."
-                ) from exc
-            terms = []
-            for i, (name, desc) in enumerate(zip(keys, descending, strict=True)):
-                column = query.c[name]
-                comparison = column < values[i] if desc else column > values[i]
-                terms.append(
-                    and_(*(query.c[keys[j]] == values[j] for j in range(i)), comparison)
-                )
-            statement = statement.where(or_(*terms))
+            values = _cursor_keys(cursor, valid_fingerprints, len(keys))
+            statement = statement.where(_after(query, keys, descending, values))
         statement = statement.order_by(
             *(
                 query.c[name].desc() if desc else query.c[name].asc()
