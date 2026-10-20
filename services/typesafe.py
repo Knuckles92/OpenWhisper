@@ -38,6 +38,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from http import HTTPStatus
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from services.credentials import resolve_credential
@@ -381,38 +382,54 @@ def validate_answers(body: Any, questions: Mapping[str, Mapping[str, Any]]) -> D
         if not isinstance(answer, Mapping) or answer.get("type") != kind:
             raise TypeSafeError(f"answer type mismatch on {name}")
         if kind == "noul":
-            value = answer.get("noul")
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0.0 <= float(value) <= 1.0:
-                raise TypeSafeError(f"invalid probability on {name}")
-            checked[name] = {"type": "noul", "noul": float(value)}
+            checked[name] = _checked_noul(name, answer)
         elif kind == "choice":
-            choice = answer.get("choice")
-            if choice not in question.get("criteria", {}):
-                raise TypeSafeError(f"unknown choice on {name}")
-            confidence = answer.get("confidence", 0.0)
-            if not isinstance(confidence, (int, float)) or not 0.0 <= float(confidence) <= 1.0:
-                raise TypeSafeError(f"invalid confidence on {name}")
-            probabilities = answer.get("probabilities") or {}
-            if not isinstance(probabilities, Mapping):
-                raise TypeSafeError(f"invalid probabilities on {name}")
-            checked[name] = {
-                "type": "choice", "choice": str(choice), "confidence": float(confidence),
-                "probabilities": {str(k): float(v) for k, v in probabilities.items()
-                                  if isinstance(v, (int, float))},
-            }
+            checked[name] = _checked_choice(name, question, answer)
         elif kind == "score":
-            score = answer.get("score")
-            levels = len(question.get("criteria") or [])
-            if not isinstance(score, (int, float)) or not 0.0 <= float(score) <= max(0, levels - 1):
-                raise TypeSafeError(f"invalid score on {name}")
-            confidence = answer.get("confidence", 0.0)
-            checked[name] = {
-                "type": "score", "score": float(score),
-                "confidence": float(confidence) if isinstance(confidence, (int, float)) else 0.0,
-            }
+            checked[name] = _checked_score(name, question, answer)
         else:
             raise TypeSafeError(f"unsupported question type on {name}")
     return checked
+
+
+def _is_unit_interval(value: Any) -> bool:
+    return isinstance(value, (int, float)) and 0.0 <= float(value) <= 1.0
+
+
+def _checked_noul(name: str, answer: Mapping[str, Any]) -> Dict[str, Any]:
+    value = answer.get("noul")
+    if isinstance(value, bool) or not _is_unit_interval(value):
+        raise TypeSafeError(f"invalid probability on {name}")
+    return {"type": "noul", "noul": float(value)}
+
+
+def _checked_choice(name: str, question: Mapping[str, Any], answer: Mapping[str, Any]) -> Dict[str, Any]:
+    choice = answer.get("choice")
+    if choice not in question.get("criteria", {}):
+        raise TypeSafeError(f"unknown choice on {name}")
+    confidence = answer.get("confidence", 0.0)
+    if not _is_unit_interval(confidence):
+        raise TypeSafeError(f"invalid confidence on {name}")
+    probabilities = answer.get("probabilities") or {}
+    if not isinstance(probabilities, Mapping):
+        raise TypeSafeError(f"invalid probabilities on {name}")
+    return {
+        "type": "choice", "choice": str(choice), "confidence": float(confidence),
+        "probabilities": {str(k): float(v) for k, v in probabilities.items()
+                          if isinstance(v, (int, float))},
+    }
+
+
+def _checked_score(name: str, question: Mapping[str, Any], answer: Mapping[str, Any]) -> Dict[str, Any]:
+    score = answer.get("score")
+    top = max(0, len(question.get("criteria") or []) - 1)
+    if not isinstance(score, (int, float)) or not 0.0 <= float(score) <= top:
+        raise TypeSafeError(f"invalid score on {name}")
+    confidence = answer.get("confidence", 0.0)
+    return {
+        "type": "score", "score": float(score),
+        "confidence": float(confidence) if isinstance(confidence, (int, float)) else 0.0,
+    }
 
 
 class _Primitives:
@@ -723,25 +740,33 @@ def verify_key(api_key: str, *, route: JudgeRoute = TYPESAFE_ROUTE,
         logger.debug("TypeSafe key verification failed: %s", type(exc).__name__)
         return False, f"Couldn't reach {host} ({type(exc).__name__})."
     elapsed = time.monotonic() - started
-    if status == 401:
-        return False, f"{host} rejected the key (HTTP 401)."
-    if status == 402:
-        # OpenRouter's answer for an account with no credits left.
-        return False, f"{host} accepted the key, but the account is out of credits (HTTP 402)."
-    if status == 403:
-        return False, f"{host} accepted the key but denied access (HTTP 403)."
-    if status == 404 and route is OPENROUTER_ROUTE:
-        # For chat models OpenRouter answers 404 when the account's privacy
-        # settings exclude every provider of the model; assume the same here.
-        return False, (f"{host} has no route to {route.model} for this key (HTTP 404). "
-                       "Check the provider and privacy settings on your OpenRouter account.")
-    if status == 429:
-        # Throttling only happens after authentication, so the key is good.
-        return True, f"{host} accepted the key but is rate limiting it (HTTP 429)."
-    if status != 200:
-        return False, f"{host} answered HTTP {status}."
+    outcome = _status_outcome(status, host, route)
+    if outcome is not None:
+        return outcome
     try:
         validate_answers(json.loads(text), _VERIFY_QUESTIONS)
     except (ValueError, TypeSafeError) as exc:
         return False, f"{host} accepted the key but answered oddly: {exc}."
     return True, f"{host} accepted the key and {route.model} answered in {elapsed:.2f} s."
+
+
+def _status_outcome(status: int, host: str, route: JudgeRoute) -> Optional[Tuple[bool, str]]:
+    """The verification outcome an HTTP status decides, or None for 200."""
+    if status == HTTPStatus.UNAUTHORIZED:
+        return False, f"{host} rejected the key (HTTP 401)."
+    if status == HTTPStatus.PAYMENT_REQUIRED:
+        # OpenRouter's answer for an account with no credits left.
+        return False, f"{host} accepted the key, but the account is out of credits (HTTP 402)."
+    if status == HTTPStatus.FORBIDDEN:
+        return False, f"{host} accepted the key but denied access (HTTP 403)."
+    if status == HTTPStatus.NOT_FOUND and route is OPENROUTER_ROUTE:
+        # For chat models OpenRouter answers 404 when the account's privacy
+        # settings exclude every provider of the model; assume the same here.
+        return False, (f"{host} has no route to {route.model} for this key (HTTP 404). "
+                       "Check the provider and privacy settings on your OpenRouter account.")
+    if status == HTTPStatus.TOO_MANY_REQUESTS:
+        # Throttling only happens after authentication, so the key is good.
+        return True, f"{host} accepted the key but is rate limiting it (HTTP 429)."
+    if status != HTTPStatus.OK:
+        return False, f"{host} answered HTTP {status}."
+    return None
