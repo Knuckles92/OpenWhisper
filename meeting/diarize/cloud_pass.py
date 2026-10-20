@@ -16,7 +16,7 @@ import io
 import logging
 import re
 from collections import defaultdict
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -73,17 +73,7 @@ def map_turns_to_segments(
     Returns:
         ``segment_id -> api_speaker``.
     """
-    usable_turns = []
-    for turn in turns:
-        speaker = str(turn.get("speaker") or "").strip()
-        try:
-            start = float(turn.get("start"))
-            end = float(turn.get("end"))
-        except (TypeError, ValueError):
-            continue
-        if not speaker or end <= start:
-            continue
-        usable_turns.append({"speaker": speaker, "start": start, "end": end})
+    usable_turns = _usable_turns(turns)
     assigned: Dict[str, str] = {}
     for row in segments:
         if bool(row.get("speaker_pinned")):
@@ -96,26 +86,48 @@ def map_turns_to_segments(
             end = float(row.get("end_s"))
         except (TypeError, ValueError):
             continue
-        best_speaker = None
-        best_overlap = 0.0
-        best_turn_start = 0.0
-        for turn in usable_turns:
-            overlap = overlap_duration(start, end, turn["start"], turn["end"])
-            if overlap <= 0.0:
-                continue
-            if (
-                overlap > best_overlap + _OVERLAP_TIE_EPS
-                or (
-                    abs(overlap - best_overlap) <= _OVERLAP_TIE_EPS
-                    and (best_speaker is None or turn["start"] < best_turn_start)
-                )
-            ):
-                best_overlap = overlap
-                best_speaker = turn["speaker"]
-                best_turn_start = turn["start"]
+        best_speaker = _best_overlapping_speaker(start, end, usable_turns)
         if best_speaker is not None:
             assigned[segment_id] = best_speaker
     return assigned
+
+
+def _usable_turns(turns: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Turns with a speaker and a positive numeric span."""
+    usable_turns = []
+    for turn in turns:
+        speaker = str(turn.get("speaker") or "").strip()
+        try:
+            start = float(turn.get("start"))
+            end = float(turn.get("end"))
+        except (TypeError, ValueError):
+            continue
+        if not speaker or end <= start:
+            continue
+        usable_turns.append({"speaker": speaker, "start": start, "end": end})
+    return usable_turns
+
+
+def _best_overlapping_speaker(
+    start: float, end: float, usable_turns: Sequence[Dict[str, Any]],
+) -> Optional[str]:
+    """Speaker of the turn overlapping ``[start, end)`` most; ties go to the earlier turn."""
+    best_speaker = None
+    best_overlap = 0.0
+    best_turn_start = 0.0
+    for turn in usable_turns:
+        overlap = overlap_duration(start, end, turn["start"], turn["end"])
+        if overlap <= 0.0:
+            continue
+        clearly_longer = overlap > best_overlap + _OVERLAP_TIE_EPS
+        tied = abs(overlap - best_overlap) <= _OVERLAP_TIE_EPS
+        if clearly_longer or (
+            tied and (best_speaker is None or turn["start"] < best_turn_start)
+        ):
+            best_overlap = overlap
+            best_speaker = turn["speaker"]
+            best_turn_start = turn["start"]
+    return best_speaker
 
 
 def resolve_speaker_participants(
@@ -192,6 +204,26 @@ def pick_reference_segments(
     participant. Falls back to a pinned segment on that participant when
     nothing else is long enough.
     """
+    by_participant = _loopback_rows_by_participant(segments)
+    picked: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+    for participant in participants:
+        if len(picked) >= int(limit):
+            break
+        if not _is_human_named_cluster(participant):
+            continue
+        participant_id = str(participant.get("id") or "")
+        if not participant_id:
+            continue
+        best = _longest_reference_row(list(by_participant.get(participant_id) or []))
+        if best is None:
+            continue
+        picked.append((participant, best))
+    return picked
+
+
+def _loopback_rows_by_participant(
+    segments: Sequence[Dict[str, Any]],
+) -> Dict[str, List[Dict[str, Any]]]:
     by_participant: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for row in segments:
         if str(row.get("channel") or "") != CHANNEL_LOOPBACK:
@@ -200,35 +232,33 @@ def pick_reference_segments(
         if not participant_id:
             continue
         by_participant[str(participant_id)].append(row)
+    return by_participant
 
-    picked: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
-    for participant in participants:
-        if len(picked) >= int(limit):
-            break
-        if str(participant.get("kind") or "") != "others_cluster":
-            continue
-        if str(participant.get("name_source") or "") != "human":
-            continue
-        participant_id = str(participant.get("id") or "")
-        if not participant_id:
-            continue
-        candidates = list(by_participant.get(participant_id) or [])
-        if not candidates:
-            continue
-        unpinned = [row for row in candidates if not row.get("speaker_pinned")]
-        pool = unpinned or candidates
 
-        def _duration(row: Dict[str, Any]) -> float:
-            try:
-                return float(row.get("end_s") or 0.0) - float(row.get("start_s") or 0.0)
-            except (TypeError, ValueError):
-                return 0.0
+def _is_human_named_cluster(participant: Dict[str, Any]) -> bool:
+    if str(participant.get("kind") or "") != "others_cluster":
+        return False
+    return str(participant.get("name_source") or "") == "human"
 
-        best = max(pool, key=_duration)
-        if _duration(best) <= 0.0:
-            continue
-        picked.append((participant, best))
-    return picked
+
+def _row_duration(row: Dict[str, Any]) -> float:
+    """Segment length in seconds; 0.0 when its times are not numeric."""
+    try:
+        return float(row.get("end_s") or 0.0) - float(row.get("start_s") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _longest_reference_row(candidates: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Longest unpinned row (any row when all are pinned), if it has positive length."""
+    if not candidates:
+        return None
+    unpinned = [row for row in candidates if not row.get("speaker_pinned")]
+    pool = unpinned or candidates
+    best = max(pool, key=_row_duration)
+    if _row_duration(best) <= 0.0:
+        return None
+    return best
 
 
 def parse_diarized_result(result: Any) -> List[Dict[str, Any]]:
@@ -358,13 +388,7 @@ def _anchor_clips_from_window(
     for speaker, segment_ids in speaker_to_segment_ids.items():
         duration = 0.0
         for segment_id in segment_ids:
-            row = segments_by_id.get(segment_id) or {}
-            try:
-                duration += float(row.get("end_s") or 0.0) - float(
-                    row.get("start_s") or 0.0
-                )
-            except (TypeError, ValueError):
-                continue
+            duration += _row_duration(segments_by_id.get(segment_id) or {})
         scored.append((duration, speaker))
     scored.sort(reverse=True)
     anchors: List[Tuple[str, str, str]] = []
@@ -374,18 +398,7 @@ def _anchor_clips_from_window(
         participant_id = speaker_to_pid.get(speaker)
         if not participant_id:
             continue
-        segment_ids = speaker_to_segment_ids.get(speaker) or []
-        best = None
-        best_dur = 0.0
-        for segment_id in segment_ids:
-            row = segments_by_id.get(segment_id) or {}
-            try:
-                dur = float(row.get("end_s") or 0.0) - float(row.get("start_s") or 0.0)
-            except (TypeError, ValueError):
-                continue
-            if dur > best_dur:
-                best_dur = dur
-                best = row
+        best = _longest_row(speaker_to_segment_ids.get(speaker) or [], segments_by_id)
         if best is None:
             continue
         clip = cut_reference_clip(
@@ -402,6 +415,21 @@ def _anchor_clips_from_window(
         )
         anchors.append((label, clip, participant_id))
     return anchors
+
+
+def _longest_row(
+    segment_ids: Sequence[str], segments_by_id: Dict[str, Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """First row of maximal positive duration, or None."""
+    best = None
+    best_dur = 0.0
+    for segment_id in segment_ids:
+        row = segments_by_id.get(segment_id) or {}
+        dur = _row_duration(row)
+        if dur > best_dur:
+            best_dur = dur
+            best = row
+    return best
 
 
 def _turns_on_meeting_clock(
@@ -467,59 +495,23 @@ def run_cloud_speaker_pass(
     """
     from meeting.asr.offline import load_channel_session
 
-    try:
-        chunks = repository.get_audio_chunks(meeting_id)
-    except Exception:
-        logger.exception("Could not load audio chunks for cloud speaker pass")
-        chunks = []
+    chunks = _audio_chunks(repository, meeting_id)
     frames, rate, origin_s = load_channel_session(spool_dir, CHANNEL_LOOPBACK, chunks)
     if frames is None or getattr(frames, "size", 0) == 0:
-        return {
-            "ok": False, "applied": 0, "created": 0, "windows": 0,
-            "error": "No system-audio recording is available.",
-        }
+        return _failed("No system-audio recording is available.")
 
     try:
-        segments = [
-            row for row in repository.get_segments(meeting_id)
-            if str(row.get("channel") or "") == CHANNEL_LOOPBACK
-        ]
+        segments = _loopback_segments(repository, meeting_id)
     except Exception as exc:
         logger.exception("Could not load segments for cloud speaker pass")
-        return {
-            "ok": False, "applied": 0, "created": 0, "windows": 0,
-            "error": str(exc),
-        }
+        return _failed(str(exc))
     if not segments:
-        return {
-            "ok": False, "applied": 0, "created": 0, "windows": 0,
-            "error": "No system-audio transcript segments to label.",
-        }
+        return _failed("No system-audio transcript segments to label.")
 
-    participants = store.with_state(
-        lambda state: [p.to_dict() for p in state.participants.values()]
+    speaker_pass = _LoopbackSpeakerPass(
+        store, segments, frames, rate, origin_s, bitrate=bitrate, model=model,
     )
-    named_pairs = pick_reference_segments(participants, segments)
-    named_slugs = _unique_slugs([
-        str(participant.get("display_name") or "")
-        for participant, _row in named_pairs
-    ])
-    named_refs: List[str] = []
-    named_map: Dict[str, str] = {}
-    for slug, (participant, row) in zip(named_slugs, named_pairs):
-        clip = cut_reference_clip(
-            frames, rate,
-            float(row.get("start_s") or 0.0),
-            float(row.get("end_s") or 0.0),
-            origin_s=origin_s,
-            bitrate=bitrate,
-        )
-        if not clip:
-            continue
-        named_refs.append(clip)
-        named_map[slug] = str(participant["id"])
-    known_names = [slug for slug in named_map]
-    known_clips = named_refs[:len(known_names)]
+    known = speaker_pass.named_references()
 
     windows = plan_windows(
         int(frames.size), int(rate),
@@ -527,10 +519,7 @@ def run_cloud_speaker_pass(
         overlap_s=DEFAULT_WINDOW_OVERLAP_S,
     )
     if not windows:
-        return {
-            "ok": False, "applied": 0, "created": 0, "windows": 0,
-            "error": "System-audio recording is empty.",
-        }
+        return _failed("System-audio recording is empty.")
 
     decoder = transcribe_fn or (
         lambda mp3_bytes, **kwargs: default_transcribe(
@@ -538,95 +527,100 @@ def run_cloud_speaker_pass(
         )
     )
 
-    segments_by_id = {str(row["id"]): row for row in segments if row.get("id")}
-    all_assignments: Dict[str, str] = {}
-    speaker_segments: Dict[str, List[str]] = defaultdict(list)
-    window_names = list(known_names)
-    window_clips = list(known_clips)
-    window_named_map = dict(named_map)
-
+    references = _References(list(known.names), list(known.clips), dict(known.named_map))
     for index, (start, end) in enumerate(windows, 1):
-        if progress_cb is not None:
-            try:
-                progress_cb(
-                    f"Identifying speakers in window {index}/{len(windows)}",
-                    index, len(windows),
-                )
-            except Exception:
-                logger.exception("Cloud speaker progress callback failed")
-        window = frames[start:end]
-        try:
-            mp3 = encode_mp3(window, rate, bitrate)
-        except Exception as exc:
-            logger.exception("Failed to encode loopback window %s", index)
-            return {
-                "ok": False, "applied": 0, "created": 0,
-                "windows": len(windows), "error": str(exc),
-            }
-        try:
-            raw_turns = decoder(
-                mp3,
-                known_speaker_names=window_names or None,
-                known_speaker_references=window_clips or None,
-            )
-        except Exception as exc:
-            if openai_retirement.is_model_gone_error(exc):
-                logger.warning("OpenAI no longer serves %s", model)
-                return {
-                    "ok": False, "applied": 0, "created": 0,
-                    "windows": len(windows), "retired": True,
-                    "error": openai_retirement.SPEAKER_MODEL_RETIRED_MESSAGE,
-                }
-            logger.exception("Cloud diarize request failed for window %s", index)
-            return {
-                "ok": False, "applied": 0, "created": 0,
-                "windows": len(windows), "error": str(exc),
-            }
-        window_origin = float(origin_s) + start / float(rate)
-        turns = _turns_on_meeting_clock(raw_turns, window_origin)
-        mapped = map_turns_to_segments(segments, turns)
-        for segment_id, speaker in mapped.items():
-            all_assignments[segment_id] = speaker
-            speaker_segments[speaker].append(segment_id)
-
+        _report_window_progress(progress_cb, index, len(windows))
+        raw_turns, failure = speaker_pass.decode_window(
+            decoder, index, start, end, len(windows), references,
+        )
+        if failure is not None:
+            return failure
+        speaker_pass.add_window_turns(raw_turns, start)
         if index < len(windows):
-            speaker_to_pid = resolve_speaker_participants(
-                {key: list(ids) for key, ids in speaker_segments.items()},
-                segments_by_id, window_named_map,
-            )
-            participants_by_id = {
-                str(p.get("id")): p for p in store.with_state(
-                    lambda state: [part.to_dict() for part in state.participants.values()]
-                )
-            }
-            anchors = _anchor_clips_from_window(
-                frames, rate, origin_s, dict(speaker_segments),
-                segments_by_id, speaker_to_pid, participants_by_id,
-                limit=MAX_KNOWN_SPEAKERS,
-            )
-            # Human-named clips stay first; fill remaining slots with anchors.
-            merged_names = list(known_names)
-            merged_clips = list(known_clips)
-            merged_map = dict(named_map)
-            for slug, clip, participant_id in anchors:
-                if participant_id in merged_map.values():
-                    continue
-                if len(merged_names) >= MAX_KNOWN_SPEAKERS:
-                    break
-                if slug in merged_map:
-                    slug = f"{slug}_{len(merged_names) + 1}"[:32]
-                merged_names.append(slug)
-                merged_clips.append(clip)
-                merged_map[slug] = participant_id
-            window_names = merged_names
-            window_clips = merged_clips
-            window_named_map = merged_map
+            references = speaker_pass.next_references(known, references.named_map)
 
-    speaker_to_pid = resolve_speaker_participants(
-        {key: list(dict.fromkeys(ids)) for key, ids in speaker_segments.items()},
-        segments_by_id, window_named_map,
-    )
+    speaker_to_pid = speaker_pass.final_speaker_map(references.named_map)
+    created = _create_missing_participants(store, speaker_to_pid)
+    reassigns = speaker_pass.reassignments(speaker_to_pid)
 
+    try:
+        applied = _apply_reassigns(store, reassigns)
+    except Exception as exc:
+        logger.exception("Cloud speaker reassignment failed")
+        return _failed(str(exc), windows=len(windows), created=created)
+    return {
+        "ok": True,
+        "applied": applied,
+        "created": created,
+        "windows": len(windows),
+        "error": None,
+    }
+
+
+def _failed(error: str, *, windows: int = 0, created: int = 0) -> Dict[str, Any]:
+    return {
+        "ok": False, "applied": 0, "created": created,
+        "windows": windows, "error": error,
+    }
+
+
+def _audio_chunks(repository: Any, meeting_id: str) -> List[Dict[str, Any]]:
+    try:
+        return repository.get_audio_chunks(meeting_id)
+    except Exception:
+        logger.exception("Could not load audio chunks for cloud speaker pass")
+        return []
+
+
+def _loopback_segments(repository: Any, meeting_id: str) -> List[Dict[str, Any]]:
+    return [
+        row for row in repository.get_segments(meeting_id)
+        if str(row.get("channel") or "") == CHANNEL_LOOPBACK
+    ]
+
+
+def _report_window_progress(progress_cb: Optional[ProgressCb], index: int, total: int) -> None:
+    if progress_cb is None:
+        return
+    try:
+        progress_cb(
+            f"Identifying speakers in window {index}/{total}",
+            index, total,
+        )
+    except Exception:
+        logger.exception("Cloud speaker progress callback failed")
+
+
+class _References(NamedTuple):
+    """Known-speaker names and clips sent with a window, and the participant each name is."""
+
+    names: List[str]
+    clips: List[str]
+    named_map: Dict[str, str]
+
+
+def _merge_anchor_references(
+    known: _References, anchors: Sequence[Tuple[str, str, str]],
+) -> _References:
+    """Human-named clips stay first; fill remaining slots with anchors."""
+    merged_names = list(known.names)
+    merged_clips = list(known.clips)
+    merged_map = dict(known.named_map)
+    for slug, clip, participant_id in anchors:
+        if participant_id in merged_map.values():
+            continue
+        if len(merged_names) >= MAX_KNOWN_SPEAKERS:
+            break
+        if slug in merged_map:
+            slug = f"{slug}_{len(merged_names) + 1}"[:32]
+        merged_names.append(slug)
+        merged_clips.append(clip)
+        merged_map[slug] = participant_id
+    return _References(merged_names, merged_clips, merged_map)
+
+
+def _create_missing_participants(store: Any, speaker_to_pid: Dict[str, Optional[str]]) -> int:
+    """Create "Speaker N" participants for unmapped speakers, in place; returns how many."""
     created = 0
     existing_names = store.with_state(
         lambda state: {p.display_name for p in state.participants.values()}
@@ -644,31 +638,139 @@ def run_cloud_speaker_pass(
         created += 1
         existing_names.add(f"Speaker {next_number}")
         next_number += 1
+    return created
 
-    reassigns: List[Tuple[str, str]] = []
-    for segment_id, speaker in all_assignments.items():
-        participant_id = speaker_to_pid.get(speaker)
-        if not participant_id:
-            continue
-        row = segments_by_id.get(segment_id) or {}
-        if bool(row.get("speaker_pinned")):
-            continue
-        if row.get("speaker_participant_id") == participant_id:
-            continue
-        reassigns.append((segment_id, participant_id))
 
-    try:
-        applied = _apply_reassigns(store, reassigns)
-    except Exception as exc:
-        logger.exception("Cloud speaker reassignment failed")
-        return {
-            "ok": False, "applied": 0, "created": created,
-            "windows": len(windows), "error": str(exc),
+class _LoopbackSpeakerPass:
+    """Loopback audio, transcript rows and the turn assignments gathered so far."""
+
+    def __init__(
+        self,
+        store: Any,
+        segments: List[Dict[str, Any]],
+        frames: np.ndarray,
+        rate: int,
+        origin_s: float,
+        *,
+        bitrate: int,
+        model: str,
+    ) -> None:
+        self.store = store
+        self.segments = segments
+        self.frames = frames
+        self.rate = rate
+        self.origin_s = origin_s
+        self.bitrate = bitrate
+        self.model = model
+        self.segments_by_id = {str(row["id"]): row for row in segments if row.get("id")}
+        self.all_assignments: Dict[str, str] = {}
+        self.speaker_segments: Dict[str, List[str]] = defaultdict(list)
+
+    def named_references(self) -> _References:
+        """Reference clips for human-named participants, at most one per slug."""
+        participants = self.store.with_state(
+            lambda state: [p.to_dict() for p in state.participants.values()]
+        )
+        named_pairs = pick_reference_segments(participants, self.segments)
+        named_slugs = _unique_slugs([
+            str(participant.get("display_name") or "")
+            for participant, _row in named_pairs
+        ])
+        named_refs: List[str] = []
+        named_map: Dict[str, str] = {}
+        for slug, (participant, row) in zip(named_slugs, named_pairs):
+            clip = cut_reference_clip(
+                self.frames, self.rate,
+                float(row.get("start_s") or 0.0),
+                float(row.get("end_s") or 0.0),
+                origin_s=self.origin_s,
+                bitrate=self.bitrate,
+            )
+            if not clip:
+                continue
+            named_refs.append(clip)
+            named_map[slug] = str(participant["id"])
+        known_names = [slug for slug in named_map]
+        known_clips = named_refs[:len(known_names)]
+        return _References(known_names, known_clips, named_map)
+
+    def decode_window(
+        self,
+        decoder: TranscribeFn,
+        index: int,
+        start: int,
+        end: int,
+        total: int,
+        references: _References,
+    ) -> Tuple[Any, Optional[Dict[str, Any]]]:
+        """Encode and diarize one window: ``(raw_turns, None)`` or ``(None, failure)``."""
+        window = self.frames[start:end]
+        try:
+            mp3 = encode_mp3(window, self.rate, self.bitrate)
+        except Exception as exc:
+            logger.exception("Failed to encode loopback window %s", index)
+            return None, _failed(str(exc), windows=total)
+        try:
+            raw_turns = decoder(
+                mp3,
+                known_speaker_names=references.names or None,
+                known_speaker_references=references.clips or None,
+            )
+        except Exception as exc:
+            if openai_retirement.is_model_gone_error(exc):
+                logger.warning("OpenAI no longer serves %s", self.model)
+                return None, {
+                    "ok": False, "applied": 0, "created": 0,
+                    "windows": total, "retired": True,
+                    "error": openai_retirement.SPEAKER_MODEL_RETIRED_MESSAGE,
+                }
+            logger.exception("Cloud diarize request failed for window %s", index)
+            return None, _failed(str(exc), windows=total)
+        return raw_turns, None
+
+    def add_window_turns(self, raw_turns: Sequence[Any], start: int) -> None:
+        window_origin = float(self.origin_s) + start / float(self.rate)
+        turns = _turns_on_meeting_clock(raw_turns, window_origin)
+        mapped = map_turns_to_segments(self.segments, turns)
+        for segment_id, speaker in mapped.items():
+            self.all_assignments[segment_id] = speaker
+            self.speaker_segments[speaker].append(segment_id)
+
+    def next_references(self, known: _References, window_named_map: Dict[str, str]) -> _References:
+        """References for the next window: named clips plus anchors of voices heard so far."""
+        speaker_to_pid = resolve_speaker_participants(
+            {key: list(ids) for key, ids in self.speaker_segments.items()},
+            self.segments_by_id, window_named_map,
+        )
+        participants_by_id = {
+            str(p.get("id")): p for p in self.store.with_state(
+                lambda state: [part.to_dict() for part in state.participants.values()]
+            )
         }
-    return {
-        "ok": True,
-        "applied": applied,
-        "created": created,
-        "windows": len(windows),
-        "error": None,
-    }
+        anchors = _anchor_clips_from_window(
+            self.frames, self.rate, self.origin_s, dict(self.speaker_segments),
+            self.segments_by_id, speaker_to_pid, participants_by_id,
+            limit=MAX_KNOWN_SPEAKERS,
+        )
+        return _merge_anchor_references(known, anchors)
+
+    def final_speaker_map(self, named_map: Dict[str, str]) -> Dict[str, Optional[str]]:
+        return resolve_speaker_participants(
+            {key: list(dict.fromkeys(ids)) for key, ids in self.speaker_segments.items()},
+            self.segments_by_id, named_map,
+        )
+
+    def reassignments(self, speaker_to_pid: Dict[str, Optional[str]]) -> List[Tuple[str, str]]:
+        """Relabels for unpinned rows whose participant actually changes."""
+        reassigns: List[Tuple[str, str]] = []
+        for segment_id, speaker in self.all_assignments.items():
+            participant_id = speaker_to_pid.get(speaker)
+            if not participant_id:
+                continue
+            row = self.segments_by_id.get(segment_id) or {}
+            if bool(row.get("speaker_pinned")):
+                continue
+            if row.get("speaker_participant_id") == participant_id:
+                continue
+            reassigns.append((segment_id, participant_id))
+        return reassigns
