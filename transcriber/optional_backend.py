@@ -27,6 +27,10 @@ _WARMUP_SAMPLES = 16000
 _WARMUP_LEVEL = 0.01
 
 
+def _is_set(event) -> bool:
+    return event is not None and event.is_set()
+
+
 def _phrase_options(phrases) -> dict:
     # A decode without a vocabulary is called exactly as before there was one.
     return {"phrases": tuple(phrases)} if phrases else {}
@@ -73,7 +77,9 @@ class LocalSpeechBackend(TranscriptionBackend):
 
     @property
     def device_info(self):
-        return f"{MODELS[self.model_name].label} | {self.device}" if self.is_available() else self.last_error or f"{self.name} is not loaded"
+        if self.is_available():
+            return f"{MODELS[self.model_name].label} | {self.device}"
+        return self.last_error or f"{self.name} is not loaded"
 
     def is_available(self):
         return self._process is not None and self.model is not None and self._process.process.poll() is None
@@ -100,37 +106,66 @@ class LocalSpeechBackend(TranscriptionBackend):
         self.model_name = model_name or self._model_override or selected_model(self.backend_id, settings)
         if self.model_name not in MODELS or MODELS[self.model_name].backend != self.backend_id:
             raise ValueError("Model does not belong to this backend")
-        from services.components import component_dir, is_installed
+        from services.components import is_installed
         requested = self._device_override or selected_device(self.backend_id, settings)
         component, device = resolve_runtime(self.backend_id, requested)
         self.runtime_component = component
         if not is_installed(component):
-            from services.components import catalog_entry_for_platform, check_compatibility
-            entry = catalog_entry_for_platform(component)
-            reason = check_compatibility(entry) if entry is not None else None
-            if entry is None:
-                self.runtime_component = None
-                self.last_error = f"{self.name}'s {device.upper()} runtime is not available on this platform."
-            elif reason:
-                self.runtime_component = None
-                self.last_error = f"{self.name} is not available on this computer. {reason}."
-            else:
-                kind = "MLX" if self.backend_id == "parakeet_mlx" else ('GPU' if device in ('cuda', 'mps', 'metal') else 'CPU')
-                self.last_error = f"Install {self.name}'s {kind} runtime in Downloads."
+            self._explain_missing_runtime(component, device)
             return
         if self.is_model_missing:
             self.last_error = f"Download {MODELS[self.model_name].label} in Downloads."
             return
+        loaded = self._start_worker(component, requested, device, generation, cancel_event)
+        if loaded is None:
+            return
+        process, result = loaded
+        with self._state_lock:
+            if generation != self._generation or _is_set(cancel_event):
+                process.close()
+                return
+            self.device = result["device"]
+            self.model = SpeechDecoder(self)
+            self.last_error = ""
+        if result.get("gpu"):
+            logger.info("%s is running on %s through Vulkan", self.name, result["gpu"])
+
+    def _explain_missing_runtime(self, component, device):
+        from services.components import catalog_entry_for_platform, check_compatibility
+        entry = catalog_entry_for_platform(component)
+        reason = check_compatibility(entry) if entry is not None else None
+        if entry is None:
+            self.runtime_component = None
+            self.last_error = f"{self.name}'s {device.upper()} runtime is not available on this platform."
+        elif reason:
+            self.runtime_component = None
+            self.last_error = f"{self.name} is not available on this computer. {reason}."
+        else:
+            self.last_error = f"Install {self.name}'s {self._runtime_kind(device)} runtime in Downloads."
+
+    def _runtime_kind(self, device) -> str:
+        if self.backend_id == "parakeet_mlx":
+            return "MLX"
+        return "GPU" if device in ("cuda", "mps", "metal") else "CPU"
+
+    def _start_worker(self, component, requested, device, generation, cancel_event):
+        """A worker with the model loaded and its load reply, or None once superseded.
+
+        Auto falls back to the CPU when the runtime has no code for the GPU.
+        """
+        from services.components import component_dir
         from services.local_asr.process import SpeechProcess
         # Windows runtimes carry an embedded Python; the macOS and Linux
         # ones use the app's interpreter with downloaded native libraries
         # or, for MLX, a separate wheel tree.
-        python = str(Path(component_dir(component)) / "python.exe") if sys.platform == "win32" else sys.executable
+        if sys.platform == "win32":
+            python = str(Path(component_dir(component)) / "python.exe")
+        else:
+            python = sys.executable
         while True:
             with self._state_lock:
-                if (generation != self._generation
-                        or (cancel_event is not None and cancel_event.is_set())):
-                    return
+                if generation != self._generation or _is_set(cancel_event):
+                    return None
                 process = SpeechProcess(python)
                 self._process = process
             try:
@@ -148,29 +183,22 @@ class LocalSpeechBackend(TranscriptionBackend):
                     self.cpu_fallback_note = f"{self.name} is using the CPU. {exc}"
                     device = "cpu"
                     continue
-                with self._state_lock:
-                    current = generation == self._generation
-                    if current:
-                        self._process = None
-                        self.last_error = str(exc)
-                if current and not (cancel_event is not None and cancel_event.is_set()):
-                    # The worker's traceback (and any PyTorch warning) is the
-                    # only record of why a native runtime failed to load.
-                    output = getattr(process, "recent_errors", lambda: "")()
-                    logger.error("%s failed to load on %s: %s%s", self.name, device, exc,
-                                 f"\nWorker output:\n{output}" if output else "")
+                self._load_failed(process, exc, device, generation, cancel_event)
                 raise
-            break
+            return process, result
+
+    def _load_failed(self, process, exc, device, generation, cancel_event):
         with self._state_lock:
-            if (generation != self._generation
-                    or (cancel_event is not None and cancel_event.is_set())):
-                process.close()
-                return
-            self.device = result["device"]
-            self.model = SpeechDecoder(self)
-            self.last_error = ""
-        if result.get("gpu"):
-            logger.info("%s is running on %s through Vulkan", self.name, result["gpu"])
+            current = generation == self._generation
+            if current:
+                self._process = None
+                self.last_error = str(exc)
+        if current and not _is_set(cancel_event):
+            # The worker's traceback (and any PyTorch warning) is the
+            # only record of why a native runtime failed to load.
+            output = getattr(process, "recent_errors", lambda: "")()
+            logger.error("%s failed to load on %s: %s%s", self.name, device, exc,
+                         f"\nWorker output:\n{output}" if output else "")
 
     def download_and_load(self, progress_callback=None):
         cache.download(self.model_name, progress_callback)
