@@ -170,6 +170,17 @@ class PostRollGate:
         return float(min(index, len(counts) - 1) + LEVEL_HISTOGRAM_MIN_DB)
 
 
+def _stamp_origination(filename: str) -> None:
+    try:
+        stamp_wav_origination(filename, datetime.now())
+    except Exception:
+        logger.warning(
+            "Failed to stamp WAV origination metadata on %s",
+            filename,
+            exc_info=True,
+        )
+
+
 class AudioRecorder:
     """Handles audio recording using SoundDevice."""
 
@@ -582,38 +593,42 @@ class AudioRecorder:
                     if error:
                         self.dropped_frames += frames
                         self._audio_spool.error = error
-                        self._stop_event.set()
-                        self._end_post_roll('capture error')
+                        self._stop_for_capture_error()
                         return
                 audio_copy = indata.copy()
                 payload = audio_copy.tobytes()
                 if not self._audio_spool.append(payload):
                     self.dropped_frames += frames
-                    self._stop_event.set()
-                    self._end_post_roll('capture error')
+                    self._stop_for_capture_error()
                     return
                 self._recorded_bytes += len(payload)
                 block_frames = int(audio_copy.shape[0] if audio_copy.ndim else frames)
                 self._recorded_sample_frames += block_frames
-
-                if self._post_roll_gate.observe(block_level_db(audio_copy), block_frames):
-                    self._end_post_roll("quiet")
-
-                if self.audio_level_callback:
-                    self._calculate_and_report_level(audio_copy)
-
-                if self.streaming_callback:
-                    try:
-                        self.streaming_callback(audio_copy.copy())
-                    except Exception as stream_err:
-                        logger.debug(f"Streaming callback error: {stream_err}")
+                self._observe_block(audio_copy, block_frames)
 
         except Exception as e:
             # No logger/file access on PortAudio's thread. The watcher reports it.
             if self._audio_spool is not None:
                 self._audio_spool.error = f'Audio capture failed: {e}'
-            self._stop_event.set()
-            self._end_post_roll('capture error')
+            self._stop_for_capture_error()
+
+    def _stop_for_capture_error(self) -> None:
+        self._stop_event.set()
+        self._end_post_roll('capture error')
+
+    def _observe_block(self, audio_copy: np.ndarray, block_frames: int) -> None:
+        """Hold ``_callback_lock``. Feed a stored block to post-roll, the level meter and streaming."""
+        if self._post_roll_gate.observe(block_level_db(audio_copy), block_frames):
+            self._end_post_roll("quiet")
+
+        if self.audio_level_callback:
+            self._calculate_and_report_level(audio_copy)
+
+        if self.streaming_callback:
+            try:
+                self.streaming_callback(audio_copy.copy())
+            except Exception as stream_err:
+                logger.debug(f"Streaming callback error: {stream_err}")
 
     def _status_error(self, status) -> Optional[str]:
         """Hold ``_callback_lock``. Why a flagged block ends the recording, or None.
@@ -642,8 +657,7 @@ class AudioRecorder:
                 return
             self.last_capture_error = message
         logger.error('%s', message)
-        self._stop_event.set()
-        self._end_post_roll('capture error')
+        self._stop_for_capture_error()
         if self.error_callback:
             self.error_callback(message)
 
@@ -661,13 +675,7 @@ class AudioRecorder:
         reason = "cap"
         try:
             logger.info("Audio stream started")
-            while not stop_event.wait(0.1):
-                if self._audio_spool and self._audio_spool.error:
-                    self._fail_capture(self._audio_spool.error)
-                    break
-                if self._capture_lost() and not self._switch_device(stop_event):
-                    self._fail_capture(NO_MICROPHONE_LEFT)
-                    break
+            self._watch_capture(stop_event)
             if self._audio_spool and self._audio_spool.error:
                 self._fail_capture(self._audio_spool.error)
             remaining = self._post_roll_deadline - time.monotonic()
@@ -676,46 +684,67 @@ class AudioRecorder:
         except Exception as e:
             self._fail_capture(f'Audio capture stopped unexpectedly: {e}')
         finally:
-            stream = self.stream
-            if stream:
-                with self._callback_lock:
-                    self._stream_generation += 1
-                try:
-                    # abort() drops what PortAudio still buffers instead of
-                    # draining it: 7 ms median against stop()'s 33 ms (56 ms
-                    # max) on MME, September 2026, and neither delivered one
-                    # more callback. That audio is post-roll either way.
-                    stream.abort()
-                    stream.close()
-                    logger.info("Audio stream stopped and closed")
-                except Exception as e:
-                    logger.error(f"Error closing audio stream: {e}")
-                finally:
-                    audio_devices.unregister_stream(stream)
-                self.stream = None
+            self._close_capture_stream()
             self._log_post_roll(reason)
-            journal = self._audio_spool
-            if journal:
-                if not journal.finish():
-                    self._fail_capture('Recording storage did not finish; audio kept for recovery.')
-                elif journal.error:
-                    self._fail_capture(journal.error)
-            if self.input_overflows and not self.last_capture_error:
-                logger.warning(
-                    "Audio input overflowed %d time(s); the recording carried on "
-                    "past each short gap", self.input_overflows,
-                )
-            from services.diagnostics import record_metrics
-            record_metrics(captured_frames=self._recorded_sample_frames,
-                           dropped_frames=self.dropped_frames,
-                           device_switches=self._device_switches,
-                           input_overflows=self.input_overflows)
+            self._finish_capture_journal()
+            self._report_capture_stats()
             self._stop_requested = False
             self._stop_requested_at = 0.0
             self._post_roll_deadline = 0.0
             self.recording_thread = None
             self.is_recording = False
             complete_event.set()
+
+    def _watch_capture(self, stop_event: threading.Event) -> None:
+        """Until stop, end on a storage error and switch microphones when one is lost."""
+        while not stop_event.wait(0.1):
+            if self._audio_spool and self._audio_spool.error:
+                self._fail_capture(self._audio_spool.error)
+                return
+            if self._capture_lost() and not self._switch_device(stop_event):
+                self._fail_capture(NO_MICROPHONE_LEFT)
+                return
+
+    def _close_capture_stream(self) -> None:
+        stream = self.stream
+        if not stream:
+            return
+        with self._callback_lock:
+            self._stream_generation += 1
+        try:
+            # abort() drops what PortAudio still buffers instead of
+            # draining it: 7 ms median against stop()'s 33 ms (56 ms
+            # max) on MME, September 2026, and neither delivered one
+            # more callback. That audio is post-roll either way.
+            stream.abort()
+            stream.close()
+            logger.info("Audio stream stopped and closed")
+        except Exception as e:
+            logger.error(f"Error closing audio stream: {e}")
+        finally:
+            audio_devices.unregister_stream(stream)
+        self.stream = None
+
+    def _finish_capture_journal(self) -> None:
+        journal = self._audio_spool
+        if not journal:
+            return
+        if not journal.finish():
+            self._fail_capture('Recording storage did not finish; audio kept for recovery.')
+        elif journal.error:
+            self._fail_capture(journal.error)
+
+    def _report_capture_stats(self) -> None:
+        if self.input_overflows and not self.last_capture_error:
+            logger.warning(
+                "Audio input overflowed %d time(s); the recording carried on "
+                "past each short gap", self.input_overflows,
+            )
+        from services.diagnostics import record_metrics
+        record_metrics(captured_frames=self._recorded_sample_frames,
+                       dropped_frames=self.dropped_frames,
+                       device_switches=self._device_switches,
+                       input_overflows=self.input_overflows)
 
     def _capture_lost(self) -> bool:
         """The microphone is gone: its stream finished or went inactive, or blocks stopped."""
@@ -867,29 +896,10 @@ class AudioRecorder:
         filename = filename or self.output_file
 
         journal = self._audio_spool
-        if journal is not None and not journal.finish():
-            self._fail_capture(
-                'Recording storage did not finish; audio kept for recovery.'
-            )
-            return False
-        if journal is not None and journal.error:
-            self._fail_capture(journal.error)
-            return False
-        if self.dropped_frames and not self.last_capture_error:
-            self._fail_capture(
-                'Audio blocks were lost; the partial recording was kept.'
-            )
-        if self.last_capture_error and not allow_incomplete:
-            logger.warning('Refusing to save an incomplete recording as complete')
+        if not self._capture_saveable(journal, allow_incomplete):
             return False
 
-        # Trailing silence prevents some ASR models from dropping the last word.
-        padding_bytes = b''
-        if config.END_PADDING_MS > 0:
-            padding_samples = int(self.rate * (config.END_PADDING_MS / 1000.0))
-            if padding_samples > 0:
-                silence_shape = (padding_samples, self.channels) if self.channels > 1 else (padding_samples,)
-                padding_bytes = np.zeros(silence_shape, dtype=self.dtype).tobytes()
+        padding_bytes = self._end_padding_bytes()
 
         try:
             directory = os.path.dirname(os.path.abspath(filename)) or os.curdir
@@ -907,35 +917,12 @@ class AudioRecorder:
                     recorded_sample_frames = recorded_bytes // (self.channels * np.dtype(self.dtype).itemsize)
                 with os.fdopen(temp_fd, 'wb') as temp_file:
                     temp_fd = -1
-                    with wave.open(temp_file, 'wb') as wf:
-                        wf.setnchannels(self.channels)
-                        wf.setsampwidth(np.dtype(self.dtype).itemsize)
-                        wf.setframerate(self.rate)
-                        journal.copy_into(wf)
-                        if padding_bytes:
-                            wf.writeframesraw(padding_bytes)
-                    temp_file.flush()
-                    os.fsync(temp_file.fileno())
+                    self._write_wav_file(temp_file, journal, padding_bytes)
 
                 os.replace(temp_path, filename)
                 temp_path = ""
-                try:
-                    stamp_wav_origination(filename, datetime.now())
-                except Exception:
-                    logger.warning(
-                        "Failed to stamp WAV origination metadata on %s",
-                        filename,
-                        exc_info=True,
-                    )
-
-                total_bytes = recorded_bytes + len(padding_bytes)
-                if padding_bytes:
-                    logger.info(f"Appended {config.END_PADDING_MS}ms of silence to protect the tail of the recording")
-                logger.info(
-                    f"Audio saved to {filename} at {time.strftime('%Y-%m-%d %H:%M:%S')} "
-                    f"- {recorded_sample_frames} sample frames, {total_bytes} bytes, "
-                    f"{self.get_recording_duration():.2f}s"
-                )
+                _stamp_origination(filename)
+                self._log_saved(filename, recorded_bytes, recorded_sample_frames, padding_bytes)
                 return True
 
             except Exception:
@@ -949,6 +936,60 @@ class AudioRecorder:
         except Exception as e:
             logger.error(f"Failed to save audio to {filename}: {e}")
             return False
+
+    def _capture_saveable(self, journal, allow_incomplete: bool) -> bool:
+        """Finish the journal and decide whether its audio may be saved; reports any loss."""
+        if journal is not None and not journal.finish():
+            self._fail_capture(
+                'Recording storage did not finish; audio kept for recovery.'
+            )
+            return False
+        if journal is not None and journal.error:
+            self._fail_capture(journal.error)
+            return False
+        if self.dropped_frames and not self.last_capture_error:
+            self._fail_capture(
+                'Audio blocks were lost; the partial recording was kept.'
+            )
+        if self.last_capture_error and not allow_incomplete:
+            logger.warning('Refusing to save an incomplete recording as complete')
+            return False
+        return True
+
+    def _end_padding_bytes(self) -> bytes:
+        """Trailing silence: it prevents some ASR models from dropping the last word."""
+        padding_samples = 0
+        if config.END_PADDING_MS > 0:
+            padding_samples = int(self.rate * (config.END_PADDING_MS / 1000.0))
+        if padding_samples <= 0:
+            return b''
+        if self.channels > 1:
+            silence_shape = (padding_samples, self.channels)
+        else:
+            silence_shape = (padding_samples,)
+        return np.zeros(silence_shape, dtype=self.dtype).tobytes()
+
+    def _write_wav_file(self, temp_file, journal, padding_bytes: bytes) -> None:
+        with wave.open(temp_file, 'wb') as wf:
+            wf.setnchannels(self.channels)
+            wf.setsampwidth(np.dtype(self.dtype).itemsize)
+            wf.setframerate(self.rate)
+            journal.copy_into(wf)
+            if padding_bytes:
+                wf.writeframesraw(padding_bytes)
+        temp_file.flush()
+        os.fsync(temp_file.fileno())
+
+    def _log_saved(self, filename: str, recorded_bytes: int, recorded_sample_frames: int,
+                   padding_bytes: bytes) -> None:
+        total_bytes = recorded_bytes + len(padding_bytes)
+        if padding_bytes:
+            logger.info(f"Appended {config.END_PADDING_MS}ms of silence to protect the tail of the recording")
+        logger.info(
+            f"Audio saved to {filename} at {time.strftime('%Y-%m-%d %H:%M:%S')} "
+            f"- {recorded_sample_frames} sample frames, {total_bytes} bytes, "
+            f"{self.get_recording_duration():.2f}s"
+        )
 
     def get_recording_duration(self) -> float:
         """Return captured duration in seconds."""
