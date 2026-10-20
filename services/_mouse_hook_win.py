@@ -37,6 +37,8 @@ _MODIFIER_KEYS = (
     ("win", (0x5B, 0x5C)),
 )
 
+_KEY_DOWN_BIT = 0x8000
+
 LRESULT = wintypes.LPARAM
 
 
@@ -85,6 +87,20 @@ def _load_libraries():
     kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
     kernel32.GetModuleHandleW.restype = wintypes.HMODULE
     return user32, kernel32, hookproc
+
+
+def _held_modifiers(key_state) -> frozenset:
+    return frozenset(
+        name for name, keys in _MODIFIER_KEYS
+        if any(key_state(key) & _KEY_DOWN_BIT for key in keys)
+    )
+
+
+def _real_side_button(info) -> Optional[str]:
+    """The side button a hook event reports, or None when injected or not a side button."""
+    if info.flags & LLMHF_INJECTED:
+        return None
+    return _BUTTONS.get((info.mouseData >> 16) & 0xFFFF)
 
 
 class _Run:
@@ -199,12 +215,6 @@ class MouseButtonHook:
         timer = time.perf_counter
         from_address = MSLLHOOKSTRUCT.from_address
 
-        def modifiers() -> frozenset:
-            return frozenset(
-                name for name, keys in _MODIFIER_KEYS
-                if any(key_state(key) & 0x8000 for key in keys)
-            )
-
         def callback(code, wparam, lparam):
             if wparam != WM_XBUTTONDOWN and wparam != WM_XBUTTONUP:
                 return call_next(None, code, wparam, lparam)
@@ -212,14 +222,11 @@ class MouseButtonHook:
             try:
                 if code < 0:
                     return call_next(None, code, wparam, lparam)
-                info = from_address(lparam)
-                if info.flags & LLMHF_INJECTED:
-                    return call_next(None, code, wparam, lparam)
-                button = _BUTTONS.get((info.mouseData >> 16) & 0xFFFF)
+                button = _real_side_button(from_address(lparam))
                 if button is None:
                     return call_next(None, code, wparam, lparam)
                 if wparam == WM_XBUTTONDOWN:
-                    held = modifiers()
+                    held = _held_modifiers(key_state)
                     if not claims(button, held):
                         return call_next(None, code, wparam, lparam)
                     suppressed.add(button)
