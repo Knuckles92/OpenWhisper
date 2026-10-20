@@ -100,6 +100,16 @@ def _enable_crash_logging() -> None:
         logging.warning(f"Failed to enable faulthandler: {exc}")
 
 
+def _qt_context_suffix(context) -> str:
+    """Describe where a Qt message came from, or "" when Qt gave no location."""
+    try:
+        if context and (context.file or context.function or context.line):
+            return f" ({context.file}:{context.line} {context.function})"
+    except Exception:
+        pass
+    return ""
+
+
 def _install_qt_message_handler() -> None:
     """Route Qt warnings/errors to the Python logger."""
     global _QT_MESSAGE_HANDLER_INSTALLED
@@ -113,29 +123,18 @@ def _install_qt_message_handler() -> None:
         logging.warning(f"Failed to install Qt message handler: {exc}")
         return
 
+    log_methods = {
+        QtMsgType.QtDebugMsg: "debug",
+        QtMsgType.QtInfoMsg: "info",
+        QtMsgType.QtWarningMsg: "warning",
+        QtMsgType.QtCriticalMsg: "error",
+        QtMsgType.QtFatalMsg: "critical",
+    }
+
     def _qt_message_handler(msg_type, context, message) -> None:
         logger = logging.getLogger("qt")
-        context_info = ""
-        try:
-            if context and (context.file or context.function or context.line):
-                context_info = f" ({context.file}:{context.line} {context.function})"
-        except Exception:
-            context_info = ""
-
-        text = f"{message}{context_info}"
-
-        if msg_type == QtMsgType.QtDebugMsg:
-            logger.debug(text)
-        elif msg_type == QtMsgType.QtInfoMsg:
-            logger.info(text)
-        elif msg_type == QtMsgType.QtWarningMsg:
-            logger.warning(text)
-        elif msg_type == QtMsgType.QtCriticalMsg:
-            logger.error(text)
-        elif msg_type == QtMsgType.QtFatalMsg:
-            logger.critical(text)
-        else:
-            logger.info(text)
+        text = f"{message}{_qt_context_suffix(context)}"
+        getattr(logger, log_methods.get(msg_type, "info"))(text)
 
     qInstallMessageHandler(_qt_message_handler)
     _QT_MESSAGE_HANDLER_INSTALLED = True
@@ -237,15 +236,7 @@ def main() -> int:
     logging.info("Starting OpenWhisper")
     logging.info("=" * 60)
 
-    # Model loads are cache-first (local_files_only) regardless of settings;
-    # an external HF_HUB_OFFLINE=1 additionally hard-disables downloads.
-    from services.settings import is_hf_hub_offline_env_set
-
-    if is_hf_hub_offline_env_set():
-        logging.info(
-            "HF_HUB_OFFLINE set in environment — Hugging Face downloads disabled"
-        )
-
+    _log_hf_hub_offline()
     log_cuda_preload_summary()
 
     profiler.mark("early_imports_started")
@@ -339,22 +330,13 @@ def main() -> int:
         )
         mcp_runtime.restore(settings_manager)
         if health_token:
-            from PyQt6.QtCore import QTimer
-
-            # A visible window is not enough: let the real event loop process
-            # deferred runtime setup before making the helper discard rollback.
-            def acknowledge_update():
-                if app_controller.update_readiness_error:
-                    logging.error("Update readiness failed: %s", app_controller.update_readiness_error)
-                    qt_app.app.exit(1)
-                    return
-                if write_health_acknowledgement(health_token):
-                    ui_controller.main_window.setEnabled(True)
-                else:
-                    logging.error("Could not acknowledge the update transaction")
-                    qt_app.app.exit(1)
-
-            QTimer.singleShot(1500, acknowledge_update)
+            _schedule_update_acknowledgement(
+                qt_app,
+                ui_controller,
+                app_controller,
+                health_token,
+                write_health_acknowledgement,
+            )
 
         profiler.log_summary()
         summary_logged = True
@@ -368,23 +350,61 @@ def main() -> int:
         logging.exception("Application startup failed")
         raise
     finally:
-        from services.agent_mcp.runtime import runtime as mcp_runtime
+        _shut_down(loading_screen, ui_controller, app_controller)
 
-        mcp_runtime.stop(wait=True)
-        try:
-            if loading_screen is not None:
-                loading_screen.destroy()
-        except Exception:
-            logging.exception("Failed to cleanup loading screen")
 
-        try:
-            if app_controller is not None:
-                app_controller.cleanup()
-            elif ui_controller is not None:
-                ui_controller.cleanup()
-        except Exception:
-            logging.exception("Failed to cleanup controllers")
+def _log_hf_hub_offline() -> None:
+    # Model loads are cache-first (local_files_only) regardless of settings;
+    # an external HF_HUB_OFFLINE=1 additionally hard-disables downloads.
+    from services.settings import is_hf_hub_offline_env_set
 
-        logging.info("=" * 60)
-        logging.info("Application shutdown complete")
-        logging.info("=" * 60)
+    if is_hf_hub_offline_env_set():
+        logging.info(
+            "HF_HUB_OFFLINE set in environment — Hugging Face downloads disabled"
+        )
+
+
+def _schedule_update_acknowledgement(
+    qt_app, ui_controller, app_controller, health_token, write_health_acknowledgement
+) -> None:
+    """Confirm a just-applied update once startup has settled, or exit with 1."""
+    from PyQt6.QtCore import QTimer
+
+    # A visible window is not enough: let the real event loop process
+    # deferred runtime setup before making the helper discard rollback.
+    def acknowledge_update():
+        if app_controller.update_readiness_error:
+            logging.error("Update readiness failed: %s", app_controller.update_readiness_error)
+            qt_app.app.exit(1)
+            return
+        if write_health_acknowledgement(health_token):
+            ui_controller.main_window.setEnabled(True)
+        else:
+            logging.error("Could not acknowledge the update transaction")
+            qt_app.app.exit(1)
+
+    QTimer.singleShot(1500, acknowledge_update)
+
+
+def _shut_down(loading_screen, ui_controller, app_controller) -> None:
+    """Release whatever startup created, whether or not the event loop ran."""
+    from services.agent_mcp.runtime import runtime as mcp_runtime
+
+    mcp_runtime.stop(wait=True)
+    try:
+        if loading_screen is not None:
+            loading_screen.destroy()
+    except Exception:
+        logging.exception("Failed to cleanup loading screen")
+
+    try:
+        if app_controller is not None:
+            app_controller.cleanup()
+        elif ui_controller is not None:
+            ui_controller.cleanup()
+    except Exception:
+        logging.exception("Failed to cleanup controllers")
+
+    logging.info("=" * 60)
+    logging.info("Application shutdown complete")
+    logging.info("=" * 60)
