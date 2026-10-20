@@ -647,6 +647,20 @@ class RemoteSpeechBackend(LocalSpeechBackend):
 
     # ---- requests ----
 
+    def preview_audio(self, audio: np.ndarray, language=None, *, busy=lambda: False):
+        """Let the host shed disposable windows without delaying final text."""
+        if busy() or not self._decode_lock.acquire(blocking=False):
+            return None
+        try:
+            if busy():
+                return None
+            if not self._audible(audio):
+                return {"text": "", "segments": []}
+            result = self._request_audio("transcribe", audio, language, preview=True)
+            return None if result.get("preview_skipped") else result
+        finally:
+            self._decode_lock.release()
+
     def _request_audio(self, op, audio, language=None, **options) -> dict:
         from services.remote_asr.client import RemoteConnectionLost
 

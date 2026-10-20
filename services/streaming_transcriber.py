@@ -436,20 +436,22 @@ class StreamingTranscriber:
         return new_audio
 
     def _transcribe_window(self, model, prepared: np.ndarray) -> Optional[str]:
-        """The window's text, or None when results were discarded while it decoded."""
-        transcribe = getattr(model, "transcribe_cancelable", None)
-        if callable(transcribe):
-            options = {"should_cancel": lambda: self._discard_results}
+        """The window's text, or None when skipped or discarded while it decoded."""
+        preview = getattr(model, "preview_transcribe", None)
+        if callable(preview) and not self._finalizing:
+            result = preview(prepared, beam_size=1, vad_filter=False)
+            if result is None:
+                return None
         else:
-            options = {}
-            transcribe = model.transcribe
-        segments, _info = transcribe(
-            prepared,
-            beam_size=1,
-            vad_filter=False,
-            **options,
-        )
+            transcribe = getattr(model, "transcribe_cancelable", None)
+            if callable(transcribe):
+                options = {"should_cancel": lambda: self._discard_results}
+            else:
+                options = {}
+                transcribe = model.transcribe
+            result = transcribe(prepared, beam_size=1, vad_filter=False, **options)
 
+        segments, _info = result
         text_parts = []
         for segment in segments:
             if self._discard_results:

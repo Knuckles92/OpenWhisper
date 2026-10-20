@@ -13,6 +13,13 @@ before model switching send no ``models`` and answer ``select_model`` with
 an unknown-operation error. A successful reply carries ``host_ms``, the time
 the host spent on the request, which older hosts leave out.
 
+A disposable window preview may add ``preview: true`` to ``transcribe``.
+Hosts that understand it use idle work capacity only and reply with
+``result.preview_skipped: true`` when durable work is waiting. Clients keep
+recording and use the unmarked final transcription as the source of truth.
+Older hosts ignore this optional field. Stateful ``stream`` pushes and their
+finish messages are never disposable: dropping them would lose audio.
+
 Opt-in model management is advertised only to authenticated clients as
 ``ready.capabilities.model_management`` (missing means unsupported).
 ``model_catalog`` returns bundled models, cache/runtime readiness, the active

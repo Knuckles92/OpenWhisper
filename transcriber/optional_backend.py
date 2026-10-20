@@ -491,6 +491,15 @@ class SpeechDecoder:
     def __init__(self, backend):
         self.backend = backend
 
+    def preview_transcribe(self, audio, *, language=None, **_whisper_options):
+        """A disposable window, or None when durable work owns the decoder."""
+        result = self.backend.preview_audio(np.asarray(audio, dtype=np.float32), language or "auto")
+        if result is None:
+            return None
+        segments = [SimpleNamespace(**s, avg_logprob=0., no_speech_prob=0., words=None)
+                    for s in result["segments"]]
+        return iter(segments), SimpleNamespace(language=language or "en")
+
     def transcribe(self, audio, *, language=None, **_whisper_options):
         with self.backend._decode_lock:
             self.backend.is_transcribing = True

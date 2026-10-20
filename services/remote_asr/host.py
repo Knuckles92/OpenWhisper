@@ -24,6 +24,7 @@ from typing import Callable, Dict, List, Optional
 
 from services.remote_asr import discovery, protocol, tailscale
 from services.remote_asr.activity import HostActivity
+from services.remote_asr.admission import WorkAdmission as _WorkAdmission
 from services.remote_asr.engines import HostEngine, UnavailableEngine
 from services.remote_asr.tls import HostIdentity, server_context
 from services.remote_records.gate import RecordsBusy
@@ -236,47 +237,6 @@ class _Client:
     in_request: bool = False
     #: When it connected, by the wall clock (for the host dashboard).
     since: float = 0.0
-
-
-class _WorkAdmission:
-    """FIFO admission for costly requests across all paired connections."""
-
-    def __init__(self, active: int, queued: int, wait_s: float) -> None:
-        self._active_limit = active
-        self._queue_limit = queued
-        self._wait_s = wait_s
-        self._condition = threading.Condition()
-        self._active = 0
-        self._queue = deque()
-
-    def acquire(self, still_connected: Callable[[], bool]) -> bool:
-        with self._condition:
-            if self._active < self._active_limit and not self._queue:
-                self._active += 1
-                return True
-            if len(self._queue) >= self._queue_limit:
-                return False
-            ticket = object()
-            self._queue.append(ticket)
-            deadline = time.monotonic() + self._wait_s
-            try:
-                while True:
-                    if not still_connected() or time.monotonic() >= deadline:
-                        return False
-                    if self._queue[0] is ticket and self._active < self._active_limit:
-                        self._queue.popleft()
-                        self._active += 1
-                        return True
-                    self._condition.wait(timeout=0.1)
-            finally:
-                if ticket in self._queue:
-                    self._queue.remove(ticket)
-                    self._condition.notify_all()
-
-    def release(self) -> None:
-        with self._condition:
-            self._active -= 1
-            self._condition.notify_all()
 
 
 def _header_language(header: dict) -> Optional[str]:
@@ -1075,7 +1035,13 @@ class SpeechHost:
             def still_connected() -> bool:
                 return (self.running and ws is not None and ws.state is State.OPEN)
 
-            if not self._work_admission.acquire(still_connected):
+            preview = op == "transcribe" and header.get("preview") is True
+            priority = 0 if op == "transcribe" or op == "stream" and header.get("finish") else 1
+            if not self._work_admission.acquire(
+                still_connected, device_id=device_id, priority=priority, preview=preview,
+            ):
+                if preview:
+                    return {"id": request_id, "result": {"preview_skipped": True}}
                 return {"id": request_id, "code": "busy",
                         "error": "The host is busy. Try again shortly.",
                         "retry_after_ms": 1000}
@@ -1085,7 +1051,7 @@ class SpeechHost:
                     device_name, device_id,
                 )
             finally:
-                self._work_admission.release()
+                self._work_admission.release(device_id)
         return self._dispatch_unpacked(
             header, payload, engine, identity, connection_id, streams,
             device_name, device_id,
