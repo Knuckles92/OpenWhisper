@@ -282,6 +282,16 @@ class PastMeetingItem(QFrame):
         super().mousePressEvent(event)
 
 
+def _read_meetings(load_meetings, query: str, limit: int, repository):
+    """One page of saved meetings; returns ``(meetings, source_filtered, error)``."""
+    try:
+        meetings, source_filtered = load_meetings(query, limit, repository)
+    except Exception as exc:
+        logger.error("Failed to load past meetings: %s", exc)
+        return [], False, str(exc)
+    return meetings, source_filtered, ""
+
+
 class PastMeetingsPanel(QWidget):
     """Sidebar page listing completed meetings from the meeting repository."""
 
@@ -624,68 +634,69 @@ class PastMeetingsPanel(QWidget):
         # synchronous behavior. Production repository reads run off the Qt
         # thread and return only one bounded page.
         if self._meeting_provider is None:
-            if self._repository is None:
-                from meeting.persist.repository import SqlMeetingRepository
-
-                self._repository = SqlMeetingRepository()
-            if not self._meetings:
-                self._clear_list()
-                self.meetings_list_layout.addWidget(
-                    self._placeholder("Loading past meetings…")
-                )
-            # Bound here: the worker must not reach back into the panel.
-            load_meetings, repository = self._load_meetings, self._repository
-            start_remote_listing = self._start_remote_listing
-            merge_wait_s = self.REMOTE_MERGE_WAIT_S
-
-            def load() -> None:
-                meetings = []
-                error = ""
-                source_filtered = False
-                try:
-                    meetings, source_filtered = load_meetings(query, limit, repository)
-                except Exception as exc:
-                    logger.error("Failed to load past meetings: %s", exc)
-                    error = str(exc)
-                if canceled.is_set():
-                    return
-                remote = None if error else start_remote_listing(query, limit, meetings)
-                if remote is None:
-                    delivery.loaded.emit(
-                        generation, meetings, error, source_filtered
-                    )
-                    return
-                done, merged = remote
-                if not done.wait(merge_wait_s):
-                    delivery.loaded.emit(generation, meetings, "", source_filtered)
-                    while not done.wait(0.1):
-                        if canceled.is_set():
-                            return
-                if not canceled.is_set():
-                    delivery.loaded.emit(generation, merged(), "", source_filtered)
-
-            threading.Thread(
-                target=load,
-                name="past-meetings-load",
-                daemon=True,
-            ).start()
+            self._start_background_load(query, limit, generation, canceled, delivery)
             return
+        self._load_from_provider(query, limit)
 
+    def _start_background_load(self, query: str, limit: int, generation: int, canceled, delivery) -> None:
+        if self._repository is None:
+            from meeting.persist.repository import SqlMeetingRepository
+
+            self._repository = SqlMeetingRepository()
+        if not self._meetings:
+            self._clear_list()
+            self.meetings_list_layout.addWidget(
+                self._placeholder("Loading past meetings…")
+            )
+        # Bound here: the worker must not reach back into the panel.
+        load_meetings, repository = self._load_meetings, self._repository
+        start_remote_listing = self._start_remote_listing
+        merge_wait_s = self.REMOTE_MERGE_WAIT_S
+
+        def load() -> None:
+            meetings, source_filtered, error = _read_meetings(load_meetings, query, limit, repository)
+            if canceled.is_set():
+                return
+            remote = None if error else start_remote_listing(query, limit, meetings)
+            if remote is None:
+                delivery.loaded.emit(
+                    generation, meetings, error, source_filtered
+                )
+                return
+            done, merged = remote
+            if not done.wait(merge_wait_s):
+                delivery.loaded.emit(generation, meetings, "", source_filtered)
+                while not done.wait(0.1):
+                    if canceled.is_set():
+                        return
+            if not canceled.is_set():
+                delivery.loaded.emit(generation, merged(), "", source_filtered)
+
+        threading.Thread(
+            target=load,
+            name="past-meetings-load",
+            daemon=True,
+        ).start()
+
+    def _load_from_provider(self, query: str, limit: int) -> None:
         try:
             self._meetings, self._source_filtered = self._load_meetings(
                 query, limit, self._repository, self._meeting_provider
             )
         except Exception as exc:
             logger.error("Failed to load past meetings: %s", exc)
-            self._meetings = []
-            self._clear_list()
-            self.section_header.setText("PAST MEETINGS")
-            self.meetings_list_layout.addWidget(
-                self._placeholder("Past meetings could not be loaded")
-            )
+            self._show_load_failure()
             return
         self._has_more = len(self._meetings) > self.MAX_MEETINGS
         self._rebuild_list()
+
+    def _show_load_failure(self) -> None:
+        self._meetings = []
+        self._clear_list()
+        self.section_header.setText("PAST MEETINGS")
+        self.meetings_list_layout.addWidget(
+            self._placeholder("Past meetings could not be loaded")
+        )
 
     def _apply_meeting_results(
         self,
@@ -697,12 +708,7 @@ class PastMeetingsPanel(QWidget):
         if generation != self._meeting_load_generation:
             return
         if error:
-            self._meetings = []
-            self._clear_list()
-            self.section_header.setText("PAST MEETINGS")
-            self.meetings_list_layout.addWidget(
-                self._placeholder("Past meetings could not be loaded")
-            )
+            self._show_load_failure()
             return
         self._meetings = list(meetings or [])
         self._source_filtered = bool(source_filtered)
