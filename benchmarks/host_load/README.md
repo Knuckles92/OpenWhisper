@@ -23,7 +23,9 @@ production modules while running the harness from the candidate checkout. The
 output records source commit, dirty state, complete arguments and raw events.
 Do not edit production modules during a sweep. Keep the same seed, arguments,
 package environment and CPU concurrency in before/after runs. `sweep --jobs 1`
-is the default; larger values are shared-machine exploratory screens, not
+is the default; `sweep --jitter 0` (also the default) gives identical per-request
+service costs across schedulers. Nonzero jitter is a separate sensitivity run
+because a shared random stream is consumed in execution order. Larger job counts are shared-machine exploratory screens, not
 isolated latency measurements. Run real CPU inference and full pytest separately
 from capacity timing. The CPU percent scale is 100% per saturated core.
 

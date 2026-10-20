@@ -34,6 +34,7 @@ def main():
     parser.add_argument("--rate", type=float, default=.05)
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--jitter", type=float, default=0., help="Zero keeps paired before/after service costs identical")
     parser.add_argument("--preview", choices=("window", "native"), default="window")
     parser.add_argument("--chatty-history", action="store_true")
     parser.add_argument("--max-connections", type=int)
@@ -50,7 +51,7 @@ def main():
                 command = [sys.executable, "-m", "benchmarks.host_load", "--source-root", str(args.source_root),
                     "--output", str(output), "--profile", profile, "--clients", str(clients),
                     "--workload", workload, "--duration", str(args.duration), "--rate", str(args.rate),
-                    "--seed", str(args.seed), "--preview", args.preview]
+                    "--seed", str(args.seed), "--preview", args.preview, "--jitter", str(args.jitter)]
                 if args.chatty_history:
                     command.append("--chatty-history")
                 if args.max_connections:
