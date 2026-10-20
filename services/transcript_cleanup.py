@@ -360,35 +360,17 @@ class TranscriptCleanup:
             return text
 
         try:
-            client = self.client
-            attempt_timeout_s = self._timeout_s
-            retries = config.TRANSCRIPT_CLEANUP_MAX_RETRIES
-            if timeout_s is not None:
-                attempt_timeout_s = timeout_s
-                retries = config.TRANSCRIPT_BATCH_CLEANUP_MAX_RETRIES
-                # A copy that shares the client's connection pool.
-                client = client.with_options(max_retries=retries)
+            client, give_up_s = self._attempt_budget(timeout_s, deadline_s)
             profile = get_profile(self.provider)
             messages = [
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": text},
             ]
-            give_up_s = attempt_timeout_s * (retries + 1) + _RETRY_BACKOFF_ALLOWANCE_S
-            if deadline_s is not None:
-                give_up_s = deadline_s
-            def run():
-                if profile is not None:
-                    learn_server_models(profile, self.api_key)
-                return generate(
-                    client, profile,
-                    session_id=str(uuid.uuid4()),
-                    reasoning_level=self.reasoning,
-                    model=self.model,
-                    messages=messages,
-                    **request_kwargs,
-                )
-
-            response = _call_with_deadline(run, give_up_s, self.cancel_event)
+            response = _call_with_deadline(
+                lambda: self._generate(client, profile, messages, request_kwargs),
+                give_up_s,
+                self.cancel_event,
+            )
             cleaned = response.text.strip()
             if not cleaned:
                 self.last_error = "empty response"
@@ -404,3 +386,30 @@ class TranscriptCleanup:
             self.last_error = str(exc)
             logger.warning("Transcript cleanup failed; using raw text: %s", exc)
             return text
+
+    def _attempt_budget(self, timeout_s: Optional[float], deadline_s: Optional[float]):
+        """The client to call and the wall-clock limit for all of its attempts."""
+        client = self.client
+        attempt_timeout_s = self._timeout_s
+        retries = config.TRANSCRIPT_CLEANUP_MAX_RETRIES
+        if timeout_s is not None:
+            attempt_timeout_s = timeout_s
+            retries = config.TRANSCRIPT_BATCH_CLEANUP_MAX_RETRIES
+            # A copy that shares the client's connection pool.
+            client = client.with_options(max_retries=retries)
+        give_up_s = attempt_timeout_s * (retries + 1) + _RETRY_BACKOFF_ALLOWANCE_S
+        if deadline_s is not None:
+            give_up_s = deadline_s
+        return client, give_up_s
+
+    def _generate(self, client, profile, messages: list, request_kwargs: dict):
+        if profile is not None:
+            learn_server_models(profile, self.api_key)
+        return generate(
+            client, profile,
+            session_id=str(uuid.uuid4()),
+            reasoning_level=self.reasoning,
+            model=self.model,
+            messages=messages,
+            **request_kwargs,
+        )
