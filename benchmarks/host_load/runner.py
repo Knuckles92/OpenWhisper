@@ -550,6 +550,7 @@ def client_worker(fixture, records, args, index, start, stop):
                         audio_s=event["seconds"], status="not_connected")
         return
     seen_preview = set()
+    next_cycle = start + args.connection_cycle_s if args.connection_cycle_s else math.inf
     try:
         for event in schedule:
             due = start + event["at"]
@@ -559,6 +560,25 @@ def client_worker(fixture, records, args, index, start, stop):
                 continue
             if _pause_until(due, stop):
                 break
+            if time.perf_counter() >= next_cycle and event["kind"] in ("final", "meeting"):
+                # Lifecycle soak only: close between requests, never discard
+                # a native stream chunk or pretend this is an abrupt drop.
+                if history:
+                    history.close()
+                connection.cleanup() if role == "meeting" else connection.close()
+                cycle_op = "cycle_connect"
+                try:
+                    connection = fixture.new_meeting(index) if role == "meeting" else fixture.new_client(index)
+                    records.add(client=index, op="cycle_connect", status="ok")
+                    if args.workload in ("history", "mixed"):
+                        cycle_op = "cycle_history_connect"
+                        history = fixture.new_client(index, history=True)
+                        threading.Thread(target=_history_loop, args=(history, stop, args.chatty_history), daemon=True).start()
+                        records.add(client=index, op="cycle_history_connect", status="ok")
+                except Exception as exc:
+                    records.add(client=index, op=cycle_op, status="refused",
+                                error=type(exc).__name__, message=str(exc))
+                next_cycle = time.perf_counter() + args.connection_cycle_s
             row = request(fixture, connection, records, index, event["op"], event["seconds"],
                           due, role=role, measurement_kind=event["kind"],
                           utterance_start=start + event.get("utterance_start", event["at"]),
@@ -628,7 +648,9 @@ def _resource_worker(records, stop, pid=None):
 
 def summary(records, duration):
     rows = records.rows
-    requests = [r for r in rows if r.get("op") not in ("connect", "history_connect", "reconnect", "disruption", "first_preview", "history_query")]
+    # Request attempts (including censored arrivals) have a workload kind.
+    # Lifecycle events must never enter audio/latency aggregates.
+    requests = [r for r in rows if "kind" in r and "audio_s" in r]
     ok = [r for r in requests if r["status"] == "ok"]
     finals = [r for r in ok if r["op"] == "transcribe" and r.get("role") != "local" and r.get("kind") == "final"]
     small = [r for r in finals if r["audio_s"] < 15]
@@ -639,8 +661,9 @@ def summary(records, duration):
         not_connected=sum(r["status"] == "not_connected" for r in requests),
         full_featured_connected=len({r["client"] for r in rows if r["op"] == "connect" and r["status"] == "ok"} & {r["client"] for r in rows if r["op"] == "history_connect" and r["status"] == "ok"}),
         connected=sum(r["op"] == "connect" and r["status"] == "ok" for r in rows),
-        connection_refusals=sum(r["op"] == "connect" and r["status"] == "refused" for r in rows),
-        history_refusals=sum(r["op"] == "history_connect" and r["status"] == "refused" for r in rows),
+        connection_refusals=sum(r["op"] in ("connect", "reconnect", "cycle_connect") and r["status"] == "refused" for r in rows),
+        history_refusals=sum(r["op"] in ("history_connect", "cycle_history_connect") and r["status"] == "refused" for r in rows),
+        lifecycle_reconnects=sum(r["op"] in ("reconnect", "cycle_connect") and r["status"] == "ok" for r in rows),
         audio_seconds_per_wall_second=sum(r["audio_s"] for r in ok) / duration,
         final_samples=len(finals), small_final_samples=len(small),
         final_offered=sum(r.get("kind") == "final" and r.get("role") != "local" for r in requests),
@@ -707,6 +730,8 @@ def parser():
     p.add_argument("--parallel-decode", action="store_true", help="Sensitivity experiment, not current production locking")
     p.add_argument("--max-connections", type=int, help="Sensitivity override; omit to test production default")
     p.add_argument("--reconnect", action="store_true")
+    p.add_argument("--connection-cycle-s", type=float, default=0.,
+                   help="Lifecycle soak: gracefully reconnect between requests at this interval; 0 disables")
     return p
 
 
@@ -722,6 +747,8 @@ def main():
         raise SystemExit("jitter must be0..1; cpu-threads and records-bytes must be positive")
     if args.max_connections is not None and args.max_connections < 1:
         raise SystemExit("max-connections must be positive")
+    if not math.isfinite(args.connection_cycle_s) or args.connection_cycle_s < 0:
+        raise SystemExit("connection-cycle-s must be nonnegative and finite")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     records = Measurements(args.output.with_suffix(".ndjson"))
     stop = threading.Event()

@@ -32,7 +32,10 @@ from capacity timing. The CPU percent scale is 100% per saturated core.
 ## Workloads and arrival model
 
 - `dictation`: independent precomputed Poisson utterance releases, clipped
-  lognormal durations from 2–30 seconds (median 6 seconds). Default `.05`
+  lognormal durations from 2–30 seconds (median 6 seconds). The first release
+  is exponential too, so short cells can legitimately have no samples and no
+  acceptance claim. Preview and continuous meetings instead begin with a
+  uniformly distributed 0–2-second startup phase. Default `.05`
   releases/s/client is three utterances/minute. `.2` is an intentionally heavy
   12/minute stress model; it can imply more than 100% recording duty and is NOT
   a realistic human typing/recording model. Each device has one sequential
@@ -146,7 +149,7 @@ curves.
 For a soak:
 
 ```sh
-python -m benchmarks.host_load --workload mixed --chatty-history --clients 4 --duration 3600 --rate .05 --output .tmp/host-load/soak.json
+python -m benchmarks.host_load --workload mixed --chatty-history --clients 4 --duration 3600 --rate .05 --connection-cycle-s 30 --output .tmp/host-load/soak.json
 ```
 
 The server samples resources once per second. Start, live-server quiescent

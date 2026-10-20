@@ -1,4 +1,6 @@
 """The optional load harness must count overload rather than hide arrivals."""
+import random
+
 import pytest
 
 pytest.importorskip("psutil")
@@ -22,6 +24,12 @@ def test_poisson_schedule_is_reproducible_and_contains_no_execution_feedback():
     assert first != make_schedule(args, 4)
     assert all(0 <= row["at"] < 100 for row in first)
     assert all(2 <= row["seconds"] <= 30 for row in first)
+    assert first[0]["at"] == random.Random(args.seed + 3 * 7919).expovariate(args.rate)
+
+
+def test_short_poisson_cell_can_have_no_arrivals():
+    assert make_schedule(default_args(duration=.001, rate=.05), 0) == []
+    assert not summary(Measurements(), .001)["acceptance_observed"]
 
 
 def test_window_preview_uses_transcribe_and_native_stream_is_not_windowed():
@@ -59,3 +67,22 @@ def test_full_featured_capacity_counts_history_refusal():
              audio_s=3., latency_s=.1, schedule_lag_s=0.)
     assert not summary(data, 10.)["acceptance_observed"]
     assert summary(data, 10.)["full_featured_connected"] == 0
+
+
+def test_lifecycle_rows_are_not_audio_requests_and_refusals_fail_acceptance():
+    data = Measurements()
+    data.add(op="transcribe", kind="final", role="remote", status="ok", client=0,
+             audio_s=3., latency_s=.1, schedule_lag_s=0.)
+    data.add(op="cycle_connect", status="ok", client=0)
+    data.add(op="cycle_history_connect", status="ok", client=0)
+    result = summary(data, 10.)
+    assert result["requests"] == 1
+    assert result["audio_seconds_per_wall_second"] == .3
+    assert result["lifecycle_reconnects"] == 1
+    assert result["acceptance_observed"]
+    data.add(op="cycle_history_connect", status="refused", client=0)
+    data.add(op="cycle_connect", status="refused", client=0)
+    result = summary(data, 10.)
+    assert result["requests"] == 1
+    assert result["connection_refusals"] == result["history_refusals"] == 1
+    assert not result["acceptance_observed"]
