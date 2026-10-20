@@ -616,7 +616,8 @@ class RemoteEngineService:
             raise RuntimeError(f"{model} isn't ready on {name}. Download it there first.")
         label = choice["label"]
         current = self._engine().describe()
-        if device is None and current.get("available") and (current.get("family"), current.get("model")) == (family, model):
+        running = current.get("available") and (current.get("family"), current.get("model")) == (family, model)
+        if device is None and running:
             return current
         # Raises with the reason when this computer can't switch right now.
         if device is None:
@@ -987,10 +988,14 @@ class RemoteEngineService:
                 raise RemoteEngineError(
                     "Model management is disabled on the host. Enable it in Settings → Remote engine there."
                 )
-            if (op == "install_runtime" or "device" in fields) and capabilities.get("runtime_installation") is not True:
-                raise RemoteEngineError("Update OpenWhisper on the host to install runtimes and choose a model's device remotely.")
-            result = connection.request(op, timeout=SWITCH_TIMEOUT_S + 10 if op == "select_model" else 30,
-                                        **fields)
+            installs = op == "install_runtime" or "device" in fields
+            if installs and capabilities.get("runtime_installation") is not True:
+                raise RemoteEngineError(
+                    "Update OpenWhisper on the host to install runtimes and choose a model's device remotely."
+                )
+            # A model switch replies only once the host has loaded it.
+            timeout = SWITCH_TIMEOUT_S + 10 if op == "select_model" else 30
+            result = connection.request(op, timeout=timeout, **fields)
             if op == "model_catalog" and self.on_host_catalog is not None:
                 self.on_host_catalog(pairing, ready, result)
             return result
