@@ -88,8 +88,28 @@ def build_timeline_backfill_ops(
         return []
 
     by_id = _segment_index(segments)
-    ops: List[Dict[str, Any]] = []
+    ops = _key_point_beats(state, by_id)
+    if not ops:
+        ops = _note_beats(state, by_id)
 
+    ops.sort(key=lambda op: float(op["data"]["start_s"]))
+    return ops[:_MAX_TIMELINE_BEATS]
+
+
+def _timeline_add_op(text: str, start_s: float, evidence: List[str]) -> Dict[str, Any]:
+    return {
+        "op": "add_item",
+        "card": "timeline",
+        "text": text,
+        "data": {"start_s": start_s},
+        "evidence": evidence[:20],
+    }
+
+
+def _key_point_beats(state: Dict[str, Any],
+                     by_id: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Timeline beats promoted from synthesized key points with timed evidence."""
+    ops: List[Dict[str, Any]] = []
     for item in _synthesized_items(state, "key_points"):
         evidence = list(item.get("evidence") or [])
         start_s = _earliest_start(evidence, by_id)
@@ -98,49 +118,42 @@ def build_timeline_backfill_ops(
         text = _clip_text(item.get("text") or "")
         if not text:
             continue
-        ops.append({
-            "op": "add_item",
-            "card": "timeline",
-            "text": text,
-            "data": {"start_s": start_s},
-            "evidence": evidence[:20],
-        })
+        ops.append(_timeline_add_op(text, start_s, evidence))
         if len(ops) >= _MAX_TIMELINE_BEATS:
             break
+    return ops
 
-    if not ops:
-        for item in _live_items(state, "live_notes"):
-            data = item.get("data") or {}
-            start_s = data.get("start_s")
-            evidence = [sid for sid in (item.get("evidence") or []) if sid in by_id]
-            if not evidence:
-                continue
-            if start_s is None or isinstance(start_s, bool):
-                start_s = _earliest_start(evidence, by_id)
-            if start_s is None:
-                continue
-            heading = str(data.get("heading") or "").strip()
-            item_text = (item.get("text") or "").strip()
-            beat_text = (
-                f"{heading}: {item_text}"
-                if heading and not item_text.startswith(heading)
-                else (heading or item_text)
-            )
-            text = _clip_text(beat_text)
-            if not text:
-                continue
-            ops.append({
-                "op": "add_item",
-                "card": "timeline",
-                "text": text,
-                "data": {"start_s": float(start_s)},
-                "evidence": evidence[:20],
-            })
-            if len(ops) >= _MAX_TIMELINE_BEATS:
-                break
 
-    ops.sort(key=lambda op: float(op["data"]["start_s"]))
-    return ops[:_MAX_TIMELINE_BEATS]
+def _note_beats(state: Dict[str, Any],
+                by_id: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Timeline beats from note blocks whose evidence is in the transcript."""
+    ops: List[Dict[str, Any]] = []
+    for item in _live_items(state, "live_notes"):
+        data = item.get("data") or {}
+        start_s = data.get("start_s")
+        evidence = [sid for sid in (item.get("evidence") or []) if sid in by_id]
+        if not evidence:
+            continue
+        if start_s is None or isinstance(start_s, bool):
+            start_s = _earliest_start(evidence, by_id)
+        if start_s is None:
+            continue
+        text = _clip_text(_note_beat_text(data, item))
+        if not text:
+            continue
+        ops.append(_timeline_add_op(text, float(start_s), evidence))
+        if len(ops) >= _MAX_TIMELINE_BEATS:
+            break
+    return ops
+
+
+def _note_beat_text(data: Dict[str, Any], item: Dict[str, Any]) -> str:
+    """``heading: text`` unless the text already opens with its heading."""
+    heading = str(data.get("heading") or "").strip()
+    item_text = (item.get("text") or "").strip()
+    if heading and not item_text.startswith(heading):
+        return f"{heading}: {item_text}"
+    return heading or item_text
 
 
 def _normalize_tokens(text: str) -> set:
@@ -271,23 +284,9 @@ def build_summary_backfill_ops(
     live_notes = _live_items(state, "live_notes")
     evidence: List[str] = []
     if key_points:
-        sentences = []
-        for item in key_points[:6]:
-            text = (item.get("text") or "").strip()
-            if not text:
-                continue
-            sentences.append(text.rstrip(".") + ".")
-            evidence.extend(item.get("evidence") or [])
-        summary = " ".join(sentences).strip()
+        summary = _summary_from_items(key_points, evidence)
     elif live_notes:
-        sentences = []
-        for item in live_notes[:6]:
-            text = (item.get("text") or "").strip()
-            if not text:
-                continue
-            sentences.append(text.rstrip(".") + ".")
-            evidence.extend(item.get("evidence") or [])
-        summary = " ".join(sentences).strip()
+        summary = _summary_from_items(live_notes, evidence)
     else:
         return []
 
@@ -305,6 +304,42 @@ def build_summary_backfill_ops(
     return [op]
 
 
+def _summary_from_items(items: List[Dict[str, Any]], evidence: List[str]) -> str:
+    """Join the first six items' texts as sentences; collect their evidence."""
+    sentences = []
+    for item in items[:6]:
+        text = (item.get("text") or "").strip()
+        if not text:
+            continue
+        sentences.append(text.rstrip(".") + ".")
+        evidence.extend(item.get("evidence") or [])
+    return " ".join(sentences).strip()
+
+
+#: Returned by ``_snapshot_or_none`` when the store could not snapshot.
+_NO_SNAPSHOT: Any = object()
+
+
+def _snapshot_or_none(store: Any, failure_message: str) -> Any:
+    try:
+        return store.snapshot()
+    except Exception:
+        logger.exception(failure_message)
+        return _NO_SNAPSHOT
+
+
+def _apply_repair(store: Any, ops: List[Dict[str, Any]], label: str) -> int:
+    """Apply one repair batch; returns how many ops succeeded."""
+    if not ops:
+        return 0
+    try:
+        results = store.apply("system", "state_repair", ops)
+    except Exception:
+        logger.exception("%s portion of state repair failed", label)
+        return 0
+    return sum(1 for result in results if result.ok)
+
+
 def repair_meeting_state(store: Any, segments: List[Dict[str, Any]]) -> int:
     """Apply structural repairs through the state store.
 
@@ -320,66 +355,44 @@ def repair_meeting_state(store: Any, segments: List[Dict[str, Any]]) -> int:
         Count of ops successfully applied across all repairs.
     """
     applied = 0
-
-    def _apply(ops: List[Dict[str, Any]], label: str) -> None:
-        nonlocal applied
-        if not ops:
-            return
-        try:
-            results = store.apply("system", "state_repair", ops)
-        except Exception:
-            logger.exception("%s portion of state repair failed", label)
-            return
-        applied += sum(1 for result in results if result.ok)
-
-    try:
-        snapshot = store.snapshot()
-    except Exception:
-        logger.exception("State repair could not snapshot state")
+    snapshot = _snapshot_or_none(store, "State repair could not snapshot state")
+    if snapshot is _NO_SNAPSHOT:
         return 0
 
     views = snapshot.get("report_views") or ["ribbon", "brief", "signal"]
-    want_ribbon = "ribbon" in views
-
-    if want_ribbon:
-        _apply(build_timeline_backfill_ops(snapshot, segments), "timeline")
-        try:
-            snapshot = store.snapshot()
-        except Exception:
-            logger.exception("State repair could not re-snapshot after timeline")
+    if "ribbon" in views:
+        applied += _apply_repair(store, build_timeline_backfill_ops(snapshot, segments), "timeline")
+        snapshot = _snapshot_or_none(store, "State repair could not re-snapshot after timeline")
+        if snapshot is _NO_SNAPSHOT:
             return applied
-
-    if want_ribbon:
-        _apply(
+        applied += _apply_repair(
+            store,
             build_timeline_coverage_from_segments(snapshot, segments),
             "timeline_coverage",
         )
-    try:
-        snapshot = store.snapshot()
-    except Exception:
-        logger.exception(
-            "State repair could not re-snapshot after timeline coverage"
-        )
+    snapshot = _snapshot_or_none(
+        store, "State repair could not re-snapshot after timeline coverage"
+    )
+    if snapshot is _NO_SNAPSHOT:
         return applied
 
-    _apply(
+    applied += _apply_repair(
+        store,
         build_summary_backfill_ops(snapshot, segments)
         + build_topic_backfill_ops(snapshot, segments),
         "summary/topic",
     )
     # Copy topic into a blank title only after the meeting is terminal so
     # the immediate end-of-capture repair does not lock in a live draft.
-    try:
-        snapshot = store.snapshot()
-    except Exception:
-        logger.exception("State repair could not re-snapshot after topic")
+    snapshot = _snapshot_or_none(store, "State repair could not re-snapshot after topic")
+    if snapshot is _NO_SNAPSHOT:
         return applied
     if str(snapshot.get("status") or "") in {
         "ended", "needs_recovery", "failed",
     }:
         from meeting.content import build_untitled_title_ops
 
-        _apply(build_untitled_title_ops(snapshot), "title")
+        applied += _apply_repair(store, build_untitled_title_ops(snapshot), "title")
     if applied:
         logger.info("State repair applied %d op(s)", applied)
     return applied
