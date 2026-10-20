@@ -68,7 +68,7 @@ class TextEndpointDialog(QDialog):
                 "Cleanup and meetings share this server. Change the address "
                 "when it runs on another port or computer. If you started it "
                 "with an API key, name the variable that holds the key, then "
-                "enter the key under Settings → API keys (or export the "
+                "enter the key under Settings → App → API keys (or export the "
                 "variable). Leave it blank when the server does not "
                 "authenticate."
             )
@@ -82,7 +82,7 @@ class TextEndpointDialog(QDialog):
                 "Servers that support OpenAI Chat Completions or Responses "
                 "work here — LiteLLM, a second LM Studio or vLLM server, or a "
                 "private gateway. Name the variable that holds its API key, "
-                "then enter the key under Settings → API keys (or export the "
+                "then enter the key under Settings → App → API keys (or export the "
                 "variable). Leave it blank for a local server that does not "
                 "authenticate."
             )

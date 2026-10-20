@@ -248,7 +248,7 @@ class TestResolutionOrder:
         profile = builtin_profile("openrouter")
         available, text = credential_status(profile)
         assert not available
-        assert text == "Requires OpenRouter API key — add it in Settings → API keys"
+        assert text == "Requires OpenRouter API key — add it in Settings → App → API keys"
         credentials.store().set("OPENROUTER_API_KEY", SECRET)
         assert credential_status(profile) == (True, "OpenRouter API key found")
 

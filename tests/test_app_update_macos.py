@@ -227,8 +227,8 @@ def test_helper_swaps_in_the_new_version_and_drops_the_old_one_once_healthy(
     appdata, journal = staged(tmp_path, installed, image, parent_pid=999_999_999)
     launches = []
 
-    def launch(executable, arguments, environment):
-        launches.append((executable, arguments))
+    def launch(executable, arguments, environment, watch=False):
+        launches.append((executable, arguments, watch))
         assert version_of(installed) == "2.7.0"
         assert mac.write_health_acknowledgement(arguments[1], appdata, bundle=str(installed))
         return FakeProcess()
@@ -236,7 +236,7 @@ def test_helper_swaps_in_the_new_version_and_drops_the_old_one_once_healthy(
     code, late_imports = run_guarded(helper_args(journal), appdata, launch)
     assert code == 0
     assert late_imports == []
-    assert launches == [(str(installed / "Contents/MacOS/OpenWhisper"), [HEALTH_ARG, journal.health_token])]
+    assert launches == [(str(installed / "Contents/MacOS/OpenWhisper"), [HEALTH_ARG, journal.health_token], True)]
     assert version_of(installed) == "2.7.0"
     assert not Path(journal.staged_path).exists()
     assert not Path(mac.transaction_dir(journal.transaction_id, appdata)).exists()
@@ -246,15 +246,16 @@ def test_helper_rolls_back_when_the_new_version_does_not_start(tmp_path, install
     appdata, journal = staged(tmp_path, installed, image, parent_pid=999_999_999)
     launches = []
 
-    def launch(executable, arguments, environment):
-        launches.append(arguments)
+    def launch(executable, arguments, environment, watch=False):
+        launches.append((arguments, watch))
         # The new version crashes; the restored one starts normally.
         return FakeProcess(exit_code=1 if arguments else None)
 
     code, late_imports = run_guarded(helper_args(journal), appdata, launch)
     assert code == 1
     assert late_imports == []
-    assert launches == [[HEALTH_ARG, journal.health_token], []]
+    # Only the health check is watched; the restored version is left to run.
+    assert launches == [([HEALTH_ARG, journal.health_token], True), ([], False)]
     assert version_of(installed) == "2.6.13"
     assert not Path(journal.staged_path).exists()
     message = Path(apply_error_path(appdata)).read_text()
@@ -265,9 +266,57 @@ def test_helper_stops_a_new_version_that_never_reports_healthy(tmp_path, install
     appdata, journal = staged(tmp_path, installed, image, parent_pid=999_999_999)
     hung = FakeProcess()
     code, _late = run_guarded(helper_args(journal), appdata,
-                              lambda executable, arguments, environment: hung if arguments else FakeProcess())
+                              lambda executable, arguments, environment, watch=False: hung if watch else None)
     assert code == 1 and hung.terminated
     assert version_of(installed) == "2.6.13"
+
+
+def test_versions_start_through_launch_services(monkeypatch):
+    # Started as the helper's child, the app would borrow a vanished build's
+    # microphone permission and record silence.
+    commands = []
+
+    def launch(executable, arguments, environment):
+        commands.append([executable, *arguments])
+        return SimpleNamespace(pid=4242)
+
+    monkeypatch.setattr(mac, "_launch", launch)
+    app = "/Apps/Open Whisper.app/Contents/MacOS/OpenWhisper"
+    assert mac._open_app(app, [], {}) is None
+    watched = mac._open_app(app, [HEALTH_ARG, "a" * 32], {}, watch=True)
+    assert commands == [
+        ["/usr/bin/open", "-n", "/Apps/Open Whisper.app"],
+        ["/usr/bin/open", "-n", "-W", "/Apps/Open Whisper.app", "--args", HEALTH_ARG, "a" * 32],
+    ]
+    assert isinstance(watched, mac._OpenedApp)
+
+
+def test_stopping_a_watched_version_signals_the_app_not_open(monkeypatch):
+    app = "/Apps/Open Whisper.app/Contents/MacOS/OpenWhisper"
+    token = "b" * 32
+    listing = "\n".join([
+        f"  4242 /usr/bin/open -n -W /Apps/Open Whisper.app --args {HEALTH_ARG} {token}",
+        f"  5000 {app} {HEALTH_ARG} {token}",
+        f"  5001 {app} --local-asr-worker",
+        f"  5002 {app} {HEALTH_ARG} {'c' * 32}",
+    ]).encode()
+    monkeypatch.setattr(mac.subprocess, "run",
+                        lambda *a, **k: subprocess.CompletedProcess(a, 0, listing, b""))
+    signals = []
+    monkeypatch.setattr(mac.os, "kill", lambda pid, number: signals.append((pid, number)))
+    watched = mac._OpenedApp(SimpleNamespace(pid=4242), app, [HEALTH_ARG, token])
+    watched.terminate()
+    watched.kill()
+    assert signals == [(5000, mac.signal.SIGTERM), (5000, mac.signal.SIGKILL)]
+
+
+def test_stopping_a_version_that_never_started_stops_open(monkeypatch):
+    monkeypatch.setattr(mac.subprocess, "run",
+                        lambda *a, **k: subprocess.CompletedProcess(a, 0, b"", b""))
+    signals = []
+    monkeypatch.setattr(mac.os, "kill", lambda pid, number: signals.append(pid))
+    mac._OpenedApp(SimpleNamespace(pid=4242), "/A.app/Contents/MacOS/A", ["x"]).terminate()
+    assert signals == [4242]
 
 
 def test_helper_installs_nothing_while_the_app_is_still_running(tmp_path, installed, image, signed):

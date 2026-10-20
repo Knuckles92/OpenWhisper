@@ -2,7 +2,7 @@
 
 **Experimental:** insight review is available for testing. Its judgments, thresholds, and question selection may change.
 
-Enable **Settings → Meeting Mode → Intelligence → TypeSafe fast judgments**, then **After End → Review uncertain insights at the end** for future meetings. Accept the TypeSafe sharing disclosure, supply a TypeSafe key in **Settings → API keys** or `TYPESAFE_API_KEY` in the environment or `.env`, and enable cloud intelligence for the meeting. Review is off by default. Changing this setting does not retroactively authorize sending older meetings to TypeSafe.
+Enable **Settings → Meeting Mode → Intelligence → TypeSafe fast judgments**, then **After End → Review uncertain insights at the end** for future meetings. Accept the TypeSafe sharing disclosure, supply a TypeSafe key in **Settings → App → API keys** or `TYPESAFE_API_KEY` in the environment or `.env`, and enable cloud intelligence for the meeting. Review is off by default. Changing this setting does not retroactively authorize sending older meetings to TypeSafe.
 
 Review starts with the three highest-priority questions. **Review more** shows all remaining questions in priority order, with no five-question cutoff. Normal sensitivity selects material issues; Thorough also selects more borderline cases. Recording and saving do not wait for the service or for your answers.
 

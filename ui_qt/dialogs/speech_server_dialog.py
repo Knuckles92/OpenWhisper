@@ -36,7 +36,7 @@ class SpeechServerDialog(QDialog):
             f"{endpoint.description} OpenWhisper sends recordings to its "
             "OpenAI-compatible /audio/transcriptions route. A server on this "
             "computer keeps audio here. Name the variable that holds its API "
-            "key, then enter the key under Settings → API keys, or leave it "
+            "key, then enter the key under Settings → App → API keys, or leave it "
             "blank for a server that does not authenticate."
         )
         intro.setObjectName("infoLabel")

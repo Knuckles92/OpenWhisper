@@ -76,14 +76,14 @@ class SpeechServerControls(QWidget):
             "speech server you run, such as Speaches, LocalAI, vLLM or "
             "whisper.cpp. Audio sent to a server on this computer stays on it. "
             "Hosted services need an API key.",
-            [("Open Settings → API keys", "api_keys")], self.help_requested.emit,
+            [("Open Settings → App → API keys", "api_keys")], self.help_requested.emit,
         )
         self.model_field = engine_field(
             "Model", self.model_combo,
             "The speech model the server turns your audio into text with. "
             "A server you run lists the models it has; choose Edit server… "
             "to enter another model id.",
-            [("Open Settings → API keys", "api_keys")], self.help_requested.emit,
+            [("Open Settings → App → API keys", "api_keys")], self.help_requested.emit,
         )
         row.addWidget(self.server_field, stretch=1)
         row.addWidget(self.model_field, stretch=1)

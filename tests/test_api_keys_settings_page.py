@@ -1,4 +1,4 @@
-"""Behavior tests for the Settings → API keys destination."""
+"""Behavior tests for the Settings → App → API keys destination."""
 
 import os
 import tempfile

@@ -41,6 +41,6 @@ The **API** engine uploads each recording to a server that speaks OpenAI's `POST
 - Dictionary words go as a `prompt` and the language as `language` to every server except OpenAI's `gpt-transcribe`, which takes `keywords` and `languages`. A request whose hints are rejected (HTTP 400 or 422) is retried once without them.
 - Recordings over 23 MB are split into pieces and uploaded separately, on every server.
 - Each upload waits up to 120 seconds for an answer from a hosted service (OpenAI, Groq, a Custom server elsewhere), and up to 600 seconds from a server you run (any self-hosted preset, or any address on this computer), which may load the model on the first request or run on a CPU. Cancel stops an upload at once.
-- Audio sent to a server on `localhost` or `127.0.0.1` stays on this computer; anything else is uploaded to that host. The Server field and **Settings → API keys** name the destination and which key goes where.
+- Audio sent to a server on `localhost` or `127.0.0.1` stays on this computer; anything else is uploaded to that host. The Server field and **Settings → App → API keys** name the destination and which key goes where.
 
 Meeting speaker identification is separate: on-device labels (WeSpeaker) are the default, and the optional cloud pass always uses OpenAI's diarization model with the OpenAI key, whichever server dictation uses.

@@ -8,9 +8,10 @@ it has one — then copied beside the installed bundle.
 
 The new bundle's own executable runs as the helper. Once this process exits it
 exchanges the two bundles with one atomic ``renamex_np(RENAME_SWAP)``, starts
-the new version with a health token, and keeps the previous bundle until that
-version acknowledges a healthy start. Otherwise it swaps them back and reopens
-the previous version, leaving a message for it to show.
+the new version through LaunchServices with a health token, and keeps the
+previous bundle until that version acknowledges a healthy start. Otherwise it
+swaps them back and reopens the previous version, leaving a message for it to
+show.
 
 When the app cannot replace itself — App Translocation, a read-only volume, a
 folder or bundle this account does not own — :func:`prepare_in_place_update`
@@ -369,6 +370,78 @@ def _launch(executable: str, arguments: List[str], environment: dict) -> subproc
     )
 
 
+class _OpenedApp:
+    """An app LaunchServices started, watched through ``open -W``.
+
+    ``open -W`` exits when the app does, so polling and waiting on it follow
+    the app. Stopping it signals the app itself, found by its arguments.
+    """
+
+    def __init__(self, process: subprocess.Popen, executable: str, arguments: List[str]) -> None:
+        self._process = process
+        self._executable = executable
+        self._arguments = arguments
+
+    def poll(self) -> Optional[int]:
+        return self._process.poll()
+
+    def wait(self, timeout: Optional[float] = None) -> int:
+        return self._process.wait(timeout)
+
+    def terminate(self) -> None:
+        self._signal(signal.SIGTERM)
+
+    def kill(self) -> None:
+        self._signal(signal.SIGKILL)
+
+    def _signal(self, number: int) -> None:
+        # An app that never started leaves only open itself to stop.
+        for pid in self._app_pids() or [self._process.pid]:
+            try:
+                os.kill(pid, number)
+            except OSError:
+                pass
+
+    def _app_pids(self) -> List[int]:
+        try:
+            listing = subprocess.run(
+                ["/bin/ps", "-axww", "-o", "pid=,command="],
+                capture_output=True, timeout=10, check=False,
+            ).stdout.decode("utf-8", "replace")
+        except (OSError, subprocess.SubprocessError):
+            return []
+        prefix = self._executable + " "
+        pids = []
+        for line in listing.splitlines():
+            pid, _, command = line.strip().partition(" ")
+            command = command.strip()
+            if (
+                pid.isdigit()
+                and int(pid) != self._process.pid
+                and command.startswith(prefix)
+                and command[len(prefix):].split() == self._arguments
+            ):
+                pids.append(int(pid))
+        return pids
+
+
+def _open_app(executable: str, arguments: List[str], environment: dict,
+              watch: bool = False) -> Optional[_OpenedApp]:
+    """Start the bundle around ``executable`` through LaunchServices.
+
+    macOS asks the process that launched an app for its microphone permission.
+    Started straight from the helper, the app would borrow that chain's
+    identity, a build that no longer exists, and record silence without ever
+    asking. LaunchServices makes the app responsible for itself.
+    """
+    bundle = os.path.dirname(os.path.dirname(os.path.dirname(executable)))
+    command = ["/usr/bin/open", "-n"] + (["-W"] if watch else []) + [bundle]
+    if arguments:
+        command += ["--args", *arguments]
+    process = _launch(command[0], command[1:], environment)
+    return _OpenedApp(process, executable, arguments) if watch else None
+
+
 def start_helper(transaction_id: str, appdata: Optional[str] = None) -> subprocess.Popen:
     """Launch the staged bundle's executable as the helper for this transaction."""
     journal = load_journal(transaction_id, appdata)
@@ -533,7 +606,7 @@ def run_helper(
     appdata: Optional[str] = None,
     *,
     swap: Optional[Callable[[str, str], None]] = None,
-    launch: Callable[[str, List[str], dict], subprocess.Popen] = _launch,
+    launch: Callable[..., Optional[_OpenedApp]] = _open_app,
     environment: Optional[dict] = None,
     parent_wait_s: float = _PARENT_WAIT_S,
     health_wait_s: float = _HEALTH_WAIT_S,
@@ -609,7 +682,7 @@ def run_helper(
     save(State.SWAPPED)
     process = None
     try:
-        process = launch(executable, [HEALTH_ARG, journal.health_token], environment)
+        process = launch(executable, [HEALTH_ARG, journal.health_token], environment, watch=True)
         started = _wait(lambda: healthy() or process.poll() is not None, health_wait_s) and healthy()
     except OSError as exc:
         logger.error("Could not start the new version: %s", exc)

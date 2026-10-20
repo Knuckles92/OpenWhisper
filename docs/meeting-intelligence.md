@@ -2,7 +2,7 @@
 
 Choose separate text models in **Settings → AI cleanup** and **Settings → Intelligence**. Supported providers include OpenAI, OpenRouter, Ollama, LM Studio, vLLM, llama.cpp, LocalAI, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. Custom endpoints let you choose **Chat Completions** or **Responses**; existing custom endpoints keep Chat Completions. Supported modern OpenAI text models use Responses automatically.
 
-Add credentials in **Settings → API keys**. Keys use the OS credential store. Environment variables or `.env` are a fallback: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENCODE_GO_API_KEY`, and `OPENCODE_ZEN_API_KEY`.
+Add credentials in **Settings → App → API keys**. Keys use the OS credential store. Environment variables or `.env` are a fallback: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENCODE_GO_API_KEY`, and `OPENCODE_ZEN_API_KEY`.
 
 ## Local servers
 
@@ -16,7 +16,7 @@ The local servers ship preconfigured with their standard addresses. Each one is 
 | llama.cpp (`llama-server`) | `http://127.0.0.1:9931/v1`, the default since October 2026 |
 | LocalAI | `http://127.0.0.1:8080/v1` |
 
-- **Edit** in the endpoint picker changes a server's address when it runs on another port or computer. A server needs no key unless you started it with one; then name the environment variable that holds the key in the same dialog and enter the key in **Settings → API keys**.
+- **Edit** in the endpoint picker changes a server's address when it runs on another port or computer. A server needs no key unless you started it with one; then name the environment variable that holds the key in the same dialog and enter the key in **Settings → App → API keys**.
 - Opening AI cleanup or Intelligence checks once whether each preset's address, and each server's standard address, answers. The picker marks a server that is running as **Running**, and names the address when a server answers somewhere other than its preset, for example an older llama.cpp build on port 8080: choose Edit to use it.
 - Each server's own model routes decide which models appear: embedding, speech and rerank models are hidden, and the server's context size, tool support and thinking support are used instead of guesses. A server that will not describe its models still lists them, judged by name.
 - **Thinking level** applies to a thinking model. **Off** sends `reasoning_effort: "none"` to Ollama, vLLM, llama.cpp and LocalAI, which turns thinking off. LM Studio offers only the levels it reports for the model, and Off leaves the model's default.

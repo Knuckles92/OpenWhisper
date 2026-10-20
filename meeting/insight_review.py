@@ -182,7 +182,7 @@ def run_review(store, repository, run_id, reviewer=None):
             route = route_from_settings()
             judge = judge_from_settings(timeout_s=max(REVIEW_TIMEOUT_S, route.timeout_s))
             if judge is None:
-                raise ReviewUnavailable(f"Add {route.key_phrase} in Settings → API keys or {route.credential_env} in your environment, then retry.")
+                raise ReviewUnavailable(f"Add {route.key_phrase} in Settings → App → API keys or {route.credential_env} in your environment, then retry.")
             reviewer = JudgeReviewer(judge)
         segments = repository.get_segments(snapshot["meeting_id"])
         fingerprint = _fingerprint(segments)

@@ -35,7 +35,7 @@ def search_history(repository, query, *, semantic=False, exclude_meeting_id=None
     judge = judge or judge_from_settings()
     if judge is None:
         fallback["message"] = (f"Keyword results. Add {route_from_settings().key_phrase} "
-                               "in Settings → API keys for meaning-based ranking.")
+                               "in Settings → App → API keys for meaning-based ranking.")
         return fallback
     try:
         deadline = time.monotonic() + SEARCH_BUDGET_S
