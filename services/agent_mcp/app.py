@@ -67,93 +67,75 @@ EventTypes = Annotated[list[EventType] | None, Field(min_length=1, max_length=le
 EventSeq = Annotated[int | None, Field(ge=0)]
 
 
-def create_app(
-    database,
-    token: str,
-    *,
-    enabled=None,
-    settings=None,
-    on_change=None,
-    meeting_renamer=None,
-    allowed_hosts=(),
-    client_history=None,
-):
-    """Serve /mcp and /v1 with shared host validation and bearer protection.
+def _tool_annotations():
+    """Each kind of tool's hints, built once per app."""
+    return {
+        "read": ToolAnnotations(
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
+        ),
+        "write": ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
+        ),
+        # Running an action can paste, open links or reach the user's webhooks
+        # and agents; cancelling throws a recording away.
+        "run": ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=False,
+            open_world_hint=True,
+        ),
+        "record": ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=False,
+            open_world_hint=False,
+        ),
+        "stop": ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
+        ),
+        "cancel": ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
+        ),
+        "notice": ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=False,
+            open_world_hint=False,
+        ),
+        # Live state changes between calls, so these reads are not idempotent.
+        "live_read": ToolAnnotations(
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=False,
+            open_world_hint=False,
+        ),
+    }
 
-    ASGI requests reuse the API's public schemas, filters, auth, and sanitized
-    errors without opening another socket or giving the agent a database path.
-    """
-    app = create_history_app(database, token, allowed_hosts=allowed_hosts, client_history=client_history)
-    mcp = MCPServer("OpenWhisper", version="1.0.0", instructions=INSTRUCTIONS)
-    annotations = ToolAnnotations(
-        read_only_hint=True,
-        destructive_hint=False,
-        idempotent_hint=True,
-        open_world_hint=False,
-    )
-    write_annotations = ToolAnnotations(
-        read_only_hint=False,
-        destructive_hint=False,
-        idempotent_hint=True,
-        open_world_hint=False,
-    )
-    # Running an action can paste, open links or reach the user's webhooks
-    # and agents; cancelling throws a recording away.
-    run_annotations = ToolAnnotations(
-        read_only_hint=False,
-        destructive_hint=True,
-        idempotent_hint=False,
-        open_world_hint=True,
-    )
-    record_annotations = ToolAnnotations(
-        read_only_hint=False,
-        destructive_hint=False,
-        idempotent_hint=False,
-        open_world_hint=False,
-    )
-    stop_annotations = ToolAnnotations(
-        read_only_hint=False,
-        destructive_hint=False,
-        idempotent_hint=True,
-        open_world_hint=False,
-    )
-    cancel_annotations = ToolAnnotations(
-        read_only_hint=False,
-        destructive_hint=True,
-        idempotent_hint=True,
-        open_world_hint=False,
-    )
-    notice_annotations = ToolAnnotations(
-        read_only_hint=False,
-        destructive_hint=False,
-        idempotent_hint=False,
-        open_world_hint=False,
-    )
-    # Live state changes between calls, so these reads are not idempotent.
-    live_read_annotations = ToolAnnotations(
-        read_only_hint=True,
-        destructive_hint=False,
-        idempotent_hint=False,
-        open_world_hint=False,
-    )
-    controls = AgentControls(
-        database,
-        settings,
-        enabled=enabled,
-        on_change=on_change,
-        meeting_renamer=meeting_renamer,
-    )
 
-    async def control_call(method, *args):
-        try:
-            return await asyncio.to_thread(method, *args)
-        except ControlError as exc:
-            raise ToolError(str(exc)) from None
-        except Exception:
-            raise ToolError(
-                "storage_unavailable: Could not save or read the requested data. Retry the request."
-            ) from None
+async def _control_call(method, *args):
+    try:
+        return await asyncio.to_thread(method, *args)
+    except ControlError as exc:
+        raise ToolError(str(exc)) from None
+    except Exception:
+        raise ToolError(
+            "storage_unavailable: Could not save or read the requested data. Retry the request."
+        ) from None
 
+
+def _live_caller(enabled, settings):
     async def live_call(permission, operation):
         """Run ``operation(saved_settings)`` off the event loop once ``permission`` holds.
 
@@ -184,12 +166,16 @@ def create_app(
                 "unavailable: OpenWhisper could not do that right now. Retry the request."
             ) from None
 
-    @mcp.tool(annotations=annotations)
+    return live_call
+
+
+def _register_control_tools(mcp, hints, controls):
+    @mcp.tool(annotations=hints["read"])
     async def get_capabilities() -> dict[str, object]:
         """Read the user's current action permissions and writable setting keys."""
-        return await control_call(controls.capabilities)
+        return await _control_call(controls.capabilities)
 
-    @mcp.tool(annotations=annotations)
+    @mcp.tool(annotations=hints["read"])
     async def get_settings() -> dict[str, object]:
         """Read supported preferences, valid values, effects, and write permissions.
 
@@ -198,9 +184,9 @@ def create_app(
         Theme value is the resolved preference; inherited means no saved override.
         Resettable preferences accept null to remove their saved override.
         """
-        return await control_call(controls.get_settings)
+        return await _control_call(controls.get_settings)
 
-    @mcp.tool(annotations=write_annotations)
+    @mcp.tool(annotations=hints["write"])
     async def update_settings(
         changes: dict[str, StrictBool | StrictInt | StrictFloat | StrictStr | None],
     ) -> dict[str, object]:
@@ -212,9 +198,9 @@ def create_app(
         in updated and previous are resolved preferences. Pass restore back as
         changes to recover prior values while preserving theme inheritance.
         """
-        return await control_call(controls.update_settings, changes)
+        return await _control_call(controls.update_settings, changes)
 
-    @mcp.tool(annotations=write_annotations)
+    @mcp.tool(annotations=hints["write"])
     async def retitle_transcription(
         record_id: RecordId, title: Title
     ) -> dict[str, object]:
@@ -223,18 +209,20 @@ def create_app(
         Requires retitling permission. Preserves source filename and transcript
         text; paired-computer records cannot be changed.
         """
-        return await control_call(controls.retitle, "transcription", record_id, title)
+        return await _control_call(controls.retitle, "transcription", record_id, title)
 
-    @mcp.tool(annotations=write_annotations)
+    @mcp.tool(annotations=hints["write"])
     async def retitle_meeting(meeting_id: RecordId, title: Title) -> dict[str, object]:
         """Set a finished local meeting's title (1–200 characters).
 
         Requires retitling permission. Active meetings and paired-computer records
         cannot be changed.
         """
-        return await control_call(controls.retitle, "meeting", meeting_id, title)
+        return await _control_call(controls.retitle, "meeting", meeting_id, title)
 
-    @mcp.tool(annotations=live_read_annotations)
+
+def _register_live_tools(mcp, hints, live_call):
+    @mcp.tool(annotations=hints["live_read"])
     async def get_live_state() -> dict[str, object]:
         """Read whether OpenWhisper is recording or busy, and which live permissions are on."""
 
@@ -244,7 +232,7 @@ def create_app(
 
         return await live_call(None, read)
 
-    @mcp.tool(annotations=live_read_annotations)
+    @mcp.tool(annotations=hints["live_read"])
     async def list_actions() -> dict[str, object]:
         """List the user's saved actions: id, name, kind, description and spoken names.
 
@@ -255,7 +243,7 @@ def create_app(
             None, lambda saved: {"actions": require_app_control().list_actions()}
         )
 
-    @mcp.tool(annotations=run_annotations)
+    @mcp.tool(annotations=hints["run"])
     async def run_action(action_id: ActionId, text: ActionText) -> dict[str, object]:
         """Run a saved action on text, as if the user had dictated it (1–20,000 characters).
 
@@ -272,7 +260,9 @@ def create_app(
             },
         )
 
-    @mcp.tool(annotations=record_annotations)
+
+def _register_recording_tools(mcp, hints, live_call):
+    @mcp.tool(annotations=hints["record"])
     async def start_dictation(action_id: ActionId | None = None) -> dict[str, object]:
         """Start recording the user's microphone, optionally for a saved action.
 
@@ -290,7 +280,7 @@ def create_app(
             },
         )
 
-    @mcp.tool(annotations=stop_annotations)
+    @mcp.tool(annotations=hints["stop"])
     async def stop_dictation() -> dict[str, object]:
         """Stop the current recording and transcribe it; requires permission to control recordings."""
 
@@ -300,7 +290,7 @@ def create_app(
 
         return await live_call(permissions.CONTROL_RECORDING, stop)
 
-    @mcp.tool(annotations=cancel_annotations)
+    @mcp.tool(annotations=hints["cancel"])
     async def cancel_dictation() -> dict[str, object]:
         """Cancel the current recording or transcription and discard it.
 
@@ -313,7 +303,26 @@ def create_app(
 
         return await live_call(permissions.CONTROL_RECORDING, cancel)
 
-    @mcp.tool(annotations=live_read_annotations)
+
+def _recent_events(types, since_seq, limit):
+    bus = automation_events.bus()
+    wanted = list(types) if types else None
+    if since_seq is None:
+        items, gap, more = bus.recent(limit, types=wanted), None, False
+    else:
+        items, gap = bus.since(since_seq, types=wanted)
+        more = len(items) > limit
+        items = items[:limit]
+    return {
+        "events": [event.to_dict() for event in items],
+        "gap": gap is not None,
+        "has_more": more,
+        "last_seq": bus.last_seq(),
+    }
+
+
+def _register_event_and_notice_tools(mcp, hints, live_call):
+    @mcp.tool(annotations=hints["live_read"])
     async def recent_events(
         types: EventTypes = None,
         since_seq: EventSeq = None,
@@ -331,24 +340,11 @@ def create_app(
         """
 
         def read(saved):
-            bus = automation_events.bus()
-            wanted = list(types) if types else None
-            if since_seq is None:
-                items, gap, more = bus.recent(limit, types=wanted), None, False
-            else:
-                items, gap = bus.since(since_seq, types=wanted)
-                more = len(items) > limit
-                items = items[:limit]
-            return {
-                "events": [event.to_dict() for event in items],
-                "gap": gap is not None,
-                "has_more": more,
-                "last_seq": bus.last_seq(),
-            }
+            return _recent_events(types, since_seq, limit)
 
         return await live_call(permissions.LIVE_EVENTS, read)
 
-    @mcp.tool(annotations=notice_annotations)
+    @mcp.tool(annotations=hints["notice"])
     async def notify_user(text: NoticeText, title: NoticeTitle = "") -> dict[str, object]:
         """Show the user a short notice near the pointer (1–500 characters).
 
@@ -360,6 +356,10 @@ def create_app(
             return {"shown": True}
 
         return await live_call(permissions.RUN_ACTIONS, notify)
+
+
+def _history_getter(app, token):
+    """``get(path, **params)``: the History API's JSON over ASGI, or a ToolError."""
 
     async def get(path, **params):
         params = {
@@ -379,11 +379,15 @@ def create_app(
             raise ToolError(f"{error['code']}: {error['message']}")
         return response.json()
 
-    @mcp.tool(annotations=annotations)
+    return get
+
+
+def _register_status_and_search_tools(mcp, hints, controls, get):
+    @mcp.tool(annotations=hints["read"])
     async def get_status() -> dict[str, object]:
         """Check whether saved OpenWhisper history is available for reading."""
         status = await get("/v1/status")
-        capabilities = await control_call(controls.capabilities)
+        capabilities = await _control_call(controls.capabilities)
         return {
             **status,
             "history_api_read_only": True,
@@ -391,7 +395,7 @@ def create_app(
             "capabilities": capabilities,
         }
 
-    @mcp.tool(annotations=annotations)
+    @mcp.tool(annotations=hints["read"])
     async def search_history(
         q: Query,
         kind: Literal["all", "transcription", "meeting"] = "all",
@@ -421,7 +425,9 @@ def create_app(
             before=before,
         )
 
-    @mcp.tool(annotations=annotations)
+
+def _register_transcription_tools(mcp, hints, get):
+    @mcp.tool(annotations=hints["read"])
     async def list_transcriptions(
         q: Query | None = None,
         limit: Limit = 20,
@@ -445,7 +451,7 @@ def create_app(
             before=before,
         )
 
-    @mcp.tool(annotations=annotations)
+    @mcp.tool(annotations=hints["read"])
     async def get_transcription(
         record_id: RecordId, include_remote: bool = False, device_id: RecordId | None = None
     ) -> dict[str, object]:
@@ -456,7 +462,9 @@ def create_app(
             device_id=device_id,
         )
 
-    @mcp.tool(annotations=annotations)
+
+def _register_meeting_tools(mcp, hints, get):
+    @mcp.tool(annotations=hints["read"])
     async def list_meetings(
         q: Query | None = None,
         limit: Limit = 20,
@@ -480,7 +488,7 @@ def create_app(
             before=before,
         )
 
-    @mcp.tool(annotations=annotations)
+    @mcp.tool(annotations=hints["read"])
     async def get_meeting(
         meeting_id: RecordId, include_remote: bool = False, device_id: RecordId | None = None
     ) -> dict[str, object]:
@@ -489,7 +497,7 @@ def create_app(
             f"/v1/meetings/{quote(meeting_id, safe='')}", include_remote=include_remote, device_id=device_id
         )
 
-    @mcp.tool(annotations=annotations)
+    @mcp.tool(annotations=hints["read"])
     async def list_meeting_segments(
         meeting_id: RecordId,
         limit: Limit = 20,
@@ -514,7 +522,7 @@ def create_app(
             end_s=end_s,
         )
 
-    @mcp.tool(annotations=annotations)
+    @mcp.tool(annotations=hints["read"])
     async def get_meeting_segment(
         meeting_id: RecordId,
         segment_id: RecordId,
@@ -528,7 +536,7 @@ def create_app(
             device_id=device_id,
         )
 
-    @mcp.tool(annotations=annotations)
+    @mcp.tool(annotations=hints["read"])
     async def get_meeting_insights(
         meeting_id: RecordId, include_remote: bool = False, device_id: RecordId | None = None
     ) -> dict[str, object]:
@@ -542,13 +550,9 @@ def create_app(
             device_id=device_id,
         )
 
-    # MCP Events (events/list, events/subscribe, events/unsubscribe) on the
-    # same authenticated endpoint as the tools.
-    from services.agent_mcp import events_ext
 
-    events_ext.install(mcp, settings)
-
-    http_app = mcp.streamable_http_app(
+def _mcp_http_app(mcp, allowed_hosts):
+    return mcp.streamable_http_app(
         streamable_http_path=MCP_PATH,
         json_response=True,
         stateless_http=True,
@@ -561,6 +565,9 @@ def create_app(
             ],
         ),
     )
+
+
+def _install_lifespan(app, mcp):
     history_lifespan = app.router.lifespan_context
 
     @asynccontextmanager
@@ -576,6 +583,91 @@ def create_app(
             filters.drop_all_leases()
 
     app.router.lifespan_context = lifespan
+
+
+def _install_private_peer_check(app):
+    @app.middleware("http")
+    async def check_private_peer(request, call_next):
+        from services.agent_api.app import _error
+        from services.remote_asr.tailscale import is_tailscale_address
+
+        peer = request.client.host if request.client else ""
+        try:
+            local = ipaddress.ip_address(peer).is_loopback
+        except ValueError:
+            local = False
+        if not local and not is_tailscale_address(peer):
+            return _error(
+                403,
+                "forbidden",
+                "Only local or Tailscale clients are supported.",
+                {"Cache-Control": "no-store"},
+            )
+        return await call_next(request)
+
+
+def _install_enabled_check(app, enabled):
+    # Disabling cuts off new requests immediately, even while uvicorn is
+    # draining work already in flight. No session can keep reading afterward.
+    @app.middleware("http")
+    async def check_enabled(request, call_next):
+        if not enabled():
+            from services.agent_api.app import _error
+
+            return _error(
+                503,
+                "disabled",
+                "MCP access is turned off.",
+                {"Cache-Control": "no-store"},
+            )
+        return await call_next(request)
+
+
+def create_app(
+    database,
+    token: str,
+    *,
+    enabled=None,
+    settings=None,
+    on_change=None,
+    meeting_renamer=None,
+    allowed_hosts=(),
+    client_history=None,
+):
+    """Serve /mcp and /v1 with shared host validation and bearer protection.
+
+    ASGI requests reuse the API's public schemas, filters, auth, and sanitized
+    errors without opening another socket or giving the agent a database path.
+    """
+    app = create_history_app(database, token, allowed_hosts=allowed_hosts, client_history=client_history)
+    mcp = MCPServer("OpenWhisper", version="1.0.0", instructions=INSTRUCTIONS)
+    hints = _tool_annotations()
+    controls = AgentControls(
+        database,
+        settings,
+        enabled=enabled,
+        on_change=on_change,
+        meeting_renamer=meeting_renamer,
+    )
+    # Registration order is the order tools/list reports them in.
+    live_call = _live_caller(enabled, settings)
+    _register_control_tools(mcp, hints, controls)
+    _register_live_tools(mcp, hints, live_call)
+    _register_recording_tools(mcp, hints, live_call)
+    _register_event_and_notice_tools(mcp, hints, live_call)
+    get = _history_getter(app, token)
+    _register_status_and_search_tools(mcp, hints, controls, get)
+    _register_transcription_tools(mcp, hints, get)
+    _register_meeting_tools(mcp, hints, get)
+
+    # MCP Events (events/list, events/subscribe, events/unsubscribe) on the
+    # same authenticated endpoint as the tools.
+    from services.agent_mcp import events_ext
+
+    events_ext.install(mcp, settings)
+
+    http_app = _mcp_http_app(mcp, allowed_hosts)
+    _install_lifespan(app, mcp)
     # The live API (events, actions, recording) exists only here, where a
     # running app is behind it; the headless --api never serves it.
     from services.automation.api import create_live_router
@@ -587,40 +679,7 @@ def create_app(
     # answers 404 and 405 in its JSON error shape.
     app.add_route(MCP_PATH, http_app)
     if allowed_hosts:
-
-        @app.middleware("http")
-        async def check_private_peer(request, call_next):
-            from services.agent_api.app import _error
-            from services.remote_asr.tailscale import is_tailscale_address
-
-            peer = request.client.host if request.client else ""
-            try:
-                local = ipaddress.ip_address(peer).is_loopback
-            except ValueError:
-                local = False
-            if not local and not is_tailscale_address(peer):
-                return _error(
-                    403,
-                    "forbidden",
-                    "Only local or Tailscale clients are supported.",
-                    {"Cache-Control": "no-store"},
-                )
-            return await call_next(request)
-
+        _install_private_peer_check(app)
     if enabled is not None:
-        # Disabling cuts off new requests immediately, even while uvicorn is
-        # draining work already in flight. No session can keep reading afterward.
-        @app.middleware("http")
-        async def check_enabled(request, call_next):
-            if not enabled():
-                from services.agent_api.app import _error
-
-                return _error(
-                    503,
-                    "disabled",
-                    "MCP access is turned off.",
-                    {"Cache-Control": "no-store"},
-                )
-            return await call_next(request)
-
+        _install_enabled_check(app, enabled)
     return app
