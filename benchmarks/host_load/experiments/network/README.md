@@ -24,8 +24,9 @@ Supply an existing **16 kHz, mono, uncompressed PCM16 WAV** using `--audio`. The
 original measurement used the public `whisper.cpp/samples/jfk.wav` sample, repeated
 for longer clips, SHA-256:
 `59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e`.
-A preserved copy is in the evidence package. Do not substitute silence when
-comparing compression. A single repeated speaker is not a representative corpus.
+Supply your own local copy matching that hash, or other representative speech.
+Do not substitute silence when comparing compression. A single repeated speaker
+is not a representative corpus.
 
 The portable copies validate source HEAD against required `--expected-revision`
 and reject tracked modifications. `--output` is required and must not already
@@ -42,24 +43,23 @@ From a checkout containing this `benchmarks` directory, set the following paths.
 The baseline and candidate must be separate clean worktrees. The original
 measured baseline was `169d254`; the records candidate was `ab9b4c8` (scheduler,
 weak lock registry and telemetry, before the later event-refresh follow-up).
-If those research commits are available in the provided repository history:
+That isolated historical commit was lost with the shared workspace. The commands
+below compare the preserved baseline with the later, published integrated candidate:
 
 ```bash
 REPO="$PWD"
 BASE="$(dirname "$REPO")/openwhisper-network-baseline"
 CAND="$(dirname "$REPO")/openwhisper-network-candidate"
 git worktree add --detach "$BASE" 169d254
-git worktree add --detach "$CAND" ab9b4c8
+git worktree add --detach "$CAND" 285d01d2d693046d3caccc1ae2b53f68bd29ae91
 ```
 
-If delivery contains patches rather than the research commit objects, apply them
-in a separate candidate worktree and use its actual resulting commit below.
-Do not label a different source revision an exact reproduction of `ab9b4c8`.
-Set `BASE` and `CAND` to the resulting clean worktrees, then:
+Do not label this newer candidate an exact reproduction of the historical
+`ab9b4c8` timing experiment. Set `BASE` and `CAND` to the clean worktrees, then:
 
 ```bash
 EXP="$REPO/benchmarks/host_load/experiments/network"
-AUDIO="$REPO/evidence/original-network/data/jfk.wav"  # Or your local PCM16 speech WAV.
+AUDIO="/absolute/path/to/speech-16k.wav"  # Existing PCM16 mono 16 kHz speech.
 OUT="$PWD/network-results-$(date +%Y%m%d-%H%M%S)"
 PY=python  # Select your prepared OpenWhisper Python environment.
 BASE_REV=$(git -C "$BASE" rev-parse HEAD)
@@ -100,9 +100,11 @@ new performance runs during the primary controlled sweep.
 
 ## Evidence and limitations
 
-`evidence/original-network/` preserves the original scripts, raw JSON/logs and
-source audio, with `SHA256SUMS`. Those originals contain historical workspace
-paths and are not the portable entry points. They were not rewritten or rerun.
+The original raw network/codec/records-contention files were lost during the
+shared-workspace incident. The scaling report labels their surviving aggregate
+observations accordingly; an `evidence/original-network/` directory is not
+delivered. A later scratch-only record-lock count comparison has fresh raw
+evidence and provenance. Use these portable entry points to generate new runs.
 Native dependencies and generated encoded examples are not vendored.
 
 The byte-pacing proxy is **not netem**: it does not model packet loss, TCP

@@ -4,13 +4,15 @@
 
 ## Evidence status: interrupted investigation and recovered observations
 
-**At 11:23 UTC, the execution environment reset and its local files were lost.** The published source survived; the uncommitted report, original raw measurements, full test logs, model assets and local research artifacts did not. This report was reconstructed from previously inspected text and summaries retained in the investigation conversation. Tables explicitly marked **recovered observations** describe results seen before the reset, not newly rerun measurements or raw evidence that remains independently auditable.
+**Around 11:23 UTC, the shared workspace disappeared and its local files became unavailable.** The published source survived; the uncommitted report, original raw measurements, full test logs, model assets and local research artifacts did not. This report was reconstructed from previously inspected text and summaries retained in the investigation conversation. Tables explicitly marked **recovered observations** describe results seen before the first shared-workspace loss, not newly rerun measurements or raw evidence that remains independently auditable.
 
 The primary baseline completed **80 cells**. The paired candidate sweep was last verified at **51 of 80 cells at 11:07 UTC** and was interrupted. **There is no completed primary before/after sweep.** Do not infer missing candidate cells, treat an interrupted process as completion, or advertise a measured capacity gain from this partial matrix. Recovered aggregate exports, where provided, are a separate evidence class from original raw request rows. Source code and reproduction procedures survive, but they do not replace lost observations.
 
-The pre-reset candidate was `30c206b`. Its tree-identical published equivalent is `717eeaeaed8ab8a173388f9984da52f4ba393af3`: publication preserved commit order and file contents but recreated commit metadata. The remote Git tree was directly verified as `0fc0aaaf5326e02932958db823e2719e32d556e6`. Historical prototype IDs below identify earlier isolated experiments; they are not necessarily commit objects in the published branch. Fresh post-recovery tests and soak results identify their own source and environment and must not be conflated with earlier runs.
+The pre-loss candidate was `30c206b`. Its tree-identical published equivalent is `717eeaeaed8ab8a173388f9984da52f4ba393af3`: publication preserved commit order and file contents but recreated commit metadata. The remote Git tree was directly verified as `0fc0aaaf5326e02932958db823e2719e32d556e6`. Historical prototype IDs below identify earlier isolated experiments; they are not necessarily commit objects in the published branch. Fresh post-recovery tests and soak results identify their own source and environment and must not be conflated with earlier runs.
 
-**Fresh validation status:** the post-recovery full suite completed with 9,474 passed and the same six isolation failures; all 529 remote-related cases passed. Focused paired measurements and long-run checks are in progress and will be reported separately.
+**A second filesystem loss at approximately 11:59 UTC removed the restored shared workspace.** The cause of both incidents is unknown; neither is established as a whole-machine reset. During the second incident the hostname stayed unchanged and an existing process continued writing to scratch while its shared paths were unavailable. Published source/report and deliberate scratch backups survived. The completed 26-cell focused comparison below retains raw JSON in that backup and is freshly auditable; the original 80-cell raw baseline and interrupted candidate remain lost. Earlier attempted 40-minute soaks did not produce completed-run/quiescence evidence and are not counted as completed stability tests.
+
+**Fresh validation status:** the post-recovery full suite completed with 9,474 passed and the same six isolation failures; all 529 remote-related cases passed. A distinct 26-cell focused paired comparison completed and its raw p95 values were independently rechecked after the second disappearance. New scratch-based 30-minute soak results remain pending; final log/bundle availability is tracked in the evidence index.
 
 ## Executive summary
 
@@ -31,7 +33,7 @@ No RTX 2060, GTX 1050 Ti, CUDA-memory experiment, real WAN-loss experiment, micr
 | CPU-Parakeet acceptable-latency dictating users | Device-specific; supplied laptop timing differs from measured cloud CPU | Not established on owner's laptop | Recovered small-sample CPU observations below |
 | GPU-Whisper-turbo or CPU-Whisper-small user count | Not established | Not established | Uncalibrated simulated sensitivity profiles, not hardware forecasts |
 
-The recovered baseline-only screen below reports tested simulated client counts, not a target-hardware maximum. No candidate capacity result is substituted for missing paired cells.
+The recovered baseline-only screen and the separate fresh 26-cell comparison below report tested simulations, not target-hardware maximums. Fresh GPU-Parakeet timing simulations completed every offered final at default-cap N=12 and cap-relaxed N=16/24/32 on both sources; they did not demonstrate a consistent candidate latency improvement. They do not fill the missing original paired cells.
 
 ### Recommendations ranked by value and effort
 
@@ -72,13 +74,13 @@ Two active jobs do not imply two GPU decodes. One may be decoding while another 
 
 ### Environment and isolation
 
-The pre-reset environment exposed nine logical CPUs and approximately 9.7 GiB RAM, without a GPU. Baseline and candidate used the same package environment, service-time parameters, arrival seeds and measurement instrumentation. The baseline production checkout was immutable.
+The original environment exposed nine logical CPUs and approximately 9.7 GiB RAM, without a GPU. Baseline and candidate used the same package environment, service-time parameters, arrival seeds and measurement instrumentation. The baseline production checkout was immutable.
 
 Load tests bound `127.0.0.1`, used real TLS WebSockets, temporary certificates, in-memory device registries and production `SpeechHost`/`RemoteConnection`. Discovery and Tailscale were patched away. Temporary data roots were selected before settings imports. Real model files came from explicit test/model locations, without opening actual pairing or credential storage.
 
 The main harness places the server in a separate process. Its CPU/RSS/thread samples include inference-worker descendants and exclude the client generator. Earlier connection experiments measured a joint process; those figures must not be read as server-only memory. One fully occupied core is 100% CPU. Resource samples are periodic observations, not guaranteed peak allocations.
 
-Initial full-suite attempts exposed dependency and test-egress problems. Later runs used a process-local loopback-only guard and native-runtime telemetry opt-out. These were test-launch controls, not production modifications. Original launch logs were lost in the reset; fresh launch configurations must be retained separately.
+Initial full-suite attempts exposed dependency and test-egress problems. Later runs used a process-local loopback-only guard and native-runtime telemetry opt-out. These were test-launch controls, not production modifications. Original launch logs were lost in the first shared-workspace loss; fresh launch configurations must be retained separately.
 
 ### Arrival accounting
 
@@ -113,7 +115,7 @@ Connection capacity and engine capacity are distinct. Default-cap measurements r
 
 ## Primary workload evidence and coverage
 
-**Recovered status:** baseline completed 80 cells spanning four simulated profiles, ten client counts (1, 2, 3, 4, 6, 8, 12, 16, 24, 32) and two dictation rates (0.05 and 0.2/s/client), with sixty-second generation windows. Candidate was last verified at 51/80 cells and was interrupted. Original raw rows are lost. A completed primary all-workload matrix or completed paired matrix is not claimed.
+**Recovered status:** baseline completed 80 cells spanning four simulated profiles, ten client counts (1, 2, 3, 4, 6, 8, 12, 16, 24, 32) and two dictation rates (0.05 and 0.2/s/client), with sixty-second light-duty windows and thirty-second stress windows. Candidate was last verified at 51/80 cells and was interrupted. Original raw rows are lost. A completed primary all-workload matrix or completed paired matrix is not claimed.
 
 [Recovered baseline aggregate CSV](data/recovered-baseline.csv) retains all 80 previously printed rows, reconciling to 4,224 offered requests. It is a transcript-derived aggregate, not the original request-level dataset. The table below selects cells with retained short-final p95 below the threshold and zero retained busy, not_started, not_connected and connection-refusal counts. It does not recover all original per-request metadata or certify a population SLO.
 
@@ -130,7 +132,61 @@ Connection capacity and engine capacity are distinct. Default-cap measurements r
 
 These are speech-only default-cap cells, not speech-plus-history clients. High-N connection refusals and generation-window censoring prevent interpreting the last passing count as the engine's physical throughput ceiling. Short cells and small samples make even the passing counts provisional. A recovered successful-tail plot must be paired with failure/censoring information, never shown alone as capacity.
 
+![Recovered baseline latency across all ten client counts](recovered-baseline-latency.png)
+
+![Recovered baseline unserved demand, including rejection and censoring](recovered-baseline-unserved.png)
+
 Secondary experiments covered previews, meetings, history, local contention, records, connection pressure and lifecycle behavior at narrower scales. These do not substitute for the missing complete matrix. The final evidence index must distinguish recovered aggregates, newly measured evidence and source-only findings. Missing cells must remain visibly missing in charts.
+
+## Fresh focused paired measurements (26 completed cells)
+
+These measurements are **new after the first shared-workspace loss**, separate from the recovered 80-cell baseline and interrupted primary candidate. Their 26 raw JSON files survived the second storage disappearance in a scratch backup. Thirteen baseline/candidate parameter pairs were checked, and all 26 successful short-final p95 values were independently recomputed from raw rows after recovery. Every cell reports zero unfinished client threads. [CSV summary](data/focused-summary.csv), [JSON summary](data/focused-summary.json), [raw-file hash manifest](data/focused-raw-SHA256SUMS.txt).
+
+### Exact source and measurement boundaries
+
+- Production baseline: clean `169d25442086c238ac7ef36660510a7c748adc97`; production candidate: clean `717eeaeaed8ab8a173388f9984da52f4ba393af3`. Each raw file records source hashes for host/client/engine/remote-backend modules.
+- Both sides use the same schema-3 harness, SHA-256 `681aa0ae7be2287e23c836db550d3fc874a01de3a01b169aed8cb55b5ff251ca`. Its maintenance source `c1c3f3c7bd4d1811ee6e51ddfad34d164fffa1e8` is preserved by tree-identical published `285d01d2d693046d3caccc1ae2b53f68bd29ae91`, tree `3be0cdb3ea371cddef3cf861322d1629bce147e9`. Harness provenance and the selected production checkout are different fields, deliberately.
+- Real loopback TLS; **serialized sleep-based inference only**. Python 3.12.14, Linux x86-64, nine logical CPUs. Fixed seed 7, inference jitter zero, 0.2 offered releases/s/client. Cases ran sequentially during the focused timing window, before subsequent soak activity; underlying cloud-host scheduling was not controlled.
+- Schema 3 holds connections through the generation window, unlike original cells where empty clients could close early. It records actual engine description, harness hash and explicit grace/connection-lifetime metadata. These changes mean this is a newly defined paired experiment, not a continuation of the old sweep.
+- Sustained GPU-Parakeet: 150-second generation and ten-second issue grace, default twelve-connection cap. Cap-relaxed sensitivity: thirty-second generation and ten-second issue grace, cap explicitly raised to 64. Compact other profiles: twenty-second generation and five-second issue grace, default cap.
+- Issue grace permits scheduled work to start after the generation window; it is not a request-latency deadline. Already running work may drain beyond it. Latency still starts at intended release, and requests not started by the issue limit remain censored. Immediate live-server quiescence sampling is only 0.3 s here, not a long-run leak test.
+
+### GPU-Parakeet timing simulation: default cap and relaxed cap
+
+| Case | Offered clients | Finals completed/offered per source | Successful clips <15 s per source | Baseline short-final p95 s | Candidate short-final p95 s |
+|---|---:|---:|---:|---:|---:|
+| Default cap, 150 s generation | 12 | 353/353 | 329 | 0.102626 | 0.137858 |
+| Cap 64, 30 s generation | 16 | 99/99 | 93 | 0.104315 | 0.110768 |
+| Cap 64, 30 s generation | 24 | 153/153 | 142 | 0.183464 | 0.139192 |
+| Cap 64, 30 s generation | 32 | 202/202 | 188 | 0.205634 | 0.234440 |
+
+Every row had zero busy, error, not_started, not_connected and connection-refusal counts on both sources. Candidate latency was higher in three of these four comparisons and lower at N=24; these single-seed runs do **not** show a consistent latency speedup or justify a causal regression estimate. Both remain well below the one-second observed screen for this service-time model. Default-cap N=12 is speech-only, not twelve speech-plus-history computers. Cap64 is explicitly not shipped behavior.
+
+![Fresh paired GPU-Parakeet timing simulation, not GPU inference](fresh-gpu-parakeet.png)
+
+The chart's p99 is descriptive, not a population guarantee. The workload remains below the sleeping engine's offered compute utilization of one in these cells; successfully simulating 32 cap-relaxed clients does not establish GPU saturation, maximum physical engine capacity, real native contention, VRAM headroom or recognition quality.
+
+### Compact stress screens for the other profiles
+
+Successful-tail latency must be read beside rejected/censored work. All rows below have zero transport errors and connection refusals; “busy / unstarted” accounts for the incomplete finals. These are small twenty-second stress traces plus five-second issue grace, not steady-state capacity curves.
+
+| Simulated profile | N | Baseline complete/offered | Candidate complete/offered | Baseline busy / unstarted | Candidate busy / unstarted | Baseline short-final p95 s | Candidate short-final p95 s |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| cpu-parakeet | 1 | 5/5 | 5/5 | 0 / 0 | 0 / 0 | 2.749 | 2.751 |
+| cpu-parakeet | 6 | 22/25 | 22/25 | 0 / 3 | 0 / 3 | 19.728 | 19.782 |
+| cpu-parakeet | 12 | 18/46 | 24/46 | 19 / 9 | 18 / 4 | 22.721 | 20.632 |
+| gpu-whisper-turbo | 1 | 5/5 | 5/5 | 0 / 0 | 0 / 0 | 0.375 | 0.349 |
+| gpu-whisper-turbo | 6 | 25/25 | 25/25 | 0 / 0 | 0 / 0 | 0.980 | 0.984 |
+| gpu-whisper-turbo | 12 | 46/46 | 46/46 | 0 / 0 | 0 / 0 | 2.429 | 2.458 |
+| cpu-whisper-small | 1 | 5/5 | 5/5 | 0 / 0 | 0 / 0 | 8.953 | 8.987 |
+| cpu-whisper-small | 6 | 14/25 | 14/25 | 0 / 11 | 0 / 11 | 34.597 | 34.582 |
+| cpu-whisper-small | 12 | 14/46 | 14/46 | 20 / 12 | 20 / 12 | 48.918 | 48.970 |
+
+![Fresh compact profile stress screens; successful-tail latency excludes busy and censored attempts](fresh-compact-profiles.png)
+
+The CPU-Parakeet N=12 candidate completed 24/46 versus 18/46 baseline, but many finals still failed or remained unstarted. The successful subsets differ (24 versus 17 short clips), so the p95 difference is not an equal-request latency speedup. CPU-Whisper-small was essentially unchanged and overloaded; the hypothetical GPU-Whisper-turbo scenario completed every final but exceeded two-second p95 at N=12. With only five offered finals at N=1 and 25 at N=6, extrapolating a precise knee is not justified. The two Whisper profiles remain uncalibrated sensitivity models, not the named hardware measured here.
+
+**Conclusion:** the focused data provide fresh, reproducible behavior checks and bounded overload examples, not a replacement for the interrupted full sweep or a hardware user-count guarantee. The strongest prototype rationale remains admission/security/fairness correctness rather than claimed inference acceleration.
 
 ## Research tracks
 
@@ -146,7 +202,7 @@ Whisper's `BatchedInferencePipeline.transcribe` batches chunks of the supplied r
 
 #### Recovered real CPU observations
 
-These values were inspected before the reset; original scored rows/logs are lost. They were actual inference over real TLS with public eleven-second JFK speech. Production modes included normal isolated workers; experimental modes used direct backend APIs with the limitations above. Four-client cases were synchronized waves favorable to batching, not Poisson human workloads. All listed requests succeeded. Small-sample percentiles are descriptive.
+These values were inspected before the first shared-workspace loss; original scored rows/logs are lost. They were actual inference over real TLS with public eleven-second JFK speech. Production modes included normal isolated workers; experimental modes used direct backend APIs with the limitations above. Four-client cases were synchronized waves favorable to batching, not Poisson human workloads. All listed requests succeeded. Small-sample percentiles are descriptive.
 
 | CPU case | Scored requests | p50 s | p95 s | Audio-s/wall-s |
 |---|---:|---:|---:|---:|
@@ -198,7 +254,7 @@ The prototype separates authenticated long-lived admission from a small anonymou
 
 Protocol version remains one and hello still checks the token. Old clients use the anonymous lane and can remain blocked by its saturation. TCP/TLS/HTTP worker creation precedes application admission: this is not protection from raw TCP/TLS floods. An anonymous pool alone cannot identify and protect a new paired client before receiving its identity.
 
-Recovered compatibility checks covered wrong pins, invalid/duplicate/malformed authorization headers, revocation between upgrade and hello and attempted identity changes in hello. Wrong-pin endpoints saw neither upgrade nor token. New speech/history clients worked against the unmodified baseline; legacy hello clients worked against the new host when the anonymous lane had space. These historical checks need fresh retained confirmation after the reset.
+Recovered compatibility checks covered wrong pins, invalid/duplicate/malformed authorization headers, revocation between upgrade and hello and attempted identity changes in hello. Wrong-pin endpoints saw neither upgrade nor token. New speech/history clients worked against the unmodified baseline; legacy hello clients worked against the new host when the anonymous lane had space. These historical checks need fresh retained confirmation after the shared-workspace loss.
 
 Authorization headers add another logging exposure. The transport suppresses raw wire DEBUG logging, including token-bearing hello bodies, rather than trusting header redaction alone. Operational warnings remain. External proxies/tracing must also avoid tokens. Certificate pins, hashed-token registry, owner approval and Tailscale same-owner checks are not replaced with anonymous trust.
 
@@ -208,6 +264,31 @@ Async I/O may reduce idle-thread cost but does not remove inference serializatio
 
 Recommendation: land admission only after security/compatibility review, keep cap unchanged until resource validation, then assess a larger cap. A cap decision is roughly 1–2 days of validation; transport replacement/multiplexing is a separate multi-day architecture project. Risk: legacy saturation, pre-TLS resource exhaustion and response demultiplexing.
 
+Dependency boundary: execution used release-pinned websockets 17.1. The app's broad `>=13.0` declaration is not proof that every permitted version works; its existing sync keepalive arguments require later threading support. Upstream documents that addition in 15.0. Validate and correct the minimum supported dependency separately rather than claim that this run tested every version. [Official changelog](https://websockets.readthedocs.io/en/stable/project/changelog.html).
+
+### Fresh connection resource and valid-token saturation checks
+
+A completed scratch-only check at 12:07:36 UTC retains [raw results](data/fresh-connection-resources/result.json), [execution metadata](data/fresh-connection-resources/metadata.json), [exact script](data/fresh-connection-resources/executed-source.py) and [log](data/fresh-connection-resources/run.log). It tested production candidate `285d01d2d693046d3caccc1ae2b53f68bd29ae91`, websockets 17.1, with a synthetic immediate engine over real pinned loopback TLS. Resources are **server-only**, unlike original joint-process connection experiments. Other work shared the machine: no latency/throughput claim follows.
+
+The cap was deliberately raised to 64 for this resource characterization:
+
+| Channel configuration | Distinct devices | Live sockets | Server Python threads | Server RSS MiB |
+|---|---:|---:|---:|---:|
+| Speech only | 1 | 1 | 5 | 52.19 |
+| Speech only | 8 | 8 | 26 | 53.48 |
+| Speech only | 16 | 16 | 50 | 55.10 |
+| Speech only | 32 | 32 | 98 | 58.00 |
+| Speech only | 64 | 64 | 194 | 62.57 |
+| Speech + history | 1 | 2 | 8 | 53.54 |
+| Speech + history | 4 | 8 | 26 | 54.72 |
+| Speech + history | 8 | 16 | 50 | 56.32 |
+| Speech + history | 16 | 32 | 98 | 59.23 |
+| Speech + history | 32 | 64 | 194 | 63.73 |
+
+All 100 request checks and live-slot assertions passed. Both configurations returned to one Python thread and zero paired slots after shutdown. Python-thread counts are not OS-thread counts; both are retained in raw results. At 64 sockets the measured process includes no real model working memory, and this is a finite connection exercise, not a long soak or proof that 32 fully featured users can dictate concurrently.
+
+A separate **default-cap** case opened all twelve slots using the same valid token. Another paired device then received `RemoteHostBusy`, while the four anonymous-lane slots remained free. This freshly demonstrates the residual connection-level denial by an authenticated device: per-device work fairness does not impose per-device socket fairness. Keep this limitation explicit before increasing the default.
+
 ### 5. Admission feedback, retry, local fallback and discovery
 
 The client parses `retry_after_ms`, but foreground dictation does not automatically retry busy. Its one resend is limited to connection loss before sending (`transcriber/remote_backend.py:651–730`). Meetings retain chunks and honor bounded retry suggestions without spending their decode-retry budget (`meeting/asr/engine.py:639–698,777–785`).
@@ -216,7 +297,7 @@ Background reconnect uses deterministic 2/5/15/30/60 s delays (`services/applica
 
 Fallback needs an installed compatible local engine, explicit user policy, circuit breaker and hysteresis. Retain audio until one accepted final exists, suppress late remote results by request/generation identity, and explain “Host busy; transcribing on this computer.” Do not download silently or route to unpaired machines. Meetings should retain their saved host/model contract unless migration is explicitly designed.
 
-A **proposed, unmeasured initial policy** is to allow fallback after an explicit host-busy response when a bounded retry cannot meet the user's chosen final-text deadline; open a circuit after repeated such failures, and restore remote preference only after successful low-rate health probes and a cooldown. Choose thresholds from owner-latency measurements, not this small matrix. Known-unsent failure and uncertain completion must remain different states; prevent duplicate final insertion. Effort: several days with UI and lifecycle tests. Risk: switching recognition behavior, cold local load and duplicate results.
+A **proposed, unmeasured initial policy** is to fall back after two explicit pre-execution busy responses or a three-second final-text deadline, provided a compatible local engine is already installed and fallback is enabled. Use a thirty-second circuit cooldown, then require three successful short trial requests before restoring remote preference. Treat these as starting thresholds for user testing, not measured optima. A deadline alone never proves the remote request did not execute: suppress late remote completion by request identity and insert only one accepted final. Choose thresholds from owner-latency measurements, not this small matrix. Known-unsent failure and uncertain completion must remain different states; prevent duplicate final insertion. Effort: several days with UI and lifecycle tests. Risk: switching recognition behavior, cold local load and duplicate results.
 
 Authenticated feedback can expose active/queued counts, recent rejection rate and service estimates; it is stale advice, not a reservation. Unauthenticated discovery should neither reveal per-device activity nor authorize private-audio routing. Advertise coarse capabilities publicly and use authenticated load for host choice.
 
@@ -261,6 +342,8 @@ The recovered codec matrix included native encode, TLS transport, decode and fak
 
 [Recovered codec-pipeline CSV](data/recovered-codec-pipeline-summary.csv) and [noise/size CSV](data/recovered-codec-noise-summary.csv) retain the printed observations. FLAC saved off-LAN transfer time but not loopback time. Native Opus costs outweighed payload savings on LAN. This is implementation/configuration-specific, not universal codec ranking. No WER/quality test was performed. Separate size experiments found FLAC/PCM ratios 0.557 clean, 0.749 at 20 dB white-noise SNR, 0.825 at 10 dB; Opus about 0.09–0.095. Only clean speech had the controlled timing matrix.
 
+![Recovered codec crossover, with original raw evidence unavailable](recovered-codec-latency.png)
+
 An idealized 30-second recording with ten completed three-second previews and 0.75-second overlap sends 36.75 preview audio-seconds plus thirty final seconds: 2.136 MB, 2.225 times final-only, about 570 kbit/s over recording time before burst/header effects. Actual stop boundaries and stateful streaming differ; this is a budget calculation.
 
 Recommendation: progressive upload first, moving bytes during recording while preview inference stays optional. Separate upload completion from decode scheduling; bound per-device retention and cancellation cleanup. A codec extension must mutually negotiate `audio_codecs` and decoded-sample/time limits so an old host never interprets compressed bytes as PCM. Several engineering days plus compatibility and quality testing; keep PCM fallback. See [portable network experiments](../../../benchmarks/host_load/experiments/network/README.md); references there to the original evidence bundle must be checked against what actually survived.
@@ -303,13 +386,26 @@ All numbers are illustrative. Prototypes expose bounded counters/timing, not the
 
 Recovered 5,000-record real-TLS begin/abort churn retained 5,000 old-store locks versus zero in the weak-reference registry after callers released them. [Recovered lock-churn CSV](data/recovered-lock-churn-summary.csv) preserves the aggregate. Traced process allocations fell from about 1.58 MB to 0.157 MB; not standalone RSS. Held/waiting callers retain strong references, preserving same-record exclusion.
 
+#### Fresh record-lock verification with surviving raw evidence
+
+After the second shared-storage loss, a scratch-only rerun completed both 5,000-pair cases successfully (exit 0). Clean baseline `169d254` and immutable candidate `285d01d2d693046d3caccc1ae2b53f68bd29ae91` used real pinned loopback TLS, production `HostRecordStore` and disposable settings/storage. No speech inference or actual-user records were involved. [Evidence guide](data/fresh-lock-churn/README.md), [checkpoint CSV](data/fresh-lock-churn/checkpoints.csv), [baseline raw](data/fresh-lock-churn/baseline-checkpoints.json), [candidate raw](data/fresh-lock-churn/candidate-checkpoints.json), [hash manifest](data/fresh-lock-churn/SHA256SUMS).
+
+| Completed begin/abort pairs | Baseline retained locks | Candidate retained locks |
+|---:|---:|---:|
+| 0 | 0 | 0 |
+| 100 | 100 | 0 |
+| 1,000 | 1,000 | 0 |
+| 5,000 | 5,000 | 0 |
+
+This fresh evidence independently confirms the earlier recovered retention result. Final traced live allocations were 1,574,189 bytes baseline and 183,567 candidate: supplemental tracemalloc observations, not RSS or isolated causal attribution. The candidate's reported 48-byte map figure is only the weak-map wrapper and must not be compared with the baseline map/key/lock lower bound as total memory. Concurrent soak/recovery work may overlap, so no timing/throughput improvement is claimed. This verifies completed-record registry retention, not every concurrent lock lifecycle. The erased 11:52 rerun is not used as surviving raw evidence.
+
 Fast client cancellation does not mean stopped host compute. Abandoned requests can remain queued on an open connection and later execute. Per-request cancellation needs a broker, not killing a shared worker for one caller.
 
 Engine reload needs atomic ownership. Checking identity after host admission does not protect a request already waiting on a backend lock. Optional remote recognition/streaming does not set the local is_transcribing flag used by controller switch refusal. Cleanup can close the worker without waiting on the decode lock. Same-model reload can increment backend generation without changing the published host identity. These findings motivate leases and drain/reload coordination; transport reconnect tests do not prove safe native model replacement.
 
 Recommendation: narrow lock-lifetime fix now; broker/leases next; explicit cancellation, revoke-during-queue, restart/reconnect and cleanup tests before concurrency expansion. The preserved [reload characterization](../../../benchmarks/host_load/experiments/reload-characterization.md) intentionally documents undesirable behavior and is outside ordinary regressions. It must change when the lifecycle is fixed, not preserve the hazard forever.
 
-**Fresh soak result pending.** No lost/uncompleted pre-reset soak is claimed as a completed 30–60-minute stability test. The final result should report duration, workload, concurrency overlap, resource start/live/quiescent snapshots, errors and unfinished threads. Stable memory over one finite interval is not unlimited uptime or GPU-leak coverage.
+**Fresh scratch-based soak results pending.** Neither the pre-loss attempt nor the forty-minute attempts interrupted by the second storage loss are claimed as completed 30–60-minute stability tests. One retained real-Parakeet prefix spans only 137.446 seconds with 13 successful nonempty requests and three reconnects; it provides no final shutdown/quiescence or memory-stability result. The final result should report duration, workload, concurrency overlap, resource start/live/quiescent snapshots, errors and unfinished threads. Stable memory over one finite interval is not unlimited uptime or GPU-leak coverage.
 
 ### 11. Headless hosting and alternative front doors
 
@@ -339,7 +435,7 @@ Primary sources inspected during the original research on October 20, 2026; this
 
 ## Prototype comparisons: recovered observations
 
-These are recovered pre-reset summaries, not currently re-auditable raw experiment data. They are controlled behavior tests, not normal-load throughput measurements.
+These are recovered pre-loss summaries, not currently re-auditable raw experiment data. They are controlled behavior tests, not normal-load throughput measurements.
 
 | Experiment | Baseline | Prototype | What it establishes |
 |---|---|---|---|
@@ -357,9 +453,9 @@ Fairness/preview counts repeated in five trials including corrected aging. One n
 
 ## Full-suite validation
 
-### Recovered pre-reset test observations
+### Recovered pre-loss test observations
 
-Original stdout/JUnit/tracebacks and dependency freeze were lost. Counts below were observed before reset and are not a substitute for fresh retained logs. Python 3.12.14, nine xdist workers, release-constrained dependencies, Qt offscreen, dummy input backend and loopback-only guard were used. Command: `pytest -n auto -v --durations=20 -o faulthandler_timeout=120`.
+Original stdout/JUnit/tracebacks and dependency freeze were lost. Counts below were observed before the first shared-workspace loss and are not a substitute for fresh retained logs. Python 3.12.14, nine xdist workers, release-constrained dependencies, Qt offscreen, dummy input backend and loopback-only guard were used. Command: `pytest -n auto -v --durations=20 -o faulthandler_timeout=120`.
 
 | Source | Passed | Failed | Skipped | Passed subtests | Duration | Exit |
 |---|---:|---:|---:|---:|---:|---:|
@@ -373,7 +469,7 @@ All 472 baseline remote-related JUnit cases passed. The six baseline failures we
 
 These were classified as baseline test-isolation limitations, not Host Mode regressions. The guard was not weakened to obtain green results. Earlier incomplete/dependency-broken attempts were not substituted for the completed baseline.
 
-The candidate had those six plus `tests/test_clipboard.py::test_cleanup_drops_the_prefetch`: line 519 expected `captures == []` but found one main-thread capture. It requests a 20 ms prefetch, pumps Qt for 5 ms, cleans up, then pumps again. Clipboard source/test were byte-identical to baseline. Immediate isolated rerun passed in 1.64 s. A timer overrun under load is plausible, not proven, and does not erase the seven-failure suite result. No Host Mode tests failed. Ruff 0.16.4 `--select F` passed before reset.
+The candidate had those six plus `tests/test_clipboard.py::test_cleanup_drops_the_prefetch`: line 519 expected `captures == []` but found one main-thread capture. It requests a 20 ms prefetch, pumps Qt for 5 ms, cleans up, then pumps again. Clipboard source/test were byte-identical to baseline. Immediate isolated rerun passed in 1.64 s. A timer overrun under load is plausible, not proven, and does not erase the seven-failure suite result. No Host Mode tests failed. Ruff 0.16.4 `--select F` passed before the first shared-workspace loss.
 
 ### Fresh post-recovery validation
 
@@ -383,7 +479,7 @@ The restored source plus schema-3 harness maintenance, `c1c3f3c7bd4d1811ee6e51dd
 |---:|---:|---:|---:|---:|---:|---:|
 | 9,474 | 6 | 44 | 0 | 4,487 | 189.64 s | 1 |
 
-The six failures are exactly the isolation cases named above. The clipboard timer failure did not recur in this full run. All 529 remote-related JUnit rows passed; Ruff 0.16.4 `--select F` passed. Full fresh stdout, JUnit, failure traces, dependency freeze, source hash and launch configuration are retained in the evidence bundle. The suite remains exit 1, not globally green. The recovered environment is a fresh installation, not proof that every byte of the lost environment was identical.
+The six failures are exactly the isolation cases named above. The clipboard timer failure did not recur in this full run. All 529 remote-related JUnit rows passed; Ruff 0.16.4 `--select F` passed. Full fresh stdout, JUnit, failure traces, dependency freeze, source hash and launch configuration are retained in the evidence bundle. The suite remains exit 1, not globally green. The second storage loss occurred after this run, but the fresh full-suite bundle survived separately and was successfully restored from its native Library backup. These fresh raw test logs were not lost; historical absolute workspace paths inside them are not their current delivery location. The recovered environment is a fresh installation, not proof that every byte of the lost environment was identical.
 
 This Linux investigation does not establish Windows packaging, microphone, desktop-input or CUDA correctness.
 
@@ -397,7 +493,7 @@ This Linux investigation does not establish Windows packaging, microphone, deskt
 | Paced TLS proxy | Controlled rate/delay effects | TCP loss/congestion or real WAN/Tailscale |
 | Soak/churn | Resources over the measured interval | Unlimited uptime or unexercised native/GPU leaks |
 | Static audit | Control flow/design constraints | Successful hardware execution |
-| Recovered tables | Previously observed summaries | Independent raw-data audit after reset |
+| Recovered tables | Previously observed summaries | Independent raw-data audit after shared-workspace loss |
 
 ## Roadmap and selective review
 
@@ -510,7 +606,25 @@ Recovered aggregate evidence, explicitly not original raw data:
 - [Network](data/recovered-network-30s-summary.csv), [codecs](data/recovered-codec-pipeline-summary.csv), [noise/size](data/recovered-codec-noise-summary.csv).
 - [Records contention](data/recovered-records-summary.csv) and [lock churn](data/recovered-lock-churn-summary.csv).
 
-Fresh simulated reproduction, run sequentially rather than beside inference/suite work:
+Fresh completed focused evidence:
+
+- [26-cell paired CSV](data/focused-summary.csv), [JSON](data/focused-summary.json), [raw JSON hash manifest](data/focused-raw-SHA256SUMS.txt).
+- [GPU-Parakeet paired chart](fresh-gpu-parakeet.png) and [compact stress chart](fresh-compact-profiles.png).
+- [Fresh scratch-only record-lock evidence](data/fresh-lock-churn/README.md), including raw checkpoints, logs, source provenance, scripts and hashes.
+- [Fresh connection resource/saturation raw results](data/fresh-connection-resources/result.json) and [provenance](data/fresh-connection-resources/metadata.json).
+- Raw JSON files exist in the surviving evidence backup and must be included in the final evidence package. Absolute paths retained inside historical configs describe where runs executed, not current download locations.
+
+To reproduce the fresh focused cases with the schema-3 harness, run each command for both immutable production source roots, using distinct output paths:
+
+```sh
+python -m benchmarks.host_load --source-root "PATH_TO_PRODUCTION_SOURCE" --profile gpu-parakeet --clients 12 --duration 150 --rate .2 --seed 7 --jitter 0 --arrival-grace-s 10 --output ".tmp/host-load/focused-n12.json"
+python -m benchmarks.host_load --source-root "PATH_TO_PRODUCTION_SOURCE" --profile gpu-parakeet --clients 16 --max-connections 64 --duration 30 --rate .2 --seed 7 --jitter 0 --arrival-grace-s 10 --output ".tmp/host-load/cap64-n16.json"
+python -m benchmarks.host_load --source-root "PATH_TO_PRODUCTION_SOURCE" --profile cpu-parakeet --clients 6 --duration 20 --rate .2 --seed 7 --jitter 0 --arrival-grace-s 5 --output ".tmp/host-load/compact-cpu-parakeet-n6.json"
+```
+
+Repeat cap64 at N=24/32 and compact at N=1/6/12 for cpu-parakeet, gpu-whisper-turbo and cpu-whisper-small. Keep experiments sequential and retain failure/censor counts.
+
+Fresh simulated full-sweep reproduction, run sequentially rather than beside inference/suite work:
 
 ```sh
 python -m benchmarks.host_load.sweep --source-root "PATH_TO_BASELINE" --output-dir ".tmp/host-load/baseline" --duration 60 --rate .05 --jobs 1 --jitter 0
@@ -522,4 +636,4 @@ python -m benchmarks.host_load.policy --source-root "PATH_TO_CANDIDATE" --output
 
 These are reproduction instructions, not claims those fresh runs completed. Repeat the sweep with `.2` and a distinct output directory for stress. Optional workload sweeps need distinct paths and explicit labels; low sample cells do not establish capacity.
 
-**Pending final integration:** fresh exact-source tests, completed soak, surviving/recovered aggregate tables and chart coverage, hashes and evidence manifest. Do not link a missing historical raw bundle as though delivered. Preserve each evidence item's source revision, environment, command, duration, request count, overlap conditions and recovered-versus-fresh status. If a result cannot be recovered or rerun, retain that limitation rather than reconstructing plausible raw rows.
+**Pending final integration:** completed scratch-based soak results and the final evidence/archive index. Fresh connection-resource and lock-checkpoint raw evidence are included above. Fresh suite and focused paired results above are complete, not pending. Do not link a missing historical raw bundle as though delivered. Preserve each evidence item's source revision, environment, command, duration, request count, overlap conditions and recovered-versus-fresh status. If a result cannot be recovered or rerun, retain that limitation rather than reconstructing plausible raw rows.

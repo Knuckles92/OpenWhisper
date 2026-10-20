@@ -1,0 +1,8 @@
+{
+  "target_commit": "285d01d2d693046d3caccc1ae2b53f68bd29ae91",
+  "script_commit": "7738dd3",
+  "script_sha256": "05d8bc7710aa638f083d1d96ac515774c2487d28195615b28c2f49d42d0b4e7f",
+  "result_sha256": "37e1edcef9e2f0f353ec2b237a5e855a4408ff3e930035dedb542f6ce7b78839",
+  "command": "source /workspace/scratch/cc20469b78dc/host-scaling-runtime/safe-env.sh; /workspace/scratch/cc20469b78dc/host-scaling-runtime/venv/bin/python /workspace/scratch/cc20469b78dc/openwhisper-host-scaling/benchmarks/host_load/experiments/connection_resources.py --repo /workspace/scratch/cc20469b78dc/openwhisper-host-soak-source --output /workspace/scratch/cc20469b78dc/connection-resources-final/result.json",
+  "scope": "Real loopback TLS, synthetic engine, server-only RSS/threads; shared machine, no timing claims"
+}

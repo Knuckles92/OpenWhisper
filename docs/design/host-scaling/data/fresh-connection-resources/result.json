@@ -1,0 +1,185 @@
+{
+  "utc": "2026-10-20T12:07:36Z",
+  "websockets": "17.1",
+  "commit": "285d01d2d693046d3caccc1ae2b53f68bd29ae91",
+  "script_sha256": "05d8bc7710aa638f083d1d96ac515774c2487d28195615b28c2f49d42d0b4e7f",
+  "scope": "Real loopback TLS, synthetic engine, server-only RSS/threads; shared machine, no timing claims",
+  "same_token_capacity": {
+    "same_token_sockets": 12,
+    "other_device": {
+      "connected": false,
+      "exception": "RemoteHostBusy"
+    },
+    "server": {
+      "rss_bytes": 55640064,
+      "os_threads": 47,
+      "python_threads": 39,
+      "paired_slots": 12,
+      "anonymous_slots_free": 4
+    }
+  },
+  "speech": {
+    "history": false,
+    "capacity_override": 64,
+    "before": {
+      "rss_bytes": 54464512,
+      "os_threads": 10,
+      "python_threads": 2,
+      "paired_slots": 0,
+      "anonymous_slots_free": 4
+    },
+    "rows": [
+      {
+        "devices": 1,
+        "sockets": 1,
+        "server": {
+          "rss_bytes": 54722560,
+          "os_threads": 13,
+          "python_threads": 5,
+          "paired_slots": 1,
+          "anonymous_slots_free": 4
+        },
+        "successful_requests": 10
+      },
+      {
+        "devices": 8,
+        "sockets": 8,
+        "server": {
+          "rss_bytes": 56074240,
+          "os_threads": 34,
+          "python_threads": 26,
+          "paired_slots": 8,
+          "anonymous_slots_free": 4
+        },
+        "successful_requests": 10
+      },
+      {
+        "devices": 16,
+        "sockets": 16,
+        "server": {
+          "rss_bytes": 57774080,
+          "os_threads": 58,
+          "python_threads": 50,
+          "paired_slots": 16,
+          "anonymous_slots_free": 4
+        },
+        "successful_requests": 10
+      },
+      {
+        "devices": 32,
+        "sockets": 32,
+        "server": {
+          "rss_bytes": 60813312,
+          "os_threads": 106,
+          "python_threads": 98,
+          "paired_slots": 32,
+          "anonymous_slots_free": 4
+        },
+        "successful_requests": 10
+      },
+      {
+        "devices": 64,
+        "sockets": 64,
+        "server": {
+          "rss_bytes": 65605632,
+          "os_threads": 202,
+          "python_threads": 194,
+          "paired_slots": 64,
+          "anonymous_slots_free": 4
+        },
+        "successful_requests": 10
+      }
+    ],
+    "stop": {
+      "after": {
+        "rss_bytes": 62480384,
+        "os_threads": 9,
+        "python_threads": 1,
+        "paired_slots": 0,
+        "anonymous_slots_free": 4
+      }
+    }
+  },
+  "speech_history": {
+    "history": true,
+    "capacity_override": 64,
+    "before": {
+      "rss_bytes": 54857728,
+      "os_threads": 10,
+      "python_threads": 2,
+      "paired_slots": 0,
+      "anonymous_slots_free": 4
+    },
+    "rows": [
+      {
+        "devices": 1,
+        "sockets": 2,
+        "server": {
+          "rss_bytes": 56135680,
+          "os_threads": 16,
+          "python_threads": 8,
+          "paired_slots": 2,
+          "anonymous_slots_free": 4
+        },
+        "successful_requests": 10
+      },
+      {
+        "devices": 4,
+        "sockets": 8,
+        "server": {
+          "rss_bytes": 57376768,
+          "os_threads": 34,
+          "python_threads": 26,
+          "paired_slots": 8,
+          "anonymous_slots_free": 4
+        },
+        "successful_requests": 10
+      },
+      {
+        "devices": 8,
+        "sockets": 16,
+        "server": {
+          "rss_bytes": 59052032,
+          "os_threads": 58,
+          "python_threads": 50,
+          "paired_slots": 16,
+          "anonymous_slots_free": 4
+        },
+        "successful_requests": 10
+      },
+      {
+        "devices": 16,
+        "sockets": 32,
+        "server": {
+          "rss_bytes": 62111744,
+          "os_threads": 106,
+          "python_threads": 98,
+          "paired_slots": 32,
+          "anonymous_slots_free": 4
+        },
+        "successful_requests": 10
+      },
+      {
+        "devices": 32,
+        "sockets": 64,
+        "server": {
+          "rss_bytes": 66826240,
+          "os_threads": 202,
+          "python_threads": 194,
+          "paired_slots": 64,
+          "anonymous_slots_free": 4
+        },
+        "successful_requests": 10
+      }
+    ],
+    "stop": {
+      "after": {
+        "rss_bytes": 63635456,
+        "os_threads": 9,
+        "python_threads": 1,
+        "paired_slots": 0,
+        "anonymous_slots_free": 4
+      }
+    }
+  }
+}

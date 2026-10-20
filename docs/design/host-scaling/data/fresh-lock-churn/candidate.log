@@ -1,0 +1,4 @@
+{"records": 0, "locks": 0, "lock_map_bytes_lower_bound": 48, "traced_current": 40, "traced_peak": 120, "wall_s": 0.011047441999835428}
+{"records": 100, "locks": 0, "lock_map_bytes_lower_bound": 48, "traced_current": 157811, "traced_peak": 239301, "wall_s": 0.2984524989988131}
+{"records": 1000, "locks": 0, "lock_map_bytes_lower_bound": 48, "traced_current": 176855, "traced_peak": 287214, "wall_s": 3.355688191997615}
+{"records": 5000, "locks": 0, "lock_map_bytes_lower_bound": 48, "traced_current": 183567, "traced_peak": 319507, "wall_s": 17.856850015999953}
