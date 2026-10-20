@@ -1,7 +1,49 @@
 """Public UI exports loaded only when a feature requests them."""
 from importlib import import_module
 
-_EXPORTS = {'Button': ('ui_qt.widgets.buttons', 'Button'), 'HotkeyHintFilter': ('ui_qt.widgets.buttons', 'HotkeyHintFilter'), 'PrimaryButton': ('ui_qt.widgets.buttons', 'PrimaryButton'), 'DangerButton': ('ui_qt.widgets.buttons', 'DangerButton'), 'SuccessButton': ('ui_qt.widgets.buttons', 'SuccessButton'), 'WarningButton': ('ui_qt.widgets.buttons', 'WarningButton'), 'AnimatedProgressBar': ('ui_qt.widgets.animated_progress_bar', 'AnimatedProgressBar'), 'Card': ('ui_qt.widgets.cards', 'Card'), 'ControlPanel': ('ui_qt.widgets.cards', 'ControlPanel'), 'HeaderCard': ('ui_qt.widgets.cards', 'HeaderCard'), 'HistorySidebar': ('ui_qt.widgets.history_sidebar', 'HistorySidebar'), 'HistoryEdgeTab': ('ui_qt.widgets.history_sidebar', 'HistoryEdgeTab'), 'HistoryItemWidget': ('ui_qt.widgets.history_sidebar', 'HistoryItemWidget'), 'PastMeetingItem': ('ui_qt.widgets.past_meetings_panel', 'PastMeetingItem'), 'PastMeetingsPanel': ('ui_qt.widgets.past_meetings_panel', 'PastMeetingsPanel'), 'TranscriptionStatsWidget': ('ui_qt.widgets.stats_display', 'TranscriptionStatsWidget'), 'EngineStatus': ('ui_qt.widgets.engine_field', 'EngineStatus'), 'StatusDot': ('ui_qt.widgets.engine_field', 'StatusDot'), 'engine_combo': ('ui_qt.widgets.engine_field', 'engine_combo'), 'engine_field': ('ui_qt.widgets.engine_field', 'engine_field'), 'LocalEngineControls': ('ui_qt.widgets.local_engine_controls', 'LocalEngineControls'), 'LocalModelPicker': ('ui_qt.widgets.local_model_picker', 'LocalModelPicker'), 'ModelRowWidget': ('ui_qt.widgets.model_row_widget', 'ModelRowWidget'), 'TextModelPicker': ('ui_qt.widgets.text_model_picker', 'TextModelPicker'), 'CollapsibleSectionToggle': ('ui_qt.widgets.collapsible_header', 'CollapsibleSectionToggle'), 'TabbedContentWidget': ('ui_qt.widgets.tabbed_content', 'TabbedContentWidget'), 'TranscriptionTabBase': ('ui_qt.widgets.transcription_tab_base', 'TranscriptionTabBase'), 'QuickRecordTab': ('ui_qt.widgets.quick_record_tab', 'QuickRecordTab'), 'UploadFileTab': ('ui_qt.widgets.upload_file_tab', 'UploadFileTab'), 'MeetingModeTab': ('ui_qt.widgets.meeting_mode_tab', 'MeetingModeTab'), 'CompactRecordController': ('ui_qt.widgets.compact_record_controller', 'CompactRecordController'), 'ElidingComboBox': ('ui_qt.widgets.no_wheel', 'ElidingComboBox'), 'NoWheelComboBox': ('ui_qt.widgets.no_wheel', 'NoWheelComboBox'), 'NoWheelDateEdit': ('ui_qt.widgets.no_wheel', 'NoWheelDateEdit'), 'NoWheelSpinBox': ('ui_qt.widgets.no_wheel', 'NoWheelSpinBox'), 'ElidingLabel': ('ui_qt.widgets.eliding_label', 'ElidingLabel'), 'SearchableComboBox': ('ui_qt.widgets.searchable_combo', 'SearchableComboBox'), 'FieldTile': ('ui_qt.widgets.setting_tile', 'FieldTile'), 'InfoTile': ('ui_qt.widgets.setting_tile', 'InfoTile'), 'SettingTile': ('ui_qt.widgets.setting_tile', 'SettingTile'), 'WrappedLabel': ('ui_qt.widgets.wrapped_label', 'WrappedLabel')}
+_EXPORTS = {
+    'Button': ('ui_qt.widgets.buttons', 'Button'),
+    'HotkeyHintFilter': ('ui_qt.widgets.buttons', 'HotkeyHintFilter'),
+    'PrimaryButton': ('ui_qt.widgets.buttons', 'PrimaryButton'),
+    'DangerButton': ('ui_qt.widgets.buttons', 'DangerButton'),
+    'SuccessButton': ('ui_qt.widgets.buttons', 'SuccessButton'),
+    'WarningButton': ('ui_qt.widgets.buttons', 'WarningButton'),
+    'AnimatedProgressBar': ('ui_qt.widgets.animated_progress_bar', 'AnimatedProgressBar'),
+    'Card': ('ui_qt.widgets.cards', 'Card'),
+    'ControlPanel': ('ui_qt.widgets.cards', 'ControlPanel'),
+    'HeaderCard': ('ui_qt.widgets.cards', 'HeaderCard'),
+    'HistorySidebar': ('ui_qt.widgets.history_sidebar', 'HistorySidebar'),
+    'HistoryEdgeTab': ('ui_qt.widgets.history_sidebar', 'HistoryEdgeTab'),
+    'HistoryItemWidget': ('ui_qt.widgets.history_sidebar', 'HistoryItemWidget'),
+    'PastMeetingItem': ('ui_qt.widgets.past_meetings_panel', 'PastMeetingItem'),
+    'PastMeetingsPanel': ('ui_qt.widgets.past_meetings_panel', 'PastMeetingsPanel'),
+    'TranscriptionStatsWidget': ('ui_qt.widgets.stats_display', 'TranscriptionStatsWidget'),
+    'EngineStatus': ('ui_qt.widgets.engine_field', 'EngineStatus'),
+    'StatusDot': ('ui_qt.widgets.engine_field', 'StatusDot'),
+    'engine_combo': ('ui_qt.widgets.engine_field', 'engine_combo'),
+    'engine_field': ('ui_qt.widgets.engine_field', 'engine_field'),
+    'LocalEngineControls': ('ui_qt.widgets.local_engine_controls', 'LocalEngineControls'),
+    'LocalModelPicker': ('ui_qt.widgets.local_model_picker', 'LocalModelPicker'),
+    'ModelRowWidget': ('ui_qt.widgets.model_row_widget', 'ModelRowWidget'),
+    'TextModelPicker': ('ui_qt.widgets.text_model_picker', 'TextModelPicker'),
+    'CollapsibleSectionToggle': ('ui_qt.widgets.collapsible_header', 'CollapsibleSectionToggle'),
+    'TabbedContentWidget': ('ui_qt.widgets.tabbed_content', 'TabbedContentWidget'),
+    'TranscriptionTabBase': ('ui_qt.widgets.transcription_tab_base', 'TranscriptionTabBase'),
+    'QuickRecordTab': ('ui_qt.widgets.quick_record_tab', 'QuickRecordTab'),
+    'UploadFileTab': ('ui_qt.widgets.upload_file_tab', 'UploadFileTab'),
+    'MeetingModeTab': ('ui_qt.widgets.meeting_mode_tab', 'MeetingModeTab'),
+    'CompactRecordController': ('ui_qt.widgets.compact_record_controller', 'CompactRecordController'),
+    'ElidingComboBox': ('ui_qt.widgets.no_wheel', 'ElidingComboBox'),
+    'NoWheelComboBox': ('ui_qt.widgets.no_wheel', 'NoWheelComboBox'),
+    'NoWheelDateEdit': ('ui_qt.widgets.no_wheel', 'NoWheelDateEdit'),
+    'NoWheelSpinBox': ('ui_qt.widgets.no_wheel', 'NoWheelSpinBox'),
+    'ElidingLabel': ('ui_qt.widgets.eliding_label', 'ElidingLabel'),
+    'SearchableComboBox': ('ui_qt.widgets.searchable_combo', 'SearchableComboBox'),
+    'FieldTile': ('ui_qt.widgets.setting_tile', 'FieldTile'),
+    'InfoTile': ('ui_qt.widgets.setting_tile', 'InfoTile'),
+    'SettingTile': ('ui_qt.widgets.setting_tile', 'SettingTile'),
+    'WrappedLabel': ('ui_qt.widgets.wrapped_label', 'WrappedLabel'),
+}
 __all__ = list(_EXPORTS)
 
 
