@@ -69,6 +69,18 @@ def _host_status_note(status: str) -> str:
     return note.strip() if " | " in summary else status
 
 
+_REMOTE_MODEL_HELP = (
+    "The model the paired computer transcribes with. Choosing another switches that computer to it, "
+    "as if it were chosen there. Only models already downloaded there are listed."
+)
+_BACKEND_HELP = (
+    "Choose which speech recognition engine turns your audio into text. "
+    "Local engines process audio on this computer after download. "
+    "API sends audio to the server you choose: OpenAI, Groq, or a speech server you run. "
+    "This choice determines the available models."
+)
+
+
 class TranscriptPane(QFrame):
     """The transcript's painted surface, with room for one floating corner action.
 
@@ -246,7 +258,7 @@ class TranscriptionTabBase(QWidget):
         self.remote_model_combo = engine_combo(())
         self.remote_model_field = engine_field(
             "Model", self.remote_model_combo,
-            "The model the paired computer transcribes with. Choosing another switches that computer to it, as if it were chosen there. Only models already downloaded there are listed.",
+            _REMOTE_MODEL_HELP,
             [("Open Settings → Remote engine", "remote_engine")], self.help_requested.emit,
         )
         self.remote_model_field.hide()
@@ -260,7 +272,7 @@ class TranscriptionTabBase(QWidget):
         self._field_row.setSpacing(10)
         self._field_row.addWidget(engine_field(
             "Backend", self.model_combo,
-            "Choose which speech recognition engine turns your audio into text. Local engines process audio on this computer after download. API sends audio to the server you choose: OpenAI, Groq, or a speech server you run. This choice determines the available models.",
+            _BACKEND_HELP,
             [("Open Settings → Voice model", "ondemand")], self.help_requested.emit,
         ), stretch=2)
         self._field_row.addWidget(self.local_engine, stretch=4)
@@ -811,7 +823,10 @@ class TranscriptionTabBase(QWidget):
         self._serving_busy = busy
         if names:
             who = names[0] if len(names) == 1 else f"{len(names)} computers"
-            self.serving_label.setText(f"Transcribing for {who}" if busy else f"Sharing this engine with {who}")
+            if busy:
+                self.serving_label.setText(f"Transcribing for {who}")
+            else:
+                self.serving_label.setText(f"Sharing this engine with {who}")
             self.serving_glyph.set_link("connected", busy=busy, replies=self._served)
             self.serving_row.setToolTip("\n".join(f"{name} is connected" for name in names))
         self._show_serving_row(bool(names))
@@ -823,7 +838,8 @@ class TranscriptionTabBase(QWidget):
         row = self.serving_row
         if show:
             row.show()
-            run_max_height_animation(self._serving_anim, start=row.maximumHeight() if row.maximumHeight() < UNLIMITED_HEIGHT else 0,
+            start = row.maximumHeight() if row.maximumHeight() < UNLIMITED_HEIGHT else 0
+            run_max_height_animation(self._serving_anim, start=start,
                                      end=row.sizeHint().height(),
                                      on_finished=lambda: row.setMaximumHeight(UNLIMITED_HEIGHT))
         else:
