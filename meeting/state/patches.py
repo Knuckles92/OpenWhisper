@@ -137,12 +137,19 @@ HOST_ONLY_OPS = frozenset({"set_topic", "set_rolling_summary", "set_title",
 SEGMENT_OPS = frozenset({"reassign_segment_speaker", "revise_segment_text"})
 
 #: The full vocabulary (human actions include everything below).
-ALL_OPS = AGENT_OPS | SEGMENT_OPS | frozenset(FAST_HANDLERS) | frozenset(REVIEW_HANDLERS) | frozenset(CUSTOM_REPORT_HANDLERS) | frozenset({
-    "pin_item", "unpin_item", "confirm_item",
-    "answer_question", "dismiss_question", "reopen_question",
-    "rename_participant", "set_title", "set_cloud_enabled",
-    "set_meeting_intent",
-})
+ALL_OPS = (
+    AGENT_OPS
+    | SEGMENT_OPS
+    | frozenset(FAST_HANDLERS)
+    | frozenset(REVIEW_HANDLERS)
+    | frozenset(CUSTOM_REPORT_HANDLERS)
+    | frozenset({
+        "pin_item", "unpin_item", "confirm_item",
+        "answer_question", "dismiss_question", "reopen_question",
+        "rename_participant", "set_title", "set_cloud_enabled",
+        "set_meeting_intent",
+    })
+)
 
 
 class OpContext:
@@ -224,6 +231,12 @@ def _normalize_item_text(text: str) -> str:
 #: cards is treated as a duplicate.
 _CROSS_CARD_DUP_THRESHOLDS = (0.75, 0.90)
 
+#: Same-card duplicates are near-paraphrases: (jaccard, containment).
+_SAME_CARD_DUP_THRESHOLDS = (0.60, 0.75)
+
+#: Highest occurrence index a one-off transcript correction may target.
+_MAX_OCCURRENCE_INDEX = 1000
+
 
 def _item_text_too_similar(left: str, right: str,
                            jaccard_threshold: float = 0.60,
@@ -285,61 +298,13 @@ def _op_add_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> OpR
     data = op.get("data") or {}
     if not isinstance(data, dict):
         return _reject(op, "invalid_data")
-    reason = _check_data_size(data)
+    reason = _check_data_size(data) or _check_card_data(card, data, op, ctx)
     if reason:
         return _reject(op, reason)
-    if card == "user_notes" and data.get("kind") == "occurrence_correction":
-        # A one-off correction must be attached to exactly one real passage.
-        # Arbitrary page selections cannot silently become global text rules.
-        evidence = op.get("evidence") or []
-        source, replacement = data.get("selected_text"), data.get("replacement")
-        index = data.get("occurrence_index")
-        fingerprint = data.get("base_fingerprint")
-        if not ctx.is_human:
-            return _reject(op, "human_only_card")
-        if (not isinstance(evidence, list) or len(evidence) != 1
-                or not isinstance(evidence[0], str) or not evidence[0]):
-            return _reject(op, "invalid_evidence")
-        if ctx.segment_exists is None or not ctx.segment_exists(evidence[0]):
-            return _reject(op, "unknown_evidence")
-        if (not isinstance(source, str) or not 0 < len(source.strip()) <= MAX_TERM_CHARS
-                or not isinstance(replacement, str) or not 0 < len(replacement.strip()) <= MAX_TERM_CHARS):
-            return _reject(op, "invalid_data")
-        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index <= 1000:
-            return _reject(op, "invalid_data")
-        if not valid_segment_fingerprint(fingerprint):
-            return _reject(op, "invalid_data")
-    if card == "timeline" and (ctx.is_agent or ctx.actor_type == "system"):
-        reason = _check_timeline_data(data)
-        if reason:
-            return _reject(op, reason)
     if len(state.cards[card]) >= MAX_CARD_ITEMS:
         return _reject(op, "card_full")
-    if ctx.is_agent:
-        # Same-card duplicates are near-paraphrases; cross-card matches must
-        # be near-identical, because distinct cards legitimately restate one
-        # another (a decision that confirms a key point, minutes prose that
-        # retells a discussion beat). Benchmark runs showed paraphrase-level
-        # cross-card rejection blocked a third of consolidation content.
-        for c, card_items in state.cards.items():
-            if c in HUMAN_ONLY_CARDS:
-                continue
-            # The note taker's minutes must stand on their own even when
-            # a shorter card already records the same fact.
-            if c != card and "live_notes" in (c, card):
-                continue
-            if c == card:
-                jac, cont = 0.60, 0.75
-            else:
-                jac, cont = _CROSS_CARD_DUP_THRESHOLDS
-            for existing in card_items:
-                if existing.status == "removed":
-                    continue
-                if _item_text_too_similar(
-                    existing.text, op["text"],
-                    jaccard_threshold=jac, containment_threshold=cont,
-                ):
-                    return _reject(op, "duplicate_item")
+    if ctx.is_agent and _duplicates_live_item(state, card, op):
+        return _reject(op, "duplicate_item")
 
     item = CardItem(
         id=new_id("it"),
@@ -359,35 +324,91 @@ def _op_add_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> OpR
     )
 
 
+def _check_card_data(card: str, data: Dict[str, Any], op: Dict[str, Any],
+                     ctx: OpContext) -> Optional[str]:
+    """Card-specific validation of a new item's ``data``."""
+    if card == "user_notes" and data.get("kind") == "occurrence_correction":
+        reason = _check_occurrence_correction(op, data, ctx)
+        if reason:
+            return reason
+    if card == "timeline" and (ctx.is_agent or ctx.actor_type == "system"):
+        return _check_timeline_data(data)
+    return None
+
+
+def _check_occurrence_correction(op: Dict[str, Any], data: Dict[str, Any],
+                                 ctx: OpContext) -> Optional[str]:
+    """A one-off correction must be attached to exactly one real passage.
+
+    Arbitrary page selections cannot silently become global text rules.
+    """
+    evidence = op.get("evidence") or []
+    if not ctx.is_human:
+        return "human_only_card"
+    if (not isinstance(evidence, list) or len(evidence) != 1
+            or not isinstance(evidence[0], str) or not evidence[0]):
+        return "invalid_evidence"
+    if ctx.segment_exists is None or not ctx.segment_exists(evidence[0]):
+        return "unknown_evidence"
+    if not (_valid_term(data.get("selected_text")) and _valid_term(data.get("replacement"))):
+        return "invalid_data"
+    if not _valid_occurrence_index(data.get("occurrence_index")):
+        return "invalid_data"
+    if not valid_segment_fingerprint(data.get("base_fingerprint")):
+        return "invalid_data"
+    return None
+
+
+def _valid_term(value: Any) -> bool:
+    return isinstance(value, str) and 0 < len(value.strip()) <= MAX_TERM_CHARS
+
+
+def _valid_occurrence_index(index: Any) -> bool:
+    if isinstance(index, bool) or not isinstance(index, int):
+        return False
+    return 0 <= index <= _MAX_OCCURRENCE_INDEX
+
+
+def _duplicates_live_item(state: MeetingState, card: str, op: Dict[str, Any]) -> bool:
+    """Whether an agent add repeats a live item.
+
+    Same-card duplicates are near-paraphrases; cross-card matches must
+    be near-identical, because distinct cards legitimately restate one
+    another (a decision that confirms a key point, minutes prose that
+    retells a discussion beat). Benchmark runs showed paraphrase-level
+    cross-card rejection blocked a third of consolidation content.
+    """
+    for c, card_items in state.cards.items():
+        if c in HUMAN_ONLY_CARDS:
+            continue
+        # The note taker's minutes must stand on their own even when
+        # a shorter card already records the same fact.
+        if c != card and "live_notes" in (c, card):
+            continue
+        if c == card:
+            jac, cont = _SAME_CARD_DUP_THRESHOLDS
+        else:
+            jac, cont = _CROSS_CARD_DUP_THRESHOLDS
+        for existing in card_items:
+            if existing.status == "removed":
+                continue
+            if _item_text_too_similar(
+                existing.text, op["text"],
+                jaccard_threshold=jac, containment_threshold=cont,
+            ):
+                return True
+    return False
+
+
 def _op_update_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> OpResult:
     item = state.find_item(op.get("id", ""))
     if item is None:
         return _reject(op, "unknown_item")
     force = bool(op.get("force")) and ctx.actor_type == "system"
-    if ctx.is_agent:
-        if item.protected:
-            return _reject(op, "human_edited", target_id=item.id)
-        if op.get("base_revision") != item.revision:
-            return _reject(op, "revision_mismatch", target_id=item.id,
-                           current_revision=item.revision)
     changes = op.get("set") or {}
-    if not isinstance(changes, dict) or not (changes or op.get("restore_status")):
-        return _reject(op, "empty_update", target_id=item.id)
-    if "text" in changes:
-        reason = _check_text(changes["text"])
-        if reason:
-            return _reject(op, reason, target_id=item.id)
-    if "data" in changes:
-        if not isinstance(changes["data"], dict):
-            return _reject(op, "invalid_data", target_id=item.id)
-        reason = _check_data_size(changes["data"])
-        if reason:
-            return _reject(op, reason, target_id=item.id)
-    reason = _check_evidence(op, ctx) if (
-        op.get("evidence") or (ctx.is_agent and not item.evidence)
-    ) else None
-    if reason:
-        return _reject(op, reason, target_id=item.id)
+    rejection = _update_item_rejection(item, op, ctx, changes)
+    if rejection is not None:
+        return rejection
 
     prev = {
         "text": item.text,
@@ -395,35 +416,14 @@ def _op_update_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> 
         "evidence": list(item.evidence),
     }
     prev_status = item.status
-    if "text" in changes:
-        item.text = changes["text"].strip()
-    if "data" in changes:
-        new_data = dict(changes["data"])
-        if item.card == NOTES_CARD and not force:
-            # A note block is defined by its heading and meeting-clock stamp;
-            # the note-taker prompt promises they persist across updates, so
-            # a partial data dict must not silently drop them. The system
-            # force path (undo) restores the exact prior data instead.
-            for key in ("heading", "start_s"):
-                if key not in new_data and key in item.data:
-                    new_data[key] = item.data[key]
-        item.data = new_data
+    _apply_item_changes(item, changes, force)
     # A repaired sample keeps its creation provenance. Mark a real agent
     # rewrite so the capture rail can show the synthesized replacement;
     # metadata-only edits do not turn the original snippet into an insight.
     if ctx.is_agent and item.author_type == "system" and item.author_id == "state_repair":
         if item.text != prev["text"] or prev["data"].get("insight_synthesized") is True:
             item.data["insight_synthesized"] = True
-    if force and isinstance(changes.get("evidence"), list):
-        # Undo path: restore the exact prior anchor set.
-        item.evidence = list(changes["evidence"])
-    elif op.get("evidence"):
-        # Evidence anchors are additive. The consolidation pass is told to
-        # reword and merge items, so replacing the list would silently drop
-        # anchors the item already carried — and undo could not bring them back.
-        item.evidence = list(dict.fromkeys(
-            list(item.evidence) + list(op["evidence"])
-        ))
+    _update_item_evidence(item, op, changes, force)
     if op.get("restore_status") and force:
         item.status = op["restore_status"]
     elif ctx.is_human:
@@ -438,6 +438,72 @@ def _op_update_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> 
         inverse={"op": "update_item", "id": item.id, "set": prev,
                  "restore_status": prev_status, "force": True},
     )
+
+
+def _update_item_rejection(item: CardItem, op: Dict[str, Any], ctx: OpContext,
+                           changes: Any) -> Optional[OpResult]:
+    """The rejection for an invalid ``update_item``, or None to apply it."""
+    if ctx.is_agent:
+        if item.protected:
+            return _reject(op, "human_edited", target_id=item.id)
+        if op.get("base_revision") != item.revision:
+            return _reject(op, "revision_mismatch", target_id=item.id,
+                           current_revision=item.revision)
+    if not isinstance(changes, dict) or not (changes or op.get("restore_status")):
+        return _reject(op, "empty_update", target_id=item.id)
+    reason = _check_item_changes(changes) or _check_update_evidence(item, op, ctx)
+    if reason:
+        return _reject(op, reason, target_id=item.id)
+    return None
+
+
+def _check_item_changes(changes: Dict[str, Any]) -> Optional[str]:
+    if "text" in changes:
+        reason = _check_text(changes["text"])
+        if reason:
+            return reason
+    if "data" in changes:
+        if not isinstance(changes["data"], dict):
+            return "invalid_data"
+        return _check_data_size(changes["data"])
+    return None
+
+
+def _check_update_evidence(item: CardItem, op: Dict[str, Any], ctx: OpContext) -> Optional[str]:
+    """New evidence is always checked; an agent must cite an item that has none."""
+    if op.get("evidence") or (ctx.is_agent and not item.evidence):
+        return _check_evidence(op, ctx)
+    return None
+
+
+def _apply_item_changes(item: CardItem, changes: Dict[str, Any], force: bool) -> None:
+    if "text" in changes:
+        item.text = changes["text"].strip()
+    if "data" in changes:
+        new_data = dict(changes["data"])
+        if item.card == NOTES_CARD and not force:
+            # A note block is defined by its heading and meeting-clock stamp;
+            # the note-taker prompt promises they persist across updates, so
+            # a partial data dict must not silently drop them. The system
+            # force path (undo) restores the exact prior data instead.
+            for key in ("heading", "start_s"):
+                if key not in new_data and key in item.data:
+                    new_data[key] = item.data[key]
+        item.data = new_data
+
+
+def _update_item_evidence(item: CardItem, op: Dict[str, Any], changes: Dict[str, Any],
+                          force: bool) -> None:
+    if force and isinstance(changes.get("evidence"), list):
+        # Undo path: restore the exact prior anchor set.
+        item.evidence = list(changes["evidence"])
+    elif op.get("evidence"):
+        # Evidence anchors are additive. The consolidation pass is told to
+        # reword and merge items, so replacing the list would silently drop
+        # anchors the item already carried — and undo could not bring them back.
+        item.evidence = list(dict.fromkeys(
+            list(item.evidence) + list(op["evidence"])
+        ))
 
 
 def _op_remove_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> OpResult:
