@@ -142,15 +142,61 @@ def _is_code_block(block_format: QTextBlockFormat) -> bool:
     ) or block_format.nonBreakableLines()
 
 
+@dataclass(frozen=True)
+class _BlockKind:
+    """What the importer made of a block, as far as styling cares."""
+
+    heading_level: int
+    is_code: bool
+    is_quote: bool
+
+    @classmethod
+    def of(cls, block_format: QTextBlockFormat) -> _BlockKind:
+        return cls(
+            heading_level=block_format.headingLevel(),
+            is_code=_is_code_block(block_format),
+            is_quote=block_format.hasProperty(QTextFormat.Property.BlockQuoteLevel),
+        )
+
+
 def _style_block(
     cursor: QTextCursor, block: QTextBlock, style: MarkdownStyle, *, in_table: bool
 ) -> None:
-    block_format = block.blockFormat()
-    level = block_format.headingLevel()
-    is_code = _is_code_block(block_format)
-    is_quote = block_format.hasProperty(QTextFormat.Property.BlockQuoteLevel)
-    gap = style.paragraph_gap
+    kind = _BlockKind.of(block.blockFormat())
+    merged = _block_spacing(block, kind, style, in_table=in_table)
 
+    cursor.setPosition(block.position())
+    cursor.mergeBlockFormat(merged)
+
+    if block.length() <= 1:
+        return
+
+    if kind.heading_level:
+        char_format = QTextCharFormat()
+        char_format.setFontPointSize(style.heading_pt(kind.heading_level))
+        char_format.setFontWeight(QFont.Weight.DemiBold)
+        char_format.setForeground(token_color(_HEADING))
+        _merge_over_block(cursor, block, char_format)
+        return
+
+    if kind.is_code:
+        _merge_over_block(cursor, block, _code_format(style, background=None))
+        return
+
+    if kind.is_quote:
+        char_format = QTextCharFormat()
+        char_format.setForeground(token_color(_QUOTE_TEXT))
+        _merge_over_block(cursor, block, char_format)
+
+    _style_inline_runs(cursor, block, style)
+
+
+def _block_spacing(
+    block: QTextBlock, kind: _BlockKind, style: MarkdownStyle, *, in_table: bool
+) -> QTextBlockFormat:
+    """The line height, margins and background the block's kind calls for."""
+    level = kind.heading_level
+    gap = style.paragraph_gap
     merged = QTextBlockFormat()
     merged.setLineHeight(style.line_height, _PROPORTIONAL_LINE_HEIGHT)
     if in_table:
@@ -159,7 +205,7 @@ def _style_block(
     elif level:
         merged.setTopMargin(gap * (1.5 if level <= 2 else 1.0))
         merged.setBottomMargin(gap * 0.6)
-    elif is_code:
+    elif kind.is_code:
         # Each fenced line is its own block; only the run's last line gets the
         # gap, so the lines read as one slab.
         merged.setLineHeight(125, _PROPORTIONAL_LINE_HEIGHT)
@@ -168,7 +214,7 @@ def _style_block(
         next_block = block.next()
         ends_run = not (next_block.isValid() and _is_code_block(next_block.blockFormat()))
         merged.setBottomMargin(gap if ends_run else 0)
-    elif is_quote:
+    elif kind.is_quote:
         merged.setBackground(_color(style.quote_background))
         merged.setLeftMargin(style.indent_px)
         merged.setTopMargin(0)
@@ -181,30 +227,11 @@ def _style_block(
         merged.setBottomMargin(gap)
     if block.position() == 0:
         merged.setTopMargin(0)
+    return merged
 
-    cursor.setPosition(block.position())
-    cursor.mergeBlockFormat(merged)
 
-    if block.length() <= 1:
-        return
-
-    if level:
-        char_format = QTextCharFormat()
-        char_format.setFontPointSize(style.heading_pt(level))
-        char_format.setFontWeight(QFont.Weight.DemiBold)
-        char_format.setForeground(token_color(_HEADING))
-        _merge_over_block(cursor, block, char_format)
-        return
-
-    if is_code:
-        _merge_over_block(cursor, block, _code_format(style, background=None))
-        return
-
-    if is_quote:
-        char_format = QTextCharFormat()
-        char_format.setForeground(token_color(_QUOTE_TEXT))
-        _merge_over_block(cursor, block, char_format)
-
+def _style_inline_runs(cursor: QTextCursor, block: QTextBlock, style: MarkdownStyle) -> None:
+    """Inline code and links inside an ordinary block."""
     fragment = block.begin()
     while not fragment.atEnd():
         piece = fragment.fragment()
