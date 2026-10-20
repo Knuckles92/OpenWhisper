@@ -25,6 +25,7 @@ import shutil
 import threading
 import time
 from typing import Dict, Optional, Protocol
+from weakref import WeakValueDictionary
 
 from services.remote_asr.protocol import RECORD_CHUNK_BYTES
 
@@ -187,8 +188,9 @@ class HostRecordStore:
         self.root = os.path.abspath(root)
         self.kinds = dict(kinds)
         # One lock per upload keeps a resumed upload on a second connection
-        # from interleaving with the first.
-        self._locks: Dict[tuple, threading.Lock] = {}
+        # from interleaving with the first. Held and waiting callers keep it alive;
+        # completed records must not leave a lock here for the host's lifetime.
+        self._locks: WeakValueDictionary[tuple, threading.Lock] = WeakValueDictionary()
         self._locks_guard = threading.Lock()
 
     # ---- paths ----
