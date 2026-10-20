@@ -320,15 +320,18 @@ def _isolated_credential_store():
 
 
 @pytest.fixture(autouse=True)
-def _null_focus_capture():
-    """Keep every test away from the real focused app and its text.
+def _null_focus_capture(monkeypatch):
+    """Keep every test away from the real focused app, its text and its pixels.
 
     The platform capture service reads the foreground window and, when
     allowed, the text around its caret through accessibility APIs. Here
-    every capture comes back empty unless a test installs its own service.
+    every capture comes back empty unless a test installs its own service,
+    and no desktop can take a window screenshot unless a test gives it one.
     """
     from services import focus_context
+    from services.focus_context import screenshot
 
+    monkeypatch.setattr(screenshot, "_platform", lambda: None)
     previous = focus_context._service
     focus_context.set_service(focus_context.NullCaptureService())
     try:

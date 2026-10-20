@@ -82,6 +82,23 @@ project** option isn't exposed by the [documented app links](https://learn.chatg
 so automatic folder creation is a fallback for requests that don't need an
 existing project.
 
+Two switches add what you were looking at. **Include what I've selected**
+adds the selected text and the app's name after your words; it needs app
+awareness on Styles. **Include a screenshot of the window** captures the
+window you're in as the recording starts, on Windows (windows on top of it,
+such as the recording overlay, are left out) and on Hyprland with `grim`
+installed. A session gets the screenshot as a PNG in your temp folder
+(`OpenWhisper/window-screenshots`, removed after a day), named in a
+`<window_screenshot>` line after your words. Codex in a terminal also attaches
+it, and Claude Code in a terminal may read that folder without asking. A Quick
+answer sends the picture along with the question instead, because it runs
+with no tools to open files: Claude Code and Codex always see it, OpenCode
+when its version accepts images. Neither switch reads OpenWhisper's own
+windows, apps and sites excluded from app awareness, or anything for an
+action a program runs over the API or MCP. An action picked with Route by
+voice sends no screenshot, because the recording starts before the action
+is known.
+
 Every action you dictate is saved in History as `Action · <name>`, with the
 original words alongside.
 

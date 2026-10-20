@@ -347,6 +347,13 @@ def matches(identity, value: str) -> bool:
     return key == site_key(identity) or key in app_keys(identity)
 
 
+def excluded(identity, values) -> bool:
+    """Whether the user's excluded apps and sites (stored ``values``) name ``identity``."""
+    return any(matches(identity, value)
+               for value in (values if isinstance(values, list) else ())
+               if isinstance(value, str))
+
+
 def parse_overrides(raw) -> tuple[tuple[str, str], ...]:
     """Valid ``(match, category)`` pairs from stored overrides, first one wins."""
     pairs: list[tuple[str, str]] = []

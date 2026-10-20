@@ -83,6 +83,7 @@ PARAMS: dict[str, dict[str, Any]] = {
         "folder": "",
         "new_folder": False,
         "include_selection": False,
+        "include_screenshot": False,
         "model": "",
         "output": Output.SCRATCHPAD,
     },

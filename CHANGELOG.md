@@ -7,6 +7,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Added
+- **Agent actions can send a screenshot of your window** — turn on **Include a screenshot of the window** on an agent action, such as the Agent hotkey, and OpenWhisper captures the window you're in as you start speaking. A session gets it as a PNG named in the prompt: Codex in a terminal attaches it, and Claude Code can open it without asking. A Quick answer sends the picture with the question, so even an agent with no tools sees it. It works on Windows, where windows on top such as the recording overlay are left out, and on Hyprland with `grim` installed. It's never taken of OpenWhisper's own windows, of apps excluded from app awareness, or for actions a program runs over the API or MCP. Saved screenshots are removed after a day.
+
 ## [2.7.6] - 2026-10-18
 
 ### Changed

@@ -30,12 +30,15 @@ from services.actions.model import (
     SHAPING_CLEANUP,
     SHAPING_RAW,
 )
+from services.focus_context import screenshot
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.action_copy import (
     MODE_LABELS,
     NO_APP_HINT,
     OUTPUT_LABELS,
+    SCREENSHOT_DETAIL,
+    SCREENSHOT_UNAVAILABLE,
     SURFACE_HINTS,
     SURFACE_LABELS,
 )
@@ -787,13 +790,22 @@ class AgentFields(QWidget):
         note.addWidget(self.styles_link, alignment=Qt.AlignmentFlag.AlignTop)
         self.selection_note.hide()
         layout.addWidget(self.selection_note)
+        screenshots = screenshot.supported()
+        self.screenshot_row = SwitchRow(
+            "Include a screenshot of the window",
+            SCREENSHOT_DETAIL if screenshots else SCREENSHOT_UNAVAILABLE,
+        )
+        self.screenshot_row.switch.setEnabled(screenshots)
+        self.screenshot_row.switch.toggled.connect(self._emit_changed)
+        layout.addWidget(self.screenshot_row)
         self._app_awareness = True
         self._compact = False
         self._caps = ((self.chooser, CHOOSER_MAX_WIDTH), (self.mode_bar, BAR_MAX_WIDTH),
                       (self.surface_bar, BAR_MAX_WIDTH), (self.answer_box, CHOOSER_MAX_WIDTH),
                       (self.folder_box, CHOOSER_MAX_WIDTH), (self.new_folder_row, CHOOSER_MAX_WIDTH),
                       (self.selection_row, CHOOSER_MAX_WIDTH),
-                      (self.selection_note, CHOOSER_MAX_WIDTH))
+                      (self.selection_note, CHOOSER_MAX_WIDTH),
+                      (self.screenshot_row, CHOOSER_MAX_WIDTH))
         cap_widths(self._caps)
         self.set_params({})
 
@@ -815,6 +827,7 @@ class AgentFields(QWidget):
             "folder": self.folder.path(),
             "new_folder": self.new_folder_row.switch.isChecked(),
             "include_selection": self.selection_row.switch.isChecked(),
+            "include_screenshot": self.screenshot_row.switch.isChecked(),
             "model": self.model_edit.text().strip(),
             "output": self.output_combo.value(),
         }
@@ -837,6 +850,7 @@ class AgentFields(QWidget):
             self.folder.set_path(values["folder"] or "")
             self.new_folder_row.switch.setChecked(bool(values["new_folder"]))
             self.selection_row.switch.setChecked(bool(values["include_selection"]))
+            self.screenshot_row.switch.setChecked(bool(values["include_screenshot"]))
         finally:
             self._loading = False
         self._sync()

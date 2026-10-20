@@ -849,7 +849,10 @@ behaviour, UI, cross-platform) and six fix streams changed these contracts:
   text near the cursor on, an action that wants it); a program's job
   captures the app's identity only. Cleanup, profile and transform prompts,
   the paste join and dictionary learning all take that capture.
-  `transcription._reads_selection(action)` takes the action only.
+  `transcription._screen_context(action)` takes the action only and gives
+  `begin_job` both `include_selection` and `include_screenshot`; the
+  screenshot (`focus_context.screenshot`) has the same user-started rule but
+  doesn't need app awareness, and `DictationJob.window_image` carries it.
 - **Event bus**: `since` returns why a gap happened; `catalog.GAP_EVICTED`,
   `GAP_RESTARTED` and `GAP_SLOW`; `events.gap` data has `reason`; `since=0` is
   from this run's start and a gap only if this run dropped events; the

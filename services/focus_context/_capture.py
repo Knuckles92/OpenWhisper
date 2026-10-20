@@ -426,11 +426,7 @@ class CaptureService(ContextCaptureService):
         except Exception:
             logger.debug("Excluded apps unavailable", exc_info=True)
             return True
-        return any(
-            catalog.matches(identity, value)
-            for value in (values if isinstance(values, list) else ())
-            if isinstance(value, str)
-        )
+        return catalog.excluded(identity, values)
 
     def _read(self, reader, identity: AppIdentity, *, include_text: bool,
               include_selection: bool) -> Optional[TextContext]:

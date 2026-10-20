@@ -496,7 +496,7 @@ def test_agent_handoff_passes_folder_and_surface(h, monkeypatch, new_folder):
         "new_folder": new_folder}))
     calls = []
 
-    def handoff(agent_id, text, *, folder="", surface="auto", new_folder=False):
+    def handoff(agent_id, text, *, folder="", surface="auto", new_folder=False, image=""):
         calls.append((agent_id, text, folder, surface, new_folder))
         return ActionResult(True, "Opened Codex in a terminal")
 
@@ -515,7 +515,7 @@ def test_agent_ask_routes_the_answer_to_the_scratchpad_by_default(h, monkeypatch
         "agent": "claude_code", "mode": "ask", "model": "haiku"}))
     asks = []
 
-    def ask(agent_id, text, *, model="", timeout_s=120.0, cancel=None):
+    def ask(agent_id, text, *, model="", timeout_s=120.0, cancel=None, image=None):
         asks.append((agent_id, text, model, cancel))
         return ActionResult(True, "", "Forty-two.")
 

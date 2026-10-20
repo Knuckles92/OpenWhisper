@@ -56,6 +56,8 @@ OUTPUT_LABELS = {
 }
 
 MODE_LABELS = {AgentMode.HANDOFF: "Open a session", AgentMode.ASK: "Quick answer"}
+SCREENSHOT_DETAIL = "Sends a picture of the window you're in when you start speaking."
+SCREENSHOT_UNAVAILABLE = "Not available on this desktop yet."
 SURFACE_LABELS = {AgentSurface.AUTO: "Auto", AgentSurface.APP: "App", AgentSurface.TERMINAL: "Terminal"}
 #: Where a session opens, and whether the agent waits for you there: an app
 #: link only fills the words in, a terminal starts the agent on them.

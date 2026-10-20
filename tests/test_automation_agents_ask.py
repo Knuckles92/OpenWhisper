@@ -4,6 +4,7 @@ No real agent runs. The real command lines are built, then their program is
 swapped for a fake CLI (or a fake ``opencode acp``) written by this module,
 which records what it received and answers like the real one.
 """
+import base64
 import json
 import os
 import subprocess
@@ -48,8 +49,11 @@ def out(event):
 
 
 if mode == "claude":
+    # One stream-json user message; the answer echoes its text block.
+    content = json.loads(prompt)["message"]["content"]
+    out({"type": "system", "subtype": "init", "tools": []})
     out({"type": "result", "subtype": "success", "is_error": False,
-         "result": "Answer: " + prompt})
+         "result": "Answer: " + next(b["text"] for b in content if b["type"] == "text")})
 elif mode == "claude-signed-out":
     out({"type": "result", "subtype": "success", "is_error": True,
          "result": "Not logged in · Please run /login"})
@@ -119,7 +123,8 @@ for line in sys.stdin:
     if method == "initialize":
         send({"jsonrpc": "2.0", "id": msg_id, "result": {
             "protocolVersion": 1,
-            "agentCapabilities": {"sessionCapabilities": {"delete": {}}}}})
+            "agentCapabilities": {"sessionCapabilities": {"delete": {}},
+                                  "promptCapabilities": {"image": mode == "image"}}}})
     elif method == "session/new":
         send({"jsonrpc": "2.0", "id": msg_id, "result": {"sessionId": "s1", "configOptions": [
             {"id": "model", "type": "select", "currentValue": model,
@@ -128,7 +133,7 @@ for line in sys.stdin:
         model = params["value"]
         send({"jsonrpc": "2.0", "id": msg_id, "result": {"configOptions": []}})
     elif method == "session/prompt":
-        text = params["prompt"][0]["text"]
+        text = next(block["text"] for block in params["prompt"] if block["type"] == "text")
         if mode == "hang":
             continue
         if mode == "auth":
@@ -176,8 +181,8 @@ def _use_cli(monkeypatch, fakes, builder, mode):
     """Run ``builder``'s real command line with the fake CLI as its program."""
     real = getattr(agents, builder)
 
-    def build(agent, model, workdir):
-        argv = real(agent, model, workdir)
+    def build(agent, model, workdir, **kwargs):
+        argv = real(agent, model, workdir, **kwargs)
         return [sys.executable, str(fakes["cli"]), mode, *argv[1:]]
 
     monkeypatch.setattr(agents, builder, build)
@@ -245,7 +250,8 @@ def _kill(pid):
 
 def test_claude_command_line_has_no_tools_and_keeps_the_words_off_it(fakes, tmp_path):
     argv = agents._claude_ask_command(CLAUDE, "haiku", str(tmp_path))
-    assert argv[:4] == [CLAUDE.path, "-p", "--output-format", "json"]
+    assert argv[:7] == [CLAUDE.path, "-p", "--input-format", "stream-json",
+                        "--output-format", "stream-json", "--verbose"]
     assert argv[argv.index("--system-prompt") + 1] == agents.ASK_INSTRUCTION
     assert argv[argv.index("--tools") + 1] == ""
     assert "--strict-mcp-config" in argv
@@ -313,9 +319,46 @@ def test_claude_answers_from_its_json_result(fakes, monkeypatch):
     assert result.ok and result.message == "Claude Code answered"
     assert result.output == ("Answer: " + WORDS).strip()
     seen = _recorded(fakes)
-    assert seen["prompt"] == WORDS  # on stdin, intact
+    # On stdin as one stream-json user message, intact.
+    assert json.loads(seen["prompt"]) == {"type": "user", "message": {
+        "role": "user", "content": [{"type": "text", "text": WORDS}]}}
     assert not any("2+2" in arg for arg in seen["argv"])
     assert os.path.samefile(seen["cwd"], installed_agents.agent_workspace_dir())
+
+
+PNG = b"\x89PNG\r\n\x1a\nnot-really-a-picture"
+
+
+def test_claude_gets_the_screenshot_as_an_image_block(fakes, monkeypatch):
+    _use_cli(monkeypatch, fakes, "_claude_ask_command", "claude")
+    result = agents.ask("claude_code", WORDS, image=PNG)
+    assert result.ok and result.output == ("Answer: " + WORDS).strip()
+    content = json.loads(_recorded(fakes)["prompt"])["message"]["content"]
+    assert content == [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                     "data": base64.b64encode(PNG).decode("ascii")}},
+        {"type": "text", "text": WORDS},
+    ]
+
+
+def test_codex_attaches_the_screenshot_and_removes_it_after(fakes, monkeypatch):
+    _use_cli(monkeypatch, fakes, "_codex_ask_command", "codex")
+    seen_files = []
+    real_run = agents._run_headless
+
+    def run(argv, prompt, **kwargs):
+        image = argv[argv.index("--image") + 1]
+        seen_files.append((image, Path(image).read_bytes()))
+        return real_run(argv, prompt, **kwargs)
+
+    monkeypatch.setattr(agents, "_run_headless", run)
+    result = agents.ask("codex", WORDS, image=PNG)
+    assert result.ok
+    argv = _recorded(fakes)["argv"]
+    # Right after exec, so "-" (stdin) is never read as another image.
+    assert argv[:4] == ["exec", "--json", "--image", seen_files[0][0]] and argv[-1] == "-"
+    assert seen_files[0][1] == PNG
+    assert not Path(seen_files[0][0]).exists()
 
 
 def test_a_signed_out_claude_says_how_to_sign_in(fakes, monkeypatch):
@@ -434,6 +477,18 @@ def test_opencode_answers_in_a_locked_down_session_it_then_deletes(fakes, monkey
     new = log[2]["params"]
     assert new["mcpServers"] == [] and os.path.samefile(new["cwd"], installed_agents.agent_workspace_dir())
     assert log[3]["params"]["prompt"] == [{"type": "text", "text": WORDS}]
+
+
+@pytest.mark.parametrize("mode, sent", [("image", True), ("ok", False)])
+def test_opencode_gets_the_screenshot_only_when_it_takes_images(fakes, monkeypatch, mode, sent):
+    _use_acp(monkeypatch, fakes, mode)
+    result = agents.ask("opencode_cli", WORDS, image=PNG)
+    assert result.ok and result.output == ("Answer: " + WORDS).strip()
+    (prompt,) = [e for e in _acp_log(fakes) if e.get("method") == "session/prompt"]
+    image = {"type": "image", "mimeType": "image/png",
+             "data": base64.b64encode(PNG).decode("ascii")}
+    text = {"type": "text", "text": WORDS}
+    assert prompt["params"]["prompt"] == ([image, text] if sent else [text])
 
 
 def test_opencode_switches_to_the_chosen_model(fakes, monkeypatch):

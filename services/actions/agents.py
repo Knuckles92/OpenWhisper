@@ -13,6 +13,7 @@ never logged.
 
 from __future__ import annotations
 
+import base64
 import glob
 import json
 import logging
@@ -79,7 +80,7 @@ def available() -> dict[str, bool]:
 # ---- handoff ----
 
 def handoff(agent_id: str, text: str, *, folder: str = "", surface: str = "auto",
-            new_folder: bool = False) -> ActionResult:
+            new_folder: bool = False, image: str = "") -> ActionResult:
     """Open a visible session of ``agent_id`` with ``text`` ready.
 
     Args:
@@ -91,6 +92,9 @@ def handoff(agent_id: str, text: str, *, folder: str = "", surface: str = "auto"
         new_folder: Create a persistent, empty folder for this session under
             ``~/OpenWhisper Agent Tasks``, instead of using ``folder``.
             Codex app links register this folder as a local project.
+        image: A saved screenshot that ``text`` already names. A terminal
+            session gets it as well: Codex attaches it, and Claude Code may
+            read its folder without asking. App links only carry ``text``.
     """
     name = AGENT_NAMES.get(agent_id)
     if name is None:
@@ -108,7 +112,7 @@ def handoff(agent_id: str, text: str, *, folder: str = "", surface: str = "auto"
         except OSError:
             return ActionResult(False, "Couldn't create a new working folder. "
                                        "Check that ~/OpenWhisper Agent Tasks is writable.")
-    return _handoff_session(agent_id, text, folder, surface)
+    return _handoff_session(agent_id, text, folder, surface, image)
 
 
 def _new_handoff_folder() -> str:
@@ -124,7 +128,8 @@ def _new_handoff_folder() -> str:
     return tempfile.mkdtemp(prefix=prefix, dir=root)
 
 
-def _handoff_session(agent_id: str, text: str, folder: str, surface: str) -> ActionResult:
+def _handoff_session(agent_id: str, text: str, folder: str, surface: str,
+                     image: str = "") -> ActionResult:
     name = AGENT_NAMES[agent_id]
     if surface != AgentSurface.TERMINAL:
         failure = ""
@@ -146,7 +151,7 @@ def _handoff_session(agent_id: str, text: str, folder: str, surface: str) -> Act
             return ActionResult(True, f"Opened {name}")
         if surface == AgentSurface.APP:
             return ActionResult(False, failure or _no_app_message(agent_id, text))
-    return _handoff_terminal(agent_id, text, folder)
+    return _handoff_terminal(agent_id, text, folder, image)
 
 
 def app_links(agent_id: str, text: str, folder: str = "") -> List[Tuple[str, str]]:
@@ -181,13 +186,15 @@ def _no_app_message(agent_id: str, text: str) -> str:
     return "OpenCode has no app link. Choose Terminal instead."
 
 
-def terminal_argv(agent_id: str, program: Union[str, Sequence[str]], text: str) -> List[str]:
+def terminal_argv(agent_id: str, program: Union[str, Sequence[str]], text: str,
+                  image: str = "") -> List[str]:
     """The command line that starts ``agent_id`` interactively with ``text``.
 
     ``program`` is the executable, or the command that starts the agent
     (``node.exe`` and its script; see :func:`terminal_command`). The words
     are always one element, after anything that would let the CLI read them
-    as its own options or commands.
+    as its own options or commands. ``image`` is a screenshot the words
+    name; OpenCode has no flag for it and reads it from the words alone.
     """
     command = [program] if isinstance(program, str) else list(program)
     if agent_id == CLAUDE_CODE:
@@ -195,9 +202,11 @@ def terminal_argv(agent_id: str, program: Union[str, Sequence[str]], text: str) 
         # purge, ...) as that command even after "--"; words with a space
         # never are one.
         prompt = text if any(ch.isspace() for ch in text) else text + " "
-        return [*command, "--", prompt]
+        access = ["--add-dir", os.path.dirname(image)] if image else []
+        return [*command, *access, "--", prompt]
     if agent_id == CODEX:
-        return [*command, "--", text]
+        attach = ["--image", image] if image else []
+        return [*command, *attach, "--", text]
     return [*command, f"--prompt={text}"]
 
 
@@ -272,14 +281,14 @@ def _package_exe(script: str, command: str, npm_folder: str) -> str:
     return ""
 
 
-def _handoff_terminal(agent_id: str, text: str, folder: str) -> ActionResult:
+def _handoff_terminal(agent_id: str, text: str, folder: str, image: str = "") -> ActionResult:
     name = AGENT_NAMES[agent_id]
     agent = _find(agent_id)
     if agent is None:
         return ActionResult(False, f"{name} isn't installed.")
     try:
         launch.open_in_terminal(
-            terminal_argv(agent_id, terminal_command(agent), text),
+            terminal_argv(agent_id, terminal_command(agent), text, image),
             cwd=folder or os.path.expanduser("~"),
             env=installed_agents.agent_child_env(),
         )
@@ -301,7 +310,8 @@ def _find(agent_id: str) -> Optional[installed_agents.InstalledAgent]:
 # ---- ask ----
 
 def ask(agent_id: str, text: str, *, model: str = "", timeout_s: float = 120.0,
-        cancel: Optional[threading.Event] = None) -> ActionResult:
+        cancel: Optional[threading.Event] = None,
+        image: Optional[bytes] = None) -> ActionResult:
     """Ask ``agent_id`` with no tools; ``output`` is the answer.
 
     Args:
@@ -310,6 +320,8 @@ def ask(agent_id: str, text: str, *, model: str = "", timeout_s: float = 120.0,
         model: The agent's model id or alias; "" keeps its default.
         timeout_s: Hard wall; the agent and its helpers are killed after it.
         cancel: Set to stop early; the agent is killed the same way.
+        image: PNG bytes sent with the question, as the agent's own image
+            input rather than a file it would need a tool to open.
     """
     name = AGENT_NAMES.get(agent_id)
     if name is None:
@@ -324,23 +336,27 @@ def ask(agent_id: str, text: str, *, model: str = "", timeout_s: float = 120.0,
     cancel = cancel or threading.Event()
     deadline = time.monotonic() + max(1.0, float(timeout_s))
     if agent_id == OPENCODE:
-        result = _ask_opencode(agent, text, model, deadline, cancel)
+        result = _ask_opencode(agent, text, model, deadline, cancel, image)
     else:
-        result = _ask_headless(agent, text, model, deadline, cancel)
+        result = _ask_headless(agent, text, model, deadline, cancel, image)
     logger.info("Asked %s: %s", agent_id, "answered" if result.ok else "no answer")
     return result
 
 
 def _ask_headless(agent: installed_agents.InstalledAgent, text: str, model: str,
-                  deadline: float, cancel: threading.Event) -> ActionResult:
+                  deadline: float, cancel: threading.Event,
+                  image: Optional[bytes] = None) -> ActionResult:
     name = AGENT_NAMES[agent.id]
     workdir = tempfile.mkdtemp(prefix="openwhisper-ask-")
     try:
         if agent.id == CLAUDE_CODE:
             argv = _claude_ask_command(agent, model, workdir)
+            prompt = _claude_message(text, image)
         else:
-            argv = _codex_ask_command(agent, model, workdir)
-        run = _run_headless(argv, text, deadline=deadline, cancel=cancel)
+            argv = _codex_ask_command(agent, model, workdir,
+                                      image=_write_image(workdir, image) if image else "")
+            prompt = text
+        run = _run_headless(argv, prompt, deadline=deadline, cancel=cancel)
     except _TooOld as exc:
         return ActionResult(False, str(exc))
     finally:
@@ -362,7 +378,12 @@ class _TooOld(Exception):
 
 def _claude_ask_command(agent: installed_agents.InstalledAgent, model: str,
                         workdir: str) -> List[str]:
-    """``claude -p`` with no tools, no MCP servers, hooks or saved session."""
+    """``claude -p`` with no tools, no MCP servers, hooks or saved session.
+
+    The question goes in as one stream-json user message (see
+    :func:`_claude_message`), the only input that carries an image, and
+    stream-json input requires stream-json output.
+    """
     help_text = _help(agent, "--help")
     if help_text and "--tools" not in help_text:
         raise _TooOld(f"Claude Code {agent.version} is too old to answer questions "
@@ -374,7 +395,8 @@ def _claude_ask_command(agent: installed_agents.InstalledAgent, model: str,
     with open(settings_file, "w", encoding="utf-8") as handle:
         json.dump({"disableAllHooks": True, "alwaysThinkingEnabled": False}, handle)
     argv = [
-        agent.path, "-p", "--output-format", "json",
+        agent.path, "-p", "--input-format", "stream-json",
+        "--output-format", "stream-json", "--verbose",
         "--system-prompt", ASK_INSTRUCTION,
         "--tools", "",
         "--mcp-config", mcp_file, "--strict-mcp-config",
@@ -388,9 +410,33 @@ def _claude_ask_command(agent: installed_agents.InstalledAgent, model: str,
     return argv
 
 
+def _claude_message(text: str, image: Optional[bytes] = None) -> str:
+    """The question as the one stream-json user message ``claude -p`` reads on stdin."""
+    content: List[Dict[str, Any]] = []
+    if image:
+        content.append({"type": "image", "source": {
+            "type": "base64", "media_type": "image/png",
+            "data": base64.b64encode(image).decode("ascii")}})
+    content.append({"type": "text", "text": text})
+    message = {"type": "user", "message": {"role": "user", "content": content}}
+    return json.dumps(message, ensure_ascii=False) + "\n"
+
+
+def _write_image(workdir: str, image: bytes) -> str:
+    """``image`` saved in the ask's own folder, which is removed after the ask."""
+    path = os.path.join(workdir, "window.png")
+    with open(path, "wb") as handle:
+        handle.write(image)
+    return path
+
+
 def _codex_ask_command(agent: installed_agents.InstalledAgent, model: str,
-                       workdir: str) -> List[str]:
-    """``codex exec`` without the user's config, with every tool feature off."""
+                       workdir: str, *, image: str = "") -> List[str]:
+    """``codex exec`` without the user's config, with every tool feature off.
+
+    ``image`` is a PNG the CLI attaches to the question itself, so no tool
+    is needed to see it.
+    """
     exec_help = _help(agent, "exec", "--help")
     if exec_help and "--ignore-user-config" not in exec_help:
         spec = installed_agents.AGENT_SPECS[CODEX]
@@ -400,6 +446,9 @@ def _codex_ask_command(agent: installed_agents.InstalledAgent, model: str,
     with open(instructions, "w", encoding="utf-8") as handle:
         handle.write(ASK_INSTRUCTION)
     argv = [agent.path, "exec", "--json"]
+    if image:
+        # Before the trailing "-": --image takes every value up to the next flag.
+        argv += ["--image", image]
     if not exec_help or "--ephemeral" in exec_help:
         argv.append("--ephemeral")
     # The user's config brings their MCP servers, hooks and notify program;
@@ -544,10 +593,11 @@ def _wait_for_exit(proc: subprocess.Popen, *, deadline: float, cancel: threading
 
 
 def _claude_result(stdout: str) -> Optional[Dict[str, Any]]:
-    """The ``result`` message ``claude -p --output-format json`` printed.
+    """The ``result`` message ``claude -p`` printed.
 
-    It prints that one object, or, when verbose output is on in the user's
-    own config, every message of the turn as one JSON array ending with it.
+    Stream-json output prints every message of the turn one per line, ending
+    with it; json output prints that one object, or, when verbose output is
+    on in the user's own config, every message as one JSON array.
     """
     for chunk in [stdout.strip(), *reversed(stdout.splitlines())]:
         try:
@@ -721,8 +771,22 @@ def _opencode_result(result: Any, answer: _AcpAnswer) -> ActionResult:
     return _answered(OPENCODE, answer.text())
 
 
+def _opencode_prompt(info: Dict[str, Any], text: str, image: Optional[bytes]) -> List[Dict[str, Any]]:
+    """The ACP prompt: ``image`` first when the agent says it takes images."""
+    blocks: List[Dict[str, Any]] = [{"type": "text", "text": text}]
+    if not image:
+        return blocks
+    capabilities = (info.get("agentCapabilities") or {}).get("promptCapabilities") or {}
+    if not capabilities.get("image"):
+        logger.info("OpenCode doesn't take images here; asking without the screenshot")
+        return blocks
+    return [{"type": "image", "mimeType": "image/png",
+             "data": base64.b64encode(image).decode("ascii")}, *blocks]
+
+
 def _ask_opencode(agent: installed_agents.InstalledAgent, text: str, model: str,
-                  deadline: float, cancel: threading.Event) -> ActionResult:
+                  deadline: float, cancel: threading.Event,
+                  image: Optional[bytes] = None) -> ActionResult:
     """One ACP session with every OpenCode tool denied, deleted afterwards.
 
     ``opencode acp`` runs in-process (no background service), and the
@@ -772,7 +836,7 @@ def _ask_opencode(agent: installed_agents.InstalledAgent, text: str, model: str,
                 "sessionId": session_id, "configId": "model", "value": wanted,
             }, min(30.0, remaining()), cancel_event=cancel)
         result = conn.request("session/prompt", {
-            "sessionId": session_id, "prompt": [{"type": "text", "text": text}],
+            "sessionId": session_id, "prompt": _opencode_prompt(info, text, image),
         }, remaining(), cancel_event=cancel)
     except AcpError as exc:
         return _opencode_failure(conn, session_id, exc, deadline, cancel)

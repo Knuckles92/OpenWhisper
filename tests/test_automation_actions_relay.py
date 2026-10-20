@@ -101,7 +101,7 @@ class BlockedAsk:
         self.started = threading.Event()
         self.cancels = []
 
-    def __call__(self, agent_id, text, *, model="", timeout_s=120.0, cancel=None):
+    def __call__(self, agent_id, text, *, model="", timeout_s=120.0, cancel=None, image=None):
         self.cancels.append(cancel)
         self.started.set()
         while not self.release.is_set():

@@ -28,7 +28,8 @@ from services import (
 from services.automation import catalog
 from services.batch_upload import compose_batch_cleanup_prompt
 from services.cleanup_profiles import compose_profile_prompt
-from services.focus_context import FocusSnapshot
+from services.focus_context import FocusSnapshot, screenshot
+from services.focus_context.screenshot import WindowImage
 from services.recognition_context import RecognitionContext
 from services.settings import (
     compose_transcript_cleanup_prompt,
@@ -99,6 +100,9 @@ class DictationJob:
     #: the paste check only, also with app awareness off; history, styles
     #: and prompts read ``focus`` alone.
     target: Optional[Future] = None
+    #: Future[WindowImage | None]: the focused window as the recording
+    #: started, for an agent action that sends a screenshot.
+    screen: Optional[Future] = None
     #: Names this job in events, so a listener can match its completion
     #: and history entry to its start.
     id: str = field(default_factory=lambda: secrets.token_hex(8))
@@ -134,6 +138,11 @@ class DictationJob:
         value = _resolved(self.focus, timeout)
         return value if isinstance(value, FocusSnapshot) else None
 
+    def window_image(self, timeout: float = 0.0) -> Optional[WindowImage]:
+        """The focused window's screenshot, or None when not taken or not ready."""
+        value = _resolved(self.screen, timeout)
+        return value if isinstance(value, WindowImage) else None
+
     def selection_text(self, timeout: float = 0.0) -> str:
         """The selected text, or "" when there is none or it isn't ready."""
         value = _resolved(self.selection, timeout)
@@ -167,7 +176,8 @@ class FinishedText:
 
 def begin_job(mode: str, settings: Mapping, *, selection=None, action_id: str = "",
               source: str = "", route: str = "",
-              include_selection: bool = False) -> DictationJob:
+              include_selection: bool = False,
+              include_screenshot: bool = False) -> DictationJob:
     """Start a job's background captures as its recording starts; never raises.
 
     Called right after the recorder opens and before the preview starts, so
@@ -183,6 +193,8 @@ def begin_job(mode: str, settings: Mapping, *, selection=None, action_id: str = 
         route: See DictationJob.route.
         include_selection: An ACTION job's action wants the selected text,
             which the focus capture reads when app awareness is on.
+        include_screenshot: An ACTION job's action sends a screenshot of
+            the focused window, taken whether or not app awareness is on.
 
     Only a job the user started reads what is on screen. It reads the text
     near the cursor when that is on, and the selection when the job uses it:
@@ -190,11 +202,13 @@ def begin_job(mode: str, settings: Mapping, *, selection=None, action_id: str = 
     text near the cursor on), and an action reads it when asked. A job a
     program started reads neither, only which app has focus, so no program
     gets the user's on-screen text back through cleanup, an event or an
-    action.
+    action. The same goes for the screenshot.
     """
     settings = settings or {}
-    focus = target = None
+    focus = target = screen = None
     try:
+        if mode == JobMode.ACTION and include_screenshot and catalog.user_started(source):
+            screen = screenshot.request(settings)
         if resolve_app_context_enabled(settings):
             users = catalog.user_started(source)
             include_text = users and resolve_app_context_read_text(settings)
@@ -221,6 +235,7 @@ def begin_job(mode: str, settings: Mapping, *, selection=None, action_id: str = 
         recognition=recognition_for(None, settings),
         selection=_as_future(selection),
         target=target,
+        screen=screen,
         action_id=action_id,
         source=source,
         route=route,

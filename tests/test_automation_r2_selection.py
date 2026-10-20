@@ -155,7 +155,7 @@ def prompts(monkeypatch):
 
 
 PARAMS = {"agent": "claude_code", "mode": "ask", "model": "", "include_selection": True,
-          "surface": "auto", "folder": ""}
+          "include_screenshot": False, "surface": "auto", "folder": ""}
 
 
 @pytest.mark.parametrize("source, shared", [("api", False), ("mcp", False), ("hotkey", True)])

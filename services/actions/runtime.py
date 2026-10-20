@@ -285,29 +285,37 @@ def _program(argv: list, stdin: bytes, timeout_s: float, env: dict,
     return ActionResult(True, "", (out or b"").decode("utf-8", errors="replace").strip())
 
 
-def prompt_with_context(text: str, snapshot) -> str:
-    """``text`` followed by the selection and app the job started on, when known.
+def prompt_with_context(text: str, snapshot, *, screenshot: str = "", app: str = "") -> str:
+    """``text`` followed by the selection, screenshot and app the job started on, when known.
 
     The selection is UI Automation's read from the job's focus capture,
-    never a copy; nothing is added when it is unknown, refused or empty.
+    never a copy; it is left out when unknown, refused or empty.
+    ``screenshot`` is the path of the saved window screenshot, and ``app``
+    names the app when the focus capture doesn't. Nothing is added without
+    a selection or a screenshot.
     """
     context = getattr(snapshot, "text", None)
-    if context is None or context.blocked or not context.selection_known:
-        return text
-    selected = context.selected or ""
-    if not selected.strip():
+    selected = ""
+    if context is not None and not context.blocked and context.selection_known:
+        selected = context.selected or ""
+    if not selected.strip() and not screenshot:
         return text
     identity = getattr(snapshot, "identity", None)
-    app = identity.name if identity is not None and identity.name else ""
+    app = identity.name if identity is not None and identity.name else app
     lines = [CONTEXT_OPEN]
     if app:
         lines.append(f"<app>{_inside_frame(app)}</app>")
-    lines += ["<selected_text>", _inside_frame(selected), "</selected_text>", CONTEXT_CLOSE]
+    if selected.strip():
+        lines += ["<selected_text>", _inside_frame(selected), "</selected_text>"]
+    if screenshot:
+        lines.append(f"<window_screenshot>{_inside_frame(screenshot)}</window_screenshot>")
+    lines.append(CONTEXT_CLOSE)
     return text + "\n\n" + "\n".join(lines)
 
 
 #: The "<" of a tag naming one of the frame's own elements, open or close.
-_FRAME_TAG = re.compile(r"<(?=\s*/?\s*(?:selected_text|context|app)\b)", re.IGNORECASE)
+_FRAME_TAG = re.compile(r"<(?=\s*/?\s*(?:selected_text|window_screenshot|context|app)\b)",
+                        re.IGNORECASE)
 
 
 def _inside_frame(value: str) -> str:
@@ -334,18 +342,27 @@ def program_words_allowed(action, settings) -> bool:
 def _agent(params: dict, text: str, job, cancel: threading.Event) -> ActionResult:
     from config import config
     from services.actions import agents
+    from services.focus_context import screenshot
 
-    if params["include_selection"]:
-        # Only a job the user started has the selection (begin_job). Its
-        # capture ran while they spoke; a worker can afford to wait for one
-        # still running.
-        text = prompt_with_context(text, job.snapshot(timeout=config.CONTEXT_CAPTURE_DEADLINE_S))
+    # Only a job the user started has the selection or a screenshot
+    # (begin_job). Both were taken while they spoke; a worker can afford to
+    # wait for one still running.
+    snapshot = (job.snapshot(timeout=config.CONTEXT_CAPTURE_DEADLINE_S)
+                if params["include_selection"] else None)
+    image = job.window_image(timeout=screenshot.WAIT_S) if params["include_screenshot"] else None
     if params["mode"] == AgentMode.ASK:
-        # The ask says whether its cancel stopped it (``stopped``); one that
-        # answered, or failed on its own, wasn't.
-        return agents.ask(params["agent"], text, model=params["model"], cancel=cancel)
+        # An ask has no tools to open a file with, so the picture goes with
+        # the question. The ask says whether its cancel stopped it
+        # (``stopped``); one that answered, or failed on its own, wasn't.
+        return agents.ask(params["agent"], prompt_with_context(text, snapshot),
+                          model=params["model"], cancel=cancel,
+                          image=image.png if image is not None else None)
+    path = screenshot.save(image) if image is not None else ""
+    text = prompt_with_context(text, snapshot, screenshot=path,
+                               app=image.app if image is not None else "")
     return agents.handoff(params["agent"], text, folder=params["folder"],
-                          surface=params["surface"], new_folder=params["new_folder"])
+                          surface=params["surface"], new_folder=params["new_folder"],
+                          image=path)
 
 
 # -- the runtime ------------------------------------------------------------------
@@ -690,7 +707,8 @@ class ActionRuntime:
 
     def _start_agent(self, run: _Run) -> None:
         params = {key: run.action.param(key) for key in (
-            "agent", "mode", "surface", "folder", "new_folder", "include_selection", "model")}
+            "agent", "mode", "surface", "folder", "new_folder", "include_selection",
+            "include_screenshot", "model")}
         self._submit(run, partial(_agent, params, run.text, run.job, run.cancel))
 
     def _submit(self, run: _Run, work: Callable[[], ActionResult]) -> None:

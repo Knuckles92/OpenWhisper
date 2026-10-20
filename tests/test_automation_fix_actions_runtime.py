@@ -25,7 +25,7 @@ class BlockedAsk:
         self.calls = []
         self.lock = threading.Lock()
 
-    def __call__(self, agent_id, text, *, model="", timeout_s=120.0, cancel=None):
+    def __call__(self, agent_id, text, *, model="", timeout_s=120.0, cancel=None, image=None):
         with self.lock:
             self.calls.append((text, cancel))
         while not self.release.is_set():

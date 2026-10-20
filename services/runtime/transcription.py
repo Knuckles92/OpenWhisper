@@ -64,14 +64,17 @@ def _start_failure_message(exc: Exception) -> str:
     return f"Failed to process audio: {exc}"
 
 
-def _reads_selection(action) -> bool:
-    """Whether an action job asks for the selected text as context.
+def _screen_context(action) -> dict:
+    """``begin_job`` arguments for what an action job sends from the screen.
 
-    begin_job reads it only for a job the user started: a program (the live
-    API, MCP) must not learn what is selected in the user's app by running
-    an action.
+    The selected text and a screenshot of the focused window. begin_job
+    takes them only for a job the user started: a program (the live API,
+    MCP) must not learn what is on the user's screen by running an action.
     """
-    return action.param("include_selection") is True
+    if action is None:
+        return {}
+    return {"include_selection": action.param("include_selection") is True,
+            "include_screenshot": action.param("include_screenshot") is True}
 
 
 def _recording_destination(action) -> str:
@@ -414,7 +417,8 @@ class TranscriptionRuntime:
             logger.debug("Dictation job context unavailable", exc_info=True)
             return dictation_pipeline.DictationJob(
                 mode=mode,
-                **{k: v for k, v in context.items() if k != "include_selection"},
+                **{k: v for k, v in context.items()
+                   if k not in ("include_selection", "include_screenshot")},
             )
 
     def _action_for_recording(self, action_id: str):
@@ -473,7 +477,7 @@ class TranscriptionRuntime:
             action_id=action.id if action is not None else "",
             source=source,
             route=route,
-            include_selection=action is not None and _reads_selection(action),
+            **_screen_context(action),
         )
         # Publish before streaming can show the overlay, using the action
         # resolved for this capture rather than re-reading mutable settings.
@@ -1643,7 +1647,7 @@ class TranscriptionRuntime:
             raise ControlError(BUSY, "OpenWhisper isn't taking actions right now.")
         job = dictation_pipeline.begin_job(
             JobMode.ACTION, settings, action_id=action.id, source=source,
-            include_selection=_reads_selection(action),
+            **_screen_context(action),
         )
         if not self.begin_rewrite_job(job, source_name=f"Action · {action.name}"):
             raise ControlError(BUSY, "OpenWhisper is busy with another recording.")
