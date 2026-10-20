@@ -26,7 +26,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 from urllib.parse import quote
 
 from services import installed_agents
@@ -485,48 +485,15 @@ def _run_headless(argv: List[str], prompt: str, *, deadline: float,
         return _Run("unstartable")
     out: List[bytes] = []
     err: deque = deque(maxlen=20)
-
-    def feed() -> None:
-        try:
-            assert proc.stdin is not None
-            proc.stdin.write(prompt.encode("utf-8"))
-            proc.stdin.close()
-        except (OSError, ValueError):
-            pass
-
-    def read_out() -> None:
-        assert proc.stdout is not None
-        size = 0
-        for line in proc.stdout:
-            if size < _STDOUT_MAX_BYTES:
-                out.append(line)
-                size += len(line)
-
-    def read_err() -> None:
-        assert proc.stderr is not None
-        for raw in proc.stderr:
-            line = raw.decode("utf-8", "replace").rstrip()
-            if line:
-                err.append(line[:400])
-
-    threads = [threading.Thread(target=fn, name=f"agent-ask-{fn.__name__}", daemon=True)
-               for fn in (feed, read_out, read_err)]
+    pumps = (("feed", _feed_stdin, (proc, prompt)),
+             ("read_out", _read_stdout, (proc, out)),
+             ("read_err", _read_stderr, (proc, err)))
+    threads = [threading.Thread(target=fn, args=args, name=f"agent-ask-{label}", daemon=True)
+               for label, fn, args in pumps]
     for thread in threads:
         thread.start()
-    status = "done"
     try:
-        while True:
-            try:
-                proc.wait(timeout=0.1)
-                break
-            except subprocess.TimeoutExpired:
-                pass
-            if cancel.is_set():
-                status = "canceled"
-                break
-            if time.monotonic() >= deadline:
-                status = "timeout"
-                break
+        status = _wait_for_exit(proc, deadline=deadline, cancel=cancel)
     finally:
         # Also ends helpers that outlive the agent while holding its pipes.
         installed_agents.kill_process_tree(proc)
@@ -534,6 +501,46 @@ def _run_headless(argv: List[str], prompt: str, *, deadline: float,
         thread.join(2.0)
     stdout = b"".join(out).decode("utf-8", "replace")
     return _Run(status, proc.returncode, stdout, "\n".join(err))
+
+
+def _feed_stdin(proc: subprocess.Popen, prompt: str) -> None:
+    try:
+        assert proc.stdin is not None
+        proc.stdin.write(prompt.encode("utf-8"))
+        proc.stdin.close()
+    except (OSError, ValueError):
+        pass
+
+
+def _read_stdout(proc: subprocess.Popen, out: List[bytes]) -> None:
+    assert proc.stdout is not None
+    size = 0
+    for line in proc.stdout:
+        if size < _STDOUT_MAX_BYTES:
+            out.append(line)
+            size += len(line)
+
+
+def _read_stderr(proc: subprocess.Popen, err: deque) -> None:
+    assert proc.stderr is not None
+    for raw in proc.stderr:
+        line = raw.decode("utf-8", "replace").rstrip()
+        if line:
+            err.append(line[:400])
+
+
+def _wait_for_exit(proc: subprocess.Popen, *, deadline: float, cancel: threading.Event) -> str:
+    """Poll until ``proc`` exits ("done"), ``cancel`` is set or ``deadline`` passes."""
+    while True:
+        try:
+            proc.wait(timeout=0.1)
+            return "done"
+        except subprocess.TimeoutExpired:
+            pass
+        if cancel.is_set():
+            return "canceled"
+        if time.monotonic() >= deadline:
+            return "timeout"
 
 
 def _claude_result(stdout: str) -> Optional[Dict[str, Any]]:
@@ -563,15 +570,20 @@ def _claude_answer(run: _Run) -> ActionResult:
     return _answered(CLAUDE_CODE, text)
 
 
-def _codex_answer(run: _Run) -> ActionResult:
-    answer, error, done = "", "", False
-    for line in run.stdout.splitlines():
+def _codex_events(stdout: str) -> Iterator[Dict[str, Any]]:
+    """The JSON objects ``codex exec --json`` printed, one per line."""
+    for line in stdout.splitlines():
         try:
             event = json.loads(line)
         except ValueError:
             continue
-        if not isinstance(event, dict):
-            continue
+        if isinstance(event, dict):
+            yield event
+
+
+def _codex_answer(run: _Run) -> ActionResult:
+    answer, error, done = "", "", False
+    for event in _codex_events(run.stdout):
         kind = event.get("type")
         item = event.get("item") if isinstance(event.get("item"), dict) else {}
         if kind == "item.completed" and item.get("type") == "agent_message":
@@ -607,6 +619,108 @@ def _opencode_command(agent: installed_agents.InstalledAgent) -> List[str]:
     return [agent.path, "acp"]
 
 
+def _opencode_env() -> Dict[str, str]:
+    """The child environment: both primary agents get the ask prompt and no tools."""
+    deny_all = [{"action": "*", "resource": "*", "effect": "deny"}]
+    overlay = {"agents": {persona: {"system": ASK_INSTRUCTION, "permissions": deny_all}
+                          for persona in ("build", "plan")}}
+    return installed_agents.agent_child_env({
+        "OPENCODE_CONFIG_CONTENT": json.dumps(overlay),
+        "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
+        "OPENCODE_DISABLE_AUTOUPDATE": "1",
+        "OPENCODE_DISABLE_FILEWATCHER": "1",
+    })
+
+
+class _AcpAnswer:
+    """The answer an ACP prompt turn streams, gathered from its notifications."""
+
+    def __init__(self) -> None:
+        self._chunks: List[str] = []
+        self._lock = threading.Lock()
+
+    def on_notification(self, method: str, params: Dict[str, Any]) -> None:
+        if method != "session/update":
+            return
+        update = params.get("update") or {}
+        kind = update.get("sessionUpdate")
+        with self._lock:
+            if kind == "agent_message_chunk":
+                chunk = (update.get("content") or {}).get("text")
+                if isinstance(chunk, str):
+                    self._chunks.append(chunk)
+            elif kind in ("tool_call", "tool_call_update"):
+                self._chunks.clear()  # narration before a tool call isn't the answer
+
+    def text(self) -> str:
+        with self._lock:
+            return "".join(self._chunks)
+
+
+def _refuse_acp_request(method: str, params: Dict[str, Any]) -> Any:
+    """Reject every permission the agent asks for; no other request is served."""
+    from meeting.agent.installed.acp import AcpError
+
+    if method == "session/request_permission":
+        options = [o for o in params.get("options") or [] if isinstance(o, dict)]
+        choice = next((o for o in options if str(o.get("kind", "")).startswith("reject")),
+                      None)
+        if choice is None:
+            return {"outcome": {"outcome": "cancelled"}}
+        return {"outcome": {"outcome": "selected", "optionId": choice.get("optionId")}}
+    raise AcpError(f"{method} isn't available when asking", -32601)
+
+
+def _opencode_model(session: Dict[str, Any], model: str) -> Optional[str]:
+    """The model to ask with: "" keeps the session's own, None means ``model`` isn't offered."""
+    from meeting.agent.installed.acp import model_choices
+
+    wanted = model or installed_agents.configured_default_model(OPENCODE)
+    if wanted and wanted not in {value for value, _label in model_choices(session)}:
+        if model:
+            return None
+        wanted = ""
+    return wanted
+
+
+def _opencode_failure(conn: Any, session_id: str, exc: Exception, deadline: float,
+                      cancel: threading.Event) -> ActionResult:
+    """Cancel the turn in flight and say why the ask ended."""
+    name = AGENT_NAMES[OPENCODE]
+    if session_id:
+        conn.notify("session/cancel", {"sessionId": session_id})
+    if cancel.is_set():
+        return ActionResult(False, f"Stopped asking {name}.", stopped=True)
+    if time.monotonic() >= deadline:
+        return ActionResult(False, f"{name} didn't answer in time.")
+    detail = str(exc)
+    if "auth" in detail.lower():
+        return ActionResult(False, _signed_out(OPENCODE))
+    return ActionResult(False, _failure(OPENCODE, detail))
+
+
+def _close_opencode(conn: Any, session_id: str, can_delete: bool) -> None:
+    from meeting.agent.installed.acp import AcpError
+
+    if session_id and can_delete:
+        try:
+            # Keeps asks out of the user's OpenCode history.
+            conn.request("session/delete", {"sessionId": session_id}, 3.0)
+        except AcpError:
+            logger.debug("Couldn't delete the OpenCode ask session")
+    conn.close(wait_s=1.0)
+
+
+def _opencode_result(result: Any, answer: _AcpAnswer) -> ActionResult:
+    name = AGENT_NAMES[OPENCODE]
+    reason = result.get("stopReason") if isinstance(result, dict) else None
+    if reason == "cancelled":
+        return ActionResult(False, f"Stopped asking {name}.", stopped=True)
+    if reason == "refusal":
+        return ActionResult(False, "OpenCode's model wouldn't answer that.")
+    return _answered(OPENCODE, answer.text())
+
+
 def _ask_opencode(agent: installed_agents.InstalledAgent, text: str, model: str,
                   deadline: float, cancel: threading.Event) -> ActionResult:
     """One ACP session with every OpenCode tool denied, deleted afterwards.
@@ -620,51 +734,18 @@ def _ask_opencode(agent: installed_agents.InstalledAgent, text: str, model: str,
         AcpError,
         config_option,
         initialize,
-        model_choices,
     )
 
     name = AGENT_NAMES[OPENCODE]
-    deny_all = [{"action": "*", "resource": "*", "effect": "deny"}]
-    overlay = {"agents": {persona: {"system": ASK_INSTRUCTION, "permissions": deny_all}
-                          for persona in ("build", "plan")}}
-    env = installed_agents.agent_child_env({
-        "OPENCODE_CONFIG_CONTENT": json.dumps(overlay),
-        "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
-        "OPENCODE_DISABLE_AUTOUPDATE": "1",
-        "OPENCODE_DISABLE_FILEWATCHER": "1",
-    })
-    chunks: List[str] = []
-    lock = threading.Lock()
-
-    def on_notification(method: str, params: Dict[str, Any]) -> None:
-        if method != "session/update":
-            return
-        update = params.get("update") or {}
-        kind = update.get("sessionUpdate")
-        with lock:
-            if kind == "agent_message_chunk":
-                chunk = (update.get("content") or {}).get("text")
-                if isinstance(chunk, str):
-                    chunks.append(chunk)
-            elif kind in ("tool_call", "tool_call_update"):
-                chunks.clear()  # narration before a tool call isn't the answer
-
-    def on_request(method: str, params: Dict[str, Any]) -> Any:
-        if method == "session/request_permission":
-            options = [o for o in params.get("options") or [] if isinstance(o, dict)]
-            choice = next((o for o in options if str(o.get("kind", "")).startswith("reject")),
-                          None)
-            if choice is None:
-                return {"outcome": {"outcome": "cancelled"}}
-            return {"outcome": {"outcome": "selected", "optionId": choice.get("optionId")}}
-        raise AcpError(f"{method} isn't available when asking", -32601)
+    env = _opencode_env()
+    answer = _AcpAnswer()
 
     def remaining() -> float:
         return max(0.1, deadline - time.monotonic())
 
     conn = AcpConnection(_opencode_command(agent), env=env,
                          cwd=installed_agents.agent_workspace_dir(),
-                         on_notification=on_notification, on_request=on_request)
+                         on_notification=answer.on_notification, on_request=_refuse_acp_request)
     try:
         conn.start()
     except AcpError:
@@ -682,12 +763,10 @@ def _ask_opencode(agent: installed_agents.InstalledAgent, text: str, model: str,
         session_id = str(session.get("sessionId") or "")
         if not session_id:
             return ActionResult(False, f"{name} didn't open a session.")
-        wanted = model or installed_agents.configured_default_model(OPENCODE)
-        if wanted and wanted not in {value for value, _label in model_choices(session)}:
-            if model:
-                return ActionResult(False, f"OpenCode has no model {model} with your current "
-                                           "providers. Pick another in Settings.")
-            wanted = ""
+        wanted = _opencode_model(session, model)
+        if wanted is None:
+            return ActionResult(False, f"OpenCode has no model {model} with your current "
+                                       "providers. Pick another in Settings.")
         if wanted and wanted != (config_option(session, "model") or {}).get("currentValue"):
             conn.request("session/set_config_option", {
                 "sessionId": session_id, "configId": "model", "value": wanted,
@@ -696,32 +775,10 @@ def _ask_opencode(agent: installed_agents.InstalledAgent, text: str, model: str,
             "sessionId": session_id, "prompt": [{"type": "text", "text": text}],
         }, remaining(), cancel_event=cancel)
     except AcpError as exc:
-        if session_id:
-            conn.notify("session/cancel", {"sessionId": session_id})
-        if cancel.is_set():
-            return ActionResult(False, f"Stopped asking {name}.", stopped=True)
-        if time.monotonic() >= deadline:
-            return ActionResult(False, f"{name} didn't answer in time.")
-        detail = str(exc)
-        if "auth" in detail.lower():
-            return ActionResult(False, _signed_out(OPENCODE))
-        return ActionResult(False, _failure(OPENCODE, detail))
+        return _opencode_failure(conn, session_id, exc, deadline, cancel)
     finally:
-        if session_id and can_delete:
-            try:
-                # Keeps asks out of the user's OpenCode history.
-                conn.request("session/delete", {"sessionId": session_id}, 3.0)
-            except AcpError:
-                logger.debug("Couldn't delete the OpenCode ask session")
-        conn.close(wait_s=1.0)
-    reason = result.get("stopReason") if isinstance(result, dict) else None
-    if reason == "cancelled":
-        return ActionResult(False, f"Stopped asking {name}.", stopped=True)
-    if reason == "refusal":
-        return ActionResult(False, "OpenCode's model wouldn't answer that.")
-    with lock:
-        answer = "".join(chunks)
-    return _answered(OPENCODE, answer)
+        _close_opencode(conn, session_id, can_delete)
+    return _opencode_result(result, answer)
 
 
 # ---- messages ----
