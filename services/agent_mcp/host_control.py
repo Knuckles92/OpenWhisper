@@ -95,27 +95,7 @@ class HostMcpControl:
 
     def _apply(self, changes):
         try:
-            for name, key in PERMISSIONS.items():
-                if name in changes:
-                    self._settings.save_setting(key, changes[name])
-            if changes.get("writable"):
-                grants = changes["writable"]
-
-                def commit(saved):
-                    granted = saved.get(SettingsKey.MCP_WRITABLE_SETTINGS, {})
-                    granted = dict(granted) if isinstance(granted, dict) else {}
-                    granted.update(grants)
-                    saved[SettingsKey.MCP_WRITABLE_SETTINGS] = granted
-
-                self._settings.mutate_settings(commit)
-            if "port" in changes:
-                self._settings.save_setting(SettingsKey.MCP_PORT, changes["port"])
-            if "tailscale" in changes:
-                self._settings.save_setting(
-                    SettingsKey.MCP_TAILSCALE_ENABLED, changes["tailscale"]
-                )
-            if "enabled" in changes:
-                self._settings.save_setting(SettingsKey.MCP_ENABLED, changes["enabled"])
+            self._save(changes)
         except Exception:
             logger.warning("Could not save a remote MCP change", exc_info=True)
             raise ControlError("save_failed: The host couldn't save that MCP setting.")
@@ -124,6 +104,29 @@ class HostMcpControl:
                 self._start()
             else:
                 self._runtime.stop()
+
+    def _save(self, changes):
+        for name, key in PERMISSIONS.items():
+            if name in changes:
+                self._settings.save_setting(key, changes[name])
+        if changes.get("writable"):
+            grants = changes["writable"]
+
+            def commit(saved):
+                granted = saved.get(SettingsKey.MCP_WRITABLE_SETTINGS, {})
+                granted = dict(granted) if isinstance(granted, dict) else {}
+                granted.update(grants)
+                saved[SettingsKey.MCP_WRITABLE_SETTINGS] = granted
+
+            self._settings.mutate_settings(commit)
+        if "port" in changes:
+            self._settings.save_setting(SettingsKey.MCP_PORT, changes["port"])
+        if "tailscale" in changes:
+            self._settings.save_setting(
+                SettingsKey.MCP_TAILSCALE_ENABLED, changes["tailscale"]
+            )
+        if "enabled" in changes:
+            self._settings.save_setting(SettingsKey.MCP_ENABLED, changes["enabled"])
 
     def _start(self):
         preferences = self._settings.load_all_settings()
