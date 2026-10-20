@@ -109,23 +109,17 @@ class AxTextReader:
         import objc
 
         with objc.autorelease_pool():
-            focused = self._attribute(self._system, hi.kAXFocusedUIElementAttribute)
+            focused = self._focused_element(identity)
             if focused is None:
-                return None
-            error, pid = hi.AXUIElementGetPid(focused, None)
-            if error != 0 or pid == os.getpid() or (identity.pid and pid != identity.pid):
                 return None
             roles = {self._attribute(focused, hi.kAXRoleAttribute),
                      self._attribute(focused, hi.kAXSubroleAttribute)}
             if "AXSecureTextField" in roles:
                 return TextContext(source=self.source, blocked=True)
-            span = self._attribute(focused, hi.kAXSelectedTextRangeAttribute)
-            if span is None:
+            selection = self._selection_range(focused)
+            if selection is None:
                 return None
-            ok, selection = hi.AXValueGetValue(span, hi.kAXValueCFRangeType, None)
-            if not ok:
-                return None
-            start, length = int(selection.location), int(selection.length)
+            start, length = selection
             selected = ""
             # The selection's range places the text around it; its words go
             # only to a caller that asked for them.
@@ -135,15 +129,43 @@ class AxTextReader:
                 selected = self._string_for(focused, start, length)
             before = after = ""
             if include_text:
-                first = max(0, start - config.CONTEXT_BEFORE_CHARS)
-                before = self._string_for(focused, first, start - first)
-                total = self._attribute(focused, hi.kAXNumberOfCharactersAttribute)
-                end = start + length
-                if total is not None:
-                    after = self._string_for(
-                        focused, end, min(config.CONTEXT_AFTER_CHARS, int(total) - end))
+                before, after = self._text_around(focused, start, length)
             return TextContext(before, selected, after, caret_known=include_text,
                                selection_known=include_selection, source=self.source)
+
+    def _focused_element(self, identity):
+        """The focused element, unless it belongs to this app or to another than ``identity``."""
+        hi = self._hi
+        focused = self._attribute(self._system, hi.kAXFocusedUIElementAttribute)
+        if focused is None:
+            return None
+        error, pid = hi.AXUIElementGetPid(focused, None)
+        if error != 0 or pid == os.getpid() or (identity.pid and pid != identity.pid):
+            return None
+        return focused
+
+    def _selection_range(self, focused) -> Optional[tuple[int, int]]:
+        """The selection's (start, length), or None when the element reports none."""
+        hi = self._hi
+        span = self._attribute(focused, hi.kAXSelectedTextRangeAttribute)
+        if span is None:
+            return None
+        ok, selection = hi.AXValueGetValue(span, hi.kAXValueCFRangeType, None)
+        if not ok:
+            return None
+        return int(selection.location), int(selection.length)
+
+    def _text_around(self, focused, start: int, length: int) -> tuple[str, str]:
+        """The text before ``start`` and after the selection, within the context limits."""
+        first = max(0, start - config.CONTEXT_BEFORE_CHARS)
+        before = self._string_for(focused, first, start - first)
+        total = self._attribute(focused, self._hi.kAXNumberOfCharactersAttribute)
+        end = start + length
+        after = ""
+        if total is not None:
+            after = self._string_for(
+                focused, end, min(config.CONTEXT_AFTER_CHARS, int(total) - end))
+        return before, after
 
 
 
