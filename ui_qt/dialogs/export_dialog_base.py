@@ -110,6 +110,15 @@ def _export_relay() -> _ExportRelay:
     return _relay
 
 
+def _write_document(output: str, document: str) -> None:
+    """Write ``document`` to ``output``, creating its folder if needed."""
+    parent = os.path.dirname(output)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(output, "w", encoding="utf-8") as handle:
+        handle.write(document)
+
+
 class ExportDialogBase(QDialog):
     """Pick items, criteria, and a format, then export them to disk.
 
@@ -795,12 +804,7 @@ class ExportDialogBase(QDialog):
                 if per_item:
                     write_files(entries, fmt, output, **options)
                 else:
-                    document = render(entries, fmt, **options)
-                    parent = os.path.dirname(output)
-                    if parent:
-                        os.makedirs(parent, exist_ok=True)
-                    with open(output, "w", encoding="utf-8") as handle:
-                        handle.write(document)
+                    _write_document(output, render(entries, fmt, **options))
                 relay.finished.emit(token, len(entries), output)
             except Exception as exc:
                 logger.exception(failed_log)
