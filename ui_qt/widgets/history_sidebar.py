@@ -192,6 +192,52 @@ def _remote_relay() -> _RemoteRelay:
     return _relay
 
 
+def _read_local_history(query: str, limit: int):
+    """This computer's entries, newest first; returns ``(entries, error)``."""
+    entries = []
+    error = ""
+    try:
+        if query:
+            entries = history_manager.search_history(query, limit=limit)
+        else:
+            entries = history_manager.get_history(limit=limit)
+    except Exception as exc:
+        logger.error("Failed to load transcription history: %s", exc)
+        error = str(exc)
+    return entries, error
+
+
+def _unpack_history(entries) -> tuple[list, str]:
+    """The entries as a list, and the host's note when merged with its own."""
+    notice = ""
+    if isinstance(entries, dict):
+        # Merged with the host's: see HistorySidebar._start_remote_listing.
+        notice = str(entries.get("notice") or "")
+        entries = entries.get("entries")
+    return list(entries or []), notice
+
+
+def _unique_entries(entries) -> list:
+    """``entries`` without repeated ids, keeping the first of each."""
+    # One card per entry: a repeated id would get two cards but one slot
+    # in _history_cards, and the extra card would outlive the next refresh.
+    shown, seen = [], set()
+    for entry in entries:
+        if entry.id not in seen:
+            seen.add(entry.id)
+            shown.append(entry)
+    return shown
+
+
+def _card_fingerprint(entry, settings) -> dict:
+    """What a card shows, so an unchanged entry keeps its card."""
+    value = {name: value for name, value in vars(entry).items() if not name.startswith("_")}
+    value["cleanup_display"] = _format_cleanup_info(entry, settings)
+    if entry.audio_file and not getattr(entry, "stored_on", None):
+        value["audio_available"] = bool(history_manager.get_recording_path(entry.audio_file))
+    return value
+
+
 def _location_chip(entry) -> tuple[str, str]:
     """``(text, tooltip)`` for where an entry is kept, or empty."""
     stored_on = getattr(entry, "stored_on", None)
@@ -389,29 +435,8 @@ class HistoryItemWidget(QFrame):
         # What kind of entry, how AI cleanup changed it, the app it went into
         # and where it is kept share their own row (the top row is already
         # full), wrapping to another when they don't fit.
-        chips = []
         kind_text = _kind_label(self.entry)
-        if kind_text:
-            self.kind_chip = self._chip("historyKindChip", kind_text)
-            chips.append(self.kind_chip)
-        if _entry_was_cleaned(self.entry):
-            self.cleanup_chip = self._chip("historyCleanupChip", f"✦ {self._cleanup_info}")
-            self.cleanup_chip.setToolTip(_cleanup_tooltip(self.entry, settings=self._settings))
-            chips.append(self.cleanup_chip)
-        elif entry_version(self.entry) == ORIGINAL_VERSION:
-            self.cleanup_chip = self._chip("historyOriginalChip", "Original")
-            self.cleanup_chip.setToolTip("AI edit undone: this is what you said")
-            chips.append(self.cleanup_chip)
-        app_name = (getattr(self.entry, "app_name", None) or "").strip()
-        if app_name:
-            self.app_chip = self._chip("historyAppChip", app_name)
-            self.app_chip.setToolTip(f"Dictated into {app_name}")
-            chips.append(self.app_chip)
-        location_text, location_tip = _location_chip(self.entry)
-        if location_text:
-            self.location_chip = self._chip("historyLocationChip", location_text)
-            self.location_chip.setToolTip(location_tip)
-            chips.append(self.location_chip)
+        chips = self._make_chips(kind_text)
         if chips:
             self.chips = _ChipFlow(chips)
             layout.addWidget(self.chips)
@@ -446,31 +471,60 @@ class HistoryItemWidget(QFrame):
         layout.addWidget(self.preview_label)
 
         if self._has_audio:
-            footer = QHBoxLayout()
-            footer.setContentsMargins(0, 2, 0, 0)
-            footer.setSpacing(8)
+            self._add_audio_footer(layout)
 
-            play_button = QPushButton("Play")
-            play_button.setObjectName("historyPlayBtn")
-            play_button.setCursor(Qt.CursorShape.PointingHandCursor)
-            play_button.setFixedHeight(28)
-            self.playback = PlaybackControl(self.entry, play_button, self)
-            footer.addWidget(play_button)
-            footer.addWidget(self.playback.time_label)
-            footer.addStretch()
+    def _make_chips(self, kind_text: str) -> list:
+        chips = []
+        if kind_text:
+            self.kind_chip = self._chip("historyKindChip", kind_text)
+            chips.append(self.kind_chip)
+        if _entry_was_cleaned(self.entry):
+            self.cleanup_chip = self._chip("historyCleanupChip", f"✦ {self._cleanup_info}")
+            self.cleanup_chip.setToolTip(_cleanup_tooltip(self.entry, settings=self._settings))
+            chips.append(self.cleanup_chip)
+        elif entry_version(self.entry) == ORIGINAL_VERSION:
+            self.cleanup_chip = self._chip("historyOriginalChip", "Original")
+            self.cleanup_chip.setToolTip("AI edit undone: this is what you said")
+            chips.append(self.cleanup_chip)
+        app_name = (getattr(self.entry, "app_name", None) or "").strip()
+        if app_name:
+            self.app_chip = self._chip("historyAppChip", app_name)
+            self.app_chip.setToolTip(f"Dictated into {app_name}")
+            chips.append(self.app_chip)
+        location_text, location_tip = _location_chip(self.entry)
+        if location_text:
+            self.location_chip = self._chip("historyLocationChip", location_text)
+            self.location_chip.setToolTip(location_tip)
+            chips.append(self.location_chip)
+        return chips
 
-            self.retranscribe_btn = QPushButton("Transcribe again")
-            self.retranscribe_btn.setObjectName("retranscribeBtn")
-            self.retranscribe_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.retranscribe_btn.setFixedHeight(28)
-            self.retranscribe_btn.setToolTip(
-                "Run this recording through the current model "
-                "using the current AI cleanup setting"
-            )
-            self.retranscribe_btn.clicked.connect(self._request_retranscribe)
-            footer.addWidget(self.retranscribe_btn)
-            layout.addLayout(footer)
-            layout.addWidget(self.playback.progress)
+    def _add_audio_footer(self, layout: QVBoxLayout) -> None:
+        """Play, the time, and Transcribe again, with the playback bar below."""
+        footer = QHBoxLayout()
+        footer.setContentsMargins(0, 2, 0, 0)
+        footer.setSpacing(8)
+
+        play_button = QPushButton("Play")
+        play_button.setObjectName("historyPlayBtn")
+        play_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        play_button.setFixedHeight(28)
+        self.playback = PlaybackControl(self.entry, play_button, self)
+        footer.addWidget(play_button)
+        footer.addWidget(self.playback.time_label)
+        footer.addStretch()
+
+        self.retranscribe_btn = QPushButton("Transcribe again")
+        self.retranscribe_btn.setObjectName("retranscribeBtn")
+        self.retranscribe_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.retranscribe_btn.setFixedHeight(28)
+        self.retranscribe_btn.setToolTip(
+            "Run this recording through the current model "
+            "using the current AI cleanup setting"
+        )
+        self.retranscribe_btn.clicked.connect(self._request_retranscribe)
+        footer.addWidget(self.retranscribe_btn)
+        layout.addLayout(footer)
+        layout.addWidget(self.playback.progress)
 
     def _chip(self, name: str, text: str) -> ElidingLabel:
         chip = ElidingLabel(text)
@@ -1084,16 +1138,7 @@ class HistorySidebar(QWidget):
         merge_wait_s = self.REMOTE_MERGE_WAIT_S
 
         def load() -> None:
-            entries = []
-            error = ""
-            try:
-                if query:
-                    entries = history_manager.search_history(query, limit=limit)
-                else:
-                    entries = history_manager.get_history(limit=limit)
-            except Exception as exc:
-                logger.error("Failed to load transcription history: %s", exc)
-                error = str(exc)
+            entries, error = _read_local_history(query, limit)
             if canceled.is_set():
                 return
             if error:
@@ -1177,20 +1222,10 @@ class HistorySidebar(QWidget):
         if generation != self._history_load_generation:
             return
         if error:
-            self._clear_layout(self.history_list_layout)
-            self._history_cards = {}
-            self.history_header.setText("HISTORY")
-            self.history_list_layout.addWidget(
-                self._make_empty_label("History could not be loaded")
-            )
+            self._show_history_message("History could not be loaded")
             return
 
-        notice = ""
-        if isinstance(entries, dict):
-            # Merged with the host's: see _start_remote_listing.
-            notice = str(entries.get("notice") or "")
-            entries = entries.get("entries")
-        entries = list(entries or [])
+        entries, notice = _unpack_history(entries)
         self._remote_entries = {
             entry.id: entry for entry in entries if getattr(entry, "stored_on", None)
         }
@@ -1198,46 +1233,19 @@ class HistorySidebar(QWidget):
             entry.id: entry.also_on for entry in entries if getattr(entry, "also_on", None)
         }
         has_more = len(entries) > self.MAX_HISTORY_ITEMS
-        # One card per entry: a repeated id would get two cards but one slot
-        # in _history_cards, and the extra card would outlive the next refresh.
-        shown, seen = [], set()
-        for entry in entries[:self.MAX_HISTORY_ITEMS]:
-            if entry.id not in seen:
-                seen.add(entry.id)
-                shown.append(entry)
+        shown = _unique_entries(entries[:self.MAX_HISTORY_ITEMS])
 
         if not shown:
-            self.history_header.setText("HISTORY")
-            self._clear_layout(self.history_list_layout)
-            self._history_cards = {}
-            message = "No matching entries" if query else "No history yet"
-            self.history_list_layout.addWidget(self._make_empty_label(message))
+            self._show_history_message("No matching entries" if query else "No history yet")
             return
 
         settings = settings_manager.load_all_settings()
-        def create(entry):
-            item = HistoryItemWidget(entry, settings=settings)
-            replaced = self._history_cards.get(entry.id)
-            old_playback = replaced[1].playback if replaced is not None else None
-            if item.playback is not None and old_playback is not None:
-                item.playback.take_over(old_playback)
-            item.clicked.connect(self._on_entry_clicked)
-            item.copy_requested.connect(self._on_copy_requested)
-            item.copy_raw_requested.connect(self._on_copy_raw_requested)
-            item.delete_requested.connect(self._on_delete_requested)
-            item.retranscribe_requested.connect(self.retranscribe_requested.emit)
-            item.version_requested.connect(self._on_version_requested)
-            return item
-
-        def fingerprint(entry):
-            value = {name: value for name, value in vars(entry).items() if not name.startswith("_")}
-            value["cleanup_display"] = _format_cleanup_info(entry, settings)
-            if entry.audio_file and not getattr(entry, "stored_on", None):
-                value["audio_available"] = bool(history_manager.get_recording_path(entry.audio_file))
-            return value
-
         self._history_cards = reconcile_cards(
-            self.history_list_layout, shown, self._history_cards, create, fingerprint
+            self.history_list_layout,
+            shown,
+            self._history_cards,
+            lambda entry: self._create_card(entry, settings),
+            lambda entry: _card_fingerprint(entry, settings),
         )
         # Counted from the cards on screen, after they are built: set first,
         # a card that failed to build left the new count over the old list.
@@ -1246,13 +1254,7 @@ class HistorySidebar(QWidget):
             f"HISTORY ({rendered}{'+' if has_more else ''})" if rendered else "HISTORY"
         )
         if notice:
-            note = self._make_empty_label(
-                f"{notice} Entries kept there show when it is."
-                if "reachable" in notice else notice
-            )
-            note.setObjectName("historyRemoteNotice")
-            note.setWordWrap(True)
-            self.history_list_layout.insertWidget(0, note)
+            self._add_remote_notice(notice)
         if has_more:
             self.history_list_layout.addWidget(
                 self._make_empty_label(
@@ -1260,6 +1262,37 @@ class HistorySidebar(QWidget):
                     "to find older entries"
                 )
             )
+
+    def _show_history_message(self, message: str) -> None:
+        """Replace the list with one line, such as why it is empty."""
+        self._clear_layout(self.history_list_layout)
+        self._history_cards = {}
+        self.history_header.setText("HISTORY")
+        self.history_list_layout.addWidget(self._make_empty_label(message))
+
+    def _create_card(self, entry, settings) -> HistoryItemWidget:
+        item = HistoryItemWidget(entry, settings=settings)
+        replaced = self._history_cards.get(entry.id)
+        old_playback = replaced[1].playback if replaced is not None else None
+        if item.playback is not None and old_playback is not None:
+            item.playback.take_over(old_playback)
+        item.clicked.connect(self._on_entry_clicked)
+        item.copy_requested.connect(self._on_copy_requested)
+        item.copy_raw_requested.connect(self._on_copy_raw_requested)
+        item.delete_requested.connect(self._on_delete_requested)
+        item.retranscribe_requested.connect(self.retranscribe_requested.emit)
+        item.version_requested.connect(self._on_version_requested)
+        return item
+
+    def _add_remote_notice(self, notice: str) -> None:
+        """Say above the list why the host's entries are missing."""
+        note = self._make_empty_label(
+            f"{notice} Entries kept there show when it is."
+            if "reachable" in notice else notice
+        )
+        note.setObjectName("historyRemoteNotice")
+        note.setWordWrap(True)
+        self.history_list_layout.insertWidget(0, note)
 
     def rendered_card_count(self) -> int:
         """How many entry cards the list holds, each counted once."""
@@ -1307,87 +1340,14 @@ class HistorySidebar(QWidget):
 
     def _on_delete_requested(self, entry_id: str):
         delete_audio_file = False
-        try:
-            should_confirm = settings_manager.get(
-                SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE,
-                SETTING_DEFAULTS[SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE],
-            )
-        except Exception as exc:
-            logger.warning("Failed to load history deletion preference: %s", exc)
-            should_confirm = True
+        should_confirm = self._delete_confirmation_wanted()
 
         remote = self._remote_entries.get(entry_id)
         also_on = self._also_on.get(entry_id)
         if should_confirm is not False:
-            confirmation = QMessageBox(self)
-            confirmation.setIcon(QMessageBox.Icon.Warning)
-            confirmation.setWindowTitle("Delete History Entry")
-            if remote is not None:
-                confirmation.setText(f"Delete this transcription from {remote.stored_on}?")
-                confirmation.setInformativeText(
-                    "Its recording there is deleted too. This cannot be undone."
-                )
-            else:
-                confirmation.setText("Delete this transcription from history?")
-                confirmation.setInformativeText(
-                    f"This cannot be undone. Its copy on {also_on} is deleted too."
-                    if also_on else "This cannot be undone."
-                )
-            confirmation.setStandardButtons(
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            confirmation.setDefaultButton(QMessageBox.StandardButton.No)
-
-            audio_choice = None
-            entry = None if remote is not None else history_manager.get_entry_by_id(entry_id)
-            audio_path = (
-                history_manager.get_recording_path(entry.audio_file)
-                if entry and entry.audio_file
-                else None
-            )
-            if audio_path:
-                audio_label = QLabel("Delete saved audio file too?", confirmation)
-                audio_choice = QComboBox(confirmation)
-                audio_choice.addItem("No — keep the audio file", False)
-                audio_choice.addItem("Yes — permanently delete it", True)
-                audio_choice.setToolTip(
-                    "Choose whether the recording attached to this transcript "
-                    "should also be deleted"
-                )
-
-                message_layout = confirmation.layout()
-                if isinstance(message_layout, QGridLayout):
-                    row = message_layout.rowCount()
-                    columns = max(1, message_layout.columnCount())
-                    message_layout.addWidget(audio_label, row, 0, 1, columns)
-                    message_layout.addWidget(
-                        audio_choice,
-                        row + 1,
-                        0,
-                        1,
-                        columns,
-                    )
-
-            dont_ask_again = QCheckBox("Don't ask me again", confirmation)
-            confirmation.setCheckBox(dont_ask_again)
-
-            if confirmation.exec() != QMessageBox.StandardButton.Yes:
+            delete_audio_file = self._confirm_delete(entry_id, remote, also_on)
+            if delete_audio_file is None:
                 return
-
-            delete_audio_file = bool(
-                audio_choice is not None and audio_choice.currentData()
-            )
-            if dont_ask_again.isChecked():
-                try:
-                    settings_manager.save_setting(
-                        SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE,
-                        False,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to save history deletion preference: %s",
-                        exc,
-                    )
 
         if remote is not None:
             self.delete_remote_entry(entry_id)
@@ -1399,6 +1359,96 @@ class HistorySidebar(QWidget):
             self.entry_deleted.emit(entry_id)
             self.refresh()  # Refresh the list
             logger.info(f"Deleted entry: {entry_id[:8]}...")
+
+    @staticmethod
+    def _delete_confirmation_wanted():
+        try:
+            return settings_manager.get(
+                SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE,
+                SETTING_DEFAULTS[SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE],
+            )
+        except Exception as exc:
+            logger.warning("Failed to load history deletion preference: %s", exc)
+            return True
+
+    def _confirm_delete(self, entry_id: str, remote, also_on) -> bool | None:
+        """Ask before deleting; returns whether to delete the audio too, or None to keep the entry."""
+        confirmation = QMessageBox(self)
+        confirmation.setIcon(QMessageBox.Icon.Warning)
+        confirmation.setWindowTitle("Delete History Entry")
+        if remote is not None:
+            confirmation.setText(f"Delete this transcription from {remote.stored_on}?")
+            confirmation.setInformativeText(
+                "Its recording there is deleted too. This cannot be undone."
+            )
+        else:
+            confirmation.setText("Delete this transcription from history?")
+            confirmation.setInformativeText(
+                f"This cannot be undone. Its copy on {also_on} is deleted too."
+                if also_on else "This cannot be undone."
+            )
+        confirmation.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        confirmation.setDefaultButton(QMessageBox.StandardButton.No)
+
+        audio_choice = self._add_audio_choice(confirmation, entry_id, remote)
+
+        dont_ask_again = QCheckBox("Don't ask me again", confirmation)
+        confirmation.setCheckBox(dont_ask_again)
+
+        if confirmation.exec() != QMessageBox.StandardButton.Yes:
+            return None
+
+        delete_audio_file = bool(
+            audio_choice is not None and audio_choice.currentData()
+        )
+        if dont_ask_again.isChecked():
+            try:
+                settings_manager.save_setting(
+                    SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE,
+                    False,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to save history deletion preference: %s",
+                    exc,
+                )
+        return delete_audio_file
+
+    @staticmethod
+    def _add_audio_choice(confirmation: QMessageBox, entry_id: str, remote):
+        """Offer to delete a local entry's saved recording; None when it has none."""
+        audio_choice = None
+        entry = None if remote is not None else history_manager.get_entry_by_id(entry_id)
+        audio_path = (
+            history_manager.get_recording_path(entry.audio_file)
+            if entry and entry.audio_file
+            else None
+        )
+        if audio_path:
+            audio_label = QLabel("Delete saved audio file too?", confirmation)
+            audio_choice = QComboBox(confirmation)
+            audio_choice.addItem("No — keep the audio file", False)
+            audio_choice.addItem("Yes — permanently delete it", True)
+            audio_choice.setToolTip(
+                "Choose whether the recording attached to this transcript "
+                "should also be deleted"
+            )
+
+            message_layout = confirmation.layout()
+            if isinstance(message_layout, QGridLayout):
+                row = message_layout.rowCount()
+                columns = max(1, message_layout.columnCount())
+                message_layout.addWidget(audio_label, row, 0, 1, columns)
+                message_layout.addWidget(
+                    audio_choice,
+                    row + 1,
+                    0,
+                    1,
+                    columns,
+                )
+        return audio_choice
 
     def delete_remote_entry(self, entry_id: str) -> None:
         """Delete a host-kept entry there, off the UI thread."""
