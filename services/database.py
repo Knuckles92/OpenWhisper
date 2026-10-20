@@ -20,6 +20,160 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 17
 
 
+def _table_exists(conn, table: str) -> bool:
+    row = conn.execute(
+        text(
+            "SELECT 1 FROM sqlite_master "
+            f"WHERE type='table' AND name='{table}'"
+        )
+    ).fetchone()
+    return bool(row)
+
+
+def _table_columns(conn, table: str) -> set:
+    """Column names of ``table``; empty when the table does not exist."""
+    return {row[1] for row in conn.execute(
+        text(f"PRAGMA table_info({table})")
+    ).fetchall()}
+
+
+def _add_text_columns(conn, table: str, columns, existing: set) -> None:
+    for column in columns:
+        if column not in existing:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} TEXT"))
+
+
+def _add_text_columns_if_table_exists(conn, table: str, columns) -> None:
+    if _table_exists(conn, table):
+        _add_text_columns(conn, table, columns, _table_columns(conn, table))
+
+
+def _add_text_columns_if_columns_found(conn, table: str, columns) -> None:
+    existing = _table_columns(conn, table)
+    if existing:
+        _add_text_columns(conn, table, columns, existing)
+
+
+def _migrate_to_v6(conn) -> None:
+    try:
+        conn.execute(text("DROP INDEX IF EXISTS idx_insights_unique"))
+        conn.execute(text("DROP INDEX IF EXISTS idx_insights_meeting_id"))
+        conn.execute(text("DROP TABLE IF EXISTS meeting_insights"))
+        logger.info("Migration v5->v6: Removed meeting_insights table")
+    except Exception as e:
+        logger.error(f"Migration v5->v6 failed: {e}")
+        raise
+
+
+def _migrate_to_v7(conn) -> None:
+    try:
+        conn.execute(text("DROP INDEX IF EXISTS idx_chunks_meeting_id"))
+        conn.execute(text("DROP INDEX IF EXISTS idx_meetings_start_time"))
+        conn.execute(text("DROP INDEX IF EXISTS idx_insights_unique"))
+        conn.execute(text("DROP INDEX IF EXISTS idx_insights_meeting_id"))
+        conn.execute(text("DROP TABLE IF EXISTS meeting_insights"))
+        conn.execute(text("DROP TABLE IF EXISTS meeting_chunks"))
+        conn.execute(text("DROP TABLE IF EXISTS meetings"))
+        logger.info("Migration v6->v7: Removed meeting mode tables")
+    except Exception as e:
+        logger.error(f"Migration v6->v7 failed: {e}")
+        raise
+
+
+def _migrate_to_v8(conn) -> None:
+    try:
+        _add_text_columns_if_table_exists(conn, "transcription_history", ("raw_text",))
+        logger.info("Migration v7->v8: Added raw_text to transcription_history")
+    except Exception as e:
+        logger.error(f"Migration v7->v8 failed: {e}")
+        raise
+
+
+def _migrate_to_v9(conn) -> None:
+    try:
+        _add_text_columns_if_table_exists(
+            conn, "transcription_history", ("cleanup_provider", "cleanup_model"),
+        )
+        logger.info(
+            "Migration v8->v9: Added cleanup_provider/cleanup_model "
+            "to transcription_history"
+        )
+    except Exception as e:
+        logger.error(f"Migration v8->v9 failed: {e}")
+        raise
+
+
+def _migrate_to_v10(conn) -> None:
+    # Meeting Mode tables (meeting_sessions, meeting_audio_chunks,
+    # meeting_segments, meeting_participants, meeting_state_items,
+    # meeting_questions, meeting_events) are new in v10 and created by
+    # Base.metadata.create_all after migrations run; the FTS index is
+    # created by _ensure_meeting_fts. Nothing to transform here.
+    logger.info("Migration v9->v10: Meeting Mode tables added via create_all")
+
+
+def _migrate_to_v11(conn) -> None:
+    try:
+        _add_text_columns_if_table_exists(conn, "meeting_sessions", ("agent_endpoint_json",))
+        logger.info(
+            "Migration v10->v11: Added agent_endpoint_json "
+            "to meeting_sessions"
+        )
+    except Exception as e:
+        logger.error("Migration v10->v11 failed: %s", e)
+        raise
+
+
+def _migrate_to_v12(conn) -> None:
+    try:
+        _add_text_columns_if_table_exists(conn, "transcription_history", ("source_name",))
+        logger.info(
+            "Migration v11->v12: Added source_name to transcription_history"
+        )
+    except Exception as e:
+        logger.error("Migration v11->v12 failed: %s", e)
+        raise
+
+
+def _migrate_to_v13(conn) -> None:
+    _add_text_columns_if_columns_found(conn, "meeting_sessions", ("asr_remote_json",))
+
+
+def _migrate_to_v14(conn) -> None:
+    # Records a paired computer stored here (services/remote_records);
+    # record_sync itself is new and made by create_all.
+    for table in ("transcription_history", "meeting_sessions"):
+        _add_text_columns_if_columns_found(
+            conn, table, ("origin_device_id", "origin_device_name"),
+        )
+
+
+def _migrate_to_v15(conn) -> None:
+    _add_text_columns_if_columns_found(conn, "transcription_history", ("title",))
+
+
+def _migrate_to_v17(conn) -> None:
+    # Per-entry context; dictation_stats is new and made by create_all.
+    _add_text_columns_if_columns_found(conn, "transcription_history", HISTORY_CONTEXT_COLUMNS)
+
+
+# (schema version a step brings the database to, step). A step runs when the
+# database is older than its version; steps run in this order. v16 needed none.
+_MIGRATIONS = (
+    (6, _migrate_to_v6),
+    (7, _migrate_to_v7),
+    (8, _migrate_to_v8),
+    (9, _migrate_to_v9),
+    (10, _migrate_to_v10),
+    (11, _migrate_to_v11),
+    (12, _migrate_to_v12),
+    (13, _migrate_to_v13),
+    (14, _migrate_to_v14),
+    (15, _migrate_to_v15),
+    (17, _migrate_to_v17),
+)
+
+
 class DatabaseManager:
     """Manages SQLite database for transcription history storage."""
 
@@ -197,190 +351,9 @@ class DatabaseManager:
     def _run_migrations(self, conn, from_version: int) -> None:
         logger.info(f"Running database migrations from v{from_version} to v{SCHEMA_VERSION}")
 
-        if from_version < 6:
-            try:
-                conn.execute(text("DROP INDEX IF EXISTS idx_insights_unique"))
-                conn.execute(text("DROP INDEX IF EXISTS idx_insights_meeting_id"))
-                conn.execute(text("DROP TABLE IF EXISTS meeting_insights"))
-                logger.info("Migration v5->v6: Removed meeting_insights table")
-            except Exception as e:
-                logger.error(f"Migration v5->v6 failed: {e}")
-                raise
-
-        if from_version < 7:
-            try:
-                conn.execute(text("DROP INDEX IF EXISTS idx_chunks_meeting_id"))
-                conn.execute(text("DROP INDEX IF EXISTS idx_meetings_start_time"))
-                conn.execute(text("DROP INDEX IF EXISTS idx_insights_unique"))
-                conn.execute(text("DROP INDEX IF EXISTS idx_insights_meeting_id"))
-                conn.execute(text("DROP TABLE IF EXISTS meeting_insights"))
-                conn.execute(text("DROP TABLE IF EXISTS meeting_chunks"))
-                conn.execute(text("DROP TABLE IF EXISTS meetings"))
-                logger.info("Migration v6->v7: Removed meeting mode tables")
-            except Exception as e:
-                logger.error(f"Migration v6->v7 failed: {e}")
-                raise
-
-        if from_version < 8:
-            try:
-                table_exists = conn.execute(
-                    text(
-                        "SELECT 1 FROM sqlite_master "
-                        "WHERE type='table' AND name='transcription_history'"
-                    )
-                ).fetchone()
-                if table_exists:
-                    columns = {
-                        row[1]
-                        for row in conn.execute(
-                            text("PRAGMA table_info(transcription_history)")
-                        ).fetchall()
-                    }
-                    if "raw_text" not in columns:
-                        conn.execute(
-                            text(
-                                "ALTER TABLE transcription_history "
-                                "ADD COLUMN raw_text TEXT"
-                            )
-                        )
-                logger.info("Migration v7->v8: Added raw_text to transcription_history")
-            except Exception as e:
-                logger.error(f"Migration v7->v8 failed: {e}")
-                raise
-
-        if from_version < 9:
-            try:
-                table_exists = conn.execute(
-                    text(
-                        "SELECT 1 FROM sqlite_master "
-                        "WHERE type='table' AND name='transcription_history'"
-                    )
-                ).fetchone()
-                if table_exists:
-                    columns = {
-                        row[1]
-                        for row in conn.execute(
-                            text("PRAGMA table_info(transcription_history)")
-                        ).fetchall()
-                    }
-                    for column in ("cleanup_provider", "cleanup_model"):
-                        if column not in columns:
-                            conn.execute(
-                                text(
-                                    "ALTER TABLE transcription_history "
-                                    f"ADD COLUMN {column} TEXT"
-                                )
-                            )
-                logger.info(
-                    "Migration v8->v9: Added cleanup_provider/cleanup_model "
-                    "to transcription_history"
-                )
-            except Exception as e:
-                logger.error(f"Migration v8->v9 failed: {e}")
-                raise
-
-        if from_version < 10:
-            # Meeting Mode tables (meeting_sessions, meeting_audio_chunks,
-            # meeting_segments, meeting_participants, meeting_state_items,
-            # meeting_questions, meeting_events) are new in v10 and created by
-            # Base.metadata.create_all after migrations run; the FTS index is
-            # created by _ensure_meeting_fts. Nothing to transform here.
-            logger.info("Migration v9->v10: Meeting Mode tables added via create_all")
-
-        if from_version < 11:
-            try:
-                table_exists = conn.execute(
-                    text(
-                        "SELECT 1 FROM sqlite_master "
-                        "WHERE type='table' AND name='meeting_sessions'"
-                    )
-                ).fetchone()
-                if table_exists:
-                    columns = {
-                        row[1]
-                        for row in conn.execute(
-                            text("PRAGMA table_info(meeting_sessions)")
-                        ).fetchall()
-                    }
-                    if "agent_endpoint_json" not in columns:
-                        conn.execute(
-                            text(
-                                "ALTER TABLE meeting_sessions "
-                                "ADD COLUMN agent_endpoint_json TEXT"
-                            )
-                        )
-                logger.info(
-                    "Migration v10->v11: Added agent_endpoint_json "
-                    "to meeting_sessions"
-                )
-            except Exception as e:
-                logger.error("Migration v10->v11 failed: %s", e)
-                raise
-
-        if from_version < 12:
-            try:
-                table_exists = conn.execute(
-                    text(
-                        "SELECT 1 FROM sqlite_master "
-                        "WHERE type='table' AND name='transcription_history'"
-                    )
-                ).fetchone()
-                if table_exists:
-                    columns = {
-                        row[1]
-                        for row in conn.execute(
-                            text("PRAGMA table_info(transcription_history)")
-                        ).fetchall()
-                    }
-                    if "source_name" not in columns:
-                        conn.execute(
-                            text(
-                                "ALTER TABLE transcription_history "
-                                "ADD COLUMN source_name TEXT"
-                            )
-                        )
-                logger.info(
-                    "Migration v11->v12: Added source_name to transcription_history"
-                )
-            except Exception as e:
-                logger.error("Migration v11->v12 failed: %s", e)
-                raise
-
-        if from_version < 13:
-            columns = {row[1] for row in conn.execute(
-                text("PRAGMA table_info(meeting_sessions)")
-            ).fetchall()}
-            if columns and "asr_remote_json" not in columns:
-                conn.execute(text("ALTER TABLE meeting_sessions ADD COLUMN asr_remote_json TEXT"))
-
-        if from_version < 14:
-            # Records a paired computer stored here (services/remote_records);
-            # record_sync itself is new and made by create_all.
-            for table in ("transcription_history", "meeting_sessions"):
-                columns = {row[1] for row in conn.execute(
-                    text(f"PRAGMA table_info({table})")
-                ).fetchall()}
-                for column in ("origin_device_id", "origin_device_name"):
-                    if columns and column not in columns:
-                        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} TEXT"))
-
-        if from_version < 15:
-            columns = {row[1] for row in conn.execute(
-                text("PRAGMA table_info(transcription_history)")
-            ).fetchall()}
-            if columns and "title" not in columns:
-                conn.execute(text("ALTER TABLE transcription_history ADD COLUMN title TEXT"))
-
-        if from_version < 17:
-            # Per-entry context; dictation_stats is new and made by create_all.
-            columns = {row[1] for row in conn.execute(
-                text("PRAGMA table_info(transcription_history)")
-            ).fetchall()}
-            for column in HISTORY_CONTEXT_COLUMNS:
-                if columns and column not in columns:
-                    conn.execute(text(
-                        f"ALTER TABLE transcription_history ADD COLUMN {column} TEXT"
-                    ))
+        for version, migrate in _MIGRATIONS:
+            if from_version < version:
+                migrate(conn)
 
         conn.execute(text("UPDATE schema_version SET version = :v"), {"v": SCHEMA_VERSION})
         logger.info(f"Database migrated to schema version {SCHEMA_VERSION}")
