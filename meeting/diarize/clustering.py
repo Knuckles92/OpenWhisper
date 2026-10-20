@@ -218,6 +218,33 @@ def _average_linkage(dist: np.ndarray, threshold: float) -> List[List[int]]:
     return [members[i] for i in np.where(alive)[0]]
 
 
+def _group_votes(
+    group: List[int], records: List[_SegRecord], anchors: List[_Anchor]
+) -> Tuple[Dict[str, float], List[_SegRecord]]:
+    """Weighted participant votes of one AHC group, and its relabelable members.
+
+    Indices below ``len(records)`` are working-set records (pins weigh
+    ``PIN_WEIGHT``); the rest are anchors weighted by their history size.
+    """
+    n_records = len(records)
+    weights: Dict[str, float] = {}
+    members: List[_SegRecord] = []
+    for i in group:
+        if i < n_records:
+            record = records[i]
+            if not record.pinned:
+                members.append(record)
+            pid = record.participant_id
+            weight = PIN_WEIGHT if record.pinned else 1.0
+        else:
+            anchor = anchors[i - n_records]
+            pid, weight = anchor.participant_id, anchor.weight
+        if pid is None:
+            continue
+        weights[pid] = weights.get(pid, 0.0) + weight
+    return weights, members
+
+
 def create_diarizer(model_path: Optional[str], store, repository,
                     meeting_id: str) -> Optional["OnlineDiarizer"]:
     """Build an ``OnlineDiarizer``, or None when diarization is unavailable.
@@ -743,26 +770,11 @@ class OnlineDiarizer:
         Returns:
             Planned groups with relabelable member ids.
         """
-        n_records = len(records)
         planned: List[_PlannedGroup] = []
         claims: Dict[str, List[Tuple[float, _PlannedGroup]]] = {}
 
         for group in groups:
-            weights: Dict[str, float] = {}
-            members: List[_SegRecord] = []
-            for i in group:
-                if i < n_records:
-                    record = records[i]
-                    if not record.pinned:
-                        members.append(record)
-                    pid, weight = record.participant_id, (
-                        PIN_WEIGHT if record.pinned else 1.0)
-                else:
-                    anchor = anchors[i - n_records]
-                    pid, weight = anchor.participant_id, anchor.weight
-                if pid is None:
-                    continue
-                weights[pid] = weights.get(pid, 0.0) + weight
+            weights, members = _group_votes(group, records, anchors)
             if not weights:
                 continue
             dominant = max(weights.items(), key=lambda kv: (kv[1], kv[0]))[0]
@@ -774,22 +786,26 @@ class OnlineDiarizer:
             claims.setdefault(dominant, []).append((weights[dominant], entry))
 
         for pid, contenders in claims.items():
-            if len(contenders) < 2:
-                continue
-            # Strongest claim keeps the participant; the rest are separate
-            # speakers the online pass merged into it.
-            contenders.sort(key=lambda c: (
-                -c[0], -len(c[1].segment_ids),
-                c[1].segment_ids[0] if c[1].segment_ids else ""))
-            for _, entry in contenders[1:]:
-                if len(entry.segment_ids) >= MIN_SPLIT_SEGMENTS:
-                    entry.needs_new_participant = True
-                    entry.participant_id = None
-                    logger.info(
-                        "Re-cluster splitting %d segments off participant %s"
-                        " (meeting %s)", len(entry.segment_ids), pid,
-                        self._meeting_id)
+            if len(contenders) >= 2:
+                self._split_weaker_claims(pid, contenders)
         return planned
+
+    def _split_weaker_claims(
+        self, pid: str, contenders: List[Tuple[float, _PlannedGroup]]
+    ) -> None:
+        """Strongest claim keeps the participant; the rest are separate
+        speakers the online pass merged into it."""
+        contenders.sort(key=lambda c: (
+            -c[0], -len(c[1].segment_ids),
+            c[1].segment_ids[0] if c[1].segment_ids else ""))
+        for _, entry in contenders[1:]:
+            if len(entry.segment_ids) >= MIN_SPLIT_SEGMENTS:
+                entry.needs_new_participant = True
+                entry.participant_id = None
+                logger.info(
+                    "Re-cluster splitting %d segments off participant %s"
+                    " (meeting %s)", len(entry.segment_ids), pid,
+                    self._meeting_id)
 
     def _create_split_participants(
         self, planned: List[_PlannedGroup]
