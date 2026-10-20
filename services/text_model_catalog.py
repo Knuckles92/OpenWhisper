@@ -97,6 +97,43 @@ _ROUTES = {
 
 _OPENAI_REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-6")
 _OPENAI_RESPONSES_TEXT_PREFIXES = ("gpt-4o", "gpt-4.1")
+_OPENAI_NON_TEXT_MARKERS = ("audio", "realtime", "search", "tts", "transcribe")
+# Groq lists speech, safety and agent models beside its text models.
+_GROQ_NON_TEXT_MARKERS = ("whisper", "tts", "orpheus", "guard", "compound")
+# Budgets for the large hosted models (OpenAI, OpenRouter, Responses endpoints).
+_LARGE_CONTEXT_WINDOW = 131072
+_LARGE_MAX_OUTPUT_TOKENS = 16384
+_SAVED_PROTOCOLS = ("chat", "responses", "anthropic", "google")
+_SAVED_REASONING_FORMATS = ("openai", "deepseek", "zai")
+
+
+def _openai_model_spec(model: str) -> TextModelSpec:
+    # Fine-tuned IDs retain their base model after the ft: prefix.
+    base_model = model.lower().removeprefix("ft:").split(":", 1)[0]
+    reasoning = base_model.startswith(_OPENAI_REASONING_PREFIXES)
+    responses = reasoning or (
+        base_model.startswith(_OPENAI_RESPONSES_TEXT_PREFIXES)
+        and not any(marker in base_model for marker in _OPENAI_NON_TEXT_MARKERS)
+    )
+    return TextModelSpec(
+        protocol="responses" if responses else "chat",
+        reasoning=reasoning,
+        reasoning_format="openai" if reasoning else "",
+        # Omitting effort uses Luna's medium default, even when the UI says Off.
+        thinking_levels={"off": "none"} if base_model == "gpt-6-luna" else None,
+        context_window=_LARGE_CONTEXT_WINDOW,
+        max_output_tokens=_LARGE_MAX_OUTPUT_TOKENS,
+    )
+
+
+def _routed_model_spec(profile, model: str) -> TextModelSpec:
+    for protocol, models in _ROUTES[profile.kind].items():
+        if model in models:
+            capabilities = _CAPABILITIES.get(profile.kind, {}).get(model, {})
+            return TextModelSpec(protocol=protocol, **capabilities)
+    raise ValueError(
+        f"{model} has no supported API route for {profile.name}. Choose a supported model."
+    )
 
 
 def model_spec(profile, model: str) -> TextModelSpec:
@@ -105,22 +142,7 @@ def model_spec(profile, model: str) -> TextModelSpec:
     # OpenAI's supported protocols change independently of a meeting snapshot.
     # Recalculate these routes so retries do not retain an obsolete chat route.
     if profile.kind == "openai":
-        # Fine-tuned IDs retain their base model after the ft: prefix.
-        base_model = model.lower().removeprefix("ft:").split(":", 1)[0]
-        reasoning = base_model.startswith(_OPENAI_REASONING_PREFIXES)
-        responses = reasoning or (
-            base_model.startswith(_OPENAI_RESPONSES_TEXT_PREFIXES)
-            and not any(marker in base_model for marker in ("audio", "realtime", "search", "tts", "transcribe"))
-        )
-        return TextModelSpec(
-            protocol="responses" if responses else "chat",
-            reasoning=reasoning,
-            reasoning_format="openai" if reasoning else "",
-            # Omitting effort uses Luna's medium default, even when the UI says Off.
-            thinking_levels={"off": "none"} if base_model == "gpt-6-luna" else None,
-            context_window=131072,
-            max_output_tokens=16384,
-        )
+        return _openai_model_spec(model)
     saved = getattr(profile, "model_metadata", None)
     if saved and saved.get("model") == model:
         return spec_from_mapping(saved)
@@ -128,42 +150,51 @@ def model_spec(profile, model: str) -> TextModelSpec:
         reasoning = model.lower().removeprefix("ft:").startswith(_OPENAI_REASONING_PREFIXES)
         return TextModelSpec(protocol="responses", reasoning=reasoning,
                              reasoning_format="openai" if reasoning else "",
-                             context_window=131072, max_output_tokens=16384)
+                             context_window=_LARGE_CONTEXT_WINDOW,
+                             max_output_tokens=_LARGE_MAX_OUTPUT_TOKENS)
     if getattr(profile, "self_hosted", False):
         # A server the user runs, as a preset or a custom endpoint: what it
         # reported, else a modest default rather than a hosted model's limits.
         with _server_lock:
             return _server_specs.get(profile.base_url, {}).get(model) or TextModelSpec()
     if profile.kind in _ROUTES:
-        for protocol, models in _ROUTES[profile.kind].items():
-            if model in models:
-                return TextModelSpec(protocol=protocol, **_CAPABILITIES.get(profile.kind, {}).get(model, {}))
-        raise ValueError(f"{model} has no supported API route for {profile.name}. Choose a supported model.")
-    if profile.kind == "groq" and any(word in model.lower() for word in ("whisper", "tts", "orpheus", "guard", "compound")):
-        raise ValueError("Choose a Groq text-generation model.")
+        return _routed_model_spec(profile, model)
     if profile.kind == "groq":
+        if any(word in model.lower() for word in _GROQ_NON_TEXT_MARKERS):
+            raise ValueError("Choose a Groq text-generation model.")
         return TextModelSpec()
     return TextModelSpec(reasoning=profile.kind in ("openai", "openrouter"),
-                         context_window=131072, max_output_tokens=16384)
+                         context_window=_LARGE_CONTEXT_WINDOW,
+                         max_output_tokens=_LARGE_MAX_OUTPUT_TOKENS)
+
+
+def _clamped(value, low: int, high: int) -> int:
+    return max(low, min(high, int(value)))
 
 
 def spec_from_mapping(raw: dict) -> TextModelSpec:
     protocol = raw.get("protocol", "chat")
-    if protocol not in ("chat", "responses", "anthropic", "google"):
+    if protocol not in _SAVED_PROTOCOLS:
         raise ValueError("Unsupported saved text protocol.")
+    reasoning_format = raw.get("reasoning_format", "")
+    if reasoning_format not in _SAVED_REASONING_FORMATS:
+        reasoning_format = ""
+    pi_compat = raw.get("pi_compat")
+    thinking_levels = raw.get("thinking_levels")
     return TextModelSpec(
         protocol=protocol, tools=raw.get("tools", True) is True,
-        context_window=max(1024, min(2000000, int(raw.get("context_window", 32768)))),
-        max_output_tokens=max(16, min(131072, int(raw.get("max_output_tokens", 4096)))),
+        context_window=_clamped(raw.get("context_window", 32768), 1024, 2000000),
+        max_output_tokens=_clamped(raw.get("max_output_tokens", 4096), 16, 131072),
         reasoning=raw.get("reasoning", False) is True,
-        reasoning_format=raw.get("reasoning_format", "") if raw.get("reasoning_format", "") in ("openai", "deepseek", "zai") else "",
-        pi_compat=raw.get("pi_compat") if isinstance(raw.get("pi_compat"), dict) else None,
-        thinking_levels=raw.get("thinking_levels") if isinstance(raw.get("thinking_levels"), dict) else None,
+        reasoning_format=reasoning_format,
+        pi_compat=pi_compat if isinstance(pi_compat, dict) else None,
+        thinking_levels=thinking_levels if isinstance(thinking_levels, dict) else None,
     )
 
 
 # Capability snapshot from the installed pi-ai provider catalog; output is capped for meeting turns.
-_CAPABILITIES = {'opencode_go': {'minimax-m3': {'context_window': 1000000, 'max_output_tokens': 16384, 'reasoning': True},
+_CAPABILITIES = {'opencode_go': {'minimax-m3': {'context_window': 1000000, 'max_output_tokens': 16384,
+                                                'reasoning': True},
                  'qwen3.7-max': {'context_window': 1000000, 'max_output_tokens': 16384, 'reasoning': True},
                  'qwen3.7-plus': {'context_window': 1000000, 'max_output_tokens': 16384, 'reasoning': True},
                  'qwen3.8-max': {'context_window': 1000000, 'max_output_tokens': 16384, 'reasoning': True},
