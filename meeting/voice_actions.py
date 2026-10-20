@@ -4,6 +4,14 @@ import re
 from meeting.corrections import MAX_TERM_CHARS, correct_text
 
 
+def _usable_pair(source, target):
+    if not source or not target:
+        return False
+    if max(len(source), len(target)) > MAX_TERM_CHARS:
+        return False
+    return source.casefold() != target.casefold()
+
+
 def correction_op(command_row, previous):
     text = command_row.get("text", "").strip()
     patterns = (
@@ -16,10 +24,13 @@ def correction_op(command_row, previous):
             continue
         first, second = (s.strip(" \"'“”‘’.,!?") for s in match.groups())
         source, target = (first, second) if index == 0 else (second, first)
-        if not source or not target or max(len(source), len(target)) > MAX_TERM_CHARS or source.casefold() == target.casefold():
+        if not _usable_pair(source, target):
             continue
-        evidence = [r["id"] for r in previous if r.get("id") != command_row.get("id")
-                    and correct_text(r.get("text", ""), {source.lower(): target}) != r.get("text", "")]
+        evidence = [
+            r["id"] for r in previous
+            if r.get("id") != command_row.get("id")
+            and correct_text(r.get("text", ""), {source.lower(): target}) != r.get("text", "")
+        ]
         if not evidence:
             continue
         return {"op": "add_item", "card": "user_notes", "text": f"Spoken correction: “{source}” → “{target}”.",
