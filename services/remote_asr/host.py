@@ -616,7 +616,9 @@ class SpeechHost:
     def _send(ws, message: dict) -> None:
         ws.send(json.dumps(message, separators=(",", ":")))
 
-    def _refuse_connection(self, ws) -> None:
+    def _refuse_connection(self, ws, reason: str) -> None:
+        self.activity.connection_rejected(reason)
+        self._emit("activity", {"connection_rejected": reason})
         try:
             self._send(ws, {"type": "error", "code": "busy",
                             "message": "The host is busy. Try again shortly.",
@@ -628,7 +630,7 @@ class SpeechHost:
     def _handle(self, ws) -> None:
         if getattr(ws, "openwhisper_device_id", None):
             if not self._connection_slots.acquire(blocking=False):
-                self._refuse_connection(ws)
+                self._refuse_connection(ws, "authenticated_capacity")
                 return
             try:
                 message = self._receive_hello(ws)
@@ -638,7 +640,7 @@ class SpeechHost:
                 self._connection_slots.release()
             return
         if not self._handshake_slots.acquire(blocking=False):
-            self._refuse_connection(ws)
+            self._refuse_connection(ws, "anonymous_handshake_capacity")
             return
         anonymous_reserved = True
 
@@ -986,7 +988,7 @@ class SpeechHost:
             self._serve_authenticated(ws, message, address, device)
             return
         if not self._connection_slots.acquire(blocking=False):
-            self._refuse_connection(ws)
+            self._refuse_connection(ws, "authenticated_capacity")
             return
         try:
             # Promotion transfers ownership from the anonymous routing budget to

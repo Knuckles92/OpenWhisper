@@ -44,8 +44,15 @@ def _hello(ws, token, **extra):
     return json.loads(ws.recv(timeout=2))
 
 
-def test_anonymous_handshakes_cannot_take_paired_connection_slots(host):
+def test_anonymous_handshakes_cannot_take_paired_connection_slots(host, monkeypatch):
     pairing = _pair(host)
+    notified = []
+
+    def observe(_kind, detail):
+        if "connection_rejected" in detail:
+            notified.append(host.activity.snapshot()["load"]["connection_rejections"])
+
+    monkeypatch.setattr(host, "_on_event", observe)
     sockets = []
     connection = None
     try:
@@ -59,6 +66,9 @@ def test_anonymous_handshakes_cannot_take_paired_connection_slots(host):
         sockets.append(excess)
         assert json.loads(excess.recv(timeout=2))["code"] == "busy"
         assert host._connection_slots._value == 11
+        assert host.activity.snapshot()["load"]["connection_rejections"] == {
+            "anonymous_handshake_capacity": 1}
+        assert notified == [{"anonymous_handshake_capacity": 1}]
     finally:
         if connection is not None:
             connection.close()
@@ -315,6 +325,8 @@ def test_legacy_capacity_refusal_returns_anonymous_reservation(host, monkeypatch
     ws = client._open("127.0.0.1", host.port, 2)
     try:
         assert _hello(ws, pairing.token)["code"] == "busy"
+        assert host.activity.snapshot()["load"]["connection_rejections"] == {
+            "authenticated_capacity": 1}
         assert _wait_for(lambda: host._handshake_slots._value == MAX_PENDING_HANDSHAKES)
         assert host._connection_slots._value == 0
     finally:

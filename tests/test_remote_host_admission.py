@@ -101,6 +101,8 @@ def test_connection_cap_is_retryable_and_releases_after_disconnect(tmp_path):
         with pytest.raises(RemoteHostBusy) as refused:
             second.connect()
         assert refused.value.retry_after_s == 1
+        assert host.activity.snapshot()["load"]["connection_rejections"] == {
+            "authenticated_capacity": 1}
         first.close()
         assert _wait_for(lambda: not host.connected_clients())
         assert _wait_for(lambda: host._connection_slots._value == 1)
