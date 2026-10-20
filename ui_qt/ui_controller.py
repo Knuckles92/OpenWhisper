@@ -110,6 +110,132 @@ def _start_detached(program: str, arguments: list) -> bool:
     return True
 
 
+#: Stages that end any live preview and show on the waveform overlay, by the
+#: overlay's state attribute for each.
+_OVERLAY_WORK_STATES = {
+    OverlayState.PROCESSING: "STATE_PROCESSING",
+    OverlayState.TRANSCRIBING: "STATE_TRANSCRIBING",
+    OverlayState.CLEANING: "STATE_CLEANING",
+    OverlayState.REWRITING: "STATE_REWRITING",
+}
+#: Brief confirmations the overlay plays, by the overlay's state attribute.
+_OVERLAY_MOMENT_STATES = {
+    OverlayState.STT_ENABLED: "STATE_STT_ENABLE",
+    OverlayState.STT_DISABLED: "STATE_STT_DISABLE",
+}
+
+
+# The update hand-off helpers below take the controller rather than being
+# methods because the flow is also driven on stand-in controllers.
+
+def _abandon_update(controller, path: str) -> None:
+    """Let the update service discard what it staged at ``path``."""
+    abandon = getattr(controller, "on_update_abandon", None)
+    if abandon:
+        abandon(path)
+
+
+def _fail_update(controller, message: str, **options) -> None:
+    """Show an update failure in the open update dialog, or in a warning box."""
+    if controller._update_dialog is not None:
+        controller._update_dialog.set_error(message, **options)
+    else:
+        QMessageBox.warning(controller.main_window, "Update failed", message)
+
+
+def _can_offer_setup(result) -> bool:
+    """Whether a failed native update can fall back to the verified setup installer."""
+    return bool(
+        result is not None
+        and result.apply_mode == ApplyMode.NATIVE
+        and result.release is not None
+        and result.release.setup_asset is not None
+        and result.release.setup_asset.sha256
+    )
+
+
+def _report_download_error(controller, error: str) -> None:
+    offer_setup = _can_offer_setup(controller._last_update_result)
+    if controller._update_dialog is not None:
+        controller._update_dialog.set_error(error, offer_setup=offer_setup)
+    elif controller._update_canceled:
+        # The user asked to stop and closed the dialog; a modal
+        # "Update failed" box for their own cancel is just noise.
+        logger.info("Update stopped after cancel: %s", error)
+        controller.set_status("Update canceled")
+    else:
+        QMessageBox.warning(
+            controller.main_window, "Update failed", error
+        )
+
+
+def _drop_download(controller, path: str, message: str) -> None:
+    """The download finished but must not be installed."""
+    _abandon_update(controller, path)
+    if controller._update_dialog is not None:
+        controller._update_dialog.set_error(message)
+
+
+def _apply_macos_download(controller, path: str) -> None:
+    from services.app_update_macos import decode_result
+
+    mac_transaction = decode_result(path)
+    if mac_transaction:
+        controller._start_macos_update(mac_transaction, path)
+        return
+    if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
+        if controller._update_dialog is not None:
+            controller._update_dialog.set_error("The Mac update disk image could not be opened.")
+        return
+    controller.exit_for_update()
+
+
+def _native_helper_command(controller, transaction_id: str, path: str):
+    """The helper executable and its arguments, or None after reporting why not."""
+    try:
+        journal = load_journal(transaction_id)
+        exe = helper_exe_for(journal)
+        args = helper_argv(journal)
+    except Exception as exc:
+        _abandon_update(controller, path)
+        message = str(exc) or "The updater helper could not be prepared."
+        _fail_update(controller, message, offer_setup=True)
+        return None
+    if controller._update_dialog is not None:
+        controller._update_dialog.set_progress(DownloadPhase.RESTARTING, 1, 1)
+    return exe, args
+
+
+def _setup_installer_command(path: str):
+    """Run the verified setup silently over the current install."""
+    from services.app_update_apply import discover_install_registration, running_app_dir
+    from services.app_update import updates_dir
+
+    exe = path
+    registration = discover_install_registration()
+    scope = "/ALLUSERS" if registration and registration.hive == "HKLM" else "/CURRENTUSER"
+    args = [
+        "/SP-", "/SILENT", "/NORESTART", "/OPENWHISPERUPDATE=1", scope,
+        "/DIR=" + running_app_dir(),
+        "/LOG=" + os.path.join(updates_dir(), "setup.log"),
+    ]
+    release_application_mutex_for_setup()
+    return exe, args
+
+
+def _report_launch_failure(controller, path: str, transaction_id) -> None:
+    if transaction_id:
+        _abandon_update(controller, path)
+    else:
+        acquire_application_mutex_or_exit()
+    message = (
+        "The updater could not be started."
+        if transaction_id
+        else "The installer could not be started."
+    )
+    _fail_update(controller, message, offer_setup=bool(transaction_id))
+
+
 class UIController(QObject):
     record_started = pyqtSignal()
     record_stopped = pyqtSignal()
@@ -733,31 +859,24 @@ class UIController(QObject):
         # and shows the instruction's live preview itself.
         if state in (OverlayState.RECORDING, OverlayState.COMMAND_LISTENING):
             self.tray_manager.set_recording(True)
-            if state is OverlayState.COMMAND_LISTENING:
-                self._show_or_set_overlay(self.overlay.STATE_COMMAND_LISTENING)
-            elif self.streaming_flow_active:
-                if not self.overlay.isVisible():
-                    self.overlay.show_at_cursor(self.overlay.STATE_STREAMING)
-                elif self.overlay.current_state != self.overlay.STATE_STREAMING:
-                    self.overlay.set_state(self.overlay.STATE_STREAMING)
-            else:
-                self._show_or_set_overlay(self.overlay.STATE_RECORDING)
-        elif state is OverlayState.PROCESSING:
+            self._show_listening_overlay(state)
+        elif state in _OVERLAY_WORK_STATES:
             self.tray_manager.set_recording(False)
-            self._dismiss_streaming_preview_for_waveform(self.overlay.STATE_PROCESSING)
-        elif state is OverlayState.TRANSCRIBING:
-            self.tray_manager.set_recording(False)
-            self._dismiss_streaming_preview_for_waveform(self.overlay.STATE_TRANSCRIBING)
-        elif state is OverlayState.CLEANING:
-            self.tray_manager.set_recording(False)
-            self._dismiss_streaming_preview_for_waveform(self.overlay.STATE_CLEANING)
-        elif state is OverlayState.REWRITING:
-            self.tray_manager.set_recording(False)
-            self._dismiss_streaming_preview_for_waveform(self.overlay.STATE_REWRITING)
-        elif state is OverlayState.STT_ENABLED:
-            self._show_or_set_overlay(self.overlay.STATE_STT_ENABLE)
-        elif state is OverlayState.STT_DISABLED:
-            self._show_or_set_overlay(self.overlay.STATE_STT_DISABLE)
+            waveform_state = getattr(self.overlay, _OVERLAY_WORK_STATES[state])
+            self._dismiss_streaming_preview_for_waveform(waveform_state)
+        elif state in _OVERLAY_MOMENT_STATES:
+            self._show_or_set_overlay(getattr(self.overlay, _OVERLAY_MOMENT_STATES[state]))
+
+    def _show_listening_overlay(self, state: OverlayState) -> None:
+        if state is OverlayState.COMMAND_LISTENING:
+            self._show_or_set_overlay(self.overlay.STATE_COMMAND_LISTENING)
+        elif self.streaming_flow_active:
+            if not self.overlay.isVisible():
+                self.overlay.show_at_cursor(self.overlay.STATE_STREAMING)
+            elif self.overlay.current_state != self.overlay.STATE_STREAMING:
+                self.overlay.set_state(self.overlay.STATE_STREAMING)
+        else:
+            self._show_or_set_overlay(self.overlay.STATE_RECORDING)
 
     def _upload_job_active(self) -> bool:
         return (
@@ -854,7 +973,9 @@ class UIController(QObject):
             options["restore"] = False
         return self._temporary_clipboard.stage_text(text, **options)
 
-    def capture_selection(self, callback: Callable[[Optional[str]], None], *, timeout_ms: Optional[int] = None) -> None:
+    def capture_selection(
+        self, callback: Callable[[Optional[str]], None], *, timeout_ms: Optional[int] = None
+    ) -> None:
         """Read the selected text through a copy that leaves the clipboard as it was.
 
         ``callback`` receives the text, "" when nothing was selected, or None
@@ -2104,110 +2225,33 @@ class UIController(QObject):
     def on_update_download_finished(self, path: str, error: str) -> None:
         """Start the native helper or setup exe and quit, or show the error."""
         if error:
-            offer_setup = False
-            result = self._last_update_result
-            if (
-                result is not None
-                and result.apply_mode == ApplyMode.NATIVE
-                and result.release is not None
-                and result.release.setup_asset is not None
-                and result.release.setup_asset.sha256
-            ):
-                offer_setup = True
-            if self._update_dialog is not None:
-                self._update_dialog.set_error(error, offer_setup=offer_setup)
-            elif self._update_canceled:
-                # The user asked to stop and closed the dialog; a modal
-                # "Update failed" box for their own cancel is just noise.
-                logger.info("Update stopped after cancel: %s", error)
-                self.set_status("Update canceled")
-            else:
-                QMessageBox.warning(
-                    self.main_window, "Update failed", error
-                )
+            _report_download_error(self, error)
             return
         if self._update_canceled:
-            abandon = getattr(self, "on_update_abandon", None)
-            if abandon:
-                abandon(path)
-            if self._update_dialog is not None:
-                self._update_dialog.set_error("The update was canceled.")
+            _drop_download(self, path, "The update was canceled.")
             return
 
         if not self._confirm_update_while_busy():
-            abandon = getattr(self, "on_update_abandon", None)
-            if abandon:
-                abandon(path)
-            if self._update_dialog is not None:
-                self._update_dialog.set_error("The update was not installed. Your work is still open.")
+            _drop_download(self, path, "The update was not installed. Your work is still open.")
             return
 
         result = self._last_update_result
         if result is not None and result.apply_mode == ApplyMode.MACOS_DMG:
-            from services.app_update_macos import decode_result
-
-            mac_transaction = decode_result(path)
-            if mac_transaction:
-                self._start_macos_update(mac_transaction, path)
-                return
-            if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
-                if self._update_dialog is not None:
-                    self._update_dialog.set_error("The Mac update disk image could not be opened.")
-                return
-            self.exit_for_update()
+            _apply_macos_download(self, path)
             return
 
         transaction_id = decode_native_result(path)
         if transaction_id:
-            try:
-                journal = load_journal(transaction_id)
-                exe = helper_exe_for(journal)
-                args = helper_argv(journal)
-            except Exception as exc:
-                abandon = getattr(self, "on_update_abandon", None)
-                if abandon:
-                    abandon(path)
-                message = str(exc) or "The updater helper could not be prepared."
-                if self._update_dialog is not None:
-                    self._update_dialog.set_error(message, offer_setup=True)
-                else:
-                    QMessageBox.warning(self.main_window, "Update failed", message)
+            command = _native_helper_command(self, transaction_id, path)
+            if command is None:
                 return
-            if self._update_dialog is not None:
-                self._update_dialog.set_progress(DownloadPhase.RESTARTING, 1, 1)
+            exe, args = command
         else:
-            from services.app_update_apply import discover_install_registration, running_app_dir
-            from services.app_update import updates_dir
-
-            exe = path
-            registration = discover_install_registration()
-            scope = "/ALLUSERS" if registration and registration.hive == "HKLM" else "/CURRENTUSER"
-            args = [
-                "/SP-", "/SILENT", "/NORESTART", "/OPENWHISPERUPDATE=1", scope,
-                "/DIR=" + running_app_dir(),
-                "/LOG=" + os.path.join(updates_dir(), "setup.log"),
-            ]
-            release_application_mutex_for_setup()
+            exe, args = _setup_installer_command(path)
 
         launched = _start_detached(exe, args)
         if not launched:
-            if transaction_id:
-                abandon = getattr(self, "on_update_abandon", None)
-                if abandon:
-                    abandon(path)
-            if not transaction_id:
-                acquire_application_mutex_or_exit()
-            message = (
-                "The updater could not be started."
-                if transaction_id
-                else "The installer could not be started."
-            )
-            if self._update_dialog is not None:
-                self._update_dialog.set_error(
-                    message, offer_setup=bool(transaction_id)
-                )
-            else:
-                QMessageBox.warning(self.main_window, "Update failed", message)
+            _report_launch_failure(self, path, transaction_id)
             return
         self.exit_for_update()
 
@@ -2217,13 +2261,8 @@ class UIController(QObject):
         from services.app_update_macos import READY_WAIT_S, helper_ready, start_helper
 
         def fail(message: str) -> None:
-            abandon = getattr(self, "on_update_abandon", None)
-            if abandon:
-                abandon(handoff)
-            if self._update_dialog is not None:
-                self._update_dialog.set_error(message)
-            else:
-                QMessageBox.warning(self.main_window, "Update failed", message)
+            _abandon_update(self, handoff)
+            _fail_update(self, message)
 
         try:
             process = start_helper(transaction_id)
