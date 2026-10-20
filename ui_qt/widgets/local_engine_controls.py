@@ -30,6 +30,28 @@ from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
 
+_MODEL_HELP = (
+    "The speech model turns audio into text. Larger models generally improve accuracy "
+    "but need more memory and processing time. Use Downloads to install models for this backend."
+)
+_DEVICE_HELP = (
+    "Choose the hardware used for transcription. Auto picks an available device; "
+    "Parakeet MLX uses the Apple GPU. CUDA uses a compatible NVIDIA graphics card; "
+    "CPU uses your main processor. Moonshine uses CPU only."
+)
+_QUANT_HELP = (
+    "Controls how Whisper stores and calculates model numbers. Start with Auto. "
+    "int8 uses less memory; float16 is suited to GPUs; float32 uses more memory. "
+    "Lower precision may affect accuracy."
+)
+_LANGUAGE_HELP = (
+    "Choose a language supported by this model, or Auto for language detection. "
+    "Coverage and accuracy vary by model; this transcribes rather than translates. "
+    "Moonshine supports English only."
+)
+_VOICE_MODEL_LINK = ("Open Settings → Voice model", "ondemand")
+_DOWNLOADS_LINK = ("Open Settings → Downloads", "downloads")
+
 
 def show_download_sizes(combo) -> None:
     """Give each model its download size as a tooltip.
@@ -94,18 +116,15 @@ class LocalEngineControls(QWidget):
 
         # Matches the Backend field's share, so Model reads as its peer and the
         # two runtime knobs stay visibly secondary.
-        layout.addWidget(engine_field("Model", self.model_combo,
-            'The speech model turns audio into text. Larger models generally improve accuracy but need more memory and processing time. Use Downloads to install models for this backend.',
-            [('Open Settings → Voice model', 'ondemand'), ('Open Settings → Downloads', 'downloads')], self.help_requested.emit), stretch=2)
-        layout.addWidget(engine_field("Device", self.device_combo,
-            'Choose the hardware used for transcription. Auto picks an available device; Parakeet MLX uses the Apple GPU. CUDA uses a compatible NVIDIA graphics card; CPU uses your main processor. Moonshine uses CPU only.',
-            [('Open Settings → Voice model', 'ondemand')], self.help_requested.emit), stretch=1)
-        layout.addWidget(engine_field("Quant", self.compute_combo,
-            'Controls how Whisper stores and calculates model numbers. Start with Auto. int8 uses less memory; float16 is suited to GPUs; float32 uses more memory. Lower precision may affect accuracy.',
-            [('Open Settings → Voice model', 'ondemand')], self.help_requested.emit), stretch=1)
-        self.language_field = engine_field("Language", self.language_combo,
-            'Choose a language supported by this model, or Auto for language detection. Coverage and accuracy vary by model; this transcribes rather than translates. Moonshine supports English only.',
-            [('Open Settings → Voice model', 'ondemand')], self.help_requested.emit)
+        on_help = self.help_requested.emit
+        layout.addWidget(engine_field("Model", self.model_combo, _MODEL_HELP,
+                                      [_VOICE_MODEL_LINK, _DOWNLOADS_LINK], on_help), stretch=2)
+        layout.addWidget(engine_field("Device", self.device_combo, _DEVICE_HELP,
+                                      [_VOICE_MODEL_LINK], on_help), stretch=1)
+        layout.addWidget(engine_field("Quant", self.compute_combo, _QUANT_HELP,
+                                      [_VOICE_MODEL_LINK], on_help), stretch=1)
+        self.language_field = engine_field("Language", self.language_combo, _LANGUAGE_HELP,
+                                           [_VOICE_MODEL_LINK], on_help)
         layout.addWidget(self.language_field, stretch=1)
         self.language_field.hide()
 
@@ -120,7 +139,11 @@ class LocalEngineControls(QWidget):
         self._backend = backend
         self.device_combo.blockSignals(True)
         self.device_combo.clear()
-        self.device_combo.addItems(["auto", "cpu"] if backend == "parakeet_mlx" or sys.platform == "darwin" else ["auto", "cuda", "cpu"])
+        # No CUDA on a Mac, nor for the Apple-only Parakeet MLX.
+        if backend == "parakeet_mlx" or sys.platform == "darwin":
+            self.device_combo.addItems(["auto", "cpu"])
+        else:
+            self.device_combo.addItems(["auto", "cuda", "cpu"])
         self.device_combo.blockSignals(False)
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
@@ -142,11 +165,14 @@ class LocalEngineControls(QWidget):
         self.compute_combo.parentWidget().setVisible(backend not in BACKENDS)
         self.sync_language_field()
         self.language_combo.blockSignals(True)
-        stored_lang = settings_manager.get(SettingsKey.LOCAL_ASR_LANGUAGE, SETTING_DEFAULTS[SettingsKey.LOCAL_ASR_LANGUAGE])
+        stored_lang = settings_manager.get(
+            SettingsKey.LOCAL_ASR_LANGUAGE, SETTING_DEFAULTS[SettingsKey.LOCAL_ASR_LANGUAGE]
+        )
         self.language_combo.clear()
         for code in language_choices(backend):
             self.language_combo.addItem(LANGUAGE_LABELS[code], code)
-        self.language_combo.setCurrentIndex(self.language_combo.findData(selected_language(backend, stored_lang)))
+        language = selected_language(backend, stored_lang)
+        self.language_combo.setCurrentIndex(self.language_combo.findData(language))
         self.language_combo.blockSignals(False)
         self.language_combo.setEnabled(self.language_combo.count() > 1)
         self.device_combo.setEnabled(backend != "moonshine")
@@ -177,8 +203,11 @@ class LocalEngineControls(QWidget):
             models[backend] = self.model_combo.currentData()
             devices[backend] = self.device_combo.currentText()
             lang_code = selected_language(backend, self.language_combo.currentData())
-            settings_manager.update_settings({SettingsKey.LOCAL_ASR_MODELS: models, SettingsKey.LOCAL_ASR_DEVICES: devices,
-                SettingsKey.LOCAL_ASR_LANGUAGE: lang_code})
+            settings_manager.update_settings({
+                SettingsKey.LOCAL_ASR_MODELS: models,
+                SettingsKey.LOCAL_ASR_DEVICES: devices,
+                SettingsKey.LOCAL_ASR_LANGUAGE: lang_code,
+            })
             self.engine_settings_changed.emit()
             return
         settings = settings_manager.update_settings({
