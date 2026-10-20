@@ -242,20 +242,12 @@ def _identify(http, rows: Optional[Dict[str, dict]] = None) -> Optional[str]:
     """
     import httpx
 
-    for row in (rows or {}).values():
-        if row.get("owned_by") in _OWNERS:
-            return _OWNERS[row["owned_by"]]
+    owner = _server_from_owners(rows)
+    if owner is not None:
+        return owner
 
     def get(path: str):
-        try:
-            response = http.get(path)
-        except httpx.HTTPError:
-            return None
-        try:
-            body = response.json()
-        except ValueError:
-            body = response.text
-        return response.status_code, body
+        return _probe(http, path, httpx.HTTPError)
 
     answer = get("/.well-known/localai.json")
     if answer is None:
@@ -263,28 +255,73 @@ def _identify(http, rows: Optional[Dict[str, dict]] = None) -> Optional[str]:
     status, body = answer
     if status == 200 and isinstance(body, dict) and "endpoints" in body:
         return "localai"
-    status, body = get("/") or (0, None)
-    if isinstance(body, str) and "Ollama is running" in body:
-        return "ollama"
+    for server, answers in _FINGERPRINTS:
+        if answers(get):
+            return server
+    return None
+
+
+def _server_from_owners(rows: Optional[Dict[str, dict]]) -> Optional[str]:
+    for row in (rows or {}).values():
+        if row.get("owned_by") in _OWNERS:
+            return _OWNERS[row["owned_by"]]
+    return None
+
+
+def _probe(http, path: str, http_error: type) -> Optional[Tuple[int, Any]]:
+    """GET ``path`` as ``(status, body)``, or None when the request fails."""
+    try:
+        response = http.get(path)
+    except http_error:
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        body = response.text
+    return response.status_code, body
+
+
+def _answers_ollama(get) -> bool:
+    _status, body = get("/") or (0, None)
+    return isinstance(body, str) and "Ollama is running" in body
+
+
+def _answers_llama_cpp(get) -> bool:
     status, body = get("/props") or (0, None)
-    if isinstance(body, dict) and (
-        "build_info" in body
-        or (status == 401 and (body.get("error") or {}).get("message") == "Invalid API Key")
-    ):
-        return "llama_cpp"
+    if not isinstance(body, dict):
+        return False
+    if "build_info" in body:
+        return True
+    return status == 401 and (body.get("error") or {}).get("message") == "Invalid API Key"
+
+
+def _answers_vllm(get) -> bool:
     status, body = get("/version") or (0, None)
-    if status == 200 and isinstance(body, dict) and "version" in body:
-        status, body = get("/v1/models") or (0, None)
-        owners = {row.get("owned_by") for row in body.get("data") or [] if isinstance(row, dict)} \
-            if isinstance(body, dict) else set()
-        # With --api-key the model list is closed but /version stays open.
-        if status == 401 or "vllm" in owners:
-            return "vllm"
+    if not (status == 200 and isinstance(body, dict) and "version" in body):
+        return False
+    status, body = get("/v1/models") or (0, None)
+    owners = set()
+    if isinstance(body, dict):
+        owners = {row.get("owned_by") for row in body.get("data") or [] if isinstance(row, dict)}
+    # With --api-key the model list is closed but /version stays open.
+    return status == 401 or "vllm" in owners
+
+
+def _answers_lm_studio(get) -> bool:
     for path in ("/api/v1/models", "/api/v0/models"):
         status, body = get(path) or (0, None)
         if status == 200 and isinstance(body, dict) and ("models" in body or "data" in body):
-            return "lm_studio"
-    return None
+            return True
+    return False
+
+
+#: Checked in order after LocalAI; each takes the address's GET probe.
+_FINGERPRINTS: Tuple[Tuple[str, Callable[..., bool]], ...] = (
+    ("ollama", _answers_ollama),
+    ("llama_cpp", _answers_llama_cpp),
+    ("vllm", _answers_vllm),
+    ("lm_studio", _answers_lm_studio),
+)
 
 
 def identify_server(base_url: str, timeout: float = _PROBE_TIMEOUT_S) -> Optional[str]:
