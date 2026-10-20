@@ -218,19 +218,16 @@ class DictionaryLibrary(QWidget):
             or any(needle in variant.casefold() for variant in term.heard)
         ]
 
-    def _render(self) -> None:
-        self.search.setVisible(len(self._terms) >= self.SEARCH_FROM or bool(self.search.text()))
-        matching = self._matching()
-        shown = matching[: self.MAX_ROWS]
-        keep = {term.id for term in shown}
+    def _focused_row_index(self, keep: set) -> Optional[int]:
+        """Where the row holding focus sat, if that row is about to go."""
         focused = QApplication.focusWidget()
-        held = next((
+        return next((
             index for index, term_id in enumerate(self.visible_ids)
             if term_id not in keep and focused is not None and self._rows[term_id].isAncestorOf(focused)
         ), None)
-        stale = [self._rows.pop(term_id) for term_id in list(self._rows) if term_id not in keep]
-        for row in stale:
-            self._list_layout.removeWidget(row)
+
+    def _place_rows(self, shown: list[DictionaryTerm]) -> None:
+        """Create, update and order the rows so they match ``shown``."""
         for index, term in enumerate(shown):
             row = self._rows.get(term.id)
             if row is None:
@@ -245,6 +242,8 @@ class DictionaryLibrary(QWidget):
                 self._list_layout.removeWidget(row)
                 self._list_layout.insertWidget(index, row)
             row.show()
+
+    def _chain_tab_order(self, shown: list[DictionaryTerm]) -> None:
         # New rows join the end of the window's Tab order, after the tiles
         # below the list; the search box sits where the list starts.
         previous = self.search
@@ -253,15 +252,31 @@ class DictionaryLibrary(QWidget):
             for widget in (row.star, row.edit, row.remove):
                 QWidget.setTabOrder(previous, widget)
                 previous = widget
+
+    def _refocus_after_removal(self, held: int, shown: list[DictionaryTerm]) -> None:
+        """Move focus to the row now at ``held``, or off the list once it's empty."""
+        if shown:
+            target = self._rows[shown[min(held, len(shown) - 1)].id].remove
+        else:
+            target = self.search if self.search.isVisible() else self._focus_when_empty
+        if target is not None:
+            target.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _render(self) -> None:
+        self.search.setVisible(len(self._terms) >= self.SEARCH_FROM or bool(self.search.text()))
+        matching = self._matching()
+        shown = matching[: self.MAX_ROWS]
+        keep = {term.id for term in shown}
+        held = self._focused_row_index(keep)
+        stale = [self._rows.pop(term_id) for term_id in list(self._rows) if term_id not in keep]
+        for row in stale:
+            self._list_layout.removeWidget(row)
+        self._place_rows(shown)
+        self._chain_tab_order(shown)
         if held is not None:
             # Before the removed row hides, which would pass its focus to
             # whatever follows the list.
-            if shown:
-                target = self._rows[shown[min(held, len(shown) - 1)].id].remove
-            else:
-                target = self.search if self.search.isVisible() else self._focus_when_empty
-            if target is not None:
-                target.setFocus(Qt.FocusReason.OtherFocusReason)
+            self._refocus_after_removal(held, shown)
         for row in stale:
             row.hide()
             row.deleteLater()
