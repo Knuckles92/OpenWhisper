@@ -51,28 +51,40 @@ def restore_data(journal) -> None:
         records = json.load(handle)
     if not isinstance(records, dict) or set(records) != set(_NAMES):
         raise apply.UpdateApplyError("The update data snapshot is invalid.")
+    _verify_snapshot(root, records)
+    for name, digest in records.items():
+        _restore_one(journal, root, name, digest)
+
+
+def _verify_snapshot(root: str, records: dict) -> None:
     for name, digest in records.items():
         source = os.path.join(root, "data", name)
         if digest is not None:
             apply.reject_reparse_chain(source, "Update data snapshot")
             if apply.file_sha256(source) != digest:
                 raise apply.UpdateApplyError("The update data snapshot failed verification.")
-    for name, digest in records.items():
-        target = os.path.join(journal.appdata, name)
-        apply.reject_reparse_chain(target, "Application data")
-        if name.endswith(".db"):
-            for suffix in ("-wal", "-shm"):
-                sidecar = target + suffix
-                apply.reject_reparse_chain(sidecar, "Application database sidecar")
-                if os.path.isfile(sidecar):
-                    os.unlink(sidecar)
-        if digest is None:
-            if os.path.isfile(target):
-                os.unlink(target)
-            continue
-        temporary = target + ".update-restore"
-        apply.reject_reparse_chain(temporary, "Restored application data")
-        shutil.copy2(os.path.join(root, "data", name), temporary)
-        with open(temporary, "rb+") as handle:
-            os.fsync(handle.fileno())
-        apply._replace_path_write_through(temporary, target, replace_existing=True)
+
+
+def _remove_database_sidecars(target: str) -> None:
+    for suffix in ("-wal", "-shm"):
+        sidecar = target + suffix
+        apply.reject_reparse_chain(sidecar, "Application database sidecar")
+        if os.path.isfile(sidecar):
+            os.unlink(sidecar)
+
+
+def _restore_one(journal, root: str, name: str, digest) -> None:
+    target = os.path.join(journal.appdata, name)
+    apply.reject_reparse_chain(target, "Application data")
+    if name.endswith(".db"):
+        _remove_database_sidecars(target)
+    if digest is None:
+        if os.path.isfile(target):
+            os.unlink(target)
+        return
+    temporary = target + ".update-restore"
+    apply.reject_reparse_chain(temporary, "Restored application data")
+    shutil.copy2(os.path.join(root, "data", name), temporary)
+    with open(temporary, "rb+") as handle:
+        os.fsync(handle.fileno())
+    apply._replace_path_write_through(temporary, target, replace_existing=True)
