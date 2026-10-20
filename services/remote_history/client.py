@@ -49,6 +49,54 @@ _FIELDS = {
     "segment": {"meeting_id", "segment_id"},
     "insights": {"meeting_id"},
 }
+_REQUIRED = {
+    "transcription": ("record_id",),
+    "meeting": ("meeting_id",),
+    "segments": ("meeting_id",),
+    "segment": ("meeting_id", "segment_id"),
+    "insights": ("meeting_id",),
+    "search": ("q",),
+}
+# Seconds before reconnecting, and before asking again a host without client history.
+_RETRY_S = 10
+_RETRY_UNSUPPORTED_S = 60
+
+
+def _query_values(operation, params):
+    """The store arguments for a host's query, or InvalidQuery/ValidationError."""
+    if (
+        operation not in _FIELDS
+        or not isinstance(params, dict)
+        or set(params) - _FIELDS[operation]
+    ):
+        raise InvalidQuery()
+    query = _Query.model_validate(params)
+    values = query.model_dump(include=query.model_fields_set, exclude_none=True)
+    _dates_to_utc(values)
+    if (
+        values.get("since")
+        and values.get("before")
+        and values["since"] >= values["before"]
+    ):
+        raise InvalidQuery()
+    if (
+        query.start_s is not None
+        and query.end_s is not None
+        and query.start_s >= query.end_s
+    ):
+        raise InvalidQuery()
+    if any(name not in values for name in _REQUIRED.get(operation, ())):
+        raise InvalidQuery()
+    return values
+
+
+def _dates_to_utc(values):
+    for name in ("since", "before"):
+        if name in values:
+            date = datetime.fromisoformat(values[name])
+            if date.tzinfo is None:
+                raise InvalidQuery()
+            values[name] = date.astimezone(UTC).isoformat()
 
 
 class HistoryReader:
@@ -60,42 +108,7 @@ class HistoryReader:
         if not self.enabled():
             return {"error": "sharing_disabled"}
         try:
-            if (
-                operation not in _FIELDS
-                or not isinstance(params, dict)
-                or set(params) - _FIELDS[operation]
-            ):
-                raise InvalidQuery()
-            query = _Query.model_validate(params)
-            values = query.model_dump(include=query.model_fields_set, exclude_none=True)
-            for name in ("since", "before"):
-                if name in values:
-                    date = datetime.fromisoformat(values[name])
-                    if date.tzinfo is None:
-                        raise InvalidQuery()
-                    values[name] = date.astimezone(UTC).isoformat()
-            if (
-                values.get("since")
-                and values.get("before")
-                and values["since"] >= values["before"]
-            ):
-                raise InvalidQuery()
-            if (
-                query.start_s is not None
-                and query.end_s is not None
-                and query.start_s >= query.end_s
-            ):
-                raise InvalidQuery()
-            required = {
-                "transcription": ("record_id",),
-                "meeting": ("meeting_id",),
-                "segments": ("meeting_id",),
-                "segment": ("meeting_id", "segment_id"),
-                "insights": ("meeting_id",),
-                "search": ("q",),
-            }.get(operation, ())
-            if any(name not in values for name in required):
-                raise InvalidQuery()
+            values = _query_values(operation, params)
             result = getattr(self.store, operation)(**values)
             data = result.model_dump(mode="json") if result is not None else {}
             return {"result": data} if self.enabled() else {"error": "sharing_disabled"}
@@ -147,71 +160,84 @@ class HistoryClient:
     def _run(self):
         while not self._stop.is_set():
             self._wake.clear()
-            connection = None
-            reader = None
-            retry_delay = 10
-            try:
-                pairing = self.pairing()
-                token = self.token() if pairing else None
-                if pairing and token:
-                    connection = RemoteConnection(
-                        pairing.host,
-                        pairing.port,
-                        token,
-                        pairing.fingerprint,
-                        alternates=pairing.alternates,
-                        history_enabled=self.enabled(),
-                    )
-                    with self._lock:
-                        self._connection = connection
-                    ready = connection.connect()
-                    if ready.get("capabilities", {}).get("client_history") is True:
-                        from config import config
+            self._wake.wait(self._connect_once())
 
-                        reader = HistoryReader(
-                            self.database or config.DATABASE_FILE, self.enabled
-                        )
-                        while not self._stop.is_set() and not self._wake.is_set():
-                            try:
-                                frame = connection.receive_history()
-                            except TimeoutError:
-                                continue
-                            if (
-                                not isinstance(frame, str)
-                                or len(frame.encode("utf-8"))
-                                > protocol.MAX_HEADER_BYTES
-                            ):
-                                break
-                            request = json.loads(frame)
-                            if (
-                                not isinstance(request, dict)
-                                or request.get("type") != "history_query"
-                            ):
-                                break
-                            response = reader.query(
-                                request.get("operation"), request.get("params")
-                            )
-                            response.update(type="history_result", id=request.get("id"))
-                            payload = json.dumps(response)
-                            if len(payload.encode("utf-8")) > protocol.MAX_REPLY_BYTES:
-                                payload = json.dumps(
-                                    {
-                                        "type": "history_result",
-                                        "id": request.get("id"),
-                                        "error": "unavailable",
-                                    }
-                                )
-                            connection.send_history(payload)
-                    else:
-                        retry_delay = 60
-            except Exception:
-                # Reconnection never interrupts speech or moves saved records.
-                pass
-            finally:
-                if connection:
-                    connection.close()
-                if reader:
-                    reader.store.close()
+    def _connect_once(self):
+        """Serve the host's queries over one connection; returns the seconds to wait after."""
+        connection = None
+        reader = None
+        retry_delay = _RETRY_S
+        try:
+            pairing = self.pairing()
+            token = self.token() if pairing else None
+            if pairing and token:
+                connection = RemoteConnection(
+                    pairing.host,
+                    pairing.port,
+                    token,
+                    pairing.fingerprint,
+                    alternates=pairing.alternates,
+                    history_enabled=self.enabled(),
+                )
                 with self._lock:
-                    self._connection = None
-            self._wake.wait(retry_delay)
+                    self._connection = connection
+                ready = connection.connect()
+                if ready.get("capabilities", {}).get("client_history") is True:
+                    from config import config
+
+                    reader = HistoryReader(
+                        self.database or config.DATABASE_FILE, self.enabled
+                    )
+                    self._answer_queries(connection, reader)
+                else:
+                    retry_delay = _RETRY_UNSUPPORTED_S
+        except Exception:
+            # Reconnection never interrupts speech or moves saved records.
+            pass
+        finally:
+            if connection:
+                connection.close()
+            if reader:
+                reader.store.close()
+            with self._lock:
+                self._connection = None
+        return retry_delay
+
+    def _answer_queries(self, connection, reader):
+        while not self._stop.is_set() and not self._wake.is_set():
+            try:
+                frame = connection.receive_history()
+            except TimeoutError:
+                continue
+            request = _history_query(frame)
+            if request is None:
+                break
+            connection.send_history(_history_reply(reader, request))
+
+
+def _history_query(frame):
+    """The host's query in ``frame``, or None for anything else (which ends the session)."""
+    if (
+        not isinstance(frame, str)
+        or len(frame.encode("utf-8")) > protocol.MAX_HEADER_BYTES
+    ):
+        return None
+    request = json.loads(frame)
+    if not isinstance(request, dict) or request.get("type") != "history_query":
+        return None
+    return request
+
+
+def _history_reply(reader, request):
+    response = reader.query(request.get("operation"), request.get("params"))
+    response.update(type="history_result", id=request.get("id"))
+    payload = json.dumps(response)
+    if len(payload.encode("utf-8")) > protocol.MAX_REPLY_BYTES:
+        payload = json.dumps(
+            {
+                "type": "history_result",
+                "id": request.get("id"),
+                "error": "unavailable",
+            }
+        )
+    return payload
