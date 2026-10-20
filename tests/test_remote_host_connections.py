@@ -306,3 +306,31 @@ def test_legacy_admission_exceptions_release_each_reservation_once(host, monkeyp
         ws.close()
     assert _wait_for(lambda: host._handshake_slots._value == MAX_PENDING_HANDSHAKES)
     assert _wait_for(lambda: host._connection_slots._value == 12)
+
+
+def test_legacy_capacity_refusal_returns_anonymous_reservation(host, monkeypatch):
+    pairing = _pair(host)
+    monkeypatch.setattr(host, "_connection_slots", threading.BoundedSemaphore(1))
+    connection = _connect(host, pairing)
+    ws = client._open("127.0.0.1", host.port, 2)
+    try:
+        assert _hello(ws, pairing.token)["code"] == "busy"
+        assert _wait_for(lambda: host._handshake_slots._value == MAX_PENDING_HANDSHAKES)
+        assert host._connection_slots._value == 0
+    finally:
+        ws.close()
+        connection.close()
+    assert _wait_for(lambda: host._connection_slots._value == 1)
+
+
+@pytest.mark.parametrize("message", ["not json", "[]", b"binary hello"])
+def test_invalid_first_message_returns_anonymous_reservation(host, message):
+    ws = client._open("127.0.0.1", host.port, 2)
+    try:
+        ws.send(message)
+        with pytest.raises(ConnectionClosed):
+            ws.recv(timeout=2)
+    finally:
+        ws.close()
+    assert _wait_for(lambda: host._handshake_slots._value == MAX_PENDING_HANDSHAKES)
+    assert host._connection_slots._value == 12
