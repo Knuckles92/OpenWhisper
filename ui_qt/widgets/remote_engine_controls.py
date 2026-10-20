@@ -8,6 +8,28 @@ from services.local_asr.languages import LANGUAGE_LABELS
 
 _LABELS = {**LANGUAGE_LABELS, "cpu": "CPU", "cuda": "NVIDIA GPU"}
 
+_DEVICE_TIP = (
+    "Choose the hardware on the remote computer. Auto chooses an available device; "
+    "NVIDIA GPU uses its graphics card; CPU uses its processor."
+)
+_QUANT_TIP = (
+    "Choose Whisper's precision on the remote computer. "
+    "Auto chooses a supported precision for its hardware."
+)
+_LANGUAGE_TIP = (
+    "Choose the host engine's language for remote transcription. "
+    "Auto detects a supported language; Moonshine supports English only."
+)
+_REMOTE_ENGINE_LINK = ("Open Settings → Remote engine", "remote_engine")
+
+
+def _runtime_tip(host: str, runtime: dict, engine: dict) -> str:
+    if runtime.get("can_configure"):
+        return f"Runtime on {host}. Changes apply to the host and connected clients."
+    if engine:
+        return f"Update OpenWhisper on {host} to change its runtime from here."
+    return "Connect to the host to see its runtime choices."
+
 
 class RemoteEngineControls(QWidget):
     runtime_selected = pyqtSignal(str, str, dict)
@@ -26,12 +48,12 @@ class RemoteEngineControls(QWidget):
         self.language_combo = engine_combo(())
         self._fields = {}
         for key, label, combo, tip in (
-            ("device", "Device", self.device_combo, "Choose the hardware on the remote computer. Auto chooses an available device; NVIDIA GPU uses its graphics card; CPU uses its processor."),
-            ("compute_type", "Quant", self.compute_combo, "Choose Whisper's precision on the remote computer. Auto chooses a supported precision for its hardware."),
-            ("language", "Language", self.language_combo, "Choose the host engine's language for remote transcription. Auto detects a supported language; Moonshine supports English only."),
+            ("device", "Device", self.device_combo, _DEVICE_TIP),
+            ("compute_type", "Quant", self.compute_combo, _QUANT_TIP),
+            ("language", "Language", self.language_combo, _LANGUAGE_TIP),
         ):
             field = engine_field(label, combo, tip + " Changes apply to the host and connected clients.",
-                                 [("Open Settings → Remote engine", "remote_engine")], self.help_requested.emit)
+                                 [_REMOTE_ENGINE_LINK], self.help_requested.emit)
             self._fields[key] = field
             layout.addWidget(field, stretch=1)
             combo.activated.connect(lambda index, key=key, combo=combo: self._activate(key, combo.itemData(index)))
@@ -64,18 +86,14 @@ class RemoteEngineControls(QWidget):
             if key == "device":
                 for dependency in runtime.get("dependencies", []):
                     if dependency.get("installable") and dependency["device"] not in values:
-                        combo.addItem(f"{_LABELS.get(dependency['device'], dependency['device'])} · Set up on host",
-                                      "setup:" + dependency["device"])
+                        device_label = _LABELS.get(dependency["device"], dependency["device"])
+                        combo.addItem(f"{device_label} · Set up on host", "setup:" + dependency["device"])
             if not values:
                 combo.addItem("Not reported" if engine else "Not connected", None)
             elif value:
                 combo.setCurrentIndex(combo.findData(value))
             combo.blockSignals(blocked)
-            host = getattr(state, "host", "") or "the host"
-            tip = (f"Runtime on {host}. Changes apply to the host and connected clients."
-                   if runtime.get("can_configure") else
-                   f"Update OpenWhisper on {host} to change its runtime from here."
-                   if engine else "Connect to the host to see its runtime choices.")
+            tip = _runtime_tip(getattr(state, "host", "") or "the host", runtime, engine)
             if value and value not in options[key] and runtime.get("can_configure"):
                 tip += " The saved choice is currently unavailable on the host."
                 combo.model().item(combo.findData(value)).setEnabled(False)
@@ -94,7 +112,8 @@ class RemoteEngineControls(QWidget):
 
     def _sync_enabled(self):
         for _key, combo in self._combos():
-            combo.setEnabled(bool(combo.property("remoteEditable")) and not self._locked and not self._pending)
+            editable = bool(combo.property("remoteEditable"))
+            combo.setEnabled(editable and not self._locked and not self._pending)
 
     def _activate(self, key, value):
         runtime = getattr(self._state, "runtime", None) or {}
