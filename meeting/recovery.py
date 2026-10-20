@@ -93,6 +93,33 @@ def _register_recovered_chunk(
     return int(repository.register_chunk(**fields)), True
 
 
+def _recovery_sidecars(spool_dir: str) -> Optional[List[str]]:
+    """Sorted ``*.recovery.json`` paths in the spool, or None when it cannot be read."""
+    try:
+        return sorted(
+            entry.path for entry in os.scandir(spool_dir)
+            if entry.is_file() and entry.name.endswith(".recovery.json")
+        )
+    except OSError:
+        logger.exception("Could not scan meeting spool %s", spool_dir)
+        return None
+
+
+def _restore_orphan(artifact: str, orphan: str, canonical: str) -> Optional[str]:
+    """The WAV path to recover from, or None when an orphan cannot be restored."""
+    # The DB row may have committed immediately before the old process
+    # died.  Make its expected canonical path available before removing
+    # the leftover transaction marker.
+    if artifact != orphan or os.path.exists(canonical):
+        return artifact
+    try:
+        os.replace(orphan, canonical)
+    except OSError:
+        logger.exception("Could not restore orphan WAV %s", orphan)
+        return None
+    return canonical
+
+
 def _recover_stranded_wavs(
     repository: Any,
     meeting: Dict[str, Any],
@@ -113,13 +140,8 @@ def _recover_stranded_wavs(
         for row in chunks
     }
     recovered = 0
-    try:
-        sidecars = sorted(
-            entry.path for entry in os.scandir(spool_dir)
-            if entry.is_file() and entry.name.endswith(".recovery.json")
-        )
-    except OSError:
-        logger.exception("Could not scan meeting spool %s", spool_dir)
+    sidecars = _recovery_sidecars(spool_dir)
+    if sidecars is None:
         return 0
 
     for sidecar in sidecars:
@@ -140,16 +162,9 @@ def _recover_stranded_wavs(
         seq = int(meta["seq"])
         identity = (channel, seq)
 
-        # The DB row may have committed immediately before the old process
-        # died.  Make its expected canonical path available before removing
-        # the leftover transaction marker.
-        if artifact == orphan and not os.path.exists(canonical):
-            try:
-                os.replace(orphan, canonical)
-                artifact = canonical
-            except OSError:
-                logger.exception("Could not restore orphan WAV %s", orphan)
-                continue
+        artifact = _restore_orphan(artifact, orphan, canonical)
+        if artifact is None:
+            continue
 
         wav_info = _read_wav_duration(artifact)
         if wav_info is None:
@@ -187,6 +202,14 @@ def _recover_stranded_wavs(
     return recovered
 
 
+def _pcm_sample_count(path: str) -> int:
+    """16-bit samples in a PCM file; 0 when it is missing or unreadable."""
+    try:
+        return os.path.getsize(path) // 2
+    except OSError:
+        return 0
+
+
 def _pcm_artifacts(
     spool_dir: str,
     channel: str,
@@ -217,18 +240,11 @@ def _pcm_artifacts(
     prefix_path = os.path.join(spool_dir, f"{channel}_session.16k.pcm")
     raw_path = session_pcm_path(spool_dir, channel)
     artifacts: List[Tuple[str, int, int, float]] = []
-    prefix_samples = 0
-    try:
-        prefix_samples = os.path.getsize(prefix_path) // 2
-    except OSError:
-        pass
+    prefix_samples = _pcm_sample_count(prefix_path)
     if prefix_samples > 0:
         artifacts.append((prefix_path, TARGET_RATE, prefix_samples, global_origin))
 
-    try:
-        raw_samples = os.path.getsize(raw_path) // 2
-    except OSError:
-        raw_samples = 0
+    raw_samples = _pcm_sample_count(raw_path)
     # A failed unlink after successful prefix conversion can leave the old raw
     # source in place.  New metadata marks it inactive so recovery does not
     # register the same audio twice.  Legacy metadata has no marker and keeps
@@ -565,22 +581,7 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
         logger.exception("Failed to list pending chunks for %s", meeting_id)
         return False
     total = len(pending)
-    progress = {"done": 0}
-
-    def _report() -> None:
-        if on_progress is None:
-            return
-        try:
-            on_progress(progress["done"], total)
-        except Exception:
-            logger.exception("Finalize progress callback raised")
-
-    def _on_chunk_result(chunk, segments) -> None:
-        repository.commit_chunk_transcription(
-            meeting_id, chunk.chunk_id, segments
-        )
-        progress["done"] += 1
-        _report()
+    progress = _FinalizeProgress(repository, meeting_id, total, on_progress)
 
     drained = True
     engine = None
@@ -593,14 +594,11 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
             from meeting.corrections import repository_term_rules
 
             leased = acquire_model_lease(model_lease) if remote is None else False
-            if remote is not None:
-                asr_language = remote.get("language") or asr_language
-            language = (asr_language or "auto").strip().lower()
             engine = MeetingAsrEngine(
                 model_name,
                 meeting_id,
                 repository,
-                language=None if language == "auto" else language,
+                language=_finalize_language(remote, asr_language),
                 # Corrections offered during the meeting keep priming the
                 # decoder when leftover chunks are transcribed afterwards.
                 term_rules=repository_term_rules(repository, meeting_id),
@@ -610,36 +608,85 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
                 logger.error("ASR model %r unavailable; cannot finalize %s",
                              model_name, meeting_id)
                 return False
-            engine.start(_on_chunk_result)
-            requeue = getattr(engine, "requeue_pending", None)
-            if callable(requeue):
-                requeue()
-            else:
-                for chunk in pending:
-                    engine.enqueue(SpooledChunk(
-                        chunk_id=chunk["id"],
-                        meeting_id=chunk["meeting_id"],
-                        channel=chunk["channel"],
-                        seq=chunk["seq"],
-                        file_path=chunk["file_path"],
-                        start_s=chunk["start_s"],
-                        duration_s=chunk["duration_s"],
-                        sample_rate=chunk["sample_rate"],
-                    ))
-            _report()
+            engine.start(progress.on_chunk_result)
+            _enqueue_pending(engine, pending)
+            progress.report()
             drained = engine.drain(FINALIZE_DRAIN_TIMEOUT_S)
     except Exception:
         logger.exception("Finalize pipeline failed for meeting %s", meeting_id)
         return False
     finally:
-        if engine is not None:
-            try:
-                engine.stop()
-            except Exception:
-                logger.exception("ASR stop failed after finalize of %s",
-                                 meeting_id)
+        _stop_engine(engine, meeting_id)
         if leased:
             release_model_lease(model_lease)
+    return _complete_finalize(repository, meeting, meeting_id, drained, total)
+
+
+class _FinalizeProgress:
+    """Commits each transcribed chunk and reports progress to an optional callback."""
+
+    def __init__(self, repository: Any, meeting_id: str, total: int,
+                 on_progress: Optional[Callable[[int, int], None]]) -> None:
+        self.repository = repository
+        self.meeting_id = meeting_id
+        self.total = total
+        self.on_progress = on_progress
+        self.done = 0
+
+    def report(self) -> None:
+        if self.on_progress is None:
+            return
+        try:
+            self.on_progress(self.done, self.total)
+        except Exception:
+            logger.exception("Finalize progress callback raised")
+
+    def on_chunk_result(self, chunk, segments) -> None:
+        self.repository.commit_chunk_transcription(
+            self.meeting_id, chunk.chunk_id, segments
+        )
+        self.done += 1
+        self.report()
+
+
+def _finalize_language(remote: Optional[Dict[str, Any]], asr_language: str) -> Optional[str]:
+    """The decoder language, preferring the saved remote route's; None means detect."""
+    if remote is not None:
+        asr_language = remote.get("language") or asr_language
+    language = (asr_language or "auto").strip().lower()
+    return None if language == "auto" else language
+
+
+def _enqueue_pending(engine: Any, pending: List[Dict[str, Any]]) -> None:
+    requeue = getattr(engine, "requeue_pending", None)
+    if callable(requeue):
+        requeue()
+        return
+    for chunk in pending:
+        engine.enqueue(SpooledChunk(
+            chunk_id=chunk["id"],
+            meeting_id=chunk["meeting_id"],
+            channel=chunk["channel"],
+            seq=chunk["seq"],
+            file_path=chunk["file_path"],
+            start_s=chunk["start_s"],
+            duration_s=chunk["duration_s"],
+            sample_rate=chunk["sample_rate"],
+        ))
+
+
+def _stop_engine(engine: Any, meeting_id: str) -> None:
+    if engine is None:
+        return
+    try:
+        engine.stop()
+    except Exception:
+        logger.exception("ASR stop failed after finalize of %s",
+                         meeting_id)
+
+
+def _complete_finalize(repository: Any, meeting: Dict[str, Any], meeting_id: str,
+                       drained: bool, total: int) -> bool:
     if not drained:
         logger.error("ASR drain timed out finalizing meeting %s", meeting_id)
         return False
