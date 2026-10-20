@@ -1,5 +1,6 @@
 """Fuzzy string matching and scoring utilities for dropdowns and search inputs."""
 import re
+from itertools import pairwise
 from typing import List, Optional
 
 _DELIMITER_PATTERN = re.compile(r"[^\w]+", re.UNICODE)
@@ -18,6 +19,164 @@ def _normalize_delimiters(text: str) -> str:
 def _strip_delimiters(text: str) -> str:
     """Strip all whitespace and punctuation delimiters from lowercase text."""
     return "".join(_split_tokens(text))
+
+
+# Base score for each strategy, best first. Bonuses and penalties below stay
+# small enough that a strategy never outranks the one above it.
+_EXACT_SCORE = 10000
+_SUBSTRING_SCORE = 3000
+_NORMALIZED_SUBSTRING_SCORE = 2200
+_MULTI_TOKEN_SCORE = 1800
+_STRIPPED_SUBSTRING_SCORE = 1500
+_SUBSEQUENCE_SCORE = 700
+_SUBSEQUENCE_MIN_SCORE = 100
+
+_PATH_SEPARATOR = "/"
+_WORD_DELIMITERS = " -_:."
+_BOUNDARY_CHARS = _WORD_DELIMITERS + _PATH_SEPARATOR
+
+# Shorter query tokens only match whole tokens or token prefixes, so that
+# e.g. 'o' does not match the inside of every target token.
+_MIN_INFIX_TOKEN_LEN = 3
+_MIN_SUBSEQUENCE_LEN = 2
+
+
+def _position_penalty(pos: int) -> int:
+    """Penalize matches that start later in the target, capped at 100."""
+    return min(100, pos * 2)
+
+
+def _score_substring(q: str, t: str) -> Optional[int]:
+    """Strategy 1: exact contiguous substring in the raw target."""
+    pos = t.find(q)
+    if pos == -1:
+        return None
+    if pos == 0 or t[pos - 1] == _PATH_SEPARATOR:
+        prefix_bonus = 1000
+    elif t[pos - 1] in _WORD_DELIMITERS:
+        prefix_bonus = 500
+    else:
+        prefix_bonus = 0
+    return _SUBSTRING_SCORE + prefix_bonus - _position_penalty(pos)
+
+
+def _score_normalized_substring(q: str, t: str) -> Optional[int]:
+    """Strategy 2: substring after collapsing all delimiters to spaces."""
+    q_norm = _normalize_delimiters(q)
+    if not q_norm:
+        return None
+    t_norm = _normalize_delimiters(t)
+    pos = t_norm.find(q_norm)
+    if pos == -1:
+        return None
+    if pos == 0:
+        prefix_bonus = 800
+    elif t_norm[pos - 1] == " ":
+        prefix_bonus = 500
+    else:
+        prefix_bonus = 0
+    return _NORMALIZED_SUBSTRING_SCORE + prefix_bonus - _position_penalty(pos)
+
+
+def _match_token(q_tok: str, t_tokens: List[str], taken: List[int]) -> Optional[int]:
+    """Return the index of the first free target token matching ``q_tok``.
+
+    Prefers an exact token match, then a prefix, then (for longer query
+    tokens) a substring.
+    """
+    free = [(idx, t_tok) for idx, t_tok in enumerate(t_tokens) if idx not in taken]
+    for idx, t_tok in free:
+        if t_tok == q_tok:
+            return idx
+    for idx, t_tok in free:
+        if t_tok.startswith(q_tok):
+            return idx
+    if len(q_tok) >= _MIN_INFIX_TOKEN_LEN:
+        for idx, t_tok in free:
+            if q_tok in t_tok:
+                return idx
+    return None
+
+
+def _score_multi_token(q: str, t: str) -> Optional[int]:
+    """Strategy 3: every query token matches a distinct target token."""
+    q_tokens = _split_tokens(q)
+    t_tokens = _split_tokens(t)
+    if len(q_tokens) < 2 or not t_tokens:
+        return None
+
+    matched: List[int] = []
+    for q_tok in q_tokens:
+        idx = _match_token(q_tok, t_tokens, matched)
+        if idx is None:
+            return None
+        matched.append(idx)
+
+    # _match_token tries exact matches first, so a matched token equal to
+    # its query token is exactly the case where the exact pass found it.
+    exact_count = sum(
+        1 for q_tok, idx in zip(q_tokens, matched, strict=True) if t_tokens[idx] == q_tok
+    )
+    order_bonus = 200 if matched == sorted(matched) else 0
+    return _MULTI_TOKEN_SCORE + order_bonus + exact_count * 50
+
+
+def _score_stripped_substring(q: str, t: str) -> Optional[int]:
+    """Strategy 4: substring with all delimiters removed ('gpt4o' -> 'openai/gpt-4o')."""
+    q_stripped = _strip_delimiters(q)
+    if not q_stripped:
+        return None
+    pos = _strip_delimiters(t).find(q_stripped)
+    if pos == -1:
+        return None
+    return _STRIPPED_SUBSTRING_SCORE - _position_penalty(pos)
+
+
+def _subsequence_positions(chars: str, t: str) -> Optional[List[int]]:
+    """Return the leftmost positions of ``chars`` appearing in order in ``t``."""
+    positions: List[int] = []
+    start = 0
+    for char in chars:
+        pos = t.find(char, start)
+        if pos == -1:
+            return None
+        positions.append(pos)
+        start = pos + 1
+    return positions
+
+
+def _score_subsequence(q: str, t: str) -> Optional[int]:
+    """Strategy 5: all query chars appear in order in the target."""
+    q_stripped = _strip_delimiters(q)
+    if len(q_stripped) < _MIN_SUBSEQUENCE_LEN:
+        return None
+    positions = _subsequence_positions(q_stripped, t)
+    if positions is None:
+        return None
+
+    boundary_bonus = 40 * sum(
+        1 for pos in positions if pos == 0 or t[pos - 1] in _BOUNDARY_CHARS
+    )
+    # Each match extending a run of adjacent matches earns 20 per earlier
+    # match in that run, so longer runs are rewarded more than linearly.
+    consecutive_bonus = 0
+    run = 1
+    for prev, pos in pairwise(positions):
+        run = run + 1 if pos == prev + 1 else 1
+        consecutive_bonus += (run - 1) * 20
+
+    span_penalty = min(200, (positions[-1] - positions[0]) * 3)
+    score = _SUBSEQUENCE_SCORE + consecutive_bonus + boundary_bonus - span_penalty
+    return max(_SUBSEQUENCE_MIN_SCORE, score)
+
+
+_STRATEGIES = (
+    _score_substring,
+    _score_normalized_substring,
+    _score_multi_token,
+    _score_stripped_substring,
+    _score_subsequence,
+)
 
 
 def fuzzy_score(query: str, target: str) -> Optional[int]:
@@ -46,124 +205,13 @@ def fuzzy_score(query: str, target: str) -> Optional[int]:
     t = t_raw.casefold()
 
     if q == t:
-        return 10000
+        return _EXACT_SCORE
 
-    # Strategy 1: Exact contiguous substring in raw target.
-    pos = t.find(q)
-    if pos != -1:
-        prefix_bonus = 0
-        if pos == 0 or (pos > 0 and t[pos - 1] == "/"):
-            prefix_bonus = 1000
-        elif pos > 0 and t[pos - 1] in " -_:.":
-            prefix_bonus = 500
-        pos_penalty = min(100, pos * 2)
-        return 3000 + prefix_bonus - pos_penalty
-
-    # Strategy 2: Normalized substring (all delimiters collapsed to spaces).
-    q_norm = _normalize_delimiters(q)
-    t_norm = _normalize_delimiters(t)
-    if q_norm and q_norm in t_norm:
-        norm_pos = t_norm.find(q_norm)
-        prefix_bonus = 0
-        if norm_pos == 0:
-            prefix_bonus = 800
-        elif norm_pos > 0 and t_norm[norm_pos - 1] == " ":
-            prefix_bonus = 500
-        pos_penalty = min(100, norm_pos * 2)
-        return 2200 + prefix_bonus - pos_penalty
-
-    # Strategy 3: Multi-token match (all query tokens matched against target tokens).
-    q_tokens = _split_tokens(q)
-    t_tokens = _split_tokens(t)
-    if len(q_tokens) > 1 and t_tokens:
-        matched_token_indices = []
-        exact_count = 0
-        all_tokens_found = True
-
-        for q_tok in q_tokens:
-            matched_idx = -1
-            # Prefer exact token match first, then prefix, then substring (if >= 3 chars)
-            for idx, t_tok in enumerate(t_tokens):
-                if idx in matched_token_indices:
-                    continue
-                if t_tok == q_tok:
-                    matched_idx = idx
-                    exact_count += 1
-                    break
-            if matched_idx == -1:
-                for idx, t_tok in enumerate(t_tokens):
-                    if idx in matched_token_indices:
-                        continue
-                    if t_tok.startswith(q_tok):
-                        matched_idx = idx
-                        break
-            if matched_idx == -1 and len(q_tok) >= 3:
-                for idx, t_tok in enumerate(t_tokens):
-                    if idx in matched_token_indices:
-                        continue
-                    if q_tok in t_tok:
-                        matched_idx = idx
-                        break
-
-            if matched_idx != -1:
-                matched_token_indices.append(matched_idx)
-            else:
-                all_tokens_found = False
-                break
-
-        if all_tokens_found:
-            in_order = matched_token_indices == sorted(matched_token_indices)
-            order_bonus = 200 if in_order else 0
-            exact_bonus = exact_count * 50
-            return 1800 + order_bonus + exact_bonus
-
-    # Strategy 4: Delimiter-stripped substring match (e.g., 'gpt4o' -> 'openai/gpt-4o').
-    q_stripped = _strip_delimiters(q)
-    t_stripped = _strip_delimiters(t)
-    if q_stripped and q_stripped in t_stripped:
-        stripped_pos = t_stripped.find(q_stripped)
-        pos_penalty = min(100, stripped_pos * 2)
-        return 1500 - pos_penalty
-
-    # Strategy 5: Subsequence match (all query chars appear in order in target).
-    if q_stripped and len(q_stripped) >= 2:
-        target_idx = 0
-        consecutive = 0
-        consecutive_bonus = 0
-        boundary_bonus = 0
-        first_match_idx = -1
-        last_match_idx = -1
-
-        for q_char in q_stripped:
-            found = False
-            while target_idx < len(t):
-                if t[target_idx] == q_char:
-                    if first_match_idx == -1:
-                        first_match_idx = target_idx
-                    last_match_idx = target_idx
-
-                    if target_idx == 0 or (target_idx > 0 and t[target_idx - 1] in " -_/:."):
-                        boundary_bonus += 40
-
-                    if consecutive > 0:
-                        consecutive_bonus += consecutive * 20
-                    consecutive += 1
-
-                    target_idx += 1
-                    found = True
-                    break
-                else:
-                    consecutive = 0
-                    target_idx += 1
-
-            if not found:
-                return None
-
-        span = last_match_idx - first_match_idx
-        span_penalty = min(200, span * 3)
-        score = 700 + consecutive_bonus + boundary_bonus - span_penalty
-        return max(100, score)
-
+    # The first strategy that matches decides the score.
+    for strategy in _STRATEGIES:
+        score = strategy(q, t)
+        if score is not None:
+            return score
     return None
 
 
