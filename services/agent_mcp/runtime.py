@@ -43,6 +43,43 @@ def _tailscale_address():
     return address, status.dns_name.lower().rstrip(".")
 
 
+def _is_valid_port(port):
+    return not isinstance(port, bool) and isinstance(port, int) and 1 <= port <= 65535
+
+
+def _listen_addresses(port, tailscale):
+    """Addresses to listen on, extra Host names to accept, and the Tailscale URL ("" without)."""
+    addresses = ["127.0.0.1"]
+    allowed_hosts = []
+    remote_url = ""
+    if tailscale:
+        address, dns_name = _tailscale_address()
+        addresses.append(address)
+        allowed_hosts.append(address)
+        if dns_name:
+            allowed_hosts.append(dns_name)
+        remote_url = f"http://{address}:{port}/mcp"
+    return addresses, allowed_hosts, remote_url
+
+
+def _bind_sockets(sockets, addresses, port):
+    """Listen on each address, adding each socket to ``sockets`` as soon as it exists.
+
+    Bind ourselves so an occupied port is recoverable, not uvicorn's
+    SystemExit. Windows' exclusive bind prevents a second listener.
+    """
+    for address in addresses:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sockets.append(sock)
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((address, port))
+        sock.listen(128)
+        sock.setblocking(False)
+
+
 class McpRuntime:
     def __init__(self, database=None, *, credentials=None, settings=None):
         self._database = database
@@ -78,11 +115,7 @@ class McpRuntime:
             return self._token if self.status().state == "running" else ""
 
     def start(self, port=DEFAULT_PORT, *, tailscale=False):
-        if (
-            isinstance(port, bool)
-            or not isinstance(port, int)
-            or not 1 <= port <= 65535
-        ):
+        if not _is_valid_port(port):
             raise ValueError("MCP port must be between 1 and 65535.")
         with self._lock:
             if self._thread and self._thread.is_alive():
@@ -119,11 +152,7 @@ class McpRuntime:
         self._settings = settings
         if settings.get(SettingsKey.MCP_ENABLED, False) is True:
             port = settings.get(SettingsKey.MCP_PORT, DEFAULT_PORT)
-            if (
-                isinstance(port, bool)
-                or not isinstance(port, int)
-                or not 1 <= port <= 65535
-            ):
+            if not _is_valid_port(port):
                 port = DEFAULT_PORT
             if settings.get(SettingsKey.MCP_TAILSCALE_ENABLED, False) is True:
                 self.start(port, tailscale=True)
@@ -140,28 +169,13 @@ class McpRuntime:
         self._settings = settings
 
     def _serve(self, port, tailscale=False):
-        from services.credentials import CredentialStoreError, store
+        from services.credentials import CredentialStoreError
 
         sockets = []
         error = ""
         try:
-            addresses = ["127.0.0.1"]
-            allowed_hosts = []
-            remote_url = ""
-            if tailscale:
-                address, dns_name = _tailscale_address()
-                addresses.append(address)
-                allowed_hosts.append(address)
-                if dns_name:
-                    allowed_hosts.append(dns_name)
-                remote_url = f"http://{address}:{port}/mcp"
-            credentials = (
-                self._credentials if self._credentials is not None else store()
-            )
-            token = credentials.get(CREDENTIAL_NAME)
-            if not token:
-                token = secrets.token_urlsafe(32)
-                credentials.set(CREDENTIAL_NAME, token)
+            addresses, allowed_hosts, remote_url = _listen_addresses(port, tailscale)
+            token = self._saved_token()
             if self._stop.is_set():
                 return
 
@@ -171,18 +185,7 @@ class McpRuntime:
             from services.agent_mcp.app import create_app
             from services.settings import settings_manager
 
-            # Bind ourselves so an occupied port is recoverable, not uvicorn's
-            # SystemExit. Windows' exclusive bind prevents a second listener.
-            for address in addresses:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sockets.append(sock)
-                if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
-                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-                else:
-                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                sock.bind((address, port))
-                sock.listen(128)
-                sock.setblocking(False)
+            _bind_sockets(sockets, addresses, port)
             app = create_app(
                 self._database or config.DATABASE_FILE,
                 token,
@@ -209,15 +212,8 @@ class McpRuntime:
                     timeout_graceful_shutdown=3,
                 )
             )
-            with self._lock:
-                self._server = server
-                if self._stop.is_set():
-                    server.should_exit = True
-                else:
-                    self._token = token
-                    self._status = ServerStatus(
-                        "starting", "Starting MCP…", port, remote_url
-                    )
+            self._publish_server(server, token, port, remote_url)
+
             async def serve() -> None:
                 quiet_connection_lost(asyncio.get_running_loop())
                 await server.serve(sockets=sockets)
@@ -242,11 +238,37 @@ class McpRuntime:
             with self._lock:
                 self._token = ""
                 self._server = None
+                self._status = self._ended_status(error, port)
+
+    def _saved_token(self):
+        """The saved MCP token, creating and saving one the first time."""
+        from services.credentials import store
+
+        credentials = (
+            self._credentials if self._credentials is not None else store()
+        )
+        token = credentials.get(CREDENTIAL_NAME)
+        if not token:
+            token = secrets.token_urlsafe(32)
+            credentials.set(CREDENTIAL_NAME, token)
+        return token
+
+    def _publish_server(self, server, token, port, remote_url):
+        with self._lock:
+            self._server = server
+            if self._stop.is_set():
+                server.should_exit = True
+            else:
+                self._token = token
                 self._status = ServerStatus(
-                    "error" if error and not self._stop.is_set() else "stopped",
-                    error if error and not self._stop.is_set() else "MCP is off.",
-                    port,
+                    "starting", "Starting MCP…", port, remote_url
                 )
+
+    def _ended_status(self, error, port):
+        """The status once the listener is gone; a stop asked for is never an error."""
+        if error and not self._stop.is_set():
+            return ServerStatus("error", error, port)
+        return ServerStatus("stopped", "MCP is off.", port)
 
 
 runtime = McpRuntime()
