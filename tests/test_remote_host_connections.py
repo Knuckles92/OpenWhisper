@@ -238,3 +238,71 @@ def test_credentials_cannot_be_sent_without_a_pin(monkeypatch):
     monkeypatch.setattr("websockets.sync.client.connect", unexpected_connect)
     with pytest.raises(client._WrongPlace):
         client._open("127.0.0.1", 1, 1, token="synthetic-test-token")
+
+
+@pytest.mark.parametrize("route", ["probe", "tailscale"])
+def test_anonymous_budget_covers_blocked_routing(host, monkeypatch, route):
+    pairing = _pair(host)
+    release = threading.Event()
+    entered = []
+    lock = threading.Lock()
+
+    def blocked(*args):
+        with lock:
+            entered.append(True)
+        assert release.wait(5)
+        return None
+
+    if route == "probe":
+        monkeypatch.setattr(host, "_probe", blocked)
+        message = {"type": "probe"}
+    else:
+        monkeypatch.setattr(host, "_tailscale_owner", lambda: "synthetic-owner")
+        monkeypatch.setattr("services.remote_asr.host.tailscale.own_device", blocked)
+        message = {"type": "pair", "tailscale": True,
+                   "protocol": protocol.PROTOCOL_VERSION}
+    sockets = []
+    connection = None
+    try:
+        for _ in range(MAX_PENDING_HANDSHAKES):
+            ws = client._open("127.0.0.1", host.port, 2)
+            sockets.append(ws)
+            ws.send(json.dumps(message))
+        assert _wait_for(lambda: len(entered) == MAX_PENDING_HANDSHAKES)
+        assert host._handshake_slots._value == 0
+        for _ in range(8):
+            excess = client._open("127.0.0.1", host.port, 2)
+            sockets.append(excess)
+            assert json.loads(excess.recv(timeout=2))["code"] == "busy"
+        assert len(entered) == MAX_PENDING_HANDSHAKES
+        connection = _connect(host, pairing)
+        assert connection.request("transcribe", audio=np.zeros(160, dtype=np.float32))["text"]
+    finally:
+        release.set()
+        if connection:
+            connection.close()
+        for ws in sockets:
+            ws.close()
+    assert _wait_for(lambda: host._handshake_slots._value == MAX_PENDING_HANDSHAKES)
+    assert _wait_for(lambda: host._connection_slots._value == 12)
+
+
+@pytest.mark.parametrize("stage", ["authenticate", "serve"])
+def test_legacy_admission_exceptions_release_each_reservation_once(host, monkeypatch, stage):
+    pairing = _pair(host)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("synthetic routing failure")
+
+    if stage == "authenticate":
+        monkeypatch.setattr(host.registry, "authenticate", fail)
+    else:
+        monkeypatch.setattr(host, "_serve_authenticated", fail)
+    ws = client._open("127.0.0.1", host.port, 2)
+    try:
+        with pytest.raises(ConnectionClosed):
+            _hello(ws, pairing.token)
+    finally:
+        ws.close()
+    assert _wait_for(lambda: host._handshake_slots._value == MAX_PENDING_HANDSHAKES)
+    assert _wait_for(lambda: host._connection_slots._value == 12)

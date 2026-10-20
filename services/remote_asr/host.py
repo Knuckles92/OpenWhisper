@@ -636,14 +636,23 @@ class SpeechHost:
         if not self._handshake_slots.acquire(blocking=False):
             self._refuse_connection(ws)
             return
+        anonymous_reserved = True
+
+        def release_anonymous():
+            nonlocal anonymous_reserved
+            if anonymous_reserved:
+                anonymous_reserved = False
+                self._handshake_slots.release()
+
         try:
             message = self._receive_hello(ws)
+            if message is not None:
+                self._handle_admitted(ws, message, release_anonymous=release_anonymous)
         finally:
-            self._handshake_slots.release()
-        if message is not None:
-            self._handle_admitted(ws, message)
+            release_anonymous()
 
-    def _handle_admitted(self, ws, message: dict, *, connection_admitted=False) -> None:
+    def _handle_admitted(self, ws, message: dict, *, connection_admitted=False,
+                         release_anonymous=None) -> None:
         peer = ws.remote_address
         address = str(peer[0]) if isinstance(peer, tuple) and peer else "unknown"
         if message.get("type") == "probe":
@@ -662,7 +671,8 @@ class SpeechHost:
             })
             ws.close(protocol.CLOSE_BAD_REQUEST, "protocol version")
             return
-        self._route_hello(ws, message, address, connection_admitted=connection_admitted)
+        self._route_hello(ws, message, address, connection_admitted=connection_admitted,
+                          release_anonymous=release_anonymous)
 
     @staticmethod
     def _receive_hello(ws) -> Optional[dict]:
@@ -683,7 +693,8 @@ class SpeechHost:
             return None
         return message
 
-    def _route_hello(self, ws, message: dict, address: str, *, connection_admitted=False) -> None:
+    def _route_hello(self, ws, message: dict, address: str, *, connection_admitted=False,
+                     release_anonymous=None) -> None:
         kind = message.get("type")
         if kind == "pair" and message.get("tailscale") is True:
             self._pair_tailscale(ws, message, address)
@@ -692,7 +703,8 @@ class SpeechHost:
         elif kind == "pair_request":
             self._pair_request(ws, message, address)
         elif kind == "hello":
-            self._serve(ws, message, address, connection_admitted=connection_admitted)
+            self._serve(ws, message, address, connection_admitted=connection_admitted,
+                        release_anonymous=release_anonymous)
         else:
             ws.close(protocol.CLOSE_BAD_REQUEST, "expected hello")
 
@@ -951,7 +963,8 @@ class SpeechHost:
             return "stopped"
         return "allowed" if request.decision else "denied"
 
-    def _serve(self, ws, message: dict, address: str, *, connection_admitted=False) -> None:
+    def _serve(self, ws, message: dict, address: str, *, connection_admitted=False,
+               release_anonymous=None) -> None:
         device = self.registry.authenticate(message.get("token"))
         if device is None:
             self._send(ws, {
@@ -972,6 +985,10 @@ class SpeechHost:
             self._refuse_connection(ws)
             return
         try:
+            # Promotion transfers ownership from the anonymous routing budget to
+            # the authenticated lifetime budget, without double-release on exit.
+            if release_anonymous is not None:
+                release_anonymous()
             self._serve_authenticated(ws, message, address, device)
         finally:
             self._connection_slots.release()
