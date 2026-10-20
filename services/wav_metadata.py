@@ -16,6 +16,8 @@ ORIGINATOR = "OpenWhisper"
 SOFTWARE = "OpenWhisper"
 BEXT_SIZE = 602
 COPY_BLOCK_BYTES = 1024 * 1024
+# RIFF stores its size as an unsigned 32-bit field.
+_MAX_RIFF_SIZE = 0xFFFFFFFF
 
 _BEXT_DATE = slice(320, 330)
 _BEXT_TIME = slice(330, 338)
@@ -41,21 +43,15 @@ def stamp_wav_origination(path: str, when: datetime) -> bool:
             if not _is_wave(header):
                 return False
             source_size = os.fstat(source.fileno()).st_size
-            aligned_end = 12
-            for chunk_id, offset, size in _scan_chunk_headers(source, source_size):
-                if chunk_id == b"bext":
-                    return False
-                if chunk_id == b"LIST" and size >= 4:
-                    source.seek(offset)
-                    if source.read(4) == b"INFO":
-                        return False
-                aligned_end = offset + size + (size & 1)
+            aligned_end = _untagged_aligned_end(source, source_size)
+            if aligned_end is None:
+                return False
             # Python's wave writer can omit the final pad byte for odd-length
             # 8-bit PCM. Insert it before adding another RIFF chunk.
             padding = b"\x00" if aligned_end > source_size else b""
             metadata = padding + _list_info_chunk(when) + _bext_chunk(when)
             riff_size = source_size + len(metadata) - 8
-            if riff_size > 0xFFFFFFFF:
+            if riff_size > _MAX_RIFF_SIZE:
                 raise WavMetadataError("Recording is too large for RIFF metadata")
             directory = os.path.dirname(os.path.abspath(path)) or os.curdir
             fd, temp_path = tempfile.mkstemp(suffix=".wav", dir=directory)
@@ -63,14 +59,7 @@ def stamp_wav_origination(path: str, when: datetime) -> bool:
             fd = None  # ownership transferred to destination
             with destination:
                 destination.write(header[:4] + struct.pack("<I", riff_size) + header[8:])
-                source.seek(12)
-                remaining = source_size - 12
-                while remaining:
-                    block = source.read(min(COPY_BLOCK_BYTES, remaining))
-                    if not block:
-                        raise WavMetadataError("Recording was truncated during metadata copy")
-                    destination.write(block)
-                    remaining -= len(block)
+                _copy_chunks(source, destination, source_size)
                 destination.write(metadata)
                 destination.flush()
                 os.fsync(destination.fileno())
@@ -83,6 +72,32 @@ def stamp_wav_origination(path: str, when: datetime) -> bool:
             os.remove(temp_path)
         raise
     return True
+
+
+def _untagged_aligned_end(source, source_size: int) -> Optional[int]:
+    """Return where the last chunk's padding ends, or None if already tagged."""
+    aligned_end = 12
+    for chunk_id, offset, size in _scan_chunk_headers(source, source_size):
+        if chunk_id == b"bext":
+            return None
+        if chunk_id == b"LIST" and size >= 4:
+            source.seek(offset)
+            if source.read(4) == b"INFO":
+                return None
+        aligned_end = offset + size + (size & 1)
+    return aligned_end
+
+
+def _copy_chunks(source, destination, source_size: int) -> None:
+    """Stream everything after the RIFF header from ``source`` to ``destination``."""
+    source.seek(12)
+    remaining = source_size - 12
+    while remaining:
+        block = source.read(min(COPY_BLOCK_BYTES, remaining))
+        if not block:
+            raise WavMetadataError("Recording was truncated during metadata copy")
+        destination.write(block)
+        remaining -= len(block)
 
 
 def _scan_chunk_headers(handle, length: int) -> Iterator[Tuple[bytes, int, int]]:
