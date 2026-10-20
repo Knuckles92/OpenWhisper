@@ -8,8 +8,17 @@ pairing files or credential storage. Temporary certificates and in-memory device
 registries are discarded. `OPENWHISPER_DATA_DIR` is temporary before app imports.
 `ORT_DISABLE_TELEMETRY=1` is set before importing optional inference packages and
 inherited by children. No external service or paid model API is used.
+The harness preserves existing proxy exclusions and adds loopback addresses to
+`NO_PROXY` and `no_proxy`, so its local traffic never needs an outbound proxy.
 
 Install the app's requirements, then `pip install -r benchmarks/host_load/requirements.txt`.
+For the constrained setup tested here (Python 3.12.14, pytest 9.1.1 and
+pytest-xdist 3.8.0), use:
+
+```sh
+python -m pip install -r requirements.txt -r requirements-build.txt -r benchmarks/host_load/requirements.txt -c requirements-release-constraints.txt
+```
+
 Run from the repository root:
 
 ```sh
@@ -57,7 +66,10 @@ from capacity timing. The CPU percent scale is 100% per saturated core.
   `--chatty-history` to have the real broker issue one query/client/second and
   receive synthetic records. Without the flag these connections stay idle.
 - `local`: remote dictation plus host-owned requests against the same engine
-  lock; this models shared-engine contention, not keyboard/UI timing.
+  lock; this is a shared-engine contention proxy, not owner UI/backend
+  scheduling. In particular, real Whisper uses `fixture.engine.transcribe`
+  and therefore the remote-only `WhisperEngine` lock, unlike the actual local
+  entry through `IsolatedWhisperModel`.
 - `records`: client zero sends 1 MiB `records_put` frames every 200 ms by default;
   other clients dictate. The sink writes to a temporary file. This measures
   real admission/TLS/dispatch/disk-copy contention, **not** full production
@@ -78,7 +90,11 @@ The main SLO is observed p95 final-text latency <1 second for clips <15 seconds,
 with no failed/censored final requests and no required connection refusals.
 Preview skips are separate, not failed final dictations. No low-sample run
 certifies reliability. Every summary includes offered/successful sample counts
-and the one-sided 95% upper failure-rate bound when zero failures were observed.
+and a nominal one-sided 95% binomial upper failure-rate bound when zero failures
+were observed. That bound assumes independent/exchangeable Bernoulli attempts;
+correlated, fixed-seed shared-queue traces do not establish fleet reliability.
+Pure meeting runs have no dictation-final SLO: `acceptance_applicable=false`
+and `acceptance_observed=null`, not a failed meeting SLO.
 A CPU profile that cannot meet a one-second SLO at N=1 may still serve useful
 work with a looser latency target.
 
@@ -146,10 +162,27 @@ fairness, restart, revocation and connection leak experiments have separate
 scripts/results in the report rather than being silently mixed into capacity
 curves.
 
+### Method version
+
+Schema 3 holds successful main/history connections through the entire generation
+window, including clients with zero scheduled utterances. Schema 2 closed each
+client after its last request, so a zero-offer client could release a slot during
+startup and allow more unique clients than the simultaneous connection cap.
+Schema 3 also records every unserved host-own arrival and actual
+`engine.describe()` metadata, separate from requested configuration, plus the
+harness source hash. Describe metadata is the application's reported engine
+state, not an independent GPU/VRAM measurement.
+
+`--arrival-grace-s 10` lets already-planned arrivals be issued during a bounded
+ten-second grace period after generation ends. Remaining unissued arrivals
+are right-censored, not proven server failures. Use identical method versions
+and grace periods for paired comparisons; do not silently combine schema-2
+primary screens with schema-3 sustained followups.
+
 For a soak:
 
 ```sh
-python -m benchmarks.host_load --workload mixed --chatty-history --clients 4 --duration 3600 --rate .05 --connection-cycle-s 30 --output .tmp/host-load/soak.json
+python -m benchmarks.host_load --workload mixed --chatty-history --clients 4 --duration 3600 --rate .05 --connection-cycle-s 30 --quiescence-s 5 --output .tmp/host-load/soak.json
 ```
 
 The server samples resources once per second. Start, live-server quiescent
@@ -157,3 +190,6 @@ The server samples resources once per second. Start, live-server quiescent
 normal retained allocation from still-live handlers. Overlapping a soak with
 other work is acceptable for leak observation, but its latency must then be
 labeled shared-machine and not compared as an isolated capacity curve.
+Connection cycles are graceful reconnects between final/meeting requests, not
+abrupt socket-drop tests. The five-second settle occurs while the host remains
+alive, before its final resource snapshot and shutdown.

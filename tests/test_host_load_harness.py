@@ -1,11 +1,12 @@
 """The optional load harness must count overload rather than hide arrivals."""
 import random
+import threading
 
 import pytest
 
 pytest.importorskip("psutil")
 
-from benchmarks.host_load.runner import Measurements, default_args, make_schedule, summary
+from benchmarks.host_load.runner import Measurements, _local_worker, default_args, make_schedule, summary
 from benchmarks.host_load.profiles import PROFILES
 
 
@@ -86,3 +87,36 @@ def test_lifecycle_rows_are_not_audio_requests_and_refusals_fail_acceptance():
     assert result["requests"] == 1
     assert result["connection_refusals"] == result["history_refusals"] == 1
     assert not result["acceptance_observed"]
+
+
+def test_host_own_stop_preserves_all_planned_arrivals():
+    stop = threading.Event()
+    stop.set()
+    data = Measurements()
+    args = default_args(duration=100., rate=.2)
+    _local_worker(None, data, args, 0., stop)
+    expected = 0
+    due = 0.
+    rng = random.Random(args.seed + 991)
+    while due < args.duration:
+        expected += 1
+        due += rng.expovariate(args.rate)
+    assert len(data.rows) == expected
+    result = summary(data, args.duration)
+    assert result["local_offered"] == result["local_unserved"] == expected
+    assert result["final_offered"] == 0
+
+
+def test_grace_and_quiescence_defaults_are_explicit():
+    args = default_args()
+    assert args.arrival_grace_s == 0.
+    assert args.quiescence_s == .3
+
+
+def test_meeting_dictation_acceptance_is_not_applicable():
+    data = Measurements()
+    data.add(op="transcribe", kind="meeting", role="meeting", status="ok", client=0,
+             audio_s=5., latency_s=.2, schedule_lag_s=0.)
+    result = summary(data, 10.)
+    assert not result["acceptance_applicable"]
+    assert result["acceptance_observed"] is None

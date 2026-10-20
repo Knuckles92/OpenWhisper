@@ -25,6 +25,9 @@ from unittest.mock import patch
 
 os.environ["ORT_DISABLE_TELEMETRY"] = "1"
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+for _proxy_key in ("NO_PROXY", "no_proxy"):
+    _hosts = [host for host in os.environ.get(_proxy_key, "").split(",") if host]
+    os.environ[_proxy_key] = ",".join(dict.fromkeys([*_hosts, "localhost", "127.0.0.1", "::1"]))
 
 import numpy as np
 import psutil
@@ -314,6 +317,7 @@ def _host_process(args, pipe):
         with BenchmarkHost(args) as fixture:
             pipe.send(dict(port=fixture.host.port, fingerprint=fixture.host.identity.fingerprint,
                            credentials=fixture.credentials, pid=os.getpid(),
+                           engine_description=fixture.engine.describe(),
                            resource_start=resource_snapshot(os.getpid())))
             local_thread = None
             while True:
@@ -332,7 +336,7 @@ def _host_process(args, pipe):
                     stop.set()
                     if local_thread:
                         local_thread.join(45.)
-                    time.sleep(.3)
+                    time.sleep(args.quiescence_s)
                     quiescent = dict(resource_snapshot(os.getpid()),
                                      registered_speech_clients=len(fixture.host._clients))
                     break
@@ -392,6 +396,7 @@ class RemoteFixture:
         self.pid = ready["pid"]
         self.credentials = ready["credentials"]
         self.resource_start = ready["resource_start"]
+        self.engine_description = ready["engine_description"]
         self.resource_end = None
         self.resource_quiescent = None
         self.host = SimpleNamespace(port=ready["port"], identity=SimpleNamespace(fingerprint=ready["fingerprint"]))
@@ -413,7 +418,7 @@ class RemoteFixture:
             connection.close()
         with self.pipe_lock:
             self.pipe.send(("stop",))
-            if self.pipe.poll(50.):
+            if self.pipe.poll(55. + self.args.quiescence_s):
                 final = self.pipe.recv()
                 self.local_rows = final.get("rows", [])
                 self.resource_end = final.get("resource_end")
@@ -554,7 +559,7 @@ def client_worker(fixture, records, args, index, start, stop):
     try:
         for event in schedule:
             due = start + event["at"]
-            if time.perf_counter() > start + args.duration or stop.is_set():
+            if time.perf_counter() > start + args.duration + args.arrival_grace_s or stop.is_set():
                 records.add(client=index, role=role, op=event["op"], kind=event["kind"],
                             audio_s=event["seconds"], status="not_started")
                 continue
@@ -597,6 +602,7 @@ def client_worker(fixture, records, args, index, start, stop):
                 except Exception as exc:
                     records.add(client=index, op="reconnect", status="refused", error=type(exc).__name__)
     finally:
+        _pause_until(start + args.duration, stop)
         if history:
             history.close()
         if connection:
@@ -606,11 +612,20 @@ def client_worker(fixture, records, args, index, start, stop):
 def _local_worker(fixture, records, args, start, stop):
     rng = random.Random(args.seed + 991)
     due = start
-    while due < start + args.duration and not stop.is_set():
-        if _pause_until(due, stop):
-            break
-        request(fixture, None, records, "host", "transcribe", 6., due, role="local")
+    schedule = []
+    while due < start + args.duration:
+        schedule.append(due)
         due += rng.expovariate(args.rate)
+    for due in schedule:
+        if stop.is_set() or time.perf_counter() > start + args.duration + args.arrival_grace_s:
+            records.add(client="host", role="local", op="transcribe", kind="final",
+                        audio_s=6., status="not_started")
+            continue
+        if _pause_until(due, stop):
+            records.add(client="host", role="local", op="transcribe", kind="final",
+                        audio_s=6., status="not_started")
+            continue
+        request(fixture, None, records, "host", "transcribe", 6., due, role="local")
 
 
 def _history_queries(fixture, records, args, start, stop):
@@ -668,6 +683,8 @@ def summary(records, duration):
         final_samples=len(finals), small_final_samples=len(small),
         final_offered=sum(r.get("kind") == "final" and r.get("role") != "local" for r in requests),
         final_failures=sum(r.get("kind") == "final" and r.get("role") != "local" and r["status"] != "ok" for r in requests),
+        local_offered=sum(r.get("role") == "local" for r in requests),
+        local_unserved=sum(r.get("role") == "local" and r["status"] != "ok" for r in requests),
         preview_busy=sum(r.get("kind") == "preview" and r["status"] == "busy" for r in requests))
     groups = {"latency": [r["latency_s"] for r in ok],
         "preview_staleness": [r["latency_s"] for r in ok if r.get("kind") == "preview"],
@@ -689,8 +706,12 @@ def summary(records, duration):
         metrics[name + "_max"] = max((r[name] for r in records.resources), default=None)
     metrics["acceptance_observed"] = bool(small and metrics["small_final_latency_p95_s"] < 1.
         and not metrics["final_failures"] and not metrics["connection_refusals"] and not metrics["history_refusals"])
+    metrics["acceptance_applicable"] = bool(metrics["final_offered"])
+    if not metrics["acceptance_applicable"]:
+        metrics["acceptance_observed"] = None
     metrics["zero_final_failures_95pct_upper_rate"] = (1. - .05 ** (1. / metrics["final_offered"])
         if metrics["final_offered"] and not metrics["final_failures"] else None)
+    metrics["zero_failure_bound_caveat"] = "Nominal binomial bound assumes independent/exchangeable Bernoulli attempts; correlated fixed-seed queue traces do not establish fleet reliability."
     metrics["acceptance_caveat"] = "Observed in this finite synthetic run, not certified hardware capacity; inspect sample count and offered arrival rate."
     return metrics
 
@@ -732,6 +753,10 @@ def parser():
     p.add_argument("--reconnect", action="store_true")
     p.add_argument("--connection-cycle-s", type=float, default=0.,
                    help="Lifecycle soak: gracefully reconnect between requests at this interval; 0 disables")
+    p.add_argument("--quiescence-s", type=float, default=.3,
+                   help="Settle after clients close before live-host resource snapshot; use 5 for soaks")
+    p.add_argument("--arrival-grace-s", type=float, default=0.,
+                   help="Issue already-planned arrivals for this many seconds after generation ends")
     return p
 
 
@@ -749,6 +774,8 @@ def main():
         raise SystemExit("max-connections must be positive")
     if not math.isfinite(args.connection_cycle_s) or args.connection_cycle_s < 0:
         raise SystemExit("connection-cycle-s must be nonnegative and finite")
+    if any(not math.isfinite(v) or v < 0 for v in (args.quiescence_s, args.arrival_grace_s)):
+        raise SystemExit("quiescence-s and arrival-grace-s must be nonnegative and finite")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     records = Measurements(args.output.with_suffix(".ndjson"))
     stop = threading.Event()
@@ -768,7 +795,7 @@ def main():
             for thread in threads:
                 thread.start()
             # Drain the bounded client queues; distinguish generated duration from wall time.
-            deadline = start + args.duration + 50.
+            deadline = start + args.duration + args.arrival_grace_s + 50.
             for thread in threads:
                 thread.join(timeout=max(0., deadline - time.perf_counter()))
             _pause_until(start + args.duration, stop)
@@ -785,13 +812,16 @@ def main():
             dirty = bool(subprocess.check_output(["git", "-C", str(source), "status", "--porcelain"], text=True).strip())
         except Exception:
             commit, dirty = "unknown", None
-        result = dict(schema_version=2, resources_scope="host process tree (sum RSS/threads/CPU including inference workers); client generator excluded", config={k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
+        result = dict(schema_version=3, connection_lifetime="held through generation window",
+            resources_scope="host process tree (sum RSS/threads/CPU including inference workers); client generator excluded", config={k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
             source=dict(root=str(source), commit=commit, dirty=dirty, sha256={
                 path: hashlib.sha256((source / path).read_bytes()).hexdigest() for path in (
                 "services/remote_asr/host.py", "services/remote_asr/client.py",
                 "services/remote_asr/engines.py", "transcriber/remote_backend.py")}),
             environment=dict(python=sys.version, platform=platform.platform(), logical_cpus=os.cpu_count()),
             engine_profile=PROFILES[args.profile].metadata() if args.engine == "fake" else {"real": True},
+            engine_description=fixture.engine_description,
+            harness_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             timing_semantics="host_s follows client request_timed behavior; raw wire_host_ms and optional wire_server_total_ms are recorded separately",
             input_audio_sha256=hashlib.sha256(args.audio_file.read_bytes()).hexdigest() if args.audio_file else None,
             elapsed_s=elapsed, setup_and_teardown_s=time.perf_counter() - began - elapsed,
