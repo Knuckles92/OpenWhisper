@@ -192,8 +192,9 @@ class BenchmarkHost:
                 download_root=self.args.model_cache, local_files_only=True)
             model.load()
             self.stack.callback(model.close)
-            backend = SimpleNamespace(model=model, last_loaded_model=self.args.model,
-                model_name=self.args.model, device=self.args.device, compute_type=self.args.compute_type,
+            model_id = self.args.model_id or (Path(self.args.model).name if Path(self.args.model).is_dir() else self.args.model)
+            backend = SimpleNamespace(model=model, last_loaded_model=model_id,
+                model_name=model_id, device=self.args.device, compute_type=self.args.compute_type,
                 is_available=lambda: True, device_info="Real isolated faster-whisper worker")
             return WhisperEngine(backend)
         if not self.args.app_data:
@@ -215,6 +216,7 @@ class BenchmarkHost:
         admission = self.host._work_admission
         original = admission.acquire
         dispatch = self.host._dispatch_unpacked
+        dispatch_frame = self.host._dispatch
         timing = threading.local()
         def acquire(*a, **kw):
             started = time.perf_counter()
@@ -227,9 +229,17 @@ class BenchmarkHost:
                 metrics = result["result"].setdefault("_benchmark", {})
                 metrics["admission_wait_s"] = getattr(timing, "queue_s", 0.)
             return result
+        def frame(*a, **kw):
+            result = dispatch_frame(*a, **kw)
+            if isinstance(result.get("result"), dict):
+                metrics = result["result"].setdefault("_benchmark", {})
+                metrics.update({"wire_" + key: value for key, value in result.items()
+                    if key.endswith("_ms") and isinstance(value, (int, float))})
+            return result
         # Measurement-only wrappers preserve the implementation's admissions.
         admission.acquire = acquire
         self.host._dispatch_unpacked = unpacked
+        self.host._dispatch = frame
 
     def _switch(self, family, model, device_name):
         if not isinstance(self.engine, TimedEngine):
@@ -646,6 +656,8 @@ def summary(records, duration):
         "decode": [r["decode_s"] for r in ok if "decode_s" in r],
         "local_latency": [r["latency_s"] for r in ok if r.get("role") == "local"],
         "host_time": [r["host_s"] for r in ok if r.get("host_s") is not None],
+        "legacy_host_time": [r["wire_host_ms"] / 1000. for r in ok if "wire_host_ms" in r],
+        "server_total_time": [r["wire_server_total_ms"] / 1000. for r in ok if "wire_server_total_ms" in r],
         "schedule_lag": [r["schedule_lag_s"] for r in requests if "schedule_lag_s" in r]}
     for name, values in groups.items():
         for p in (50, 95, 99):
@@ -675,6 +687,7 @@ def parser():
     p.add_argument("--profile", choices=PROFILES, default="gpu-parakeet")
     p.add_argument("--family", choices=("parakeet", "whisper"), default="whisper")
     p.add_argument("--model", default="tiny.en")
+    p.add_argument("--model-id", help="Semantic Whisper model ID when --model is a local folder; used by meeting route validation")
     p.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     p.add_argument("--compute-type", default="int8")
     p.add_argument("--cpu-threads", type=int, default=4)
@@ -752,6 +765,7 @@ def main():
                 "services/remote_asr/engines.py", "transcriber/remote_backend.py")}),
             environment=dict(python=sys.version, platform=platform.platform(), logical_cpus=os.cpu_count()),
             engine_profile=PROFILES[args.profile].metadata() if args.engine == "fake" else {"real": True},
+            timing_semantics="host_s follows client request_timed behavior; raw wire_host_ms and optional wire_server_total_ms are recorded separately",
             input_audio_sha256=hashlib.sha256(args.audio_file.read_bytes()).hexdigest() if args.audio_file else None,
             elapsed_s=elapsed, setup_and_teardown_s=time.perf_counter() - began - elapsed,
             unfinished_threads=active_threads, summary=summary(records, elapsed),

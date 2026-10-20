@@ -106,7 +106,7 @@ python -m benchmarks.host_load --engine real --family parakeet --model parakeet-
 # CPU on the GTX 1050 Ti laptop; the GPU is not used by this command.
 python -m benchmarks.host_load --engine real --family parakeet --model parakeet-v3 --device cpu --app-data "PATH_TO_EXISTING_APP_DATA" --audio-file speech-16k.wav --clients 2 --duration 300 --rate .05 --output parakeet-laptop-cpu.json
 # Whisper, previously downloaded model folder; int8 CPU avoids fp16 assumptions.
-python -m benchmarks.host_load --engine real --family whisper --model "PATH_TO_DOWNLOADED_WHISPER_MODEL" --device cpu --compute-type int8 --audio-file speech-16k.wav --clients 2 --duration 300 --output whisper-cpu.json
+python -m benchmarks.host_load --engine real --family whisper --model "PATH_TO_DOWNLOADED_WHISPER_MODEL" --model-id tiny.en --device cpu --compute-type int8 --audio-file speech-16k.wav --clients 2 --duration 300 --output whisper-cpu.json
 ```
 
 The Parakeet root is used only to resolve existing `speech-models/<model>` and
@@ -114,15 +114,22 @@ The Parakeet root is used only to resolve existing `speech-models/<model>` and
 in separate temporary locations. App source imports and installed runtime code
 still require the normal app dependencies. GPU dtype/compatibility and actual
 VRAM headroom must be verified on the real machine; these commands do not
-promise GPU availability or a particular throughput.
+promise GPU availability or a particular throughput. For Whisper model directories,
+`--model-id tiny.en` (or the matching actual model ID) supplies routing metadata
+so MeetingRemoteBackend can enforce its supported-model gate. A recognized
+folder basename is used when omitted; an arbitrary folder name will not pass
+meeting validation. This label does not verify the identity of downloaded weights.
 
 ## Metrics and artifacts
 
 Each cell produces JSON (all attempts, resource samples, summary) and incrementally
 flushed NDJSON attempts. Sweeps retain the exact command and exit code per cell.
 CSV/JSON aggregation and PNG charts retain successful-tail latency separately
-from unserved-work ratios. `host_s` is the production `host_ms` field and excludes
-admission wait; do not call `RTT-host_s` pure network latency. Measurement-only
+from unserved-work ratios. `host_s` follows the tested client's `request_timed` behavior: baseline returns
+legacy `host_ms` (excludes admission), while newer timing-aware clients may
+prefer `server_total_ms`. Raw `wire_host_ms` and `wire_server_total_ms` are
+recorded separately; compare like-for-like fields. Do not call baseline
+`RTT-host_s` pure network latency. Measurement-only
 wrappers time admission and attach a small `_benchmark` object to replies; both
 baseline and candidate use the same instrumentation. Fake inference separately
 records engine-lock wait and actual sleep duration. Wire byte totals therefore
