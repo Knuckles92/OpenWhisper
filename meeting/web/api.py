@@ -84,6 +84,8 @@ _TRANSCRIPT_PAGE_DEFAULT = 500
 _TRANSCRIPT_PAGE_MAX = 1000
 _HISTORY_PAGE_DEFAULT = 50
 _HISTORY_PAGE_MAX = 100
+#: Longest History cursor worth decoding; real ones are far shorter.
+_HISTORY_CURSOR_MAX_CHARS = 1024
 
 
 def _encode_cursor(item: Dict[str, Any]) -> str:
@@ -103,7 +105,7 @@ def _decode_history_cursor(cursor: str) -> tuple[Optional[str], Optional[str]]:
     if not cursor:
         return None, None
     try:
-        if len(cursor) > 1024:
+        if len(cursor) > _HISTORY_CURSOR_MAX_CHARS:
             raise ValueError("cursor too long")
         values = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
         if not isinstance(values, list) or len(values) != 2:
@@ -262,6 +264,319 @@ _MISSING_BUNDLE_PAGE = (
 )
 
 
+#: Insight review operations a client may send.
+_REVIEW_ACTIONS = ("start", "review_answer", "review_skip", "review_reopen")
+#: Longest note adjustment request the dashboard accepts.
+_NOTE_REQUEST_MAX_CHARS = 4000
+
+
+class _AppContext:
+    """What the dashboard route handlers share.
+
+    The collaborators passed to ``create_app`` plus the bookkeeping that keeps
+    two writers off one past meeting: the insights executor, the meetings with
+    a post-meeting pass in flight, and the cached review stores.
+    """
+
+    def __init__(self, engine: Any, repository: Any, hub: WsHub) -> None:
+        self.engine = engine
+        self.repository = repository
+        self.hub = hub
+        #: Consolidation runs hold a worker for a whole LLM round trip. They get a
+        #: dedicated single-thread executor so they can never drain the loop's
+        #: shared pool and stall authentication for every other client.
+        self.insights_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="meeting-reinsights"
+        )
+        #: Meeting ids with a consolidation run in flight (double-click guard).
+        self.insights_running: Set[str] = set()
+        self.review_stores: Dict[str, Any] = {}
+
+    def is_current(self, meeting_id: str) -> bool:
+        return getattr(self.engine, "meeting_id", None) == meeting_id
+
+    def is_active_meeting(self, meeting_id: str) -> bool:
+        return self.is_current(meeting_id) and self.engine.is_active()
+
+    def live_store(self, meeting_id: str) -> Any:
+        """The engine's store when ``meeting_id`` is the current meeting."""
+        store = getattr(self.engine, "store", None)
+        if store is not None and self.is_current(meeting_id):
+            return store
+        return None
+
+    def meeting_store(self, meeting_id: str) -> Any:
+        """The engine's store for the current meeting, else any cached review store."""
+        if self.is_current(meeting_id):
+            return getattr(self.engine, "store", None)
+        return self.review_stores.get(meeting_id)
+
+    def owning_store(self, meeting_id: str, meeting: Dict[str, Any]) -> Any:
+        """The one store allowed to write this meeting's state.
+
+        The live engine owns the current meeting; a past meeting reuses the
+        cached review store so a report and an insight review can never be
+        two writers racing over one ``state_json``.
+        """
+        store = self.live_store(meeting_id)
+        if store is not None:
+            return store
+        if meeting_id not in self.review_stores:
+            self.review_stores[meeting_id] = open_store(
+                self.repository, meeting_id, meeting, historical=True
+            )
+        return self.review_stores[meeting_id]
+
+    async def current_meeting(self) -> Optional[Dict[str, Any]]:
+        meeting_id = getattr(self.engine, "meeting_id", None)
+        if not meeting_id:
+            return None
+        return await asyncio.to_thread(self.repository.get_meeting, meeting_id)
+
+    async def resolve(self, token: str) -> Optional[str]:
+        meeting = await self.current_meeting()
+        if not meeting:
+            return None
+        return resolve_role(
+            token, meeting.get("host_token"), meeting.get("guest_token")
+        )
+
+    async def require(self, token: str, host_only: bool = False) -> str:
+        role = await self.resolve(token)
+        if role is None:
+            raise HTTPException(status_code=401, detail="invalid token")
+        if host_only and role != "host":
+            raise HTTPException(status_code=403, detail="host only")
+        return role
+
+    async def require_meeting(self, token: str, meeting_id: str) -> str:
+        role = await self.require(token)
+        if role == "guest" and meeting_id != getattr(self.engine, "meeting_id", None):
+            raise HTTPException(status_code=403, detail="guest access is current meeting only")
+        return role
+
+    async def saved_meeting(self, meeting_id: str) -> Dict[str, Any]:
+        """The repository row for ``meeting_id``; 404 when there is none."""
+        meeting = await asyncio.to_thread(self.repository.get_meeting, meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="unknown meeting")
+        return meeting
+
+    async def transcript_page(self, meeting_id: str, cursor: str,
+                              limit: int) -> Dict[str, Any]:
+        start_s, segment_id = _decode_cursor(cursor)
+        page_limit = max(1, min(int(limit), _TRANSCRIPT_PAGE_MAX))
+        rows = await asyncio.to_thread(
+            self.repository.get_segments_page, meeting_id, start_s, segment_id,
+            page_limit + 1,
+        )
+        has_more = len(rows) > page_limit
+        items = rows[:page_limit]
+        next_cursor = _encode_cursor(items[-1]) if has_more and items else None
+        return {"items": items, "next_cursor": next_cursor}
+
+    async def state_for(self, meeting_id: str,
+                        meeting: Dict[str, Any]) -> Dict[str, Any]:
+        """Live snapshot for the current meeting, stored snapshot otherwise.
+
+        Both branches block (store lock / JSON parse of a whole document), so
+        both run on a worker thread.
+        """
+        store = self.live_store(meeting_id)
+        if store is not None:
+            return await asyncio.to_thread(store.snapshot)
+        if meeting_id in self.review_stores:
+            return await asyncio.to_thread(self.review_stores[meeting_id].snapshot)
+        return await asyncio.to_thread(_stored_state, meeting_id, meeting)
+
+    async def retitle_saved_meeting(self, meeting_id: str, title: str) -> Dict[str, Any]:
+        """Shared local action; callers establish authorization before dispatch."""
+        try:
+            title = normalize_title(title)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        set_title = {"op": "set_title", "text": title}
+        if self.live_store(meeting_id) is not None:
+            results = await asyncio.to_thread(
+                self.engine.apply_client_action, "host", None, set_title,
+            )
+            return {"ok": _first_result_ok(results), "title": title}
+        await self.saved_meeting(meeting_id)
+        if meeting_id in self.review_stores:
+            results = await asyncio.to_thread(
+                self.review_stores[meeting_id].apply, "host", None, [set_title],
+            )
+            return {"ok": _first_result_ok(results), "title": title}
+        await asyncio.to_thread(self.repository.rename_meeting, meeting_id, title)
+        return {"ok": True, "title": title}
+
+    async def refresh_saved_meeting_title(self, meeting_id: str) -> None:
+        store = self.live_store(meeting_id)
+        if store is not None:
+            changed = await asyncio.to_thread(store.refresh_title)
+            if changed:
+                # A reconnect sends a full hello without inventing an audit seq.
+                self.hub.schedule_invalidate_connections(resync=True)
+        cached = self.review_stores.get(meeting_id)
+        if cached is not None:
+            await asyncio.to_thread(cached.refresh_title)
+
+    async def run_post_meeting_pass(
+        self,
+        meeting_id: str,
+        job: Any,
+        on_result: Optional[Any] = None,
+    ) -> Any:
+        """Run ``job`` on the insights executor with ``meeting_id`` claimed.
+
+        ``on_result`` sees the result before it is returned; a busy
+        finalization or a rejected input becomes the matching HTTP error.
+        """
+        self.insights_running.add(meeting_id)
+        try:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(self.insights_executor, job)
+            if on_result is not None:
+                on_result(result)
+            return result
+        except FinalizationBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            self.insights_running.discard(meeting_id)
+
+
+def _first_result_ok(results: Any) -> bool:
+    return bool(results and results[0].ok)
+
+
+def _stored_state(meeting_id: str, meeting: Dict[str, Any]) -> Dict[str, Any]:
+    """A past meeting's persisted state document (blocking)."""
+    return load_state(meeting, meeting_id, historical=True).to_dict()
+
+
+async def _json_body(request: Request) -> Dict[str, Any]:
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON body")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be an object")
+    return body
+
+
+def _filter_history_page(page: list, has_decisions: bool, has_actions: bool,
+                         needs_attention: bool) -> list[Dict[str, Any]]:
+    """Public rows of one History page that pass the digest filters."""
+    result = []
+    for row in page:
+        public = _public_meeting(row)
+        digest = public.get("digest") or {}
+        if has_decisions and not digest.get("decisions"):
+            continue
+        if has_actions and not digest.get("action_items"):
+            continue
+        if needs_attention and public.get("insights_tone") != "warning":
+            continue
+        result.append(public)
+    return result
+
+
+def _report_in_flight(store: Any) -> bool:
+    """True while a tailored report is being written against this meeting.
+
+    A finalization re-run replaces the whole state document, so it must
+    not start while a report worker is about to write into it.
+    """
+    if store is None:
+        return False
+    return any(
+        report.get("status") == "running"
+        for report in store.snapshot().get("custom_reports") or []
+    )
+
+
+def _review_running(store: Any) -> bool:
+    if not store:
+        return False
+    return store.snapshot().get("insight_review", {}).get("status") == "running"
+
+
+def _refuse_rerun_while_busy(store: Any) -> None:
+    """409 while another pass or a report is still writing this meeting."""
+    if store is not None:
+        snapshot = store.snapshot()
+        if (snapshot.get("finalization") or {}).get("status") == "running":
+            raise HTTPException(status_code=409, detail="Wait for the post-meeting steps to finish")
+        if (snapshot.get("insight_review") or {}).get("status") == "running":
+            raise HTTPException(status_code=409, detail="Wait for insight review to finish")
+    if _report_in_flight(store):
+        raise HTTPException(status_code=409, detail="Wait for the report being written to finish")
+
+
+def _adopt_rerun_state(store: Any, result: Dict[str, Any]) -> None:
+    """Hand a re-run's fresh state document to the store that serves it."""
+    replace_state = getattr(store, "replace_document", None)
+    if callable(replace_state) and result.get("state"):
+        replace_state(MeetingState.from_dict(result["state"]))
+
+
+def _parse_endpoint_json(raw_endpoint: Any) -> Optional[Dict[str, Any]]:
+    """The meeting's recorded endpoint, when it holds a JSON object."""
+    if isinstance(raw_endpoint, dict):
+        return raw_endpoint
+    if not isinstance(raw_endpoint, str) or not raw_endpoint.strip():
+        return None
+    try:
+        parsed = json.loads(raw_endpoint)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _report_endpoint(engine: Any, meeting: Dict[str, Any]) -> Dict[str, Any]:
+    """Provider, model, and endpoint for a report on this meeting.
+
+    The meeting's own recorded endpoint wins so a report matches the
+    intelligence that produced the record; the engine's current options
+    fill in for meetings recorded with AI insights off.
+    """
+    options = getattr(engine, "options", None)
+    from services.settings import MeetingAgentCore
+
+    kind = getattr(options, "agent_core_kind", "")
+    if kind in MeetingAgentCore.INSTALLED:
+        # The meeting's installed agent writes the report too.
+        return {"provider": kind, "model": getattr(options, "llm_model", "") or "",
+                "endpoint": None}
+    provider = (meeting.get("agent_provider")
+                or getattr(options, "llm_provider", "") or "openrouter")
+    model = (meeting.get("agent_model")
+             or getattr(options, "llm_model", "") or "")
+    endpoint = getattr(options, "llm_endpoint", None)
+    recorded = _parse_endpoint_json(meeting.get("agent_endpoint_json"))
+    if recorded is not None:
+        endpoint = recorded
+    return {"provider": provider, "model": model, "endpoint": endpoint}
+
+
+def _find_report(state: Dict[str, Any], report_id: str) -> Dict[str, Any]:
+    for report in state.get("custom_reports") or []:
+        if report.get("id") == report_id:
+            return report
+    raise HTTPException(status_code=404, detail="unknown report")
+
+
+def _note_request_summary(result: Any) -> Dict[str, Any]:
+    return {
+        "ok": result.ok,
+        "applied": sum(1 for op in result.op_results if op.ok),
+        "rejected": sum(1 for op in result.op_results if not op.ok),
+        "error": result.error,
+    }
+
+
 def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
     """Build the dashboard FastAPI app.
 
@@ -273,16 +588,7 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
     Returns:
         A fully-routed ``FastAPI`` application (docs endpoints disabled).
     """
-
-    #: Consolidation runs hold a worker for a whole LLM round trip. They get a
-    #: dedicated single-thread executor so they can never drain the loop's
-    #: shared pool and stall authentication for every other client.
-    insights_executor = ThreadPoolExecutor(
-        max_workers=1, thread_name_prefix="meeting-reinsights"
-    )
-    #: Meeting ids with a consolidation run in flight (double-click guard).
-    insights_running: Set[str] = set()
-    review_stores: Dict[str, Any] = {}
+    ctx = _AppContext(engine, repository, hub)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -291,7 +597,7 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             yield
         finally:
             hub.on_shutdown()
-            insights_executor.shutdown(wait=False)
+            ctx.insights_executor.shutdown(wait=False)
 
     app = FastAPI(
         title="OpenWhisper Meeting",
@@ -304,80 +610,26 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
     if os.path.isdir(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-    async def _current_meeting() -> Optional[Dict[str, Any]]:
-        meeting_id = getattr(engine, "meeting_id", None)
-        if not meeting_id:
-            return None
-        return await asyncio.to_thread(repository.get_meeting, meeting_id)
+    # Registration order is the routing order; keep these calls in sequence.
+    _register_page_routes(app, ctx, dist_dir)
+    _register_live_routes(app, ctx)
+    _register_history_routes(app, ctx)
+    _register_meeting_file_routes(app, ctx)
+    _register_title_and_review_routes(app, ctx)
+    _register_insights_rerun_route(app, ctx)
+    _register_speakers_rerun_route(app, ctx)
+    _register_history_admin_routes(app, ctx)
+    _register_export_routes(app, ctx)
+    _register_report_routes(app, ctx)
+    _register_note_routes(app, ctx)
+    _register_meeting_control_routes(app, ctx)
+    return app
 
-    async def _resolve(token: str) -> Optional[str]:
-        meeting = await _current_meeting()
-        if not meeting:
-            return None
-        return resolve_role(
-            token, meeting.get("host_token"), meeting.get("guest_token")
-        )
 
-    async def _require(token: str, host_only: bool = False) -> str:
-        role = await _resolve(token)
-        if role is None:
-            raise HTTPException(status_code=401, detail="invalid token")
-        if host_only and role != "host":
-            raise HTTPException(status_code=403, detail="host only")
-        return role
-
-    async def _require_meeting(token: str, meeting_id: str) -> str:
-        role = await _require(token)
-        if role == "guest" and meeting_id != getattr(engine, "meeting_id", None):
-            raise HTTPException(status_code=403, detail="guest access is current meeting only")
-        return role
-
-    async def _transcript_page(meeting_id: str, cursor: str,
-                               limit: int) -> Dict[str, Any]:
-        start_s, segment_id = _decode_cursor(cursor)
-        page_limit = max(1, min(int(limit), _TRANSCRIPT_PAGE_MAX))
-        rows = await asyncio.to_thread(
-            repository.get_segments_page, meeting_id, start_s, segment_id,
-            page_limit + 1,
-        )
-        has_more = len(rows) > page_limit
-        items = rows[:page_limit]
-        return {
-            "items": items,
-            "next_cursor": _encode_cursor(items[-1])
-            if has_more and items else None,
-        }
-
-    def _stored_state(meeting_id: str, meeting: Dict[str, Any]) -> Dict[str, Any]:
-        """A past meeting's persisted state document (blocking)."""
-        return load_state(meeting, meeting_id, historical=True).to_dict()
-
-    async def _state_for(meeting_id: str,
-                         meeting: Dict[str, Any]) -> Dict[str, Any]:
-        """Live snapshot for the current meeting, stored snapshot otherwise.
-
-        Both branches block (store lock / JSON parse of a whole document), so
-        both run on a worker thread.
-        """
-        store = getattr(engine, "store", None)
-        if store is not None and getattr(engine, "meeting_id", None) == meeting_id:
-            return await asyncio.to_thread(store.snapshot)
-        if meeting_id in review_stores:
-            return await asyncio.to_thread(review_stores[meeting_id].snapshot)
-        return await asyncio.to_thread(_stored_state, meeting_id, meeting)
-
-    async def _json_body(request: Request) -> Dict[str, Any]:
-        try:
-            body = await request.json()
-        except Exception:
-            raise HTTPException(status_code=400, detail="invalid JSON body")
-        if not isinstance(body, dict):
-            raise HTTPException(status_code=400, detail="body must be an object")
-        return body
-
+def _register_page_routes(app: FastAPI, ctx: _AppContext, dist_dir: str) -> None:
     @app.get("/m/{token}", response_class=HTMLResponse)
     async def dashboard(token: str) -> Response:
-        role = await _resolve(token)
+        role = await ctx.resolve(token)
         if role is None:
             raise HTTPException(status_code=403, detail="invalid or expired link")
         index_path = os.path.join(dist_dir, "index.html")
@@ -387,12 +639,16 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
-        await hub.handle_connection(websocket)
+        await ctx.hub.handle_connection(websocket)
+
+
+def _register_live_routes(app: FastAPI, ctx: _AppContext) -> None:
+    engine = ctx.engine
 
     @app.get("/api/session")
     async def api_session(token: str = "") -> Dict[str, Any]:
-        role = await _require(token)
-        meeting = await _current_meeting()
+        role = await ctx.require(token)
+        meeting = await ctx.current_meeting()
         store = getattr(engine, "store", None)
         state = await asyncio.to_thread(store.snapshot) if store is not None else {}
         if role != "host":
@@ -408,11 +664,15 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
     @app.get("/api/transcript")
     async def api_transcript(token: str = "", cursor: str = "",
                              limit: int = _TRANSCRIPT_PAGE_DEFAULT) -> Dict[str, Any]:
-        await _require(token)
+        await ctx.require(token)
         meeting_id = getattr(engine, "meeting_id", None)
         if not meeting_id:
             return {"items": [], "next_cursor": None}
-        return await _transcript_page(meeting_id, cursor, limit)
+        return await ctx.transcript_page(meeting_id, cursor, limit)
+
+
+def _register_history_routes(app: FastAPI, ctx: _AppContext) -> None:
+    repository = ctx.repository
 
     @app.get("/api/meetings")
     async def api_meetings(token: str = "", cursor: str = "",
@@ -420,7 +680,7 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                            since: str = "", has_decisions: bool = False,
                            has_actions: bool = False,
                            needs_attention: bool = False) -> Dict[str, Any]:
-        await _require(token, host_only=True)
+        await ctx.require(token, host_only=True)
         started_at, meeting_id = _decode_history_cursor(cursor)
         page_limit = max(1, min(limit, _HISTORY_PAGE_MAX))
         rows = await asyncio.to_thread(
@@ -432,40 +692,31 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         page = rows[:page_limit]
         # Digest filters inspect one bounded window. A continuation is returned
         # even for an empty filtered page, so older matches remain reachable.
-        def public_page() -> list[Dict[str, Any]]:
-            result = []
-            for row in page:
-                public = _public_meeting(row)
-                digest = public.get("digest") or {}
-                if has_decisions and not digest.get("decisions"):
-                    continue
-                if has_actions and not digest.get("action_items"):
-                    continue
-                if needs_attention and public.get("insights_tone") != "warning":
-                    continue
-                result.append(public)
-            return result
+        meetings = await asyncio.to_thread(
+            _filter_history_page, page, has_decisions, has_actions, needs_attention,
+        )
         return {
-            "meetings": await asyncio.to_thread(public_page),
+            "meetings": meetings,
             "next_cursor": _history_cursor(page[-1]) if has_more and page else None,
         }
 
     @app.get("/api/meetings/{meeting_id}")
     async def api_meeting_detail(meeting_id: str, token: str = "",
                                  include_transcript: bool = True) -> Dict[str, Any]:
-        await _require(token, host_only=True)
-        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
-        if meeting is None:
-            raise HTTPException(status_code=404, detail="unknown meeting")
-        transcript = (await _transcript_page(
-            meeting_id, "", _TRANSCRIPT_PAGE_DEFAULT
-        )) if include_transcript else {"items": [], "next_cursor": None}
+        await ctx.require(token, host_only=True)
+        meeting = await ctx.saved_meeting(meeting_id)
+        if include_transcript:
+            transcript = await ctx.transcript_page(
+                meeting_id, "", _TRANSCRIPT_PAGE_DEFAULT
+            )
+        else:
+            transcript = {"items": [], "next_cursor": None}
         public_meeting = await asyncio.to_thread(
             _public_meeting, meeting, repository
         )
         return {
             "meeting": public_meeting,
-            "state": await _state_for(meeting_id, meeting),
+            "state": await ctx.state_for(meeting_id, meeting),
             "segments": transcript["items"],
             "transcript_next_cursor": transcript["next_cursor"],
             "transcript_included": include_transcript,
@@ -474,26 +725,26 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
     @app.get("/api/meetings/{meeting_id}/state")
     async def api_meeting_state(meeting_id: str, token: str = "") -> Dict[str, Any]:
         """Follow report/review progress without transcript or content queries."""
-        await _require(token, host_only=True)
-        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
-        if meeting is None:
-            raise HTTPException(status_code=404, detail="unknown meeting")
-        return {"state": await _state_for(meeting_id, meeting)}
+        await ctx.require(token, host_only=True)
+        meeting = await ctx.saved_meeting(meeting_id)
+        return {"state": await ctx.state_for(meeting_id, meeting)}
+
+
+def _register_meeting_file_routes(app: FastAPI, ctx: _AppContext) -> None:
+    repository = ctx.repository
 
     @app.get("/api/meetings/{meeting_id}/transcript")
     async def api_meeting_transcript(meeting_id: str, token: str = "",
                                      cursor: str = "",
                                      limit: int = _TRANSCRIPT_PAGE_DEFAULT) -> Dict[str, Any]:
-        await _require_meeting(token, meeting_id)
-        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
-        if meeting is None:
-            raise HTTPException(status_code=404, detail="unknown meeting")
-        return await _transcript_page(meeting_id, cursor, limit)
+        await ctx.require_meeting(token, meeting_id)
+        await ctx.saved_meeting(meeting_id)
+        return await ctx.transcript_page(meeting_id, cursor, limit)
 
     @app.get("/api/meetings/{meeting_id}/segments/{segment_id}")
     async def api_segment(meeting_id: str, segment_id: str,
                           token: str = "") -> Dict[str, Any]:
-        await _require_meeting(token, meeting_id)
+        await ctx.require_meeting(token, meeting_id)
         segment = await asyncio.to_thread(
             repository.get_segment, meeting_id, segment_id
         )
@@ -503,7 +754,7 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
 
     @app.get("/api/meetings/{meeting_id}/audio")
     async def api_meeting_audio(meeting_id: str, token: str = "") -> Response:
-        await _require_meeting(token, meeting_id)
+        await ctx.require_meeting(token, meeting_id)
         try:
             path = await asyncio.to_thread(
                 build_playback, repository, meeting_id
@@ -518,72 +769,33 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             headers={"Cache-Control": "no-store"},
         )
 
-    async def retitle_saved_meeting(meeting_id: str, title: str) -> Dict[str, Any]:
-        """Shared local action; callers establish authorization before dispatch."""
-        try:
-            title = normalize_title(title)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        store = getattr(engine, "store", None)
-        if store is not None and getattr(engine, "meeting_id", None) == meeting_id:
-            results = await asyncio.to_thread(
-                engine.apply_client_action, "host", None,
-                {"op": "set_title", "text": title},
-            )
-            ok = bool(results and results[0].ok)
-        else:
-            meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
-            if meeting is None:
-                raise HTTPException(status_code=404, detail="unknown meeting")
-            if meeting_id in review_stores:
-                results = await asyncio.to_thread(review_stores[meeting_id].apply, "host", None,
-                                                  [{"op": "set_title", "text": title}])
-                ok = bool(results and results[0].ok)
-            else:
-                await asyncio.to_thread(repository.rename_meeting, meeting_id, title)
-                ok = True
-        return {"ok": ok, "title": title}
 
-    async def refresh_saved_meeting_title(meeting_id: str) -> None:
-        store = getattr(engine, "store", None)
-        if store is not None and getattr(engine, "meeting_id", None) == meeting_id:
-            changed = await asyncio.to_thread(store.refresh_title)
-            if changed:
-                # A reconnect sends a full hello without inventing an audit seq.
-                hub.schedule_invalidate_connections(resync=True)
-        cached = review_stores.get(meeting_id)
-        if cached is not None:
-            await asyncio.to_thread(cached.refresh_title)
+def _register_title_and_review_routes(app: FastAPI, ctx: _AppContext) -> None:
+    repository = ctx.repository
+    insights_running = ctx.insights_running
 
-    app.state.retitle_saved_meeting = retitle_saved_meeting
-    app.state.refresh_saved_meeting_title = refresh_saved_meeting_title
+    app.state.retitle_saved_meeting = ctx.retitle_saved_meeting
+    app.state.refresh_saved_meeting_title = ctx.refresh_saved_meeting_title
 
     @app.post("/api/meetings/{meeting_id}/rename")
     async def api_rename_meeting(meeting_id: str, request: Request,
                                  token: str = "") -> Dict[str, Any]:
-        await _require(token, host_only=True)
+        await ctx.require(token, host_only=True)
         body = await _json_body(request)
-        return await retitle_saved_meeting(meeting_id, body.get("title"))
+        return await ctx.retitle_saved_meeting(meeting_id, body.get("title"))
 
     @app.post("/api/meetings/{meeting_id}/review")
     async def api_insight_review(meeting_id: str, request: Request, token: str = "") -> Dict[str, Any]:
-        await _require(token, host_only=True)
+        await ctx.require(token, host_only=True)
         body = await _json_body(request)
         action = body.get("op")
-        if action not in ("start", "review_answer", "review_skip", "review_reopen"):
+        if action not in _REVIEW_ACTIONS:
             raise HTTPException(status_code=400, detail="invalid review action")
         if meeting_id in insights_running:
             raise HTTPException(status_code=409, detail="Wait for final insights to finish")
-        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
-        if meeting is None:
-            raise HTTPException(status_code=404, detail="unknown meeting")
+        meeting = await ctx.saved_meeting(meeting_id)
         from meeting.insight_review import start_review
-        store = getattr(engine, "store", None) if getattr(engine, "meeting_id", None) == meeting_id else None
-        if store is None:
-            if meeting_id not in review_stores:
-                review_stores[meeting_id] = open_store(
-                    repository, meeting_id, meeting, historical=True)
-            store = review_stores[meeting_id]
+        store = ctx.owning_store(meeting_id, meeting)
         if meeting_id in insights_running:
             raise HTTPException(status_code=409, detail="A meeting update is already running")
         insights_running.add(meeting_id)
@@ -592,95 +804,72 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                 result = await asyncio.to_thread(start_review, store, repository)
             else:
                 results = await asyncio.to_thread(store.apply, "host", None, [body])
-                result = {"ok": bool(results and results[0].ok),
-                          "error": results[0].reason if results and not results[0].ok else None}
+                result = _review_step_result(results)
             return {**result, "state": await asyncio.to_thread(store.snapshot)}
         finally:
             insights_running.discard(meeting_id)
 
-    def _report_in_flight(store: Any) -> bool:
-        """True while a tailored report is being written against this meeting.
 
-        A finalization re-run replaces the whole state document, so it must
-        not start while a report worker is about to write into it.
-        """
-        if store is None:
-            return False
-        return any(
-            report.get("status") == "running"
-            for report in store.snapshot().get("custom_reports") or []
-        )
+def _review_step_result(results: Any) -> Dict[str, Any]:
+    ok = _first_result_ok(results)
+    error = results[0].reason if results and not results[0].ok else None
+    return {"ok": ok, "error": error}
+
+
+def _register_insights_rerun_route(app: FastAPI, ctx: _AppContext) -> None:
+    engine = ctx.engine
+    repository = ctx.repository
 
     @app.post("/api/meetings/{meeting_id}/reinsights")
     async def api_rerun_insights(meeting_id: str,
                                  token: str = "") -> Dict[str, Any]:
         """Retry failed post-meeting steps, including redecode when needed."""
-        await _require(token, host_only=True)
-        if getattr(engine, "meeting_id", None) == meeting_id and engine.is_active():
+        await ctx.require(token, host_only=True)
+        if ctx.is_active_meeting(meeting_id):
             raise HTTPException(
                 status_code=409,
                 detail="cannot re-run insights on the active meeting",
             )
-        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
-        if meeting is None:
-            raise HTTPException(status_code=404, detail="unknown meeting")
+        meeting = await ctx.saved_meeting(meeting_id)
         from services.meeting_rerun import rerun_options
 
         options = await asyncio.to_thread(rerun_options, meeting)
         # Check-and-claim with no await between: a double-click cannot start
         # two agent cores writing the same past meeting.
-        if meeting_id in insights_running:
+        if meeting_id in ctx.insights_running:
             raise HTTPException(
                 status_code=409,
                 detail="insights are already running for this meeting",
             )
-        live_review_store = (getattr(engine, "store", None)
-                             if getattr(engine, "meeting_id", None) == meeting_id else review_stores.get(meeting_id))
-        if live_review_store is not None:
-            live_snapshot = live_review_store.snapshot()
-            if (live_snapshot.get("finalization") or {}).get("status") == "running":
-                raise HTTPException(status_code=409, detail="Wait for the post-meeting steps to finish")
-            if (live_snapshot.get("insight_review") or {}).get("status") == "running":
-                raise HTTPException(status_code=409, detail="Wait for insight review to finish")
-        if _report_in_flight(live_review_store):
-            raise HTTPException(status_code=409, detail="Wait for the report being written to finish")
-        review_stores.pop(meeting_id, None)
-        insights_running.add(meeting_id)
-        try:
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                insights_executor,
-                functools.partial(
-                    rerun_finalization, repository, meeting_id,
-                    from_step="failed",
-                    model_lease=getattr(engine, "model_lease", None),
-                    **options,
-                ),
-            )
-            replace_state = getattr(live_review_store, "replace_document", None)
-            if callable(replace_state) and result.get("state"):
-                replace_state(MeetingState.from_dict(result["state"]))
-            return result
-        except FinalizationBusyError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        finally:
-            insights_running.discard(meeting_id)
+        live_review_store = ctx.meeting_store(meeting_id)
+        _refuse_rerun_while_busy(live_review_store)
+        ctx.review_stores.pop(meeting_id, None)
+        job = functools.partial(
+            rerun_finalization, repository, meeting_id,
+            from_step="failed",
+            model_lease=getattr(engine, "model_lease", None),
+            **options,
+        )
+        return await ctx.run_post_meeting_pass(
+            meeting_id, job,
+            on_result=functools.partial(_adopt_rerun_state, live_review_store),
+        )
+
+
+def _register_speakers_rerun_route(app: FastAPI, ctx: _AppContext) -> None:
+    repository = ctx.repository
 
     @app.post("/api/meetings/{meeting_id}/respeakers")
     async def api_rerun_speakers(meeting_id: str,
                                  token: str = "") -> Dict[str, Any]:
         """Re-run OpenAI speaker identification on a past meeting."""
-        await _require(token, host_only=True)
-        if getattr(engine, "meeting_id", None) == meeting_id and engine.is_active():
+        await ctx.require(token, host_only=True)
+        if ctx.is_active_meeting(meeting_id):
             raise HTTPException(
                 status_code=409,
                 detail="cannot re-run speakers on the active meeting",
             )
-        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
-        if meeting is None:
-            raise HTTPException(status_code=404, detail="unknown meeting")
+        meeting = await ctx.saved_meeting(meeting_id)
         content = await asyncio.to_thread(
             summarize_meeting_content, repository, meeting_id
         )
@@ -697,50 +886,40 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         gate = await asyncio.to_thread(resolve_speaker_pass)
         if not gate.ok:
             raise HTTPException(status_code=400, detail=gate.reason)
-        if meeting_id in insights_running:
+        if meeting_id in ctx.insights_running:
             raise HTTPException(
                 status_code=409,
                 detail="a post-meeting pass is already running for this meeting",
             )
-        store = (getattr(engine, "store", None) if getattr(engine, "meeting_id", None) == meeting_id
-                 else review_stores.get(meeting_id))
-        if store and store.snapshot().get("insight_review", {}).get("status") == "running":
+        store = ctx.meeting_store(meeting_id)
+        if _review_running(store):
             raise HTTPException(status_code=409, detail="Wait for insight review to finish")
         if _report_in_flight(store):
             raise HTTPException(status_code=409, detail="Wait for the report being written to finish")
-        review_stores.pop(meeting_id, None)
-        insights_running.add(meeting_id)
-        try:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
-                insights_executor,
-                functools.partial(
-                    rerun_speakers, repository, meeting_id,
-                    gate=gate, store=store,
-                    spool_dir=meeting.get("spool_dir"),
-                ),
-            )
-        except FinalizationBusyError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        finally:
-            insights_running.discard(meeting_id)
+        ctx.review_stores.pop(meeting_id, None)
+        job = functools.partial(
+            rerun_speakers, repository, meeting_id,
+            gate=gate, store=store,
+            spool_dir=meeting.get("spool_dir"),
+        )
+        return await ctx.run_post_meeting_pass(meeting_id, job)
+
+
+def _register_history_admin_routes(app: FastAPI, ctx: _AppContext) -> None:
+    engine = ctx.engine
+    repository = ctx.repository
 
     @app.delete("/api/meetings/{meeting_id}")
     async def api_delete_meeting(meeting_id: str, token: str = "") -> Dict[str, Any]:
-        await _require(token, host_only=True)
-        if getattr(engine, "meeting_id", None) == meeting_id and engine.is_active():
+        await ctx.require(token, host_only=True)
+        if ctx.is_active_meeting(meeting_id):
             raise HTTPException(status_code=409,
                                 detail="cannot delete the active meeting")
-        store = (getattr(engine, "store", None) if getattr(engine, "meeting_id", None) == meeting_id
-                 else review_stores.get(meeting_id))
-        if meeting_id in insights_running or (store and store.snapshot().get("insight_review", {}).get("status") == "running"):
+        store = ctx.meeting_store(meeting_id)
+        if meeting_id in ctx.insights_running or _review_running(store):
             raise HTTPException(status_code=409, detail="Wait for the meeting update to finish before deleting")
-        review_stores.pop(meeting_id, None)
-        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
-        if meeting is None:
-            raise HTTPException(status_code=404, detail="unknown meeting")
+        ctx.review_stores.pop(meeting_id, None)
+        await ctx.saved_meeting(meeting_id)
         options = getattr(engine, "options", None)
         meetings_root = getattr(options, "spool_root", None) or config.MEETINGS_FOLDER
         await asyncio.to_thread(
@@ -750,18 +929,19 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
 
     @app.get("/api/search")
     async def api_search(token: str = "", q: str = "", mode: str = "keyword") -> Dict[str, Any]:
-        await _require(token, host_only=True)
+        await ctx.require(token, host_only=True)
         if mode not in ("keyword", "semantic"):
             raise HTTPException(status_code=400, detail="invalid search mode")
         if mode == "keyword":
-            return {"results": await asyncio.to_thread(repository.search_transcripts, q), "mode": "keyword", "message": ""}
+            results = await asyncio.to_thread(repository.search_transcripts, q)
+            return {"results": results, "mode": "keyword", "message": ""}
         from meeting.semantic_search import search_history
         return await asyncio.to_thread(search_history, repository, q, semantic=mode == "semantic")
 
     @app.get("/api/events")
     async def api_events(token: str = "", before_seq: Optional[int] = None,
                          limit: int = 100) -> Dict[str, Any]:
-        await _require(token, host_only=True)
+        await ctx.require(token, host_only=True)
         meeting_id = getattr(engine, "meeting_id", None)
         if not meeting_id:
             return {"events": []}
@@ -770,20 +950,23 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         )
         return {"events": events}
 
+
+def _register_export_routes(app: FastAPI, ctx: _AppContext) -> None:
+    engine = ctx.engine
+    repository = ctx.repository
+
     @app.get("/api/export/{fmt}")
     async def api_export(fmt: str, token: str = "",
                          meeting_id: str = "") -> Response:
-        await _require(token, host_only=True)
+        await ctx.require(token, host_only=True)
         entry = _EXPORTERS.get(fmt)
         if entry is None:
             raise HTTPException(status_code=404, detail="unknown export format")
         target_id = meeting_id or getattr(engine, "meeting_id", None) or ""
         if not target_id:
             raise HTTPException(status_code=404, detail="no meeting")
-        meeting = await asyncio.to_thread(repository.get_meeting, target_id)
-        if meeting is None:
-            raise HTTPException(status_code=404, detail="unknown meeting")
-        state = await _state_for(target_id, meeting)
+        meeting = await ctx.saved_meeting(target_id)
+        state = await ctx.state_for(target_id, meeting)
         segments = await asyncio.to_thread(repository.get_segments, target_id)
         exporter, media_type, extension = entry
         # Keep host export metadata; JSON strips capabilities and volatile fields.
@@ -800,65 +983,14 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         )
 
 
-    def _report_store(meeting_id: str, meeting: Dict[str, Any]) -> Any:
-        """The one store allowed to write this meeting's state.
-
-        The live engine owns the current meeting; a past meeting reuses the
-        cached review store so a report and an insight review can never be
-        two writers racing over one ``state_json``.
-        """
-        store = getattr(engine, "store", None)
-        if store is not None and getattr(engine, "meeting_id", None) == meeting_id:
-            return store
-        if meeting_id not in review_stores:
-            review_stores[meeting_id] = open_store(
-                repository, meeting_id, meeting, historical=True
-            )
-        return review_stores[meeting_id]
-
-    def _report_endpoint(meeting: Dict[str, Any]) -> Dict[str, Any]:
-        """Provider, model, and endpoint for a report on this meeting.
-
-        The meeting's own recorded endpoint wins so a report matches the
-        intelligence that produced the record; the engine's current options
-        fill in for meetings recorded with AI insights off.
-        """
-        options = getattr(engine, "options", None)
-        from services.settings import MeetingAgentCore
-
-        kind = getattr(options, "agent_core_kind", "")
-        if kind in MeetingAgentCore.INSTALLED:
-            # The meeting's installed agent writes the report too.
-            return {"provider": kind, "model": getattr(options, "llm_model", "") or "",
-                    "endpoint": None}
-        provider = (meeting.get("agent_provider")
-                    or getattr(options, "llm_provider", "") or "openrouter")
-        model = (meeting.get("agent_model")
-                 or getattr(options, "llm_model", "") or "")
-        endpoint = getattr(options, "llm_endpoint", None)
-        raw_endpoint = meeting.get("agent_endpoint_json")
-        if isinstance(raw_endpoint, dict):
-            endpoint = raw_endpoint
-        elif isinstance(raw_endpoint, str) and raw_endpoint.strip():
-            try:
-                parsed = json.loads(raw_endpoint)
-            except Exception:
-                parsed = None
-            if isinstance(parsed, dict):
-                endpoint = parsed
-        return {"provider": provider, "model": model, "endpoint": endpoint}
-
-    def _find_report(state: Dict[str, Any], report_id: str) -> Dict[str, Any]:
-        for report in state.get("custom_reports") or []:
-            if report.get("id") == report_id:
-                return report
-        raise HTTPException(status_code=404, detail="unknown report")
+def _register_report_routes(app: FastAPI, ctx: _AppContext) -> None:
+    repository = ctx.repository
 
     @app.post("/api/meetings/{meeting_id}/reports")
     async def api_request_report(meeting_id: str, request: Request,
                                  token: str = "") -> Dict[str, Any]:
         """Ask for a report written to the requester's own description."""
-        await _require(token, host_only=True)
+        await ctx.require(token, host_only=True)
         body = await _json_body(request)
         text = body.get("request")
         if (not isinstance(text, str) or not text.strip()
@@ -870,16 +1002,14 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                     f"{MAX_REQUEST_CHARS} characters."
                 ),
             )
-        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
-        if meeting is None:
-            raise HTTPException(status_code=404, detail="unknown meeting")
-        if meeting_id in insights_running:
+        meeting = await ctx.saved_meeting(meeting_id)
+        if meeting_id in ctx.insights_running:
             raise HTTPException(
                 status_code=409,
                 detail="Wait for the meeting's insights to finish",
             )
-        store = await asyncio.to_thread(_report_store, meeting_id, meeting)
-        endpoint = _report_endpoint(meeting)
+        store = await asyncio.to_thread(ctx.owning_store, meeting_id, meeting)
+        endpoint = _report_endpoint(ctx.engine, meeting)
         result = await asyncio.to_thread(
             functools.partial(
                 start_custom_report, store, repository, text,
@@ -901,11 +1031,9 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
     async def api_delete_report(meeting_id: str, report_id: str,
                                 token: str = "") -> Dict[str, Any]:
         """Discard a report, including one stranded by an interrupted run."""
-        await _require(token, host_only=True)
-        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
-        if meeting is None:
-            raise HTTPException(status_code=404, detail="unknown meeting")
-        store = await asyncio.to_thread(_report_store, meeting_id, meeting)
+        await ctx.require(token, host_only=True)
+        meeting = await ctx.saved_meeting(meeting_id)
+        store = await asyncio.to_thread(ctx.owning_store, meeting_id, meeting)
         results = await asyncio.to_thread(
             store.apply, "host", None,
             [{"op": "remove_custom_report", "report_id": report_id}],
@@ -920,11 +1048,9 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
     async def api_download_report(meeting_id: str, report_id: str,
                                   token: str = "") -> Response:
         """Download one finished report as a Markdown file."""
-        await _require(token, host_only=True)
-        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
-        if meeting is None:
-            raise HTTPException(status_code=404, detail="unknown meeting")
-        state = await _state_for(meeting_id, meeting)
+        await ctx.require(token, host_only=True)
+        meeting = await ctx.saved_meeting(meeting_id)
+        state = await ctx.state_for(meeting_id, meeting)
         report = _find_report(state, report_id)
         if report.get("status") != "ready":
             raise HTTPException(status_code=409, detail="report is not ready")
@@ -937,13 +1063,20 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             },
         )
 
+
+def _register_note_routes(app: FastAPI, ctx: _AppContext) -> None:
+    engine = ctx.engine
+
     @app.post("/api/meeting/notes/request")
     async def api_note_request(request: Request, token: str = "") -> Dict[str, Any]:
-        await _require(token)
+        await ctx.require(token)
         body = await _json_body(request)
         text = body.get("text")
-        if not isinstance(text, str) or not text.strip() or len(text) > 4000:
-            raise HTTPException(status_code=400, detail="Enter a note request of 1 to 4000 characters.")
+        if not isinstance(text, str) or not text.strip() or len(text) > _NOTE_REQUEST_MAX_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Enter a note request of 1 to {_NOTE_REQUEST_MAX_CHARS} characters.",
+            )
         try:
             future = await asyncio.to_thread(engine.request_note_adjustment, text)
         except ValueError as exc:
@@ -953,16 +1086,11 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         # The existing scheduler owns execution. Awaiting its Future does not
         # occupy a server worker for the duration of the model call.
         result = await asyncio.shield(asyncio.wrap_future(future))
-        return {
-            "ok": result.ok,
-            "applied": sum(1 for op in result.op_results if op.ok),
-            "rejected": sum(1 for op in result.op_results if not op.ok),
-            "error": result.error,
-        }
+        return _note_request_summary(result)
 
     @app.post("/api/meeting/end")
     async def api_meeting_end(token: str = "") -> Dict[str, Any]:
-        await _require(token, host_only=True)
+        await ctx.require(token, host_only=True)
         requested = time.perf_counter()
         started: list = []
 
@@ -973,31 +1101,39 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         await asyncio.to_thread(_end)
         elapsed = time.perf_counter() - requested
         if elapsed > _SLOW_END_WARN_S:
-            # Split the wait so a saturated thread pool is told apart from
-            # an engine.end() that blocks (it should only spawn its worker).
-            queued = (started[0] - requested) if started else elapsed
-            logger.warning(
-                "Meeting end request took %.2fs (%.2fs waiting for a worker "
-                "thread, %.2fs in engine.end)",
-                elapsed, queued, elapsed - queued,
-            )
+            _log_slow_end(requested, started, elapsed)
         return {"ok": True}
+
+
+def _log_slow_end(requested: float, started: list, elapsed: float) -> None:
+    # Split the wait so a saturated thread pool is told apart from
+    # an engine.end() that blocks (it should only spawn its worker).
+    queued = (started[0] - requested) if started else elapsed
+    logger.warning(
+        "Meeting end request took %.2fs (%.2fs waiting for a worker "
+        "thread, %.2fs in engine.end)",
+        elapsed, queued, elapsed - queued,
+    )
+
+
+def _register_meeting_control_routes(app: FastAPI, ctx: _AppContext) -> None:
+    engine = ctx.engine
 
     @app.post("/api/meeting/pause")
     async def api_meeting_pause(token: str = "") -> Dict[str, Any]:
-        await _require(token, host_only=True)
+        await ctx.require(token, host_only=True)
         await asyncio.to_thread(engine.pause)
         return {"ok": True}
 
     @app.post("/api/meeting/resume")
     async def api_meeting_resume(token: str = "") -> Dict[str, Any]:
-        await _require(token, host_only=True)
+        await ctx.require(token, host_only=True)
         await asyncio.to_thread(engine.resume)
         return {"ok": True}
 
     @app.post("/api/meeting/cloud")
     async def api_meeting_cloud(request: Request, token: str = "") -> Dict[str, Any]:
-        await _require(token, host_only=True)
+        await ctx.require(token, host_only=True)
         body = await _json_body(request)
         enabled = bool(body.get("enabled"))
         if enabled and not await asyncio.to_thread(_cloud_consent_given):
@@ -1015,8 +1151,6 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
 
     @app.post("/api/meeting/tokens/regenerate")
     async def api_regenerate_tokens(token: str = "") -> Dict[str, Any]:
-        await _require(token, host_only=True)
+        await ctx.require(token, host_only=True)
         result = await asyncio.to_thread(engine.regenerate_tokens)
         return {"ok": True, **result}
-
-    return app
