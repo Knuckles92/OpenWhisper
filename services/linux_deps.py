@@ -13,7 +13,7 @@ from __future__ import annotations
 import ctypes
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, TextIO, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, TextIO, Tuple
 
 REQUIRED_LIBRARIES: Tuple[Tuple[str, Dict[str, str]], ...] = (
     ("libEGL.so.1", {
@@ -226,266 +226,298 @@ def meeting_audio_remediation(
     if packaged is None:
         packaged = bool(getattr(sys, "frozen", False))
 
-    titles = {
-        "soundcard_missing": "SoundCard is not installed",
-        "libpulse_missing": "PulseAudio client library is missing",
-        "audio_server_unavailable": "No Pulse-compatible audio server is running",
-        "pipewire_pulse_missing": "PipeWire is running without PulseAudio compatibility",
-        "default_sink_missing": "No default audio output was found",
-        "pactl_missing": "Optional pactl fallback is not installed",
-        "monitor_source_missing": "System-audio monitor source is unavailable",
-        "monitor_open_failed": "System-audio monitor could not be opened",
-        "unsupported_architecture": "This Linux architecture is not supported",
-        "unknown_failure": "System audio could not be prepared",
-    }
-    title = titles.get(reason, titles["unknown_failure"])
+    title = _MEETING_AUDIO_TITLES.get(reason, _MEETING_AUDIO_TITLES["unknown_failure"])
+    build = _MEETING_AUDIO_BUILDERS.get(reason, _unknown_failure_remediation)
+    return build(reason, family, title, stack, packaged)
 
-    if reason == "soundcard_missing" and packaged:
-        commands = reinstall_commands(family)
-        explanation = (
-            "This OpenWhisper install is missing its bundled audio component "
-            "(SoundCard), so it can't capture system audio. Reinstall "
-            f"OpenWhisper from {OPENWHISPER_RELEASES_URL}, then retry detection."
-        )
-        if commands:
-            explanation += (
-                f" Download the version {_app_version()} package there, then "
-                "run the command below in the folder you saved it to."
-            )
-        return MeetingAudioRemediation(
-            reason=reason,
-            package_family=family,
-            title="OpenWhisper's audio component is missing",
-            explanation=explanation,
-            commands=commands,
-        )
 
-    if reason == "soundcard_missing":
-        commands = (
-            "python -m pip install 'soundcard>=0.4.3'",
-        )
-        explanation = (
-            "Meeting Mode uses the SoundCard package to capture the default "
-            "output mix on Linux. Install it into the same environment that "
-            "runs OpenWhisper, then retry detection."
-        )
-        return MeetingAudioRemediation(
-            reason=reason,
-            package_family=family,
-            title=title,
-            explanation=explanation,
-            commands=commands,
-            # Not ``python -c "import soundcard"``: SoundCard names its Pulse
-            # client from sys.argv at import and raises IndexError under -c.
-            verification=("python -m pip show soundcard",),
-        )
+_MEETING_AUDIO_TITLES: Dict[str, str] = {
+    "soundcard_missing": "SoundCard is not installed",
+    "libpulse_missing": "PulseAudio client library is missing",
+    "audio_server_unavailable": "No Pulse-compatible audio server is running",
+    "pipewire_pulse_missing": "PipeWire is running without PulseAudio compatibility",
+    "default_sink_missing": "No default audio output was found",
+    "pactl_missing": "Optional pactl fallback is not installed",
+    "monitor_source_missing": "System-audio monitor source is unavailable",
+    "monitor_open_failed": "System-audio monitor could not be opened",
+    "unsupported_architecture": "This Linux architecture is not supported",
+    "unknown_failure": "System audio could not be prepared",
+}
 
-    if reason == "libpulse_missing":
-        packages = {
-            "apt": ("libpulse0",),
-            "dnf": ("pulseaudio-libs",),
-            "pacman": ("libpulse",),
-        }.get(family, ())
-        commands = _family_commands(family, packages)
-        explanation = (
-            "OpenWhisper needs the PulseAudio client library to talk to "
-            "PulseAudio or PipeWire's Pulse compatibility layer."
-        )
-        if not commands:
-            explanation += (
-                " Install the PulseAudio client library for your distribution, "
-                "then retry detection."
-            )
-        return MeetingAudioRemediation(
-            reason=reason,
-            package_family=family,
-            title=title,
-            explanation=explanation,
-            commands=commands,
-            verification=(
-                # A packaged build has no ``python`` to run this with.
-                ("ldconfig -p | grep libpulse.so.0",) if packaged
-                else ("python -c \"import ctypes; ctypes.CDLL('libpulse.so.0')\"",)
-            ),
-        )
+_LIBPULSE_PACKAGES: Dict[str, Tuple[str, ...]] = {
+    "apt": ("libpulse0",),
+    "dnf": ("pulseaudio-libs",),
+    "pacman": ("libpulse",),
+}
 
-    if reason == "pipewire_pulse_missing":
-        packages = {
-            "apt": ("pipewire-pulse", "wireplumber"),
-            "dnf": ("pipewire-pulseaudio", "wireplumber"),
-            "pacman": ("pipewire-pulse", "wireplumber"),
-        }.get(family, ())
-        commands = _family_commands(family, packages) + _service_commands(family)
-        explanation = (
-            "PipeWire is active, but the PulseAudio compatibility service is "
-            "not. Meeting Mode captures system audio through that compatibility "
-            "layer."
-        )
-        if family == "unknown":
-            explanation += (
-                " Install pipewire-pulse and wireplumber for your distribution, "
-                "enable the user services, then sign out and back in if needed."
-            )
-            commands = ()
-        return MeetingAudioRemediation(
-            reason=reason,
-            package_family=family,
-            title=title,
-            explanation=explanation,
-            commands=commands,
-            verification=(
-                "pactl info | grep -i 'Server Name'",
-                "systemctl --user is-active pipewire-pulse",
-            ),
-            restart_note="Sign out and back in if the new services do not appear immediately.",
-            rollback_note="You can disable pipewire-pulse later with systemctl --user disable --now pipewire-pulse.",
-        )
+_PIPEWIRE_PULSE_PACKAGES: Dict[str, Tuple[str, ...]] = {
+    "apt": ("pipewire-pulse", "wireplumber"),
+    "dnf": ("pipewire-pulseaudio", "wireplumber"),
+    "pacman": ("pipewire-pulse", "wireplumber"),
+}
 
-    if reason == "audio_server_unavailable":
-        # Diagnostic-only: never auto-start a competing stack. A paste of the
-        # listed commands must not switch Pulse users onto PipeWire (or the
-        # reverse) via ``cmd_a || cmd_b`` fallbacks.
-        commands = (
-            "systemctl --user status pulseaudio pipewire pipewire-pulse wireplumber",
+_PACTL_PACKAGES: Dict[str, Tuple[str, ...]] = {
+    "apt": ("pulseaudio-utils",),
+    "dnf": ("pulseaudio-utils",),
+    "pacman": ("libpulse",),
+}
+
+_PACTL_DIAGNOSTICS: Tuple[str, ...] = (
+    "pactl info",
+    "pactl list short sinks",
+    "pactl list short sources",
+)
+
+_MONITOR_EXPLANATIONS: Dict[str, str] = {
+    "default_sink_missing": (
+        "OpenWhisper found no default speaker/output sink. Choose a "
+        "default output in your desktop sound settings, play a short "
+        "sound to wake the device, then retry detection."
+    ),
+    "monitor_source_missing": (
+        "The default output has no usable monitor source. Confirm "
+        "PulseAudio or PipeWire-Pulse is running and that the default "
+        "output is not a virtual device without a monitor."
+    ),
+    "monitor_open_failed": (
+        "A monitor source was found but could not be opened. Another "
+        "app may be holding exclusive access, or the audio server may "
+        "need a restart."
+    ),
+}
+
+
+def _soundcard_remediation(
+    reason: str, family: str, title: str, stack: str, packaged: bool
+) -> MeetingAudioRemediation:
+    if packaged:
+        return _packaged_soundcard_remediation(reason, family)
+    commands = (
+        "python -m pip install 'soundcard>=0.4.3'",
+    )
+    explanation = (
+        "Meeting Mode uses the SoundCard package to capture the default "
+        "output mix on Linux. Install it into the same environment that "
+        "runs OpenWhisper, then retry detection."
+    )
+    return MeetingAudioRemediation(
+        reason=reason,
+        package_family=family,
+        title=title,
+        explanation=explanation,
+        commands=commands,
+        # Not ``python -c "import soundcard"``: SoundCard names its Pulse
+        # client from sys.argv at import and raises IndexError under -c.
+        verification=("python -m pip show soundcard",),
+    )
+
+
+def _packaged_soundcard_remediation(reason: str, family: str) -> MeetingAudioRemediation:
+    commands = reinstall_commands(family)
+    explanation = (
+        "This OpenWhisper install is missing its bundled audio component "
+        "(SoundCard), so it can't capture system audio. Reinstall "
+        f"OpenWhisper from {OPENWHISPER_RELEASES_URL}, then retry detection."
+    )
+    if commands:
+        explanation += (
+            f" Download the version {_app_version()} package there, then "
+            "run the command below in the folder you saved it to."
+        )
+    return MeetingAudioRemediation(
+        reason=reason,
+        package_family=family,
+        title="OpenWhisper's audio component is missing",
+        explanation=explanation,
+        commands=commands,
+    )
+
+
+def _libpulse_remediation(
+    reason: str, family: str, title: str, stack: str, packaged: bool
+) -> MeetingAudioRemediation:
+    commands = _family_commands(family, _LIBPULSE_PACKAGES.get(family, ()))
+    explanation = (
+        "OpenWhisper needs the PulseAudio client library to talk to "
+        "PulseAudio or PipeWire's Pulse compatibility layer."
+    )
+    if not commands:
+        explanation += (
+            " Install the PulseAudio client library for your distribution, "
+            "then retry detection."
+        )
+    if packaged:
+        # A packaged build has no ``python`` to run this with.
+        verification = ("ldconfig -p | grep libpulse.so.0",)
+    else:
+        verification = ("python -c \"import ctypes; ctypes.CDLL('libpulse.so.0')\"",)
+    return MeetingAudioRemediation(
+        reason=reason,
+        package_family=family,
+        title=title,
+        explanation=explanation,
+        commands=commands,
+        verification=verification,
+    )
+
+
+def _pipewire_pulse_remediation(
+    reason: str, family: str, title: str, stack: str, packaged: bool
+) -> MeetingAudioRemediation:
+    packages = _PIPEWIRE_PULSE_PACKAGES.get(family, ())
+    commands = _family_commands(family, packages) + _service_commands(family)
+    explanation = (
+        "PipeWire is active, but the PulseAudio compatibility service is "
+        "not. Meeting Mode captures system audio through that compatibility "
+        "layer."
+    )
+    if family == "unknown":
+        explanation += (
+            " Install pipewire-pulse and wireplumber for your distribution, "
+            "enable the user services, then sign out and back in if needed."
+        )
+        commands = ()
+    return MeetingAudioRemediation(
+        reason=reason,
+        package_family=family,
+        title=title,
+        explanation=explanation,
+        commands=commands,
+        verification=(
+            "pactl info | grep -i 'Server Name'",
+            "systemctl --user is-active pipewire-pulse",
+        ),
+        restart_note="Sign out and back in if the new services do not appear immediately.",
+        rollback_note="You can disable pipewire-pulse later with systemctl --user disable --now pipewire-pulse.",
+    )
+
+
+def _audio_server_remediation(
+    reason: str, family: str, title: str, stack: str, packaged: bool
+) -> MeetingAudioRemediation:
+    # Diagnostic-only: never auto-start a competing stack. A paste of the
+    # listed commands must not switch Pulse users onto PipeWire (or the
+    # reverse) via ``cmd_a || cmd_b`` fallbacks.
+    commands = (
+        "systemctl --user status pulseaudio pipewire pipewire-pulse wireplumber",
+        "systemctl --user is-active pulseaudio",
+        "systemctl --user is-active pipewire-pulse",
+        "pactl info",
+        "pactl list short sinks",
+        "pactl list short sources",
+    )
+    explanation = (
+        "No Pulse-compatible audio server answered. Desktop Linux needs "
+        "a running native PulseAudio session or PipeWire with "
+        "pipewire-pulse before Meeting Mode can capture system audio. "
+        "Identify which stack you already install, restart only that "
+        "stack, then retry detection. Do not chain a Pulse start into a "
+        "PipeWire start with '||'."
+    )
+    if family == "unknown":
+        explanation += (
+            " If no Pulse-compatible server is installed at all, see the "
+            "setup guide for distribution-specific package names."
+        )
+    return MeetingAudioRemediation(
+        reason=reason,
+        package_family=family,
+        title=title,
+        explanation=explanation,
+        commands=commands,
+        verification=(
+            "pactl info",
             "systemctl --user is-active pulseaudio",
             "systemctl --user is-active pipewire-pulse",
-            "pactl info",
-            "pactl list short sinks",
-            "pactl list short sources",
-        )
-        explanation = (
-            "No Pulse-compatible audio server answered. Desktop Linux needs "
-            "a running native PulseAudio session or PipeWire with "
-            "pipewire-pulse before Meeting Mode can capture system audio. "
-            "Identify which stack you already install, restart only that "
-            "stack, then retry detection. Do not chain a Pulse start into a "
-            "PipeWire start with '||'."
-        )
-        if family == "unknown":
-            explanation += (
-                " If no Pulse-compatible server is installed at all, see the "
-                "setup guide for distribution-specific package names."
-            )
-        return MeetingAudioRemediation(
-            reason=reason,
-            package_family=family,
-            title=title,
-            explanation=explanation,
-            commands=commands,
-            verification=(
-                "pactl info",
-                "systemctl --user is-active pulseaudio",
-                "systemctl --user is-active pipewire-pulse",
-            ),
-            restart_note=(
-                "After you identify the installed stack, restart only that one: "
-                "`systemctl --user restart pulseaudio` or "
-                "`systemctl --user restart pipewire pipewire-pulse wireplumber`. "
-                "Choose one; do not paste both as a single '||' command."
-            ),
-            rollback_note=(
-                "Do not replace a working native Pulse install with PipeWire "
-                "only to recover a temporary outage."
-            ),
-        )
+        ),
+        restart_note=(
+            "After you identify the installed stack, restart only that one: "
+            "`systemctl --user restart pulseaudio` or "
+            "`systemctl --user restart pipewire pipewire-pulse wireplumber`. "
+            "Choose one; do not paste both as a single '||' command."
+        ),
+        rollback_note=(
+            "Do not replace a working native Pulse install with PipeWire "
+            "only to recover a temporary outage."
+        ),
+    )
 
-    if reason == "pactl_missing":
-        packages = {
-            "apt": ("pulseaudio-utils",),
-            "dnf": ("pulseaudio-utils",),
-            "pacman": ("libpulse",),
-        }.get(family, ())
-        commands = _family_commands(family, packages)
-        explanation = (
-            "SoundCard could not directly prove which nonstandard loopback "
-            "belongs to the default output. Install pactl so OpenWhisper can "
-            "verify the exact PulseAudio or PipeWire-Pulse monitor association. "
-            "System-audio capture remains optional."
-        )
-        if not commands:
-            explanation += (
-                " Install the package that provides pactl for your distribution, "
-                "then retry detection."
-            )
-        return MeetingAudioRemediation(
-            reason=reason,
-            package_family=family,
-            title=title,
-            explanation=explanation,
-            commands=commands,
-            verification=(
-                "pactl info",
-                "pactl list short sinks",
-                "pactl list short sources",
-            ),
-        )
 
-    if reason in {
-        "default_sink_missing",
-        "monitor_source_missing",
-        "monitor_open_failed",
-    }:
-        explanation = {
-            "default_sink_missing": (
-                "OpenWhisper found no default speaker/output sink. Choose a "
-                "default output in your desktop sound settings, play a short "
-                "sound to wake the device, then retry detection."
-            ),
-            "monitor_source_missing": (
-                "The default output has no usable monitor source. Confirm "
-                "PulseAudio or PipeWire-Pulse is running and that the default "
-                "output is not a virtual device without a monitor."
-            ),
-            "monitor_open_failed": (
-                "A monitor source was found but could not be opened. Another "
-                "app may be holding exclusive access, or the audio server may "
-                "need a restart."
-            ),
-        }[reason]
-        commands = (
-            "pactl info",
-            "pactl list short sinks",
-            "pactl list short sources",
+def _pactl_remediation(
+    reason: str, family: str, title: str, stack: str, packaged: bool
+) -> MeetingAudioRemediation:
+    commands = _family_commands(family, _PACTL_PACKAGES.get(family, ()))
+    explanation = (
+        "SoundCard could not directly prove which nonstandard loopback "
+        "belongs to the default output. Install pactl so OpenWhisper can "
+        "verify the exact PulseAudio or PipeWire-Pulse monitor association. "
+        "System-audio capture remains optional."
+    )
+    if not commands:
+        explanation += (
+            " Install the package that provides pactl for your distribution, "
+            "then retry detection."
         )
-        # Never push a competing PipeWire stack onto a live PulseAudio session
-        # for transient sink/monitor problems.
-        if stack in {"", "unknown", "unavailable"} and family != "unknown":
-            # Unknown stack: diagnostic commands only; no stack swap.
-            pass
-        elif stack == "pipewire-pulse" and family != "unknown":
-            commands = commands + (
-                "systemctl --user is-active pipewire pipewire-pulse wireplumber",
-            )
-        elif stack == "pulse":
-            commands = commands + (
-                "systemctl --user --type=service | grep -E 'pulse|pipewire' || true",
-            )
-        return MeetingAudioRemediation(
-            reason=reason,
-            package_family=family,
-            title=title,
-            explanation=explanation,
-            commands=commands,
-            verification=commands[:3],
-            restart_note=(
-                "If the monitor appears only after a service restart, sign out "
-                "and back in once. Do not switch audio stacks for this error "
-                "unless your desktop already intended to use PipeWire."
-            ),
-        )
+    return MeetingAudioRemediation(
+        reason=reason,
+        package_family=family,
+        title=title,
+        explanation=explanation,
+        commands=commands,
+        verification=_PACTL_DIAGNOSTICS,
+    )
 
-    if reason == "unsupported_architecture":
-        return MeetingAudioRemediation(
-            reason=reason,
-            package_family=family,
-            title=title,
-            explanation=(
-                "Meeting Mode supports Linux on x86_64/amd64 and aarch64/arm64 "
-                "only. Other architectures remain unsupported."
-            ),
-            commands=(),
-        )
 
+def _monitor_remediation(
+    reason: str, family: str, title: str, stack: str, packaged: bool
+) -> MeetingAudioRemediation:
+    commands = _PACTL_DIAGNOSTICS + _monitor_stack_commands(stack, family)
+    return MeetingAudioRemediation(
+        reason=reason,
+        package_family=family,
+        title=title,
+        explanation=_MONITOR_EXPLANATIONS[reason],
+        commands=commands,
+        verification=commands[:3],
+        restart_note=(
+            "If the monitor appears only after a service restart, sign out "
+            "and back in once. Do not switch audio stacks for this error "
+            "unless your desktop already intended to use PipeWire."
+        ),
+    )
+
+
+def _monitor_stack_commands(stack: str, family: str) -> Tuple[str, ...]:
+    # Never push a competing PipeWire stack onto a live PulseAudio session
+    # for transient sink/monitor problems.
+    if stack in {"", "unknown", "unavailable"} and family != "unknown":
+        # Unknown stack: diagnostic commands only; no stack swap.
+        return ()
+    if stack == "pipewire-pulse" and family != "unknown":
+        return ("systemctl --user is-active pipewire pipewire-pulse wireplumber",)
+    if stack == "pulse":
+        return ("systemctl --user --type=service | grep -E 'pulse|pipewire' || true",)
+    return ()
+
+
+def _unsupported_architecture_remediation(
+    reason: str, family: str, title: str, stack: str, packaged: bool
+) -> MeetingAudioRemediation:
+    return MeetingAudioRemediation(
+        reason=reason,
+        package_family=family,
+        title=title,
+        explanation=(
+            "Meeting Mode supports Linux on x86_64/amd64 and aarch64/arm64 "
+            "only. Other architectures remain unsupported."
+        ),
+        commands=(),
+    )
+
+
+def _unknown_failure_remediation(
+    reason: str, family: str, title: str, stack: str, packaged: bool
+) -> MeetingAudioRemediation:
     return MeetingAudioRemediation(
         reason=reason or "unknown_failure",
         package_family=family,
@@ -499,6 +531,19 @@ def meeting_audio_remediation(
         commands=(),
         verification=("pactl info",),
     )
+
+
+_MEETING_AUDIO_BUILDERS: Dict[str, Callable[..., MeetingAudioRemediation]] = {
+    "soundcard_missing": _soundcard_remediation,
+    "libpulse_missing": _libpulse_remediation,
+    "pipewire_pulse_missing": _pipewire_pulse_remediation,
+    "audio_server_unavailable": _audio_server_remediation,
+    "pactl_missing": _pactl_remediation,
+    "default_sink_missing": _monitor_remediation,
+    "monitor_source_missing": _monitor_remediation,
+    "monitor_open_failed": _monitor_remediation,
+    "unsupported_architecture": _unsupported_architecture_remediation,
+}
 
 
 def check_linux_dependencies(stream: TextIO | None = None) -> int:
