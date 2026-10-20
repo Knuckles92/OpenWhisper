@@ -25,6 +25,15 @@ _ALLOWED_ENV = {
     "OPENWHISPER_SIDECAR_TOKEN", "OPENWHISPER_LLM_API_KEY",
     "OPENWHISPER_LLM_BASE_URL",
 }
+# The installer self-test may contact only its own loopback mock.
+_SELF_TEST_BLOCKED_ENV = {
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+    "OPENWHISPER_LLM_API_KEY", "OPENWHISPER_LLM_BASE_URL",
+}
+_SELF_TEST_OK = "OPENWHISPER_OPENCODE_OK"
+_PAYLOAD_SCHEMA = 1
+_INCOMPLETE_MESSAGE = "The OpenCode component is incomplete or has incompatible SDK versions."
+_VERIFY_FAILED_MESSAGE = "OpenCode component verification failed. Reinstall it from Downloads."
 
 
 def runtime_name(windows: bool | None = None) -> str:
@@ -56,7 +65,8 @@ def isolated_environment(source: dict[str, str], root: str) -> dict[str, str]:
 
 def _metadata(root: Path) -> dict:
     metadata = json.loads((root / "payload.json").read_text(encoding="utf-8"))
-    if (metadata.get("schema"), metadata.get("sdk_version"), metadata.get("bun_version")) != (1, SDK_VERSION, BUN_VERSION):
+    versions = (metadata.get("schema"), metadata.get("sdk_version"), metadata.get("bun_version"))
+    if versions != (_PAYLOAD_SCHEMA, SDK_VERSION, BUN_VERSION):
         raise ValueError("OpenCode payload version does not match this app")
     for package in ("sdk", "core", "plugin"):
         data = json.loads((root / f"node_modules/@opencode/{package}/package.json").read_text(encoding="utf-8"))
@@ -116,52 +126,72 @@ def validate_payload(target_dir: str) -> None:
     from services.components import ComponentError, current_platform_tag
     root = Path(target_dir).resolve()
     try:
-        metadata = _metadata(root)
-        if metadata.get("platform") != current_platform_tag():
-            raise ValueError("OpenCode payload was built for another platform")
-        files = metadata["files"]
-        if not isinstance(files, dict) or not set(_required()).difference({"payload.json"}).issubset(files):
-            raise ValueError("Incomplete payload inventory")
-        restore_executable_bits(root, metadata)
+        files = _inventory(root, current_platform_tag)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
-        raise ComponentError("The OpenCode component is incomplete or has incompatible SDK versions.") from exc
+        raise ComponentError(_INCOMPLETE_MESSAGE) from exc
     if not runnable(str(root)):
-        raise ComponentError("The OpenCode component is incomplete or has incompatible SDK versions.")
+        raise ComponentError(_INCOMPLETE_MESSAGE)
     runtime = str(root / runtime_name())
     try:
-        for name, expected in files.items():
-            path = root / name
-            if not path.resolve().is_relative_to(root) or path.is_symlink() or not path.is_file():
-                raise ValueError("Invalid payload inventory path")
-            with path.open("rb") as source:
-                digest = hashlib.file_digest(source, "sha256").hexdigest()
-            if digest != expected:
-                raise ValueError("Payload inventory checksum mismatch")
-        with tempfile.TemporaryDirectory(prefix="openwhisper-opencode-verify-") as temporary:
-            env = isolated_environment(os.environ, temporary)
-            # The installer self-test may contact only its own loopback mock.
-            for key in list(env):
-                if key.upper() in {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
-                                   "OPENWHISPER_LLM_API_KEY", "OPENWHISPER_LLM_BASE_URL"}:
-                    del env[key]
-            env["NO_PROXY"] = "127.0.0.1,localhost"
-            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-            version = subprocess.run(
-                [runtime, "--version"], env=env, cwd=temporary,
-                capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL,
-                creationflags=flags,
-            )
-            if version.returncode or version.stdout.strip() != BUN_VERSION:
-                raise ValueError("Unexpected Bun runtime")
-            tested = subprocess.run(
-                [runtime, "--no-install", str(root / "self-test.mjs")],
-                env=env, cwd=temporary, capture_output=True, text=True, timeout=45,
-                stdin=subprocess.DEVNULL, creationflags=flags,
-            )
-            if tested.returncode or tested.stdout.strip() != "OPENWHISPER_OPENCODE_OK":
-                raise ValueError("Offline SDK self-test failed")
+        _verify_checksums(root, files)
+        _run_self_test(root, runtime)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
-        raise ComponentError("OpenCode component verification failed. Reinstall it from Downloads.") from exc
+        raise ComponentError(_VERIFY_FAILED_MESSAGE) from exc
+
+
+def _inventory(root: Path, platform_tag) -> dict:
+    """Check the payload's metadata for this platform and return its file inventory."""
+    metadata = _metadata(root)
+    if metadata.get("platform") != platform_tag():
+        raise ValueError("OpenCode payload was built for another platform")
+    files = metadata["files"]
+    if not isinstance(files, dict):
+        raise ValueError("Incomplete payload inventory")
+    if not set(_required()).difference({"payload.json"}).issubset(files):
+        raise ValueError("Incomplete payload inventory")
+    restore_executable_bits(root, metadata)
+    return files
+
+
+def _verify_checksums(root: Path, files: dict) -> None:
+    for name, expected in files.items():
+        path = root / name
+        if not path.resolve().is_relative_to(root) or path.is_symlink() or not path.is_file():
+            raise ValueError("Invalid payload inventory path")
+        with path.open("rb") as source:
+            digest = hashlib.file_digest(source, "sha256").hexdigest()
+        if digest != expected:
+            raise ValueError("Payload inventory checksum mismatch")
+
+
+def _run_self_test(root: Path, runtime: str) -> None:
+    """Check the Bun version, then run the SDK's offline self-test."""
+    with tempfile.TemporaryDirectory(prefix="openwhisper-opencode-verify-") as temporary:
+        env = _self_test_environment(temporary)
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        version = subprocess.run(
+            [runtime, "--version"], env=env, cwd=temporary,
+            capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL,
+            creationflags=flags,
+        )
+        if version.returncode or version.stdout.strip() != BUN_VERSION:
+            raise ValueError("Unexpected Bun runtime")
+        tested = subprocess.run(
+            [runtime, "--no-install", str(root / "self-test.mjs")],
+            env=env, cwd=temporary, capture_output=True, text=True, timeout=45,
+            stdin=subprocess.DEVNULL, creationflags=flags,
+        )
+        if tested.returncode or tested.stdout.strip() != _SELF_TEST_OK:
+            raise ValueError("Offline SDK self-test failed")
+
+
+def _self_test_environment(temporary: str) -> dict[str, str]:
+    env = isolated_environment(os.environ, temporary)
+    for key in list(env):
+        if key.upper() in _SELF_TEST_BLOCKED_ENV:
+            del env[key]
+    env["NO_PROXY"] = "127.0.0.1,localhost"
+    return env
 
 
 def clean_stale_runtime_dirs() -> None:
