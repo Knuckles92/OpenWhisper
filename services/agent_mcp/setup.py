@@ -113,29 +113,38 @@ def agent_prompt(url: str, host_name: str | None = None, token: str = "") -> str
     Without ``token`` the prompt has the agent ask the user for it.
     """
     local = urlsplit(url).hostname in {"127.0.0.1", "localhost", "::1"}
-    location = (
-        f"Connect my agent to OpenWhisper running on computer {host_name or socket.gethostname()}. "
-        "This is that computer's localhost URL. Use it only if the agent runs on "
-        "the same computer. If the agent runs elsewhere, ask me to enable Allow "
-        "agents over Tailscale in OpenWhisper Settings > API & MCP on the host and copy "
-        "its Tailscale setup instead. Do not connect to or enable a different "
-        "OpenWhisper instance on the agent's computer. "
-        if local
-        else "Connect my agent to OpenWhisper on another computer over Tailscale. "
-        "The agent's computer must be connected to the same Tailscale network. "
-        "Use this host's Tailscale URL as given; do not replace it with localhost. "
-    )
+    if local:
+        computer = host_name or socket.gethostname()
+        location = (
+            f"Connect my agent to OpenWhisper running on computer {computer}. "
+            "This is that computer's localhost URL. Use it only if the agent runs on "
+            "the same computer. If the agent runs elsewhere, ask me to enable Allow "
+            "agents over Tailscale in OpenWhisper Settings > API & MCP on the host and copy "
+            "its Tailscale setup instead. Do not connect to or enable a different "
+            "OpenWhisper instance on the agent's computer. "
+        )
+    else:
+        location = (
+            "Connect my agent to OpenWhisper on another computer over Tailscale. "
+            "The agent's computer must be connected to the same Tailscale network. "
+            "Use this host's Tailscale URL as given; do not replace it with localhost. "
+        )
+    if token:
+        authorization = (
+            f"It requires the header Authorization: Bearer {token}. Save the token "
+            "using this client's credential configuration and do not repeat it back to me. "
+        )
+    else:
+        authorization = (
+            "It requires an Authorization: Bearer <token> header. Ask me for the "
+            "token from OpenWhisper Settings > API & MCP on the computer running "
+            "OpenWhisper and save it using this client's "
+            "credential configuration. "
+        )
     return (
         location
         + f"Register a server named openwhisper using Streamable HTTP at {url}. "
-        + (
-            f"It requires the header Authorization: Bearer {token}. Save the token "
-            "using this client's credential configuration and do not repeat it back to me. "
-            if token
-            else "It requires an Authorization: Bearer <token> header. Ask me for the "
-            "token from OpenWhisper Settings > API & MCP on the computer running OpenWhisper and save it using this client's "
-            "credential configuration. "
-        )
+        + authorization
         + "Preserve my other MCP servers. "
         "Verify the connection by listing tools, calling get_status, and checking get_capabilities. "
         "OpenWhisper must remain running with MCP enabled on that host computer. "
