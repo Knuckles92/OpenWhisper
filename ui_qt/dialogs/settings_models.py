@@ -953,8 +953,10 @@ class ModelAssignments(QObject):
         """A missing SDK blocks AI insights, not recording or agent selection."""
         notice = ""
         if core == MeetingAgentCore.PI and not self._pi_payload_available:
-            fix = ("Install or update Pi from Downloads → Components."
-                   if is_frozen() else "Build the Pi sidecar, or install/update it from Downloads → Components.")
+            if is_frozen():
+                fix = "Install or update Pi from Downloads → Components."
+            else:
+                fix = "Build the Pi sidecar, or install/update it from Downloads → Components."
             notice = f"{fix} Or choose an installed coding agent above."
         elif core == MeetingAgentCore.OPENCODE and not self._opencode_payload_available:
             notice = "Install OpenCode SDK from Downloads → Components, or choose another agent above."
@@ -1034,8 +1036,11 @@ class ModelAssignments(QObject):
     def _refresh_picker_profiles(self) -> None:
         profiles = list_profiles(self._settings_snapshot())
         settings = self._settings_snapshot()
-        for picker, key, page in ((self.__dict__.get("text_model_picker"), "cleanup_model_memory", CLEANUP),
-                                  (self.__dict__.get("meeting_model_picker"), "meeting_model_memory", MEETING_INTELLIGENCE)):
+        pickers = (
+            (self.__dict__.get("text_model_picker"), "cleanup_model_memory", CLEANUP),
+            (self.__dict__.get("meeting_model_picker"), "meeting_model_memory", MEETING_INTELLIGENCE),
+        )
+        for picker, key, page in pickers:
             if picker is None or not self._page_is_loading(page):
                 continue
             memory = settings.get(key, {})
@@ -1346,10 +1351,11 @@ class ModelAssignments(QObject):
         ):
             return
         try:
+            memory = {**self._settings_snapshot().get("cleanup_model_memory", {}), provider: model}
             settings_manager.update_settings({
                 SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: provider,
                 SettingsKey.TRANSCRIPT_CLEANUP_MODEL: model,
-                "cleanup_model_memory": {**self._settings_snapshot().get("cleanup_model_memory", {}), provider: model},
+                "cleanup_model_memory": memory,
             })
         except Exception as exc:
             logger.error("Couldn't activate text model: %s", exc)
@@ -1375,10 +1381,11 @@ class ModelAssignments(QObject):
         ):
             return
         try:
+            memory = {**self._settings_snapshot().get("meeting_model_memory", {}), provider: model}
             settings_manager.update_settings({
                 SettingsKey.MEETING_LLM_PROVIDER: provider,
                 SettingsKey.MEETING_LLM_MODEL: model,
-                "meeting_model_memory": {**self._settings_snapshot().get("meeting_model_memory", {}), provider: model},
+                "meeting_model_memory": memory,
             })
         except Exception as exc:
             logger.error("Couldn't activate meeting LLM model: %s", exc)
@@ -1450,11 +1457,13 @@ class ModelAssignments(QObject):
             self._sync_pi_core_availability(settings)
         if self._page_is_loading(MEETING_VOICE):
             blocker = self.meeting_source_combo.blockSignals(True)
-            self.meeting_source_combo.setCurrentIndex(self.meeting_source_combo.findData(resolve_meeting_asr_source(settings)))
+            source = resolve_meeting_asr_source(settings)
+            self.meeting_source_combo.setCurrentIndex(self.meeting_source_combo.findData(source))
             self.meeting_source_combo.blockSignals(blocker)
             self._refresh_meeting_source()
             blocker = self.meeting_language_combo.blockSignals(True)
-            self.meeting_language_combo.setCurrentIndex(max(0, self.meeting_language_combo.findData(resolve_meeting_language(settings))))
+            language = resolve_meeting_language(settings)
+            self.meeting_language_combo.setCurrentIndex(max(0, self.meeting_language_combo.findData(language)))
             self.meeting_language_combo.blockSignals(blocker)
             backend = resolve_meeting_speaker_id_backend(settings)
             blocker = self.meeting_speaker_id_combo.blockSignals(True)
@@ -1502,7 +1511,10 @@ class ModelAssignments(QObject):
     def _update_engine_caption(self) -> None:
         value = self.engine_combo.currentData() or "local_whisper"
         from services.local_asr.catalog import BACKENDS, DEFAULT_MODELS, MODELS
-        caption = MODELS[DEFAULT_MODELS[value]].purpose + ". Runs locally." if value in BACKENDS else _ENGINE_CAPTIONS.get(value, "")
+        if value in BACKENDS:
+            caption = MODELS[DEFAULT_MODELS[value]].purpose + ". Runs locally."
+        else:
+            caption = _ENGINE_CAPTIONS.get(value, "")
         display_name = _display_name_for_backend(value)
         tip = backend_picker_tooltip(display_name)
         if tip != display_name:
@@ -1801,7 +1813,10 @@ class ModelAssignments(QObject):
         """The dictation engine and model, as the rail shows it."""
         engine_value = self._engine_value()
         if engine_value == "local_whisper":
-            model = self.ondemand_whisper_picker.current_model() if VOICE_MODEL in self._built else setting_value(SettingsKey.WHISPER_MODEL, self._settings_snapshot())
+            if VOICE_MODEL in self._built:
+                model = self.ondemand_whisper_picker.current_model()
+            else:
+                model = setting_value(SettingsKey.WHISPER_MODEL, self._settings_snapshot())
             return f"Local Whisper · {model}"
         if engine_value == "api":
             from services import speech_endpoints
@@ -1870,20 +1885,28 @@ class ModelAssignments(QObject):
         if self._meeting_source() == "remote":
             return "Remote computer"
         from services.local_asr.catalog import MODELS
-        model = self.meeting_whisper_picker.current_model() if MEETING_VOICE in self._built else resolve_meeting_whisper_model(self._settings_snapshot())
+        if MEETING_VOICE in self._built:
+            model = self.meeting_whisper_picker.current_model()
+        else:
+            model = resolve_meeting_whisper_model(self._settings_snapshot())
         return MODELS[model].label if model in MODELS else model
 
+    def _meeting_language_value(self):
+        """The meeting language on the page once it's built, else the saved one."""
+        if MEETING_VOICE in self._built:
+            return self.meeting_language_combo.currentData()
+        return resolve_meeting_language(self._settings_snapshot())
+
     def meeting_voice_summary(self) -> str:
-        language = meeting_language_label(
-            self.meeting_language_combo.currentData() if MEETING_VOICE in self._built else resolve_meeting_language(self._settings_snapshot())
-        )
+        language = meeting_language_label(self._meeting_language_value())
         return f"{self.meeting_model_label()} · {language}"
 
     def meeting_voice_detail(self) -> str:
-        language = meeting_language_label(
-            self.meeting_language_combo.currentData() if MEETING_VOICE in self._built else resolve_meeting_language(self._settings_snapshot())
-        )
-        backend = self.meeting_speaker_id_combo.currentData() if MEETING_VOICE in self._built else resolve_meeting_speaker_id_backend(self._settings_snapshot())
+        language = meeting_language_label(self._meeting_language_value())
+        if MEETING_VOICE in self._built:
+            backend = self.meeting_speaker_id_combo.currentData()
+        else:
+            backend = resolve_meeting_speaker_id_backend(self._settings_snapshot())
         speakers = speaker_id_label(backend)
         detail = f"{language} · {speakers}"
         if self._meeting_source() == "remote":
@@ -1955,13 +1978,20 @@ class ModelAssignments(QObject):
     def meeting_agent_core_label(self) -> str:
         if self.meeting_agent_is_installed():
             return agent_core_label(self.meeting_agent_core())
-        core = self.meeting_agent_core_combo.currentData() if MEETING_INTELLIGENCE in self._built else resolve_meeting_agent_core(self._settings_snapshot())
+        if MEETING_INTELLIGENCE in self._built:
+            core = self.meeting_agent_core_combo.currentData()
+        else:
+            core = resolve_meeting_agent_core(self._settings_snapshot())
         return agent_core_label(core)
 
     def runtime_summary(self) -> str:
         settings = self._settings_snapshot()
-        device = self.device_combo.currentText() if RUNTIME in self._built else setting_value(SettingsKey.WHISPER_DEVICE, settings)
-        compute = self.compute_combo.currentText() if RUNTIME in self._built else setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings)
+        if RUNTIME in self._built:
+            device = self.device_combo.currentText()
+            compute = self.compute_combo.currentText()
+        else:
+            device = setting_value(SettingsKey.WHISPER_DEVICE, settings)
+            compute = setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings)
         return f"{device} · {compute}"
 
     def _refresh_rail_values(self) -> None:
