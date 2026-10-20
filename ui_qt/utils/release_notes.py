@@ -71,16 +71,33 @@ def render_release_notes_html(notes: str) -> str:
 
 
 def _relevant_lines(notes: str) -> List[str]:
-    text = (notes or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    text = _normalized_text(notes)
     if not text:
         return []
+    kept = _drop_verification(text.split("\n"))
+    while kept and not kept[0].strip():
+        kept.pop(0)
+    while kept and not kept[-1].strip():
+        kept.pop()
+    return kept
+
+
+def _normalized_text(notes: str) -> str:
+    """Unix line endings, trimmed, and cut at a line break near the input limit."""
+    text = (notes or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return ""
     if len(text) > _INPUT_LIMIT:
         text = text[:_INPUT_LIMIT].rsplit("\n", 1)[0]
+    return text
 
+
+def _drop_verification(lines: List[str]) -> List[str]:
+    """Drop checksum sections and lines; fenced code is kept as written."""
     kept: List[str] = []
     skip_level = 0
     in_fence = False
-    for line in text.split("\n"):
+    for line in lines:
         stripped = line.strip()
         if not in_fence:
             heading = _HEADING_RE.match(stripped)
@@ -95,16 +112,9 @@ def _relevant_lines(notes: str) -> List[str]:
             in_fence = not in_fence
         if skip_level:
             continue
-        if not in_fence and _DROPPED_LINE_RE.match(line):
-            continue
-        if not in_fence and _is_checksum_line(stripped):
+        if not in_fence and (_DROPPED_LINE_RE.match(line) or _is_checksum_line(stripped)):
             continue
         kept.append(line)
-
-    while kept and not kept[0].strip():
-        kept.pop(0)
-    while kept and not kept[-1].strip():
-        kept.pop()
     return kept
 
 
@@ -136,16 +146,9 @@ def _blocks_to_html(lines: List[str]) -> str:
             continue
 
         if _FENCE_RE.match(stripped):
-            index += 1
-            buffer: List[str] = []
-            while index < total and not _FENCE_RE.match(lines[index].strip()):
-                buffer.append(lines[index])
-                index += 1
-            index += 1
-            body = [row for row in buffer if row.strip()]
-            if body and not all(_is_checksum_line(row.strip()) for row in body):
-                code = html.escape("\n".join(buffer).strip("\n"))
-                parts.append(f'<pre style="{_r(_PRE_STYLE)}">{code}</pre>')
+            block, index = _render_fence(lines, index)
+            if block:
+                parts.append(block)
             continue
 
         heading = _HEADING_RE.match(stripped)
@@ -169,17 +172,43 @@ def _blocks_to_html(lines: List[str]) -> str:
             parts.append(f'<{tag} style="{_UL_STYLE}">{rendered}</{tag}>')
             break
         else:
-            buffer = [stripped]
-            index += 1
-            while index < total:
-                nxt = lines[index].strip()
-                if not nxt or _starts_block(nxt):
-                    break
-                buffer.append(nxt)
-                index += 1
-            parts.append(f'<p style="{_r(_P_STYLE)}">{_inline(" ".join(buffer))}</p>')
+            paragraph, index = _collect_paragraph(lines, index)
+            parts.append(f'<p style="{_r(_P_STYLE)}">{_inline(paragraph)}</p>')
 
     return "".join(parts)
+
+
+def _render_fence(lines: List[str], index: int) -> tuple[str, int]:
+    """Render the fenced block opening at ``index``; "" when it holds only checksums.
+
+    Returns the block and the index just past its closing fence.
+    """
+    total = len(lines)
+    index += 1
+    buffer: List[str] = []
+    while index < total and not _FENCE_RE.match(lines[index].strip()):
+        buffer.append(lines[index])
+        index += 1
+    index += 1
+    body = [row for row in buffer if row.strip()]
+    if body and not all(_is_checksum_line(row.strip()) for row in body):
+        code = html.escape("\n".join(buffer).strip("\n"))
+        return f'<pre style="{_r(_PRE_STYLE)}">{code}</pre>', index
+    return "", index
+
+
+def _collect_paragraph(lines: List[str], index: int) -> tuple[str, int]:
+    """Join the lines from ``index`` up to the next blank line or block."""
+    total = len(lines)
+    buffer = [lines[index].strip()]
+    index += 1
+    while index < total:
+        nxt = lines[index].strip()
+        if not nxt or _starts_block(nxt):
+            break
+        buffer.append(nxt)
+        index += 1
+    return " ".join(buffer), index
 
 
 def _collect_list(lines: List[str], index: int, pattern) -> tuple[List[str], int]:
