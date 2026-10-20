@@ -463,15 +463,17 @@ class CalendarSource:
     def load_month(self, year: int, month: int) -> List[CalendarItem]:
         """Every record of the local month, oldest first."""
         start, end = query_bounds(year, month)
+        items = self._month_dictations(year, month, start, end)
+        items.extend(self._month_meetings(year, month, start, end))
+        items.sort(key=lambda item: (item.when, item.record_id))
+        return items
 
-        def in_month(when: Optional[datetime]) -> bool:
-            return when is not None and (when.year, when.month) == (year, month)
-
+    def _month_dictations(self, year: int, month: int, start, end) -> List[CalendarItem]:
         items: List[CalendarItem] = []
         entries = []
         for entry in self._database().get_history_entries_between(start, end):
             when = local_wall_time(entry.timestamp, self.tz)
-            if in_month(when):
+            if _in_month(when, year, month):
                 entries.append((entry, when))
         also_on = self._copies_on_host(DICTATION, [entry.id for entry, _when in entries])
         for entry, when in entries:
@@ -481,25 +483,26 @@ class CalendarSource:
 
             for item in self._remote[DICTATION]:
                 when = local_wall_time(item.get("timestamp"), self.tz)
-                if in_month(when):
+                if _in_month(when, year, month):
                     items.append(entry_item(remote_history_entry(item), when))
+        return items
 
+    def _month_meetings(self, year: int, month: int, start, end) -> List[CalendarItem]:
+        items: List[CalendarItem] = []
         meetings = []
         for meeting in self._meetings().list_past_meeting_summaries(
             limit=501, started_from=start, started_before=end,
         ):
             when = local_wall_time(meeting.get("started_at"), self.tz)
-            if in_month(when):
+            if _in_month(when, year, month):
                 meetings.append((meeting, when))
-        also_on = self._copies_on_host(MEETING, [str(m.get("id") or "") for m, _when in meetings])
+        also_on = self._copies_on_host(MEETING, [_meeting_id(m) for m, _when in meetings])
         for meeting, when in meetings:
-            items.append(meeting_item(meeting, when, also_on.get(str(meeting.get("id") or ""), "")))
+            items.append(meeting_item(meeting, when, also_on.get(_meeting_id(meeting), "")))
         for meeting in self._remote[MEETING]:
             when = local_wall_time(meeting.get("started_at"), self.tz)
-            if in_month(when):
+            if _in_month(when, year, month):
                 items.append(meeting_item(meeting, when))
-
-        items.sort(key=lambda item: (item.when, item.record_id))
         return items
 
     def _copies_on_host(self, kind: str, ids: List[str]) -> Dict[str, str]:
@@ -516,6 +519,14 @@ class CalendarSource:
             logger.debug("Couldn't tell which records the host also keeps", exc_info=True)
             return {}
         return {record_id: host for record_id in copies}
+
+
+def _in_month(when: Optional[datetime], year: int, month: int) -> bool:
+    return when is not None and (when.year, when.month) == (year, month)
+
+
+def _meeting_id(meeting: Dict[str, Any]) -> str:
+    return str(meeting.get("id") or "")
 
 
 def _meeting_seconds(meeting: Dict[str, Any]) -> float:
