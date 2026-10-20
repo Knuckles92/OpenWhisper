@@ -7,9 +7,7 @@ import ctypes
 import os
 import ctypes.util
 import io
-from pathlib import Path
 import struct
-import sys
 import numpy as np
 import soundfile as sf
 

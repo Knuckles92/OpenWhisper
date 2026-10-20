@@ -1,5 +1,4 @@
 """Portable benchmark configuration; no installs or downloads."""
-import argparse
 import hashlib
 import os
 from pathlib import Path
@@ -54,6 +53,6 @@ def configure(parser, args, *, host=True):
     os.environ["NO_PROXY"] = os.environ["no_proxy"] = "localhost,127.0.0.1,::1"
     os.environ["ORT_DISABLE_TELEMETRY"] = "1"
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
-    import loopback_guard  # Installs process-local audit hook before app imports.
+    import loopback_guard  # noqa: F401 - installs network isolation before app imports.
     args.output.parent.mkdir(parents=True, exist_ok=True)
     return args

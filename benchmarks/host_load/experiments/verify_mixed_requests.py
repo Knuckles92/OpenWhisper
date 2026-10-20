@@ -3,11 +3,11 @@ import os
 os.environ['ORT_DISABLE_TELEMETRY']='1'
 os.environ['HF_HUB_DISABLE_TELEMETRY']='1'
 os.environ['DO_NOT_TRACK']='1'
-import argparse,json,threading,time
+import argparse,json,threading
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 from pathlib import Path
-from real_transport import ROOT,audio_file,CrossRequestBatchEngine,BenchmarkHost,default_args
+from real_transport import audio_file,CrossRequestBatchEngine,BenchmarkHost,default_args
 from native_tls import NativeEngine
 from experiment_paths import PATHS,add_paths,required
 from services.remote_asr import host as host_module

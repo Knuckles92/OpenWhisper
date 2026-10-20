@@ -1,4 +1,6 @@
 """A real-TLS reply distinguishes admission wait from engine execution."""
+# Imported fixtures are discovered by pytest and reused as argument names.
+# ruff: noqa: F811
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
@@ -7,7 +9,7 @@ import pytest
 
 from services.remote_asr.admission import WorkAdmission
 from services.remote_asr.client import _host_seconds
-from tests.test_remote_engine import (
+from tests.test_remote_engine import (  # noqa: F401 - shared TLS and isolation fixtures.
     _connect, _pair, _tone, _wait_for, engine, host, identity, no_real_tailscale, store,
 )
 

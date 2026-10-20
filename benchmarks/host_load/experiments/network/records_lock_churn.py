@@ -1,6 +1,5 @@
 """Real TLS records begin/abort churn; measure retained upload lock bookkeeping."""
 import gc
-import os
 import json
 from pathlib import Path
 import sys

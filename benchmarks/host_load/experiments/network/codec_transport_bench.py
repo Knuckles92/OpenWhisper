@@ -8,13 +8,10 @@ production codec implementation or an ASR accuracy evaluation.
 """
 from datetime import datetime, timezone
 import json
-import os
 from pathlib import Path
 import subprocess
-import sys
 import time
 import wave
-from concurrent.futures import ThreadPoolExecutor
 import network_bench as bench
 from paced_proxy import PacedProxy
 import numpy as np
@@ -22,7 +19,6 @@ NATIVE = bench.args.codec_backend == "native"
 if NATIVE:
     from native_codecs import flac_encode, flac_decode, opus_encode, opus_decode
 FFMPEG = bench.args.ffmpeg
-from services.remote_asr import protocol
 
 ROOT=Path(__file__).resolve().parent
 

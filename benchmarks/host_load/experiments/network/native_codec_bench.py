@@ -1,4 +1,4 @@
-import hashlib,json,time,wave
+import json,time,wave
 from pathlib import Path
 import argparse
 from options import add_common, configure

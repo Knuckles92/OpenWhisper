@@ -2,7 +2,6 @@
 import argparse
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -99,7 +98,6 @@ def main():
                                 rows=[]
                                 for rep in range(args.reps):
                                     barrier.wait()
-                                    before=proxy.byte_counts.copy()
                                     start=time.perf_counter()
                                     try:
                                         result,host_s = clients[index].request_timed('transcribe',audio=audio,language='en',timeout=30)
