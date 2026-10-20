@@ -51,6 +51,10 @@ class ConsolidationOutcome:
 
 #: How often the worker loop re-evaluates its firing conditions.
 _TICK_S = 1.0
+#: Default checkpoint intervals when neither the caller nor the core sets one.
+_BASE_INTERVAL_S = 15.0
+_MIN_INTERVAL_S = 5.0
+_MAX_INTERVAL_S = 20.0
 #: Let the opening discussion establish context before automatic generation.
 _INITIAL_CONTEXT_S = 120.0
 #: Minimum spacing between topic-shift computations.
@@ -99,6 +103,9 @@ _NOTES_MIN_INTERVAL_S = 45.0
 #: How much recent transcript a notes payload may carry; earlier narrative
 #: lives in the existing note blocks shipped in the state snapshot.
 _NOTES_MAX_SEGMENTS = 300
+#: Bounds on explicit note requests from the dashboard.
+_NOTE_REQUEST_MAX_CHARS = 4000
+_MAX_QUEUED_NOTE_REQUESTS = 4
 
 
 @dataclass(frozen=True)
@@ -163,6 +170,55 @@ def _content_words(text: str) -> Set[str]:
     }
 
 
+def _applied_count(result: AgentResult) -> int:
+    return sum(1 for r in result.op_results if r.ok)
+
+
+def _revised_transcript(result: AgentResult) -> bool:
+    """Whether the pass rewrote any transcript segment text."""
+    return any(r.ok and r.op.get("op") == "revise_segment_text"
+               for r in result.op_results)
+
+
+@dataclass
+class _NotesPass:
+    """A note-taker pass about to run, and where its delivery resumes."""
+
+    payload: CheckpointPayload
+    segments: List[Dict[str, Any]]
+    guidance: bool
+    more_delivery: bool
+    delivery_seq: int
+
+
+def _consolidation_outcome(result: Optional[AgentResult],
+                           timeout_s: float) -> ConsolidationOutcome:
+    """The terminal outcome for a consolidation result (None: timed out)."""
+    if result is None:
+        logger.warning("Consolidation produced no result (timed out)")
+        return ConsolidationOutcome(
+            status="failed",
+            message=(
+                f"Final insights timed out after {int(timeout_s)}s."
+            ),
+        )
+    if result.ok:
+        logger.info(
+            "Consolidation done: %d/%d ops applied",
+            _applied_count(result), len(result.op_results),
+        )
+        return ConsolidationOutcome(
+            status="completed",
+            message="Final insights are ready.",
+        )
+    error = result.error or "consolidation failed"
+    logger.warning("Consolidation failed: %s", error)
+    return ConsolidationOutcome(
+        status="failed",
+        message=f"Final insights failed: {error}",
+    )
+
+
 class CheckpointScheduler:
     """Drives agent checkpoints from transcript activity.
 
@@ -189,12 +245,12 @@ class CheckpointScheduler:
         self._cadence: Optional[CheckpointCadence] = (
             cadence if isinstance(cadence, CheckpointCadence) else None
         )
-        self._base_interval_s = base_interval_s if base_interval_s is not None else (
-            self._cadence.base_interval_s if self._cadence else 15.0)
-        self._min_interval_s = min_interval_s if min_interval_s is not None else (
-            self._cadence.min_interval_s if self._cadence else 5.0)
-        self._max_interval_s = max_interval_s if max_interval_s is not None else (
-            self._cadence.max_interval_s if self._cadence else 20.0)
+        self._base_interval_s = self._interval_setting(
+            base_interval_s, "base_interval_s", _BASE_INTERVAL_S)
+        self._min_interval_s = self._interval_setting(
+            min_interval_s, "min_interval_s", _MIN_INTERVAL_S)
+        self._max_interval_s = self._interval_setting(
+            max_interval_s, "max_interval_s", _MAX_INTERVAL_S)
         self._on_health = on_health
         #: ``(previous_window_text, window_text) -> P(topic changed)``; ``None``
         #: from the judge means "no answer", and the lexical rule decides.
@@ -243,6 +299,15 @@ class CheckpointScheduler:
             if self._delivery_enabled else 0
         )
         self._notes_resume_pending = False
+
+    def _interval_setting(self, explicit: Optional[float], name: str,
+                          default: float) -> float:
+        """The caller's interval, else the core's cadence, else the default."""
+        if explicit is not None:
+            return explicit
+        if self._cadence:
+            return getattr(self._cadence, name)
+        return default
 
     def _pace(self, name: str, default: float) -> float:
         """A cadence value: the core's own, else the module default.
@@ -335,12 +400,7 @@ class CheckpointScheduler:
             self._notes_sent_starts[str(seg_id)] = start_s
             if start_s > self._notes_max_sent_start_s:
                 self._notes_max_sent_start_s = start_s
-        prune_cursor = max(-1.0, self._notes_max_sent_start_s - _REFETCH_WINDOW_S)
-        self._notes_sent_starts = {
-            seg_id: start_s
-            for seg_id, start_s in self._notes_sent_starts.items()
-            if start_s > prune_cursor
-        }
+        self._prune_notes_sent()
         if self._delivery_enabled:
             high_water = self._engine.get_transcript_delivery_high_water()
             self._engine.advance_transcript_delivery_cursor("cards", high_water)
@@ -364,13 +424,14 @@ class CheckpointScheduler:
 
     def request_note_adjustment(self, text: str) -> Future:
         """Queue an explicit request on the same worker as periodic passes."""
-        if not isinstance(text, str) or not text.strip() or len(text) > 4000:
-            raise ValueError("Enter a note request of 1 to 4000 characters.")
+        if not isinstance(text, str) or not text.strip() or len(text) > _NOTE_REQUEST_MAX_CHARS:
+            raise ValueError(
+                f"Enter a note request of 1 to {_NOTE_REQUEST_MAX_CHARS} characters.")
         with self._lock:
             if (self._consolidating or self._stop_event.is_set()
                     or self._thread is None or not self._thread.is_alive()):
                 raise RuntimeError("The note agent is not available.")
-            if len(self._note_requests) >= 4:
+            if len(self._note_requests) >= _MAX_QUEUED_NOTE_REQUESTS:
                 raise RuntimeError("The note agent already has several requests queued.")
             future = Future()
             self._note_requests.append((text.strip(), future))
@@ -451,12 +512,7 @@ class CheckpointScheduler:
             return
         # Keep pending segments and guidance intact during warm-up. The
         # meeting clock excludes pauses and survives scheduler restarts.
-        clock = getattr(self._engine, "clock", None)
-        elapsed_meeting_s = (
-            clock.now_s() if clock is not None
-            else self._monotonic() - self._started_mono
-        )
-        if elapsed_meeting_s < _INITIAL_CONTEXT_S:
+        if self._meeting_elapsed_s() < _INITIAL_CONTEXT_S:
             return
         with self._lock:
             if self._note_requests:
@@ -467,23 +523,27 @@ class CheckpointScheduler:
             self._maybe_fire_notes()
             self._maybe_fire_polish()
             return
-        elapsed = self._monotonic() - self._last_fire_mono
-        if self._monotonic() < self._retry_not_before:
-            return
-        if self._guidance_pending:
-            self._fire()
-            return
-        if not self._sent_starts:
-            self._fire()
-            return
-        if elapsed < self._min_interval_s:
-            return
-        due = elapsed >= self._interval_for(pending)
-        if not due:
-            due = self._detect_topic_shift()
-        if due:
+        if self._checkpoint_due(pending):
             self._fire()
 
+    def _meeting_elapsed_s(self) -> float:
+        clock = getattr(self._engine, "clock", None)
+        if clock is not None:
+            return clock.now_s()
+        return self._monotonic() - self._started_mono
+
+    def _checkpoint_due(self, pending: int) -> bool:
+        """Whether ``pending`` new segments warrant a card checkpoint now."""
+        elapsed = self._monotonic() - self._last_fire_mono
+        if self._monotonic() < self._retry_not_before:
+            return False
+        if self._guidance_pending:
+            return True
+        if not self._sent_starts:
+            return True
+        if elapsed < self._min_interval_s:
+            return False
+        return elapsed >= self._interval_for(pending) or self._detect_topic_shift()
 
     def _detect_topic_shift(self) -> bool:
         """Compare the last two 60s transcript windows for a topic shift."""
@@ -624,29 +684,13 @@ class CheckpointScheduler:
         # while the checkpoint executes fires immediately after completion.
         self._last_fire_mono = self._monotonic()
 
-        more_delivery = False
-        delivery_seq = self._card_cursor_seq
         try:
-            if self._delivery_enabled and not guidance:
-                fetched, more_delivery, delivery_seq = self._delivery_page("cards")
-            else:
-                fetched = self._engine.get_transcript(
-                    after_start_s=-1.0 if guidance else self._fetch_cursor_s()
-                )
+            fetched, more_delivery, delivery_seq = self._fetch_for_checkpoint(guidance)
         except Exception as exc:
             logger.exception("Checkpoint transcript fetch failed")
-            if guidance:
-                self.notify_guidance()
-            self._record_failure(claimed, str(exc))
+            self._checkpoint_failed(claimed, guidance, str(exc))
             return
-        segments = ([
-            seg for seg in fetched
-            if guidance or str(seg.get("id") or "") not in self._sent_starts
-        ] if not self._delivery_enabled or guidance else fetched)
-        if guidance:
-            # Segments are read with term corrections applied, so a guidance
-            # pass shows the agent the corrected recent transcript.
-            segments = segments[-_GUIDANCE_MAX_SEGMENTS:]
+        segments = self._checkpoint_segments(fetched, guidance)
         if not segments and not guidance:
             return
 
@@ -666,66 +710,103 @@ class CheckpointScheduler:
             payload.request_id, len(segments), claimed,
             self._consecutive_failures,
         )
-        try:
-            result = self._agent.checkpoint(payload)
-        except Exception as exc:
-            logger.exception("Agent checkpoint raised")
-            result = AgentResult(ok=False, error=str(exc))
-
-        if result.ok:
-            if self._delivery_enabled and not guidance:
-                try:
-                    self._engine.advance_transcript_delivery_cursor("cards", delivery_seq)
-                except Exception as exc:
-                    logger.exception("Could not save checkpoint transcript cursor")
-                    self._record_failure(claimed, str(exc), request_id=payload.request_id)
-                    return
-                self._card_cursor_seq = delivery_seq
-            self._consecutive_failures = 0
-            self._mark_sent(segments)
-            self._set_online(True)
-            applied = sum(1 for r in result.op_results if r.ok)
-            logger.info(
-                "Checkpoint %s done: %d/%d ops applied",
-                payload.request_id, applied, len(result.op_results),
-            )
-            self._successful_checkpoints += 1
-            if any(r.ok and r.op.get("op") == "revise_segment_text"
-                   for r in result.op_results):
-                with self._lock:
-                    self._notes_guidance_pending = True
-                    self._guidance_generation += 1
-            self._maybe_fire_notes()
-            self._maybe_fire_polish()
-            if more_delivery:
-                self.notify_segments(1)
-        else:
-            if guidance:
-                self.notify_guidance()
-            self._record_failure(
-                claimed,
+        result = self._run_agent_pass(payload, "Agent checkpoint raised")
+        if not result.ok:
+            self._checkpoint_failed(
+                claimed, guidance,
                 result.error or "checkpoint failed",
                 request_id=payload.request_id,
             )
+            return
+
+        if self._delivery_enabled and not guidance:
+            try:
+                self._engine.advance_transcript_delivery_cursor("cards", delivery_seq)
+            except Exception as exc:
+                logger.exception("Could not save checkpoint transcript cursor")
+                self._record_failure(claimed, str(exc), request_id=payload.request_id)
+                return
+            self._card_cursor_seq = delivery_seq
+        self._record_checkpoint_success(payload.request_id, segments, result)
+        self._maybe_fire_notes()
+        self._maybe_fire_polish()
+        if more_delivery:
+            self.notify_segments(1)
+
+    def _fetch_for_checkpoint(
+        self, guidance: bool,
+    ) -> tuple[List[Dict[str, Any]], bool, int]:
+        """The checkpoint's transcript, whether more is queued, and its ack point.
+
+        Guidance re-reads the whole meeting; otherwise the durable delivery
+        ledger is paged, or the time-window cursor for older engines.
+        """
+        delivery_seq = self._card_cursor_seq
+        if self._delivery_enabled and not guidance:
+            return self._delivery_page("cards")
+        fetched = self._engine.get_transcript(
+            after_start_s=-1.0 if guidance else self._fetch_cursor_s()
+        )
+        return fetched, False, delivery_seq
+
+    def _checkpoint_segments(self, fetched: List[Dict[str, Any]],
+                             guidance: bool) -> List[Dict[str, Any]]:
+        if self._delivery_enabled and not guidance:
+            return fetched
+        if guidance:
+            # Segments are read with term corrections applied, so a guidance
+            # pass shows the agent the corrected recent transcript.
+            return list(fetched)[-_GUIDANCE_MAX_SEGMENTS:]
+        return [
+            seg for seg in fetched
+            if str(seg.get("id") or "") not in self._sent_starts
+        ]
+
+    def _run_agent_pass(self, payload: CheckpointPayload,
+                        failure_log: str) -> AgentResult:
+        """``checkpoint`` on the agent; an exception becomes a failed result."""
+        try:
+            return self._agent.checkpoint(payload)
+        except Exception as exc:
+            logger.exception(failure_log)
+            return AgentResult(ok=False, error=str(exc))
+
+    def _checkpoint_failed(self, claimed: int, guidance: bool, error: str,
+                           request_id: str = "") -> None:
+        """Requeue guidance and record a failed card checkpoint."""
+        if guidance:
+            self.notify_guidance()
+        self._record_failure(claimed, error, request_id=request_id)
+
+    def _record_checkpoint_success(self, request_id: str,
+                                   segments: List[Dict[str, Any]],
+                                   result: AgentResult) -> None:
+        self._consecutive_failures = 0
+        self._mark_sent(segments)
+        self._set_online(True)
+        logger.info(
+            "Checkpoint %s done: %d/%d ops applied",
+            request_id, _applied_count(result), len(result.op_results),
+        )
+        self._successful_checkpoints += 1
+        if _revised_transcript(result):
+            with self._lock:
+                self._notes_guidance_pending = True
+                self._guidance_generation += 1
+
+    def _background_blocked(self) -> bool:
+        """Whether background passes must wait: ending, stopped, or human input queued."""
+        return (
+            self._consolidating
+            or self._stop_event.is_set()
+            or self._interactive_pending()
+        )
 
     def _maybe_fire_polish(self) -> None:
         """Review transcript text on count/time cadence, including during silence."""
-        if self._consolidating or self._stop_event.is_set():
+        if self._background_blocked():
             return
-        if self._interactive_pending():
-            return
-        since_mark = self._successful_checkpoints - self._polish_checkpoint_mark
-        if since_mark <= 0 and not self._polish_retry_pending:
-            return
-        now = self._monotonic()
-        due_by_count = since_mark >= self._pace("polish_every_n", _POLISH_EVERY_N_CHECKPOINTS)
-        due_by_time = (
-            now - self._last_polish_mono >= self._pace(
-                "polish_min_interval_s", _POLISH_MIN_INTERVAL_S)
-            if self._last_polish_mono else
-            now - self._last_fire_mono >= _POLISH_INITIAL_DELAY_S
-        )
-        if not (due_by_count or due_by_time):
+        if not self._polish_due():
             return
         if not self._agent.is_healthy():
             return
@@ -746,34 +827,44 @@ class CheckpointScheduler:
             "Firing transcript polish %s over %d segments",
             payload.request_id, len(segments),
         )
-        try:
-            result = self._agent.checkpoint(payload)
-        except Exception as exc:
-            logger.exception("Agent polish raised")
-            result = AgentResult(ok=False, error=str(exc))
+        result = self._run_agent_pass(payload, "Agent polish raised")
         self._last_polish_mono = self._monotonic()
         # Count attempted work too; retries wait for the next cadence.
         self._polish_checkpoint_mark = self._successful_checkpoints
         self._polish_retry_pending = not result.ok
-        if result.ok:
-            if any(r.ok and r.op.get("op") == "revise_segment_text"
-                   for r in result.op_results):
-                self.notify_guidance()
-            applied = sum(1 for r in result.op_results if r.ok)
-            logger.info(
-                "Polish %s done: %d/%d ops applied",
-                payload.request_id, applied, len(result.op_results),
-            )
-        else:
+        if not result.ok:
             logger.warning(
                 "Polish %s failed: %s",
                 payload.request_id, result.error or "unknown",
             )
+            return
+        if _revised_transcript(result):
+            self.notify_guidance()
+        logger.info(
+            "Polish %s done: %d/%d ops applied",
+            payload.request_id, _applied_count(result), len(result.op_results),
+        )
+
+    def _polish_due(self) -> bool:
+        since_mark = self._successful_checkpoints - self._polish_checkpoint_mark
+        if since_mark <= 0 and not self._polish_retry_pending:
+            return False
+        now = self._monotonic()
+        due_by_count = since_mark >= self._pace("polish_every_n", _POLISH_EVERY_N_CHECKPOINTS)
+        if self._last_polish_mono:
+            min_interval = self._pace("polish_min_interval_s", _POLISH_MIN_INTERVAL_S)
+            due_by_time = now - self._last_polish_mono >= min_interval
+        else:
+            due_by_time = now - self._last_fire_mono >= _POLISH_INITIAL_DELAY_S
+        return due_by_count or due_by_time
 
     def _interactive_pending(self) -> bool:
         """Yield background work to human input waiting on the shared worker."""
         with self._lock:
             return bool(self._note_requests or self._guidance_pending)
+
+    def _notes_interval_s(self) -> float:
+        return self._pace("notes_min_interval_s", _NOTES_MIN_INTERVAL_S)
 
     def _maybe_fire_notes(self) -> None:
         """Run the dedicated note-taker pass when due.
@@ -782,61 +873,65 @@ class CheckpointScheduler:
         notes page simply catches up on the next pass, because a failed
         batch's segments are not marked as consumed.
         """
-        if self._consolidating or self._stop_event.is_set():
-            return
-        if self._interactive_pending():
+        if self._background_blocked():
             return
         if self._monotonic() < self._notes_retry_not_before:
             return
         with self._lock:
             guidance = self._notes_guidance_pending
             generation = self._guidance_generation
+        if not self._notes_due(guidance):
+            return
+        if not self._agent.is_healthy():
+            return
+        notes_pass = self._prepare_notes_pass(guidance, generation)
+        if notes_pass is None:
+            return
+        payload = notes_pass.payload
+        logger.info(
+            "Firing note-taker pass %s over %d segments",
+            payload.request_id, len(notes_pass.segments),
+        )
+        result = self._run_agent_pass(payload, "Agent note-taker pass raised")
+        # Advance the cadence bookkeeping whether or not the pass succeeded
+        # so a failing core cannot hot-loop notes calls; only a success
+        # marks the batch consumed, leaving failures to be re-covered.
+        self._last_notes_mono = self._monotonic()
+        self._notes_checkpoint_mark = self._successful_checkpoints
+        if result.ok:
+            self._finish_notes_pass(notes_pass, result)
+        else:
+            self._fail_notes_pass(notes_pass, result)
+
+    def _notes_due(self, guidance: bool) -> bool:
         since_mark = self._successful_checkpoints - self._notes_checkpoint_mark
         due_by_count = since_mark >= self._pace("notes_every_n", _NOTES_EVERY_N_CHECKPOINTS)
         due_by_time = (
             self._last_notes_mono > 0.0
-            and (self._monotonic() - self._last_notes_mono)
-            >= self._pace("notes_min_interval_s", _NOTES_MIN_INTERVAL_S)
+            and (self._monotonic() - self._last_notes_mono) >= self._notes_interval_s()
         ) or (self._last_notes_mono == 0.0 and self._successful_checkpoints >= 1)
         resume_due = self._notes_resume_pending and (
             self._last_notes_mono == 0.0
-            or self._monotonic() - self._last_notes_mono >= self._pace(
-                "notes_min_interval_s", _NOTES_MIN_INTERVAL_S,
-            )
+            or self._monotonic() - self._last_notes_mono >= self._notes_interval_s()
         )
-        if not (guidance or due_by_count or due_by_time or resume_due):
-            return
-        if not self._agent.is_healthy():
-            return
-        more_delivery = False
-        delivery_seq = self._notes_cursor_seq
-        # New installations page the durable insertion ledger. Older engine
-        # fakes retain the time-window API for compatibility.
-        if not guidance and self._notes_max_sent_start_s >= 0.0:
-            cursor = max(-1.0, self._notes_max_sent_start_s - _REFETCH_WINDOW_S)
-        else:
-            cursor = -1.0
+        return guidance or due_by_count or due_by_time or resume_due
+
+    def _prepare_notes_pass(self, guidance: bool,
+                            generation: int) -> Optional[_NotesPass]:
+        """Fetch the notes batch and build its payload; None when there is nothing to do."""
         try:
-            if self._delivery_enabled and not guidance:
-                fetched, more_delivery, delivery_seq = self._delivery_page("notes")
-            else:
-                fetched = self._engine.get_transcript(after_start_s=cursor)
+            fetched, more_delivery, delivery_seq = self._fetch_for_notes(guidance)
         except Exception:
             logger.exception("Notes transcript fetch failed")
-            return
-        segments = [
-            seg for seg in fetched
-            if guidance or self._delivery_enabled
-            or str(seg.get("id") or "") not in self._notes_sent_starts
-        ]
+            return None
+        segments = self._notes_segments(fetched, guidance)
         if not segments and not guidance:
-            return
-        segments = segments[:_NOTES_MAX_SEGMENTS] if not guidance else segments[-_NOTES_MAX_SEGMENTS:]
+            return None
         payload = self._build_payload(
             segments, is_consolidation=False, is_notes=True,
         )
         if payload is None:
-            return
+            return None
         if guidance:
             # Clear before the network call so guidance arriving during it
             # remains queued for the next pass.
@@ -844,73 +939,97 @@ class CheckpointScheduler:
                 if generation == self._guidance_generation:
                     self._notes_guidance_pending = False
             payload.state_snapshot["notes_review_requested"] = True
-        logger.info(
-            "Firing note-taker pass %s over %d segments",
-            payload.request_id, len(segments),
-        )
-        try:
-            result = self._agent.checkpoint(payload)
-        except Exception as exc:
-            logger.exception("Agent note-taker pass raised")
-            result = AgentResult(ok=False, error=str(exc))
-        # Advance the cadence bookkeeping whether or not the pass succeeded
-        # so a failing core cannot hot-loop notes calls; only a success
-        # marks the batch consumed, leaving failures to be re-covered.
-        self._last_notes_mono = self._monotonic()
-        self._notes_checkpoint_mark = self._successful_checkpoints
-        if result.ok:
-            if self._delivery_enabled and not guidance:
-                try:
-                    self._engine.advance_transcript_delivery_cursor("notes", delivery_seq)
-                except Exception:
-                    logger.exception("Could not save note-taker transcript cursor")
-                    self._notes_retry_not_before = self._monotonic() + self._pace(
-                        "notes_min_interval_s", _NOTES_MIN_INTERVAL_S)
-                    return
-                self._notes_cursor_seq = delivery_seq
-                self._notes_resume_pending = more_delivery
-            applied = sum(1 for r in result.op_results if r.ok)
-            logger.info(
-                "Note-taker pass %s done: %d/%d ops applied",
-                payload.request_id, applied, len(result.op_results),
-            )
-            if guidance:
-                # A bounded review can skip older, still-unprocessed speech.
-                # Never advance the automatic notes cursor past that backlog.
-                return
-            for seg in segments:
-                seg_id = seg.get("id")
-                if seg_id:
-                    self._notes_sent_starts[str(seg_id)] = float(
-                        seg.get("start_s") or 0.0
-                    )
-            newest = max(
-                (float(seg.get("start_s") or 0.0) for seg in segments),
-                default=-1.0,
-            )
-            self._notes_max_sent_start_s = max(
-                self._notes_max_sent_start_s, newest
-            )
-            prune_cursor = max(
-                -1.0, self._notes_max_sent_start_s - _REFETCH_WINDOW_S
-            )
-            self._notes_sent_starts = {
-                seg_id: start_s
-                for seg_id, start_s in self._notes_sent_starts.items()
-                if start_s > prune_cursor
-            }
-            if more_delivery:
-                self._wake.set()
+        return _NotesPass(payload, segments, guidance, more_delivery, delivery_seq)
+
+    def _fetch_for_notes(
+        self, guidance: bool,
+    ) -> tuple[List[Dict[str, Any]], bool, int]:
+        delivery_seq = self._notes_cursor_seq
+        # New installations page the durable insertion ledger. Older engine
+        # fakes retain the time-window API for compatibility.
+        if not guidance and self._notes_max_sent_start_s >= 0.0:
+            cursor = max(-1.0, self._notes_max_sent_start_s - _REFETCH_WINDOW_S)
         else:
-            self._notes_retry_not_before = self._monotonic() + self._pace(
-                "notes_min_interval_s", _NOTES_MIN_INTERVAL_S)
-            if guidance:
-                with self._lock:
-                    self._notes_guidance_pending = True
-            logger.warning(
-                "Note-taker pass %s failed: %s",
-                payload.request_id, result.error or "unknown",
-            )
+            cursor = -1.0
+        if self._delivery_enabled and not guidance:
+            return self._delivery_page("notes")
+        return self._engine.get_transcript(after_start_s=cursor), False, delivery_seq
+
+    def _notes_segments(self, fetched: List[Dict[str, Any]],
+                        guidance: bool) -> List[Dict[str, Any]]:
+        """Unsent segments, oldest first; a guidance review takes the newest instead."""
+        if guidance:
+            return list(fetched)[-_NOTES_MAX_SEGMENTS:]
+        segments = [
+            seg for seg in fetched
+            if self._delivery_enabled
+            or str(seg.get("id") or "") not in self._notes_sent_starts
+        ]
+        return segments[:_NOTES_MAX_SEGMENTS]
+
+    def _finish_notes_pass(self, notes_pass: _NotesPass,
+                           result: AgentResult) -> None:
+        if self._delivery_enabled and not notes_pass.guidance:
+            try:
+                self._engine.advance_transcript_delivery_cursor(
+                    "notes", notes_pass.delivery_seq)
+            except Exception:
+                logger.exception("Could not save note-taker transcript cursor")
+                self._defer_notes_retry()
+                return
+            self._notes_cursor_seq = notes_pass.delivery_seq
+            self._notes_resume_pending = notes_pass.more_delivery
+        logger.info(
+            "Note-taker pass %s done: %d/%d ops applied",
+            notes_pass.payload.request_id, _applied_count(result),
+            len(result.op_results),
+        )
+        if notes_pass.guidance:
+            # A bounded review can skip older, still-unprocessed speech.
+            # Never advance the automatic notes cursor past that backlog.
+            return
+        self._mark_notes_sent(notes_pass.segments)
+        if notes_pass.more_delivery:
+            self._wake.set()
+
+    def _fail_notes_pass(self, notes_pass: _NotesPass,
+                         result: AgentResult) -> None:
+        self._defer_notes_retry()
+        if notes_pass.guidance:
+            with self._lock:
+                self._notes_guidance_pending = True
+        logger.warning(
+            "Note-taker pass %s failed: %s",
+            notes_pass.payload.request_id, result.error or "unknown",
+        )
+
+    def _defer_notes_retry(self) -> None:
+        self._notes_retry_not_before = self._monotonic() + self._notes_interval_s()
+
+    def _mark_notes_sent(self, segments: List[Dict[str, Any]]) -> None:
+        for seg in segments:
+            seg_id = seg.get("id")
+            if seg_id:
+                self._notes_sent_starts[str(seg_id)] = float(
+                    seg.get("start_s") or 0.0
+                )
+        newest = max(
+            (float(seg.get("start_s") or 0.0) for seg in segments),
+            default=-1.0,
+        )
+        self._notes_max_sent_start_s = max(
+            self._notes_max_sent_start_s, newest
+        )
+        self._prune_notes_sent()
+
+    def _prune_notes_sent(self) -> None:
+        """Forget sent notes segments that no future fetch can return."""
+        prune_cursor = max(-1.0, self._notes_max_sent_start_s - _REFETCH_WINDOW_S)
+        self._notes_sent_starts = {
+            seg_id: start_s
+            for seg_id, start_s in self._notes_sent_starts.items()
+            if start_s > prune_cursor
+        }
 
     def _record_failure(
         self, claimed: int, error: str, request_id: str = "",
@@ -1024,30 +1143,10 @@ class CheckpointScheduler:
         """
         self._consolidating = True
         self.stop()
-        if not self._stop_inflight_checkpoint():
-            logger.error(
-                "Checkpoint worker did not stop; skipping the consolidation "
-                "pass to avoid two concurrent agent runs"
-            )
+        skipped = self._consolidation_precheck()
+        if skipped is not None:
             self._revoke_agent_writes()
-            return ConsolidationOutcome(
-                status="failed",
-                message=(
-                    "Final insights were skipped because a previous "
-                    "checkpoint was still running."
-                ),
-            )
-
-        if not self._agent.is_healthy():
-            logger.warning("Agent core unhealthy; skipping consolidation pass")
-            self._revoke_agent_writes()
-            return ConsolidationOutcome(
-                status="unavailable",
-                message=(
-                    "AI insights are offline; final insights "
-                    "could not run."
-                ),
-            )
+            return skipped
         segments: List[Dict[str, Any]] = []
         try:
             segments = self._engine.get_transcript()
@@ -1071,20 +1170,63 @@ class CheckpointScheduler:
             from meeting.agent.base import CONSOLIDATION_TIMEOUT_CAP_S
 
             timeout_s = CONSOLIDATION_TIMEOUT_CAP_S
+        result = self._consolidate(payload, len(segments), timeout_s, progress_cb)
+        outcome = _consolidation_outcome(result, timeout_s)
+
+        # Close the write gate before repair/return so only this pass's
+        # already-applied ops remain authoritative.
+        self._revoke_agent_writes()
+        self._repair_after_consolidation(segments)
+        return outcome
+
+    def _consolidation_precheck(self) -> Optional[ConsolidationOutcome]:
+        """Why the final pass cannot run, or None when it can."""
+        if not self._stop_inflight_checkpoint():
+            logger.error(
+                "Checkpoint worker did not stop; skipping the consolidation "
+                "pass to avoid two concurrent agent runs"
+            )
+            return ConsolidationOutcome(
+                status="failed",
+                message=(
+                    "Final insights were skipped because a previous "
+                    "checkpoint was still running."
+                ),
+            )
+        if not self._agent.is_healthy():
+            logger.warning("Agent core unhealthy; skipping consolidation pass")
+            return ConsolidationOutcome(
+                status="unavailable",
+                message=(
+                    "AI insights are offline; final insights "
+                    "could not run."
+                ),
+            )
+        return None
+
+    def _consolidate(
+        self,
+        payload: CheckpointPayload,
+        segment_count: int,
+        timeout_s: float,
+        progress_cb: Optional[Callable[[str], None]],
+    ) -> Optional[AgentResult]:
+        """Run ``consolidate`` with progress wired up; None when it timed out."""
         setter = getattr(self._agent, "set_progress_callback", None)
         if callable(setter):
             setter(progress_cb)
         if progress_cb is not None:
             try:
                 progress_cb(
-                    f"Synthesizing executive summary, key decisions, and action items over {len(segments)} segments..."
+                    "Synthesizing executive summary, key decisions, and action "
+                    f"items over {segment_count} segments..."
                 )
             except Exception:
                 logger.exception("Consolidation progress callback failed")
 
         logger.info(
             "Running consolidation %s over %d segments (timeout %.0fs)",
-            payload.request_id, len(segments), timeout_s,
+            payload.request_id, segment_count, timeout_s,
         )
 
         def _detach_progress() -> None:
@@ -1098,7 +1240,7 @@ class CheckpointScheduler:
             self._revoke_agent_writes()
 
         try:
-            result = run_agent_call(
+            return run_agent_call(
                 lambda: self._agent.consolidate(payload),
                 cancel=self._agent.cancel,
                 timeout_s=timeout_s,
@@ -1107,36 +1249,8 @@ class CheckpointScheduler:
             )
         finally:
             _detach_progress()
-        if result is None:
-            logger.warning("Consolidation produced no result (timed out)")
-            outcome = ConsolidationOutcome(
-                status="failed",
-                message=(
-                    f"Final insights timed out after {int(timeout_s)}s."
-                ),
-            )
-        elif result.ok:
-            applied = sum(1 for r in result.op_results if r.ok)
-            logger.info(
-                "Consolidation done: %d/%d ops applied",
-                applied, len(result.op_results),
-            )
-            outcome = ConsolidationOutcome(
-                status="completed",
-                message="Final insights are ready.",
-            )
-        else:
-            error = result.error or "consolidation failed"
-            logger.warning("Consolidation failed: %s", error)
-            outcome = ConsolidationOutcome(
-                status="failed",
-                message=f"Final insights failed: {error}",
-            )
 
-        # Close the write gate before repair/return so only this pass's
-        # already-applied ops remain authoritative.
-        self._revoke_agent_writes()
-
+    def _repair_after_consolidation(self, segments: List[Dict[str, Any]]) -> None:
         # Even when the agent fails or skips timeline, promote evidenced key
         # points (or sample the transcript) so the durable record has beats.
         # Repair errors must not replace the primary consolidation outcome.
@@ -1148,7 +1262,6 @@ class CheckpointScheduler:
                 repair_meeting_state(store, segments)
         except Exception:
             logger.exception("State repair after consolidation failed")
-        return outcome
 
     def run_final_polish(
         self,
