@@ -608,6 +608,98 @@ def _render_item(item: Dict[str, Any], card: Optional[str] = None) -> str:
 
 _ITEM_TEXT_NORM_RE = re.compile(r"[^a-z0-9]+")
 
+#: Statuses that mean a person reviewed the item.
+_HUMAN_TOUCHED_STATUSES = ("edited", "confirmed")
+#: Two spotlight texts are near-duplicates when their word sets overlap this much
+#: (Jaccard), or when the smaller set has enough words and is mostly contained.
+_SPOTLIGHT_JACCARD_MIN = 0.60
+_SPOTLIGHT_CONTAINMENT_MIN_WORDS = 4
+_SPOTLIGHT_CONTAINMENT_MIN = 0.75
+
+
+def _is_unreviewed_repair(item: Dict[str, Any]) -> bool:
+    return (
+        item.get("author_type") == "system"
+        and item.get("author_id") == "state_repair"
+        and (item.get("data") or {}).get("insight_synthesized") is not True
+    )
+
+
+def _is_spotlight_candidate(key: str, item: Any) -> bool:
+    """Whether a card item may be featured; human selections always may."""
+    if not isinstance(item, dict) or item.get("status") == "removed":
+        return False
+    touched = item.get("pinned") or item.get("status") in _HUMAN_TOUCHED_STATUSES
+    if touched:
+        return True
+    return key != "timeline" and not _is_unreviewed_repair(item)
+
+
+def _spotlight_sort_key(it: Dict[str, Any]) -> tuple:
+    pinned = 1 if it.get("pinned") else 0
+    touched = 1 if it.get("status") in _HUMAN_TOUCHED_STATUSES else 0
+    updated = str(it.get("updated_at") or it.get("created_at") or "")
+    return (pinned, touched, updated)
+
+
+def _normalized_text(text: Optional[str]) -> str:
+    return _ITEM_TEXT_NORM_RE.sub(" ", (text or "").lower()).strip()
+
+
+def _texts_overlap(norm: str, other_norm: str) -> bool:
+    if norm == other_norm:
+        return True
+    words, other_words = set(norm.split()), set(other_norm.split())
+    if not (words and other_words):
+        return False
+    shared = len(words & other_words)
+    if shared / len(words | other_words) >= _SPOTLIGHT_JACCARD_MIN:
+        return True
+    smaller = min(len(words), len(other_words))
+    return (
+        smaller >= _SPOTLIGHT_CONTAINMENT_MIN_WORDS
+        and shared / smaller >= _SPOTLIGHT_CONTAINMENT_MIN
+    )
+
+
+def _duplicates_a_pick(text: str, picks: List[Dict[str, Any]]) -> bool:
+    norm = _normalized_text(text)
+    if not norm:
+        return False
+    for pick in picks:
+        pick_norm = _normalized_text(pick.get("text"))
+        if pick_norm and _texts_overlap(norm, pick_norm):
+            return True
+    return False
+
+
+def _fill_spotlight(
+    ranked: List[Dict[str, Any]],
+    picks: List[Dict[str, Any]],
+    used_ids: Set[str],
+    limit: int,
+    used_categories: Optional[Set[str]] = None,
+) -> None:
+    """Append ranked items to ``picks`` until ``limit``, skipping repeats.
+
+    With ``used_categories`` each card category is featured at most once.
+    """
+    for it in ranked:
+        if len(picks) >= limit:
+            break
+        item_id = str(it.get("id") or "")
+        cat = str(it.get("card") or "")
+        if used_categories is not None and cat in used_categories:
+            continue
+        if item_id in used_ids:
+            continue
+        if _duplicates_a_pick(it.get("text") or "", picks):
+            continue
+        picks.append(it)
+        used_ids.add(item_id)
+        if used_categories is not None:
+            used_categories.add(cat)
+
 
 def select_spotlight_items(
     cards: Dict[str, Any], limit: int = 3
@@ -627,77 +719,15 @@ def select_spotlight_items(
         if key in ("live_notes", "user_notes"):
             continue
         for item in items or []:
-            if not isinstance(item, dict) or item.get("status") == "removed":
-                continue
-            touched = item.get("pinned") or item.get("status") in ("edited", "confirmed")
-            if not touched and (
-                key == "timeline"
-                or (
-                    item.get("author_type") == "system"
-                    and item.get("author_id") == "state_repair"
-                    and (item.get("data") or {}).get("insight_synthesized") is not True
-                )
-            ):
-                continue
-            ranked.append({**item, "card": key})
-
-    def _sort_key(it: Dict[str, Any]) -> tuple:
-        pinned = 1 if it.get("pinned") else 0
-        touched = 1 if it.get("status") in ("edited", "confirmed") else 0
-        updated = str(it.get("updated_at") or it.get("created_at") or "")
-        return (pinned, touched, updated)
-
-    ranked.sort(key=_sort_key, reverse=True)
+            if _is_spotlight_candidate(key, item):
+                ranked.append({**item, "card": key})
+    ranked.sort(key=_spotlight_sort_key, reverse=True)
 
     picks: List[Dict[str, Any]] = []
-    used_categories: Set[str] = set()
     used_ids: Set[str] = set()
-
-    def _is_duplicate_text(text: str) -> bool:
-        norm = _ITEM_TEXT_NORM_RE.sub(" ", (text or "").lower()).strip()
-        if not norm:
-            return False
-        for p in picks:
-            p_norm = _ITEM_TEXT_NORM_RE.sub(" ", (p.get("text") or "").lower()).strip()
-            if not p_norm:
-                continue
-            if norm == p_norm:
-                return True
-            ta, tb = set(norm.split()), set(p_norm.split())
-            if ta and tb:
-                intersection = len(ta & tb)
-                if intersection / len(ta | tb) >= 0.60:
-                    return True
-                if min(len(ta), len(tb)) >= 4 and intersection / min(len(ta), len(tb)) >= 0.75:
-                    return True
-        return False
-
-    # Pass 1: One per category
-    for it in ranked:
-        if len(picks) >= limit:
-            break
-        item_id = str(it.get("id") or "")
-        cat = str(it.get("card") or "")
-        if cat in used_categories or item_id in used_ids:
-            continue
-        if _is_duplicate_text(it.get("text") or ""):
-            continue
-        picks.append(it)
-        used_categories.add(cat)
-        used_ids.add(item_id)
-
-    # Pass 2: Fill leftovers
-    for it in ranked:
-        if len(picks) >= limit:
-            break
-        item_id = str(it.get("id") or "")
-        if item_id in used_ids:
-            continue
-        if _is_duplicate_text(it.get("text") or ""):
-            continue
-        picks.append(it)
-        used_ids.add(item_id)
-
+    # Pass 1: one per category; pass 2: fill leftovers.
+    _fill_spotlight(ranked, picks, used_ids, limit, used_categories=set())
+    _fill_spotlight(ranked, picks, used_ids, limit)
     return picks
 
 
