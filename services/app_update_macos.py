@@ -601,6 +601,43 @@ def _wait(condition: Callable[[], bool], timeout: float) -> bool:
     return condition()
 
 
+def _load_helper_transaction(argv: List[str], appdata: Optional[str]):
+    """Return ``(transaction id, parent pid, journal)``, or None when unusable."""
+    transaction_id = _argument(argv, TRANSACTION_ARG) or ""
+    try:
+        parent_pid = int(_argument(argv, PARENT_PID_ARG) or "0")
+        journal = load_journal(transaction_id, appdata)
+    except (OSError, ValueError, MacUpdateError) as exc:
+        logger.error("The Mac update helper could not start: %s", exc)
+        return None
+    return transaction_id, parent_pid, journal
+
+
+def _swap_in_if_unchanged(journal: MacUpdateJournal, swap: Callable[[str, str], None]) -> None:
+    if bundle_info(journal.app_path).get("CFBundleIdentifier") != journal.bundle_id:
+        raise MacUpdateError("The installed app changed while the update waited.")
+    swap(journal.app_path, journal.staged_path)
+
+
+def _health_acknowledged(health: str, token: str) -> bool:
+    try:
+        with open(health, encoding="utf-8") as handle:
+            return secrets.compare_digest(handle.read().strip(), token)
+    except OSError:
+        return False
+
+
+def _stop_if_running(process: Optional[_OpenedApp]) -> None:
+    if process is None or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(5)
+
+
 def run_helper(
     argv: List[str],
     appdata: Optional[str] = None,
@@ -618,13 +655,10 @@ def run_helper(
     used after the swap is therefore loaded first, and only already-loaded
     functions run afterwards.
     """
-    transaction_id = _argument(argv, TRANSACTION_ARG) or ""
-    try:
-        parent_pid = int(_argument(argv, PARENT_PID_ARG) or "0")
-        journal = load_journal(transaction_id, appdata)
-    except (OSError, ValueError, MacUpdateError) as exc:
-        logger.error("The Mac update helper could not start: %s", exc)
+    loaded = _load_helper_transaction(argv, appdata)
+    if loaded is None:
         return 2
+    transaction_id, parent_pid, journal = loaded
     from services.app_update_apply import write_apply_error
 
     _setup_logging(appdata)
@@ -645,11 +679,7 @@ def run_helper(
         save_journal(journal, appdata)
 
     def healthy() -> bool:
-        try:
-            with open(health, encoding="utf-8") as handle:
-                return secrets.compare_digest(handle.read().strip(), journal.health_token)
-        except OSError:
-            return False
+        return _health_acknowledged(health, journal.health_token)
 
     # Exercise the post-swap path's lazily loaded pieces (codecs, encoders).
     save(journal.state)
@@ -667,9 +697,7 @@ def run_helper(
         return 1
 
     try:
-        if bundle_info(journal.app_path).get("CFBundleIdentifier") != journal.bundle_id:
-            raise MacUpdateError("The installed app changed while the update waited.")
-        swap(journal.app_path, journal.staged_path)
+        _swap_in_if_unchanged(journal, swap)
     except (OSError, ValueError, MacUpdateError, plistlib.InvalidFileException) as exc:
         logger.error("Could not swap in the update: %s", exc)
         save(State.ABANDONED)
@@ -695,13 +723,7 @@ def run_helper(
         return 0
 
     logger.error("OpenWhisper %s did not acknowledge a healthy start; rolling back", journal.version)
-    if process is not None and process.poll() is None:
-        process.terminate()
-        try:
-            process.wait(10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(5)
+    _stop_if_running(process)
     try:
         swap(journal.app_path, journal.staged_path)
     except OSError as exc:
