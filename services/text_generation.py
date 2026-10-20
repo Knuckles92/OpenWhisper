@@ -35,6 +35,11 @@ class TextGenerationError(RuntimeError):
     pass
 
 
+_UNFINISHED_RESPONSE_STATUSES = ("incomplete", "failed", "cancelled")
+#: OpenCode profiles, whose requests carry provider_headers for the session.
+_SESSION_HEADER_PROFILES = ("opencode_go", "opencode_zen")
+
+
 def _mapping(value: Any) -> dict:
     if isinstance(value, dict):
         return value
@@ -108,6 +113,30 @@ def _chat(client, model, messages, options) -> TextResult:
 
 
 def _responses(client, model, messages, tools, limit, json_mode, options) -> TextResult:
+    items = _responses_input(messages)
+    body = dict(model=model, input=items, store=False, max_output_tokens=limit)
+    if tools:
+        # Preserve optional parameters from our Chat Completions tool schemas.
+        body["tools"] = [{"type": "function", "strict": False, **t["function"]} for t in tools]
+        body["tool_choice"] = "auto"
+    if json_mode:
+        body["text"] = {"format": {"type": "json_object"}}
+    raw = _mapping(client.responses.create(**body, **options))
+    if raw.get("status") in _UNFINISHED_RESPONSE_STATUSES or raw.get("error"):
+        raise TextGenerationError("Model output was incomplete or failed.")
+    output = raw.get("output") or []
+    texts, calls = [], []
+    for item in output:
+        if item.get("type") == "function_call":
+            calls.append(_call(item["call_id"], item["name"], item["arguments"]))
+        elif item.get("type") == "message":
+            texts.extend(_responses_message_texts(item))
+    text = "".join(texts)
+    return TextResult(text, calls, _assistant(text, calls, _responses=output),
+                      _usage(raw.get("usage") or {}), raw.get("status", ""))
+
+
+def _responses_input(messages) -> list:
     items = []
     for message in messages:
         role = message["role"]
@@ -118,30 +147,17 @@ def _responses(client, model, messages, tools, limit, json_mode, options) -> Tex
                           "call_id": message["tool_call_id"], "output": message["content"]})
         else:
             items.append({"role": role, "content": message.get("content") or ""})
-    body = dict(model=model, input=items, store=False, max_output_tokens=limit)
-    if tools:
-        # Preserve optional parameters from our Chat Completions tool schemas.
-        body["tools"] = [{"type": "function", "strict": False, **t["function"]} for t in tools]
-        body["tool_choice"] = "auto"
-    if json_mode:
-        body["text"] = {"format": {"type": "json_object"}}
-    raw = _mapping(client.responses.create(**body, **options))
-    if raw.get("status") in ("incomplete", "failed", "cancelled") or raw.get("error"):
-        raise TextGenerationError("Model output was incomplete or failed.")
-    output = raw.get("output") or []
-    texts, calls = [], []
-    for item in output:
-        if item.get("type") == "function_call":
-            calls.append(_call(item["call_id"], item["name"], item["arguments"]))
-        elif item.get("type") == "message":
-            for part in item.get("content", []):
-                if part.get("type") == "refusal":
-                    raise TextGenerationError("Model refused the request.")
-                if part.get("type") == "output_text":
-                    texts.append(part["text"])
-    text = "".join(texts)
-    return TextResult(text, calls, _assistant(text, calls, _responses=output),
-                      _usage(raw.get("usage") or {}), raw.get("status", ""))
+    return items
+
+
+def _responses_message_texts(item: dict) -> list[str]:
+    texts = []
+    for part in item.get("content", []):
+        if part.get("type") == "refusal":
+            raise TextGenerationError("Model refused the request.")
+        if part.get("type") == "output_text":
+            texts.append(part["text"])
+    return texts
 
 
 def _anthropic(client, model, messages, tools, limit, json_mode, options) -> TextResult:
@@ -190,30 +206,7 @@ def _anthropic(client, model, messages, tools, limit, json_mode, options) -> Tex
 
 
 def _google(client, model, messages, tools, limit, json_mode, options) -> TextResult:
-    system, contents, call_names = [], [], {}
-    for message in messages:
-        role = message["role"]
-        if role in ("system", "developer"):
-            system.append(message.get("content") or "")
-            continue
-        if role == "assistant":
-            for call in message.get("tool_calls", []):
-                call_names[call["id"]] = call["function"]["name"]
-            role = "model"
-            parts = message.get("_google") or [{"text": message.get("content") or ""}]
-        elif role == "tool":
-            role = "user"
-            call_id = message["tool_call_id"]
-            parts = [{"functionResponse": {
-                "id": call_id, "name": call_names[call_id],
-                "response": {"result": message["content"]},
-            }}]
-        else:
-            parts = [{"text": message.get("content") or ""}]
-        if contents and contents[-1]["role"] == role:
-            contents[-1]["parts"].extend(parts)
-        else:
-            contents.append({"role": role, "parts": list(parts)})
+    system, contents = _google_contents(messages)
     body = {"contents": contents, "generationConfig": {"maxOutputTokens": limit}}
     if system:
         body["systemInstruction"] = {"parts": [{"text": "\n\n".join(system)}]}
@@ -237,14 +230,51 @@ def _google(client, model, messages, tools, limit, json_mode, options) -> TextRe
         raise TextGenerationError(f"Model output was incomplete ({reason}).")
     parts = candidate.get("content", {}).get("parts") or []
     text = "".join(p.get("text", "") for p in parts if not p.get("thought", False))
+    calls = _google_calls(parts)
+    return TextResult(text, calls, _assistant(text, calls, _google=parts),
+                      _usage(raw.get("usageMetadata") or {}, google=True), reason)
+
+
+def _google_contents(messages) -> tuple[list[str], list[dict]]:
+    """Split messages into system text and Gemini ``contents``, merging same-role turns."""
+    system, contents, call_names = [], [], {}
+    for message in messages:
+        role = message["role"]
+        if role in ("system", "developer"):
+            system.append(message.get("content") or "")
+            continue
+        role, parts = _google_turn(message, role, call_names)
+        if contents and contents[-1]["role"] == role:
+            contents[-1]["parts"].extend(parts)
+        else:
+            contents.append({"role": role, "parts": list(parts)})
+    return system, contents
+
+
+def _google_turn(message: dict, role: str, call_names: dict) -> tuple[str, list]:
+    """Return the Gemini role and parts for one non-system message."""
+    if role == "assistant":
+        # Tool results name their function, so remember each call's name.
+        for call in message.get("tool_calls", []):
+            call_names[call["id"]] = call["function"]["name"]
+        return "model", message.get("_google") or [{"text": message.get("content") or ""}]
+    if role == "tool":
+        call_id = message["tool_call_id"]
+        return "user", [{"functionResponse": {
+            "id": call_id, "name": call_names[call_id],
+            "response": {"result": message["content"]},
+        }}]
+    return role, [{"text": message.get("content") or ""}]
+
+
+def _google_calls(parts: list) -> list[ToolCall]:
     calls = []
     for index, part in enumerate(parts):
         call = part.get("functionCall")
         if call:
             calls.append(_call(call.get("id") or f"call_{index}",
                                call["name"], call.get("args", {})))
-    return TextResult(text, calls, _assistant(text, calls, _google=parts),
-                      _usage(raw.get("usageMetadata") or {}, google=True), reason)
+    return calls
 
 
 def generate(client, profile, *, model: str, messages: list[dict],
@@ -259,7 +289,7 @@ def generate(client, profile, *, model: str, messages: list[dict],
     spec = model_spec(profile, model) if profile is not None else TextModelSpec()
     if tools and not spec.tools:
         raise TextGenerationError("This model does not support tool calls.")
-    if session_id and profile is not None and profile.kind in ("opencode_go", "opencode_zen"):
+    if session_id and profile is not None and profile.kind in _SESSION_HEADER_PROFILES:
         options["extra_headers"] = provider_headers(profile, session_id)
     # A reviewed hosted catalog decides sampling, reasoning and output budget.
     # Servers the user runs and custom endpoints keep the caller's options:
@@ -271,33 +301,44 @@ def generate(client, profile, *, model: str, messages: list[dict],
         options.pop("extra_body", None)
     level = (spec.thinking_levels or {}).get(reasoning_level, reasoning_level)
     if spec.protocol == "chat":
-        if level and level != "off" and spec.reasoning_format == "openai":
-            options["reasoning_effort"] = level
-            if level != "none":
-                # Thinking models are not meant to sample greedily.
-                options.pop("temperature", None)
-        elif level and level != "off" and spec.reasoning_format == "deepseek":
-            options["extra_body"] = {"thinking": {"type": "enabled"}}
-            if level in ("high", "max"):
-                options["extra_body"]["reasoning_effort"] = level
-        if hosted:
-            options.setdefault("max_tokens", spec.max_output_tokens)
-        if tools:
-            options["tools"] = tools
+        _set_chat_options(spec, level, hosted, tools, options)
         result = _chat(client, model, messages, options)
     else:
-        limit = options.pop("max_tokens", spec.max_output_tokens)
-        json_mode = options.pop("response_format", None) is not None
-        options.pop("tool_choice", None)
-        if spec.protocol != "responses" or spec.reasoning:
-            options.pop("temperature", None)
-        options.pop("reasoning_effort", None)
-        options.pop("extra_body", None)
-        if level and level != "off" and spec.reasoning_format == "openai":
-            options["reasoning"] = {"effort": level}
-        if spec.protocol == "responses" and spec.reasoning_format == "openai":
-            options["include"] = ["reasoning.encrypted_content"]
+        limit, json_mode = _set_native_options(spec, level, options)
         adapter = {"responses": _responses, "anthropic": _anthropic, "google": _google}[spec.protocol]
         result = adapter(client, model, messages, tools, limit, json_mode, options)
     _check_cancel(cancel_event)
     return result
+
+
+def _set_chat_options(spec: TextModelSpec, level, hosted: bool, tools, options: dict) -> None:
+    thinking = bool(level) and level != "off"
+    if thinking and spec.reasoning_format == "openai":
+        options["reasoning_effort"] = level
+        if level != "none":
+            # Thinking models are not meant to sample greedily.
+            options.pop("temperature", None)
+    elif thinking and spec.reasoning_format == "deepseek":
+        options["extra_body"] = {"thinking": {"type": "enabled"}}
+        if level in ("high", "max"):
+            options["extra_body"]["reasoning_effort"] = level
+    if hosted:
+        options.setdefault("max_tokens", spec.max_output_tokens)
+    if tools:
+        options["tools"] = tools
+
+
+def _set_native_options(spec: TextModelSpec, level, options: dict) -> tuple[Any, bool]:
+    """Strip Chat Completions options; return the output limit and JSON mode."""
+    limit = options.pop("max_tokens", spec.max_output_tokens)
+    json_mode = options.pop("response_format", None) is not None
+    options.pop("tool_choice", None)
+    if spec.protocol != "responses" or spec.reasoning:
+        options.pop("temperature", None)
+    options.pop("reasoning_effort", None)
+    options.pop("extra_body", None)
+    if level and level != "off" and spec.reasoning_format == "openai":
+        options["reasoning"] = {"effort": level}
+    if spec.protocol == "responses" and spec.reasoning_format == "openai":
+        options["include"] = ["reasoning.encrypted_content"]
+    return limit, json_mode
