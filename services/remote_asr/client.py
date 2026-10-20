@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from services.remote_asr import protocol
-from services.remote_asr.tls import client_context, peer_fingerprint
+from services.remote_asr.tls import client_context, peer_fingerprint, transport_logger
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,10 @@ REDISCOVER_INTERVAL_S = 30.0
 
 class RemoteEngineError(RuntimeError):
     """A user-facing reason the remote engine can't be used right now."""
+
+
+class RemoteUnauthorized(RemoteEngineError):
+    """The pinned host refused this computer's pairing, not its network route."""
 
 
 class RemoteHostBusy(RemoteEngineError):
@@ -126,16 +130,31 @@ def _uri(host: str, port: int) -> str:
     return f"wss://{protocol.format_address(host, port)}{protocol.PATH}"
 
 
-def _open(host: str, port: int, timeout: float):
+def _open(host: str, port: int, timeout: float, *, token=None, fingerprint=None):
     """Open the TLS WebSocket, translating failures into plain language."""
     from websockets.exceptions import InvalidHandshake, InvalidStatus
-    from websockets.sync.client import connect
+    from websockets.sync.client import ClientConnection, connect
+
+    def pinned_connection(sock, ws_protocol, **kwargs):
+        seen = peer_fingerprint(sock)
+        if not fingerprint or not hmac.compare_digest(seen, fingerprint):
+            raise _WrongPlace(
+                f"{where} presented a different certificate than when this "
+                "computer paired with it. If OpenWhisper was reinstalled there, "
+                "pair again; otherwise something is intercepting the connection."
+            )
+        return ClientConnection(sock, ws_protocol, **kwargs)
+
+    if token is not None and not fingerprint:
+        raise _WrongPlace("A pinned host certificate is required before sending credentials.")
 
     where = protocol.format_address(host, port)
     try:
         return connect(
             _uri(host, port),
             ssl=client_context(),
+            create_connection=pinned_connection if fingerprint is not None else None,
+            additional_headers={"Authorization": f"Bearer {token}"} if token is not None else None,
             open_timeout=timeout,
             close_timeout=2,
             max_size=protocol.MAX_REPLY_BYTES,
@@ -144,9 +163,13 @@ def _open(host: str, port: int, timeout: float):
             # _heartbeat); probes and pairing close within seconds.
             ping_interval=None,
             ping_timeout=None,
-            logger=logging.getLogger("websockets.remote_engine"),
+            logger=transport_logger(),
         )
     except InvalidStatus as exc:
+        if exc.response.status_code == 401 and token is not None:
+            raise RemoteUnauthorized(
+                "This computer isn't paired with the host anymore. Pair it again."
+            ) from exc
         raise RemoteEngineError(
             f"{where} answered, but it isn't an OpenWhisper remote engine "
             f"(HTTP {exc.response.status_code})."
@@ -577,18 +600,12 @@ class RemoteConnection:
         from websockets.exceptions import ConnectionClosed
 
         try:
-            ws = _open(host, self.port, timeout)
+            ws = _open(host, self.port, timeout, token=self._token, fingerprint=self._fingerprint)
+        except RemoteUnauthorized:
+            raise
         except RemoteEngineError as exc:
             raise _WrongPlace(str(exc)) from exc
-        where = protocol.format_address(host, self.port)
         try:
-            seen = peer_fingerprint(ws.socket)
-            if not self._fingerprint or not hmac.compare_digest(seen, self._fingerprint):
-                raise _WrongPlace(
-                    f"{where} presented a different certificate than when this "
-                    "computer paired with it. If OpenWhisper was reinstalled there, "
-                    "pair again; otherwise something is intercepting the connection."
-                )
             hello = {
                 "type": "hello",
                 "protocol": protocol.PROTOCOL_VERSION,

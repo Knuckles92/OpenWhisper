@@ -124,3 +124,14 @@ def peer_fingerprint(sock) -> str:
     if not der:
         raise ssl.SSLError("The host presented no certificate")
     return certificate_fingerprint(der)
+
+
+class _TransportLogger(logging.LoggerAdapter):
+    """Never log raw handshake credentials, audio frames or transcript text."""
+
+    def isEnabledFor(self, level: int) -> bool:
+        return level >= logging.INFO and super().isEnabledFor(level)
+
+
+def transport_logger() -> logging.LoggerAdapter:
+    return _TransportLogger(logging.getLogger("websockets.remote_engine"), {})

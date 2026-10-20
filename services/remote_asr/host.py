@@ -26,7 +26,7 @@ from services.remote_asr import discovery, protocol, tailscale
 from services.remote_asr.activity import HostActivity
 from services.remote_asr.admission import WorkAdmission as _WorkAdmission
 from services.remote_asr.engines import HostEngine, UnavailableEngine
-from services.remote_asr.tls import HostIdentity, server_context
+from services.remote_asr.tls import HostIdentity, server_context, transport_logger
 from services.remote_records.gate import RecordsBusy
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,8 @@ MAX_PAIRING_FAILURES = 5
 PAIRING_CODE_DIGITS = 6
 #: A connection owns a server thread and may hold a history or speech stream.
 MAX_CLIENT_CONNECTIONS = 12
+#: Unidentified peers cannot reserve paired clients' long-lived connections.
+MAX_PENDING_HANDSHAKES = 4
 #: Engine/model/record operations share a small fair work pool. Waiting work
 #: is bounded too, so one overloaded host cannot accumulate unbounded threads.
 MAX_ACTIVE_JOBS = 2
@@ -353,6 +355,7 @@ class SpeechHost:
         self.discovery = discovery.DiscoveryResponder(self._discovery_info)
         self._clients: Dict[str, _Client] = {}
         self._connection_slots = threading.BoundedSemaphore(max(1, int(max_connections)))
+        self._handshake_slots = threading.BoundedSemaphore(MAX_PENDING_HANDSHAKES)
         self._work_admission = _WorkAdmission(
             max(1, int(max_active_jobs)), max(0, int(max_queued_jobs)), MAX_JOB_WAIT_S,
         )
@@ -390,7 +393,7 @@ class SpeechHost:
                 open_timeout=HANDSHAKE_TIMEOUT_S,
                 ping_interval=20,
                 ping_timeout=20,
-                logger=logging.getLogger("websockets.remote_engine"),
+                logger=transport_logger(),
             )
             self._server = server
             self.history.start()
@@ -580,10 +583,21 @@ class SpeechHost:
         except Exception:
             logger.debug("Remote engine host event listener raised", exc_info=True)
 
-    @staticmethod
-    def _check_path(connection, request):
+    def _check_path(self, connection, request):
         if request.path.split("?", 1)[0] != protocol.PATH:
             return connection.respond(404, "Not an OpenWhisper remote engine endpoint\n")
+        credentials = request.headers.get_all("Authorization")
+        if credentials:
+            if len(credentials) != 1 or not credentials[0].startswith("Bearer "):
+                return connection.respond(401, "Invalid remote engine credentials\n")
+            try:
+                device = self.registry.authenticate(credentials[0][7:])
+            except Exception:
+                logger.warning("Could not read paired devices during authentication")
+                return connection.respond(503, "Pairing state is unavailable\n")
+            if device is None:
+                return connection.respond(401, "This computer is not paired\n")
+            connection.openwhisper_device_id = device["id"]
         return None
 
     def _engine(self) -> HostEngine:
@@ -598,27 +612,40 @@ class SpeechHost:
     def _send(ws, message: dict) -> None:
         ws.send(json.dumps(message, separators=(",", ":")))
 
+    def _refuse_connection(self, ws) -> None:
+        try:
+            self._send(ws, {"type": "error", "code": "busy",
+                            "message": "The host is busy. Try again shortly.",
+                            "retry_after_ms": 1000})
+            ws.close(protocol.CLOSE_BUSY, "host busy")
+        except Exception:
+            logger.debug("Could not send connection limit response", exc_info=True)
+
     def _handle(self, ws) -> None:
-        if not self._connection_slots.acquire(blocking=False):
+        if getattr(ws, "openwhisper_device_id", None):
+            if not self._connection_slots.acquire(blocking=False):
+                self._refuse_connection(ws)
+                return
             try:
-                self._send(ws, {"type": "error", "code": "busy",
-                                "message": "The host is busy. Try again shortly.",
-                                "retry_after_ms": 1000})
-                ws.close(protocol.CLOSE_BUSY, "host busy")
-            except Exception:
-                logger.debug("Could not send connection limit response", exc_info=True)
+                message = self._receive_hello(ws)
+                if message is not None:
+                    self._handle_admitted(ws, message, connection_admitted=True)
+            finally:
+                self._connection_slots.release()
+            return
+        if not self._handshake_slots.acquire(blocking=False):
+            self._refuse_connection(ws)
             return
         try:
-            self._handle_admitted(ws)
+            message = self._receive_hello(ws)
         finally:
-            self._connection_slots.release()
+            self._handshake_slots.release()
+        if message is not None:
+            self._handle_admitted(ws, message)
 
-    def _handle_admitted(self, ws) -> None:
+    def _handle_admitted(self, ws, message: dict, *, connection_admitted=False) -> None:
         peer = ws.remote_address
         address = str(peer[0]) if isinstance(peer, tuple) and peer else "unknown"
-        message = self._receive_hello(ws)
-        if message is None:
-            return
         if message.get("type") == "probe":
             # Answered before the version check, so discovery can say
             # "update OpenWhisper there" instead of skipping the host.
@@ -635,7 +662,7 @@ class SpeechHost:
             })
             ws.close(protocol.CLOSE_BAD_REQUEST, "protocol version")
             return
-        self._route_hello(ws, message, address)
+        self._route_hello(ws, message, address, connection_admitted=connection_admitted)
 
     @staticmethod
     def _receive_hello(ws) -> Optional[dict]:
@@ -656,7 +683,7 @@ class SpeechHost:
             return None
         return message
 
-    def _route_hello(self, ws, message: dict, address: str) -> None:
+    def _route_hello(self, ws, message: dict, address: str, *, connection_admitted=False) -> None:
         kind = message.get("type")
         if kind == "pair" and message.get("tailscale") is True:
             self._pair_tailscale(ws, message, address)
@@ -665,7 +692,7 @@ class SpeechHost:
         elif kind == "pair_request":
             self._pair_request(ws, message, address)
         elif kind == "hello":
-            self._serve(ws, message, address)
+            self._serve(ws, message, address, connection_admitted=connection_admitted)
         else:
             ws.close(protocol.CLOSE_BAD_REQUEST, "expected hello")
 
@@ -924,7 +951,7 @@ class SpeechHost:
             return "stopped"
         return "allowed" if request.decision else "denied"
 
-    def _serve(self, ws, message: dict, address: str) -> None:
+    def _serve(self, ws, message: dict, address: str, *, connection_admitted=False) -> None:
         device = self.registry.authenticate(message.get("token"))
         if device is None:
             self._send(ws, {
@@ -934,6 +961,22 @@ class SpeechHost:
             })
             ws.close(protocol.CLOSE_UNAUTHORIZED, "unauthorized")
             return
+        upgrade_device = getattr(ws, "openwhisper_device_id", device["id"])
+        if upgrade_device != device["id"]:
+            ws.close(protocol.CLOSE_UNAUTHORIZED, "credentials changed during handshake")
+            return
+        if connection_admitted:
+            self._serve_authenticated(ws, message, address, device)
+            return
+        if not self._connection_slots.acquire(blocking=False):
+            self._refuse_connection(ws)
+            return
+        try:
+            self._serve_authenticated(ws, message, address, device)
+        finally:
+            self._connection_slots.release()
+
+    def _serve_authenticated(self, ws, message: dict, address: str, device: dict) -> None:
         if message.get("purpose") == "history":
             self.history.serve(ws, device, message.get("token"), message.get("history_enabled"))
             return

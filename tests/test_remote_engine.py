@@ -1693,8 +1693,8 @@ def test_connection_skips_a_stranger_at_the_first_address_without_sending_the_to
         assert connection.host == "127.0.0.1"
         assert connection.request("transcribe", audio=_tone(160))["text"] == "heard 160"
         connection.close()
-        # The stranger saw a TLS handshake and nothing else: no hello, no token.
-        assert _wait_for(lambda: len(heard) == 1)
+        # Pinning rejects the stranger before HTTP upgrade or any credential.
+        assert heard == []
         time.sleep(0.2)
         assert tokens == [] and stranger.connected_clients() == []
 

@@ -135,7 +135,7 @@ def test_connection_refusal_before_hello_preserves_retry_delay(monkeypatch):
         close=lambda: closed.append(True),
     )
     fingerprint = "AB" * 32
-    monkeypatch.setattr(client, "_open", lambda *_: ws)
+    monkeypatch.setattr(client, "_open", lambda *_, **__: ws)
     monkeypatch.setattr(client, "peer_fingerprint", lambda _: fingerprint)
     connection = RemoteConnection("127.0.0.1", 47821, "token", fingerprint)
     with pytest.raises(RemoteHostBusy, match="Host at capacity") as refused:
