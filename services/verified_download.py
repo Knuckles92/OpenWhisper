@@ -20,7 +20,7 @@ import threading
 import urllib.error
 import urllib.request
 from types import MappingProxyType
-from typing import Callable, Final, Mapping, Optional, Sequence
+from typing import BinaryIO, Callable, Final, Mapping, Optional, Sequence
 
 from _version import __version__
 from services.format_utils import format_size_bytes
@@ -30,6 +30,12 @@ logger = logging.getLogger(__name__)
 
 USER_AGENT: Final[str] = f"OpenWhisper/{__version__}"
 NETWORK_TIMEOUT_S: Final[int] = 30
+
+_PART_SUFFIX: Final[str] = ".part"
+_PRIVATE_MODE: Final[int] = 0o600
+_HTTP_PARTIAL_CONTENT: Final[int] = 206
+_HTTP_RANGE_NOT_SATISFIABLE: Final[int] = 416
+_CONTENT_RANGE: Final[re.Pattern[str]] = re.compile(r"bytes (\d+)-(\d+)/(\d+)")
 
 # Progress phases, reported as (phase, done bytes, total bytes).
 DOWNLOADING: Final[str] = "downloading"
@@ -157,6 +163,208 @@ def describe_network_error(
     return str(exc) or f"Could not reach the {server}."
 
 
+def _open_partial(part_path: str, text: Mapping[str, str]) -> int:
+    """Open or create ``part_path`` for read/write, refusing to follow a symlink."""
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        return os.open(part_path, flags, _PRIVATE_MODE)
+    except OSError as exc:
+        raise DownloadError(text["unsafe_partial"]) from exc
+
+
+def _make_private(path: str, out: BinaryIO) -> None:
+    try:
+        os.chmod(path, _PRIVATE_MODE, follow_symlinks=False)
+    except (NotImplementedError, OSError):
+        # Not every platform can chmod without following symlinks; the open
+        # descriptor is the same file, so fall back to it where possible.
+        fchmod = getattr(os, "fchmod", None)
+        if fchmod is not None:
+            fchmod(out.fileno(), _PRIVATE_MODE)
+
+
+def _move_into_place(part_path: str, destination: str) -> None:
+    os.replace(part_path, destination)
+    try:
+        os.chmod(destination, _PRIVATE_MODE, follow_symlinks=False)
+    except NotImplementedError:
+        os.chmod(destination, _PRIVATE_MODE)
+    if os.name != "nt":
+        # Persist the rename itself. Windows cannot open a directory to fsync it.
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_fd = os.open(os.path.dirname(destination), directory_flags)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
+
+def _raise_if_canceled(
+    cancel: threading.Event,
+    path: str,
+    keep_partial_on_cancel: bool,
+    text: Mapping[str, str],
+) -> None:
+    """If ``cancel`` is set, discard ``path`` (unless kept) and raise."""
+    if not cancel.is_set():
+        return
+    if not keep_partial_on_cancel:
+        discard_regular_file(path)
+    raise DownloadCanceled(text["canceled"])
+
+
+class _PartialFile:
+    """The open ``.part`` file of one download and the SHA-256 of its bytes.
+
+    ``digest`` covers every byte in the file, including any kept from an
+    earlier attempt, so the final check is over the whole download.
+    """
+
+    def __init__(
+        self,
+        out: BinaryIO,
+        sha256_hex: str,
+        size_bytes: int,
+        cancel: threading.Event,
+        text: Mapping[str, str],
+    ) -> None:
+        self.out = out
+        self.sha256_hex = sha256_hex
+        self.size_bytes = size_bytes
+        self.cancel = cancel
+        self.text = text
+        self.resume_from = 0
+        self.digest = hashlib.sha256()
+
+    def check_canceled(self) -> None:
+        if self.cancel.is_set():
+            raise DownloadCanceled(self.text["canceled"])
+
+    def digest_matches(self) -> bool:
+        return self.digest.hexdigest() == self.sha256_hex.lower()
+
+    def restart(self) -> None:
+        """Drop everything on disk so the download starts again from byte 0."""
+        self.resume_from = 0
+        self.digest = hashlib.sha256()
+        self.out.seek(0)
+        self.out.truncate(0)
+
+    def load_existing(self, part_path: str) -> None:
+        """Check the file is safe to use and hash what an earlier attempt left."""
+        info = os.fstat(self.out.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise DownloadError(self.text["partial_not_regular"])
+        _make_private(part_path, self.out)
+
+        self.resume_from = info.st_size
+        if self.resume_from > self.size_bytes:
+            self.restart()
+
+        # Re-hash what is already on disk, so the final comparison covers
+        # the whole file and not just the bytes fetched this time.
+        self.digest = hashlib.sha256()
+        self.out.seek(0)
+        remaining = self.resume_from
+        while remaining:
+            self.check_canceled()
+            block = self.out.read(min(CHUNK_BYTES, remaining))
+            if not block:
+                raise DownloadError(self.text["partial_unreadable"])
+            self.digest.update(block)
+            remaining -= len(block)
+
+    def fetch_remainder(
+        self, url: str, opener: Opener, progress: ProgressCallback
+    ) -> None:
+        """Download the bytes after ``resume_from`` and append them."""
+        response = self._open_response(url, opener)
+        with response:
+            self._check_response(response)
+            self._stream(response, progress)
+
+    def _open_response(self, url: str, opener: Opener):
+        headers = (
+            {"Range": f"bytes={self.resume_from}-"} if self.resume_from else None
+        )
+        try:
+            return opener(url, headers)
+        except urllib.error.HTTPError as exc:
+            # The server cannot serve the rest; fetch the whole file instead.
+            if exc.code != _HTTP_RANGE_NOT_SATISFIABLE or not self.resume_from:
+                raise
+            exc.close()
+            self.restart()
+            return opener(url)
+
+    def _check_response(self, response: object) -> None:
+        status = getattr(response, "status", None)
+        if self.resume_from and status != _HTTP_PARTIAL_CONTENT:
+            # The server ignored Range and is sending the whole
+            # file. Restart rather than append a duplicate prefix.
+            logger.info("Server ignored Range header; restarting download")
+            self.restart()
+        elif self.resume_from:
+            self._check_content_range(response)
+        self._check_content_length(response)
+
+    def _check_content_range(self, response: object) -> None:
+        content_range = response_header(response, "Content-Range") or ""
+        match = _CONTENT_RANGE.fullmatch(content_range)
+        expected = (self.resume_from, self.size_bytes - 1, self.size_bytes)
+        if match is None or tuple(int(group) for group in match.groups()) != expected:
+            raise DownloadError(self.text["bad_resume"])
+
+    def _check_content_length(self, response: object) -> None:
+        content_length = response_header(response, "Content-Length")
+        if content_length is None:
+            return
+        try:
+            declared_response_bytes = int(content_length)
+        except ValueError as exc:
+            raise DownloadError(self.text["bad_length"]) from exc
+        if declared_response_bytes != self.size_bytes - self.resume_from:
+            raise DownloadError(self.text["unexpected_length"])
+
+    def _stream(self, response, progress: ProgressCallback) -> None:
+        self.out.seek(self.resume_from)
+        written = self.resume_from
+        while True:
+            self.check_canceled()
+            chunk = response.read(CHUNK_BYTES)
+            if not chunk:
+                return
+            if written + len(chunk) > self.size_bytes:
+                raise DownloadError(self.text["too_much_data"])
+            self.out.write(chunk)
+            self.digest.update(chunk)
+            written += len(chunk)
+            progress(DOWNLOADING, written, self.size_bytes)
+
+    def verify(self, progress: ProgressCallback) -> None:
+        """Check the size and digest, then flush the file to disk."""
+        self.check_canceled()
+        actual_size = self.out.tell()
+        if actual_size != self.size_bytes:
+            raise DownloadInterrupted(self.text["incomplete"].format(
+                done=format_size_bytes(actual_size),
+                total=format_size_bytes(self.size_bytes),
+            ))
+        progress(VERIFYING, actual_size, actual_size)
+        self.check_canceled()
+        if not self.digest_matches():
+            # Discarded by the caller: a retry must not resume from corrupt bytes.
+            raise DownloadError(self.text["integrity"])
+        self.out.flush()
+        os.fsync(self.out.fileno())
+        self.check_canceled()
+
+
 def download_verified(
     url: str,
     sha256_hex: str,
@@ -194,140 +402,21 @@ def download_verified(
             discarded; one cut short by a network error is kept for resume.
     """
     text = {**MESSAGES, **(messages or {})}
-
-    def canceled() -> DownloadCanceled:
-        return DownloadCanceled(text["canceled"])
-
     if size_bytes <= 0 or (max_bytes is not None and size_bytes > max_bytes):
         raise DownloadError(text["invalid_size"])
-    part_path = destination + ".part"
-    flags = (
-        os.O_RDWR
-        | os.O_CREAT
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
-    try:
-        fd = os.open(part_path, flags, 0o600)
-    except OSError as exc:
-        raise DownloadError(text["unsafe_partial"]) from exc
+    part_path = destination + _PART_SUFFIX
+    fd = _open_partial(part_path, text)
 
     try:
         with os.fdopen(fd, "r+b") as out:
-            info = os.fstat(out.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                raise DownloadError(text["partial_not_regular"])
-            try:
-                os.chmod(part_path, 0o600, follow_symlinks=False)
-            except (NotImplementedError, OSError):
-                fchmod = getattr(os, "fchmod", None)
-                if fchmod is not None:
-                    fchmod(out.fileno(), 0o600)
-
-            resume_from = info.st_size
-            if resume_from > size_bytes:
-                out.seek(0)
-                out.truncate(0)
-                resume_from = 0
-
-            # Re-hash what is already on disk, so the final comparison covers
-            # the whole file and not just the bytes fetched this time.
-            digest = hashlib.sha256()
-            out.seek(0)
-            remaining = resume_from
-            while remaining:
-                if cancel.is_set():
-                    raise canceled()
-                block = out.read(min(CHUNK_BYTES, remaining))
-                if not block:
-                    raise DownloadError(text["partial_unreadable"])
-                digest.update(block)
-                remaining -= len(block)
-
-            if cancel.is_set():
-                raise canceled()
-            if resume_from == size_bytes and digest.hexdigest() != sha256_hex.lower():
-                out.seek(0)
-                out.truncate(0)
-                resume_from = 0
-                digest = hashlib.sha256()
-            if resume_from < size_bytes:
-                headers = {"Range": f"bytes={resume_from}-"} if resume_from else None
-                try:
-                    response = opener(url, headers)
-                except urllib.error.HTTPError as exc:
-                    if exc.code != 416 or not resume_from:
-                        raise
-                    exc.close()
-                    resume_from = 0
-                    digest = hashlib.sha256()
-                    out.seek(0)
-                    out.truncate(0)
-                    response = opener(url)
-                with response:
-                    status = getattr(response, "status", None)
-                    if resume_from and status != 206:
-                        # The server ignored Range and is sending the whole
-                        # file. Restart rather than append a duplicate prefix.
-                        logger.info("Server ignored Range header; restarting download")
-                        resume_from = 0
-                        digest = hashlib.sha256()
-                        out.seek(0)
-                        out.truncate(0)
-                    elif resume_from:
-                        content_range = response_header(response, "Content-Range") or ""
-                        match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", content_range)
-                        if (
-                            match is None
-                            or int(match.group(1)) != resume_from
-                            or int(match.group(2)) != size_bytes - 1
-                            or int(match.group(3)) != size_bytes
-                        ):
-                            raise DownloadError(text["bad_resume"])
-
-                    expected_response_bytes = size_bytes - resume_from
-                    content_length = response_header(response, "Content-Length")
-                    if content_length is not None:
-                        try:
-                            declared_response_bytes = int(content_length)
-                        except ValueError as exc:
-                            raise DownloadError(text["bad_length"]) from exc
-                        if declared_response_bytes != expected_response_bytes:
-                            raise DownloadError(text["unexpected_length"])
-
-                    out.seek(resume_from)
-                    written = resume_from
-                    while True:
-                        if cancel.is_set():
-                            raise canceled()
-                        chunk = response.read(CHUNK_BYTES)
-                        if not chunk:
-                            break
-                        if written + len(chunk) > size_bytes:
-                            raise DownloadError(text["too_much_data"])
-                        out.write(chunk)
-                        digest.update(chunk)
-                        written += len(chunk)
-                        progress(DOWNLOADING, written, size_bytes)
-
-            if cancel.is_set():
-                raise canceled()
-            actual_size = out.tell()
-            if actual_size != size_bytes:
-                raise DownloadInterrupted(text["incomplete"].format(
-                    done=format_size_bytes(actual_size),
-                    total=format_size_bytes(size_bytes),
-                ))
-            progress(VERIFYING, actual_size, actual_size)
-            if cancel.is_set():
-                raise canceled()
-            if digest.hexdigest() != sha256_hex.lower():
-                # Discarded below: a retry must not resume from corrupt bytes.
-                raise DownloadError(text["integrity"])
-            out.flush()
-            os.fsync(out.fileno())
-            if cancel.is_set():
-                raise canceled()
+            partial = _PartialFile(out, sha256_hex, size_bytes, cancel, text)
+            partial.load_existing(part_path)
+            partial.check_canceled()
+            if partial.resume_from == size_bytes and not partial.digest_matches():
+                partial.restart()
+            if partial.resume_from < size_bytes:
+                partial.fetch_remainder(url, opener, progress)
+            partial.verify(progress)
     except DownloadInterrupted:
         raise
     except DownloadCanceled:
@@ -340,26 +429,9 @@ def download_verified(
     except (urllib.error.URLError, OSError) as exc:
         raise DownloadError(describe_error(exc)) from exc
 
-    if cancel.is_set():
-        if not keep_partial_on_cancel:
-            discard_regular_file(part_path)
-        raise canceled()
+    _raise_if_canceled(cancel, part_path, keep_partial_on_cancel, text)
     try:
-        os.replace(part_path, destination)
-        try:
-            os.chmod(destination, 0o600, follow_symlinks=False)
-        except NotImplementedError:
-            os.chmod(destination, 0o600)
-        if os.name != "nt":
-            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-            directory_fd = os.open(os.path.dirname(destination), directory_flags)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+        _move_into_place(part_path, destination)
     except OSError as exc:
         raise DownloadError(text["finalize"]) from exc
-    if cancel.is_set():
-        if not keep_partial_on_cancel:
-            discard_regular_file(destination)
-        raise canceled()
+    _raise_if_canceled(cancel, destination, keep_partial_on_cancel, text)
