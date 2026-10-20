@@ -7,6 +7,15 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Added
+- **Host Mode load-testing tools**: a loopback TLS harness, configurable inference simulations, real-engine runs, and separate batching, network and lifecycle experiments. The scaling report distinguishes simulated capacity from measured CPU results and lists the remaining GPU validation.
+
+### Fixed
+- **Fairer Host Mode work admission**: one paired computer can hold only one active and one queued job. Final text has priority with bounded overtaking, while disposable window previews can be skipped under pressure. Stateful audio is not treated as a disposable preview; finite capacity can still return busy.
+- **Paired reconnects no longer share anonymous hello slots**: updated clients verify the pinned TLS certificate before authenticating at HTTP upgrade. Updated hosts reserve separate capacity for anonymous routing, retaining legacy protocol compatibility. This does not prevent lower-level TCP/TLS floods.
+- **Remote timing includes time waiting for host admission**: additive queue and total-server timings prevent that wait being counted as transport overhead. Bounded load counters distinguish work rejection, connection rejection and skipped previews.
+- **Completed record uploads release their idle locks**: the host no longer retains a lock for every record it has handled, while concurrent callers still share the same live lock.
+
 ## [2.7.6] - 2026-10-18
 
 ### Changed
