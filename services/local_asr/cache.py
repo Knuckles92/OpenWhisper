@@ -61,32 +61,39 @@ def download(key: str, progress_callback=None, cancel: threading.Event | None = 
             return str(target)
         staging = target.with_name(target.name + ".partial")
         staging.mkdir(parents=True, exist_ok=True)
+
+        def progress(_phase, value, count):
+            if progress_callback:
+                progress_callback(value, count)
+
         done = 0
         for file in spec["files"]:
             if cancel.is_set():
                 raise ComponentCanceled()
-            def progress(_phase, value, count):
-                if progress_callback:
-                    progress_callback(value, count)
             _download_verified(file["url"], file["sha256"], file["size_bytes"],
                                str(staging / file["name"]), progress, cancel,
                                offset_base=done, grand_total=total)
             done += file["size_bytes"]
         (staging / "installed.json").write_text(json.dumps(spec), encoding="utf-8")
-        backup = target.with_name(target.name + ".previous")
-        if backup.exists():
-            shutil.rmtree(backup)
-        if target.exists():
-            os.replace(target, backup)
-        try:
-            os.replace(staging, target)
-        except OSError:
-            if backup.exists():
-                os.replace(backup, target)
-            raise
-        if backup.exists():
-            shutil.rmtree(backup)
+        _swap_into_place(staging, target)
     return str(target)
+
+
+def _swap_into_place(staging: Path, target: Path) -> None:
+    """Replace ``target`` with ``staging``, restoring the old copy if the rename fails."""
+    backup = target.with_name(target.name + ".previous")
+    if backup.exists():
+        shutil.rmtree(backup)
+    if target.exists():
+        os.replace(target, backup)
+    try:
+        os.replace(staging, target)
+    except OSError:
+        if backup.exists():
+            os.replace(backup, target)
+        raise
+    if backup.exists():
+        shutil.rmtree(backup)
 
 
 def delete(key: str) -> None:
