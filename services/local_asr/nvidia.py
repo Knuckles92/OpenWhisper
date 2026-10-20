@@ -7,6 +7,10 @@ import os
 import sys
 from pathlib import Path
 
+_SAMPLE_RATE = 16000
+# A segment ends at sentence punctuation, or after this many words.
+_SEGMENT_MAX_WORDS = 24
+
 
 class BackendConfig(c.Structure):
     _fields_ = [("size", c.c_size_t), ("gpu", c.c_int32)]
@@ -183,7 +187,8 @@ class NvidiaRecognizer:
             "create": ([c.POINTER(RecognizerConfig), c.POINTER(c.c_void_p)], c.c_int),
             "destroy": ([c.c_void_p], None),
             "recognition_options_default": ([], Options),
-            "recognize_f32": ([c.c_void_p, c.POINTER(Options), c.POINTER(c.c_float), c.c_size_t, c.c_int32, c.POINTER(c.c_void_p)], c.c_int),
+            "recognize_f32": ([c.c_void_p, c.POINTER(Options), c.POINTER(c.c_float), c.c_size_t,
+                               c.c_int32, c.POINTER(c.c_void_p)], c.c_int),
             "streaming_recognize": ([c.c_void_p, c.POINTER(Options), c.POINTER(c.c_void_p)], c.c_int),
             "stream_push_f32": ([c.c_void_p, c.POINTER(c.c_float), c.c_size_t, c.c_int32], c.c_int),
             "stream_finish": ([c.c_void_p], c.c_int),
@@ -241,11 +246,13 @@ class NvidiaRecognizer:
         result = c.c_void_p()
         buf = (c.c_float * len(samples)).from_buffer(samples)
         try:
-            self._check(self.lib.nemo_speech_asr_recognize_f32(self.handle, c.byref(options), buf, len(samples), 16000, c.byref(result)))
+            status = self.lib.nemo_speech_asr_recognize_f32(
+                self.handle, c.byref(options), buf, len(samples), _SAMPLE_RATE, c.byref(result))
+            self._check(status)
         finally:
             del keepalive
         data = self._result(result)
-        return dict(text=data["text"], segments=segments_from_words(data, len(samples)/16000))
+        return dict(text=data["text"], segments=segments_from_words(data, len(samples)/_SAMPLE_RATE))
 
     def stream(self, key, samples, language=None, finish=False, phrases=()):
         if key not in self.streams:
@@ -258,7 +265,7 @@ class NvidiaRecognizer:
         handle = self.streams[key]
         if samples:
             buf = (c.c_float * len(samples)).from_buffer(samples)
-            self._check(self.lib.nemo_speech_asr_stream_push_f32(handle, buf, len(samples), 16000))
+            self._check(self.lib.nemo_speech_asr_stream_push_f32(handle, buf, len(samples), _SAMPLE_RATE))
         if finish:
             self._check(self.lib.nemo_speech_asr_stream_finish(handle))
         results = []
@@ -297,9 +304,14 @@ def segments_from_words(data, duration):
     segments, current = [], []
     for word in words:
         current.append(word)
-        if word["text"].rstrip().endswith((".", "?", "!")) or len(current) >= 24:
-            segments.append(dict(text=" ".join(w["text"] for w in current), start=current[0]["start"], end=current[-1]["end"]))
+        if word["text"].rstrip().endswith((".", "?", "!")) or len(current) >= _SEGMENT_MAX_WORDS:
+            segments.append(_segment(current))
             current = []
     if current:
-        segments.append(dict(text=" ".join(w["text"] for w in current), start=current[0]["start"], end=current[-1]["end"]))
+        segments.append(_segment(current))
     return segments
+
+
+def _segment(words):
+    text = " ".join(w["text"] for w in words)
+    return dict(text=text, start=words[0]["start"], end=words[-1]["end"])
