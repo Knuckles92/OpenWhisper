@@ -1,0 +1,191 @@
+{
+  "status": "Interrupted, no terminal result or quiescent cleanup evidence. Not a completed soak pass.",
+  "resource_runs": {
+    "original_resource_only": {
+      "samples": 2263,
+      "first_s": 1.0014794039998378,
+      "last_s": 2290.712208689998,
+      "rss_start_mib": 52.0,
+      "rss_last_mib": 85.28125,
+      "rss_max_mib": 88.203125,
+      "last_10min_linear_rss_mib_per_min": 0.338968379082171,
+      "last_10min_threads_min": 32,
+      "last_10min_threads_max": 35,
+      "bins": [
+        {
+          "start_s": 0,
+          "end_s": 300,
+          "samples": 298,
+          "rss_median_mib": 67.38671875,
+          "threads_min": 11,
+          "threads_max": 35
+        },
+        {
+          "start_s": 300,
+          "end_s": 600,
+          "samples": 298,
+          "rss_median_mib": 76.091796875,
+          "threads_min": 34,
+          "threads_max": 35
+        },
+        {
+          "start_s": 600,
+          "end_s": 900,
+          "samples": 298,
+          "rss_median_mib": 78.08203125,
+          "threads_min": 35,
+          "threads_max": 35
+        },
+        {
+          "start_s": 900,
+          "end_s": 1200,
+          "samples": 297,
+          "rss_median_mib": 79.88671875,
+          "threads_min": 32,
+          "threads_max": 35
+        },
+        {
+          "start_s": 1200,
+          "end_s": 1500,
+          "samples": 299,
+          "rss_median_mib": 82.15625,
+          "threads_min": 35,
+          "threads_max": 35
+        },
+        {
+          "start_s": 1500,
+          "end_s": 1800,
+          "samples": 292,
+          "rss_median_mib": 82.4453125,
+          "threads_min": 33,
+          "threads_max": 35
+        },
+        {
+          "start_s": 1800,
+          "end_s": 2100,
+          "samples": 290,
+          "rss_median_mib": 84.80859375,
+          "threads_min": 32,
+          "threads_max": 35
+        },
+        {
+          "start_s": 2100,
+          "end_s": 2290.712208689998,
+          "samples": 191,
+          "rss_median_mib": 85.2734375,
+          "threads_min": 35,
+          "threads_max": 35
+        }
+      ]
+    },
+    "scratch_partial": {
+      "samples": 1418,
+      "first_s": 1.0028297349999775,
+      "last_s": 1440.2166633960005,
+      "rss_start_mib": 52.05859375,
+      "rss_last_mib": 86.99609375,
+      "rss_max_mib": 87.00390625,
+      "last_10min_linear_rss_mib_per_min": 0.23611172778531397,
+      "last_10min_threads_min": 32,
+      "last_10min_threads_max": 35,
+      "bins": [
+        {
+          "start_s": 0,
+          "end_s": 300,
+          "samples": 297,
+          "rss_median_mib": 69.1640625,
+          "threads_min": 9,
+          "threads_max": 35
+        },
+        {
+          "start_s": 300,
+          "end_s": 600,
+          "samples": 299,
+          "rss_median_mib": 78.015625,
+          "threads_min": 35,
+          "threads_max": 35
+        },
+        {
+          "start_s": 600,
+          "end_s": 900,
+          "samples": 293,
+          "rss_median_mib": 82.91796875,
+          "threads_min": 34,
+          "threads_max": 35
+        },
+        {
+          "start_s": 900,
+          "end_s": 1200,
+          "samples": 289,
+          "rss_median_mib": 85.12890625,
+          "threads_min": 32,
+          "threads_max": 35
+        },
+        {
+          "start_s": 1200,
+          "end_s": 1440.2166633960005,
+          "samples": 240,
+          "rss_median_mib": 85.7734375,
+          "threads_min": 35,
+          "threads_max": 35
+        }
+      ]
+    }
+  },
+  "manifest": [
+    {
+      "path": "host-scaling-evidence-recovery/soak-mixed-tree.ndjson",
+      "bytes": 1708998,
+      "sha256": "4f322ca1d543b4002682f5b5c234e7127f14c6b31a8d04f92b5bc51ec29f3142"
+    },
+    {
+      "path": "host-soak-stable/tree.ndjson",
+      "bytes": 1090214,
+      "sha256": "de4565d62b2a12fa043af2665d68b57fa0564cf2d06817e3b5c3a9d83dc61bc5"
+    },
+    {
+      "path": "host-soak-stable/mixed.ndjson",
+      "bytes": 1096753,
+      "sha256": "98a0d8afda9afd8633c60599c07443ba62fd33563397f3345bdd86526229f32e"
+    },
+    {
+      "path": "host-soak-stable/mixed.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host-soak-stable/run.sh",
+      "bytes": 809,
+      "sha256": "b9268fe97e4999c1b37b097288c096a47f85e0c6c8505735586ca444c7bd8514"
+    },
+    {
+      "path": "host-soak-stable/watch.py",
+      "bytes": 1228,
+      "sha256": "4c1aaf44d61e8e2966afee328a84f1aa0ae8b82f2e31aab8d326eeca28588e00"
+    }
+  ],
+  "request_prefix": {
+    "rows": 6725,
+    "last_at_s": 1439.6298725019988,
+    "status_counts": {
+      "ok": 6698,
+      "preview_skipped": 26,
+      "unavailable": 1
+    },
+    "op_counts": {
+      "connect": 4,
+      "history_connect": 4,
+      "history_query": 5748,
+      "transcribe": 666,
+      "first_preview": 47,
+      "cycle_connect": 128,
+      "cycle_history_connect": 128
+    },
+    "kind_counts": {
+      "None": 6059,
+      "meeting": 287,
+      "preview": 188,
+      "final": 191
+    }
+  }
+}

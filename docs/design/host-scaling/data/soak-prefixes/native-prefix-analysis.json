@@ -1,0 +1,206 @@
+{
+  "status": "PARTIAL, planned 1800 seconds not completed; session70703 unknown process id at12:40:07 UTC; no final exit, quiescence or shutdown evidence",
+  "launch": {
+    "started_utc": "2026-10-20T12:06:13.792750+00:00",
+    "source_commit": "285d01d2d693046d3caccc1ae2b53f68bd29ae91",
+    "tree": "3be0cdb3ea371cddef3cf861322d1629bce147e9",
+    "harness_sha256": "681aa0ae7be2287e23c836db550d3fc874a01de3a01b169aed8cb55b5ff251ca",
+    "command": [
+      "/workspace/scratch/cc20469b78dc/host-scaling-runtime/venv/bin/python",
+      "-m",
+      "benchmarks.host_load",
+      "--source-root",
+      "/workspace/scratch/cc20469b78dc/host-soak-source",
+      "--engine",
+      "real",
+      "--family",
+      "parakeet",
+      "--model",
+      "parakeet-v3",
+      "--device",
+      "cpu",
+      "--app-data",
+      "/workspace/scratch/cc20469b78dc/host-batching-final/app-data",
+      "--audio-file",
+      "/workspace/scratch/cc20469b78dc/host-batching-final/data/jfk.wav",
+      "--clients",
+      "2",
+      "--duration",
+      "1800",
+      "--rate",
+      ".05",
+      "--seed",
+      "7",
+      "--connection-cycle-s",
+      "30",
+      "--arrival-grace-s",
+      "10",
+      "--quiescence-s",
+      "5",
+      "--output",
+      "/workspace/scratch/cc20469b78dc/host-batching-final/evidence/soak.json"
+    ],
+    "scope": "New 30-minute scratch-only native CPU run; shared-machine robustness, old bounded soak may overlap; not capacity"
+  },
+  "last_sample_utc": "2026-10-20T12:30:07.908388+00:00",
+  "observed_seconds": 1434.1070247509997,
+  "rows": 194,
+  "transcriptions": 139,
+  "statuses": {
+    "ok": 139
+  },
+  "nonempty": 139,
+  "lifecycle": {
+    "connect:ok": 2,
+    "cycle_connect:ok": 53
+  },
+  "longest_processed_audio_s": 30.0,
+  "last_host_tree": {
+    "rss_bytes": 1078886400,
+    "threads": 16,
+    "processes": 2
+  },
+  "five_minute_bins": [
+    {
+      "start_s": 0,
+      "end_s": 300,
+      "role": "host",
+      "count": 297,
+      "rss_min": 62001152,
+      "rss_median": 69341184,
+      "rss_max": 72421376
+    },
+    {
+      "start_s": 0,
+      "end_s": 300,
+      "role": "worker",
+      "count": 297,
+      "rss_min": 41574400,
+      "rss_median": 855588864,
+      "rss_max": 994512896
+    },
+    {
+      "start_s": 0,
+      "end_s": 300,
+      "role": "aggregate",
+      "count": 297,
+      "rss_min": 103575552,
+      "rss_median": 924930048,
+      "rss_max": 1066708992
+    },
+    {
+      "start_s": 300,
+      "end_s": 600,
+      "role": "host",
+      "count": 298,
+      "rss_min": 72196096,
+      "rss_median": 73756672.0,
+      "rss_max": 75288576
+    },
+    {
+      "start_s": 300,
+      "end_s": 600,
+      "role": "worker",
+      "count": 298,
+      "rss_min": 994512896,
+      "rss_median": 994705408.0,
+      "rss_max": 994975744
+    },
+    {
+      "start_s": 300,
+      "end_s": 600,
+      "role": "aggregate",
+      "count": 298,
+      "rss_min": 1066708992,
+      "rss_median": 1068462080.0,
+      "rss_max": 1070264320
+    },
+    {
+      "start_s": 600,
+      "end_s": 900,
+      "role": "host",
+      "count": 291,
+      "rss_min": 75288576,
+      "rss_median": 76980224,
+      "rss_max": 81018880
+    },
+    {
+      "start_s": 600,
+      "end_s": 900,
+      "role": "worker",
+      "count": 291,
+      "rss_min": 994975744,
+      "rss_median": 994979840,
+      "rss_max": 999346176
+    },
+    {
+      "start_s": 600,
+      "end_s": 900,
+      "role": "aggregate",
+      "count": 291,
+      "rss_min": 1070264320,
+      "rss_median": 1071960064,
+      "rss_max": 1080365056
+    },
+    {
+      "start_s": 900,
+      "end_s": 1200,
+      "role": "host",
+      "count": 292,
+      "rss_min": 77312000,
+      "rss_median": 79388672.0,
+      "rss_max": 79745024
+    },
+    {
+      "start_s": 900,
+      "end_s": 1200,
+      "role": "worker",
+      "count": 292,
+      "rss_min": 999346176,
+      "rss_median": 999419904.0,
+      "rss_max": 999424000
+    },
+    {
+      "start_s": 900,
+      "end_s": 1200,
+      "role": "aggregate",
+      "count": 292,
+      "rss_min": 1076658176,
+      "rss_median": 1078808576.0,
+      "rss_max": 1079169024
+    },
+    {
+      "start_s": 1200,
+      "end_s": 1434.1070247509997,
+      "role": "host",
+      "count": 234,
+      "rss_min": 79204352,
+      "rss_median": 79745024.0,
+      "rss_max": 82915328
+    },
+    {
+      "start_s": 1200,
+      "end_s": 1434.1070247509997,
+      "role": "worker",
+      "count": 234,
+      "rss_min": 999424000,
+      "rss_median": 999424000.0,
+      "rss_max": 999682048
+    },
+    {
+      "start_s": 1200,
+      "end_s": 1434.1070247509997,
+      "role": "aggregate",
+      "count": 234,
+      "rss_min": 1078886400,
+      "rss_median": 1079169024.0,
+      "rss_max": 1082597376
+    }
+  ],
+  "last_observed_ten_minute_OLS_rss_bytes_per_hour": {
+    "host": 9079512.784730341,
+    "worker": 9786742.136682767,
+    "aggregate": 18866254.921413105
+  },
+  "caveat": "Shared-machine robustness only, not capacity. No clear aggregate late plateau; growth remains unresolved, not proven leak. Native worker high-water and host benchmark record retention may contribute. No GPU evidence."
+}

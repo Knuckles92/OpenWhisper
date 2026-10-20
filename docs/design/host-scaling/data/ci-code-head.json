@@ -1,0 +1,65 @@
+{
+  "run_id": 39421810141,
+  "url": "https://github.com/Knuckles92/OpenWhisper/actions/runs/39421810141",
+  "head_sha": "f719069d1df911fa3b67a9ff112a9f4f9bd5b894",
+  "status": "completed",
+  "conclusion": "success",
+  "created_at": "2026-10-20T12:22:55Z",
+  "updated_at": "2026-10-20T12:27:45Z",
+  "jobs": [
+    {
+      "name": "Windows updater and OpenCode regression tests",
+      "id": 118624362111,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Python and Qt tests",
+      "id": 118624362297,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "macOS tests",
+      "id": 118624362376,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Core lifecycle (windows-2022, source)",
+      "id": 118624362394,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Core lifecycle (windows-2022, release)",
+      "id": 118624362442,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Meeting sidecar checks",
+      "id": 118624362457,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Dashboard tests, typecheck and bundle",
+      "id": 118624362463,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Core lifecycle (macos-14, release)",
+      "id": 118624362537,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Core lifecycle (macos-14, source)",
+      "id": 118624362573,
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ]
+}

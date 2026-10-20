@@ -2,18 +2,6 @@
 
 20 October 2026. Baseline: `169d25442086c238ac7ef36660510a7c748adc97` on `main`. Recovered published source: `717eeaeaed8ab8a173388f9984da52f4ba393af3`.
 
-## Evidence status: interrupted investigation and recovered observations
-
-**Around 11:23 UTC, the shared workspace disappeared and its local files became unavailable.** The published source survived; the uncommitted report, original raw measurements, full test logs, model assets and local research artifacts did not. This report was reconstructed from previously inspected text and summaries retained in the investigation conversation. Tables explicitly marked **recovered observations** describe results seen before the first shared-workspace loss, not newly rerun measurements or raw evidence that remains independently auditable.
-
-The primary baseline completed **80 cells**. The paired candidate sweep was last verified at **51 of 80 cells at 11:07 UTC** and was interrupted. **There is no completed primary before/after sweep.** Do not infer missing candidate cells, treat an interrupted process as completion, or advertise a measured capacity gain from this partial matrix. Recovered aggregate exports, where provided, are a separate evidence class from original raw request rows. Source code and reproduction procedures survive, but they do not replace lost observations.
-
-The pre-loss candidate was `30c206b`. Its tree-identical published equivalent is `717eeaeaed8ab8a173388f9984da52f4ba393af3`: publication preserved commit order and file contents but recreated commit metadata. The remote Git tree was directly verified as `0fc0aaaf5326e02932958db823e2719e32d556e6`. Historical prototype IDs below identify earlier isolated experiments; they are not necessarily commit objects in the published branch. Fresh post-recovery tests and soak results identify their own source and environment and must not be conflated with earlier runs.
-
-**A second filesystem loss at approximately 11:59 UTC removed the restored shared workspace.** The cause of both incidents is unknown; neither is established as a whole-machine reset. During the second incident the hostname stayed unchanged and an existing process continued writing to scratch while its shared paths were unavailable. Published source/report and deliberate scratch backups survived. The completed 26-cell focused comparison below retains raw JSON in that backup and is freshly auditable; the original 80-cell raw baseline and interrupted candidate remain lost. Earlier attempted 40-minute soaks did not produce completed-run/quiescence evidence and are not counted as completed stability tests.
-
-**Fresh validation status:** the post-recovery full suite completed with 9,474 passed and the same six isolation failures; all 529 remote-related cases passed. A distinct 26-cell focused paired comparison completed and its raw p95 values were independently rechecked after the second disappearance. New scratch-based 30-minute soak results remain pending; final log/bundle availability is tracked in the evidence index.
-
 ## Executive summary
 
 The current ceiling is not just inference speed. Host Mode admits twelve persistent connections, and ordinary speech plus history uses two per computer. Six fully featured computers can therefore exhaust the default connection limit even while the speech engine is mostly idle. More connected computers and more simultaneous decodes are different capacity questions.
@@ -47,6 +35,19 @@ The recovered baseline-only screen and the separate fresh 26-cell comparison bel
 | Later | Multiple models, GPUs and independently paired hosts | Availability and deployment flexibility | Weeks | VRAM, identity, history ownership and state continuity |
 
 Effort figures are engineering estimates, not delivery commitments.
+
+
+## Evidence status: interrupted investigation and recovered observations
+
+**Around 11:23 UTC, the shared workspace disappeared and its local files became unavailable.** The published source survived; the uncommitted report, original raw measurements, full test logs, model assets and local research artifacts did not. This report was reconstructed from previously inspected text and summaries retained in the investigation conversation. Tables explicitly marked **recovered observations** describe results seen before the first shared-workspace loss, not newly rerun measurements or raw evidence that remains independently auditable.
+
+The primary baseline completed **80 cells**. The paired candidate sweep was last verified at **51 of 80 cells at 11:07 UTC** and was interrupted. **There is no completed primary before/after sweep.** Do not infer missing candidate cells, treat an interrupted process as completion, or advertise a measured capacity gain from this partial matrix. Recovered aggregate exports, where provided, are a separate evidence class from original raw request rows. Source code and reproduction procedures survive, but they do not replace lost observations.
+
+The pre-loss candidate was `30c206b`. Its tree-identical published equivalent is `717eeaeaed8ab8a173388f9984da52f4ba393af3`: publication preserved commit order and file contents but recreated commit metadata. The remote Git tree was directly verified as `0fc0aaaf5326e02932958db823e2719e32d556e6`. Historical prototype IDs below identify earlier isolated experiments; they are not necessarily commit objects in the published branch. Fresh post-recovery tests and soak results identify their own source and environment and must not be conflated with earlier runs.
+
+**A second filesystem loss at approximately 11:59 UTC removed the restored shared workspace.** The cause of both incidents is unknown; neither is established as a whole-machine reset. During the second incident the hostname stayed unchanged and an existing process continued writing to scratch while its shared paths were unavailable. Published source/report and deliberate scratch backups survived. The completed 26-cell focused comparison below retains raw JSON in that backup and is freshly auditable; the original 80-cell raw baseline and interrupted candidate remain lost. Earlier attempted 40-minute soaks did not produce completed-run/quiescence evidence and are not counted as completed stability tests.
+
+**Fresh validation status:** the post-recovery full suite completed with 9,474 passed and the same six isolation failures; all 529 remote-related cases passed. A distinct 26-cell focused paired comparison completed and its raw p95 values were independently rechecked after the second disappearance. Long-run resource traces survived, but all attempts lost finalization evidence during an execution-environment transition: the longest simulated-host trace is 38.18 minutes, the scratch retry 24.00 minutes, and the native CPU prefix 23.90 minutes. None is a completed soak pass.
 
 ## Capacity model verified against main
 
@@ -187,6 +188,12 @@ Successful-tail latency must be read beside rejected/censored work. All rows bel
 The CPU-Parakeet N=12 candidate completed 24/46 versus 18/46 baseline, but many finals still failed or remained unstarted. The successful subsets differ (24 versus 17 short clips), so the p95 difference is not an equal-request latency speedup. CPU-Whisper-small was essentially unchanged and overloaded; the hypothetical GPU-Whisper-turbo scenario completed every final but exceeded two-second p95 at N=12. With only five offered finals at N=1 and 25 at N=6, extrapolating a precise knee is not justified. The two Whisper profiles remain uncalibrated sensitivity models, not the named hardware measured here.
 
 **Conclusion:** the focused data provide fresh, reproducible behavior checks and bounded overload examples, not a replacement for the interrupted full sweep or a hardware user-count guarantee. The strongest prototype rationale remains admission/security/fairness correctness rather than claimed inference acceleration.
+
+### Completed exploratory workload coverage
+
+A separate shared-machine screen retained **51 completed cells** before interruption: paired GPU-Parakeet simulations for window preview, meetings, history, local contention and mixed work at N=1/6/12, plus paired native-stream sensitivity and records at N=6 (34 cells); paired CPU-Parakeet window-preview/meeting cases at N=1/6/12 (12 cells); and five CPU-Parakeet history cells. No Whisper workload screen completed. The planned larger grid is not claimed complete.
+
+The retained cells had zero request-error counts, but include busy responses, deliberate preview skips, censoring and connection refusals. Pure meetings have no dictation-final SLO; local work is the wrapper-contention proxy described above. These runs overlapped robustness work, so their latency is descriptive, not an isolated capacity curve. [Coverage and metrics CSV](data/shared-screens/completed-summary.csv), [JSON](data/shared-screens/completed-summary.json); complete raw files are in the archive.
 
 ## Research tracks
 
@@ -405,7 +412,23 @@ Engine reload needs atomic ownership. Checking identity after host admission doe
 
 Recommendation: narrow lock-lifetime fix now; broker/leases next; explicit cancellation, revoke-during-queue, restart/reconnect and cleanup tests before concurrency expansion. The preserved [reload characterization](../../../benchmarks/host_load/experiments/reload-characterization.md) intentionally documents undesirable behavior and is outside ordinary regressions. It must change when the lifecycle is fixed, not preserve the hazard forever.
 
-**Fresh scratch-based soak results pending.** Neither the pre-loss attempt nor the forty-minute attempts interrupted by the second storage loss are claimed as completed 30–60-minute stability tests. One retained real-Parakeet prefix spans only 137.446 seconds with 13 successful nonempty requests and three reconnects; it provides no final shutdown/quiescence or memory-stability result. The final result should report duration, workload, concurrency overlap, resource start/live/quiescent snapshots, errors and unfinished threads. Stable memory over one finite interval is not unlimited uptime or GPU-leak coverage.
+#### Long-run observations: interrupted, not passed
+
+All three retained resource streams ended at approximately 12:30:07 UTC during an execution-environment transition. Subsequent session polls returned unknown process IDs; no final run JSON, quiescence or shutdown verification exists. This is not evidence of an application crash, but it means the requested completed 30–60-minute stability check remains **only partially fulfilled**. A 38-minute live-process resource trace is useful evidence, not a substitute for successful finalization.
+
+| Retained run | Observed duration | Request evidence | Resource observation | Missing evidence |
+|---|---:|---|---|---|
+| Earlier simulated CPU-Parakeet timing host | 38.18 min | Final request summary unavailable | 2,263 live-host samples; RSS 52.0→85.28 MiB, peak 88.20 MiB | Final request totals, quiescence, shutdown |
+| Scratch mixed simulation, four clients + local proxy/history | 24.00 min | 191 successful finals, 287 successful meeting transcriptions; 188 preview attempts including 26 deliberate skips | 1,418 live-host samples; RSS 52.06→87.00 MiB | Remaining planned arrivals, local-proxy final summary, cleanup |
+| Scratch real Parakeet CPU, two clients | 23.90 min | 139/139 completed transcriptions nonempty/successful; 53 successful reconnects | Host+worker two processes, 16 threads; last combined RSS 1,078,886,400 bytes | Remaining planned arrivals, final engine description, quiescence, shutdown |
+
+The mixed prefix also contains one unavailable history query among 5,748 queries during intentional reconnect cycling. It is retained as an observed lifecycle gap, not erased from the outcome. Completed request rows do not reveal the fate of any in-flight or future planned work at interruption. These runs overlapped other bounded workloads and measure robustness observations, not isolated capacity.
+
+![Observed resource prefixes, with interruptions explicitly shown](soak-prefixes.png)
+
+The last ten observed minutes had positive RSS slopes: about 0.339 MiB/min for the earlier simulated host and 0.236 MiB/min for the scratch retry. Native aggregate OLS growth was about 18.87 MB/hour (decimal), split between host 9.08 and worker 9.79 MB/hour. These slopes summarize this finite window, not a forecast or proof of a leak. Native worker allocation steps and host benchmark/history retention can contribute; a 30-second clip completed near 1,386 seconds, inside the late window. There is no demonstrated aggregate steady-state plateau or post-quiescence recovery.
+
+[Simulated-prefix analysis](data/soak-prefixes/simulated-prefix-analysis.json), [native-prefix analysis](data/soak-prefixes/native-prefix-analysis.json) and [native five-minute memory bins](data/soak-prefixes/native-memory-bins.csv) retain exact counts, source/harness hashes and limitations. Raw NDJSON is in the evidence archive. Next validation should use fixed-clip and mixed-clip 60-minute runs, preserve external samples, then observe at least five minutes idle and repeat. Treat leak-free certification as unresolved, despite the separately proven record-lock fix.
 
 ### 11. Headless hosting and alternative front doors
 
@@ -475,13 +498,20 @@ The candidate had those six plus `tests/test_clipboard.py::test_cleanup_drops_th
 
 The restored source plus schema-3 harness maintenance, `c1c3f3c7bd4d1811ee6e51ddfad34d164fffa1e8`, completed a new full run at 11:31:47 UTC. It is preserved as tree-identical published commit `285d01d2d693046d3caccc1ae2b53f68bd29ae91`.
 
-| Passed | Failed | Skipped | Errors | Passed subtests | Duration | Exit |
-|---:|---:|---:|---:|---:|---:|---:|
-| 9,474 | 6 | 44 | 0 | 4,487 | 189.64 s | 1 |
+| Fresh source | Passed | Failed | Skipped | Errors | Passed subtests | Duration | Exit |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Baseline `169d254`, completed 12:43:31 UTC | 9,407 | 6 | 44 | 0 | 4,486 | 206.73 s | 1 |
+| Candidate `c1c3f3c` / tree-equivalent `285d01d` | 9,474 | 6 | 44 | 0 | 4,487 | 189.64 s | 1 |
 
-The six failures are exactly the isolation cases named above. The clipboard timer failure did not recur in this full run. All 529 remote-related JUnit rows passed; Ruff 0.16.4 `--select F` passed. Full fresh stdout, JUnit, failure traces, dependency freeze, source hash and launch configuration are retained in the evidence bundle. The suite remains exit 1, not globally green. The second storage loss occurred after this run, but the fresh full-suite bundle survived separately and was successfully restored from its native Library backup. These fresh raw test logs were not lost; historical absolute workspace paths inside them are not their current delivery location. The recovered environment is a fresh installation, not proof that every byte of the lost environment was identical.
+Both fresh runs have exactly the six isolation cases named above. Fresh baseline stdout/JUnit/environment/freeze were retained after the final rerun; full before/after test evidence is available, unlike the lost original performance matrix. The clipboard timer failure did not recur in this full run. All 529 remote-related JUnit rows passed; Ruff 0.16.4 `--select F` passed. Full fresh stdout, JUnit, failure traces, dependency freeze, source hash and launch configuration are retained in the evidence bundle. The suite remains exit 1, not globally green. The second storage loss occurred after this run, but the fresh full-suite bundle survived separately and was successfully restored from its native Library backup. These fresh raw test logs were not lost; historical absolute workspace paths inside them are not their current delivery location. The recovered environment is a fresh installation, not proof that every byte of the lost environment was identical.
 
 This Linux investigation does not establish Windows packaging, microphone, desktop-input or CUDA correctness.
+
+### Repository CI
+
+The draft PR's code/report head `f719069d1df911fa3b67a9ff112a9f4f9bd5b894` also completed [GitHub Actions run 39421810141](https://github.com/Knuckles92/OpenWhisper/actions/runs/39421810141) successfully at 12:27:45 UTC. All nine jobs passed: Python/Qt, macOS, Windows updater/component checks, Windows/macOS source/release lifecycle checks, meeting sidecar, and dashboard tests/build verification. [Recorded job summary](data/ci-code-head.json).
+
+That hosted CI result is separate from the deliberately stricter local network guard's six failures. It adds automated platform coverage, not manual installed-app, microphone or GPU validation. Later report/evidence-only commits do not retroactively change which exact head this CI run tested; check the PR's current checks for the final head.
 
 ## Measured versus inferred
 
@@ -519,8 +549,11 @@ These published IDs survive in repository history. Historical isolated experimen
 | Timing/activity | `7124fbd`, `974a224`, `56a21d5` | Include event-refresh/order follow-ups |
 | Portable research adapters | `03b179a` | Benchmark-only CPU batching and network tools |
 | Documentation/lint | `606d3f4`, `717eeae` | Shared fixtures/import cleanup may span benchmark code |
+| Schema-3 measurement maintenance | `285d01d` | Explicit lifetime/grace, actual description and local offered-demand accounting |
+| Portable connection experiment | `0e5dd96` | Server-only resources and authenticated socket-saturation check |
+| Report and retained data | `dc98bdf`, `f719069`, followed by the final evidence update | Documentation/data only; original and fresh evidence remain distinguished |
 
-The report can be reviewed independently of production changes. A final report/evidence commit should identify what is recovered versus fresh. Cherry-picking a group is not itself compatibility certification.
+The report can be reviewed independently of production changes. The report/evidence commits identify recovered versus fresh observations. Cherry-picking a group is not itself compatibility certification.
 
 ## Validate on real hardware
 
@@ -612,7 +645,7 @@ Fresh completed focused evidence:
 - [GPU-Parakeet paired chart](fresh-gpu-parakeet.png) and [compact stress chart](fresh-compact-profiles.png).
 - [Fresh scratch-only record-lock evidence](data/fresh-lock-churn/README.md), including raw checkpoints, logs, source provenance, scripts and hashes.
 - [Fresh connection resource/saturation raw results](data/fresh-connection-resources/result.json) and [provenance](data/fresh-connection-resources/metadata.json).
-- Raw JSON files exist in the surviving evidence backup and must be included in the final evidence package. Absolute paths retained inside historical configs describe where runs executed, not current download locations.
+- Raw JSON files are included in the companion evidence archive. Absolute paths retained inside historical configs describe where runs executed, not current download locations.
 
 To reproduce the fresh focused cases with the schema-3 harness, run each command for both immutable production source roots, using distinct output paths:
 
@@ -636,4 +669,10 @@ python -m benchmarks.host_load.policy --source-root "PATH_TO_CANDIDATE" --output
 
 These are reproduction instructions, not claims those fresh runs completed. Repeat the sweep with `.2` and a distinct output directory for stress. Optional workload sweeps need distinct paths and explicit labels; low sample cells do not establish capacity.
 
-**Pending final integration:** completed scratch-based soak results and the final evidence/archive index. Fresh connection-resource and lock-checkpoint raw evidence are included above. Fresh suite and focused paired results above are complete, not pending. Do not link a missing historical raw bundle as though delivered. Preserve each evidence item's source revision, environment, command, duration, request count, overlap conditions and recovered-versus-fresh status. If a result cannot be recovered or rerun, retain that limitation rather than reconstructing plausible raw rows.
+### Delivered evidence archive
+
+The companion `openwhisper-host-scaling-evidence.zip` contains this report and PNGs, the portable harness/experiments, a source Git bundle, complete fresh baseline/candidate test logs and dependency freezes, all 26 focused raw runs, 51 completed exploratory workload cells, final fresh lock/connection evidence, and interrupted soak request/resource prefixes. `MANIFEST.json` records file hashes. Original pre-loss performance rows are not present and were not invented.
+
+Use the source bundle in an existing clone containing baseline `169d254`: `git fetch /path/to/openwhisper-host-scaling-source.bundle research/host-scaling:research/host-scaling-evidence`. Published tree-equivalent commits preserve the tested code even where historical local commit metadata differed. Do not confuse a preserved source tree with recreation of a lost execution environment.
+
+Report figures can be regenerated with `plot_report.py` (recovered CSVs), `plot_fresh.py` (fresh focused summary JSON), and `plot_soak_prefixes.py` (the three retained NDJSON resource traces). Every figure was visually checked. The unfinished full primary candidate matrix, target-GPU tests, WAN loss/quality tests and complete soak cleanup remain explicit gaps, not implied successes.
