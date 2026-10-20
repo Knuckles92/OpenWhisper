@@ -117,6 +117,39 @@ def seed_demo_meeting(
     Raises:
         RuntimeError: When participants or segments cannot be seeded.
     """
+    speaker_ids = _seed_participants(store, me_participant_id, title)
+
+    segments, segment_ids = _build_segments(meeting_id, speaker_ids)
+    repository.add_segments(segments)
+    last_end_s = segments[-1].end_s if segments else 0.0
+
+    card_ops = _card_ops(segment_ids)
+    card_results = store.apply("system", "demo", card_ops)
+    _warn_dropped(card_results, "Demo seed dropped %d card ops: %s")
+
+    followup = _followup_ops(card_results)
+    if followup:
+        pin_results = store.apply("system", "demo", followup)
+        _warn_dropped(pin_results, "Demo seed dropped %d follow-up ops: %s")
+
+    if clock is not None and last_end_s > 0:
+        resume = getattr(clock, "resume_from_recovery", None)
+        if callable(resume):
+            resume(last_end_s)
+
+    return {
+        "segment_count": len(segments),
+        "last_end_s": last_end_s,
+        "participant_ids": dict(speaker_ids),
+    }
+
+
+def _seed_participants(
+    store: Any,
+    me_participant_id: Optional[str],
+    title: Optional[str],
+) -> Dict[str, Optional[str]]:
+    """Set the title and add the demo speakers; return ids by speaker key."""
     speaker_ids = {"me": me_participant_id}
     participant_ops: List[Dict[str, Any]] = [
         {
@@ -145,44 +178,17 @@ def seed_demo_meeting(
         speaker_ids[key] = result.effect["participant"]["id"]
     if not speaker_ids.get("me"):
         raise RuntimeError("Demo seed needs a host participant")
+    return speaker_ids
 
-    segments, segment_ids = _build_segments(meeting_id, speaker_ids)
-    repository.add_segments(segments)
-    last_end_s = segments[-1].end_s if segments else 0.0
 
-    card_ops = _card_ops(segment_ids)
-    card_results = store.apply("system", "demo", card_ops)
-    failed = [r for r in card_results if not r.ok]
+def _warn_dropped(results: List[Any], message: str) -> None:
+    failed = [r for r in results if not r.ok]
     if failed:
         logger.warning(
-            "Demo seed dropped %d card ops: %s",
+            message,
             len(failed),
             ", ".join(f"{r.op.get('op')}:{r.reason}" for r in failed),
         )
-
-    followup = _followup_ops(card_results)
-    if followup:
-        pin_results = store.apply("system", "demo", followup)
-        pin_failed = [r for r in pin_results if not r.ok]
-        if pin_failed:
-            logger.warning(
-                "Demo seed dropped %d follow-up ops: %s",
-                len(pin_failed),
-                ", ".join(
-                    f"{r.op.get('op')}:{r.reason}" for r in pin_failed
-                ),
-            )
-
-    if clock is not None and last_end_s > 0:
-        resume = getattr(clock, "resume_from_recovery", None)
-        if callable(resume):
-            resume(last_end_s)
-
-    return {
-        "segment_count": len(segments),
-        "last_end_s": last_end_s,
-        "participant_ids": dict(speaker_ids),
-    }
 
 
 def _build_segments(
