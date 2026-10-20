@@ -465,16 +465,11 @@ def rerun_redecode(
     if store is None:
         store = _open_store(repository, meeting_id, meeting)
     spool_dir = meeting.get("spool_dir") or ""
-    try:
-        chunks = list(repository.get_audio_chunks(meeting_id) or [])
-    except Exception:
-        logger.exception("Could not load audio chunks for redecode retry")
-        chunks = []
+    chunks = _redecode_chunks(repository, meeting_id)
     # Released in the ``finally`` below rather than at each exit: this block
     # has several early returns, and a retained model keeps a second copy of
     # the weights resident alongside the dictation engine.
-    backend = None
-    leased = False
+    speech = _RedecodeBackend(model_lease)
     try:
         if transcribe_fn is not None:
             decoded = list(
@@ -482,35 +477,13 @@ def rerun_redecode(
             )
         else:
             from meeting.asr.offline import transcribe_meeting_sessions
-            from transcriber.local_backend import LocalWhisperBackend
 
-            from meeting.asr.remote import MeetingRemoteBackend, saved_remote_route
-            remote = saved_remote_route(meeting)
-            leased = acquire_model_lease(model_lease) if remote is None else False
-            from services.local_asr.catalog import MODELS
-            if remote is not None:
-                backend = MeetingRemoteBackend(remote)
-                backend.reload_model()
-                language = remote.get("language") or language
-            elif asr_model_name in MODELS:
-                from transcriber.optional_backend import LocalSpeechBackend
-                backend = LocalSpeechBackend(MODELS[asr_model_name].backend, model_name=asr_model_name)
-                backend.reload_model()
-            else:
-                backend = LocalWhisperBackend(model_name=asr_model_name or "auto")
-            if not backend.is_available() or getattr(backend, "model", None) is None:
-                missing = bool(getattr(backend, "is_model_missing", False))
-                return {
-                    "ok": False,
-                    "error": (
-                        "The Whisper model is not available yet. "
-                        "Approve the download and retry."
-                        if missing else
-                        getattr(backend, "last_error", "") or "The speech model failed to load."
-                    ),
-                }
+            language = speech.load(meeting, asr_model_name, language)
+            unavailable = speech.unavailable_result()
+            if unavailable is not None:
+                return unavailable
             decoded = list(transcribe_meeting_sessions(
-                backend.model,
+                speech.backend.model,
                 spool_dir,
                 meeting_id,
                 chunks,
@@ -521,44 +494,114 @@ def rerun_redecode(
         logger.exception("Redecode transcription failed for %s", meeting_id)
         return {"ok": False, "error": str(exc)}
     finally:
-        if backend is not None:
-            try:
-                backend.cleanup()
-            except Exception:
-                logger.exception("Error releasing the redecode Whisper model")
-        if leased:
-            release_model_lease(model_lease)
+        speech.release()
     if not decoded:
         return {"ok": False, "error": "Re-decoding produced no transcript."}
+    refusal = _coverage_refusal(repository, meeting_id, decoded, redecode_coverage_guard)
+    if refusal is not None:
+        return refusal
+    if speaker_id_backend == "off":
+        diarizer = None
+    elif diarizer is _NEW_DIARIZER:
+        diarizer = _session_diarizer(store, repository, meeting_id, decoded)
+    assign_session_speakers(
+        decoded, me_id=_me_participant_id(store), diarizer=diarizer,
+        spool_dir=spool_dir, chunks=chunks,
+    )
+    return _store_redecoded(repository, store, meeting_id, decoded)
+
+
+def _redecode_chunks(repository: Any, meeting_id: str) -> List[Any]:
+    try:
+        return list(repository.get_audio_chunks(meeting_id) or [])
+    except Exception:
+        logger.exception("Could not load audio chunks for redecode retry")
+        return []
+
+
+class _RedecodeBackend:
+    """The speech backend and model lease one redecode holds until ``release``."""
+
+    def __init__(self, model_lease: Optional[ModelLease]) -> None:
+        self.model_lease = model_lease
+        self.backend: Any = None
+        self.leased = False
+
+    def load(self, meeting: Dict[str, Any], asr_model_name: str,
+             language: Optional[str]) -> Optional[str]:
+        """Load the meeting's backend; return the language to decode with."""
+        from transcriber.local_backend import LocalWhisperBackend
+
+        from meeting.asr.remote import MeetingRemoteBackend, saved_remote_route
+        remote = saved_remote_route(meeting)
+        self.leased = acquire_model_lease(self.model_lease) if remote is None else False
+        from services.local_asr.catalog import MODELS
+        if remote is not None:
+            self.backend = MeetingRemoteBackend(remote)
+            self.backend.reload_model()
+            return remote.get("language") or language
+        if asr_model_name in MODELS:
+            from transcriber.optional_backend import LocalSpeechBackend
+            self.backend = LocalSpeechBackend(MODELS[asr_model_name].backend, model_name=asr_model_name)
+            self.backend.reload_model()
+        else:
+            self.backend = LocalWhisperBackend(model_name=asr_model_name or "auto")
+        return language
+
+    def unavailable_result(self) -> Optional[Dict[str, Any]]:
+        backend = self.backend
+        if backend.is_available() and getattr(backend, "model", None) is not None:
+            return None
+        if bool(getattr(backend, "is_model_missing", False)):
+            error = "The Whisper model is not available yet. Approve the download and retry."
+        else:
+            error = getattr(backend, "last_error", "") or "The speech model failed to load."
+        return {"ok": False, "error": error}
+
+    def release(self) -> None:
+        if self.backend is not None:
+            try:
+                self.backend.cleanup()
+            except Exception:
+                logger.exception("Error releasing the redecode Whisper model")
+        if self.leased:
+            release_model_lease(self.model_lease)
+
+
+def _coverage_refusal(repository: Any, meeting_id: str, decoded: List[TranscriptSegment],
+                      coverage_guard: bool) -> Optional[Dict[str, Any]]:
+    """The result that keeps the live draft when the new pass is too sparse."""
     try:
         existing = repository.get_segments(meeting_id)
     except Exception:
         existing = []
     new_words = _word_count(decoded)
     old_words = _word_count(existing)
-    if redecode_coverage_guard and old_words and new_words < 0.8 * old_words:
-        logger.warning(
-            "Keeping live draft transcript for %s: offline pass has %d words "
-            "vs draft %d (AMI IN1009 guard: do not replace a sparser decode)",
-            meeting_id, new_words, old_words,
-        )
-        return {
-            "ok": False,
-            "error": sparse_redecode_detail(new_words, old_words),
-            "kept_draft": True,
-        }
-    if speaker_id_backend == "off":
-        diarizer = None
-    elif diarizer is _NEW_DIARIZER:
-        diarizer = (
-            _new_offline_diarizer(store, repository, meeting_id)
-            if any(seg.channel == CHANNEL_LOOPBACK for seg in decoded)
-            else None
-        )
-    assign_session_speakers(
-        decoded, me_id=_me_participant_id(store), diarizer=diarizer,
-        spool_dir=spool_dir, chunks=chunks,
+    if not (coverage_guard and old_words and new_words < 0.8 * old_words):
+        return None
+    logger.warning(
+        "Keeping live draft transcript for %s: offline pass has %d words "
+        "vs draft %d (AMI IN1009 guard: do not replace a sparser decode)",
+        meeting_id, new_words, old_words,
     )
+    return {
+        "ok": False,
+        "error": sparse_redecode_detail(new_words, old_words),
+        "kept_draft": True,
+    }
+
+
+def _session_diarizer(store: MeetingStateStore, repository: Any, meeting_id: str,
+                      decoded: List[TranscriptSegment]) -> Any:
+    """A fresh offline diarizer when the pass has system audio to label."""
+    if any(seg.channel == CHANNEL_LOOPBACK for seg in decoded):
+        return _new_offline_diarizer(store, repository, meeting_id)
+    return None
+
+
+def _store_redecoded(repository: Any, store: MeetingStateStore, meeting_id: str,
+                     decoded: List[TranscriptSegment]) -> Dict[str, Any]:
+    """Replace the draft transcript with ``decoded`` and rebuild derived state."""
     replace = getattr(repository, "replace_final_transcript", None)
     if not callable(replace):
         return {"ok": False, "error": "Transcript replace is unavailable."}
@@ -916,60 +959,26 @@ def rerun_finalization(
         have_audio=have_audio,
     )
     run_ids = _run_ids(steps, from_step)
-    applied = 0
-    last_error: Optional[str] = None
-
-    def _running(step_id: str, detail: str, message: str) -> None:
-        current = _set_step(steps, step_id, "running", detail)
-        _persist_finalization(
-            store,
-            status="running",
-            message=message,
-            steps=steps,
-            stage=step_id,
-            current_step=current,
-            step_details=detail,
-            progress_cb=progress_cb,
-        )
+    run = _RetryRun(repository, meeting_id, meeting, store, steps,
+                    cloud_enabled=cloud_enabled, progress_cb=progress_cb)
+    llm = {
+        "provider": provider,
+        "model": model,
+        "endpoint": endpoint,
+        "agent_core_kind": agent_core_kind,
+        "sidecar_payload_dir": sidecar_payload_dir,
+    }
 
     for step_id in run_ids:
         if step_id == "redecode":
-            _running(
-                "redecode",
-                "Starting high-accuracy session audio re-decoding...",
-                "Re-transcribing meeting…",
-            )
-
-            def _offline_progress(detail: str, curr: int, total: int) -> None:
-                _running(
-                    "redecode",
-                    detail,
-                    f"Re-transcribing meeting (window {curr}/{total})…",
-                )
-
-            result = rerun_redecode(
-                repository,
-                meeting_id,
-                store=store,
-                asr_model_name=asr_model_name,
-                language=language,
-                transcribe_fn=transcribe_fn,
-                progress_cb=_offline_progress,
-                model_lease=model_lease,
-                redecode_coverage_guard=redecode_coverage_guard,
-                speaker_id_backend=speaker_id_backend,
-            )
-            if result.get("ok"):
-                _set_step(
-                    steps, "redecode", "completed",
-                    "High-accuracy re-decoding complete",
-                )
-            else:
-                last_error = result.get("error") or "Re-decoding failed"
-                _set_step(
-                    steps, "redecode", "failed",
-                    last_error,
-                )
+            _retry_redecode(run, {
+                "asr_model_name": asr_model_name,
+                "language": language,
+                "transcribe_fn": transcribe_fn,
+                "model_lease": model_lease,
+                "redecode_coverage_guard": redecode_coverage_guard,
+                "speaker_id_backend": speaker_id_backend,
+            })
         elif step_id == "speaker_id":
             gate = speaker_pass_gate(
                 backend=speaker_id_backend,
@@ -979,161 +988,193 @@ def rerun_finalization(
                     else lambda: speaker_api_key
                 ),
             )
-
-            def _speaker_progress(detail: str, curr: int, total: int) -> None:
-                _running(
-                    "speaker_id",
-                    detail,
-                    f"Identifying speakers (window {curr}/{total})…",
-                )
-
-            result = run_speaker_pass(
-                repository, meeting_id, store, meeting.get("spool_dir") or "",
-                gate=gate,
-                transcribe_fn=speaker_transcribe_fn,
-                progress_cb=_speaker_progress,
-                on_start=lambda: _running(
-                    "speaker_id",
-                    "Uploading system audio for speaker labels…",
-                    "Identifying speakers…",
-                ),
-            )
-            status, detail = speaker_step_outcome(result)
-            applied += int(result.get("applied") or 0)
-            if status == "failed":
-                last_error = detail
-            _set_step(steps, "speaker_id", status, detail)
+            _retry_speaker_id(run, gate, speaker_transcribe_fn)
         elif step_id == "polish":
-            _running(
-                "polish",
-                "Starting AI transcript cleanup and formatting...",
-                "Cleaning transcript…",
-            )
-
-            def _polish_progress(detail: str, curr: int, total: int) -> None:
-                _running(
-                    "polish",
-                    detail,
-                    f"Cleaning transcript (block {curr}/{total})…",
-                )
-
-            result = rerun_polish(
-                repository,
-                meeting_id,
-                provider=provider,
-                model=model,
-                endpoint=endpoint,
-                agent_core_kind=agent_core_kind,
-                sidecar_payload_dir=sidecar_payload_dir,
-                store=store,
-                timeout_s=POLISH_TIMEOUT_S,
-                progress_cb=_polish_progress,
-            )
-            if result.get("ok"):
-                applied += int(result.get("applied") or 0)
-                _set_step(
-                    steps, "polish", "completed",
-                    "Transcript cleanup finished",
-                )
-            else:
-                last_error = result.get("error") or "Transcript cleanup failed"
-                _set_step(steps, "polish", "failed", last_error)
+            _retry_polish(run, llm)
         elif step_id == "consolidation":
-            _running(
-                "consolidation",
-                "Synthesizing executive summary, key points, decisions, "
-                "and action items...",
-                "Preparing final report…",
-            )
-            from meeting.reinsight import rerun_insights
-
-            try:
-                result = rerun_insights(
-                    repository,
-                    meeting_id,
-                    provider=provider,
-                    model=model,
-                    endpoint=endpoint,
-                    agent_core_kind=agent_core_kind,
-                    sidecar_payload_dir=sidecar_payload_dir,
-                    store=store,
-                    timeout_s=timeout_s,
-                )
-            except ValueError as exc:
-                result = {"ok": False, "applied": 0, "error": str(exc)}
-            if result.get("ok"):
-                applied += int(result.get("applied") or 0)
-                _set_step(
-                    steps, "consolidation", "completed",
-                    "Summary & action items ready",
-                )
-            else:
-                last_error = result.get("error") or "consolidation failed"
-                _set_step(steps, "consolidation", "failed", last_error)
+            _retry_consolidation(run, llm, timeout_s)
         elif step_id == "finalize":
-            _running(
-                "finalize",
-                "Saving final transcript and meeting state...",
-                "Finalizing meeting state…",
-            )
-            try:
-                stats = _collect_summary_stats(
-                    store, repository, meeting_id, meeting,
-                )
-                _set_step(
-                    steps, "finalize", "completed", saved_state_detail(stats),
-                )
-            except Exception as exc:
-                logger.exception("Finalize retry failed for %s", meeting_id)
-                last_error = str(exc)
-                _set_step(steps, "finalize", "failed", last_error)
-                stats = {}
-            status, message = _overall_from_steps(
-                steps, cloud_enabled=cloud_enabled,
-            )
-            if status == "completed" and stats:
-                message = insights_ready_message(stats)
-            finalization = _persist_finalization(
-                store,
-                status=status,
-                message=message,
-                steps=steps,
-                stage="complete" if status == "completed" else status,
-                current_step=len(steps),
-                step_details=message,
-                summary_stats=stats,
-                progress_cb=progress_cb,
-            )
-            return {
-                "ok": status != "failed",
-                "state": store.snapshot(),
-                "applied": applied,
-                "error": last_error if status == "failed" else None,
-                "finalization": finalization,
-            }
+            return _retry_finalize(run)
+    return _complete_retry(run)
 
-    stats = _collect_summary_stats(store, repository, meeting_id, meeting)
+
+class _RetryRun:
+    """What the steps of one ``rerun_finalization`` share: progress and outcome."""
+
+    def __init__(self, repository: Any, meeting_id: str, meeting: Dict[str, Any],
+                 store: MeetingStateStore, steps: List[Dict[str, Any]], *,
+                 cloud_enabled: bool, progress_cb: Optional[ProgressCb]) -> None:
+        self.repository = repository
+        self.meeting_id = meeting_id
+        self.meeting = meeting
+        self.store = store
+        self.steps = steps
+        self.cloud_enabled = cloud_enabled
+        self.progress_cb = progress_cb
+        self.applied = 0
+        self.last_error: Optional[str] = None
+
+    def running(self, step_id: str, detail: str, message: str) -> None:
+        current = _set_step(self.steps, step_id, "running", detail)
+        _persist_finalization(
+            self.store,
+            status="running",
+            message=message,
+            steps=self.steps,
+            stage=step_id,
+            current_step=current,
+            step_details=detail,
+            progress_cb=self.progress_cb,
+        )
+
+    def progress(self, step_id: str, template: str) -> Callable[[str, int, int], None]:
+        """A ``(detail, curr, total)`` callback; ``template`` takes ``curr`` and ``total``."""
+        def report(detail: str, curr: int, total: int) -> None:
+            self.running(step_id, detail, template.format(curr=curr, total=total))
+        return report
+
+    def record(self, step_id: str, result: Dict[str, Any], done_detail: str,
+               default_error: str, *, count_applied: bool = True) -> None:
+        if result.get("ok"):
+            if count_applied:
+                self.applied += int(result.get("applied") or 0)
+            _set_step(self.steps, step_id, "completed", done_detail)
+            return
+        self.last_error = result.get("error") or default_error
+        _set_step(self.steps, step_id, "failed", self.last_error)
+
+    def finish(self, status: str, message: str, stats: Dict[str, Any]) -> Dict[str, Any]:
+        finalization = _persist_finalization(
+            self.store,
+            status=status,
+            message=message,
+            steps=self.steps,
+            stage="complete" if status == "completed" else status,
+            current_step=len(self.steps),
+            step_details=message,
+            summary_stats=stats,
+            progress_cb=self.progress_cb,
+        )
+        return {
+            "ok": status != "failed",
+            "state": self.store.snapshot(),
+            "applied": self.applied,
+            "error": self.last_error if status == "failed" else None,
+            "finalization": finalization,
+        }
+
+
+def _retry_redecode(run: _RetryRun, options: Dict[str, Any]) -> None:
+    run.running(
+        "redecode",
+        "Starting high-accuracy session audio re-decoding...",
+        "Re-transcribing meeting…",
+    )
+    result = rerun_redecode(
+        run.repository,
+        run.meeting_id,
+        store=run.store,
+        progress_cb=run.progress("redecode", "Re-transcribing meeting (window {curr}/{total})…"),
+        **options,
+    )
+    run.record(
+        "redecode", result, "High-accuracy re-decoding complete", "Re-decoding failed",
+        count_applied=False,
+    )
+
+
+def _retry_speaker_id(run: _RetryRun, gate: SpeakerPassGate,
+                      transcribe_fn: Optional[TranscribeFn]) -> None:
+    result = run_speaker_pass(
+        run.repository, run.meeting_id, run.store, run.meeting.get("spool_dir") or "",
+        gate=gate,
+        transcribe_fn=transcribe_fn,
+        progress_cb=run.progress("speaker_id", "Identifying speakers (window {curr}/{total})…"),
+        on_start=lambda: run.running(
+            "speaker_id",
+            "Uploading system audio for speaker labels…",
+            "Identifying speakers…",
+        ),
+    )
+    status, detail = speaker_step_outcome(result)
+    run.applied += int(result.get("applied") or 0)
+    if status == "failed":
+        run.last_error = detail
+    _set_step(run.steps, "speaker_id", status, detail)
+
+
+def _retry_polish(run: _RetryRun, llm: Dict[str, Any]) -> None:
+    run.running(
+        "polish",
+        "Starting AI transcript cleanup and formatting...",
+        "Cleaning transcript…",
+    )
+    result = rerun_polish(
+        run.repository,
+        run.meeting_id,
+        **llm,
+        store=run.store,
+        timeout_s=POLISH_TIMEOUT_S,
+        progress_cb=run.progress("polish", "Cleaning transcript (block {curr}/{total})…"),
+    )
+    run.record("polish", result, "Transcript cleanup finished", "Transcript cleanup failed")
+
+
+def _retry_consolidation(run: _RetryRun, llm: Dict[str, Any], timeout_s: float) -> None:
+    run.running(
+        "consolidation",
+        "Synthesizing executive summary, key points, decisions, "
+        "and action items...",
+        "Preparing final report…",
+    )
+    from meeting.reinsight import rerun_insights
+
+    try:
+        result = rerun_insights(
+            run.repository,
+            run.meeting_id,
+            **llm,
+            store=run.store,
+            timeout_s=timeout_s,
+        )
+    except ValueError as exc:
+        result = {"ok": False, "applied": 0, "error": str(exc)}
+    run.record("consolidation", result, "Summary & action items ready", "consolidation failed")
+
+
+def _retry_finalize(run: _RetryRun) -> Dict[str, Any]:
+    run.running(
+        "finalize",
+        "Saving final transcript and meeting state...",
+        "Finalizing meeting state…",
+    )
+    try:
+        stats = _collect_summary_stats(
+            run.store, run.repository, run.meeting_id, run.meeting,
+        )
+        _set_step(
+            run.steps, "finalize", "completed", saved_state_detail(stats),
+        )
+    except Exception as exc:
+        logger.exception("Finalize retry failed for %s", run.meeting_id)
+        run.last_error = str(exc)
+        _set_step(run.steps, "finalize", "failed", run.last_error)
+        stats = {}
+    status, message = _overall_from_steps(
+        run.steps, cloud_enabled=run.cloud_enabled,
+    )
+    if status == "completed" and stats:
+        message = insights_ready_message(stats)
+    return run.finish(status, message, stats)
+
+
+def _complete_retry(run: _RetryRun) -> Dict[str, Any]:
+    """Finish a retry whose steps did not include ``finalize``."""
+    stats = _collect_summary_stats(run.store, run.repository, run.meeting_id, run.meeting)
     if not any(
         step.get("id") == "finalize" and step.get("status") == "completed"
-        for step in steps
+        for step in run.steps
     ):
-        _set_step(steps, "finalize", "completed", saved_state_detail(stats))
-    status, message = _overall_from_steps(steps, cloud_enabled=cloud_enabled)
-    finalization = _persist_finalization(
-        store,
-        status=status,
-        message=message,
-        steps=steps,
-        stage="complete" if status == "completed" else status,
-        current_step=len(steps),
-        step_details=message,
-        summary_stats=stats,
-        progress_cb=progress_cb,
-    )
-    return {
-        "ok": status != "failed",
-        "state": store.snapshot(),
-        "applied": applied,
-        "error": last_error if status == "failed" else None,
-        "finalization": finalization,
-    }
+        _set_step(run.steps, "finalize", "completed", saved_state_detail(stats))
+    status, message = _overall_from_steps(run.steps, cloud_enabled=run.cloud_enabled)
+    return run.finish(status, message, stats)
