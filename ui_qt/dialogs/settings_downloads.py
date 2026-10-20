@@ -14,6 +14,7 @@ still readable.
 import itertools
 import threading
 import math
+from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Set
 
 from PyQt6.QtCore import QObject, QRect, Qt, QUrl, pyqtSignal
@@ -73,6 +74,29 @@ from ui_qt.widgets.speech_backend_picker import (
     backend_picker_label,
     backend_picker_tooltip,
 )
+
+
+def _current_cache_info(
+    info: Optional[CachedModelInfo], revision: Optional[str]
+) -> Optional[CachedModelInfo]:
+    """The cached copy, unless it lacks the revision the catalog pins."""
+    if info is None or not revision or revision in info.revision_hashes:
+        return info
+    return None
+
+
+@dataclass(frozen=True)
+class _RowContext:
+    """What each catalog row's refresh needs, gathered once per refresh."""
+
+    loaded_model: Optional[str]
+    loaded_repo: Optional[str]
+    dictation_model: str
+    meeting_model: str
+    downloads_blocked: bool
+    slot_busy: bool
+    selection_locked: bool
+    queued_names: Set[str]
 
 
 class BatchDownloadDialog(QDialog):
@@ -249,7 +273,66 @@ class DownloadsPage(QWidget):
         if not defer_build:
             self.ensure_ui()
 
-    _UI_ATTRIBUTES = frozenset({'tabs', 'models_section', 'components_section', 'components_scroll', 'inspector_best_for_heading', 'inspector_detail_scroll', '_inspector_open', 'policy_row', 'inspector_source_note', 'inspector_best_for', '_cache_scan_generation', '_downloading_model', '_batch_queue', '_toolbar_layout', 'backend_filter_combo', 'download_all_button', 'stats_label', 'inspector_close_button', 'inspector_license_button', 'clear_selection_button', 'download_selected_button', '_selected_model', 'inspector', 'message_row', 'stop_batch_button', '_batch_failed', 'selection_summary', '_cached_sizes', 'inspector_tradeoffs_heading', '_download_fraction', 'library_scroll_area', '_batch_done', 'inspector_tags', 'catalog_column', '_background_cache_scan', '_downloads_blocked', 'select_all_button', 'custom_models_button', 'inspector_usage', 'inspector_description', '_get_loaded_model', 'inspector_tradeoffs', 'list_layout', 'inspector_origin_button', 'inspector_links', '_details', 'env_banner', '_split', 'message_label', 'sort_combo', '_cache_inventory_loading', 'status_filter_combo', 'empty_label', 'inspector_repo_button', 'inspector_facts', 'filter_edit', 'inspector_name', '_inspector_docked'})
+    _UI_ATTRIBUTES = frozenset({
+        'tabs',
+        'models_section',
+        'components_section',
+        'components_scroll',
+        'inspector_best_for_heading',
+        'inspector_detail_scroll',
+        '_inspector_open',
+        'policy_row',
+        'inspector_source_note',
+        'inspector_best_for',
+        '_cache_scan_generation',
+        '_downloading_model',
+        '_batch_queue',
+        '_toolbar_layout',
+        'backend_filter_combo',
+        'download_all_button',
+        'stats_label',
+        'inspector_close_button',
+        'inspector_license_button',
+        'clear_selection_button',
+        'download_selected_button',
+        '_selected_model',
+        'inspector',
+        'message_row',
+        'stop_batch_button',
+        '_batch_failed',
+        'selection_summary',
+        '_cached_sizes',
+        'inspector_tradeoffs_heading',
+        '_download_fraction',
+        'library_scroll_area',
+        '_batch_done',
+        'inspector_tags',
+        'catalog_column',
+        '_background_cache_scan',
+        '_downloads_blocked',
+        'select_all_button',
+        'custom_models_button',
+        'inspector_usage',
+        'inspector_description',
+        '_get_loaded_model',
+        'inspector_tradeoffs',
+        'list_layout',
+        'inspector_origin_button',
+        'inspector_links',
+        '_details',
+        'env_banner',
+        '_split',
+        'message_label',
+        'sort_combo',
+        '_cache_inventory_loading',
+        'status_filter_combo',
+        'empty_label',
+        'inspector_repo_button',
+        'inspector_facts',
+        'filter_edit',
+        'inspector_name',
+        '_inspector_docked',
+    })
 
     def __getattr__(self, name):
         if (name in self._UI_ATTRIBUTES and "_ui_built" in self.__dict__
@@ -850,8 +933,13 @@ class DownloadsPage(QWidget):
             return
         self._set_inspector_enabled(True)
         from services.local_asr.catalog import MODELS
-        self.inspector_name.setText(MODELS[details.model_name].label if details.model_name in MODELS else
-            custom_model_label(details.model_name) if is_custom_model(details.model_name) else details.model_name)
+        if details.model_name in MODELS:
+            name = MODELS[details.model_name].label
+        elif is_custom_model(details.model_name):
+            name = custom_model_label(details.model_name)
+        else:
+            name = details.model_name
+        self.inspector_name.setText(name)
         self.inspector_name.setToolTip(details.model_name)
         self.inspector_tags.setText(details.compact_tags)
         self.inspector_tags.setVisible(bool(details.compact_tags))
@@ -860,7 +948,8 @@ class DownloadsPage(QWidget):
         self.inspector_tradeoffs.setText(
             "\n".join(f"\u2022 {item}" for item in details.limitations)
         )
-        self.inspector_repo_button.setText("Hugging Face ↗" if "huggingface.co/" in details.repository_url else "Repository ↗")
+        on_hugging_face = "huggingface.co/" in details.repository_url
+        self.inspector_repo_button.setText("Hugging Face ↗" if on_hugging_face else "Repository ↗")
         self.inspector_repo_button.setToolTip(details.repository_url)
         self.inspector_origin_button.setToolTip(details.origin_url)
         self.inspector_license_button.setToolTip(details.license_url or details.origin_url)
@@ -950,7 +1039,10 @@ class DownloadsPage(QWidget):
     def _on_open_cache_folder(self) -> None:
         from services.local_asr.catalog import MODELS
         from services.local_asr.cache import model_dir
-        path = str(model_dir(self._selected_model).parent) if self._selected_model in MODELS else get_hf_cache_dir()
+        if self._selected_model in MODELS:
+            path = str(model_dir(self._selected_model).parent)
+        else:
+            path = get_hf_cache_dir()
         if self._selected_model and is_custom_model(self._selected_model):
             info = custom_model_cache_info(self._selected_model)
             if info is not None:
@@ -1198,34 +1290,11 @@ class DownloadsPage(QWidget):
         self._inventory = dict(cached)
         settings = self._settings_snapshot()
         if not self._ui_built:
-            from services.local_asr.catalog import MODELS
-            self._cached_sizes = {}
-            for name in [*config.WHISPER_MODEL_CHOICES, *MODELS, *custom_models(settings)]:
-                if name == "auto":
-                    continue
-                info = custom_model_cache_info(name) if is_custom_model(name) else cached.get(resolve_model_repo(name))
-                if info is not None:
-                    self._cached_sizes[name] = info.size_bytes
+            self._record_cached_sizes(cached, settings)
             self.inventory_changed.emit()
             return
         self._sync_custom_rows(settings)
-        active_model = settings_manager.get(
-            SettingsKey.WHISPER_MODEL, SETTING_DEFAULTS[SettingsKey.WHISPER_MODEL]
-        )
-        if active_model not in [*config.WHISPER_MODEL_CHOICES, *custom_models(settings)]:
-            active_model = config.DEFAULT_WHISPER_MODEL
-        from services.local_asr.catalog import BACKENDS, selected_model
-        selected_backend = setting_value(SettingsKey.SELECTED_MODEL, settings)
-        if selected_backend in BACKENDS:
-            active_model = selected_model(selected_backend, settings)
-        meeting_model = resolve_meeting_whisper_model(settings)
-        from services.settings import resolve_meeting_asr_source
-        if resolve_meeting_asr_source(settings) == "remote":
-            meeting_model = ""  # Local downloads are not serving meeting speech.
-        loaded_model = self._get_loaded_model() if self._get_loaded_model else None
-        dictation_resolved = active_model
-        if active_model == "auto" and loaded_model:
-            dictation_resolved = loaded_model
+        dictation_resolved, meeting_model, loaded_model = self._models_in_use(settings)
         loaded_repo = resolve_model_repo(loaded_model) if loaded_model else None
         downloads_blocked = is_hf_hub_offline_env_set()
         self._downloads_blocked = downloads_blocked
@@ -1233,8 +1302,17 @@ class DownloadsPage(QWidget):
 
         queued_names = set(self._batch_queue)
         slot_busy = self._download_slot_busy()
-        selection_locked = (
-            slot_busy or downloads_blocked or self._cache_inventory_loading
+        context = _RowContext(
+            loaded_model=loaded_model,
+            loaded_repo=loaded_repo,
+            dictation_model=dictation_resolved,
+            meeting_model=meeting_model,
+            downloads_blocked=downloads_blocked,
+            slot_busy=slot_busy,
+            selection_locked=(
+                slot_busy or downloads_blocked or self._cache_inventory_loading
+            ),
+            queued_names=queued_names,
         )
         seen_repos: Dict[str, CachedModelInfo] = {}
         self._cached_sizes = {}
@@ -1244,56 +1322,9 @@ class DownloadsPage(QWidget):
             if info is not None:
                 seen_repos[info.repo_id] = info
                 self._cached_sizes[model_name] = info.size_bytes
-            from services.whisper_sources import model_revision
-            revision = model_revision(model_name)
-            current_info = info if info is None or not revision or revision in info.revision_hashes else None
-            row.update_state(
-                current_info,
-                is_active=False,
-                is_loaded=(row.repo_id == loaded_repo),
-                downloading=(model_name == self._downloading_model),
-                downloads_blocked=downloads_blocked,
-                download_slot_busy=slot_busy or self._cache_inventory_loading,
-                queued=(model_name in queued_names
-                        and model_name != self._downloading_model),
-                selection_enabled=not selection_locked,
-            )
-            # Assignment lives on each feature's page; this one only downloads.
-            row.set_active_button.setVisible(False)
-            if is_custom_model(model_name):
-                local = bool(parse_source(model_name).local_path)
-                row.delete_button.setText("Remove")
-                row.delete_button.setVisible(True)
-                row.delete_button.setToolTip("Remove from the model list; keep source files")
-                row.delete_button.setEnabled(not slot_busy and model_name not in
-                    (dictation_resolved, meeting_model, loaded_model))
-                if local:
-                    row.download_button.setVisible(False)
-                    row.select_checkbox.setVisible(False)
-                    if info is None:
-                        row._set_badge("Folder unavailable", "idle")
-            row.set_usage(
-                self._usage_for(model_name, dictation_resolved, meeting_model)
-            )
-            if info is not None or (is_custom_model(model_name) and parse_source(model_name).local_path):
-                # A model that gained files elsewhere must not stay checked.
-                row.select_checkbox.setChecked(False)
-                self._selected_models.discard(model_name)
+            self._refresh_row(model_name, row, info, context)
 
-        total_bytes = sum(info.size_bytes for info in seen_repos.values())
-        if self._cache_inventory_loading:
-            self.stats_label.setText(
-                f"Checking downloaded models… · {get_hf_cache_dir()}"
-            )
-            self.tabs.set_title(0, "Speech models")
-        else:
-            self.tabs.set_title(
-                0, f"Speech models · {len(seen_repos)} of {len(self.rows)} downloaded"
-            )
-            self.stats_label.setText(
-                f"{len(seen_repos)} of {len(self.rows)} speech models · "
-                f"{format_size_bytes(total_bytes)} used · {get_hf_cache_dir()}"
-            )
+        self._show_cache_totals(seen_repos)
         self.refresh_components()
         self._apply_filter(self.filter_edit.text())
         if self._selected_model:
@@ -1311,6 +1342,111 @@ class DownloadsPage(QWidget):
             self.download_selected_button.setEnabled(False)
         self.inventory_changed.emit()
 
+    def _record_cached_sizes(
+        self, cached: Dict[str, CachedModelInfo], settings: dict
+    ) -> None:
+        """Size every downloaded model without building the catalog rows."""
+        from services.local_asr.catalog import MODELS
+        self._cached_sizes = {}
+        for name in [*config.WHISPER_MODEL_CHOICES, *MODELS, *custom_models(settings)]:
+            if name == "auto":
+                continue
+            info = custom_model_cache_info(name) if is_custom_model(name) else cached.get(resolve_model_repo(name))
+            if info is not None:
+                self._cached_sizes[name] = info.size_bytes
+
+    def _models_in_use(self, settings: dict):
+        """Return ``(dictation model, meeting model, loaded model)``.
+
+        The dictation model is the loaded one when dictation is set to auto;
+        the meeting model is "" when meetings use remote speech.
+        """
+        active_model = settings_manager.get(
+            SettingsKey.WHISPER_MODEL, SETTING_DEFAULTS[SettingsKey.WHISPER_MODEL]
+        )
+        if active_model not in [*config.WHISPER_MODEL_CHOICES, *custom_models(settings)]:
+            active_model = config.DEFAULT_WHISPER_MODEL
+        from services.local_asr.catalog import BACKENDS, selected_model
+        selected_backend = setting_value(SettingsKey.SELECTED_MODEL, settings)
+        if selected_backend in BACKENDS:
+            active_model = selected_model(selected_backend, settings)
+        meeting_model = resolve_meeting_whisper_model(settings)
+        from services.settings import resolve_meeting_asr_source
+        if resolve_meeting_asr_source(settings) == "remote":
+            meeting_model = ""  # Local downloads are not serving meeting speech.
+        loaded_model = self._get_loaded_model() if self._get_loaded_model else None
+        dictation_resolved = active_model
+        if active_model == "auto" and loaded_model:
+            dictation_resolved = loaded_model
+        return dictation_resolved, meeting_model, loaded_model
+
+    def _refresh_row(
+        self,
+        model_name: str,
+        row: ModelRowWidget,
+        info: Optional[CachedModelInfo],
+        context: _RowContext,
+    ) -> None:
+        from services.whisper_sources import model_revision
+        revision = model_revision(model_name)
+        row.update_state(
+            _current_cache_info(info, revision),
+            is_active=False,
+            is_loaded=(row.repo_id == context.loaded_repo),
+            downloading=(model_name == self._downloading_model),
+            downloads_blocked=context.downloads_blocked,
+            download_slot_busy=context.slot_busy or self._cache_inventory_loading,
+            queued=(model_name in context.queued_names
+                    and model_name != self._downloading_model),
+            selection_enabled=not context.selection_locked,
+        )
+        # Assignment lives on each feature's page; this one only downloads.
+        row.set_active_button.setVisible(False)
+        if is_custom_model(model_name):
+            self._show_custom_row_actions(model_name, row, info, context)
+        row.set_usage(
+            self._usage_for(model_name, context.dictation_model, context.meeting_model)
+        )
+        if info is not None or (is_custom_model(model_name) and parse_source(model_name).local_path):
+            # A model that gained files elsewhere must not stay checked.
+            row.select_checkbox.setChecked(False)
+            self._selected_models.discard(model_name)
+
+    @staticmethod
+    def _show_custom_row_actions(
+        model_name: str,
+        row: ModelRowWidget,
+        info: Optional[CachedModelInfo],
+        context: _RowContext,
+    ) -> None:
+        local = bool(parse_source(model_name).local_path)
+        row.delete_button.setText("Remove")
+        row.delete_button.setVisible(True)
+        row.delete_button.setToolTip("Remove from the model list; keep source files")
+        in_use = (context.dictation_model, context.meeting_model, context.loaded_model)
+        row.delete_button.setEnabled(not context.slot_busy and model_name not in in_use)
+        if local:
+            row.download_button.setVisible(False)
+            row.select_checkbox.setVisible(False)
+            if info is None:
+                row._set_badge("Folder unavailable", "idle")
+
+    def _show_cache_totals(self, seen_repos: Dict[str, CachedModelInfo]) -> None:
+        total_bytes = sum(info.size_bytes for info in seen_repos.values())
+        if self._cache_inventory_loading:
+            self.stats_label.setText(
+                f"Checking downloaded models… · {get_hf_cache_dir()}"
+            )
+            self.tabs.set_title(0, "Speech models")
+        else:
+            self.tabs.set_title(
+                0, f"Speech models · {len(seen_repos)} of {len(self.rows)} downloaded"
+            )
+            self.stats_label.setText(
+                f"{len(seen_repos)} of {len(self.rows)} speech models · "
+                f"{format_size_bytes(total_bytes)} used · {get_hf_cache_dir()}"
+            )
+
     # ---- summaries read by Settings (rail, Overview) ----
 
     def is_checking(self) -> bool:
@@ -1321,12 +1457,22 @@ class DownloadsPage(QWidget):
         from services.local_asr.catalog import BACKENDS, MODELS
         by_backend: Dict[str, int] = {}
         for model_name, size in self._cached_sizes.items():
-            backend = (self.rows[model_name].backend if self._ui_built else MODELS[model_name].backend if model_name in MODELS else "local_whisper")
+            if self._ui_built:
+                backend = self.rows[model_name].backend
+            elif model_name in MODELS:
+                backend = MODELS[model_name].backend
+            else:
+                backend = "local_whisper"
             label = BACKENDS.get(backend, "Whisper")
             by_backend[label] = by_backend.get(label, 0) + size
+        if self._ui_built:
+            total = len(self.rows)
+        else:
+            whisper_models = [name for name in config.WHISPER_MODEL_CHOICES if name != "auto"]
+            total = len(whisper_models) + len(MODELS) + len(custom_models(self._settings_snapshot()))
         return {
             "downloaded": len(self._cached_sizes),
-            "total": (len(self.rows) if self._ui_built else len([name for name in config.WHISPER_MODEL_CHOICES if name != "auto"]) + len(MODELS) + len(custom_models(self._settings_snapshot()))),
+            "total": total,
             "bytes": sum(self._cached_sizes.values()),
             "by_backend": by_backend,
         }
