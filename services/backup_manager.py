@@ -200,21 +200,28 @@ class BackupCoordinator(QObject):
         else:
             self.restore_staged.emit(str(result.path) if result else "", error)
 
-    def _start(self, operation, path, *, include_recordings=True, automatic=False):
+    def _claim(self, operation, automatic):
+        """Reserve the coordinator for one operation; report refusals to manual callers."""
         if self._busy or self._closed:
             if not automatic:
                 self._emit_result(operation, None, "Another backup operation is already running.")
             return False
-        if operation != "inspect":
-            try:
-                reason = self._acquire()
-            except Exception as exc:
-                reason = str(exc)
-            if reason:
-                if not automatic:
-                    self._emit_result(operation, None, reason)
-                return False
-            self._reserved = True
+        if operation == "inspect":
+            return True
+        try:
+            reason = self._acquire()
+        except Exception as exc:
+            reason = str(exc)
+        if reason:
+            if not automatic:
+                self._emit_result(operation, None, reason)
+            return False
+        self._reserved = True
+        return True
+
+    def _start(self, operation, path, *, include_recordings=True, automatic=False):
+        if not self._claim(operation, automatic):
+            return False
         self._busy, self._operation = True, operation
         self._last_error = ""
         self._cancel.clear()
