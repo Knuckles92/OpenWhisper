@@ -132,6 +132,61 @@ class _TileSection(QWidget):
         self._page.add_tile_grid(grid, tiles, columns)
 
 
+def _set_tile_id(tile, tile_id: str) -> None:
+    # Not setObjectName: the theme styles tiles by "settingsTile".
+    tile.setProperty("tileId", tile_id)
+
+
+def _records_location_description(location: str, host: str) -> str:
+    return {
+        "local": "History, recordings and meetings stay on this computer.",
+        "host": (f"New dictations and meetings move to {host} once it has checked "
+                 "them. History and Past Meetings list them from there."),
+        "both": (f"New dictations and meetings stay here and are copied to {host}. "
+                 "Deleting one here deletes both copies."),
+    }[location]
+
+
+def _records_host_problem(status, host: str) -> str:
+    """Why the host won't take this computer's records yet, or ""."""
+    if status.location == "local":
+        return ""
+    if status.host_supports is False:
+        return f"Update OpenWhisper on {host} to keep records there."
+    if status.host_keeps is False:
+        return (
+            f"{host} isn't keeping records for other computers yet. On {host}, turn on "
+            "\"Keep records for paired computers\" under Settings → Remote engine."
+        )
+    return ""
+
+
+def _sharing_address(state: dict, tailnet, on_tailnet: bool) -> str:
+    """Where other computers reach this one, for the sharing status line."""
+    where = protocol.format_address(state["address"] or state["host_name"], state["port"])
+    if state.get("address_kind") == "vpn":
+        where += " (a VPN address; computers on your network may not reach it)"
+    if on_tailnet:
+        where += f", and on Tailscale as {tailnet.name or tailnet.address} ({tailnet.address})"
+    return where
+
+
+def _sharing_status(state: dict, where: str) -> str:
+    if state["error"]:
+        return state["error"]
+    if state["running"]:
+        engine = state["engine"] or {}
+        if engine.get("available"):
+            return f"Sharing {_engine_phrase(engine)} at {where}."
+        return (
+            f"Sharing is on at {where}, but no engine is ready to serve: "
+            f"{engine.get('status') or 'select a local engine'}."
+        )
+    if state["enabled"]:
+        return "Starting..."
+    return ""
+
+
 def _engine_phrase(engine: dict) -> str:
     """``Whisper turbo on cuda (int8_float32)``, as the main window's status says it."""
     label = str(engine.get("label") or "")
@@ -251,7 +306,7 @@ class RemoteEngineSection(QObject):
             "",
             icon("world-blue.svg"),
         )
-        self.find_tile.setProperty("tileId", "remoteFindTile")  # not setObjectName: the theme styles tiles by "settingsTile"
+        _set_tile_id(self.find_tile, "remoteFindTile")
         self.find_list = QWidget()
         self.find_list.setObjectName("remoteFindList")
         self._find_layout = QVBoxLayout(self.find_list)
@@ -306,7 +361,7 @@ class RemoteEngineSection(QObject):
             "",
             icon("server-blue.svg"),
         )
-        self.client_tile.setProperty("tileId", "remoteClientTile")  # not setObjectName: the theme styles tiles by "settingsTile"
+        _set_tile_id(self.client_tile, "remoteClientTile")
         self.pair_row = QWidget()
         self.pair_row.setObjectName("remotePairRow")
         pair_layout = QHBoxLayout(self.pair_row)
@@ -391,7 +446,7 @@ class RemoteEngineSection(QObject):
             "",
             icon("box-blue.svg"),
         )
-        self.storage_tile.setProperty("tileId", "remoteStorageTile")  # not setObjectName: the theme styles tiles by "settingsTile"
+        _set_tile_id(self.storage_tile, "remoteStorageTile")
         switch = QFrame()
         switch.setObjectName("recordsLocationSwitch")
         switch_layout = QHBoxLayout(switch)
@@ -454,7 +509,7 @@ class RemoteEngineSection(QObject):
             "computers you pair can use it. Windows may ask once to allow private networks.",
             icon("server-blue.svg"),
         )
-        self.share_tile.setProperty("tileId", "remoteShareTile")  # not setObjectName: the theme styles tiles by "settingsTile"
+        _set_tile_id(self.share_tile, "remoteShareTile")
         self.share_tile.checkbox.toggled.connect(self._on_share_toggled)
         self.host_status = WrappedLabel("")
         self.host_status.setObjectName("remoteHostStatus")
@@ -478,7 +533,7 @@ class RemoteEngineSection(QObject):
             "",
             icon("world-blue.svg"),
         )
-        self.tailscale_tile.setProperty("tileId", "remoteTailscaleTile")  # not setObjectName: the theme styles tiles by "settingsTile"
+        _set_tile_id(self.tailscale_tile, "remoteTailscaleTile")
         self.tailscale_tile.checkbox.toggled.connect(self._on_tailscale_trust_toggled)
 
         self.management_tile = SettingTile(
@@ -489,7 +544,7 @@ class RemoteEngineSection(QObject):
             "already started continue. Choosing an already-downloaded model never needs it.",
             icon("server-blue.svg"),
         )
-        self.management_tile.setProperty("tileId", "remoteModelManagementTile")  # not setObjectName: the theme styles tiles by "settingsTile"
+        _set_tile_id(self.management_tile, "remoteModelManagementTile")
         self.management_tile.checkbox.toggled.connect(self._on_model_management_toggled)
 
         self.keep_records_tile = SettingTile(
@@ -500,7 +555,7 @@ class RemoteEngineSection(QObject):
             "ones; what's kept stays until that computer brings it back or you remove it below.",
             icon("box-blue.svg"),
         )
-        self.keep_records_tile.setProperty("tileId", "remoteKeepRecordsTile")  # not setObjectName: the theme styles tiles by "settingsTile"
+        _set_tile_id(self.keep_records_tile, "remoteKeepRecordsTile")
         self.keep_records_tile.checkbox.toggled.connect(self._on_keep_records_toggled)
 
         self.manage_mcp_tile = SettingTile(
@@ -511,7 +566,7 @@ class RemoteEngineSection(QObject):
             "blocks new requests at once.",
             icon("key-blue.svg"),
         )
-        self.manage_mcp_tile.setProperty("tileId", "remoteManageMcpTile")  # not setObjectName: the theme styles tiles by "settingsTile"
+        _set_tile_id(self.manage_mcp_tile, "remoteManageMcpTile")
         self.manage_mcp_tile.checkbox.toggled.connect(self._on_manage_mcp_toggled)
 
         self.port_spin = NoWheelSpinBox()
@@ -537,7 +592,7 @@ class RemoteEngineSection(QObject):
             "and you're asked here to allow it. Removing one cuts it off at once.",
             icon("key-blue.svg"),
         )
-        self.devices_tile.setProperty("tileId", "remoteDevicesTile")  # not setObjectName: the theme styles tiles by "settingsTile"
+        _set_tile_id(self.devices_tile, "remoteDevicesTile")
         self.pairing_box = QWidget()
         self.pairing_box.setObjectName("remotePairingBox")
         pairing_layout = QHBoxLayout(self.pairing_box)
@@ -611,7 +666,64 @@ class RemoteEngineSection(QObject):
         self._built = True
         self.refresh()
 
-    _UI_ATTRIBUTES = frozenset({'_set_rail_value', 'storage_status', 'find_list', 'cancel_pairing_button', 'manage_button', 'meeting_use_button', 'client_tile', 'paired_row', 'pair_row', 'share_tile', 'code_edit', 'devices_list', 'search_button', 'sweep_button', 'manual_button', 'find_message', 'wait_box', 'wait_code_label', 'wait_label', 'wait_cancel_button', 'tailscale_hint', 'host_notes', '_host_notes_layout', '_host_notes_shown', 'send_existing_button', 'pairing_code_label', 'client_message', 'tailscale_tile', 'pairing_expiry_label', 'retry_records_button', 'use_button', '_find_layout', 'devices_tile', 'forget_button', 'rename_host_button', 'pair_device_button', 'bring_back_button', 'storage_tile', 'host_status', 'keep_records_tile', 'manage_mcp_tile', 'tabs', 'client_container', 'host_container', 'find_tile', 'host_identity', 'management_tile', 'address_edit', '_built', '_location_group', '_devices_layout', 'pairing_box', 'pair_button', 'port_tile', 'location_buttons', 'port_spin'})
+    _UI_ATTRIBUTES = frozenset({
+        '_set_rail_value',
+        'storage_status',
+        'find_list',
+        'cancel_pairing_button',
+        'manage_button',
+        'meeting_use_button',
+        'client_tile',
+        'paired_row',
+        'pair_row',
+        'share_tile',
+        'code_edit',
+        'devices_list',
+        'search_button',
+        'sweep_button',
+        'manual_button',
+        'find_message',
+        'wait_box',
+        'wait_code_label',
+        'wait_label',
+        'wait_cancel_button',
+        'tailscale_hint',
+        'host_notes',
+        '_host_notes_layout',
+        '_host_notes_shown',
+        'send_existing_button',
+        'pairing_code_label',
+        'client_message',
+        'tailscale_tile',
+        'pairing_expiry_label',
+        'retry_records_button',
+        'use_button',
+        '_find_layout',
+        'devices_tile',
+        'forget_button',
+        'rename_host_button',
+        'pair_device_button',
+        'bring_back_button',
+        'storage_tile',
+        'host_status',
+        'keep_records_tile',
+        'manage_mcp_tile',
+        'tabs',
+        'client_container',
+        'host_container',
+        'find_tile',
+        'host_identity',
+        'management_tile',
+        'address_edit',
+        '_built',
+        '_location_group',
+        '_devices_layout',
+        'pairing_box',
+        'pair_button',
+        'port_tile',
+        'location_buttons',
+        'port_spin',
+    })
 
     def __getattr__(self, name):
         if name in self._UI_ATTRIBUTES and not self.__dict__.get("_built", False):
@@ -696,27 +808,23 @@ class RemoteEngineSection(QObject):
         for location, button in self.location_buttons.items():
             button.setChecked(location == status.location)
             button.setEnabled(not self._records_busy)
-        self.storage_tile.set_description({
-            "local": "History, recordings and meetings stay on this computer.",
-            "host": (f"New dictations and meetings move to {host} once it has checked "
-                     "them. History and Past Meetings list them from there."),
-            "both": (f"New dictations and meetings stay here and are copied to {host}. "
-                     "Deleting one here deletes both copies."),
-        }[status.location])
+        self.storage_tile.set_description(_records_location_description(status.location, host))
 
         stored = _stored_phrase(status.stored)
+        lines = self._records_status_lines(status, host, stored)
+        self.storage_status.setText(" ".join(lines))
+        self.storage_status.setVisible(bool(lines))
+        self._show_record_actions(status, host, stored)
+
+    def _records_status_lines(self, status, host: str, stored: str) -> list:
         lines = []
         if self._records_busy:
             lines.append(self._records_busy)
         elif status.active:
             lines.append(status.active)
-        if status.host_supports is False and status.location != "local":
-            lines.append(f"Update OpenWhisper on {host} to keep records there.")
-        elif status.host_keeps is False and status.location != "local":
-            lines.append(
-                f"{host} isn't keeping records for other computers yet. On {host}, turn on "
-                "\"Keep records for paired computers\" under Settings → Remote engine."
-            )
+        host_problem = _records_host_problem(status, host)
+        if host_problem:
+            lines.append(host_problem)
         elif status.waiting and not status.active:
             lines.append(status.waiting)
         if status.pending and not status.active and not self._records_busy:
@@ -727,9 +835,9 @@ class RemoteEngineSection(QObject):
             lines.append(f"On {host}: {stored}.")
         if self._records_note:
             lines.append(self._records_note)
-        self.storage_status.setText(" ".join(lines))
-        self.storage_status.setVisible(bool(lines))
+        return lines
 
+    def _show_record_actions(self, status, host: str, stored: str) -> None:
         blocked = bool(self._records_busy)
         self.send_existing_button.setVisible(status.location != "local")
         self.send_existing_button.setText(
@@ -927,47 +1035,12 @@ class RemoteEngineSection(QObject):
 
     def _refresh_host(self, service) -> None:
         state = service.host_state()
-        checkbox = self.share_tile.checkbox
-        blocked = checkbox.blockSignals(True)
-        checkbox.setChecked(bool(state["enabled"]))
-        self.share_tile._sync_checked_property(bool(state["enabled"]))
-        checkbox.blockSignals(blocked)
-        blocked = self.port_spin.blockSignals(True)
-        self.port_spin.setValue(int(state["port"] or protocol.DEFAULT_PORT))
-        self.port_spin.blockSignals(blocked)
-
-        for tile, key in ((self.management_tile, "model_management"),
-                          (self.keep_records_tile, "keep_records"),
-                          (self.manage_mcp_tile, "manage_mcp")):
-            checkbox = tile.checkbox
-            blocked = checkbox.blockSignals(True)
-            checkbox.setChecked(state.get(key) is True)
-            tile._sync_checked_property(checkbox.isChecked())
-            checkbox.blockSignals(blocked)
+        self._sync_host_switches(state)
 
         running = state["running"]
-        where = protocol.format_address(state["address"] or state["host_name"], state["port"])
-        if state.get("address_kind") == "vpn":
-            where += " (a VPN address; computers on your network may not reach it)"
         tailnet = state.get("tailscale")
         on_tailnet = tailnet is not None and tailnet.running and bool(tailnet.address)
-        if on_tailnet:
-            where += f", and on Tailscale as {tailnet.name or tailnet.address} ({tailnet.address})"
-        if state["error"]:
-            status = state["error"]
-        elif running:
-            engine = state["engine"] or {}
-            if engine.get("available"):
-                status = f"Sharing {_engine_phrase(engine)} at {where}."
-            else:
-                status = (
-                    f"Sharing is on at {where}, but no engine is ready to serve: "
-                    f"{engine.get('status') or 'select a local engine'}."
-                )
-        elif state["enabled"]:
-            status = "Starting..."
-        else:
-            status = ""
+        status = _sharing_status(state, _sharing_address(state, tailnet, on_tailnet))
         self.host_status.setText(status)
         self.host_status.setVisible(bool(status))
         if running and state["fingerprint"]:
@@ -980,20 +1053,7 @@ class RemoteEngineSection(QObject):
             self.host_identity.hide()
         self._show_host_notes(state.get("notes") or [] if running else [])
 
-        # Only offered where it can work: Tailscale running under a person's
-        # account (tagged servers have no owner to compare against).
-        self.tailscale_tile.setVisible(on_tailnet and bool(tailnet.owner))
-        if on_tailnet and tailnet.owner:
-            checkbox = self.tailscale_tile.checkbox
-            blocked = checkbox.blockSignals(True)
-            checkbox.setChecked(bool(state["tailscale_trust"]))
-            self.tailscale_tile._sync_checked_property(bool(state["tailscale_trust"]))
-            checkbox.blockSignals(blocked)
-            self.tailscale_tile.set_description(
-                f"Computers signed in to Tailscale as {tailnet.owner} can pair by "
-                "picking this one from their tailnet. Anyone else on your tailnet "
-                "still asks first, and you allow it here."
-            )
+        self._show_tailscale_trust(state, tailnet, on_tailnet)
 
         self.pair_device_button.setEnabled(running)
         self._show_pairing(state["pairing"] if running else None)
@@ -1012,6 +1072,43 @@ class RemoteEngineSection(QObject):
         if self._set_rail_value is not None:
             self._set_rail_value(rail)
         self._refresh_tabs(pairing, state, running)
+
+    def _sync_host_switches(self, state: dict) -> None:
+        """Show the saved sharing choices without re-saving them."""
+        checkbox = self.share_tile.checkbox
+        blocked = checkbox.blockSignals(True)
+        checkbox.setChecked(bool(state["enabled"]))
+        self.share_tile._sync_checked_property(bool(state["enabled"]))
+        checkbox.blockSignals(blocked)
+        blocked = self.port_spin.blockSignals(True)
+        self.port_spin.setValue(int(state["port"] or protocol.DEFAULT_PORT))
+        self.port_spin.blockSignals(blocked)
+
+        for tile, key in ((self.management_tile, "model_management"),
+                          (self.keep_records_tile, "keep_records"),
+                          (self.manage_mcp_tile, "manage_mcp")):
+            checkbox = tile.checkbox
+            blocked = checkbox.blockSignals(True)
+            checkbox.setChecked(state.get(key) is True)
+            tile._sync_checked_property(checkbox.isChecked())
+            checkbox.blockSignals(blocked)
+
+    def _show_tailscale_trust(self, state: dict, tailnet, on_tailnet: bool) -> None:
+        # Only offered where it can work: Tailscale running under a person's
+        # account (tagged servers have no owner to compare against).
+        self.tailscale_tile.setVisible(on_tailnet and bool(tailnet.owner))
+        if not (on_tailnet and tailnet.owner):
+            return
+        checkbox = self.tailscale_tile.checkbox
+        blocked = checkbox.blockSignals(True)
+        checkbox.setChecked(bool(state["tailscale_trust"]))
+        self.tailscale_tile._sync_checked_property(bool(state["tailscale_trust"]))
+        checkbox.blockSignals(blocked)
+        self.tailscale_tile.set_description(
+            f"Computers signed in to Tailscale as {tailnet.owner} can pair by "
+            "picking this one from their tailnet. Anyone else on your tailnet "
+            "still asks first, and you allow it here."
+        )
 
     def _refresh_tabs(self, pairing, state, running: bool) -> None:
         """Say on each tab what is going on there, and open on the one in use."""
@@ -1126,7 +1223,8 @@ class RemoteEngineSection(QObject):
             rename.setToolTip("Change the name this computer shows for it")
             rename.clicked.connect(lambda _checked=False, d=device: self._rename_device(d))
             remove = DangerButton("Remove")
-            remove.setProperty("buttonId", "remoteRemoveDeviceButton")  # not setObjectName: the theme styles it by "dangerButton"
+            # Not setObjectName: the theme styles it by "dangerButton".
+            remove.setProperty("buttonId", "remoteRemoveDeviceButton")
             device_id = device.get("id")
             remove.clicked.connect(lambda _checked=False, d=device_id: self._remove_device(d))
             row_layout.addWidget(label, stretch=1)
@@ -1601,7 +1699,10 @@ class RemoteEngineSection(QObject):
         def work():
             try:
                 service.recover_device_records(owner_id, device_id)
-                message = "Stored records are available to the paired computer. Refresh its history to see them."
+                message = (
+                    "Stored records are available to the paired computer. "
+                    "Refresh its history to see them."
+                )
             except Exception as exc:
                 message = f"Could not recover records: {exc}"
             done.emit(token, message)
