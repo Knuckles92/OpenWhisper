@@ -243,9 +243,24 @@ class OmarchyControls(QObject):
 
     def _sync(self):
         desired = self._desired()
-        binds = hyprland.query("binds")
+        binds = self._release_unwanted(desired, hyprland.query("binds"))
         issues = []
         active = []
+        for action, hotkey in desired.items():
+            issue = self._claim(action, hotkey, binds)
+            if issue is not None:
+                issues.append(issue)
+                continue
+            active.append(format_hotkey_display(hotkey))
+        status = "; ".join(issues) if issues else "Desktop shortcuts active"
+        if status != self._status or active != self._active_hotkeys:
+            self._status = status
+            self._active_hotkeys = active
+            self.status_changed.emit(status)
+            log.info("Omarchy: %s", status)
+
+    def _release_unwanted(self, desired: dict, binds: list) -> list:
+        """Unbind owned shortcuts that are no longer wanted; return the binds left."""
         for action, (hotkey, sequence, symbol, mask) in list(self._owned.items()):
             if desired.get(action) == hotkey:
                 continue
@@ -256,65 +271,31 @@ class OmarchyControls(QObject):
                 hyprland.evaluate(f"hl.unbind({json.dumps(sequence)})")
                 binds = [b for b in binds if not matches(b, symbol, mask)]
             del self._owned[action]
-        for action, hotkey in desired.items():
-            try:
-                sequence, symbol, mask = binding_key(hotkey)
-            except ValueError as exc:
-                issues.append(str(exc))
-                continue
-            description = PREFIX + action
-            matching = [b for b in binds if matches(b, symbol, mask)]
-            if matching and any(b.get("description") != description for b in matching):
-                issues.append(f"{hotkey} is already used by Hyprland")
-                continue
-            if matching and {bool(b.get("release")) for b in matching} != {False, True}:
-                # Repair an interrupted registration before advertising it as active.
-                hyprland.evaluate(f"hl.unbind({json.dumps(sequence)})")
-                matching = []
-            if not matching:
-                self._owned[action] = (hotkey, sequence, symbol, mask)
-                for released in (False, True):
-                    # Actions are passed as a single shell-quoted gdbus argument.
-                    # Profile IDs are data, never command fragments.
-                    import shlex
+        return binds
 
-                    command = shlex.join(
-                        [
-                            "gdbus",
-                            "call",
-                            "--session",
-                            "--dest",
-                            SERVICE,
-                            "--object-path",
-                            PATH,
-                            "--method",
-                            INTERFACE + ".Trigger",
-                            action,
-                            "true" if released else "false",
-                        ]
-                    )
-                    options = {"description": description, "release": released}
-                    lua_options = (
-                        "{description="
-                        + json.dumps(options["description"])
-                        + ",release="
-                        + str(released).lower()
-                        + "}"
-                    )
-                    hyprland.evaluate(
-                        f"hl.bind({json.dumps(sequence)}, hl.dsp.exec_cmd({json.dumps(command)}), {lua_options})"
-                    )
-                binds.extend(
-                    [{"key": symbol, "modmask": mask, "description": description}]
-                )
+    def _claim(self, action: str, hotkey: str, binds: list):
+        """Bind ``hotkey`` to ``action`` unless taken; return the issue, or None."""
+        try:
+            sequence, symbol, mask = binding_key(hotkey)
+        except ValueError as exc:
+            return str(exc)
+        description = PREFIX + action
+        matching = [b for b in binds if matches(b, symbol, mask)]
+        if matching and any(b.get("description") != description for b in matching):
+            return f"{hotkey} is already used by Hyprland"
+        if matching and {bool(b.get("release")) for b in matching} != {False, True}:
+            # Repair an interrupted registration before advertising it as active.
+            hyprland.evaluate(f"hl.unbind({json.dumps(sequence)})")
+            matching = []
+        if not matching:
             self._owned[action] = (hotkey, sequence, symbol, mask)
-            active.append(format_hotkey_display(hotkey))
-        status = "; ".join(issues) if issues else "Desktop shortcuts active"
-        if status != self._status or active != self._active_hotkeys:
-            self._status = status
-            self._active_hotkeys = active
-            self.status_changed.emit(status)
-            log.info("Omarchy: %s", status)
+            for released in (False, True):
+                _bind_trigger(action, sequence, description, released)
+            binds.extend(
+                [{"key": symbol, "modmask": mask, "description": description}]
+            )
+        self._owned[action] = (hotkey, sequence, symbol, mask)
+        return None
 
     def _run(self):
         while not self._stop.is_set():
@@ -340,6 +321,33 @@ class OmarchyControls(QObject):
         self.bus.unregisterService(SERVICE)
         self._active_hotkeys = []
         self._publish_status("Desktop shortcuts stopped")
+
+
+def _bind_trigger(action: str, sequence: str, description: str, released: bool) -> None:
+    """Bind ``sequence``'s press or release to the D-Bus Trigger for ``action``."""
+    # Actions are passed as a single shell-quoted gdbus argument.
+    # Profile IDs are data, never command fragments.
+    import shlex
+
+    command = shlex.join(
+        [
+            "gdbus",
+            "call",
+            "--session",
+            "--dest",
+            SERVICE,
+            "--object-path",
+            PATH,
+            "--method",
+            INTERFACE + ".Trigger",
+            action,
+            "true" if released else "false",
+        ]
+    )
+    release = str(released).lower()
+    lua_options = "{description=" + json.dumps(description) + ",release=" + release + "}"
+    dispatcher = f"hl.dsp.exec_cmd({json.dumps(command)})"
+    hyprland.evaluate(f"hl.bind({json.dumps(sequence)}, {dispatcher}, {lua_options})")
 
 
 def _language_status() -> dict:
