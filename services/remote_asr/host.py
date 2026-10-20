@@ -279,6 +279,43 @@ class _WorkAdmission:
             self._condition.notify_all()
 
 
+def _header_language(header: dict) -> Optional[str]:
+    language = header.get("language")
+    return language if isinstance(language, str) else None
+
+
+def _transcribe(engine: HostEngine, header: dict, audio):
+    language = _header_language(header)
+    phrases = (
+        protocol.header_phrases(header)
+        if getattr(engine, "accepts_phrases", False) is True else ()
+    )
+    # Engines without hints keep their two-argument call.
+    if phrases:
+        return engine.transcribe(audio, language, phrases=phrases)
+    return engine.transcribe(audio, language)
+
+
+def _stream(engine: HostEngine, header: dict, audio, connection_id: str, streams: set):
+    """A "stream" or "cancel_stream" request's result."""
+    session = header.get("session")
+    if not isinstance(session, str) or not session:
+        raise ValueError("A stream needs a session id")
+    # Sessions are per connection, so two clients (or the host's
+    # own preview) never share one.
+    scoped = f"remote-{connection_id}-{session}"
+    if header.get("op") != "stream":
+        streams.discard(scoped)
+        engine.cancel_stream(scoped)
+        return {}
+    finish = bool(header.get("finish"))
+    streams.add(scoped)
+    result = engine.stream(scoped, audio, _header_language(header), finish)
+    if finish:
+        streams.discard(scoped)
+    return result
+
+
 class SpeechHost:
     """A TLS WebSocket server in front of ``engine_provider()``.
 
@@ -619,19 +656,8 @@ class SpeechHost:
     def _handle_admitted(self, ws) -> None:
         peer = ws.remote_address
         address = str(peer[0]) if isinstance(peer, tuple) and peer else "unknown"
-        try:
-            first = ws.recv(timeout=HANDSHAKE_TIMEOUT_S)
-        except TimeoutError:
-            ws.close(protocol.CLOSE_TIMEOUT, "handshake timeout")
-            return
-        except Exception:
-            return
-        try:
-            message = json.loads(first) if isinstance(first, str) else None
-        except ValueError:
-            message = None
-        if not isinstance(message, dict):
-            ws.close(protocol.CLOSE_BAD_REQUEST, "expected hello")
+        message = self._receive_hello(ws)
+        if message is None:
             return
         if message.get("type") == "probe":
             # Answered before the version check, so discovery can say
@@ -649,6 +675,28 @@ class SpeechHost:
             })
             ws.close(protocol.CLOSE_BAD_REQUEST, "protocol version")
             return
+        self._route_hello(ws, message, address)
+
+    @staticmethod
+    def _receive_hello(ws) -> Optional[dict]:
+        """The client's first message; None once the connection was dropped or refused."""
+        try:
+            first = ws.recv(timeout=HANDSHAKE_TIMEOUT_S)
+        except TimeoutError:
+            ws.close(protocol.CLOSE_TIMEOUT, "handshake timeout")
+            return None
+        except Exception:
+            return None
+        try:
+            message = json.loads(first) if isinstance(first, str) else None
+        except ValueError:
+            message = None
+        if not isinstance(message, dict):
+            ws.close(protocol.CLOSE_BAD_REQUEST, "expected hello")
+            return None
+        return message
+
+    def _route_hello(self, ws, message: dict, address: str) -> None:
         kind = message.get("type")
         if kind == "pair" and message.get("tailscale") is True:
             self._pair_tailscale(ws, message, address)
@@ -931,25 +979,7 @@ class SpeechHost:
             return
         engine = self._engine()
         identity = engine.identity
-        ready = {
-            "type": "ready",
-            "host": self._host_info(),
-            "device": {"id": device["id"], "name": device["name"]},
-            "engine": engine.describe(),
-            "models": self._model_list(),
-            "runtime": self._runtime(),
-            "capabilities": {"model_management": self._can_manage_models(),
-                             "runtime_installation": self._can_manage_models(),
-                             "engine_controls": self._configure_runtime is not None,
-                             "recognition_hints": getattr(engine, "accepts_phrases", False) is True},
-        }
-        if self._mcp is not None:
-            ready["capabilities"]["mcp_control"] = self._controls_mcp()
-        if self._records is not None:
-            ready["capabilities"]["records"] = self._keeps_records()
-            # Counted even while storage is off, so a client can still find
-            # (and bring back) what it stored before the owner turned it off.
-            ready["records"] = self._stored_summary(device["id"])
+        ready = self._ready_message(device, engine)
         connection_id = uuid.uuid4().hex[:8]
         with self._lock:
             if self._server is None:
@@ -990,15 +1020,42 @@ class SpeechHost:
         except Exception as exc:
             logger.info("Remote engine client %s disconnected: %s", device["name"], exc)
         finally:
-            for session in list(streams):
-                try:
-                    engine.cancel_stream(session)
-                except Exception:
-                    logger.debug("Could not cancel remote stream %s", session, exc_info=True)
-            with self._lock:
-                client = self._clients.pop(connection_id, None)
-            self.activity.disconnected(device["id"], client.name if client else device["name"])
-            self._emit("clients", {})
+            self._drop_client(engine, streams, connection_id, device)
+
+    def _ready_message(self, device: dict, engine: HostEngine) -> dict:
+        """The "ready" reply to a paired computer's hello."""
+        ready = {
+            "type": "ready",
+            "host": self._host_info(),
+            "device": {"id": device["id"], "name": device["name"]},
+            "engine": engine.describe(),
+            "models": self._model_list(),
+            "runtime": self._runtime(),
+            "capabilities": {"model_management": self._can_manage_models(),
+                             "runtime_installation": self._can_manage_models(),
+                             "engine_controls": self._configure_runtime is not None,
+                             "recognition_hints": getattr(engine, "accepts_phrases", False) is True},
+        }
+        if self._mcp is not None:
+            ready["capabilities"]["mcp_control"] = self._controls_mcp()
+        if self._records is not None:
+            ready["capabilities"]["records"] = self._keeps_records()
+            # Counted even while storage is off, so a client can still find
+            # (and bring back) what it stored before the owner turned it off.
+            ready["records"] = self._stored_summary(device["id"])
+        return ready
+
+    def _drop_client(self, engine: HostEngine, streams: set, connection_id: str, device: dict) -> None:
+        """Cancel a departed client's open streams and forget it."""
+        for session in list(streams):
+            try:
+                engine.cancel_stream(session)
+            except Exception:
+                logger.debug("Could not cancel remote stream %s", session, exc_info=True)
+        with self._lock:
+            client = self._clients.pop(connection_id, None)
+        self.activity.disconnected(device["id"], client.name if client else device["name"])
+        self._emit("clients", {})
 
     def _dispatch(self, frame, engine: HostEngine, identity: tuple,
                   connection_id: str, streams: set, device_name: str = "",
@@ -1048,14 +1105,9 @@ class SpeechHost:
             audio = protocol.payload_audio(payload)
         except protocol.ProtocolError as exc:
             return {"id": request_id, "error": str(exc), "code": "bad_request"}
-        if header.get("op") == "configure_runtime":
-            return self._configure_runtime_request(request_id, header, device_name)
-        if header.get("op") in ("model_catalog", "download_model", "install_runtime"):
-            return self._manage_model_request(request_id, header, device_name)
-        if header.get("op") == "select_model":
-            # Asked for whatever this computer runs now, so a switch made
-            # since this client connected doesn't turn it away.
-            return self._switch_model(request_id, header, device_name)
+        managed = self._management_request(request_id, header, device_name)
+        if managed is not None:
+            return managed
         current = self._engine()
         if current.identity != identity:
             return {
@@ -1063,41 +1115,36 @@ class SpeechHost:
                 "code": "engine_changed",
                 "error": "The host switched speech engines. Reconnecting.",
             }
+        return self._decode_request(header, audio, current, connection_id, streams,
+                                    device_name, device_id)
+
+    def _management_request(self, request_id, header: dict, device_name: str) -> Optional[dict]:
+        """The reply to a runtime or model change, or None for any other request."""
         op = header.get("op")
-        language = header.get("language")
-        language = language if isinstance(language, str) else None
+        if op == "configure_runtime":
+            return self._configure_runtime_request(request_id, header, device_name)
+        if op in ("model_catalog", "download_model", "install_runtime"):
+            return self._manage_model_request(request_id, header, device_name)
+        if op == "select_model":
+            # Asked for whatever this computer runs now, so a switch made
+            # since this client connected doesn't turn it away.
+            return self._switch_model(request_id, header, device_name)
+        return None
+
+    def _decode_request(self, header: dict, audio, current: HostEngine, connection_id: str,
+                        streams: set, device_name: str, device_id: str) -> dict:
+        """Run a transcribe, stream, cancel_stream or describe request on ``current``."""
+        request_id = header.get("id")
+        op = header.get("op")
         decodes = op in ("transcribe", "stream")
         if decodes:
             self._set_busy(connection_id, True)
         started = time.perf_counter()
         try:
             if op == "transcribe":
-                phrases = (
-                    protocol.header_phrases(header)
-                    if getattr(current, "accepts_phrases", False) is True else ()
-                )
-                # Engines without hints keep their two-argument call.
-                if phrases:
-                    result = current.transcribe(audio, language, phrases=phrases)
-                else:
-                    result = current.transcribe(audio, language)
+                result = _transcribe(current, header, audio)
             elif op in ("stream", "cancel_stream"):
-                session = header.get("session")
-                if not isinstance(session, str) or not session:
-                    raise ValueError("A stream needs a session id")
-                # Sessions are per connection, so two clients (or the host's
-                # own preview) never share one.
-                scoped = f"remote-{connection_id}-{session}"
-                if op == "stream":
-                    finish = bool(header.get("finish"))
-                    streams.add(scoped)
-                    result = current.stream(scoped, audio, language, finish)
-                    if finish:
-                        streams.discard(scoped)
-                else:
-                    streams.discard(scoped)
-                    current.cancel_stream(scoped)
-                    result = {}
+                result = _stream(current, header, audio, connection_id, streams)
             elif op == "describe":
                 result = current.describe()
             else:
