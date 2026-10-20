@@ -74,6 +74,61 @@ def _reads_selection(action) -> bool:
     return action.param("include_selection") is True
 
 
+def _recording_destination(action) -> str:
+    """What the overlay says a recording is for: an agent action's agent, or ""."""
+    if action is None or action.kind != ActionKind.AGENT:
+        return ""
+    agent_name = AGENT_NAMES.get(action.param("agent"), "")
+    return f"Agent · {agent_name}" if agent_name else "Agent"
+
+
+def _batch_line(item, *, raw: bool = False) -> str:
+    """A file's text in a batch transcript: its error, its words, or the empty notice."""
+    if item.error:
+        return f"Error: {item.error}"
+    if raw:
+        return item.raw_text or item.text.strip() or EMPTY_ASR_MESSAGE
+    return item.text.strip() or EMPTY_ASR_MESSAGE
+
+
+def _batch_display(result, is_empty: bool) -> tuple[str, Optional[str]]:
+    """The transcript tab's text and raw text for a finished batch."""
+    if result.request.combine:
+        if is_empty:
+            return EMPTY_ASR_MESSAGE, None
+        return result.combined_text or "", result.combined_raw_text
+    display = format_batch_transcript(
+        [(r.item.source_name, _batch_line(r)) for r in result.items]
+    )
+    raw_display = None
+    if any(r.raw_text for r in result.items):
+        raw_display = format_batch_transcript(
+            [(r.item.source_name, _batch_line(r, raw=True)) for r in result.items]
+        )
+    return display, raw_display
+
+
+def _batch_status(result, saveable: list, *, canceled: bool) -> str:
+    """The status line once a batch is saved."""
+    request = result.request
+    if canceled:
+        kept = ("the transcript" if request.combine
+                else f"{len(saveable)} of {len(request.items)} files")
+        status = f"Canceled — kept {kept}"
+    else:
+        status = "Ready"
+    if result.cleanup_error == CANCELED_REASON:
+        # Only a Cancel cuts the cleanup short.
+        status += " without AI cleanup"
+    elif result.cleanup_error:
+        status += (
+            f" — AI cleanup failed ({result.cleanup_error}); showing raw text"
+        )
+    return status
+
+
+#: A saved recording smaller than this many bytes is reported as empty or corrupted.
+MIN_RECORDING_BYTES = 100
 #: ``_maybe_cleanup_transcript``'s default: the profile the recording started with.
 _RECORDING_PROFILE = object()
 #: Status when a text filter answered that it handled the words itself.
@@ -390,6 +445,65 @@ class TranscriptionRuntime:
     def _start_recording(self, profile_id: str, mode: str = JobMode.DICTATION,
                          selection=None, *, action_id: str = "", source: str = "hotkey",
                          route: str = "") -> bool:
+        if not self._can_start_recording():
+            return False
+        # Before the preview and early decoding look at the engine.
+        self._rearm_remote_engine()
+        plan = self._recording_format(profile_id, mode, action_id, route)
+        if plan is None:
+            return False
+        action, settings, profile, route = plan
+        try:
+            # The output device and a recording would fight over audio.
+            audio_player.stop_playback()
+        except Exception:
+            logger.debug("Could not stop playback before recording", exc_info=True)
+        if not self.controller.recorder.start_recording():
+            self._report_start_failure()
+            return False
+        # Snapshot before publishing Recording: edits and other shortcuts
+        # cannot replace the format of a recording already in progress.
+        self._recording_profile = profile
+        self._profile_settings = settings if profile else None
+        # Before the preview and early decoding, which read its
+        # recognition context, and so the focus capture runs while the
+        # user speaks.
+        self._job = self._begin_job(
+            mode, settings, selection,
+            action_id=action.id if action is not None else "",
+            source=source,
+            route=route,
+            include_selection=action is not None and _reads_selection(action),
+        )
+        # Publish before streaming can show the overlay, using the action
+        # resolved for this capture rather than re-reading mutable settings.
+        self.controller.recording_destination_changed.emit(_recording_destination(action))
+        logger.info("Recording started")
+        self.controller.ui_controller.clear_transcription_stats()
+        self.controller.ui_controller.main_window.clear_partial_transcription()
+        self.controller.streaming_runtime.start_streaming_session()
+        self._incremental.start(self.controller, recognition=self._job.recognition)
+        self.controller.recording_state_changed.emit(True)
+        publish_event(
+            event_catalog.RECORDING_STARTED, event_catalog.recording_started(self._job)
+        )
+        with self._job_lock:
+            self._previewing = self._job
+        self._show_listening(mode, action, profile)
+        # Auto-paste copies the user's clipboard so it can put it back.
+        # Take that copy while the user speaks instead of in front of the
+        # paste; it is queued to the Qt thread and never delays this start.
+        # Command Mode reads the selection through the clipboard first,
+        # so its snapshot would no longer be the user's.
+        if mode == JobMode.DICTATION and all(
+            settings_manager.get(key, SETTING_DEFAULTS[key])
+            for key in (SettingsKey.AUTO_PASTE, SettingsKey.RESTORE_CLIPBOARD)
+        ):
+            self.controller.ui_controller.prefetch_clipboard_snapshot()
+        return True
+
+    def _can_start_recording(self) -> bool:
+        """Whether a recording may start now; the status line says why not."""
         if getattr(self.controller, "_backup_in_progress", False) is True:
             self.controller.status_update.emit("Wait for backup or restore preparation to finish")
             return False
@@ -408,15 +522,17 @@ class TranscriptionRuntime:
             return False
         if self.controller.recorder.is_recording:
             return False
-        # Before the preview and early decoding look at the engine.
-        self._rearm_remote_engine()
+        return True
+
+    def _recording_format(self, profile_id: str, mode: str, action_id: str, route: str):
+        """``(action, settings, profile, route)`` for a new recording, or None after saying why not."""
         action = None
         settings = None
         if mode == JobMode.ACTION:
             action, settings = self._action_for_recording(action_id)
             if action is None:
                 self.controller.status_update.emit("That action no longer exists")
-                return False
+                return None
             # The action's own shaping decides the format.
             profile_id = action.profile_id()
         elif mode == JobMode.DICTATION and not profile_id and not route:
@@ -426,78 +542,32 @@ class TranscriptionRuntime:
         profile = find_cleanup_profile(settings, profile_id) if profile_id else None
         if profile_id and profile is None:
             self.controller.status_update.emit("Cleanup profile no longer exists")
-            return False
-        try:
-            # The output device and a recording would fight over audio.
-            audio_player.stop_playback()
-        except Exception:
-            logger.debug("Could not stop playback before recording", exc_info=True)
-        if self.controller.recorder.start_recording():
-            # Snapshot before publishing Recording: edits and other shortcuts
-            # cannot replace the format of a recording already in progress.
-            self._recording_profile = profile
-            self._profile_settings = settings if profile else None
-            # Before the preview and early decoding, which read its
-            # recognition context, and so the focus capture runs while the
-            # user speaks.
-            self._job = self._begin_job(
-                mode, settings, selection,
-                action_id=action.id if action is not None else "",
-                source=source,
-                route=route,
-                include_selection=action is not None and _reads_selection(action),
-            )
-            destination = ""
-            if action is not None and action.kind == ActionKind.AGENT:
-                agent_name = AGENT_NAMES.get(action.param("agent"), "")
-                destination = f"Agent · {agent_name}" if agent_name else "Agent"
-            # Publish before streaming can show the overlay, using the action
-            # resolved for this capture rather than re-reading mutable settings.
-            self.controller.recording_destination_changed.emit(destination)
-            logger.info("Recording started")
-            self.controller.ui_controller.clear_transcription_stats()
-            self.controller.ui_controller.main_window.clear_partial_transcription()
-            self.controller.streaming_runtime.start_streaming_session()
-            self._incremental.start(self.controller, recognition=self._job.recognition)
-            self.controller.recording_state_changed.emit(True)
-            publish_event(
-                event_catalog.RECORDING_STARTED, event_catalog.recording_started(self._job)
-            )
-            with self._job_lock:
-                self._previewing = self._job
-            if mode == JobMode.COMMAND:
-                self.controller.overlay_state_update.emit(OverlayState.COMMAND_LISTENING)
-                self.controller.status_update.emit("Command Mode · Listening...")
-            elif action is not None:
-                self.controller.overlay_state_update.emit(OverlayState.RECORDING)
-                self.controller.status_update.emit(f"{action.name} · Listening...")
-            else:
-                self.controller.overlay_state_update.emit(OverlayState.RECORDING)
-                self.controller.status_update.emit(
-                    f"Recording · {profile.name}..." if profile else "Recording..."
-                )
-            # Auto-paste copies the user's clipboard so it can put it back.
-            # Take that copy while the user speaks instead of in front of the
-            # paste; it is queued to the Qt thread and never delays this start.
-            # Command Mode reads the selection through the clipboard first,
-            # so its snapshot would no longer be the user's.
-            if mode == JobMode.DICTATION and all(
-                settings_manager.get(key, SETTING_DEFAULTS[key])
-                for key in (SettingsKey.AUTO_PASTE, SettingsKey.RESTORE_CLIPBOARD)
-            ):
-                self.controller.ui_controller.prefetch_clipboard_snapshot()
-            return True
+            return None
+        return action, settings, profile, route
+
+    def _show_listening(self, mode: str, action, profile) -> None:
+        if mode == JobMode.COMMAND:
+            self.controller.overlay_state_update.emit(OverlayState.COMMAND_LISTENING)
+            self.controller.status_update.emit("Command Mode · Listening...")
+        elif action is not None:
+            self.controller.overlay_state_update.emit(OverlayState.RECORDING)
+            self.controller.status_update.emit(f"{action.name} · Listening...")
         else:
-            self._job = None
-            reason = getattr(
-                self.controller.recorder, "last_start_error", None
-            ) or "Could not open the audio stream"
-            logger.error("Failed to start recording: %s", reason)
-            self.controller.ui_controller.discard_clipboard_prefetch()
-            self.controller.recording_state_changed.emit(False)
-            self.controller.overlay_state_update.emit(OverlayState.NONE)
-            self.controller.status_update.emit(f"Failed to start recording: {reason}")
-            return False
+            self.controller.overlay_state_update.emit(OverlayState.RECORDING)
+            self.controller.status_update.emit(
+                f"Recording · {profile.name}..." if profile else "Recording..."
+            )
+
+    def _report_start_failure(self) -> None:
+        self._job = None
+        reason = getattr(
+            self.controller.recorder, "last_start_error", None
+        ) or "Could not open the audio stream"
+        logger.error("Failed to start recording: %s", reason)
+        self.controller.ui_controller.discard_clipboard_prefetch()
+        self.controller.recording_state_changed.emit(False)
+        self.controller.overlay_state_update.emit(OverlayState.NONE)
+        self.controller.status_update.emit(f"Failed to start recording: {reason}")
 
     def stop_recording(self) -> None:
         """Stop audio recording and start transcription."""
@@ -592,43 +662,8 @@ class TranscriptionRuntime:
                 self._abandon_canceled_job("during post-roll")
                 return
 
-            if not stop_completed:
-                message = (
-                    "Recording did not finish stopping; captured audio was "
-                    "kept for recovery."
-                )
-                fail_capture = getattr(self.controller.recorder, '_fail_capture', None)
-                if callable(fail_capture):
-                    fail_capture(message)
-                self.controller.transcription_failed.emit(message)
-                return
-
-            if not self.controller.recorder.has_recording_data():
-                logger.error("No recording data available")
-                self.controller.transcription_failed.emit(
-                    getattr(self.controller.recorder, 'last_capture_error', None)
-                    or "No audio data recorded"
-                )
-                return
-
-            if not self.controller.recorder.save_recording(allow_incomplete=True):
-                logger.error("Failed to save recording")
-                self.controller.transcription_failed.emit(
-                    getattr(self.controller.recorder, 'last_capture_error', None)
-                    or "Failed to save audio file; recovery copy kept"
-                )
-                return
-
-            if not os.path.exists(config.RECORDED_AUDIO_FILE):
-                logger.error(f"Audio file not found: {config.RECORDED_AUDIO_FILE}")
-                self.controller.transcription_failed.emit("Audio file not created")
-                return
-
-            file_size = os.path.getsize(config.RECORDED_AUDIO_FILE)
-            logger.info(f"Audio file size: {file_size} bytes")
-            if file_size < 100:
-                logger.error(f"Audio file too small: {file_size} bytes")
-                self.controller.transcription_failed.emit("Audio file is empty or corrupted")
+            file_size = self._saved_recording_size(stop_completed)
+            if file_size is None:
                 return
 
             self.controller._pending_audio_path = config.RECORDED_AUDIO_FILE
@@ -636,14 +671,7 @@ class TranscriptionRuntime:
                 self.controller.recorder.get_recording_duration()
             )
             self.controller._pending_file_size = file_size
-            job = self._active_job
-            self.controller._pending_source_name = (
-                "Command Mode" if job is not None and job.mode == JobMode.COMMAND
-                else self._action_source_name(job)
-                if job is not None and job.mode == JobMode.ACTION
-                else f"Quick Record · {self._recording_profile.name}"
-                if self._recording_profile else "Quick Record"
-            )
+            self.controller._pending_source_name = self._recording_source_name(self._active_job)
 
             capture_error = getattr(self.controller.recorder, 'last_capture_error', None)
             if isinstance(capture_error, str) and capture_error:
@@ -664,6 +692,58 @@ class TranscriptionRuntime:
         except Exception as exc:
             logger.error(f"Failed to start transcription: {exc}")
             self.controller.transcription_failed.emit(_start_failure_message(exc))
+
+    def _saved_recording_size(self, stop_completed: bool) -> Optional[int]:
+        """Save the stopped capture; its file size, or None after reporting why not."""
+        if not stop_completed:
+            message = (
+                "Recording did not finish stopping; captured audio was "
+                "kept for recovery."
+            )
+            fail_capture = getattr(self.controller.recorder, '_fail_capture', None)
+            if callable(fail_capture):
+                fail_capture(message)
+            self.controller.transcription_failed.emit(message)
+            return None
+
+        if not self.controller.recorder.has_recording_data():
+            logger.error("No recording data available")
+            self.controller.transcription_failed.emit(
+                getattr(self.controller.recorder, 'last_capture_error', None)
+                or "No audio data recorded"
+            )
+            return None
+
+        if not self.controller.recorder.save_recording(allow_incomplete=True):
+            logger.error("Failed to save recording")
+            self.controller.transcription_failed.emit(
+                getattr(self.controller.recorder, 'last_capture_error', None)
+                or "Failed to save audio file; recovery copy kept"
+            )
+            return None
+
+        if not os.path.exists(config.RECORDED_AUDIO_FILE):
+            logger.error(f"Audio file not found: {config.RECORDED_AUDIO_FILE}")
+            self.controller.transcription_failed.emit("Audio file not created")
+            return None
+
+        file_size = os.path.getsize(config.RECORDED_AUDIO_FILE)
+        logger.info(f"Audio file size: {file_size} bytes")
+        if file_size < MIN_RECORDING_BYTES:
+            logger.error(f"Audio file too small: {file_size} bytes")
+            self.controller.transcription_failed.emit("Audio file is empty or corrupted")
+            return None
+        return file_size
+
+    def _recording_source_name(self, job) -> str:
+        """The history source name for a recorded job."""
+        if job is not None and job.mode == JobMode.COMMAND:
+            return "Command Mode"
+        if job is not None and job.mode == JobMode.ACTION:
+            return self._action_source_name(job)
+        if self._recording_profile:
+            return f"Quick Record · {self._recording_profile.name}"
+        return "Quick Record"
 
     def _run_transcription_job(self, audio_path: str) -> None:
         """Transcribe on the worker thread this job already runs on.
@@ -1056,47 +1136,20 @@ class TranscriptionRuntime:
         ui = self.controller.ui_controller
         succeeded = [r for r in result.items if r.succeeded]
         saveable = [r for r in succeeded if r.text.strip()]
-        is_empty = (not (result.combined_text or "").strip() if request.combine
-                    else not saveable)
+        if request.combine:
+            is_empty = not (result.combined_text or "").strip()
+        else:
+            is_empty = not saveable
         if canceled and is_empty:
             self.on_transcription_error("Transcription canceled")
             return
-
-        if request.combine:
-            display = result.combined_text or ""
-            raw_display = result.combined_raw_text
-            if is_empty:
-                display = EMPTY_ASR_MESSAGE
-                raw_display = None
-        else:
-            if not succeeded:
-                first_error = result.items[0].error if result.items else "no files"
-                self.on_transcription_error(
-                    f"All {len(result.items)} files failed: {first_error}"
-                )
-                return
-            display = format_batch_transcript(
-                [
-                    (
-                        r.item.source_name,
-                        f"Error: {r.error}" if r.error
-                        else (r.text.strip() or EMPTY_ASR_MESSAGE),
-                    )
-                    for r in result.items
-                ]
+        if not request.combine and not succeeded:
+            first_error = result.items[0].error if result.items else "no files"
+            self.on_transcription_error(
+                f"All {len(result.items)} files failed: {first_error}"
             )
-            raw_display = None
-            if any(r.raw_text for r in result.items):
-                raw_display = format_batch_transcript(
-                    [
-                        (
-                            r.item.source_name,
-                            f"Error: {r.error}" if r.error
-                            else (r.raw_text or r.text.strip() or EMPTY_ASR_MESSAGE),
-                        )
-                        for r in result.items
-                    ]
-                )
+            return
+        display, raw_display = _batch_display(result, is_empty)
 
         # The tab treats NONE while it is still running as a failure, so the
         # transcript must land first.
@@ -1123,10 +1176,16 @@ class TranscriptionRuntime:
             self._finish_job()
             return
 
-        entries = []
+        entries = self._batch_history_entries(result, saveable)
+        self._publish_batch_completions(entries)
+        ui.set_status(_batch_status(result, saveable, canceled=canceled))
+        self._queue_history(entries)
+
+    def _batch_history_entries(self, result: BatchResult, saveable: list) -> list[dict]:
+        """One history entry for a combined batch, else one per file with words."""
         model_info = self._model_info_for_history()
-        if request.combine:
-            entries.append(dict(
+        if result.request.combine:
+            return [dict(
                 text=result.combined_text,
                 model=model_info,
                 source_audio_path=None,
@@ -1139,21 +1198,25 @@ class TranscriptionRuntime:
                 source_name=batch_source_name(
                     [r.item.source_name for r in result.items]
                 ),
-            ))
-        else:
-            for r in saveable:
-                entries.append(dict(
-                    text=r.text,
-                    model=model_info,
-                    source_audio_path=None,
-                    transcription_time=r.elapsed_s,
-                    audio_duration=r.item.duration_seconds,
-                    file_size=r.file_size,
-                    raw_text=r.raw_text,
-                    cleanup_provider=r.cleanup_provider,
-                    cleanup_model=r.cleanup_model,
-                    source_name=r.item.source_name,
-                ))
+            )]
+        return [
+            dict(
+                text=r.text,
+                model=model_info,
+                source_audio_path=None,
+                transcription_time=r.elapsed_s,
+                audio_duration=r.item.duration_seconds,
+                file_size=r.file_size,
+                raw_text=r.raw_text,
+                cleanup_provider=r.cleanup_provider,
+                cleanup_model=r.cleanup_model,
+                source_name=r.item.source_name,
+            )
+            for r in saveable
+        ]
+
+    def _publish_batch_completions(self, entries: list[dict]) -> None:
+        """Add the history context to each entry and publish its completion."""
         context = self._history_context(None, None, live=False)
         for entry in entries:
             entry.update(context)
@@ -1169,22 +1232,6 @@ class TranscriptionRuntime:
                     cleanup_info=cleanup, audio_s=entry.get("audio_duration"),
                 ),
             )
-
-        if canceled:
-            kept = ("the transcript" if request.combine
-                    else f"{len(saveable)} of {len(request.items)} files")
-            status = f"Canceled — kept {kept}"
-        else:
-            status = "Ready"
-        if result.cleanup_error == CANCELED_REASON:
-            # Only a Cancel cuts the cleanup short.
-            status += " without AI cleanup"
-        elif result.cleanup_error:
-            status += (
-                f" — AI cleanup failed ({result.cleanup_error}); showing raw text"
-            )
-        ui.set_status(status)
-        self._queue_history(entries)
 
     def _maybe_cleanup_transcript(
         self,
@@ -1848,34 +1895,15 @@ class TranscriptionRuntime:
             )
             return
         status_suffix = f" — {notice}" if notice else ""
-        insert = getattr(ui, "insert_into_scratchpad", None)
-        if callable(insert):
-            try:
-                inserted = insert(transcript) is True
-            except Exception:
-                logger.exception("Could not add the transcript to the Scratchpad")
-                inserted = False
-            if inserted:
-                ui.discard_clipboard_prefetch()
-                ui.set_status("Ready (Added to Scratchpad)" + status_suffix)
-                return
+        if self._insert_into_scratchpad(ui, transcript, status_suffix):
+            return
 
         # A command or transform exists to replace text, so it pastes even
         # with auto-paste off, but only into the app it provably started in.
         forced = job is not None and job.mode != JobMode.DICTATION
         target = dictation_pipeline.paste_target(job) if forced else None
         if forced and target != dictation_pipeline.PasteTarget.SAME:
-            ui.discard_clipboard_prefetch()
-            if ui.copy_to_clipboard(transcript):
-                status = (
-                    "Rewrite copied — the app changed; paste it where you want"
-                    if target == dictation_pipeline.PasteTarget.CHANGED else
-                    "Rewrite copied — couldn't confirm the app; paste it where you want"
-                )
-            else:
-                status = "Transcription complete (copy failed)"
-            ui.set_status(status)
-            self._notify(status)
+            self._copy_rewrite(ui, transcript, target)
             return
 
         text = dictation_pipeline.text_for_paste(transcript, job)
@@ -1900,12 +1928,44 @@ class TranscriptionRuntime:
             )
             self._notify(f"{reason} — pasted instead" if pasted else reason)
         if forced:
-            if not pasted:
-                self._notify(self._delivery_status)
-            elif job.selection_text().strip():
-                self._notify("Rewritten", done=True)
-            else:
-                self._notify("Inserted", done=True)
+            self._notify_forced_outcome(job, pasted)
+
+    def _insert_into_scratchpad(self, ui, transcript: str, status_suffix: str) -> bool:
+        """Add the transcript to the focused Scratchpad, if one takes it."""
+        insert = getattr(ui, "insert_into_scratchpad", None)
+        if not callable(insert):
+            return False
+        try:
+            inserted = insert(transcript) is True
+        except Exception:
+            logger.exception("Could not add the transcript to the Scratchpad")
+            inserted = False
+        if inserted:
+            ui.discard_clipboard_prefetch()
+            ui.set_status("Ready (Added to Scratchpad)" + status_suffix)
+        return inserted
+
+    def _copy_rewrite(self, ui, transcript: str, target) -> None:
+        """Copy a command's or transform's words when its app can't be confirmed."""
+        ui.discard_clipboard_prefetch()
+        if ui.copy_to_clipboard(transcript):
+            status = (
+                "Rewrite copied — the app changed; paste it where you want"
+                if target == dictation_pipeline.PasteTarget.CHANGED else
+                "Rewrite copied — couldn't confirm the app; paste it where you want"
+            )
+        else:
+            status = "Transcription complete (copy failed)"
+        ui.set_status(status)
+        self._notify(status)
+
+    def _notify_forced_outcome(self, job, pasted: bool) -> None:
+        if not pasted:
+            self._notify(self._delivery_status)
+        elif job.selection_text().strip():
+            self._notify("Rewritten", done=True)
+        else:
+            self._notify("Inserted", done=True)
 
     def _notify(self, text: str, *, done: bool = False) -> None:
         """Show a command or transform's outcome near the pointer; Qt thread.
@@ -2042,46 +2102,7 @@ class TranscriptionRuntime:
         paste_blocked = auto_paste and not is_accessibility_trusted()
 
         if auto_paste and not paste_blocked:
-            ui = self.controller.ui_controller
-            # Only options that differ from the defaults are passed, so a plain
-            # paste stays the one-argument call every UI stand-in takes.
-            options = {}
-            if html:
-                options["html"] = html
-            if not setting_value(SettingsKey.RESTORE_CLIPBOARD, settings):
-                options["restore"] = False
-            stage = ui.stage_transcript_for_paste(transcript, **options)
-            if not stage.written:
-                logger.error("Failed to copy transcription for auto-paste")
-                _status("Transcription complete (copy failed)")
-                return False
-
-            logger.info("Transcription copied to clipboard for auto-paste")
-            try:
-                send_paste()
-                logger.info("Transcription auto-pasted")
-            except Exception as exc:
-                logger.error(f"Failed to auto-paste: {exc}")
-                if not self.controller.ui_controller.commit_transcript_clipboard(
-                    stage, transcript
-                ):
-                    logger.warning(
-                        "Could not leave transcription in clipboard after paste failure"
-                    )
-                _status("Transcription complete (paste failed)")
-                return False
-
-            if stage.restore_unavailable:
-                logger.warning(
-                    "Transcription pasted, but the previous clipboard could not be captured"
-                )
-                _status("Ready (Pasted; clipboard restore unavailable)")
-                return True
-
-            _status("Ready (Pasted)")
-            if stage.lease is not None:
-                self.controller.ui_controller.schedule_clipboard_restore(stage)
-            return True
+            return self._paste_transcript(transcript, settings, html, _status)
 
         # Only a paste consumes the clipboard snapshot prefetched when the
         # recording started (auto-paste may have been turned off since).
@@ -2089,15 +2110,7 @@ class TranscriptionRuntime:
         should_copy = copy_clipboard or paste_blocked
         copy_ok = False
         if should_copy:
-            # A formatted snippet keeps its formatting when only copied.
-            copy_ok = bool(
-                self.controller.ui_controller.copy_to_clipboard(transcript, html=html)
-                if html else self.controller.ui_controller.copy_to_clipboard(transcript)
-            )
-            if copy_ok:
-                logger.info("Transcription copied to clipboard")
-            else:
-                logger.error("Failed to copy to clipboard")
+            copy_ok = self._copy_transcript(transcript, html)
 
         if paste_blocked:
             if copy_ok:
@@ -2118,6 +2131,66 @@ class TranscriptionRuntime:
 
         _status("Ready")
         return False
+
+    def _paste_transcript(self, transcript: str, settings, html: str, report) -> bool:
+        """Stage ``transcript`` on the clipboard and send the paste keystroke.
+
+        ``report`` shows the outcome status. Returns True when the paste was sent.
+        """
+        ui = self.controller.ui_controller
+        # Only options that differ from the defaults are passed, so a plain
+        # paste stays the one-argument call every UI stand-in takes.
+        options = {}
+        if html:
+            options["html"] = html
+        if not setting_value(SettingsKey.RESTORE_CLIPBOARD, settings):
+            options["restore"] = False
+        stage = ui.stage_transcript_for_paste(transcript, **options)
+        if not stage.written:
+            logger.error("Failed to copy transcription for auto-paste")
+            report("Transcription complete (copy failed)")
+            return False
+
+        logger.info("Transcription copied to clipboard for auto-paste")
+        try:
+            send_paste()
+            logger.info("Transcription auto-pasted")
+        except Exception as exc:
+            logger.error(f"Failed to auto-paste: {exc}")
+            if not self.controller.ui_controller.commit_transcript_clipboard(
+                stage, transcript
+            ):
+                logger.warning(
+                    "Could not leave transcription in clipboard after paste failure"
+                )
+            report("Transcription complete (paste failed)")
+            return False
+
+        if stage.restore_unavailable:
+            logger.warning(
+                "Transcription pasted, but the previous clipboard could not be captured"
+            )
+            report("Ready (Pasted; clipboard restore unavailable)")
+            return True
+
+        report("Ready (Pasted)")
+        if stage.lease is not None:
+            self.controller.ui_controller.schedule_clipboard_restore(stage)
+        return True
+
+    def _copy_transcript(self, transcript: str, html: str) -> bool:
+        """Copy without pasting; a formatted snippet keeps its formatting."""
+        ui = self.controller.ui_controller
+        if html:
+            copied = ui.copy_to_clipboard(transcript, html=html)
+        else:
+            copied = ui.copy_to_clipboard(transcript)
+        copy_ok = bool(copied)
+        if copy_ok:
+            logger.info("Transcription copied to clipboard")
+        else:
+            logger.error("Failed to copy to clipboard")
+        return copy_ok
 
     def begin_rewrite_job(self, job: dictation_pipeline.DictationJob, *, source_name: str) -> bool:
         """Claim the slot for a rewrite of selected text; Qt thread.
