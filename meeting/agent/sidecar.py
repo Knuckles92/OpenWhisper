@@ -79,6 +79,7 @@ _MAX_RESTARTS = 3
 _RESTART_WINDOW_S = 600.0  # 10 minutes
 _SHUTDOWN_WAIT_S = 2.0
 _TERMINATE_WAIT_S = 1.5
+_KILL_WAIT_S = 1.0
 
 _BUNDLE_NAME = "bundle.cjs"
 _NODE_EXE_NAME = "node.exe"
@@ -302,6 +303,83 @@ def _coerce_count(value: Any) -> int:
         return max(0, int(value))
     except (TypeError, ValueError):
         return 0
+
+
+def _close_quietly(stream: Any) -> None:
+    if stream is not None:
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+
+def _terminate_process(proc: subprocess.Popen) -> None:
+    """Terminate ``proc``, killing it when it ignores the request."""
+    proc.terminate()
+    try:
+        proc.wait(timeout=_TERMINATE_WAIT_S)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=_KILL_WAIT_S)
+        except Exception:
+            pass
+
+
+def _log_sidecar_line(params: Dict[str, Any]) -> None:
+    """Relay one ``log`` notification at the sidecar's own level."""
+    level = str(params.get("level") or "info").lower()
+    text = str(params.get("msg") or "")
+    log = {
+        "warning": logger.warning,
+        "error": logger.error,
+        "debug": logger.debug,
+    }.get(level, logger.info)
+    log("sidecar: %s", text)
+
+
+def _checkpoint_user_prompt(payload: CheckpointPayload) -> str:
+    if payload.is_notes:
+        return build_notes_user_prompt(payload.state_snapshot, payload.new_segments)
+    return build_checkpoint_user_prompt(
+        payload.state_snapshot, payload.new_segments,
+        payload.is_consolidation, payload.is_polish,
+    )
+
+
+def _checkpoint_params(payload: CheckpointPayload) -> Dict[str, Any]:
+    # The host owns the prompt. ``state`` and the pass flags still travel
+    # because installed bundles pre-filter tool calls with them.
+    params: Dict[str, Any] = {
+        "user_prompt": _checkpoint_user_prompt(payload),
+        "request_id": payload.request_id,
+        "state": payload.state_snapshot,
+        "new_segments": payload.new_segments,
+        "is_consolidation": payload.is_consolidation,
+        "is_polish": payload.is_polish,
+        "is_notes": payload.is_notes,
+    }
+    if payload.is_notes:
+        # The note-taker persona replaces the copilot charter for this pass.
+        params["system_prompt"] = build_note_taker_system_prompt()
+    return params
+
+
+def _checkpoint_result(result: Dict[str, Any],
+                       actual_results: List[OpResult]) -> AgentResult:
+    usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+    # Keep actual patch operations: the scheduler needs to know when
+    # transcript text changed so dashboard and notes do not remain stale.
+    # Tallies still account for question tools and bundle-policy rejections.
+    op_results = actual_results + _op_results_from_counts(
+        _coerce_count(result.get("applied")) - sum(r.ok for r in actual_results),
+        _coerce_count(result.get("rejected")) - sum(not r.ok for r in actual_results),
+    )
+    if result.get("canceled"):
+        return AgentResult(
+            ok=False, op_results=op_results, error="canceled", usage=usage,
+        )
+    return AgentResult(ok=True, op_results=op_results, usage=usage)
 
 
 class SidecarAgent:
@@ -604,14 +682,9 @@ class SidecarAgent:
     def _run_checkpoint(self, payload: CheckpointPayload,
                         timeout_s: float,
                         stall_s: Optional[float] = None) -> AgentResult:
-        if self._shut_down or self._fatal:
-            return AgentResult(ok=False, error="agent_unavailable")
-        if self._cfg is None or self._tools is None or not self._initialized:
-            return AgentResult(ok=False, error="not_initialized")
-        if not self.is_healthy():
-            # Best-effort recover before failing the call.
-            if not self._try_recover("unhealthy before checkpoint"):
-                return AgentResult(ok=False, error="agent_unavailable")
+        refused = self._refuse_checkpoint()
+        if refused is not None:
+            return refused
 
         scope = ToolScope.for_payload(payload)
         pass_kind = scope.pass_kind
@@ -623,26 +696,7 @@ class SidecarAgent:
                 "notes_ids": scope.note_ids,
                 "evidence": list(scope.citable_ids),
             }
-        # The host owns the prompt. ``state`` and the pass flags still travel
-        # because installed bundles pre-filter tool calls with them.
-        params: Dict[str, Any] = {
-            "user_prompt": (
-                build_notes_user_prompt(payload.state_snapshot, payload.new_segments)
-                if payload.is_notes else build_checkpoint_user_prompt(
-                    payload.state_snapshot, payload.new_segments,
-                    payload.is_consolidation, payload.is_polish,
-                )
-            ),
-            "request_id": payload.request_id,
-            "state": payload.state_snapshot,
-            "new_segments": payload.new_segments,
-            "is_consolidation": payload.is_consolidation,
-            "is_polish": payload.is_polish,
-            "is_notes": payload.is_notes,
-        }
-        if payload.is_notes:
-            # The note-taker persona replaces the copilot charter for this pass.
-            params["system_prompt"] = build_note_taker_system_prompt()
+        params = _checkpoint_params(payload)
         logger.info(
             "Dispatching %s checkpoint request_id=%s (%d segments, "
             "timeout=%.0fs stall=%s)",
@@ -657,33 +711,8 @@ class SidecarAgent:
                 "checkpoint", params, timeout_s=timeout_s, stall_s=stall_s,
             )
         except Exception as exc:
-            if isinstance(exc, TimeoutError):
-                canceled = self._cancel_request(payload.request_id)
-                logger.warning(
-                    "Sidecar checkpoint RPC failed: %s "
-                    "(request_id=%s pass=%s cancel=%s)",
-                    exc, payload.request_id, pass_kind or "-",
-                    "acked" if canceled else "unconfirmed",
-                )
-                # A confirmed cancel frees the sidecar chain. An unconfirmed
-                # one may still be holding the serialized queue, so recover
-                # rather than let the next checkpoint wait behind unknown work.
-                if (
-                    not canceled
-                    and not self._shut_down
-                    and not self._fatal
-                ):
-                    self._try_recover(
-                        f"cancel unconfirmed after checkpoint timeout: {exc}"
-                    )
-                return AgentResult(ok=False, error=str(exc), op_results=list(self._checkpoint_op_results.get(payload.request_id, [])))
-            logger.warning(
-                "Sidecar checkpoint RPC failed: %s (request_id=%s pass=%s)",
-                exc, payload.request_id, pass_kind or "-",
-            )
-            if not self._shut_down and not self._fatal:
-                self._try_recover(f"checkpoint failure: {exc}")
-            return AgentResult(ok=False, error=str(exc), op_results=list(self._checkpoint_op_results.get(payload.request_id, [])))
+            # Runs before ``finally`` so the partial op results are still held.
+            return self._checkpoint_failure(exc, payload.request_id, pass_kind)
         finally:
             with self._lock:
                 actual_results = self._checkpoint_op_results.pop(payload.request_id, [])
@@ -693,20 +722,51 @@ class SidecarAgent:
 
         if not isinstance(result, dict):
             return AgentResult(ok=False, error="invalid checkpoint response")
+        return _checkpoint_result(result, actual_results)
 
-        usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
-        # Keep actual patch operations: the scheduler needs to know when
-        # transcript text changed so dashboard and notes do not remain stale.
-        # Tallies still account for question tools and bundle-policy rejections.
-        op_results = actual_results + _op_results_from_counts(
-            _coerce_count(result.get("applied")) - sum(r.ok for r in actual_results),
-            _coerce_count(result.get("rejected")) - sum(not r.ok for r in actual_results),
-        )
-        if result.get("canceled"):
-            return AgentResult(
-                ok=False, op_results=op_results, error="canceled", usage=usage,
+    def _refuse_checkpoint(self) -> Optional[AgentResult]:
+        """The failure to return instead of dispatching, or None when ready."""
+        if self._shut_down or self._fatal:
+            return AgentResult(ok=False, error="agent_unavailable")
+        if self._cfg is None or self._tools is None or not self._initialized:
+            return AgentResult(ok=False, error="not_initialized")
+        if not self.is_healthy():
+            # Best-effort recover before failing the call.
+            if not self._try_recover("unhealthy before checkpoint"):
+                return AgentResult(ok=False, error="agent_unavailable")
+        return None
+
+    def _checkpoint_failure(self, exc: Exception, request_id: str,
+                            pass_kind: str) -> AgentResult:
+        """Log a failed checkpoint RPC, recover the sidecar when needed."""
+        if isinstance(exc, TimeoutError):
+            canceled = self._cancel_request(request_id)
+            logger.warning(
+                "Sidecar checkpoint RPC failed: %s "
+                "(request_id=%s pass=%s cancel=%s)",
+                exc, request_id, pass_kind or "-",
+                "acked" if canceled else "unconfirmed",
             )
-        return AgentResult(ok=True, op_results=op_results, usage=usage)
+            # A confirmed cancel frees the sidecar chain. An unconfirmed
+            # one may still be holding the serialized queue, so recover
+            # rather than let the next checkpoint wait behind unknown work.
+            if (
+                not canceled
+                and not self._shut_down
+                and not self._fatal
+            ):
+                self._try_recover(
+                    f"cancel unconfirmed after checkpoint timeout: {exc}"
+                )
+        else:
+            logger.warning(
+                "Sidecar checkpoint RPC failed: %s (request_id=%s pass=%s)",
+                exc, request_id, pass_kind or "-",
+            )
+            if not self._shut_down and not self._fatal:
+                self._try_recover(f"checkpoint failure: {exc}")
+        partial = list(self._checkpoint_op_results.get(request_id, []))
+        return AgentResult(ok=False, error=str(exc), op_results=partial)
 
     def _bundle_path(self) -> str:
         return os.path.join(self._payload_dir, _BUNDLE_NAME)
@@ -945,30 +1005,14 @@ class SidecarAgent:
         if proc is None:
             return
         try:
-            if proc.stdin is not None:
-                try:
-                    proc.stdin.close()
-                except Exception:
-                    pass
+            _close_quietly(proc.stdin)
             if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=_TERMINATE_WAIT_S)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    try:
-                        proc.wait(timeout=1.0)
-                    except Exception:
-                        pass
+                _terminate_process(proc)
         except Exception:
             logger.debug("Sidecar process teardown error", exc_info=True)
         finally:
             for stream in (proc.stdout, proc.stderr):
-                if stream is not None:
-                    try:
-                        stream.close()
-                    except Exception:
-                        pass
+                _close_quietly(stream)
 
     def _alloc_id(self) -> int:
         with self._lock:
@@ -1282,74 +1326,82 @@ class SidecarAgent:
         if not isinstance(params, dict):
             params = {}
         if method == "hello":
-            with self._lock:
-                if (generation is not None
-                        and generation != self._restart_generation):
-                    return
-                expected = self._token
-            token = params.get("token")
-            protocol = params.get("protocol")
-            token_ok = (
-                isinstance(token, str)
-                and isinstance(expected, str)
-                and len(token) == len(expected)
-                and hmac.compare_digest(token, expected)
-            )
-            current = self._validate_hello(params)
-            ok = token_ok and protocol == _PROTOCOL_VERSION and current
-            self._hello_seen = True
-            self._hello_ok = bool(ok)
-            self._hello_outdated = bool(
-                token_ok and protocol == _PROTOCOL_VERSION and not current
-            )
-            self._text_protocols = params.get("text_protocols", []) if ok else []
-            version = params.get("harness_version") or params.get("pi_version")
-            if isinstance(version, str):
-                self._pi_version = version
-            if not ok:
-                logger.error(
-                    "Sidecar hello rejected (token_match=%s protocol=%r "
-                    "current=%s version=%r)",
-                    token_ok, protocol, current, version,
-                )
-            self._hello_event.set()
+            self._handle_hello(params, generation)
             return
         if method == "log":
-            level = str(params.get("level") or "info").lower()
-            text = str(params.get("msg") or "")
-            if level == "warning":
-                logger.warning("sidecar: %s", text)
-            elif level == "error":
-                logger.error("sidecar: %s", text)
-            elif level == "debug":
-                logger.debug("sidecar: %s", text)
-            else:
-                logger.info("sidecar: %s", text)
+            _log_sidecar_line(params)
             return
         if method == "progress":
-            if self.require_request_scope:
-                with self._lock:
-                    request = params.get("request_id")
-                    if (request not in self._active_request_ids
-                            or request in self._revoked_requests
-                            or (generation is not None and generation != self._restart_generation)):
-                        return
-            event = str(params.get("event") or "update")
-            delta = str(params.get("delta") or "")
-            tool = str(params.get("tool") or "")
-            request_id = params.get("request_id")
-            pass_kind = self._current_pass_kind(request_id)
-            detail = _progress_detail(event, delta, pass_kind)
-            self._note_progress(
-                detail,
-                request_id=request_id,
-                event=delta or event,
-            )
-            self._emit_activity(
-                _activity_kind(event, delta), detail, tool, pass_kind,
-            )
+            self._handle_progress(params, generation)
             return
         logger.debug("Ignoring unknown sidecar notification %r", method)
+
+    def _is_stale_generation(self, generation: Optional[int]) -> bool:
+        """Caller holds ``self._lock``."""
+        return generation is not None and generation != self._restart_generation
+
+    def _handle_hello(self, params: Dict[str, Any],
+                      generation: Optional[int]) -> None:
+        with self._lock:
+            if self._is_stale_generation(generation):
+                return
+            expected = self._token
+        token = params.get("token")
+        protocol = params.get("protocol")
+        token_ok = (
+            isinstance(token, str)
+            and isinstance(expected, str)
+            and len(token) == len(expected)
+            and hmac.compare_digest(token, expected)
+        )
+        current = self._validate_hello(params)
+        ok = token_ok and protocol == _PROTOCOL_VERSION and current
+        self._hello_seen = True
+        self._hello_ok = bool(ok)
+        self._hello_outdated = bool(
+            token_ok and protocol == _PROTOCOL_VERSION and not current
+        )
+        self._text_protocols = params.get("text_protocols", []) if ok else []
+        version = params.get("harness_version") or params.get("pi_version")
+        if isinstance(version, str):
+            self._pi_version = version
+        if not ok:
+            logger.error(
+                "Sidecar hello rejected (token_match=%s protocol=%r "
+                "current=%s version=%r)",
+                token_ok, protocol, current, version,
+            )
+        self._hello_event.set()
+
+    def _progress_in_scope(self, params: Dict[str, Any],
+                           generation: Optional[int]) -> bool:
+        """Whether a progress tick belongs to a live, unrevoked request."""
+        with self._lock:
+            request = params.get("request_id")
+            return not (
+                request not in self._active_request_ids
+                or request in self._revoked_requests
+                or self._is_stale_generation(generation)
+            )
+
+    def _handle_progress(self, params: Dict[str, Any],
+                         generation: Optional[int]) -> None:
+        if self.require_request_scope and not self._progress_in_scope(params, generation):
+            return
+        event = str(params.get("event") or "update")
+        delta = str(params.get("delta") or "")
+        tool = str(params.get("tool") or "")
+        request_id = params.get("request_id")
+        pass_kind = self._current_pass_kind(request_id)
+        detail = _progress_detail(event, delta, pass_kind)
+        self._note_progress(
+            detail,
+            request_id=request_id,
+            event=delta or event,
+        )
+        self._emit_activity(
+            _activity_kind(event, delta), detail, tool, pass_kind,
+        )
 
     def _handle_response(self, msg: Dict[str, Any]) -> None:
         req_id = msg.get("id")
