@@ -436,18 +436,24 @@ class RecordSync:
         """A connected connection, with what ``ready`` says about records noted."""
         connection = self._connect()
         try:
-            ready = connection.connect() if not getattr(connection, "ready", None) else connection.ready
+            ready = getattr(connection, "ready", None)
+            if not ready:
+                ready = connection.connect()
         except Exception:
             try:
                 connection.close()
             except Exception:
                 pass
             raise
-        capabilities = ready.get("capabilities") if isinstance(ready.get("capabilities"), dict) else {}
-        supports = "records" in capabilities
-        self._set(host_supports=supports,
-                  host_keeps=(capabilities.get("records") is True) if supports else None,
-                  stored=dict(ready.get("records") or {}) if supports else {})
+        capabilities = ready.get("capabilities")
+        if not isinstance(capabilities, dict):
+            capabilities = {}
+        if "records" in capabilities:
+            self._set(host_supports=True,
+                      host_keeps=capabilities.get("records") is True,
+                      stored=dict(ready.get("records") or {}))
+        else:
+            self._set(host_supports=False, host_keeps=None, stored={})
         return connection
 
     def run_once(self, *, startup: bool = False) -> None:
@@ -457,7 +463,10 @@ class RecordSync:
     @contextmanager
     def paused_for_backup(self):
         if not self._transfer_lock.acquire(timeout=30):
-            raise RuntimeError("Records are still moving to or from the paired host. Try backup again after sync finishes.")
+            raise RuntimeError(
+                "Records are still moving to or from the paired host. "
+                "Try backup again after sync finishes."
+            )
         try:
             yield
         finally:
@@ -470,14 +479,10 @@ class RecordSync:
             self._set(waiting="", active="", error="")
             return
         self._retarget(pairing.fingerprint)
-        due_digest = startup or time.monotonic() - self._digest_at >= DIGEST_CHECK_S
-        if due_digest:
+        if startup or time.monotonic() - self._digest_at >= DIGEST_CHECK_S:
             self._digest_at = time.monotonic()
             self._check_edits(pairing.fingerprint)
-        rows = self._rows(state="pending")
-        if self._retry_failed:
-            self._retry_failed = False
-            rows += self._rows(state="failed")
+        rows = self._outbox_rows()
         checkouts = self._due_checkouts(pairing.fingerprint, everything=startup)
         if not rows and not checkouts and not startup:
             return
@@ -489,19 +494,7 @@ class RecordSync:
             self._failed_attempt(str(exc) or "Couldn't reach the host.")
             return
         try:
-            if not self._host_supports and (rows or checkouts):
-                self._set(waiting=f"Update OpenWhisper on {pairing.host_name} to keep records there.")
-                return
-            for row in rows:
-                if self._stop.is_set():
-                    return
-                self._process(connection, row, pairing.host_name)
-            for row in checkouts:
-                if self._stop.is_set():
-                    return
-                self._return_checkout(connection, row)
-            self._failures = 0
-            self._retry_at = 0.0
+            self._transfer(connection, pairing, rows, checkouts)
         except RecordsUnavailable as exc:
             self._failed_attempt(str(exc))
         finally:
@@ -510,6 +503,30 @@ class RecordSync:
                 connection.close()
             except Exception:
                 pass
+
+    def _outbox_rows(self) -> list:
+        """Pending rows, plus failed ones once after the user asked to retry them."""
+        rows = self._rows(state="pending")
+        if self._retry_failed:
+            self._retry_failed = False
+            rows += self._rows(state="failed")
+        return rows
+
+    def _transfer(self, connection, pairing, rows: list, checkouts: list) -> None:
+        """Send ``rows`` and return ``checkouts`` over ``connection``, until stopped."""
+        if not self._host_supports and (rows or checkouts):
+            self._set(waiting=f"Update OpenWhisper on {pairing.host_name} to keep records there.")
+            return
+        for row in rows:
+            if self._stop.is_set():
+                return
+            self._process(connection, row, pairing.host_name)
+        for row in checkouts:
+            if self._stop.is_set():
+                return
+            self._return_checkout(connection, row)
+        self._failures = 0
+        self._retry_at = 0.0
 
     def _failed_attempt(self, message: str) -> None:
         delay = RETRY_BACKOFF_S[min(self._failures, len(RETRY_BACKOFF_S) - 1)]
