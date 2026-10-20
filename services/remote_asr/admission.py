@@ -12,6 +12,7 @@ from typing import Callable
 class _Ticket:
     device_id: str
     priority: int
+    bypasses: int = 0
 
 
 class WorkAdmission:
@@ -21,7 +22,15 @@ class WorkAdmission:
     connections therefore cannot buy more places in the queue. Disposable
     previews only use idle capacity. Stateful pushes instead receive the usual
     admission or an explicit busy refusal; none are silently shed.
+
+    An eligible waiter ages after two higher-priority grants. Aged waiters
+    are FIFO ahead of fresh priority selection: later arrivals cannot bypass
+    them. An ineligible same-device waiter never blocks an eligible device.
+    This bounds priority overtakes, not seconds spent behind active work.
     """
+
+    # Two priority overtakes, then FIFO aging prevents stream starvation.
+    _MAX_PRIORITY_BYPASSES = 2
 
     def __init__(self, active: int, queued: int, wait_s: float) -> None:
         self._active_limit = active
@@ -63,15 +72,24 @@ class WorkAdmission:
         self._devices[device_id] += 1
 
     def _next(self):
-        eligible = (ticket for ticket in self._queue if self._available(ticket.device_id))
-        return min(eligible, key=lambda ticket: ticket.priority, default=None)
+        eligible = [ticket for ticket in self._queue if self._available(ticket.device_id)]
+        aged = next((ticket for ticket in eligible
+                     if ticket.bypasses >= self._MAX_PRIORITY_BYPASSES), None)
+        return aged or min(eligible, key=lambda ticket: ticket.priority, default=None)
+
+    def _grant(self, selected: _Ticket) -> None:
+        # Count actual priority overtakes, not condition-variable wakeups.
+        for waiting in self._queue:
+            if waiting.priority > selected.priority and self._available(waiting.device_id):
+                waiting.bypasses = min(waiting.bypasses + 1, self._MAX_PRIORITY_BYPASSES)
+        self._queue.remove(selected)
+        self._take(selected.device_id)
 
     def _wait(self, ticket: _Ticket, still_connected: Callable[[], bool]) -> bool:
         deadline = time.monotonic() + self._wait_s
         while still_connected() and time.monotonic() < deadline:
             if self._next() is ticket:
-                self._queue.remove(ticket)
-                self._take(ticket.device_id)
+                self._grant(ticket)
                 self._condition.notify_all()
                 return True
             self._condition.wait(timeout=0.1)

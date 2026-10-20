@@ -255,3 +255,58 @@ def test_disconnected_client_cannot_start_idle_work():
     assert not admission.acquire(lambda: False, device_id="gone")
     assert admission.snapshot()["active"] == 0
     assert admission.snapshot()["queued"] == 0
+
+
+def test_priority_overtakes_are_bounded_by_actual_grants_not_polling():
+    from services.remote_asr.admission import _Ticket
+
+    admission = WorkAdmission(2, 16, 3)
+    assert admission.acquire(lambda: True, device_id="active")
+    blocked = _Ticket("active", 1, bypasses=2)
+    background = _Ticket("background", 1)
+    finals = [_Ticket(f"final-{index}", 0) for index in range(10)]
+    admission._queue.extend([blocked, background, *finals])
+    # The aged same-device ticket is ineligible and cannot block the free slot.
+    for _ in range(50):
+        assert admission._next() is finals[0]
+    assert background.bypasses == 0
+    for index in range(2):
+        assert admission._next() is finals[index]
+        admission._grant(finals[index])
+        assert admission._active == 2
+        admission.release(finals[index].device_id)
+        admission._queue.append(_Ticket(f"new-final-{index}", 0))
+    assert background.bypasses == 2
+    assert admission._next() is background
+    # Once the original active device releases, FIFO ties among aged eligible
+    # tickets preserve its earlier position, without resetting accumulated age.
+    admission.release("active")
+    assert admission._next() is blocked
+    admission._grant(blocked)
+    assert admission._next() is background
+    admission._grant(background)
+    admission.release("active")
+    admission.release("background")
+
+
+def test_native_stream_gets_turn_after_two_final_overtakes_over_tls(tmp_path):
+    with _host(tmp_path, queued=6) as (host, engine, connect):
+        connections = [connect()[0] for _ in range(7)]
+        results = {}
+        workers = [_start(connections[0], results, 100)]
+        assert engine.entered.wait(3)
+        workers.append(_start(connections[1], results, 200, "stream", session="native"))
+        _wait(lambda: len(host._work_admission._queue) == 1)
+        for index in range(2, 7):
+            workers.append(_start(connections[index], results, index * 100 + 100))
+            _wait(lambda: len(host._work_admission._queue) == index)
+        engine.release.set()
+        for worker in workers:
+            worker.join(5)
+            assert not worker.is_alive()
+        assert engine.calls == [("transcribe", 100), ("transcribe", 300),
+                                ("transcribe", 400), ("stream", 200),
+                                ("transcribe", 500), ("transcribe", 600),
+                                ("transcribe", 700)]
+        assert results[200]["events"] == [{"text": "200", "final": False}]
+        assert all(isinstance(result, dict) for result in results.values())
