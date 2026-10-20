@@ -242,73 +242,82 @@ class ParticleStyle:
 
         for particle in self.particles:
             if vortex_mode:
-                dx = particle.x - center_x
-                dy = particle.y - center_y
-                distance = math.sqrt(dx*dx + dy*dy)
-
-                if distance > 0:
-                    radial_force = -50 / (distance + 1)
-                    particle.vx += (dx / distance) * radial_force * dt
-                    particle.vy += (dy / distance) * radial_force * dt
-
-                    tangent_force = 100
-                    particle.vx += (-dy / distance) * tangent_force * dt
-                    particle.vy += (dx / distance) * tangent_force * dt
-
-                if particle.update(dt, 0, 0.95):
-                    alive_particles.append(particle)
-
+                alive = self._step_vortex(particle, dt, center_x, center_y)
             elif converge_mode:
-                dx = center_x - particle.x
-                dy = center_y - particle.y
-                distance = math.sqrt(dx*dx + dy*dy)
-
-                if distance > 5:
-                    nx = dx / distance
-                    ny = dy / distance
-
-                    attraction = 15000 / (distance + 10) + 500
-
-                    swirl = 300
-
-                    particle.vx += (nx * attraction - ny * swirl) * dt
-                    particle.vy += (ny * attraction + nx * swirl) * dt
-
-                    particle.vx *= 0.9 ** (dt * 30.0)
-                    particle.vy *= 0.9 ** (dt * 30.0)
-                else:
-                    particle.life -= dt * 5.0
-
-                if particle.update(dt, 0, 1.0):
-                    alive_particles.append(particle)
-
+                alive = self._step_converge(particle, dt, center_x, center_y)
             else:
-                turbulence_multiplier = 1.0 + audio_energy * 2
-                turbulence_x = (math.sin(self.animation_time * 3 + particle.x * 0.1) *
-                              self.turbulence_strength * turbulence_multiplier)
-                turbulence_y = (math.cos(self.animation_time * 2.5 + particle.y * 0.1) *
-                              self.turbulence_strength * turbulence_multiplier * 0.7)
-
-                particle.vx += turbulence_x * dt
-                particle.vy += turbulence_y * dt
-
-                wind_x = math.sin(self.animation_time) * self.wind_strength
-                particle.vx += wind_x * dt
-
-                if particle.x <= 0 or particle.x >= self.width:
-                    particle.vx *= -0.8
-                    particle.x = max(0, min(self.width, particle.x))
-
-                if particle.y >= self.height - 25:
-                    particle.vy *= -0.6
-                    particle.y = self.height - 25
-
-                if particle.update(dt, self.gravity, self.damping):
-                    alive_particles.append(particle)
+                alive = self._step_drift(particle, dt, audio_energy)
+            if alive:
+                alive_particles.append(particle)
 
         self.particles = alive_particles
         if len(self.particles) > self.max_particles:
             self.particles = self.particles[-self.max_particles:]
+
+    def _step_vortex(self, particle, dt: float, center_x, center_y):
+        """Swirl around the centre while drifting slowly inward."""
+        dx = particle.x - center_x
+        dy = particle.y - center_y
+        distance = math.sqrt(dx*dx + dy*dy)
+
+        if distance > 0:
+            radial_force = -50 / (distance + 1)
+            particle.vx += (dx / distance) * radial_force * dt
+            particle.vy += (dy / distance) * radial_force * dt
+
+            tangent_force = 100
+            particle.vx += (-dy / distance) * tangent_force * dt
+            particle.vy += (dx / distance) * tangent_force * dt
+
+        return particle.update(dt, 0, 0.95)
+
+    def _step_converge(self, particle, dt: float, center_x, center_y):
+        """Pull into the centre with a swirl; a particle that arrives fades out."""
+        dx = center_x - particle.x
+        dy = center_y - particle.y
+        distance = math.sqrt(dx*dx + dy*dy)
+
+        if distance > 5:
+            nx = dx / distance
+            ny = dy / distance
+
+            attraction = 15000 / (distance + 10) + 500
+
+            swirl = 300
+
+            particle.vx += (nx * attraction - ny * swirl) * dt
+            particle.vy += (ny * attraction + nx * swirl) * dt
+
+            particle.vx *= 0.9 ** (dt * 30.0)
+            particle.vy *= 0.9 ** (dt * 30.0)
+        else:
+            particle.life -= dt * 5.0
+
+        return particle.update(dt, 0, 1.0)
+
+    def _step_drift(self, particle, dt: float, audio_energy: float):
+        """Rise on turbulence and wind, bouncing off the sides and the floor."""
+        turbulence_multiplier = 1.0 + audio_energy * 2
+        turbulence_x = (math.sin(self.animation_time * 3 + particle.x * 0.1) *
+                      self.turbulence_strength * turbulence_multiplier)
+        turbulence_y = (math.cos(self.animation_time * 2.5 + particle.y * 0.1) *
+                      self.turbulence_strength * turbulence_multiplier * 0.7)
+
+        particle.vx += turbulence_x * dt
+        particle.vy += turbulence_y * dt
+
+        wind_x = math.sin(self.animation_time) * self.wind_strength
+        particle.vx += wind_x * dt
+
+        if particle.x <= 0 or particle.x >= self.width:
+            particle.vx *= -0.8
+            particle.x = max(0, min(self.width, particle.x))
+
+        if particle.y >= self.height - 25:
+            particle.vy *= -0.6
+            particle.y = self.height - 25
+
+        return particle.update(dt, self.gravity, self.damping)
 
     def _draw_particles(self, painter: QPainter):
         painter.setPen(Qt.PenStyle.NoPen)
@@ -326,7 +335,8 @@ class ParticleStyle:
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.setPen(QPen(glow_color, 1))
                 glow_size = size + 1
-                painter.drawEllipse(QRectF(particle.x - glow_size, particle.y - glow_size, glow_size * 2, glow_size * 2))
+                glow_rect = QRectF(particle.x - glow_size, particle.y - glow_size, glow_size * 2, glow_size * 2)
+                painter.drawEllipse(glow_rect)
                 painter.setPen(Qt.PenStyle.NoPen)
 
     def _draw_text(self, painter: QPainter, rect: QRect, message: str):
