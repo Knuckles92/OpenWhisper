@@ -15,6 +15,7 @@ current state untouched).
 import logging
 import sys
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
@@ -198,6 +199,126 @@ def meeting_audio_shows_platform_warning(platform: Optional[str] = None) -> bool
     return True
 
 
+def _saved_setting(key: str):
+    return settings_manager.get(key, SETTING_DEFAULTS[key])
+
+
+#: Identity fields a meeting-state payload may update, kept for the header.
+_IDENTITY_KEYS = (
+    "title", "display_title", "started_at", "ended_at",
+    "paused_total_s", "insights_pill", "insights_tone",
+)
+
+_FINALIZATION_TITLES = {
+    "running": "Finalizing Meeting",
+    "completed": "Final Insights Ready",
+    "disabled": "AI Insights Off",
+    "unavailable": "Final Insights Unavailable",
+    "failed": "Final Insights Incomplete",
+}
+_FINALIZATION_DEFAULTS = {
+    "running": "Preparing final insights…",
+    "completed": "Final insights are ready.",
+    "disabled": "AI insights are off for this meeting.",
+    "unavailable": "Final insights could not run.",
+    "failed": "Final insights failed.",
+}
+
+#: Steps that may run again after they completed.
+_OPTIONAL_RERUN_STEPS = frozenset({"redecode", "speaker_id", "polish", "consolidation"})
+
+
+@dataclass
+class _FinalizationView:
+    """A finalization payload, read once for the card."""
+
+    status: str
+    message: str
+    current_step: int
+    total_steps: int
+    step_details: str
+    steps: List[Dict[str, Any]]
+    content: Dict[str, Any]
+    meeting_failed: bool
+    empty_meeting: bool
+
+    @classmethod
+    def read(cls, finalization: Dict[str, Any]) -> "_FinalizationView":
+        status = str(finalization.get("status") or "")
+        message = str(finalization.get("message") or "").strip()
+        current_step = int(finalization.get("current_step") or 0)
+        total_steps = int(finalization.get("total_steps") or 0)
+        step_details = str(finalization.get("step_details") or "").strip()
+        steps = list(finalization.get("steps") or [])
+        content = dict(finalization.get("content_summary") or {})
+        return cls(
+            status=status,
+            message=message,
+            current_step=current_step,
+            total_steps=total_steps,
+            step_details=step_details,
+            steps=steps,
+            content=content,
+            meeting_failed=str(content.get("meeting_status") or "") == "failed",
+            empty_meeting=bool(content.get("is_empty", False)),
+        )
+
+
+def _finalization_heading(
+    status: str, message: str, has_failed_steps: bool, empty_meeting: bool, meeting_failed: bool
+) -> Tuple[str, str]:
+    """The card's title and message."""
+    if has_failed_steps and status == "completed":
+        title = "Meeting Finished With Issues"
+        default = "Some post-meeting steps failed. The recording was kept."
+    else:
+        title = _FINALIZATION_TITLES.get(status, "Final insights")
+        default = _FINALIZATION_DEFAULTS.get(status, "")
+    if meeting_failed and empty_meeting:
+        title = "Meeting Failed"
+    elif empty_meeting:
+        title = "Empty Meeting"
+    return title, message or default
+
+
+def _step_icon(step_status) -> Tuple[str, str]:
+    """A step's status glyph and its colour token."""
+    if step_status == "completed":
+        return "✓", "@success-text"
+    if step_status == "running":
+        return "●", "@accent"
+    if step_status == "failed":
+        return "✗", "@danger-text"
+    if step_status == "skipped":
+        return "–", "@text-muted"
+    return "○", "@text-muted"
+
+
+def _step_detail_text(step_status, detail_text: str) -> str:
+    if detail_text and step_status == "running":
+        return "In progress"
+    if step_status == "completed":
+        return "Done"
+    if step_status == "failed":
+        return "Failed"
+    if step_status == "skipped":
+        return "Skipped"
+    return "Queued"
+
+
+def _step_action_label(step_id: str, step_status, allow_actions: bool) -> str:
+    """The label for the row's action button; empty when it offers none."""
+    if not (allow_actions and step_id):
+        return ""
+    if step_status in {"failed", "skipped"}:
+        return "Retry"
+    if step_status == "completed" and step_id in _OPTIONAL_RERUN_STEPS:
+        return "Run again"
+    if step_status == "failed" and step_id == "finalize":
+        return "Retry"
+    return ""
+
+
 class _BriefEdit(QPlainTextEdit):
     """Brief field whose height is a count of text lines at the live font.
 
@@ -279,7 +400,7 @@ class MeetingModeTab(QWidget):
 
         self._setup_ui()
         self.set_developer_mode(
-            bool(settings_manager.get(SettingsKey.DEVELOPER_MODE, SETTING_DEFAULTS[SettingsKey.DEVELOPER_MODE]))
+            bool(_saved_setting(SettingsKey.DEVELOPER_MODE))
         )
         self._apply_layout_state()
 
@@ -802,7 +923,7 @@ class MeetingModeTab(QWidget):
         self.cloud_checkbox = QCheckBox("AI insights")
         self.cloud_checkbox.setObjectName("meetingAiInsightsCheckbox")
         self.cloud_checkbox.setChecked(
-            bool(settings_manager.get(SettingsKey.MEETING_CLOUD_LAST_ENABLED, SETTING_DEFAULTS[SettingsKey.MEETING_CLOUD_LAST_ENABLED]))
+            bool(_saved_setting(SettingsKey.MEETING_CLOUD_LAST_ENABLED))
         )
         self.cloud_checkbox.setAccessibleDescription(
             "When checked, transcript text goes to the AI model chosen in "
@@ -1056,57 +1177,18 @@ class MeetingModeTab(QWidget):
         if not isinstance(payload, dict):
             return
 
-        if "background_available" in payload:
-            self._background_available = bool(payload["background_available"])
-        if "background_message" in payload:
-            message = str(payload["background_message"] or "")
-            self.background_notice.setText(message)
-            self.background_notice.setVisible(bool(message))
-
-        if "cloud_enabled" in payload:
-            self.cloud_checkbox.blockSignals(True)
-            self.cloud_checkbox.setChecked(bool(payload["cloud_enabled"]))
-            self.cloud_checkbox.blockSignals(False)
-            # Blocked signals skip the toggled slots, so the brief (for
-            # instance after a declined consent dialog) syncs here instead.
-            self._sync_brief_availability()
-
-        speech = payload.get("speech")
-        if isinstance(speech, dict) and speech.get("source") == "remote":
-            self.speech_destination.setText(
-                f"Remote speech · {speech.get('host', '')} · {speech.get('model', '')}. "
-                + ("Audio sent to this host; recordings saved here."
-                   if speech.get("connected") else str(speech.get("message") or "Reconnecting…"))
-            )
+        self._apply_background(payload)
+        self._apply_cloud_choice(payload)
+        self._apply_speech_destination(payload.get("speech"))
 
         if "elapsed_s" in payload:
-            try:
-                self._elapsed_base_s = float(payload["elapsed_s"])
-            except (TypeError, ValueError):
-                self._elapsed_base_s = 0.0
-            self._running_since = time.monotonic()
-            self._refresh_elapsed()
+            self._restart_elapsed(payload["elapsed_s"])
 
         if "paused" in payload:
             self._set_paused(bool(payload["paused"]))
 
         if "status" in payload:
-            status = str(payload["status"])
-            # Engine status may arrive before the runtime confirms startup.
-            # Keep the session card visible and controls disabled until then.
-            self._starting = status == "starting" or (
-                self._starting
-                and status in {"active", "paused"}
-                and not payload.get("active", self._active)
-            )
-            self.set_status_text("Starting" if self._starting else status.capitalize())
-            # A new meeting start clears any previous finalization result.
-            if status == "starting":
-                self._background_available = False
-                self._finalization = None
-                self._identity = {}
-                # The engine snapshots its endpoint now; show that one.
-                self.refresh_ai_destination()
+            self._apply_status(str(payload["status"]), payload)
 
         if "dashboard_available" in payload:
             self._has_dashboard = bool(payload["dashboard_available"])
@@ -1115,14 +1197,7 @@ class MeetingModeTab(QWidget):
             meeting_id = payload.get("meeting_id")
             self._meeting_id = str(meeting_id) if meeting_id else None
 
-        identity_keys = (
-            "title", "display_title", "started_at", "ended_at",
-            "paused_total_s", "insights_pill", "insights_tone",
-        )
-        if any(key in payload for key in identity_keys):
-            for key in identity_keys:
-                if key in payload:
-                    self._identity[key] = payload.get(key)
+        self._apply_identity(payload)
 
         if "finalization" in payload:
             self._set_finalization(payload.get("finalization"))
@@ -1131,6 +1206,67 @@ class MeetingModeTab(QWidget):
             self._set_active(bool(payload["active"]))
         else:
             self._apply_layout_state()
+
+    def _apply_background(self, payload: Dict[str, Any]) -> None:
+        if "background_available" in payload:
+            self._background_available = bool(payload["background_available"])
+        if "background_message" in payload:
+            message = str(payload["background_message"] or "")
+            self.background_notice.setText(message)
+            self.background_notice.setVisible(bool(message))
+
+    def _apply_cloud_choice(self, payload: Dict[str, Any]) -> None:
+        if "cloud_enabled" not in payload:
+            return
+        self.cloud_checkbox.blockSignals(True)
+        self.cloud_checkbox.setChecked(bool(payload["cloud_enabled"]))
+        self.cloud_checkbox.blockSignals(False)
+        # Blocked signals skip the toggled slots, so the brief (for
+        # instance after a declined consent dialog) syncs here instead.
+        self._sync_brief_availability()
+
+    def _apply_speech_destination(self, speech) -> None:
+        """Say where remote meeting speech goes; local speech keeps the default copy."""
+        if not (isinstance(speech, dict) and speech.get("source") == "remote"):
+            return
+        if speech.get("connected"):
+            state = "Audio sent to this host; recordings saved here."
+        else:
+            state = str(speech.get("message") or "Reconnecting…")
+        self.speech_destination.setText(
+            f"Remote speech · {speech.get('host', '')} · {speech.get('model', '')}. " + state
+        )
+
+    def _restart_elapsed(self, elapsed_s) -> None:
+        """Restart the elapsed clock from the runtime's count."""
+        try:
+            self._elapsed_base_s = float(elapsed_s)
+        except (TypeError, ValueError):
+            self._elapsed_base_s = 0.0
+        self._running_since = time.monotonic()
+        self._refresh_elapsed()
+
+    def _apply_status(self, status: str, payload: Dict[str, Any]) -> None:
+        # Engine status may arrive before the runtime confirms startup.
+        # Keep the session card visible and controls disabled until then.
+        self._starting = status == "starting" or (
+            self._starting
+            and status in {"active", "paused"}
+            and not payload.get("active", self._active)
+        )
+        self.set_status_text("Starting" if self._starting else status.capitalize())
+        # A new meeting start clears any previous finalization result.
+        if status == "starting":
+            self._background_available = False
+            self._finalization = None
+            self._identity = {}
+            # The engine snapshots its endpoint now; show that one.
+            self.refresh_ai_destination()
+
+    def _apply_identity(self, payload: Dict[str, Any]) -> None:
+        for key in _IDENTITY_KEYS:
+            if key in payload:
+                self._identity[key] = payload.get(key)
 
     def set_status_text(self, text: str) -> None:
         """Update the status pill label.
@@ -1356,15 +1492,8 @@ class MeetingModeTab(QWidget):
         Args:
             finalization: Mapping with status, message, and steps.
         """
-        status = str(finalization.get("status") or "")
-        message = str(finalization.get("message") or "").strip()
-        current_step = int(finalization.get("current_step") or 0)
-        total_steps = int(finalization.get("total_steps") or 0)
-        step_details = str(finalization.get("step_details") or "").strip()
-        steps = list(finalization.get("steps") or [])
-        content = dict(finalization.get("content_summary") or {})
-        meeting_failed = str(content.get("meeting_status") or "") == "failed"
-        empty_meeting = bool(content.get("is_empty", False))
+        view = _FinalizationView.read(finalization)
+        content = view.content
         self._can_rerun_speakers = bool(
             content.get("can_rerun_speakers", False)
         )
@@ -1374,67 +1503,32 @@ class MeetingModeTab(QWidget):
         self._speaker_rerun_reason = str(
             content.get("speaker_rerun_reason") or ""
         )
-        no_report = empty_meeting or meeting_failed or status == "running"
-        self.finalization_report_button.setEnabled(not no_report)
-        if empty_meeting or meeting_failed:
-            report_tip = "No report for this meeting"
-        elif status == "running":
-            report_tip = "The final report is still being prepared"
-        else:
-            report_tip = "Open the final report in the web dashboard"
-        self.finalization_report_button.setToolTip(report_tip)
-        if empty_meeting:
-            message = (
+        self._update_report_button(view)
+        if view.empty_meeting:
+            view.message = (
                 "No audio or transcript was captured. The meeting failed "
                 "before it could start, so no dashboard was created."
-                if meeting_failed
+                if view.meeting_failed
                 else "No audio or transcript was captured for this meeting."
             )
 
-        titles = {
-            "running": "Finalizing Meeting",
-            "completed": "Final Insights Ready",
-            "disabled": "AI Insights Off",
-            "unavailable": "Final Insights Unavailable",
-            "failed": "Final Insights Incomplete",
-        }
-        defaults = {
-            "running": "Preparing final insights…",
-            "completed": "Final insights are ready.",
-            "disabled": "AI insights are off for this meeting.",
-            "unavailable": "Final insights could not run.",
-            "failed": "Final insights failed.",
-        }
         failed_steps = [
-            step for step in steps
+            step for step in view.steps
             if str(step.get("status") or "") == "failed"
         ]
-        needs_retry = bool(failed_steps) or status in {"failed", "unavailable"}
-        display_status = status
-        if failed_steps and status == "completed":
-            display_status = "failed"
-            titles = dict(titles)
-            titles["failed"] = "Meeting Finished With Issues"
-            defaults = dict(defaults)
-            defaults["failed"] = (
-                message
-                or "Some post-meeting steps failed. The recording was kept."
-            )
-        self.finalization_title.setText(
-            "Meeting Failed"
-            if meeting_failed and empty_meeting
-            else "Empty Meeting"
-            if empty_meeting
-            else titles.get(display_status, "Final insights")
+        needs_retry = bool(failed_steps) or view.status in {"failed", "unavailable"}
+        title, shown_message = _finalization_heading(
+            view.status, view.message, bool(failed_steps), view.empty_meeting, view.meeting_failed
         )
-        self.finalization_message.setText(message or defaults.get(display_status, ""))
+        self.finalization_title.setText(title)
+        self.finalization_message.setText(shown_message)
         self.finalization_card.setAccessibleName(self.finalization_title.text())
         self.finalization_card.setAccessibleDescription(
             self.finalization_message.text()
         )
         self.finalization_keep_hint.setText(
             "This failed start has no audio or transcript."
-            if empty_meeting
+            if view.empty_meeting
             else "This meeting, transcript, and audio stay in Past Meetings. "
                  "Nothing is deleted."
         )
@@ -1442,126 +1536,131 @@ class MeetingModeTab(QWidget):
             self._speaker_rerun_tip()
         )
 
-        if status == "running":
+        if view.status == "running":
             tone = "neutral"
-            self.finalization_progress.show()
-            self.finalization_retry_button.hide()
-            self.finalization_retry_speakers_button.hide()
-            self._set_incomplete_actions_visible(False)
-            self._set_done_visible(False)
-            self.finalization_active_box.show()
-
-            if total_steps > 0:
-                self.finalization_step_badge.setText(f"Step {current_step} of {total_steps}")
-                self.finalization_step_badge.setProperty("badgeTone", "info")
-                self.finalization_step_badge.show()
-                # Progress calculation
-                pct = int(max(5, min(95, ((current_step - 0.5) / total_steps) * 100)))
-                self.finalization_progress.setRange(0, 100)
-                self.finalization_progress.setValue(pct)
-            else:
-                self.finalization_step_badge.setText("In Progress")
-                self.finalization_step_badge.setProperty("badgeTone", "info")
-                self.finalization_step_badge.show()
-                # Indeterminate only when steps not configured
-                self.finalization_progress.setRange(0, 0)
-
-            if step_details and step_details != message:
-                self.finalization_detail.setText(step_details)
-                self.finalization_detail.show()
-            else:
-                self.finalization_detail.hide()
-
-            if steps:
-                self._populate_steps(steps, current_step, allow_actions=False)
-                self.finalization_steps_widget.show()
-            else:
-                self.finalization_steps_widget.hide()
-
+            self._show_running_finalization(view)
         else:
             self.finalization_progress.hide()
             self.finalization_progress.setRange(0, 1)
             self.finalization_progress.setValue(0)
             has_speaker_step = any(
-                str(step.get("id") or "") == "speaker_id" for step in steps
+                str(step.get("id") or "") == "speaker_id" for step in view.steps
             )
 
-            if status == "completed" and not failed_steps:
+            if view.status == "completed" and not failed_steps:
                 tone = "success"
-                self.finalization_step_badge.setText("Complete")
-                self.finalization_step_badge.setProperty("badgeTone", "success")
-                self.finalization_step_badge.show()
-                self.finalization_retry_button.hide()
-                self.finalization_retry_speakers_button.setVisible(
-                    not has_speaker_step and self._speaker_rerun_offered
-                )
-                self.finalization_retry_speakers_button.setEnabled(
-                    self._speaker_rerun_allowed()
-                )
-                self._set_incomplete_actions_visible(False)
-                self._set_done_visible(True)
-                # Header + checklist already cover a successful finish; the
-                # stats recap lives on the dashboard instead.
-                self.finalization_active_box.setVisible(empty_meeting)
-                self.finalization_detail.hide()
-
-                if steps:
-                    self._populate_steps(steps, current_step=len(steps))
-                    self.finalization_steps_widget.show()
-                else:
-                    self.finalization_steps_widget.hide()
-
+                self._show_completed_finalization(view, has_speaker_step)
             elif needs_retry:
                 tone = "warning"
-                if failed_steps:
-                    badge_text = "Needs retry"
-                else:
-                    badge_text = "Failed" if status == "failed" else "Unavailable"
-                self.finalization_step_badge.setText(badge_text)
-                self.finalization_step_badge.setProperty("badgeTone", "warning")
-                self.finalization_step_badge.show()
-                self.finalization_retry_button.show()
-                self.finalization_retry_button.setEnabled(True)
-                self.finalization_retry_speakers_button.setVisible(
-                    not has_speaker_step and self._speaker_rerun_offered
-                )
-                self.finalization_retry_speakers_button.setEnabled(
-                    self._speaker_rerun_allowed()
-                )
-                self._set_incomplete_actions_visible(True)
-                self._set_done_visible(False)
-                self.finalization_active_box.show()
-
-                if step_details and step_details != message:
-                    self.finalization_detail.setText(step_details)
-                    self.finalization_detail.show()
-                else:
-                    self.finalization_detail.hide()
-
-                if steps:
-                    self._populate_steps(steps, current_step)
-                    self.finalization_steps_widget.show()
-                else:
-                    self.finalization_steps_widget.hide()
-
+                self._show_retry_finalization(view, bool(failed_steps), has_speaker_step)
             else:
                 tone = "info"
-                self.finalization_step_badge.setText("Off")
-                self.finalization_step_badge.setProperty("badgeTone", "neutral")
-                self.finalization_step_badge.show()
-                self.finalization_active_box.show()
-                self.finalization_detail.hide()
-                self.finalization_steps_widget.hide()
-                self.finalization_retry_button.hide()
-                self.finalization_retry_speakers_button.setVisible(
-                    self._speaker_rerun_offered
-                )
-                self.finalization_retry_speakers_button.setEnabled(
-                    self._speaker_rerun_allowed()
-                )
-                self._set_incomplete_actions_visible(False)
-                self._set_done_visible(True)
+                self._show_off_finalization()
 
+        self._apply_finalization_tone(tone)
+
+    def _update_report_button(self, view: _FinalizationView) -> None:
+        no_report = view.empty_meeting or view.meeting_failed or view.status == "running"
+        self.finalization_report_button.setEnabled(not no_report)
+        if view.empty_meeting or view.meeting_failed:
+            report_tip = "No report for this meeting"
+        elif view.status == "running":
+            report_tip = "The final report is still being prepared"
+        else:
+            report_tip = "Open the final report in the web dashboard"
+        self.finalization_report_button.setToolTip(report_tip)
+
+    def _show_running_finalization(self, view: _FinalizationView) -> None:
+        self.finalization_progress.show()
+        self.finalization_retry_button.hide()
+        self.finalization_retry_speakers_button.hide()
+        self._set_incomplete_actions_visible(False)
+        self._set_done_visible(False)
+        self.finalization_active_box.show()
+
+        if view.total_steps > 0:
+            self._show_step_badge(f"Step {view.current_step} of {view.total_steps}", "info")
+            # Progress calculation
+            pct = int(max(5, min(95, ((view.current_step - 0.5) / view.total_steps) * 100)))
+            self.finalization_progress.setRange(0, 100)
+            self.finalization_progress.setValue(pct)
+        else:
+            self._show_step_badge("In Progress", "info")
+            # Indeterminate only when steps not configured
+            self.finalization_progress.setRange(0, 0)
+
+        self._show_step_details(view)
+        self._show_steps(view.steps, view.current_step, allow_actions=False)
+
+    def _show_completed_finalization(self, view: _FinalizationView, has_speaker_step: bool) -> None:
+        self._show_step_badge("Complete", "success")
+        self.finalization_retry_button.hide()
+        self._offer_speaker_rerun(not has_speaker_step and self._speaker_rerun_offered)
+        self._set_incomplete_actions_visible(False)
+        self._set_done_visible(True)
+        # Header + checklist already cover a successful finish; the
+        # stats recap lives on the dashboard instead.
+        self.finalization_active_box.setVisible(view.empty_meeting)
+        self.finalization_detail.hide()
+        self._show_steps(view.steps, len(view.steps))
+
+    def _show_retry_finalization(
+        self, view: _FinalizationView, has_failed_steps: bool, has_speaker_step: bool
+    ) -> None:
+        if has_failed_steps:
+            badge_text = "Needs retry"
+        else:
+            badge_text = "Failed" if view.status == "failed" else "Unavailable"
+        self._show_step_badge(badge_text, "warning")
+        self.finalization_retry_button.show()
+        self.finalization_retry_button.setEnabled(True)
+        self._offer_speaker_rerun(not has_speaker_step and self._speaker_rerun_offered)
+        self._set_incomplete_actions_visible(True)
+        self._set_done_visible(False)
+        self.finalization_active_box.show()
+
+        self._show_step_details(view)
+        self._show_steps(view.steps, view.current_step)
+
+    def _show_off_finalization(self) -> None:
+        self._show_step_badge("Off", "neutral")
+        self.finalization_active_box.show()
+        self.finalization_detail.hide()
+        self.finalization_steps_widget.hide()
+        self.finalization_retry_button.hide()
+        self._offer_speaker_rerun(self._speaker_rerun_offered)
+        self._set_incomplete_actions_visible(False)
+        self._set_done_visible(True)
+
+    def _show_step_badge(self, text: str, tone: str) -> None:
+        self.finalization_step_badge.setText(text)
+        self.finalization_step_badge.setProperty("badgeTone", tone)
+        self.finalization_step_badge.show()
+
+    def _offer_speaker_rerun(self, visible: bool) -> None:
+        self.finalization_retry_speakers_button.setVisible(visible)
+        self.finalization_retry_speakers_button.setEnabled(
+            self._speaker_rerun_allowed()
+        )
+
+    def _show_step_details(self, view: _FinalizationView) -> None:
+        """The current step's detail line, unless it repeats the message."""
+        if view.step_details and view.step_details != view.message:
+            self.finalization_detail.setText(view.step_details)
+            self.finalization_detail.show()
+        else:
+            self.finalization_detail.hide()
+
+    def _show_steps(
+        self, steps: List[Dict[str, Any]], current_step: int, allow_actions: bool = True
+    ) -> None:
+        if steps:
+            self._populate_steps(steps, current_step, allow_actions=allow_actions)
+            self.finalization_steps_widget.show()
+        else:
+            self.finalization_steps_widget.hide()
+
+    def _apply_finalization_tone(self, tone: str) -> None:
         self.finalization_card.setProperty("finalizationTone", tone)
         # Force QSS to re-evaluate dynamic properties.
         for widget in (self.finalization_card, self.finalization_step_badge):
@@ -1603,92 +1702,69 @@ class MeetingModeTab(QWidget):
             if widget is not None:
                 widget.deleteLater()
 
-        optional_rerun = {"redecode", "speaker_id", "polish", "consolidation"}
         for idx, s in enumerate(steps, 1):
-            row = QWidget()
-            row.setObjectName("meetingFinalizationStepRow")
-            row_layout = QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 3, 0, 3)
-            row_layout.setSpacing(8)
+            self._add_step_row(idx, s, allow_actions)
 
-            step_id = str(s.get("id") or "")
-            step_status = s.get("status", "pending")
-            step_name = str(s.get("name") or f"Step {idx}")
-            detail_text = str(s.get("detail") or "")
-            row.setAccessibleName(f"{step_name}: {step_status}")
-            row.setAccessibleDescription(detail_text)
-            if step_status == "completed":
-                icon_text = "✓"
-                icon_color = "@success-text"
-            elif step_status == "running":
-                icon_text = "●"
-                icon_color = "@accent"
-            elif step_status == "failed":
-                icon_text = "✗"
-                icon_color = "@danger-text"
-            elif step_status == "skipped":
-                icon_text = "–"
-                icon_color = "@text-muted"
-            else:
-                icon_text = "○"
-                icon_color = "@text-muted"
+    def _add_step_row(self, idx: int, s: Dict[str, Any], allow_actions: bool) -> None:
+        row = QWidget()
+        row.setObjectName("meetingFinalizationStepRow")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 3, 0, 3)
+        row_layout.setSpacing(8)
 
-            icon_label = QLabel(icon_text)
-            icon_label.setObjectName("meetingFinalizationStepIcon")
-            icon_label.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
-            icon_label.setStyleSheet(f"color: {icon_color};")
-            icon_label.setFixedWidth(16)
-            row_layout.addWidget(icon_label)
+        step_id = str(s.get("id") or "")
+        step_status = s.get("status", "pending")
+        step_name = str(s.get("name") or f"Step {idx}")
+        detail_text = str(s.get("detail") or "")
+        row.setAccessibleName(f"{step_name}: {step_status}")
+        row.setAccessibleDescription(detail_text)
+        icon_text, icon_color = _step_icon(step_status)
 
-            name_label = QLabel(step_name)
-            name_label.setObjectName("meetingFinalizationStepName")
-            name_font = QFont("Segoe UI", 11)
-            if step_status == "running":
-                name_font.setWeight(QFont.Weight.DemiBold)
-            name_label.setFont(name_font)
-            row_layout.addWidget(name_label)
+        icon_label = QLabel(icon_text)
+        icon_label.setObjectName("meetingFinalizationStepIcon")
+        icon_label.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        icon_label.setStyleSheet(f"color: {icon_color};")
+        icon_label.setFixedWidth(16)
+        row_layout.addWidget(icon_label)
 
-            row_layout.addStretch()
+        name_label = QLabel(step_name)
+        name_label.setObjectName("meetingFinalizationStepName")
+        name_font = QFont("Segoe UI", 11)
+        if step_status == "running":
+            name_font.setWeight(QFont.Weight.DemiBold)
+        name_label.setFont(name_font)
+        row_layout.addWidget(name_label)
 
-            if detail_text and step_status == "running":
-                detail_label = QLabel("In progress")
-            elif step_status == "completed":
-                detail_label = QLabel("Done")
-            elif step_status == "failed":
-                detail_label = QLabel("Failed")
-            elif step_status == "skipped":
-                detail_label = QLabel("Skipped")
-            else:
-                detail_label = QLabel("Queued")
-            detail_label.setObjectName("meetingFinalizationStepDetail")
-            detail_label.setFont(QFont("Segoe UI", 10))
-            row_layout.addWidget(detail_label)
+        row_layout.addStretch()
 
-            action_label = ""
-            if allow_actions and step_id:
-                if step_status in {"failed", "skipped"}:
-                    action_label = "Retry"
-                elif step_status == "completed" and step_id in optional_rerun:
-                    action_label = "Run again"
-                elif step_status == "failed" and step_id == "finalize":
-                    action_label = "Retry"
-            if action_label:
-                action = QPushButton(action_label)
-                action.setObjectName("meetingFinalizationStepAction")
-                action.setCursor(Qt.CursorShape.PointingHandCursor)
-                action.setFlat(True)
-                action.setAccessibleName(f"{action_label} {step_name}")
-                action.clicked.connect(
-                    lambda _checked=False, sid=step_id: (
-                        self.retry_step_requested.emit(sid)
-                    )
-                )
-                if step_id == "speaker_id" and not self._speaker_rerun_allowed():
-                    action.setEnabled(False)
-                    action.setToolTip(self._speaker_rerun_tip())
-                row_layout.addWidget(action)
+        detail_label = QLabel(_step_detail_text(step_status, detail_text))
+        detail_label.setObjectName("meetingFinalizationStepDetail")
+        detail_label.setFont(QFont("Segoe UI", 10))
+        row_layout.addWidget(detail_label)
 
-            self.finalization_steps_layout.addWidget(row)
+        action_label = _step_action_label(step_id, step_status, allow_actions)
+        if action_label:
+            self._add_step_action(row_layout, action_label, step_id, step_name)
+
+        self.finalization_steps_layout.addWidget(row)
+
+    def _add_step_action(
+        self, row_layout: QHBoxLayout, action_label: str, step_id: str, step_name: str
+    ) -> None:
+        action = QPushButton(action_label)
+        action.setObjectName("meetingFinalizationStepAction")
+        action.setCursor(Qt.CursorShape.PointingHandCursor)
+        action.setFlat(True)
+        action.setAccessibleName(f"{action_label} {step_name}")
+        action.clicked.connect(
+            lambda _checked=False, sid=step_id: (
+                self.retry_step_requested.emit(sid)
+            )
+        )
+        if step_id == "speaker_id" and not self._speaker_rerun_allowed():
+            action.setEnabled(False)
+            action.setToolTip(self._speaker_rerun_tip())
+        row_layout.addWidget(action)
 
     def _refresh_elapsed(self) -> None:
         """Update the elapsed label from the local pause-aware timer."""
