@@ -1,0 +1,10 @@
+rtt_ms,shared_mbit_s,clients,audio_seconds,request_count,median_ms,nearest_rank_p95_ms,errors,evidence_status
+0,10000,1,30,5,212.9,214.8,0,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset
+0,10000,3,30,15,429.9,634.3,0,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset
+0,10000,6,30,30,774.2,1271.4,0,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset
+20,20,1,30,5,611.2,616.5,0,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset
+20,20,3,30,15,1435.9,1659.7,0,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset
+20,20,6,30,30,2486.3,3077.5,0,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset
+100,5,1,30,5,1846.3,1854.5,0,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset
+100,5,3,30,15,4653.3,4926.1,0,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset
+100,5,6,30,30,8614.7,9554.2,0,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset

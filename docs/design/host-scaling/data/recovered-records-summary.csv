@@ -1,0 +1,5 @@
+source,uploaders,final_requests,busy_failures,replicate1_nearest_rank_p95_ms,replicate2_nearest_rank_p95_ms,evidence_status
+baseline169d254,0,371,0,65.2,144.0,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset
+baseline169d254,4,374,9,590.7,65.1,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset
+candidate_ab9b4c8,0,374,0,93.1,51.7,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset
+candidate_ab9b4c8,4,374,0,72.2,68.2,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset

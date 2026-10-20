@@ -1,0 +1,4 @@
+audio_seconds,condition,flac_to_pcm_byte_ratio,opus24_to_pcm_byte_ratio,evidence_status
+30,clean,0.557,0.095,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset
+30,20dB white-noise SNR,0.749,0.093,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset
+30,10dB white-noise SNR,0.825,0.09,Recovered aggregate from retained conversation; original raw evidence unavailable after environment reset
