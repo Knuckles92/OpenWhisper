@@ -50,6 +50,13 @@ EXPORT_TTL_S = 15 * 60
 #: deleted, or the computer was unpaired); its staged files are dropped.
 STAGING_TTL_S = 7 * 24 * 3600
 MAX_LIST = 500
+#: Records listed when the request doesn't say how many.
+DEFAULT_LIST = 100
+#: Operations on one record that may find it under another owner this
+#: device was granted.
+_OWNED_RECORD_OPS = (
+    "records_stat", "records_commit", "records_open", "records_fetch", "records_delete",
+)
 
 
 class RecordKind(Protocol):
@@ -122,6 +129,52 @@ def _int(value, lo: int, hi: int, what: str) -> int:
     return value
 
 
+def _list_limit(value) -> int:
+    """``records_list``'s limit: DEFAULT_LIST unless a whole number, then 1 to MAX_LIST."""
+    if not isinstance(value, int) or isinstance(value, bool):
+        value = DEFAULT_LIST
+    return max(1, min(value, MAX_LIST))
+
+
+def _newest_first_key(item: dict) -> str:
+    return item.get("timestamp") or item.get("started_at") or ""
+
+
+def _staged_path(upload_dir: str, name: str) -> str:
+    return os.path.join(upload_dir, "files", *name.split("/"))
+
+
+def _size_or_zero(path: str) -> int:
+    return os.path.getsize(path) if os.path.isfile(path) else 0
+
+
+def _chunk_fields(header: dict, payload: bytes) -> tuple:
+    """A ``records_put`` header's name, size, sha256 and offset, or ValueError."""
+    name = safe_name(header.get("name"))
+    size = _int(header.get("size"), 0, MAX_RECORD_BYTES, "file size")
+    sha = header.get("sha256")
+    if not isinstance(sha, str) or not _SHA256.match(sha):
+        raise ValueError("Invalid file hash.")
+    offset = _int(header.get("offset"), 0, MAX_RECORD_BYTES, "offset")
+    if len(payload) > RECORD_CHUNK_BYTES:
+        raise ValueError("Record chunk is too large.")
+    if name == MANIFEST and size > MAX_MANIFEST_BYTES:
+        raise ValueError("record.json is too large.")
+    return name, size, sha, offset
+
+
+def _append_chunk(path: str, payload: bytes, have: int, size: int) -> int:
+    """Append ``payload`` to the ``have`` bytes at ``path``; how many it holds now."""
+    with open(path, "ab") as handle:
+        handle.write(payload)
+        if have + len(payload) >= size:
+            # Once per file: a chunk torn by a crash fails the hash
+            # below and the file is sent again.
+            handle.flush()
+            os.fsync(handle.fileno())
+    return have + len(payload)
+
+
 class HostRecordStore:
     """Staging, verification and the ``records_*`` operations for this host.
 
@@ -162,25 +215,33 @@ class HostRecordStore:
         for owner in owners:
             self._device_dir("staging", owner)
         if op == "records_list":
-            kind = safe_kind(header.get("kind"))
-            query = header.get("query") if isinstance(header.get("query"), str) else ""
-            limit = header.get("limit", 100)
-            limit = limit if isinstance(limit, int) and not isinstance(limit, bool) else 100
-            limit = max(1, min(limit, MAX_LIST))
-            records = [item for owner in owners
-                       for item in self.kinds[kind].list(owner, query[:200], limit)]
-            records.sort(key=lambda item: item.get("timestamp") or item.get("started_at") or "", reverse=True)
-            return {"records": records[:limit]}
+            return self._list_records(header, owners)
         if op == "records_clear":
             kind = safe_kind(header.get("kind"))
             return {"deleted": sum(self.kinds[kind].delete_all(owner) for owner in owners)}
         kind = safe_kind(header.get("kind"))
         record_id = safe_record_id(header.get("record_id"))
         owner_id = device_id
-        if len(owners) > 1 and op in (
-            "records_stat", "records_commit", "records_open", "records_fetch", "records_delete",
-        ):
-            owner_id = next((owner for owner in owners if self.kinds[kind].owns(owner, record_id)), device_id)
+        if len(owners) > 1 and op in _OWNED_RECORD_OPS:
+            owner_id = self._owner_of(kind, record_id, owners, default=device_id)
+        return self._record_op(op, kind, record_id, header, payload, device, owner_id)
+
+    def _list_records(self, header: dict, owners: list) -> dict:
+        kind = safe_kind(header.get("kind"))
+        query = header.get("query") if isinstance(header.get("query"), str) else ""
+        limit = _list_limit(header.get("limit", DEFAULT_LIST))
+        records = [item for owner in owners
+                   for item in self.kinds[kind].list(owner, query[:200], limit)]
+        records.sort(key=_newest_first_key, reverse=True)
+        return {"records": records[:limit]}
+
+    def _owner_of(self, kind: str, record_id: str, owners: list, *, default: str) -> str:
+        """The first of ``owners`` holding the record, else ``default``."""
+        return next((owner for owner in owners if self.kinds[kind].owns(owner, record_id)), default)
+
+    def _record_op(self, op: str, kind: str, record_id: str, header: dict, payload: bytes,
+                   device: dict, owner_id: str) -> dict:
+        device_id = device.get("id")
         if op == "records_stat":
             # What an earlier copy of this record left here, so a sender can
             # skip files that haven't changed (a meeting's audio, after an edit).
@@ -271,8 +332,7 @@ class HostRecordStore:
                 self._write_manifest(upload_dir, manifest)
             received = {}
             for name in manifest["declared"]:
-                path = os.path.join(upload_dir, "files", *name.split("/"))
-                received[name] = os.path.getsize(path) if os.path.isfile(path) else 0
+                received[name] = _size_or_zero(_staged_path(upload_dir, name))
             still_needed = total - sum(received.values())
             os.makedirs(self.root, exist_ok=True)
             free = shutil.disk_usage(self.root).free
@@ -284,34 +344,16 @@ class HostRecordStore:
             return {"received": received, "done": list(manifest["done"])}
 
     def put(self, device_id: str, kind: str, record_id: str, header: dict, payload: bytes) -> dict:
-        name = safe_name(header.get("name"))
-        size = _int(header.get("size"), 0, MAX_RECORD_BYTES, "file size")
-        sha = header.get("sha256")
-        if not isinstance(sha, str) or not _SHA256.match(sha):
-            raise ValueError("Invalid file hash.")
-        offset = _int(header.get("offset"), 0, MAX_RECORD_BYTES, "offset")
-        if len(payload) > RECORD_CHUNK_BYTES:
-            raise ValueError("Record chunk is too large.")
-        if name == MANIFEST and size > MAX_MANIFEST_BYTES:
-            raise ValueError("record.json is too large.")
+        name, size, sha, offset = _chunk_fields(header, payload)
         upload_dir = self._upload_dir("staging", device_id, kind, record_id)
         with self._lock(device_id, kind, record_id):
             manifest = self._read_manifest(upload_dir)
             if manifest is None:
                 raise LookupError("Start the upload again.")
-            declared = manifest["declared"]
-            if name not in declared:
-                if len(declared) >= manifest["files"]:
-                    raise ValueError("More files than the record declared.")
-                if sum(item["size"] for item in declared.values()) + size > manifest["bytes"]:
-                    raise ValueError("Files larger than the record declared.")
-                declared[name] = {"size": size, "sha256": sha}
-                self._write_manifest(upload_dir, manifest)
-            elif declared[name] != {"size": size, "sha256": sha}:
-                raise ValueError(f"{name} changed during the upload; start again.")
-            path = os.path.join(upload_dir, "files", *name.split("/"))
+            self._declare_file(upload_dir, manifest, name, size, sha)
+            path = _staged_path(upload_dir, name)
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            have = os.path.getsize(path) if os.path.isfile(path) else 0
+            have = _size_or_zero(path)
             if name in manifest["done"]:
                 return {"received": size, "done": True}
             if offset != have:
@@ -319,14 +361,7 @@ class HostRecordStore:
                 return {"received": have, "done": False, "resume": True}
             if have + len(payload) > size:
                 raise ValueError(f"{name} is longer than declared.")
-            with open(path, "ab") as handle:
-                handle.write(payload)
-                if have + len(payload) >= size:
-                    # Once per file: a chunk torn by a crash fails the hash
-                    # below and the file is sent again.
-                    handle.flush()
-                    os.fsync(handle.fileno())
-            have += len(payload)
+            have = _append_chunk(path, payload, have, size)
             os.utime(upload_dir)
             if have < size:
                 return {"received": have, "done": False}
@@ -336,6 +371,20 @@ class HostRecordStore:
             manifest["done"].append(name)
             self._write_manifest(upload_dir, manifest)
             return {"received": have, "done": True}
+
+    def _declare_file(self, upload_dir: str, manifest: dict, name: str, size: int, sha: str) -> None:
+        """Add ``name`` to the upload's files, or check it matches what was declared."""
+        declared = manifest["declared"]
+        if name in declared:
+            if declared[name] != {"size": size, "sha256": sha}:
+                raise ValueError(f"{name} changed during the upload; start again.")
+            return
+        if len(declared) >= manifest["files"]:
+            raise ValueError("More files than the record declared.")
+        if sum(item["size"] for item in declared.values()) + size > manifest["bytes"]:
+            raise ValueError("Files larger than the record declared.")
+        declared[name] = {"size": size, "sha256": sha}
+        self._write_manifest(upload_dir, manifest)
 
     def commit(self, device: dict, kind: str, record_id: str, *, owner_id=None) -> dict:
         device_id = device.get("id")
