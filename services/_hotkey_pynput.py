@@ -553,6 +553,8 @@ def _spawn(callback: Callable, *args) -> None:
 
 
 _PRESS_CALLBACKS = dict(PRESS_ACTIONS)
+#: Key-ups of the hold shortcuts, by the action their press dispatched.
+_RELEASE_ACTIONS = {"record_toggle": "record_release", "command_mode": "command_release"}
 
 
 class HotkeyManager:
@@ -845,14 +847,8 @@ class HotkeyManager:
         namespace, separator, item_id = action.partition(":")
         dynamic = bool(separator) and namespace in self._dynamic_held
         if released:
-            if dynamic:
-                self._dynamic_held[namespace].pop(item_id, None)
-                return
-            if action == "record_toggle":
-                action = "record_release"
-            elif action == "command_mode":
-                action = "command_release"
-            else:
+            action = self._released_action(action, dynamic, namespace, item_id)
+            if action is None:
                 return
 
         if (
@@ -872,20 +868,34 @@ class HotkeyManager:
 
         # Releases skip the program_enabled gate so a recording cannot be
         # stranded by disabling hotkeys mid-hold.
-        if action == "record_release":
-            if self._should_accept_action("record_release", source) and self.on_record_release:
-                self.on_record_release(at)
-            return
-        if action == "command_release":
-            if self._command_key_held:
-                self._command_key_held = False
-                if self.on_command_release:
-                    self.on_command_release(at)
+        if action in ("record_release", "command_release"):
+            self._dispatch_release(action, at, source)
             return
 
         if not self.program_enabled:
             return
+        self._dispatch_press(action, at, source, dynamic)
 
+    def _released_action(
+        self, action: str, dynamic: bool, namespace: str, item_id: str
+    ) -> Optional[str]:
+        """The action a key-up dispatches, or None; a dynamic hold just ends."""
+        if dynamic:
+            self._dynamic_held[namespace].pop(item_id, None)
+            return None
+        return _RELEASE_ACTIONS.get(action)
+
+    def _dispatch_release(self, action: str, at: float, source: str) -> None:
+        if action == "record_release":
+            if self._should_accept_action("record_release", source) and self.on_record_release:
+                self.on_record_release(at)
+            return
+        if self._command_key_held:
+            self._command_key_held = False
+            if self.on_command_release:
+                self.on_command_release(at)
+
+    def _dispatch_press(self, action: str, at: float, source: str, dynamic: bool) -> None:
         if action == "record_toggle":
             if (
                 self._should_trigger_record_toggle()
@@ -897,22 +907,29 @@ class HotkeyManager:
             if self._should_accept_action("record_press", source) and self.on_record_press:
                 self.on_record_press(at)
         elif action == "command_mode":
-            if not self._command_key_held and self._should_accept_action("command_press", source):
-                self._command_key_held = True
-                if self.on_command_press:
-                    self.on_command_press(at)
+            self._press_command_mode(at, source)
         elif dynamic:
-            hotkey = self._dynamic_hotkeys.get(namespace, {}).get(item_id)
-            held = self._dynamic_held[namespace]
-            if hotkey and item_id not in held:
-                held[item_id] = hotkey
-                callback = self._dynamic_callbacks.get(namespace)
-                if callback and self._should_accept_action(action, source):
-                    _spawn(callback, item_id)
+            self._press_dynamic(action, source)
         elif action in _PRESS_CALLBACKS:
             callback = getattr(self, _PRESS_CALLBACKS[action])
             if callback and self._should_accept_action(action, source):
                 _spawn(callback)
+
+    def _press_command_mode(self, at: float, source: str) -> None:
+        if not self._command_key_held and self._should_accept_action("command_press", source):
+            self._command_key_held = True
+            if self.on_command_press:
+                self.on_command_press(at)
+
+    def _press_dynamic(self, action: str, source: str) -> None:
+        namespace, _separator, item_id = action.partition(":")
+        hotkey = self._dynamic_hotkeys.get(namespace, {}).get(item_id)
+        held = self._dynamic_held[namespace]
+        if hotkey and item_id not in held:
+            held[item_id] = hotkey
+            callback = self._dynamic_callbacks.get(namespace)
+            if callback and self._should_accept_action(action, source):
+                _spawn(callback, item_id)
 
     def _all_hotkeys(self) -> dict:
         return {
