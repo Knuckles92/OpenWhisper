@@ -124,6 +124,112 @@ class MeetingEngineOptions:
     system_audio_policy: str = 'auto'
 
 
+_INSIGHTS_OFF_MESSAGE = "AI insights are off for this meeting."
+_RECOVERY_PENDING_MESSAGE = (
+    "Final insights are unavailable until "
+    "transcription recovery finishes."
+)
+_INTELLIGENCE_OFFLINE_MESSAGE = (
+    "Meeting intelligence is offline; final cloud "
+    "insights could not run."
+)
+#: Headline shown while each finalization step runs.
+_STEP_RUNNING_MESSAGES = {
+    "redecode": "Re-transcribing meeting…",
+    "speaker_id": "Identifying speakers…",
+    "polish": "Cleaning transcript…",
+    "consolidation": "Preparing final report…",
+}
+
+
+def _stop_quietly(component: Any, failure_message: str) -> None:
+    """Stop ``component`` if there is one, logging rather than raising."""
+    if component is None:
+        return
+    try:
+        component.stop()
+    except Exception:
+        logger.exception(failure_message)
+
+
+class _EndRun:
+    """What one End carries from capture shutdown through finalization."""
+
+    def __init__(self, engine: "MeetingEngine", *, complete: bool, unfinished: Any,
+                 scheduler: Any, will_offline: bool, will_speaker_id: bool) -> None:
+        self.engine = engine
+        self.complete = complete
+        self.unfinished = unfinished
+        self.scheduler = scheduler
+        self.will_offline = will_offline
+        self.will_speaker_id = will_speaker_id
+        self.cloud_enabled = False
+        self.want_polish = False
+        self.want_report = False
+        self.run_cloud = False
+        self.steps: List[Dict[str, Any]] = []
+        self.total_steps = 0
+        self.offline_ok = False
+        self.speaker_ok = False
+        self.speaker_skipped = False
+        self.speaker_error = ""
+
+    def update_step(self, step_id: str, step_status: str, detail_msg: str = "", *,
+                    message: str = "", emit: bool = True) -> None:
+        logger.log(
+            logging.WARNING if step_status == "failed" else logging.INFO,
+            "Meeting finalization meeting_id=%s stage=%s status=%s detail=%s",
+            self.engine.meeting_id, step_id, step_status, detail_msg,
+        )
+        curr_idx = 1
+        for idx, s in enumerate(self.steps, 1):
+            if s["id"] == step_id:
+                s["status"] = step_status
+                if detail_msg:
+                    s["detail"] = detail_msg
+                curr_idx = idx
+                break
+        top_msg = message or _STEP_RUNNING_MESSAGES.get(step_id, "Finalizing meeting state…")
+        self.engine._set_finalization(
+            "running",
+            top_msg,
+            stage=step_id,
+            current_step=curr_idx,
+            total_steps=self.total_steps,
+            step_details=detail_msg,
+            steps=self.steps,
+            emit=emit,
+        )
+
+    def progress(self, step_id: str, template: str) -> Callable[[str, int, int], None]:
+        """A ``(detail, current, total)`` callback; ``template`` takes ``curr`` and ``total``."""
+        def report(detail: str, curr: int, total: int) -> None:
+            self.update_step(
+                step_id,
+                "running",
+                detail,
+                message=template.format(curr=curr, total=total),
+            )
+        return report
+
+    def speaker_outcome(self) -> Tuple[str, str]:
+        """Final status and message when speaker identification ends the run."""
+        if self.speaker_ok:
+            if self.cloud_enabled:
+                return "completed", "Speaker identification finished."
+            return "completed", (
+                "Speaker identification finished. "
+                "AI insights are off for this meeting."
+            )
+        if self.speaker_skipped:
+            return "completed", self.speaker_error or (
+                "Speaker identification skipped."
+            )
+        return "failed", self.speaker_error or (
+            "Speaker identification failed."
+        )
+
+
 class MeetingEngine:
     """Single-meeting orchestrator.
 
@@ -829,152 +935,32 @@ class MeetingEngine:
         try:
             # Flip the dashboard off "Live" immediately — drain + consolidation
             # can take a while, and leaving status=active looks hung.
-            if self.store is not None:
-                try:
-                    self.store.update_runtime_fields(status="ending")
-                except Exception:
-                    logger.exception("Could not mark meeting as ending")
-                else:
-                    self._emit_status()
+            self._mark_ending()
             # Stop rolling checkpoints/polish and cancel any in-flight LLM turn
             # so end is not blocked waiting for a live pass to finish.
-            scheduler = self._scheduler
-            if scheduler is not None:
-                prepare = getattr(scheduler, "prepare_for_end", None)
-                if callable(prepare):
-                    try:
-                        prepare()
-                    except Exception:
-                        logger.exception("Scheduler prepare_for_end failed")
+            self._prepare_scheduler_for_end()
             drained = self._drain_end_capture(drain_timeout_s)
-            try:
-                unfinished = self.repository.count_unfinished_chunks(
-                    self.meeting_id
-                )
-            except Exception:
-                logger.exception("Could not verify unfinished ASR chunks")
-                unfinished = 1
+            unfinished = self._unfinished_chunks_after_drain()
             complete = drained and unfinished == 0 and not self._capture_integrity_error
-            scheduler = self._scheduler
-            asr = self._asr
-            will_offline = bool(
-                self.options.end_redecode
-                and asr is not None
-                and callable(getattr(asr, "transcribe_offline_session", None))
-            )
-            will_speaker_id = bool(
-                not self.options.demo_mode
-                and self.options.speaker_id_backend == "openai"
+            end = _EndRun(
+                self,
+                complete=complete,
+                unfinished=unfinished,
+                scheduler=self._scheduler,
+                will_offline=self._will_redecode_at_end(),
+                will_speaker_id=self._will_identify_speakers_at_end(),
             )
             # Immediate repair still uses the live draft so the dashboard is
             # useful the moment capture ends; the offline pass may replace it.
-            if self.store is not None:
-                try:
-                    from meeting.state.repair import repair_meeting_state
-
-                    repair_meeting_state(self.store, self.get_transcript())
-                except Exception:
-                    logger.exception("Immediate end-state repair failed")
+            self._repair_live_draft()
             self.clock.pause()
             status = "ended" if complete else "needs_recovery"
-            if self.store is not None:
-                if not self.store.update_runtime_fields(status=status):
-                    raise RuntimeError("Could not persist terminal meeting state")
-            try:
-                self.repository.update_meeting(
-                    self.meeting_id,
-                    status=status,
-                    ended_at=now_iso(),
-                    paused_total_s=self.clock.paused_total_s(),
-                )
-                terminal_status = status
-            except Exception:
-                logger.exception("Failed to persist terminal meeting metadata")
-                raise
+            self._persist_terminal_status(status)
+            terminal_status = status
             self._stop_heartbeat()
 
-            cloud_enabled = False
-            if self.store is not None:
-                cloud_enabled = bool(
-                    self.store.with_state(lambda s: s.cloud_enabled)
-                )
-            want_polish = bool(self.options.end_polish)
-            want_report = bool(self.options.end_report)
-            run_cloud = bool(
-                cloud_enabled
-                and complete
-                and scheduler is not None
-                and self._core_is_healthy()
-                and (want_polish or want_report)
-            )
-
-            steps = [make_step(step_id) for step_id, enabled in (
-                ("redecode", will_offline),
-                ("speaker_id", will_speaker_id),
-                ("polish", run_cloud and want_polish),
-                ("consolidation", run_cloud and want_report),
-                ("finalize", True),
-            ) if enabled]
-            total_steps = len(steps)
-
-            def _update_step(step_id: str, step_status: str, detail_msg: str = "", *, message: str = "", emit: bool = True) -> None:
-                logger.log(
-                    logging.WARNING if step_status == "failed" else logging.INFO,
-                    "Meeting finalization meeting_id=%s stage=%s status=%s detail=%s",
-                    self.meeting_id, step_id, step_status, detail_msg,
-                )
-                curr_idx = 1
-                for idx, s in enumerate(steps, 1):
-                    if s["id"] == step_id:
-                        s["status"] = step_status
-                        if detail_msg:
-                            s["detail"] = detail_msg
-                        curr_idx = idx
-                        break
-                top_msg = message or (
-                    "Re-transcribing meeting…" if step_id == "redecode"
-                    else "Identifying speakers…" if step_id == "speaker_id"
-                    else "Cleaning transcript…" if step_id == "polish"
-                    else "Preparing final report…" if step_id == "consolidation"
-                    else "Finalizing meeting state…"
-                )
-                self._set_finalization(
-                    "running",
-                    top_msg,
-                    stage=step_id,
-                    current_step=curr_idx,
-                    total_steps=total_steps,
-                    step_details=detail_msg,
-                    steps=steps,
-                    emit=emit,
-                )
-
-            if will_offline or will_speaker_id or run_cloud:
-                _update_step(steps[0]["id"], "running", steps[0]["detail"], emit=False)
-            elif not cloud_enabled:
-                self._set_finalization(
-                    "disabled",
-                    "AI insights are off for this meeting.",
-                    emit=False,
-                )
-            elif not complete:
-                self._set_finalization(
-                    "unavailable",
-                    (
-                        "Final insights are unavailable until "
-                        "transcription recovery finishes."
-                    ),
-                    emit=False,
-                )
-            else:
-                self._set_finalization(
-                    "unavailable",
-                    (
-                        "Meeting intelligence is offline; final cloud "
-                        "insights could not run."
-                    ),
-                    emit=False,
-                )
+            self._plan_end_steps(end)
+            self._announce_finalization(end)
 
             self._active = False
             self._broadcast({"type": "meeting_ended", "status": status})
@@ -988,288 +974,14 @@ class MeetingEngine:
             })
             ended_emitted = True
 
-            offline_ok = False
-            if will_offline:
-                _update_step(
-                    "redecode",
-                    "running",
-                    "Starting high-accuracy session audio re-decoding...",
-                    message="Re-transcribing meeting…",
-                )
-                def _offline_progress(detail: str, curr_win: int, total_win: int) -> None:
-                    _update_step(
-                        "redecode",
-                        "running",
-                        detail,
-                        message=f"Re-transcribing meeting (window {curr_win}/{total_win})…",
-                    )
-                try:
-                    self._offline_failure_detail = ""
-                    offline_ok = bool(self._run_offline_final_pass(progress_cb=_offline_progress))
-                except Exception:
-                    logger.exception("Offline clean ASR pass failed")
-                    offline_ok = False
-                _update_step(
-                    "redecode",
-                    "completed" if offline_ok else "failed",
-                    "High-accuracy re-decoding complete" if offline_ok else (
-                        self._offline_failure_detail or "Re-decoding failed; kept live transcript"
-                    ),
-                )
-
+            self._end_redecode(end)
             # The remaining passes use saved audio/text. Free Whisper before
             # cloud work so another meeting can own the local model.
             if self._stop_asr("end"):
                 self._emit("background_ready", {"meeting_id": self.meeting_id})
-
-            speaker_ok = False
-            speaker_skipped = False
-            speaker_error = ""
-            if will_speaker_id:
-                def _announce_upload() -> None:
-                    _update_step(
-                        "speaker_id",
-                        "running",
-                        "Uploading system audio for speaker labels…",
-                        message="Identifying speakers…",
-                    )
-
-                def _speaker_progress(detail: str, curr: int, total: int) -> None:
-                    _update_step(
-                        "speaker_id",
-                        "running",
-                        detail,
-                        message=(
-                            f"Identifying speakers (window {curr}/{total})…"
-                        ),
-                    )
-
-                try:
-                    speaker_result = self._run_cloud_speaker_pass(
-                        progress_cb=_speaker_progress,
-                        on_start=_announce_upload,
-                    )
-                except Exception:
-                    logger.exception("Cloud speaker identification failed")
-                    speaker_result = {
-                        "ok": False, "skipped": False,
-                        "error": "Speaker identification failed.",
-                    }
-                from meeting.refinalize import speaker_step_outcome
-
-                speaker_ok = bool(speaker_result.get("ok"))
-                speaker_skipped = bool(speaker_result.get("skipped"))
-                speaker_error = str(speaker_result.get("error") or "")
-                _update_step("speaker_id", *speaker_step_outcome(speaker_result))
-
-            if run_cloud and not complete and not offline_ok:
-                run_cloud = False
-                self._set_finalization(
-                    "unavailable",
-                    (
-                        "Final insights are unavailable until "
-                        "transcription recovery finishes."
-                    ),
-                )
-
-            if run_cloud and scheduler is not None:
-                try:
-                    self.allow_agent_writes()
-                    if want_polish:
-                        _update_step(
-                            "polish",
-                            "running",
-                            "Starting AI transcript cleanup and formatting...",
-                            message="Cleaning transcript…",
-                        )
-                        def _polish_progress(detail: str, curr_blk: int, total_blks: int) -> None:
-                            _update_step(
-                                "polish",
-                                "running",
-                                detail,
-                                message=f"Cleaning transcript (block {curr_blk}/{total_blks})…",
-                            )
-                        polish = getattr(scheduler, "run_final_polish", None)
-                        polish_status = "completed"
-                        polish_detail = "Transcript cleanup finished"
-                        if callable(polish):
-                            try:
-                                polish_outcome = polish(
-                                    timeout_s=POLISH_TIMEOUT_S,
-                                    progress_cb=_polish_progress,
-                                )
-                                polish_status = getattr(
-                                    polish_outcome, "status", "completed",
-                                )
-                                polish_detail = (
-                                    getattr(polish_outcome, "message", "")
-                                    or (
-                                        "Transcript cleanup finished"
-                                        if polish_status == "completed"
-                                        else "Transcript cleanup failed"
-                                    )
-                                )
-                            except Exception as exc:
-                                logger.exception("Post-end transcript polish failed")
-                                polish_status = "failed"
-                                polish_detail = f"Transcript cleanup failed: {exc}"
-                        _update_step(
-                            "polish",
-                            "completed" if polish_status == "completed" else "failed",
-                            polish_detail,
-                        )
-                    if want_report:
-                        _update_step(
-                            "consolidation",
-                            "running",
-                            "Synthesizing executive summary, key points, decisions, and action items...",
-                            message="Preparing final report…",
-                        )
-                        def _consolidation_progress(detail: str) -> None:
-                            _update_step(
-                                "consolidation",
-                                "running",
-                                detail,
-                                message="Preparing final report…",
-                            )
-                        # live_notes is preserved into consolidation so the
-                        # final report pass can synthesize the meeting notes
-                        # and reconcile them against the final transcript.
-                        outcome = scheduler.run_consolidation(
-                            progress_cb=_consolidation_progress,
-                        )
-                        status = getattr(outcome, "status", "failed")
-                        message = getattr(outcome, "message", "") or ""
-                        _update_step(
-                            "consolidation",
-                            "completed" if status == "completed" else "failed",
-                            "Summary & action items ready" if status == "completed" else message,
-                        )
-                    else:
-                        status = "completed"
-                        message = "Transcript cleanup is ready."
-                except Exception as exc:
-                    logger.exception("Post-end consolidation pass failed")
-                    self.revoke_agent_writes()
-                    self._set_finalization(
-                        "failed",
-                        f"Final insights failed: {exc}",
-                        stage="failed",
-                        current_step=total_steps,
-                        total_steps=total_steps,
-                        step_details=f"Final insights failed: {exc}",
-                        steps=steps,
-                    )
-                else:
-                    self.revoke_agent_writes()
-                    _update_step(
-                        "finalize",
-                        "running",
-                        "Saving final transcript and meeting state...",
-                        message="Finalizing meeting state…",
-                    )
-                    summary_stats = self._finalization_summary_stats()
-
-                    _update_step(
-                        "finalize",
-                        "completed",
-                        saved_state_detail(summary_stats),
-                    )
-
-                    if any(s.get("status") == "failed" for s in steps):
-                        status = "failed"
-                        final_msg = failed_steps_message(steps)
-                    elif status == "completed" and want_report:
-                        final_msg = insights_ready_message(summary_stats)
-                    else:
-                        final_msg = message
-
-                    self._set_finalization(
-                        status,
-                        final_msg,
-                        stage="complete" if status == "completed" else status,
-                        current_step=total_steps,
-                        total_steps=total_steps,
-                        step_details=final_msg,
-                        steps=steps,
-                        summary_stats=summary_stats,
-                    )
-            else:
-                self.revoke_agent_writes()
-                if will_speaker_id:
-                    _update_step(
-                        "finalize",
-                        "completed",
-                        "Saved meeting state after speaker identification.",
-                    )
-                    if speaker_ok:
-                        final_status = "completed"
-                        final_msg = (
-                            "Speaker identification finished."
-                            if cloud_enabled else
-                            "Speaker identification finished. "
-                            "AI insights are off for this meeting."
-                        )
-                    elif speaker_skipped:
-                        final_status = "completed"
-                        final_msg = speaker_error or (
-                            "Speaker identification skipped."
-                        )
-                    else:
-                        final_status = "failed"
-                        final_msg = speaker_error or (
-                            "Speaker identification failed."
-                        )
-                    self._set_finalization(
-                        final_status,
-                        final_msg,
-                        stage=(
-                            "complete" if final_status == "completed"
-                            else final_status
-                        ),
-                        current_step=total_steps,
-                        total_steps=total_steps,
-                        step_details=final_msg,
-                        steps=steps,
-                    )
-                elif not cloud_enabled:
-                    self._set_finalization(
-                        "disabled",
-                        "AI insights are off for this meeting.",
-                    )
-                elif not complete and not offline_ok:
-                    self._set_finalization(
-                        "unavailable",
-                        (
-                            "Final insights are unavailable until "
-                            "transcription recovery finishes."
-                        ),
-                    )
-                elif not want_polish and not want_report:
-                    self._set_finalization(
-                        "completed",
-                        "Post-meeting cleanup and report are off.",
-                    )
-                elif scheduler is None or not self._core_is_healthy():
-                    self._set_finalization(
-                        "unavailable",
-                        (
-                            "Meeting intelligence is offline; final cloud "
-                            "insights could not run."
-                        ),
-                    )
-            if complete or offline_ok:
-                self._finalize_highlights()
-            if scheduler is not None:
-                try:
-                    scheduler.stop()
-                except Exception:
-                    logger.exception("Scheduler stop failed")
-                self._scheduler = None
-            self._shutdown_agent_core()
-            if self.store and self.store.snapshot().get("insight_review", {}).get("enabled"):
-                from meeting.insight_review import start_review
-                start_review(self.store, self.repository)
+            self._end_speaker_id(end)
+            self._end_insights(end)
+            self._wrap_up_end(end)
         except Exception as exc:
             logger.exception("Meeting end failed")
             self._active = False
@@ -1278,6 +990,351 @@ class MeetingEngine:
             self._finish_failed_end(
                 exc, terminal_status, ended_emitted=ended_emitted,
             )
+
+    def _mark_ending(self) -> None:
+        if self.store is None:
+            return
+        try:
+            self.store.update_runtime_fields(status="ending")
+        except Exception:
+            logger.exception("Could not mark meeting as ending")
+        else:
+            self._emit_status()
+
+    def _prepare_scheduler_for_end(self) -> None:
+        scheduler = self._scheduler
+        if scheduler is None:
+            return
+        prepare = getattr(scheduler, "prepare_for_end", None)
+        if not callable(prepare):
+            return
+        try:
+            prepare()
+        except Exception:
+            logger.exception("Scheduler prepare_for_end failed")
+
+    def _unfinished_chunks_after_drain(self) -> Any:
+        try:
+            return self.repository.count_unfinished_chunks(
+                self.meeting_id
+            )
+        except Exception:
+            logger.exception("Could not verify unfinished ASR chunks")
+            return 1
+
+    def _will_redecode_at_end(self) -> bool:
+        asr = self._asr
+        return bool(
+            self.options.end_redecode
+            and asr is not None
+            and callable(getattr(asr, "transcribe_offline_session", None))
+        )
+
+    def _will_identify_speakers_at_end(self) -> bool:
+        return bool(
+            not self.options.demo_mode
+            and self.options.speaker_id_backend == "openai"
+        )
+
+    def _repair_live_draft(self) -> None:
+        if self.store is None:
+            return
+        try:
+            from meeting.state.repair import repair_meeting_state
+
+            repair_meeting_state(self.store, self.get_transcript())
+        except Exception:
+            logger.exception("Immediate end-state repair failed")
+
+    def _persist_terminal_status(self, status: str) -> None:
+        if self.store is not None:
+            if not self.store.update_runtime_fields(status=status):
+                raise RuntimeError("Could not persist terminal meeting state")
+        try:
+            self.repository.update_meeting(
+                self.meeting_id,
+                status=status,
+                ended_at=now_iso(),
+                paused_total_s=self.clock.paused_total_s(),
+            )
+        except Exception:
+            logger.exception("Failed to persist terminal meeting metadata")
+            raise
+
+    def _plan_end_steps(self, end: _EndRun) -> None:
+        if self.store is not None:
+            end.cloud_enabled = bool(
+                self.store.with_state(lambda s: s.cloud_enabled)
+            )
+        end.want_polish = bool(self.options.end_polish)
+        end.want_report = bool(self.options.end_report)
+        end.run_cloud = bool(
+            end.cloud_enabled
+            and end.complete
+            and end.scheduler is not None
+            and self._core_is_healthy()
+            and (end.want_polish or end.want_report)
+        )
+        end.steps = [make_step(step_id) for step_id, enabled in (
+            ("redecode", end.will_offline),
+            ("speaker_id", end.will_speaker_id),
+            ("polish", end.run_cloud and end.want_polish),
+            ("consolidation", end.run_cloud and end.want_report),
+            ("finalize", True),
+        ) if enabled]
+        end.total_steps = len(end.steps)
+
+    def _announce_finalization(self, end: _EndRun) -> None:
+        """Publish the opening finalization state before ``ended`` goes out."""
+        if end.will_offline or end.will_speaker_id or end.run_cloud:
+            end.update_step(end.steps[0]["id"], "running", end.steps[0]["detail"], emit=False)
+        elif not end.cloud_enabled:
+            self._set_finalization("disabled", _INSIGHTS_OFF_MESSAGE, emit=False)
+        elif not end.complete:
+            self._set_finalization("unavailable", _RECOVERY_PENDING_MESSAGE, emit=False)
+        else:
+            self._set_finalization("unavailable", _INTELLIGENCE_OFFLINE_MESSAGE, emit=False)
+
+    def _end_redecode(self, end: _EndRun) -> None:
+        if not end.will_offline:
+            return
+        end.update_step(
+            "redecode",
+            "running",
+            "Starting high-accuracy session audio re-decoding...",
+            message="Re-transcribing meeting…",
+        )
+        progress = end.progress("redecode", "Re-transcribing meeting (window {curr}/{total})…")
+        try:
+            self._offline_failure_detail = ""
+            end.offline_ok = bool(self._run_offline_final_pass(progress_cb=progress))
+        except Exception:
+            logger.exception("Offline clean ASR pass failed")
+            end.offline_ok = False
+        if end.offline_ok:
+            end.update_step("redecode", "completed", "High-accuracy re-decoding complete")
+        else:
+            end.update_step(
+                "redecode",
+                "failed",
+                self._offline_failure_detail or "Re-decoding failed; kept live transcript",
+            )
+
+    def _end_speaker_id(self, end: _EndRun) -> None:
+        if not end.will_speaker_id:
+            return
+
+        def _announce_upload() -> None:
+            end.update_step(
+                "speaker_id",
+                "running",
+                "Uploading system audio for speaker labels…",
+                message="Identifying speakers…",
+            )
+
+        try:
+            speaker_result = self._run_cloud_speaker_pass(
+                progress_cb=end.progress("speaker_id", "Identifying speakers (window {curr}/{total})…"),
+                on_start=_announce_upload,
+            )
+        except Exception:
+            logger.exception("Cloud speaker identification failed")
+            speaker_result = {
+                "ok": False, "skipped": False,
+                "error": "Speaker identification failed.",
+            }
+        from meeting.refinalize import speaker_step_outcome
+
+        end.speaker_ok = bool(speaker_result.get("ok"))
+        end.speaker_skipped = bool(speaker_result.get("skipped"))
+        end.speaker_error = str(speaker_result.get("error") or "")
+        end.update_step("speaker_id", *speaker_step_outcome(speaker_result))
+
+    def _end_insights(self, end: _EndRun) -> None:
+        if end.run_cloud and not end.complete and not end.offline_ok:
+            end.run_cloud = False
+            self._set_finalization("unavailable", _RECOVERY_PENDING_MESSAGE)
+        if end.run_cloud and end.scheduler is not None:
+            self._run_end_cloud_passes(end)
+        else:
+            self.revoke_agent_writes()
+            self._report_end_without_cloud(end)
+
+    def _run_end_cloud_passes(self, end: _EndRun) -> None:
+        try:
+            self.allow_agent_writes()
+            if end.want_polish:
+                self._end_polish(end)
+            if end.want_report:
+                status, message = self._end_consolidation(end)
+            else:
+                status = "completed"
+                message = "Transcript cleanup is ready."
+        except Exception as exc:
+            logger.exception("Post-end consolidation pass failed")
+            self.revoke_agent_writes()
+            self._set_finalization(
+                "failed",
+                f"Final insights failed: {exc}",
+                stage="failed",
+                current_step=end.total_steps,
+                total_steps=end.total_steps,
+                step_details=f"Final insights failed: {exc}",
+                steps=end.steps,
+            )
+        else:
+            self.revoke_agent_writes()
+            self._complete_end_finalization(end, status, message)
+
+    def _end_polish(self, end: _EndRun) -> None:
+        end.update_step(
+            "polish",
+            "running",
+            "Starting AI transcript cleanup and formatting...",
+            message="Cleaning transcript…",
+        )
+        progress = end.progress("polish", "Cleaning transcript (block {curr}/{total})…")
+        polish = getattr(end.scheduler, "run_final_polish", None)
+        polish_status = "completed"
+        polish_detail = "Transcript cleanup finished"
+        if callable(polish):
+            try:
+                polish_outcome = polish(
+                    timeout_s=POLISH_TIMEOUT_S,
+                    progress_cb=progress,
+                )
+                polish_status = getattr(
+                    polish_outcome, "status", "completed",
+                )
+                polish_detail = (
+                    getattr(polish_outcome, "message", "")
+                    or (
+                        "Transcript cleanup finished"
+                        if polish_status == "completed"
+                        else "Transcript cleanup failed"
+                    )
+                )
+            except Exception as exc:
+                logger.exception("Post-end transcript polish failed")
+                polish_status = "failed"
+                polish_detail = f"Transcript cleanup failed: {exc}"
+        end.update_step(
+            "polish",
+            "completed" if polish_status == "completed" else "failed",
+            polish_detail,
+        )
+
+    def _end_consolidation(self, end: _EndRun) -> Tuple[str, str]:
+        end.update_step(
+            "consolidation",
+            "running",
+            "Synthesizing executive summary, key points, decisions, and action items...",
+            message="Preparing final report…",
+        )
+
+        def _consolidation_progress(detail: str) -> None:
+            end.update_step(
+                "consolidation",
+                "running",
+                detail,
+                message="Preparing final report…",
+            )
+        # live_notes is preserved into consolidation so the
+        # final report pass can synthesize the meeting notes
+        # and reconcile them against the final transcript.
+        outcome = end.scheduler.run_consolidation(
+            progress_cb=_consolidation_progress,
+        )
+        status = getattr(outcome, "status", "failed")
+        message = getattr(outcome, "message", "") or ""
+        if status == "completed":
+            end.update_step("consolidation", "completed", "Summary & action items ready")
+        else:
+            end.update_step("consolidation", "failed", message)
+        return status, message
+
+    def _complete_end_finalization(self, end: _EndRun, status: str, message: str) -> None:
+        end.update_step(
+            "finalize",
+            "running",
+            "Saving final transcript and meeting state...",
+            message="Finalizing meeting state…",
+        )
+        summary_stats = self._finalization_summary_stats()
+
+        end.update_step(
+            "finalize",
+            "completed",
+            saved_state_detail(summary_stats),
+        )
+
+        if any(s.get("status") == "failed" for s in end.steps):
+            status = "failed"
+            final_msg = failed_steps_message(end.steps)
+        elif status == "completed" and end.want_report:
+            final_msg = insights_ready_message(summary_stats)
+        else:
+            final_msg = message
+
+        self._set_finalization(
+            status,
+            final_msg,
+            stage="complete" if status == "completed" else status,
+            current_step=end.total_steps,
+            total_steps=end.total_steps,
+            step_details=final_msg,
+            steps=end.steps,
+            summary_stats=summary_stats,
+        )
+
+    def _report_end_without_cloud(self, end: _EndRun) -> None:
+        if end.will_speaker_id:
+            self._finish_end_after_speakers(end)
+        elif not end.cloud_enabled:
+            self._set_finalization("disabled", _INSIGHTS_OFF_MESSAGE)
+        elif not end.complete and not end.offline_ok:
+            self._set_finalization("unavailable", _RECOVERY_PENDING_MESSAGE)
+        elif not end.want_polish and not end.want_report:
+            self._set_finalization(
+                "completed",
+                "Post-meeting cleanup and report are off.",
+            )
+        elif end.scheduler is None or not self._core_is_healthy():
+            self._set_finalization("unavailable", _INTELLIGENCE_OFFLINE_MESSAGE)
+
+    def _finish_end_after_speakers(self, end: _EndRun) -> None:
+        end.update_step(
+            "finalize",
+            "completed",
+            "Saved meeting state after speaker identification.",
+        )
+        final_status, final_msg = end.speaker_outcome()
+        self._set_finalization(
+            final_status,
+            final_msg,
+            stage=(
+                "complete" if final_status == "completed"
+                else final_status
+            ),
+            current_step=end.total_steps,
+            total_steps=end.total_steps,
+            step_details=final_msg,
+            steps=end.steps,
+        )
+
+    def _wrap_up_end(self, end: _EndRun) -> None:
+        if end.complete or end.offline_ok:
+            self._finalize_highlights()
+        if end.scheduler is not None:
+            try:
+                end.scheduler.stop()
+            except Exception:
+                logger.exception("Scheduler stop failed")
+            self._scheduler = None
+        self._shutdown_agent_core()
+        if self.store and self.store.snapshot().get("insight_review", {}).get("enabled"):
+            from meeting.insight_review import start_review
+            start_review(self.store, self.repository)
 
     def _run_cloud_speaker_pass(
         self,
@@ -1415,23 +1472,7 @@ class MeetingEngine:
             except Exception:
                 logger.exception("Failed to persist failed end status")
         if self.store is not None:
-            if terminal_status is None:
-                try:
-                    self.store.update_runtime_fields(status=status)
-                except Exception:
-                    logger.exception(
-                        "Failed to update state status after a failed end"
-                    )
-            try:
-                self._set_finalization(
-                    "failed",
-                    f"Meeting end failed before final insights could finish: {exc}",
-                    emit=False,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to persist finalization after a failed end"
-                )
+            self._record_failed_end_state(exc, terminal_status, status)
         if not ended_emitted:
             self._broadcast({"type": "meeting_ended", "status": status})
         try:
@@ -1443,6 +1484,27 @@ class MeetingEngine:
                 "meeting_id": self.meeting_id, "canceled": False,
                 "status": status, "error": str(exc),
             })
+
+    def _record_failed_end_state(
+        self, exc: Exception, terminal_status: Optional[str], status: str,
+    ) -> None:
+        if terminal_status is None:
+            try:
+                self.store.update_runtime_fields(status=status)
+            except Exception:
+                logger.exception(
+                    "Failed to update state status after a failed end"
+                )
+        try:
+            self._set_finalization(
+                "failed",
+                f"Meeting end failed before final insights could finish: {exc}",
+                emit=False,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist finalization after a failed end"
+            )
 
     def wait_for_end(self) -> None:
         """Wait for the end worker without interrupting its remaining passes."""
@@ -1537,19 +1599,11 @@ class MeetingEngine:
         self._asr = None
         scheduler = self._scheduler
         self._scheduler = None
-        if scheduler is not None:
-            try:
-                scheduler.stop()
-            except Exception:
-                logger.exception("Scheduler stop failed during start abort")
+        _stop_quietly(scheduler, "Scheduler stop failed during start abort")
         self._shutdown_agent_core()
         server = self._server
         self._server = None
-        if server is not None:
-            try:
-                server.stop()
-            except Exception:
-                logger.exception("Server stop failed during start abort")
+        _stop_quietly(server, "Server stop failed during start abort")
         self._stop_heartbeat()
         self.clock.pause()
         meeting_id = self.meeting_id
@@ -1560,51 +1614,61 @@ class MeetingEngine:
         # it would create an "Untitled · Ended" history row for every missing
         # dependency or unavailable device. Be conservative on inspection
         # failures: preserve the row whenever we cannot prove it is empty.
-        has_artifacts = True
+        if not self._aborted_meeting_has_artifacts(meeting_id):
+            if self._discard_empty_meeting(meeting_id):
+                return
+        self._mark_aborted_failed(meeting_id)
+
+    def _aborted_meeting_has_artifacts(self, meeting_id: str) -> bool:
         try:
-            has_artifacts = bool(
+            return bool(
                 self.repository.get_audio_chunks(meeting_id)
                 or self.repository.get_segments(meeting_id)
             )
         except Exception:
             logger.exception("Could not inspect aborted meeting artifacts")
-        if not has_artifacts:
-            try:
-                from meeting.persist.data_lifecycle import delete_meeting_data
+            return True
 
-                delete_meeting_data(
-                    self.repository,
-                    meeting_id,
-                    self.options.spool_root or "meeting_audio",
-                )
-            except Exception:
-                logger.exception("Failed to discard empty aborted meeting")
-            else:
-                logger.info("Discarded empty failed meeting start: %s", meeting_id)
-                self.store = None
-                return
+    def _discard_empty_meeting(self, meeting_id: str) -> bool:
+        """Delete an aborted meeting that recorded nothing; True once it is gone."""
+        try:
+            from meeting.persist.data_lifecycle import delete_meeting_data
 
+            delete_meeting_data(
+                self.repository,
+                meeting_id,
+                self.options.spool_root or "meeting_audio",
+            )
+        except Exception:
+            logger.exception("Failed to discard empty aborted meeting")
+            return False
+        logger.info("Discarded empty failed meeting start: %s", meeting_id)
+        self.store = None
+        return True
+
+    def _mark_aborted_failed(self, meeting_id: str) -> None:
         try:
             self.repository.update_meeting(
                 meeting_id, status="failed", ended_at=now_iso()
             )
         except Exception:
             logger.exception("Failed to mark aborted meeting as failed")
-        if self.store is not None:
-            try:
-                self.store.update_runtime_fields(status="failed")
-            except Exception:
-                logger.exception("Failed to mark aborted store status")
-            try:
-                self._set_finalization(
-                    "unavailable",
-                    "Meeting failed to start before final insights could run.",
-                    emit=False,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to persist finalization after aborted start"
-                )
+        if self.store is None:
+            return
+        try:
+            self.store.update_runtime_fields(status="failed")
+        except Exception:
+            logger.exception("Failed to mark aborted store status")
+        try:
+            self._set_finalization(
+                "unavailable",
+                "Meeting failed to start before final insights could run.",
+                emit=False,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist finalization after aborted start"
+            )
 
     def _shutdown_agent_core(self) -> None:
         with self._lifecycle_lock:
@@ -1694,53 +1758,13 @@ class MeetingEngine:
         if not self._open_mic():
             logger.warning("No microphone could be opened; mic channel disabled")
 
-        loop_ok = False
         if self._system_audio_disabled:
             logger.info("System audio disabled for this meeting by user choice")
         else:
-            loop_dev = None
-            try:
-                loop_dev = find_loopback_device()
-            except Exception:
-                logger.exception("Loopback probe failed")
-            if loop_dev is not None:
-                try:
-                    loop_ok = self._start_source(SdCaptureSource(
-                        CHANNEL_LOOPBACK, loop_dev["index"],
-                        loop_dev["samplerate"], loop_dev["channels"],
-                    ))
-                except Exception:
-                    logger.exception("Failed to open WASAPI loopback stream")
-            if not loop_ok:
-                loop_ok = self._start_fallback_loopback()
-            if not loop_ok:
-                logger.warning(
-                    "No loopback source available; meeting continues mic-only"
-                )
-                policy = str(self.options.system_audio_policy or "auto").lower()
-                if policy == "required":
-                    raise RuntimeError(
-                        "LINUX_SYSTEM_AUDIO_REQUIRED: "
-                        "System-audio capture is required but unavailable."
-                    )
+            self._open_system_audio(find_loopback_device, SdCaptureSource)
 
         active = {source.channel for source in self._sources}
-        notes = []
-        if CHANNEL_MIC not in active:
-            notes.append("Microphone capture is unavailable.")
-        if CHANNEL_LOOPBACK not in active:
-            if self._system_audio_disabled:
-                notes.append(
-                    "System audio disabled for this meeting by your "
-                    "microphone-only choice."
-                )
-            else:
-                notes.append(
-                    "System-audio capture is unavailable; "
-                    "recording microphone only."
-                    if CHANNEL_MIC in active else
-                    "System-audio capture is unavailable."
-                )
+        notes = self._capture_notes(active)
         if not active:
             self._update_capture_status("No audio devices could be opened.")
             raise RuntimeError("No audio devices could be opened.")
@@ -1751,6 +1775,57 @@ class MeetingEngine:
         self._update_capture_status(note or "")
         self._start_capture_watchdog()
         return note
+
+    def _open_system_audio(self, find_loopback_device: Callable[[], Any], source_cls: Any) -> None:
+        """Open loopback capture, falling back per OS; enforce a required policy."""
+        loop_ok = False
+        loop_dev = None
+        try:
+            loop_dev = find_loopback_device()
+        except Exception:
+            logger.exception("Loopback probe failed")
+        if loop_dev is not None:
+            try:
+                loop_ok = self._start_source(source_cls(
+                    CHANNEL_LOOPBACK, loop_dev["index"],
+                    loop_dev["samplerate"], loop_dev["channels"],
+                ))
+            except Exception:
+                logger.exception("Failed to open WASAPI loopback stream")
+        if not loop_ok:
+            loop_ok = self._start_fallback_loopback()
+        if loop_ok:
+            return
+        logger.warning(
+            "No loopback source available; meeting continues mic-only"
+        )
+        policy = str(self.options.system_audio_policy or "auto").lower()
+        if policy == "required":
+            raise RuntimeError(
+                "LINUX_SYSTEM_AUDIO_REQUIRED: "
+                "System-audio capture is required but unavailable."
+            )
+
+    def _capture_notes(self, active: set) -> List[str]:
+        """User-facing notes for the channels that did not open."""
+        notes = []
+        if CHANNEL_MIC not in active:
+            notes.append("Microphone capture is unavailable.")
+        if CHANNEL_LOOPBACK in active:
+            return notes
+        if self._system_audio_disabled:
+            notes.append(
+                "System audio disabled for this meeting by your "
+                "microphone-only choice."
+            )
+        elif CHANNEL_MIC in active:
+            notes.append(
+                "System-audio capture is unavailable; "
+                "recording microphone only."
+            )
+        else:
+            notes.append("System-audio capture is unavailable.")
+        return notes
 
     def _start_fallback_loopback(self, *, reuse_spool: bool = False) -> bool:
         """Open system audio through the best fallback for this OS.
@@ -1973,61 +2048,70 @@ class MeetingEngine:
                 return
             for channel in (CHANNEL_MIC, CHANNEL_LOOPBACK):
                 try:
-                    if (channel == CHANNEL_LOOPBACK
-                            and self._system_audio_disabled):
-                        continue
-                    desired = self._probe_capture_device(channel)
-                    source = self._capture_source(channel)
-                    active = source is not None and bool(source.is_active())
-                    monitor = self._capture_monitors.get(channel)
-                    health = monitor.snapshot() if monitor is not None else None
-                    if active and health is not None and health["receiving"]:
-                        self._capture_stall_channels.discard(channel)
-                    if (active and health is not None and health["stalled"]
-                            and getattr(source, "requires_audio_blocks", False)):
-                        # PortAudio can report an open/active stream without
-                        # ever invoking its callback. Other capture backends
-                        # already include block delivery in is_active().
-                        active = False
-                        self._capture_stall_channels.add(channel)
-                        logger.warning("%s capture stream stalled despite an open device", channel)
-                    changed = False
-                    if active:
-                        source_id = getattr(source, "device_id", None)
-                        desired_id = desired.get("index") if desired else None
-                        if channel == CHANNEL_MIC and desired is not None:
-                            # Only "System default" follows the default; a
-                            # ranked microphone stays until it fails.
-                            changed = (
-                                self.options.mic_device_id is None
-                                and not self.options.mic_priority
-                                and isinstance(source_id, int)
-                                and source_id != desired_id
-                            )
-                        elif (channel == CHANNEL_LOOPBACK
-                              and isinstance(source_id, int)
-                              and desired is not None):
-                            changed = (
-                                source_id != desired_id
-                            )
-                        elif channel == CHANNEL_LOOPBACK:
-                            current = getattr(
-                                source, "is_default_device_current", None
-                            )
-                            if callable(current):
-                                changed = not bool(current())
-                    if active and not changed:
-                        continue
-                    now = time.monotonic()
-                    if (now - self._capture_last_attempt.get(channel, 0.0)
-                            < CAPTURE_RETRY_INTERVAL_S):
-                        continue
-                    self._capture_last_attempt[channel] = now
-                    self._restart_capture_channel(channel, desired)
+                    self._watch_capture_channel(channel)
                 except Exception:
                     logger.exception("Capture watchdog failed for %s", channel)
             self._check_spool_health()
             self._update_capture_status()
+
+    def _watch_capture_channel(self, channel: str) -> None:
+        """One watchdog pass over ``channel``: restart it when failed or stale."""
+        if (channel == CHANNEL_LOOPBACK
+                and self._system_audio_disabled):
+            return
+        desired = self._probe_capture_device(channel)
+        source = self._capture_source(channel)
+        active = self._capture_channel_healthy(channel, source)
+        if active and not self._capture_device_changed(channel, source, desired):
+            return
+        now = time.monotonic()
+        if (now - self._capture_last_attempt.get(channel, 0.0)
+                < CAPTURE_RETRY_INTERVAL_S):
+            return
+        self._capture_last_attempt[channel] = now
+        self._restart_capture_channel(channel, desired)
+
+    def _capture_channel_healthy(self, channel: str, source: Any) -> bool:
+        active = source is not None and bool(source.is_active())
+        monitor = self._capture_monitors.get(channel)
+        health = monitor.snapshot() if monitor is not None else None
+        if active and health is not None and health["receiving"]:
+            self._capture_stall_channels.discard(channel)
+        if (active and health is not None and health["stalled"]
+                and getattr(source, "requires_audio_blocks", False)):
+            # PortAudio can report an open/active stream without
+            # ever invoking its callback. Other capture backends
+            # already include block delivery in is_active().
+            self._capture_stall_channels.add(channel)
+            logger.warning("%s capture stream stalled despite an open device", channel)
+            return False
+        return active
+
+    def _capture_device_changed(self, channel: str, source: Any,
+                                desired: Optional[Dict[str, Any]]) -> bool:
+        """True when an active source no longer matches the device to follow."""
+        source_id = getattr(source, "device_id", None)
+        desired_id = desired.get("index") if desired else None
+        if channel == CHANNEL_MIC and desired is not None:
+            # Only "System default" follows the default; a
+            # ranked microphone stays until it fails.
+            return (
+                self.options.mic_device_id is None
+                and not self.options.mic_priority
+                and isinstance(source_id, int)
+                and source_id != desired_id
+            )
+        if (channel == CHANNEL_LOOPBACK
+                and isinstance(source_id, int)
+                and desired is not None):
+            return source_id != desired_id
+        if channel == CHANNEL_LOOPBACK:
+            current = getattr(
+                source, "is_default_device_current", None
+            )
+            if callable(current):
+                return not bool(current())
+        return False
 
     def _probe_capture_device(self, channel: str) -> Optional[Dict[str, Any]]:
         from meeting.capture.devices import find_loopback_device
@@ -2187,48 +2271,22 @@ class MeetingEngine:
             self._explicit_capture_message = None
         self._loopback_was_available = loopback_available
         if not message:
-            missing = []
-            if CHANNEL_MIC not in active:
-                missing.append("Microphone unavailable")
-            elif CHANNEL_MIC in self._capture_stall_channels:
-                missing.append(
-                    "Microphone is connected but no audio blocks are arriving; "
-                    "check the selected input device"
-                )
-            if CHANNEL_LOOPBACK not in active:
-                if self._system_audio_disabled:
-                    missing.append(
-                        "System audio disabled for this meeting by your "
-                        "microphone-only choice"
-                    )
-                else:
-                    missing.append("System audio unavailable")
-            elif CHANNEL_LOOPBACK in self._capture_stall_channels:
-                missing.append(
-                    "System audio is connected but no audio blocks are arriving; "
-                    "check the output device"
-                )
-            if self._explicit_capture_message and not loopback_available:
-                # A deliberate microphone-only message must not hide a new
-                # microphone callback stall.
-                message = self._explicit_capture_message
-                if CHANNEL_MIC in self._capture_stall_channels:
-                    message += " " + missing[0]
-            else:
-                message = "; ".join(missing)
+            message = self._capture_gap_message(active, loopback_available)
         if self._capture_integrity_error:
             message = (
                 f"{self._capture_integrity_error} {message}".strip()
             )
+        mic_health = health.get(CHANNEL_MIC, {})
+        loopback_health = health.get(CHANNEL_LOOPBACK, {})
         capture = {
             "mic_available": CHANNEL_MIC in active,
             "loopback_available": loopback_available,
-            "mic_receiving": bool(health.get(CHANNEL_MIC, {}).get("receiving")),
-            "loopback_receiving": bool(health.get(CHANNEL_LOOPBACK, {}).get("receiving")),
-            "mic_signal_windows": int(health.get(CHANNEL_MIC, {}).get("signal_windows", 0)),
-            "loopback_signal_windows": int(health.get(CHANNEL_LOOPBACK, {}).get("signal_windows", 0)),
-            "mic_source_generation": int(health.get(CHANNEL_MIC, {}).get("generation", 0)),
-            "loopback_source_generation": int(health.get(CHANNEL_LOOPBACK, {}).get("generation", 0)),
+            "mic_receiving": bool(mic_health.get("receiving")),
+            "loopback_receiving": bool(loopback_health.get("receiving")),
+            "mic_signal_windows": int(mic_health.get("signal_windows", 0)),
+            "loopback_signal_windows": int(loopback_health.get("signal_windows", 0)),
+            "mic_source_generation": int(mic_health.get("generation", 0)),
+            "loopback_source_generation": int(loopback_health.get("generation", 0)),
             "message": message,
             "audio_incomplete": bool(self._capture_integrity_error),
             "integrity_error": self._capture_integrity_error or "",
@@ -2238,6 +2296,42 @@ class MeetingEngine:
             return
         if self.store.update_runtime_fields(capture=capture):
             self._emit_status(note=message or None)
+
+    def _missing_capture_parts(self, active: set) -> List[str]:
+        missing = []
+        if CHANNEL_MIC not in active:
+            missing.append("Microphone unavailable")
+        elif CHANNEL_MIC in self._capture_stall_channels:
+            missing.append(
+                "Microphone is connected but no audio blocks are arriving; "
+                "check the selected input device"
+            )
+        if CHANNEL_LOOPBACK not in active:
+            if self._system_audio_disabled:
+                missing.append(
+                    "System audio disabled for this meeting by your "
+                    "microphone-only choice"
+                )
+            else:
+                missing.append("System audio unavailable")
+        elif CHANNEL_LOOPBACK in self._capture_stall_channels:
+            missing.append(
+                "System audio is connected but no audio blocks are arriving; "
+                "check the output device"
+            )
+        return missing
+
+    def _capture_gap_message(self, active: set, loopback_available: bool) -> str:
+        """Describe missing or stalled channels when no message was given."""
+        missing = self._missing_capture_parts(active)
+        if not (self._explicit_capture_message and not loopback_available):
+            return "; ".join(missing)
+        # A deliberate microphone-only message must not hide a new
+        # microphone callback stall.
+        message = self._explicit_capture_message
+        if CHANNEL_MIC in self._capture_stall_channels:
+            message += " " + missing[0]
+        return message
 
     def _on_chunk(self, chunk: SpooledChunk) -> None:
         """Route a finalized chunk to ASR (idempotent per chunk id)."""
@@ -2275,21 +2369,8 @@ class MeetingEngine:
                     "on_connection_status": self._on_asr_connection_status}
                    if self.options.asr_remote is not None else {}),
             )
-            if defer_load:
-                # Publish before native load so End/Quit can cancel it.
-                with self._lifecycle_lock:
-                    if self._processing_stop.is_set():
-                        asr.stop()
-                        return
-                    self._asr = asr
-                asr.load_backend()
-                with self._lifecycle_lock:
-                    if self._processing_stop.is_set():
-                        if self._asr is asr:
-                            self._stop_asr("processing startup canceled")
-                        else:
-                            asr.stop()
-                        return
+            if defer_load and not self._load_deferred_asr(asr):
+                return
         except Exception as exc:
             logger.exception("Meeting ASR engine unavailable")
             self._emit("error", {"code": "asr_unavailable", "message": str(exc)})
@@ -2297,26 +2378,53 @@ class MeetingEngine:
                 raise
             return
         if not getattr(asr, "is_available", True):
-            if self._asr is asr:
-                self._asr = None
-            if self.options.asr_remote is not None:
-                raise RuntimeError(asr.last_error or "The remote speech engine is unavailable.")
-            logger.error("Meeting ASR model %r is not available; "
-                         "chunks will stay pending", self.options.asr_model)
-            self._emit("error", {
-                "code": "asr_unavailable",
-                "message": "The transcription model is not available; "
-                           "audio is recorded and can be transcribed later.",
-            })
+            self._report_unavailable_asr(asr)
             return
         if self.options.asr_remote is not None:
-            route = dict(asr._backend.route, language=language)
-            self.options.asr_remote = route
-            self.options.asr_model = route["model"]
-            self.repository.update_meeting(
-                self.meeting_id, asr_model=route["model"], asr_remote_json=json.dumps(route)
-            )
-            self._on_asr_connection_status(f"Transcribing on {route['host_name']}", True)
+            self._record_remote_route(asr, language)
+        self._adopt_asr(asr)
+
+    def _load_deferred_asr(self, asr: Any) -> bool:
+        """Load a deferred backend; False when End/Quit canceled processing."""
+        # Publish before native load so End/Quit can cancel it.
+        with self._lifecycle_lock:
+            if self._processing_stop.is_set():
+                asr.stop()
+                return False
+            self._asr = asr
+        asr.load_backend()
+        with self._lifecycle_lock:
+            if self._processing_stop.is_set():
+                if self._asr is asr:
+                    self._stop_asr("processing startup canceled")
+                else:
+                    asr.stop()
+                return False
+        return True
+
+    def _report_unavailable_asr(self, asr: Any) -> None:
+        if self._asr is asr:
+            self._asr = None
+        if self.options.asr_remote is not None:
+            raise RuntimeError(asr.last_error or "The remote speech engine is unavailable.")
+        logger.error("Meeting ASR model %r is not available; "
+                     "chunks will stay pending", self.options.asr_model)
+        self._emit("error", {
+            "code": "asr_unavailable",
+            "message": "The transcription model is not available; "
+                       "audio is recorded and can be transcribed later.",
+        })
+
+    def _record_remote_route(self, asr: Any, language: str) -> None:
+        route = dict(asr._backend.route, language=language)
+        self.options.asr_remote = route
+        self.options.asr_model = route["model"]
+        self.repository.update_meeting(
+            self.meeting_id, asr_model=route["model"], asr_remote_json=json.dumps(route)
+        )
+        self._on_asr_connection_status(f"Transcribing on {route['host_name']}", True)
+
+    def _adopt_asr(self, asr: Any) -> None:
         with self._lifecycle_lock:
             if self._processing_stop.is_set():
                 asr.stop()
@@ -2421,13 +2529,7 @@ class MeetingEngine:
 
     def _assign_speakers(self, segments: List[TranscriptSegment]) -> None:
         """Mic segments become 'Me'; loopback segments go to the diarizer."""
-        by_chunk: Dict[Optional[int], List[TranscriptSegment]] = {}
-        for seg in segments:
-            if seg.channel == CHANNEL_MIC:
-                seg.speaker_participant_id = self._me_participant_id
-                seg.speaker_source = "channel"
-            elif seg.channel == CHANNEL_LOOPBACK and self._diarizer is not None:
-                by_chunk.setdefault(seg.chunk_id, []).append(seg)
+        by_chunk = self._label_mic_segments(segments)
         if not by_chunk:
             return
         try:
@@ -2458,6 +2560,19 @@ class MeetingEngine:
             ))
         refresh_labels(self._diarizer, labeled)
 
+    def _label_mic_segments(
+        self, segments: List[TranscriptSegment],
+    ) -> Dict[Optional[int], List[TranscriptSegment]]:
+        """Label mic segments 'Me'; return loopback segments to diarize, by chunk."""
+        by_chunk: Dict[Optional[int], List[TranscriptSegment]] = {}
+        for seg in segments:
+            if seg.channel == CHANNEL_MIC:
+                seg.speaker_participant_id = self._me_participant_id
+                seg.speaker_source = "channel"
+            elif seg.channel == CHANNEL_LOOPBACK and self._diarizer is not None:
+                by_chunk.setdefault(seg.chunk_id, []).append(seg)
+        return by_chunk
+
     @staticmethod
     def _segment_dict(seg: TranscriptSegment, created_at: str) -> Dict[str, Any]:
         return {
@@ -2476,26 +2591,13 @@ class MeetingEngine:
 
     def _start_diarizer(self) -> None:
         if self.options.speaker_id_backend == "off":
-            with self._lifecycle_lock:
-                if self._processing_stop.is_set():
-                    return
-                self._degraded_diarization = False
-                self._diarizer = None
-                if self.store is not None:
-                    self.store.update_runtime_fields(diarization_available=False)
-            logger.info(
-                "Speaker identification off; loopback stays channel-labeled"
-            )
+            self._disable_diarizer()
             return
         self._degraded_diarization = False
         diarizer = None
         try:
-            if (not self.options.diarization_model_path
-                    and self.options.diarization_model_resolver is not None):
-                path = self.options.diarization_model_resolver()
-                if self._processing_stop.is_set():
-                    return
-                self.options.diarization_model_path = path
+            if not self._resolve_diarization_model():
+                return
             from meeting.diarize.clustering import create_diarizer
             diarizer = create_diarizer(
                 self.options.diarization_model_path, self.store,
@@ -2505,17 +2607,7 @@ class MeetingEngine:
             logger.exception("Diarizer unavailable")
         if self._processing_stop.is_set():
             return
-        available = False
-        if diarizer is not None:
-            try:
-                available = bool(diarizer.is_available())
-            except Exception:
-                logger.exception("Diarizer availability probe failed")
-        if available:
-            try:
-                diarizer.set_relabel_callback(self._on_diarizer_relabel)
-            except Exception:
-                logger.exception("Failed to register diarizer relabel callback")
+        available = self._prepare_diarizer(diarizer)
         # Availability probes and callback registration can block. End may
         # have claimed the meeting while either ran; adoption and its status
         # write must be one guarded transition after those calls finish.
@@ -2527,6 +2619,44 @@ class MeetingEngine:
                 logger.info("Diarization disabled; loopback stays channel-labeled")
             if self.store is not None:
                 self.store.update_runtime_fields(diarization_available=available)
+
+    def _disable_diarizer(self) -> None:
+        with self._lifecycle_lock:
+            if self._processing_stop.is_set():
+                return
+            self._degraded_diarization = False
+            self._diarizer = None
+            if self.store is not None:
+                self.store.update_runtime_fields(diarization_available=False)
+        logger.info(
+            "Speaker identification off; loopback stays channel-labeled"
+        )
+
+    def _resolve_diarization_model(self) -> bool:
+        """Fill in the speaker model path if needed; False when processing stopped."""
+        if (self.options.diarization_model_path
+                or self.options.diarization_model_resolver is None):
+            return True
+        path = self.options.diarization_model_resolver()
+        if self._processing_stop.is_set():
+            return False
+        self.options.diarization_model_path = path
+        return True
+
+    def _prepare_diarizer(self, diarizer: Any) -> bool:
+        """Probe availability and hook relabeling; True when it can be used."""
+        available = False
+        if diarizer is not None:
+            try:
+                available = bool(diarizer.is_available())
+            except Exception:
+                logger.exception("Diarizer availability probe failed")
+        if available:
+            try:
+                diarizer.set_relabel_callback(self._on_diarizer_relabel)
+            except Exception:
+                logger.exception("Failed to register diarizer relabel callback")
+        return available
 
     def _check_diarizer_degraded(self) -> None:
         """Flip diarization off once the diarizer stops being available.
@@ -2613,79 +2743,22 @@ class MeetingEngine:
             from meeting.agent.scheduler import CheckpointScheduler
             from meeting.reinsight import StoreToolHost
             if self._agent_core is None:
-                system_prompt = ""
-                try:
-                    from meeting.agent.prompts import build_system_prompt
-                    system_prompt = build_system_prompt()
-                except Exception:
-                    logger.exception("build_system_prompt failed; using empty prompt")
+                system_prompt = self._agent_system_prompt()
                 created_core = create_agent_core(
                     self.options.agent_core_kind, self.options.sidecar_payload_dir
                 )
-                with self._lifecycle_lock:
-                    if (generation != self._intelligence_generation
-                            or self._processing_stop.is_set()
-                            or not self.store.with_state(lambda s: s.cloud_enabled)):
-                        created_core.shutdown()
-                        return
-                    self._initializing_agent_core = created_core
-                created_core.initialize(
-                    AgentConfig(
-                        meeting_id=self.meeting_id,
-                        provider=self.options.llm_provider,
-                        model=self.options.llm_model,
-                        api_key=None,  # resolved inside the agent layer
-                        system_prompt=system_prompt,
-                        endpoint=self.options.llm_endpoint,
-                    ),
-                    StoreToolHost(
-                        get_store=lambda: self.store,
-                        repository=self.repository,
-                        writes_allowed=lambda: (
-                            generation == self._intelligence_generation
-                            and self._agent_core is created_core
-                            and self.agent_writes_allowed()
-                            and self.store.with_state(lambda state: state.cloud_enabled)
-                        ),
-                    ),
-                )
-                with self._lifecycle_lock:
-                    owns_initialization = self._initializing_agent_core is created_core
-                    if owns_initialization:
-                        self._initializing_agent_core = None
-                    if (not owns_initialization
-                            or generation != self._intelligence_generation
-                            or self._processing_stop.is_set()
-                            or not self.store.with_state(lambda s: s.cloud_enabled)):
-                        created_core.shutdown()
-                        return
-                    self._agent_core = created_core
-                    # Cores without session events publish no activity.
-                    setter = getattr(created_core, "set_activity_callback", None)
-                    if callable(setter):
-                        setter(self._on_agent_activity)
+                if not self._adopt_agent_core(created_core, generation, system_prompt, StoreToolHost):
+                    return
             # End cannot claim the meeting between this readiness check and
             # scheduler adoption, permission restoration or status writes.
             with self._lifecycle_lock:
-                if (generation != self._intelligence_generation
-                        or self._processing_stop.is_set()
-                        or not self.store.with_state(lambda s: s.cloud_enabled)):
+                if not self._intelligence_wanted(generation):
                     return
                 if not self._core_is_healthy():
                     self._report_intelligence_unusable(created_core)
                     return
                 if self._scheduler is None:
-                    scheduler_kwargs: Dict[str, Any] = {}
-                    topic_judge = self._typesafe_topic_judge()
-                    if topic_judge is not None:
-                        scheduler_kwargs["topic_judge"] = topic_judge
-                    scheduler = CheckpointScheduler(
-                        self, self._agent_core, on_health=self._on_intelligence_health,
-                        **scheduler_kwargs,
-                    )
-                    self._seed_scheduler_watermark(scheduler)
-                    scheduler.start()
-                    self._scheduler = scheduler
+                    self._start_scheduler(CheckpointScheduler)
                 self.allow_agent_writes()
                 self.store.update_runtime_fields(intelligence_online=True)
                 self._set_finalization("pending", emit=False)
@@ -2693,29 +2766,101 @@ class MeetingEngine:
                 self._emit_status()
         except Exception as exc:
             logger.exception("Meeting intelligence failed to start")
-            with self._lifecycle_lock:
-                if self._initializing_agent_core is created_core:
-                    self._initializing_agent_core = None
-                if self._agent_core is created_core:
-                    self._agent_core = None
-            if created_core is not None:
-                try:
-                    created_core.shutdown()
-                except Exception:
-                    logger.exception("Agent core cleanup failed")
-            with self._lifecycle_lock:
-                if (generation != self._intelligence_generation
-                        or self._processing_stop.is_set()
-                        or not self.store.with_state(lambda s: s.cloud_enabled)):
-                    return
-                self.store.update_runtime_fields(intelligence_online=False)
-                self._set_finalization(
-                    "unavailable",
-                    f"Meeting intelligence failed to start: {exc}",
-                    emit=False,
-                )
-                self._emit("intelligence", {"online": False, "error": str(exc)})
-                self._emit_status()
+            self._unwind_intelligence_start(exc, created_core, generation)
+
+    def _intelligence_wanted(self, generation: int) -> bool:
+        """Whether this start attempt is still current; call under the lifecycle lock."""
+        return (generation == self._intelligence_generation
+                and not self._processing_stop.is_set()
+                and self.store.with_state(lambda s: s.cloud_enabled))
+
+    @staticmethod
+    def _agent_system_prompt() -> str:
+        system_prompt = ""
+        try:
+            from meeting.agent.prompts import build_system_prompt
+            system_prompt = build_system_prompt()
+        except Exception:
+            logger.exception("build_system_prompt failed; using empty prompt")
+        return system_prompt
+
+    def _adopt_agent_core(self, created_core: Any, generation: int, system_prompt: str,
+                          tool_host_cls: Any) -> bool:
+        """Initialize a new agent core and adopt it; False when it was shut down."""
+        with self._lifecycle_lock:
+            if not self._intelligence_wanted(generation):
+                created_core.shutdown()
+                return False
+            self._initializing_agent_core = created_core
+        created_core.initialize(
+            AgentConfig(
+                meeting_id=self.meeting_id,
+                provider=self.options.llm_provider,
+                model=self.options.llm_model,
+                api_key=None,  # resolved inside the agent layer
+                system_prompt=system_prompt,
+                endpoint=self.options.llm_endpoint,
+            ),
+            tool_host_cls(
+                get_store=lambda: self.store,
+                repository=self.repository,
+                writes_allowed=lambda: (
+                    generation == self._intelligence_generation
+                    and self._agent_core is created_core
+                    and self.agent_writes_allowed()
+                    and self.store.with_state(lambda state: state.cloud_enabled)
+                ),
+            ),
+        )
+        with self._lifecycle_lock:
+            owns_initialization = self._initializing_agent_core is created_core
+            if owns_initialization:
+                self._initializing_agent_core = None
+            if not owns_initialization or not self._intelligence_wanted(generation):
+                created_core.shutdown()
+                return False
+            self._agent_core = created_core
+            # Cores without session events publish no activity.
+            setter = getattr(created_core, "set_activity_callback", None)
+            if callable(setter):
+                setter(self._on_agent_activity)
+        return True
+
+    def _start_scheduler(self, scheduler_cls: Any) -> None:
+        scheduler_kwargs: Dict[str, Any] = {}
+        topic_judge = self._typesafe_topic_judge()
+        if topic_judge is not None:
+            scheduler_kwargs["topic_judge"] = topic_judge
+        scheduler = scheduler_cls(
+            self, self._agent_core, on_health=self._on_intelligence_health,
+            **scheduler_kwargs,
+        )
+        self._seed_scheduler_watermark(scheduler)
+        scheduler.start()
+        self._scheduler = scheduler
+
+    def _unwind_intelligence_start(self, exc: Exception, created_core: Any, generation: int) -> None:
+        with self._lifecycle_lock:
+            if self._initializing_agent_core is created_core:
+                self._initializing_agent_core = None
+            if self._agent_core is created_core:
+                self._agent_core = None
+        if created_core is not None:
+            try:
+                created_core.shutdown()
+            except Exception:
+                logger.exception("Agent core cleanup failed")
+        with self._lifecycle_lock:
+            if not self._intelligence_wanted(generation):
+                return
+            self.store.update_runtime_fields(intelligence_online=False)
+            self._set_finalization(
+                "unavailable",
+                f"Meeting intelligence failed to start: {exc}",
+                emit=False,
+            )
+            self._emit("intelligence", {"online": False, "error": str(exc)})
+            self._emit_status()
 
     def _on_agent_activity(self, activity: Any) -> None:
         """Publish one ephemeral agent activity tick to host dashboards.
@@ -3065,7 +3210,8 @@ class MeetingEngine:
         """Catch up pulses after the final transcript, even without a notes agent."""
         from services.settings import resolve_typesafe_feature_enabled
 
-        if self.store is None or not self._fast_features_allowed() or not resolve_typesafe_feature_enabled("highlights"):
+        if (self.store is None or not self._fast_features_allowed()
+                or not resolve_typesafe_feature_enabled("highlights")):
             return
         if self._typesafe_judge() is None:
             return
@@ -3124,12 +3270,21 @@ class MeetingEngine:
             from meeting.voice_actions import correction_op
             op = correction_op(row, previous)
             if not op:
-                self._voice_feedback('Correction not applied. Say “note taker, replace X with Y” using a term in the recent transcript.', "uncertain")
+                self._voice_feedback(
+                    'Correction not applied. Say “note taker, replace X with Y” '
+                    'using a term in the recent transcript.',
+                    "uncertain",
+                )
                 return []
             results = self.store.apply("system", "voice_command", [op])
             self._notify_human_guidance(results)
             self._on_voice_command_applied(command, results)
-            self._voice_feedback("Transcript correction applied. Remove the spoken correction note to undo it." if any(r.ok for r in results) else "The transcript correction could not be saved.", "saved" if any(r.ok for r in results) else "error")
+            if any(r.ok for r in results):
+                self._voice_feedback(
+                    "Transcript correction applied. Remove the spoken correction note to undo it.", "saved",
+                )
+            else:
+                self._voice_feedback("The transcript correction could not be saved.", "error")
             return results
         try:
             future = self.request_note_adjustment(
@@ -3142,7 +3297,10 @@ class MeetingEngine:
                 try:
                     result = done.result()
                     count = sum(r.ok for r in (getattr(result, "op_results", None) or []))
-                    message = "Recap added to the live notes." if result.ok and count else "The recap produced no saved notes. Try again from the notes request box."
+                    if result.ok and count:
+                        message = "Recap added to the live notes."
+                    else:
+                        message = "The recap produced no saved notes. Try again from the notes request box."
                 except Exception:
                     message = "The recap could not finish. Try again from the notes request box."
                 self._voice_feedback(message, "saved" if message.startswith("Recap added") else "error")
