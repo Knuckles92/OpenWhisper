@@ -227,16 +227,38 @@ def _overhead_mib() -> int:
     return 450 if sys.platform == "win32" else 250
 
 
-def _architecture(model: str):
+#: A distilled checkpoint inside a longer name, e.g. "distil-large-v3",
+#: Systran's "faster-distil-whisper-large-v3" or "distil-large-v3-ct2".
+_DISTIL_NAME = re.compile(r"""
+    (?:^|[-_]) distil
+    (?:[-_]whisper)?                                  # Systran's naming
+    [-_] (?P<size> small\.en | medium\.en | large[-_]v[23] )
+    (?=$|[-_])                                        # "-ct2" may follow; "large-v30" may not
+""", re.VERBOSE)
+
+
+def _distil_architecture(name: str):
+    match = _DISTIL_NAME.search(name)
+    if match is None:
+        return None
+    size = match["size"].replace("_", "-")
+    return _ARCHITECTURES[f"distil-{size}"]
+
+
+def _model_file_name(model: str) -> str:
     # Repository owners and parent directories do not describe the weights.
-    name = model.lower().replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    return model.lower().replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+
+
+def _architecture(model: str):
+    name = _model_file_name(model)
     if name in _ARCHITECTURES:
         return _ARCHITECTURES[name]
     tokens = set(re.split(r"[-_.]", name))
     if "distil" in tokens:
-        match = re.search(r"(?:^|[-_])distil(?:[-_]whisper)?[-_]"
-                          r"(small\.en|medium\.en|large[-_]v[23])(?=$|[-_])", name)
-        return _ARCHITECTURES.get("distil-" + match[1].replace("_", "-")) if match else None
+        # Distillation keeps the encoder but cuts the decoder to a few layers,
+        # so an unrecognised distil model must not fall back to its full size.
+        return _distil_architecture(name)
     sizes = tokens.intersection({"tiny", "base", "small", "medium", "large"})
     if "turbo" in tokens:
         return _ARCHITECTURES["turbo"] if sizes <= {"large"} else None
