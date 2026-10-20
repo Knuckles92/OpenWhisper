@@ -101,32 +101,30 @@ if USE_PYNPUT_BACKEND:
         _qt_key_value(Qt.Key.Key_Shift),
     }
 
-    def _qt_event_modifiers(event) -> frozenset:
-        modifiers = set()
+    #: Modifier bits and the hotkey name each one means.
+    _MAC_NATIVE_MODIFIER_NAMES = (
+        (_MAC_NATIVE_CMD, "cmd"),
+        (_MAC_NATIVE_CTRL, "ctrl"),
+        (_MAC_NATIVE_ALT, "alt"),
+        (_MAC_NATIVE_SHIFT, "shift"),
+    )
+    _QT_MODIFIER_NAMES = (
+        (Qt.KeyboardModifier.MetaModifier, "cmd"),
+        (Qt.KeyboardModifier.ControlModifier, "ctrl"),
+        (Qt.KeyboardModifier.AltModifier, "alt"),
+        (Qt.KeyboardModifier.ShiftModifier, "shift"),
+    )
 
+    def _qt_event_modifiers(event) -> frozenset:
         if sys.platform == "darwin" and hasattr(event, "nativeModifiers"):
             native_modifiers = int(event.nativeModifiers())
             if native_modifiers:
-                if native_modifiers & _MAC_NATIVE_CMD:
-                    modifiers.add("cmd")
-                if native_modifiers & _MAC_NATIVE_CTRL:
-                    modifiers.add("ctrl")
-                if native_modifiers & _MAC_NATIVE_ALT:
-                    modifiers.add("alt")
-                if native_modifiers & _MAC_NATIVE_SHIFT:
-                    modifiers.add("shift")
-                return frozenset(modifiers)
+                return frozenset(
+                    name for bit, name in _MAC_NATIVE_MODIFIER_NAMES if native_modifiers & bit
+                )
 
         qt_modifiers = event.modifiers()
-        if qt_modifiers & Qt.KeyboardModifier.MetaModifier:
-            modifiers.add("cmd")
-        if qt_modifiers & Qt.KeyboardModifier.ControlModifier:
-            modifiers.add("ctrl")
-        if qt_modifiers & Qt.KeyboardModifier.AltModifier:
-            modifiers.add("alt")
-        if qt_modifiers & Qt.KeyboardModifier.ShiftModifier:
-            modifiers.add("shift")
-        return frozenset(modifiers)
+        return frozenset(name for flag, name in _QT_MODIFIER_NAMES if qt_modifiers & flag)
 
     def _qt_event_key_name(event) -> Optional[str]:
         key = int(event.key())
