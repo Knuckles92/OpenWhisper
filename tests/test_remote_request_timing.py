@@ -81,6 +81,8 @@ def test_queue_time_is_reported_separately_over_real_tls(host, engine, monkeypat
 
 
 def test_disposable_preview_does_not_count_as_final_audio(host):
+    observed = []
+    host._on_event = lambda kind, detail: observed.append(host.activity.snapshot()["load"].copy()) if kind == "activity" and detail.get("request_finished") else None
     client = _connect(host, _pair(host))
     try:
         client.request("transcribe", audio=_tone(1600), preview=True)
@@ -94,6 +96,7 @@ def test_disposable_preview_does_not_count_as_final_audio(host):
         assert snapshot["transcriptions"] == 1
         assert snapshot["audio_s"] == .1
         assert snapshot["load"]["requests"] == 2
+        assert [item["requests"] for item in observed] == [1, 2]
     finally:
         client.close()
 
@@ -102,6 +105,8 @@ def test_disposable_preview_does_not_count_as_final_audio(host):
 def test_rejected_work_has_timing_and_separate_counter(host, monkeypatch, preview):
     from services.remote_asr import protocol
 
+    observed = []
+    host._on_event = lambda kind, detail: observed.append(host.activity.snapshot()["load"].copy()) if kind == "activity" else None
     monkeypatch.setattr(host._work_admission, "acquire", lambda *a, **kw: False)
     frame = protocol.pack_request({"id": "rejected", "op": "transcribe", "preview": preview}, payload=b"")
     reply = host._dispatch(frame, None, (), "connection", set(), "Device", "device")
@@ -112,3 +117,4 @@ def test_rejected_work_has_timing_and_separate_counter(host, monkeypatch, previe
     assert load["preview_skips"] == int(preview)
     assert load["work_rejections"] == int(not preview)
     assert host.activity.snapshot()["transcriptions"] == 0
+    assert observed == [load]

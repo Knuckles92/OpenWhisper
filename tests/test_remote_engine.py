@@ -672,7 +672,7 @@ def test_the_host_says_who_it_is_decoding_for(host, engine):
     connection.request("transcribe", audio=_tone(160))
     assert seen[0][0]["busy"] and seen[0][0]["name"] == "laptop"
     assert not host.connected_clients()[0]["busy"]
-    activity = [detail for kind, detail in events if kind == "activity"]
+    activity = [detail for kind, detail in events if kind == "activity" and "busy" in detail]
     assert activity == [{"name": "laptop", "busy": True}, {"name": "laptop", "busy": False}]
     connection.close()
 

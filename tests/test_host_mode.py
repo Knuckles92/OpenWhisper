@@ -201,7 +201,7 @@ def test_a_transcription_is_counted_before_the_event_that_ends_it(speech_host):
     seen = []
 
     def on_event(kind, detail):
-        if kind == "activity" and not detail["busy"]:
+        if kind == "activity" and detail.get("busy") is False:
             seen.append(host.activity.snapshot()["transcriptions"])
 
     host._on_event = on_event

@@ -1135,6 +1135,9 @@ class SpeechHost:
         if isinstance(reply.get("result"), dict) and reply["result"].get("preview_skipped"):
             outcome = "preview_skipped"
         self.activity.request_finished(device_id, device_name, queue_s, server_s, outcome)
+        # Busy transitions occur inside decoding; admission rejections have no
+        # transition at all. Notify readers after the request totals are current.
+        self._emit("activity", {"request_finished": True})
         return reply
 
     def _dispatch_unpacked(self, header: dict, payload: bytes, engine: HostEngine,
