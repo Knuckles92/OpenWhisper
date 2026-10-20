@@ -80,6 +80,7 @@ _SETUP_LAUNCH_WAIT_S = 120
 _ERROR_LIMIT = 2000
 _LOCK_WAIT_S = 60.0
 _CLEANUP_LOCK_WAIT_S = 300.0
+_LEGACY_PREPARATION_KEEP_S = 24 * 60 * 60
 _LOCK_POLL_S = 0.25
 _RELAUNCHED_ENV = "OPENWHISPER_UPDATER_RELAUNCHED"
 _PARENT_STILL_RUNNING = (
@@ -491,27 +492,36 @@ def validate_archive_member_name(name: str) -> str:
         if not directory:
             raise UpdateApplyError("Archive contains an empty path.")
         raw = directory
-    if raw.startswith("/") or raw.startswith("\\"):
-        raise UpdateApplyError(f"Archive contains an unsafe path: {name}")
-    if re.match(r"^[A-Za-z]:", raw) or raw.startswith("//"):
-        raise UpdateApplyError(f"Archive contains an unsafe path: {name}")
-    if ":" in raw:
-        raise UpdateApplyError(f"Archive contains an unsafe path: {name}")
+    _reject_absolute_member(name, raw)
     if len(raw) > _MAX_NAME_LEN:
         raise UpdateApplyError(f"Archive path is too long: {name}")
     parts = raw.split("/")
     if len(parts) > _MAX_DEPTH:
         raise UpdateApplyError(f"Archive path is too deep: {name}")
     for part in parts:
-        if part in ("", ".", ".."):
-            raise UpdateApplyError(f"Archive contains an unsafe path: {name}")
-        if part.endswith(" ") or part.endswith("."):
-            raise UpdateApplyError(f"Archive contains an unsafe path: {name}")
-        if _is_reserved_windows_name(part):
-            raise UpdateApplyError(f"Archive contains a reserved name: {name}")
-        if any(ord(char) < 32 for char in part):
-            raise UpdateApplyError(f"Archive contains an unsafe path: {name}")
+        _check_member_segment(name, part)
     return "/".join(parts)
+
+
+def _reject_absolute_member(name: str, raw: str) -> None:
+    """Reject rooted, drive-qualified, UNC, and stream (``:``) member paths."""
+    if raw.startswith("/") or raw.startswith("\\"):
+        raise UpdateApplyError(f"Archive contains an unsafe path: {name}")
+    if re.match(r"^[A-Za-z]:", raw) or raw.startswith("//"):
+        raise UpdateApplyError(f"Archive contains an unsafe path: {name}")
+    if ":" in raw:
+        raise UpdateApplyError(f"Archive contains an unsafe path: {name}")
+
+
+def _check_member_segment(name: str, part: str) -> None:
+    if part in ("", ".", ".."):
+        raise UpdateApplyError(f"Archive contains an unsafe path: {name}")
+    if part.endswith(" ") or part.endswith("."):
+        raise UpdateApplyError(f"Archive contains an unsafe path: {name}")
+    if _is_reserved_windows_name(part):
+        raise UpdateApplyError(f"Archive contains a reserved name: {name}")
+    if any(ord(char) < 32 for char in part):
+        raise UpdateApplyError(f"Archive contains an unsafe path: {name}")
 
 
 def _safe_join(root: str, relative: str) -> str:
@@ -610,12 +620,8 @@ def load_manifest(path: str) -> Dict:
     return payload
 
 
-def validate_manifest(
-    manifest: Dict,
-    *,
-    expected_version: Optional[str] = None,
-    current_updater_version: Optional[str] = None,
-) -> None:
+def _check_manifest_target(manifest: Dict) -> None:
+    """The package must be this product's, for this architecture and layout."""
     if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
         raise UpdateRequiresSetup("This update uses an unsupported manifest schema.")
     if manifest.get("product") != APP_NAME or manifest.get("app_id") != APP_ID:
@@ -626,6 +632,13 @@ def validate_manifest(
         raise UpdateRequiresSetup(
             "This update changes the install layout and must use the installer."
         )
+
+
+def _check_manifest_version(
+    manifest: Dict,
+    expected_version: Optional[str],
+    current_updater_version: Optional[str],
+) -> None:
     version = str(manifest.get("version") or "")
     parse_strict_version(version)
     if expected_version and version != expected_version:
@@ -637,6 +650,32 @@ def validate_manifest(
         raise UpdateRequiresSetup(
             "This update needs a newer updater and must use the installer."
         )
+
+
+def _manifest_files_total(files: Dict) -> int:
+    """Sum the declared file sizes, rejecting any malformed file entry."""
+    calculated_total = 0
+    for relative, metadata in files.items():
+        if (
+            not isinstance(relative, str)
+            or not isinstance(metadata, dict)
+            or not isinstance(metadata.get("size"), int)
+            or metadata["size"] < 0
+            or not re.fullmatch(r"[0-9a-f]{64}", str(metadata.get("sha256") or ""))
+        ):
+            raise UpdateApplyError("The update manifest has an invalid file entry.")
+        calculated_total += metadata["size"]
+    return calculated_total
+
+
+def validate_manifest(
+    manifest: Dict,
+    *,
+    expected_version: Optional[str] = None,
+    current_updater_version: Optional[str] = None,
+) -> None:
+    _check_manifest_target(manifest)
+    _check_manifest_version(manifest, expected_version, current_updater_version)
     files = manifest.get("files")
     if not isinstance(files, dict) or not files:
         raise UpdateApplyError("The update manifest lists no files.")
@@ -651,18 +690,7 @@ def validate_manifest(
         or member_count > _MAX_MEMBERS
     ):
         raise UpdateApplyError("The update manifest has invalid size metadata.")
-    calculated_total = 0
-    for relative, metadata in files.items():
-        if (
-            not isinstance(relative, str)
-            or not isinstance(metadata, dict)
-            or not isinstance(metadata.get("size"), int)
-            or metadata["size"] < 0
-            or not re.fullmatch(r"[0-9a-f]{64}", str(metadata.get("sha256") or ""))
-        ):
-            raise UpdateApplyError("The update manifest has an invalid file entry.")
-        calculated_total += metadata["size"]
-    if calculated_total != declared_total:
+    if _manifest_files_total(files) != declared_total:
         raise UpdateApplyError("The update manifest size does not match its files.")
     for required in (APP_EXE_NAME, UPDATER_EXE_NAME):
         if required not in files:
@@ -757,80 +785,121 @@ def safe_extract_tar_xz(
 
     os.makedirs(destination, exist_ok=True)
     reject_reparse(destination, "Extract directory")
-    seen_fold: Set[str] = set()
-    written = 0
     total_members = int(manifest.get("member_count") or 0) if manifest else 0
     manifest_files = manifest.get("files") if manifest else None
     index = 0
 
     with tarfile.open(archive_path, "r:xz") as archive:
+        extraction = _TarExtraction(
+            archive, destination, manifest_files, unpacked_cap, cancel
+        )
         for index, member in enumerate(archive, start=1):
             if index > _MAX_MEMBERS:
                 raise UpdateApplyError("The update archive has too many entries.")
             _check_cancel(cancel)
             if member.isdir():
-                name = validate_archive_member_name(member.name)
-                fold = name.lower()
-                if fold in seen_fold:
-                    raise UpdateApplyError(f"Archive contains a duplicate path: {name}")
-                seen_fold.add(fold)
-                target = _safe_join(destination, name)
-                os.makedirs(target, exist_ok=True)
-                progress("extracting", index, total_members)
+                extraction.directory(member)
+            elif _is_regular_member(member):
+                extraction.regular_file(member)
+            else:
                 continue
-            if member.issym() or member.islnk() or member.type in _UNSAFE_TAR_TYPES:
-                raise UpdateApplyError(
-                    f"Archive contains an unsupported entry: {member.name}"
-                )
-            if not member.isreg():
-                # Pax/global headers are consumed by tarfile; anything else is unsafe.
-                if member.type in (b"x", b"g", "x", "g"):
-                    continue
-                raise UpdateApplyError(
-                    f"Archive contains an unsupported entry: {member.name}"
-                )
-            name = validate_archive_member_name(member.name)
-            fold = name.lower()
-            if fold in seen_fold:
-                raise UpdateApplyError(f"Archive contains a duplicate path: {name}")
-            seen_fold.add(fold)
-            if member.size < 0 or written + member.size > unpacked_cap:
-                raise UpdateApplyError("The update archive is larger than allowed.")
-            if manifest_files is not None and name != MANIFEST_NAME:
-                metadata = manifest_files.get(name)
-                if (
-                    not isinstance(metadata, dict)
-                    or metadata.get("size") != member.size
-                ):
-                    raise UpdateApplyError(
-                        f"Archive member is not authorized by the manifest: {name}"
-                    )
-            target = _safe_join(destination, name)
-            parent = os.path.dirname(target)
-            os.makedirs(parent, exist_ok=True)
-            reject_reparse(parent, parent)
-            if os.path.lexists(target):
-                raise UpdateApplyError(f"Archive would overwrite {name}")
-            source = archive.extractfile(member)
-            if source is None:
-                raise UpdateApplyError(f"Could not read archive member: {name}")
-            with source, open(target, "wb") as out:
-                remaining = member.size
-                while remaining:
-                    _check_cancel(cancel)
-                    block = source.read(min(_CHUNK_BYTES, remaining))
-                    if not block:
-                        raise UpdateApplyError(
-                            f"Archive member ended early: {name}"
-                        )
-                    out.write(block)
-                    remaining -= len(block)
-                out.flush()
-                os.fsync(out.fileno())
-            written += member.size
             progress("extracting", index, total_members)
     if total_members and index != total_members:
         raise UpdateApplyError("The update archive member count is incorrect.")
+
+
+def _is_regular_member(member: tarfile.TarInfo) -> bool:
+    """True for a regular file, False for a skippable pax header; else raise."""
+    if member.issym() or member.islnk() or member.type in _UNSAFE_TAR_TYPES:
+        raise UpdateApplyError(
+            f"Archive contains an unsupported entry: {member.name}"
+        )
+    if member.isreg():
+        return True
+    # Pax/global headers are consumed by tarfile; anything else is unsafe.
+    if member.type in (b"x", b"g", "x", "g"):
+        return False
+    raise UpdateApplyError(
+        f"Archive contains an unsupported entry: {member.name}"
+    )
+
+
+class _TarExtraction:
+    """Writes one archive's members under ``destination``, enforcing its limits."""
+
+    def __init__(
+        self,
+        archive: tarfile.TarFile,
+        destination: str,
+        manifest_files: Optional[Dict],
+        unpacked_cap: int,
+        cancel,
+    ) -> None:
+        self.archive = archive
+        self.destination = destination
+        self.manifest_files = manifest_files
+        self.unpacked_cap = unpacked_cap
+        self.cancel = cancel
+        self.seen_fold: Set[str] = set()
+        self.written = 0
+
+    def _claim(self, member: tarfile.TarInfo) -> str:
+        """Validated member name, refusing case-insensitive duplicates."""
+        name = validate_archive_member_name(member.name)
+        fold = name.lower()
+        if fold in self.seen_fold:
+            raise UpdateApplyError(f"Archive contains a duplicate path: {name}")
+        self.seen_fold.add(fold)
+        return name
+
+    def directory(self, member: tarfile.TarInfo) -> None:
+        name = self._claim(member)
+        target = _safe_join(self.destination, name)
+        os.makedirs(target, exist_ok=True)
+
+    def regular_file(self, member: tarfile.TarInfo) -> None:
+        name = self._claim(member)
+        if member.size < 0 or self.written + member.size > self.unpacked_cap:
+            raise UpdateApplyError("The update archive is larger than allowed.")
+        self._check_authorized(name, member)
+        target = _safe_join(self.destination, name)
+        parent = os.path.dirname(target)
+        os.makedirs(parent, exist_ok=True)
+        reject_reparse(parent, parent)
+        if os.path.lexists(target):
+            raise UpdateApplyError(f"Archive would overwrite {name}")
+        source = self.archive.extractfile(member)
+        if source is None:
+            raise UpdateApplyError(f"Could not read archive member: {name}")
+        with source, open(target, "wb") as out:
+            self._copy(source, out, member.size, name)
+            out.flush()
+            os.fsync(out.fileno())
+        self.written += member.size
+
+    def _check_authorized(self, name: str, member: tarfile.TarInfo) -> None:
+        if self.manifest_files is None or name == MANIFEST_NAME:
+            return
+        metadata = self.manifest_files.get(name)
+        if (
+            not isinstance(metadata, dict)
+            or metadata.get("size") != member.size
+        ):
+            raise UpdateApplyError(
+                f"Archive member is not authorized by the manifest: {name}"
+            )
+
+    def _copy(self, source, out, size: int, name: str) -> None:
+        remaining = size
+        while remaining:
+            _check_cancel(self.cancel)
+            block = source.read(min(_CHUNK_BYTES, remaining))
+            if not block:
+                raise UpdateApplyError(
+                    f"Archive member ended early: {name}"
+                )
+            out.write(block)
+            remaining -= len(block)
 
 
 def tree_size_bytes(root: str) -> int:
@@ -983,6 +1052,30 @@ def _is_under_program_files(path: str) -> bool:
     return False
 
 
+def _is_user_registration(registration: Optional[InstallRegistration]) -> bool:
+    """An HKCU registration whose DisplayVersion parses."""
+    if registration is None or registration.hive != "HKCU":
+        return False
+    try:
+        parse_strict_version(registration.display_version)
+    except ValueError:
+        return False
+    return True
+
+
+def _install_dir_eligible(registration: InstallRegistration, target: str) -> bool:
+    """``target`` is the registered, per-user, reparse-free install with its uninstaller."""
+    if _is_under_program_files(target):
+        return False
+    if not paths_equal(registration.install_location, target):
+        return False
+    try:
+        reject_reparse_chain(target, "Install directory")
+    except (OSError, UpdateApplyError):
+        return False
+    return registered_uninstaller_path(registration, target) is not None
+
+
 def native_apply_eligible(
     *,
     registration: Optional[InstallRegistration] = None,
@@ -994,24 +1087,12 @@ def native_apply_eligible(
         return False
     if registration is None:
         registration = discover_install_registration()
-    if registration is None or registration.hive != "HKCU":
-        return False
-    try:
-        parse_strict_version(registration.display_version)
-    except ValueError:
+    if not _is_user_registration(registration):
         return False
     if is_process_elevated():
         return False
     target = app_dir if app_dir is not None else running_app_dir()
-    if _is_under_program_files(target):
-        return False
-    if not paths_equal(registration.install_location, target):
-        return False
-    try:
-        reject_reparse_chain(target, "Install directory")
-    except (OSError, UpdateApplyError):
-        return False
-    if registered_uninstaller_path(registration, target) is None:
+    if not _install_dir_eligible(registration, target):
         return False
     if helper_present is None:
         helper_present = os.path.isfile(os.path.join(target, UPDATER_EXE_NAME))
@@ -1053,13 +1134,8 @@ def save_journal(journal: UpdateJournal) -> None:
     )
 
 
-def validate_journal_binding(
-    journal: UpdateJournal, appdata: Optional[str] = None
-) -> None:
-    token = validate_transaction_id(journal.transaction_id)
-    expected_appdata = canonical_path(appdata if appdata is not None else local_app_dir())
-    if canonical_path(journal.appdata) != expected_appdata:
-        raise UpdateApplyError("The update journal has an invalid data root.")
+def _check_journal_trees(journal: UpdateJournal, token: str) -> None:
+    """Candidate and rollback trees must be the install's own siblings."""
     app_dir = canonical_path(journal.app_dir)
     expected_candidate = canonical_path(
         app_dir.rstrip("\\/") + f".new-{token[:8]}"
@@ -1071,8 +1147,9 @@ def validate_journal_binding(
         raise UpdateApplyError("The update journal has an invalid candidate path.")
     if canonical_path(journal.rollback_dir) != expected_rollback:
         raise UpdateApplyError("The update journal has an invalid rollback path.")
-    if not re.fullmatch(r"[0-9a-f]{32}", journal.health_token):
-        raise UpdateApplyError("The update journal has an invalid health token.")
+
+
+def _check_journal_versions(journal: UpdateJournal) -> None:
     parse_strict_version(journal.old_version)
     parse_strict_version(journal.new_version)
     parse_strict_version(journal.old_display_version)
@@ -1086,6 +1163,10 @@ def validate_journal_binding(
     for digest in (journal.old_exe_sha256, journal.new_exe_sha256):
         if digest and not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise UpdateApplyError("The update journal has an invalid file digest.")
+
+
+def _check_journal_compatibility_files(journal: UpdateJournal) -> None:
+    """Only Inno uninstaller files and the legacy NVIDIA tree may be preserved."""
     for name in journal.uninstaller_files:
         if (
             os.path.basename(name) != name
@@ -1112,6 +1193,20 @@ def validate_journal_binding(
             raise UpdateApplyError(
                 "The update journal has invalid compatibility metadata."
             )
+
+
+def validate_journal_binding(
+    journal: UpdateJournal, appdata: Optional[str] = None
+) -> None:
+    token = validate_transaction_id(journal.transaction_id)
+    expected_appdata = canonical_path(appdata if appdata is not None else local_app_dir())
+    if canonical_path(journal.appdata) != expected_appdata:
+        raise UpdateApplyError("The update journal has an invalid data root.")
+    _check_journal_trees(journal, token)
+    if not re.fullmatch(r"[0-9a-f]{32}", journal.health_token):
+        raise UpdateApplyError("The update journal has an invalid health token.")
+    _check_journal_versions(journal)
+    _check_journal_compatibility_files(journal)
     if journal.archive_path:
         archive = canonical_path(journal.archive_path)
         if canonical_path(os.path.dirname(archive)) != canonical_path(
@@ -1261,26 +1356,7 @@ def prepare_candidate(
     """Extract and verify a sibling candidate, then write the journal."""
     if progress is None:
         progress = lambda _phase, _done, _total: None
-    parse_strict_version(release_version)
-    parse_strict_version(current_version)
-    if not is_newer_version(current_version, release_version):
-        raise UpdateApplyError("Refusing to apply a version that is not newer.")
-    if not native_apply_eligible(registration=registration, app_dir=app_dir):
-        raise UpdateApplyError("This installation cannot apply a native update.")
-    if parse_strict_version(registration.display_version) != parse_strict_version(
-        current_version
-    ):
-        # DisplayVersion is descriptive state, not the installation identity.
-        # The HKCU key, install path, registered uninstaller, and updater helper
-        # were already bound by native_apply_eligible().  A prior native update
-        # can leave only this value stale; the successful commit below rewrites
-        # it, while rollback restores the value recorded in the journal.
-        logger.warning(
-            "The registered version (%s) differs from the running application "
-            "(%s); the native update will repair it",
-            registration.display_version,
-            current_version,
-        )
+    _check_preparation_request(release_version, current_version, app_dir, registration)
 
     appdata_root = canonical_path(appdata if appdata is not None else local_app_dir())
     transaction_id = uuid.uuid4().hex
@@ -1317,14 +1393,7 @@ def prepare_candidate(
 
     journal = None
     try:
-        selected_parent_pid = int(
-            parent_pid if parent_pid is not None else os.getpid()
-        )
-        parent_exe, parent_creation_time = process_identity(selected_parent_pid)
-        if sys.platform == "win32" and (
-            not parent_exe or not parent_creation_time
-        ):
-            raise UpdateApplyError("Could not identify the running OpenWhisper process.")
+        selected_parent_pid, parent_exe, parent_creation_time = _parent_identity(parent_pid)
         journal = UpdateJournal(
             transaction_id=transaction_id,
             state=TransactionState.PREPARING,
@@ -1350,20 +1419,7 @@ def prepare_candidate(
         )
         save_journal(journal)
         os.makedirs(candidate_dir, exist_ok=False)
-        safe_extract_tar_xz(
-            archive_path,
-            candidate_dir,
-            manifest=manifest,
-            progress=progress,
-            cancel=cancel,
-        )
-        manifest_path = os.path.join(candidate_dir, MANIFEST_NAME)
-        if not os.path.isfile(manifest_path):
-            raise UpdateApplyError("The update package is missing its manifest.")
-        extracted_manifest = load_manifest(manifest_path)
-        if extracted_manifest != manifest:
-            raise UpdateApplyError("The extracted update manifest changed.")
-        verify_tree_against_manifest(candidate_dir, manifest)
+        _extract_verified_candidate(archive_path, candidate_dir, manifest, progress, cancel)
         # Hashing and fsyncing the whole tree takes far longer than the
         # extraction that precedes it, so a cancel arriving here has to be
         # honored: otherwise the app hands off to the updater and restarts
@@ -1378,13 +1434,7 @@ def prepare_candidate(
         _check_cancel(cancel)
         _fsync_tree(candidate_dir)
         write_completion_sentinel(candidate_dir, release_version)
-        helper_src = os.path.join(app_dir, UPDATER_EXE_NAME)
-        if not os.path.isfile(helper_src):
-            raise UpdateApplyError("The updater helper is missing from this install.")
-        helper_copy = os.path.join(tx_dir, UPDATER_EXE_NAME)
-        shutil.copy2(helper_src, helper_copy)
-        with open(helper_copy, "rb+") as handle:
-            os.fsync(handle.fileno())
+        _stage_updater_helper(app_dir, tx_dir)
         old_exe = os.path.join(app_dir, APP_EXE_NAME)
         if not os.path.isfile(old_exe):
             raise UpdateApplyError("The installed executable is missing.")
@@ -1396,16 +1446,95 @@ def prepare_candidate(
         save_journal(journal)
         return journal
     except Exception:
-        if journal is not None:
-            journal.state = TransactionState.ROLLED_BACK
-            try:
-                save_journal(journal)
-                _cleanup_transaction(journal)
-            except (OSError, UpdateApplyError):
-                logger.info("Interrupted preparation will be cleaned on next start", exc_info=True)
-        else:
-            shutil.rmtree(tx_dir, ignore_errors=True)
+        _discard_preparation(journal, tx_dir)
         raise
+
+
+def _check_preparation_request(
+    release_version: str,
+    current_version: str,
+    app_dir: str,
+    registration: InstallRegistration,
+) -> None:
+    parse_strict_version(release_version)
+    parse_strict_version(current_version)
+    if not is_newer_version(current_version, release_version):
+        raise UpdateApplyError("Refusing to apply a version that is not newer.")
+    if not native_apply_eligible(registration=registration, app_dir=app_dir):
+        raise UpdateApplyError("This installation cannot apply a native update.")
+    if parse_strict_version(registration.display_version) != parse_strict_version(
+        current_version
+    ):
+        # DisplayVersion is descriptive state, not the installation identity.
+        # The HKCU key, install path, registered uninstaller, and updater helper
+        # were already bound by native_apply_eligible().  A prior native update
+        # can leave only this value stale; the successful commit below rewrites
+        # it, while rollback restores the value recorded in the journal.
+        logger.warning(
+            "The registered version (%s) differs from the running application "
+            "(%s); the native update will repair it",
+            registration.display_version,
+            current_version,
+        )
+
+
+def _parent_identity(parent_pid: Optional[int]) -> Tuple[int, str, int]:
+    """``(pid, exe, creation time)`` of the app the commit must wait for."""
+    selected_parent_pid = int(
+        parent_pid if parent_pid is not None else os.getpid()
+    )
+    parent_exe, parent_creation_time = process_identity(selected_parent_pid)
+    if sys.platform == "win32" and (
+        not parent_exe or not parent_creation_time
+    ):
+        raise UpdateApplyError("Could not identify the running OpenWhisper process.")
+    return selected_parent_pid, parent_exe, parent_creation_time
+
+
+def _extract_verified_candidate(
+    archive_path: str,
+    candidate_dir: str,
+    manifest: Dict,
+    progress: ProgressCallback,
+    cancel,
+) -> None:
+    safe_extract_tar_xz(
+        archive_path,
+        candidate_dir,
+        manifest=manifest,
+        progress=progress,
+        cancel=cancel,
+    )
+    manifest_path = os.path.join(candidate_dir, MANIFEST_NAME)
+    if not os.path.isfile(manifest_path):
+        raise UpdateApplyError("The update package is missing its manifest.")
+    extracted_manifest = load_manifest(manifest_path)
+    if extracted_manifest != manifest:
+        raise UpdateApplyError("The extracted update manifest changed.")
+    verify_tree_against_manifest(candidate_dir, manifest)
+
+
+def _stage_updater_helper(app_dir: str, tx_dir: str) -> None:
+    """Copy the installed updater into the transaction; it runs from there."""
+    helper_src = os.path.join(app_dir, UPDATER_EXE_NAME)
+    if not os.path.isfile(helper_src):
+        raise UpdateApplyError("The updater helper is missing from this install.")
+    helper_copy = os.path.join(tx_dir, UPDATER_EXE_NAME)
+    shutil.copy2(helper_src, helper_copy)
+    with open(helper_copy, "rb+") as handle:
+        os.fsync(handle.fileno())
+
+
+def _discard_preparation(journal: Optional[UpdateJournal], tx_dir: str) -> None:
+    if journal is not None:
+        journal.state = TransactionState.ROLLED_BACK
+        try:
+            save_journal(journal)
+            _cleanup_transaction(journal)
+        except (OSError, UpdateApplyError):
+            logger.info("Interrupted preparation will be cleaned on next start", exc_info=True)
+    else:
+        shutil.rmtree(tx_dir, ignore_errors=True)
 
 
 def helper_exe_for(journal: UpdateJournal) -> str:
@@ -1436,6 +1565,32 @@ def parse_parent_pid(argv: Optional[List[str]] = None) -> Optional[int]:
     return pid if pid > 0 else None
 
 
+def _prune_transaction(name: str, appdata: Optional[str]) -> bool:
+    """Remove one finished or stale transaction; True when its directory is gone."""
+    try:
+        path = transaction_dir(name, appdata)
+        reject_reparse_chain(path, "Update transaction")
+        if not os.path.isdir(path):
+            return False
+        if not os.path.isfile(os.path.join(path, JOURNAL_NAME)):
+            # Legacy preparations had no journal until extraction ended.
+            # Keep recent entries in case an older app is still preparing.
+            if time.time() - os.path.getmtime(path) > _LEGACY_PREPARATION_KEEP_S:
+                shutil.rmtree(path)
+                return True
+            return False
+        journal = load_journal(name, appdata)
+        if journal.state not in {
+            TransactionState.HEALTHY, TransactionState.ROLLED_BACK,
+            TransactionState.SUPERSEDED,
+        }:
+            return False
+        _cleanup_transaction(journal)
+        return not os.path.exists(path)
+    except (OSError, UpdateApplyError, ValueError):
+        return False
+
+
 def prune_abandoned_transactions(appdata: Optional[str] = None) -> List[str]:
     gates = acquire_named_mutexes(UPDATE_MUTEX_NAMES, 0.0)
     if gates is None:
@@ -1447,29 +1602,8 @@ def prune_abandoned_transactions(appdata: Optional[str] = None) -> List[str]:
         if not os.path.isdir(tx_root):
             return removed
         for name in sorted(os.listdir(tx_root)):
-            try:
-                path = transaction_dir(name, appdata)
-                reject_reparse_chain(path, "Update transaction")
-                if not os.path.isdir(path):
-                    continue
-                if not os.path.isfile(os.path.join(path, JOURNAL_NAME)):
-                    # Legacy preparations had no journal until extraction ended.
-                    # Keep recent entries in case an older app is still preparing.
-                    if time.time() - os.path.getmtime(path) > 86400:
-                        shutil.rmtree(path)
-                        removed.append(name)
-                    continue
-                journal = load_journal(name, appdata)
-                if journal.state not in {
-                    TransactionState.HEALTHY, TransactionState.ROLLED_BACK,
-                    TransactionState.SUPERSEDED,
-                }:
-                    continue
-                _cleanup_transaction(journal)
-                if not os.path.exists(path):
-                    removed.append(name)
-            except (OSError, UpdateApplyError, ValueError):
-                continue
+            if _prune_transaction(name, appdata):
+                removed.append(name)
     except (OSError, UpdateApplyError):
         logger.info("Update cleanup will retry on next start", exc_info=True)
     finally:
@@ -2425,13 +2559,63 @@ def commit_prepared_update(
     if update_mutexes is None:
         release_mutex(setup_mutex)
         raise UpdateApplyError("Another update is already in progress.")
-    app_mutexes: Optional[List[int]] = None
-    launched_process = None
-    relaunch_old = False
-    destructive_started = False
-    health_confirmed = False
-    runonce_installed = False
+    attempt = _CommitAttempt(journal, hooks, registration, setup_mutex, update_mutexes)
     try:
+        return attempt.apply(
+            wait_parent=wait_parent,
+            launch=launch,
+            health_timeout_s=health_timeout_s,
+            parent_timeout_s=parent_timeout_s,
+        )
+    except Exception as exc:
+        attempt.roll_back(exc, launch=launch)
+        raise
+    finally:
+        release_mutexes(attempt.app_mutexes)
+        release_mutexes(attempt.update_mutexes)
+        release_mutex(attempt.setup_mutex)
+
+
+class _CommitAttempt:
+    """One commit of a prepared journal: the swap, its health check, and rollback.
+
+    Holds the gates and the progress flags that decide how far a failed
+    attempt must be undone.
+    """
+
+    def __init__(
+        self,
+        journal: UpdateJournal,
+        hooks: Dict[str, Callable],
+        registration: Optional[InstallRegistration],
+        setup_mutex,
+        update_mutexes: Optional[List[int]],
+    ) -> None:
+        self.journal = journal
+        self.hooks = hooks
+        self.registration = registration
+        self.setup_mutex = setup_mutex
+        self.update_mutexes = update_mutexes
+        self.app_mutexes: Optional[List[int]] = None
+        self.launched_process = None
+        self.relaunch_old = False
+        self.destructive_started = False
+        self.health_confirmed = False
+        self.runonce_installed = False
+
+    def _hook(self, name: str) -> None:
+        if name in self.hooks:
+            self.hooks[name](self.journal)
+
+    def apply(
+        self,
+        *,
+        wait_parent: bool,
+        launch: bool,
+        health_timeout_s: float,
+        parent_timeout_s: float,
+    ) -> str:
+        journal = self.journal
         logger.info(
             "Committing transaction %s: %s -> %s in %s (parent pid %s)",
             journal.transaction_id,
@@ -2444,58 +2628,15 @@ def commit_prepared_update(
         if journal.state != TransactionState.PREPARED:
             raise UpdateApplyError("The update transaction is not prepared.")
         if wait_parent:
-            try:
-                _wait_for_pid(
-                    journal.parent_pid,
-                    parent_timeout_s,
-                    expected_exe=journal.parent_exe,
-                    expected_creation_time=journal.parent_creation_time,
-                )
-            except UpdateApplyError as exc:
-                if not _force_close_pid(
-                    journal.parent_pid,
-                    expected_exe=journal.parent_exe,
-                    expected_creation_time=journal.parent_creation_time,
-                ):
-                    raise UpdateApplyError(_PARENT_STILL_RUNNING) from exc
-        app_mutexes = acquire_named_mutexes(APP_MUTEX_NAMES, parent_timeout_s)
-        if app_mutexes is None:
+            _wait_for_parent_exit(journal, parent_timeout_s)
+        self.app_mutexes = acquire_named_mutexes(APP_MUTEX_NAMES, parent_timeout_s)
+        if self.app_mutexes is None:
             raise UpdateApplyError(_PARENT_STILL_RUNNING)
         logger.info("The application has exited; checking the install")
-        if "after_parent_exit" in hooks:
-            hooks["after_parent_exit"](journal)
+        self._hook("after_parent_exit")
 
-        if registration is None:
-            registration = discover_install_registration()
-        if registration is None or registration.hive != "HKCU":
-            raise UpdateApplyError("The install registration is no longer valid.")
-        if not paths_equal(registration.install_location, journal.app_dir):
-            raise UpdateApplyError("The install location changed during the update.")
-        if is_process_elevated() or _is_under_program_files(journal.app_dir):
-            raise UpdateApplyError("Elevated installations must use the setup program.")
-        reject_reparse_chain(journal.app_dir, "Install directory")
-        old_exe = os.path.join(journal.app_dir, APP_EXE_NAME)
-        if (
-            not os.path.isfile(old_exe)
-            or file_sha256(old_exe) != journal.old_exe_sha256
-        ):
-            raise UpdateApplyError("The installed executable changed during the update.")
-        if os.path.lexists(journal.rollback_dir):
-            raise UpdateApplyError("A previous rollback tree is still on disk.")
-        if not os.path.isdir(journal.candidate_dir):
-            raise UpdateApplyError("The prepared update is missing.")
-        if registered_uninstaller_path(registration, journal.app_dir) is None:
-            raise UpdateApplyError("The registered uninstaller is missing.")
-        if not set(journal.uninstaller_files).issubset(
-            set(uninstaller_basenames(registration))
-        ):
-            raise UpdateApplyError("The compatibility-file list changed.")
-        if uninstaller_basenames(registration)[0] not in journal.uninstaller_files:
-            raise UpdateApplyError("The uninstaller was not preserved.")
-        if not set(journal.uninstaller_files).issubset(
-            set(journal.compatibility_files)
-        ):
-            raise UpdateApplyError("A preserved uninstaller file is unverified.")
+        self.registration = _commit_registration(journal, self.registration)
+        _check_install_unchanged(journal, self.registration)
         logger.info("Verifying the prepared tree")
         _verify_candidate_for_commit(journal)
 
@@ -2507,102 +2648,73 @@ def commit_prepared_update(
             f"{journal.transaction_id} {RECOVER_ARG}"
         )
         _set_runonce(recover_cmd)
-        runonce_installed = True
+        self.runonce_installed = True
 
         # Persist intent before each rename. Recovery reconciles the journal
         # with all three directory trees, so power loss in either gap is safe.
         journal.cleanup_rollback = True
         journal.state = TransactionState.OLD_MOVED
         save_journal(journal)
-        destructive_started = True
+        self.destructive_started = True
+        self._swap_trees()
+
+        new_exe = os.path.join(journal.app_dir, APP_EXE_NAME)
+        # The health-check app acquires the app mutexes itself. Update/setup
+        # mutexes remain held, blocking every ordinary launch and Inno.
+        release_mutexes(self.app_mutexes)
+        self.app_mutexes = None
+        if launch:
+            logger.info("Starting the new version for its health check")
+            self.launched_process = _launch_exe(
+                new_exe, [HEALTH_ARG, journal.health_token]
+            )
+            if not _wait_for_health(journal, health_timeout_s, process=self.launched_process):
+                raise UpdateApplyError(
+                    "The new version started but did not become ready."
+                )
+        else:
+            _write_health_token(journal)
+
+        self.health_confirmed = True
+        self._hook("before_finalize")
+        update_arp_after_success(journal, self.registration)
+        journal.state = TransactionState.HEALTHY
+        save_journal(journal)
+        _clear_runonce()
+        self.runonce_installed = False
+        _cleanup_transaction(journal)
+        logger.info("Update to %s is healthy", journal.new_version)
+        return TransactionState.HEALTHY
+
+    def _swap_trees(self) -> None:
+        """Move the installed tree aside, then the candidate into its place."""
+        journal = self.journal
         logger.info("Moving the installed version aside")
         _rename_dir(journal.app_dir, journal.rollback_dir)
-        if "after_old_moved" in hooks:
-            hooks["after_old_moved"](journal)
+        self._hook("after_old_moved")
 
         journal.state = TransactionState.NEW_ACTIVE
         save_journal(journal)
         logger.info("Moving the new version into place")
         _rename_dir(journal.candidate_dir, journal.app_dir)
-        if "after_new_active" in hooks:
-            hooks["after_new_active"](journal)
+        self._hook("after_new_active")
 
-        new_exe = os.path.join(journal.app_dir, APP_EXE_NAME)
-        # The health-check app acquires the app mutexes itself. Update/setup
-        # mutexes remain held, blocking every ordinary launch and Inno.
-        release_mutexes(app_mutexes)
-        app_mutexes = None
-        if launch:
-            logger.info("Starting the new version for its health check")
-            launched_process = _launch_exe(
-                new_exe, [HEALTH_ARG, journal.health_token]
-            )
-            if not _wait_for_health(journal, health_timeout_s, process=launched_process):
-                raise UpdateApplyError(
-                    "The new version started but did not become ready."
-                )
-        else:
-            target = health_path(journal.transaction_id, journal.appdata or None)
-            with open(target, "w", encoding="utf-8") as handle:
-                handle.write(journal.health_token)
-                handle.flush()
-                os.fsync(handle.fileno())
+    def roll_back(self, exc: Exception, *, launch: bool) -> None:
+        """Undo a failed commit; the caller re-raises ``exc`` afterwards.
 
-        health_confirmed = True
-        if "before_finalize" in hooks:
-            hooks["before_finalize"](journal)
-        update_arp_after_success(journal, registration)
-        journal.state = TransactionState.HEALTHY
-        save_journal(journal)
-        _clear_runonce()
-        runonce_installed = False
-        _cleanup_transaction(journal)
-        logger.info("Update to %s is healthy", journal.new_version)
-        return TransactionState.HEALTHY
-    except Exception as exc:
+        Raises :class:`UpdateApplyError` instead when the rollback fails too.
+        """
+        journal = self.journal
         logger.exception("The commit failed in state %s", journal.state)
-        if health_confirmed:
+        if self.health_confirmed:
             write_apply_error(
                 f"The new version is running, but update finalization failed: {exc}",
                 journal.appdata or None,
             )
-            raise
+            return
         rollback_error: Optional[Exception] = None
         try:
-            _terminate_process(launched_process)
-            # Only a restore needs the application lock. Failing before the
-            # first rename leaves the install untouched, and demanding the lock
-            # there turned "OpenWhisper is still running" into a second,
-            # alarming "rollback failed" for a transaction that never moved a
-            # single file.
-            if app_mutexes is None and destructive_started:
-                app_mutexes = acquire_named_mutexes(APP_MUTEX_NAMES, 30.0)
-                if app_mutexes is None:
-                    raise UpdateApplyError(
-                        "OpenWhisper stayed locked during rollback."
-                    )
-            if destructive_started:
-                _restore_rollback(journal)
-                from services.update_data import restore_data
-                restore_data(journal)
-                restore_arp_after_rollback(journal, registration)
-            else:
-                _verify_old_tree(journal.app_dir, journal)
-            if os.path.isdir(journal.candidate_dir):
-                shutil.rmtree(journal.candidate_dir, ignore_errors=True)
-            journal.state = TransactionState.ROLLED_BACK
-            save_journal(journal)
-            write_apply_error(str(exc), journal.appdata or None)
-            if runonce_installed:
-                _clear_runonce()
-                runonce_installed = False
-            # The journal is terminal either way: leaving the archive and the
-            # candidate tree behind costs the user a gigabyte per attempt.
-            _cleanup_transaction(journal, include_rollback=destructive_started)
-            relaunch_old = launch
-            logger.info(
-                "The install was left on %s", journal.old_version or "the old version"
-            )
+            self._restore_previous_install(exc, launch=launch)
         except Exception as rollback_exc:
             rollback_error = rollback_exc
             logger.exception("The rollback failed")
@@ -2610,19 +2722,18 @@ def commit_prepared_update(
                 f"{exc}\nRollback also failed: {rollback_exc}",
                 journal.appdata or None,
             )
-        if "after_rollback" in hooks:
-            hooks["after_rollback"](journal)
+        self._hook("after_rollback")
         # Release both gates before relaunching the ordinary old application.
-        release_mutexes(app_mutexes)
-        app_mutexes = None
-        release_mutexes(update_mutexes)
-        update_mutexes = None
-        release_mutex(setup_mutex)
-        setup_mutex = None
+        release_mutexes(self.app_mutexes)
+        self.app_mutexes = None
+        release_mutexes(self.update_mutexes)
+        self.update_mutexes = None
+        release_mutex(self.setup_mutex)
+        self.setup_mutex = None
         # An update that failed because the app never exited does not need a
         # second copy started behind the one the user is still looking at.
         app_still_running = any(mutex_exists(name) for name in APP_MUTEX_NAMES)
-        if relaunch_old and not app_still_running:
+        if self.relaunch_old and not app_still_running:
             old_exe = os.path.join(journal.app_dir, APP_EXE_NAME)
             if os.path.isfile(old_exe):
                 _launch_exe(old_exe, [])
@@ -2630,11 +2741,120 @@ def commit_prepared_update(
             raise UpdateApplyError(
                 f"{exc}; rollback failed: {rollback_error}"
             ) from rollback_error
-        raise
-    finally:
-        release_mutexes(app_mutexes)
-        release_mutexes(update_mutexes)
-        release_mutex(setup_mutex)
+
+    def _restore_previous_install(self, exc: Exception, *, launch: bool) -> None:
+        journal = self.journal
+        _terminate_process(self.launched_process)
+        # Only a restore needs the application lock. Failing before the
+        # first rename leaves the install untouched, and demanding the lock
+        # there turned "OpenWhisper is still running" into a second,
+        # alarming "rollback failed" for a transaction that never moved a
+        # single file.
+        if self.app_mutexes is None and self.destructive_started:
+            self.app_mutexes = acquire_named_mutexes(APP_MUTEX_NAMES, 30.0)
+            if self.app_mutexes is None:
+                raise UpdateApplyError(
+                    "OpenWhisper stayed locked during rollback."
+                )
+        if self.destructive_started:
+            _restore_rollback(journal)
+            from services.update_data import restore_data
+            restore_data(journal)
+            restore_arp_after_rollback(journal, self.registration)
+        else:
+            _verify_old_tree(journal.app_dir, journal)
+        if os.path.isdir(journal.candidate_dir):
+            shutil.rmtree(journal.candidate_dir, ignore_errors=True)
+        journal.state = TransactionState.ROLLED_BACK
+        save_journal(journal)
+        write_apply_error(str(exc), journal.appdata or None)
+        if self.runonce_installed:
+            _clear_runonce()
+            self.runonce_installed = False
+        # The journal is terminal either way: leaving the archive and the
+        # candidate tree behind costs the user a gigabyte per attempt.
+        _cleanup_transaction(journal, include_rollback=self.destructive_started)
+        self.relaunch_old = launch
+        logger.info(
+            "The install was left on %s", journal.old_version or "the old version"
+        )
+
+
+def _wait_for_parent_exit(journal: UpdateJournal, parent_timeout_s: float) -> None:
+    """Wait for the app that prepared the update, closing it if it hangs."""
+    try:
+        _wait_for_pid(
+            journal.parent_pid,
+            parent_timeout_s,
+            expected_exe=journal.parent_exe,
+            expected_creation_time=journal.parent_creation_time,
+        )
+    except UpdateApplyError as exc:
+        if not _force_close_pid(
+            journal.parent_pid,
+            expected_exe=journal.parent_exe,
+            expected_creation_time=journal.parent_creation_time,
+        ):
+            raise UpdateApplyError(_PARENT_STILL_RUNNING) from exc
+
+
+def _commit_registration(
+    journal: UpdateJournal, registration: Optional[InstallRegistration]
+) -> InstallRegistration:
+    """The HKCU registration that still describes this per-user install."""
+    if registration is None:
+        registration = discover_install_registration()
+    if registration is None or registration.hive != "HKCU":
+        raise UpdateApplyError("The install registration is no longer valid.")
+    if not paths_equal(registration.install_location, journal.app_dir):
+        raise UpdateApplyError("The install location changed during the update.")
+    if is_process_elevated() or _is_under_program_files(journal.app_dir):
+        raise UpdateApplyError("Elevated installations must use the setup program.")
+    return registration
+
+
+def _check_install_unchanged(
+    journal: UpdateJournal, registration: InstallRegistration
+) -> None:
+    """The install, its uninstaller, and the prepared trees are as prepared."""
+    reject_reparse_chain(journal.app_dir, "Install directory")
+    old_exe = os.path.join(journal.app_dir, APP_EXE_NAME)
+    if (
+        not os.path.isfile(old_exe)
+        or file_sha256(old_exe) != journal.old_exe_sha256
+    ):
+        raise UpdateApplyError("The installed executable changed during the update.")
+    if os.path.lexists(journal.rollback_dir):
+        raise UpdateApplyError("A previous rollback tree is still on disk.")
+    if not os.path.isdir(journal.candidate_dir):
+        raise UpdateApplyError("The prepared update is missing.")
+    if registered_uninstaller_path(registration, journal.app_dir) is None:
+        raise UpdateApplyError("The registered uninstaller is missing.")
+    _check_uninstaller_preserved(journal, registration)
+
+
+def _check_uninstaller_preserved(
+    journal: UpdateJournal, registration: InstallRegistration
+) -> None:
+    if not set(journal.uninstaller_files).issubset(
+        set(uninstaller_basenames(registration))
+    ):
+        raise UpdateApplyError("The compatibility-file list changed.")
+    if uninstaller_basenames(registration)[0] not in journal.uninstaller_files:
+        raise UpdateApplyError("The uninstaller was not preserved.")
+    if not set(journal.uninstaller_files).issubset(
+        set(journal.compatibility_files)
+    ):
+        raise UpdateApplyError("A preserved uninstaller file is unverified.")
+
+
+def _write_health_token(journal: UpdateJournal) -> None:
+    """Acknowledge health without launching (``launch=False`` commits)."""
+    target = health_path(journal.transaction_id, journal.appdata or None)
+    with open(target, "w", encoding="utf-8") as handle:
+        handle.write(journal.health_token)
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def recover_transaction(
@@ -2663,112 +2883,10 @@ def recover_transaction(
             TransactionState.SUPERSEDED, TransactionState.PREPARING,
             TransactionState.ROLLED_BACK,
         }:
-            if journal.state == TransactionState.PREPARING:
-                journal.state = TransactionState.SUPERSEDED
-            save_journal(journal)
-            clear_transaction_runonce(journal)
-            _cleanup_transaction(journal)
-            return journal.state
-        registration = registration or discover_install_registration()
-        if (
-            registration is None
-            or registration.hive != "HKCU"
-            or not paths_equal(registration.install_location, journal.app_dir)
-            or is_process_elevated()
-            or _is_under_program_files(journal.app_dir)
-        ):
-            raise UpdateApplyError("The install registration is no longer valid.")
-        expected_uninstaller = uninstaller_basenames(registration)
-        if (
-            not expected_uninstaller
-            or expected_uninstaller[0] not in journal.uninstaller_files
-        ):
-            raise UpdateApplyError("The rollback uninstaller is not bound.")
-        reject_reparse_chain(os.path.dirname(journal.app_dir), "Install parent")
-        for path in (
-            journal.app_dir,
-            journal.candidate_dir,
-            journal.rollback_dir,
-        ):
-            if os.path.lexists(path):
-                reject_reparse_chain(path, "Update tree")
-
-        if journal.state in {TransactionState.OLD_MOVED, TransactionState.NEW_ACTIVE}:
-            journal.cleanup_rollback = True
-            save_journal(journal)
-        app_exists = os.path.isdir(journal.app_dir)
-        candidate_exists = os.path.isdir(journal.candidate_dir)
-        rollback_exists = os.path.isdir(journal.rollback_dir)
-
-        rollback_valid = False
-        if rollback_exists:
-            _verify_old_tree(journal.rollback_dir, journal)
-            rollback_valid = True
-
-        active_is_new = False
-        active_is_old = False
-        if app_exists:
-            try:
-                _verify_update_tree(journal.app_dir, journal)
-                active_is_new = True
-            except (OSError, UpdateApplyError, ValueError, json.JSONDecodeError):
-                try:
-                    _verify_old_tree(journal.app_dir, journal)
-                    active_is_old = True
-                except (OSError, UpdateApplyError):
-                    pass
-
-        health_confirmed = (
-            journal.state == TransactionState.HEALTHY
-            or _health_file_matches(journal)
-        )
-        if active_is_new and health_confirmed:
-            update_arp_after_success(journal, registration)
-            journal.state = TransactionState.HEALTHY
-            save_journal(journal)
-            _clear_runonce()
-            _cleanup_transaction(journal)
-            relaunch = True
-            return journal.state
-
-        if active_is_old:
-            journal.cleanup_rollback = journal.cleanup_rollback or rollback_valid
-        elif rollback_valid:
-            active_exe = os.path.join(journal.app_dir, APP_EXE_NAME)
-            if os.path.isfile(active_exe) and file_sha256(active_exe) not in {
-                journal.old_exe_sha256, journal.new_exe_sha256,
-            }:
-                # Setup or another repair now owns this installation. An old
-                # recovery must not replace an executable it did not install.
-                journal.state = TransactionState.SUPERSEDED
-                journal.cleanup_rollback = True
-                save_journal(journal)
-                _clear_runonce()
-                _cleanup_transaction(journal)
-                return journal.state
-            _restore_rollback(journal)
-        else:
-            raise UpdateApplyError(
-                "The interrupted update has no validated rollback tree."
-            )
-
-        if candidate_exists and os.path.isdir(journal.candidate_dir):
-            shutil.rmtree(journal.candidate_dir, ignore_errors=True)
-        _verify_old_tree(journal.app_dir, journal)
-        if not health_confirmed:
-            from services.update_data import restore_data
-            restore_data(journal)
-        restore_arp_after_rollback(journal, registration)
-        journal.state = TransactionState.ROLLED_BACK
-        save_journal(journal)
-        write_apply_error(
-            "The previous update was interrupted and was rolled back.",
-            journal.appdata or None,
-        )
-        _clear_runonce()
-        _cleanup_transaction(journal)
-        relaunch = True
-        return journal.state
+            return _retire_unstarted_transaction(journal)
+        registration = _recovery_registration(journal, registration)
+        state, relaunch = _reconcile_interrupted_commit(journal, registration)
+        return state
     finally:
         release_mutexes(app_mutexes)
         release_mutexes(update_mutexes)
@@ -2777,6 +2895,144 @@ def recover_transaction(
             app_exe = os.path.join(journal.app_dir, APP_EXE_NAME)
             if os.path.isfile(app_exe):
                 _launch_exe(app_exe, [])
+
+
+def _retire_unstarted_transaction(journal: UpdateJournal) -> str:
+    """Close a journal that never moved a tree (or was already closed)."""
+    if journal.state == TransactionState.PREPARING:
+        journal.state = TransactionState.SUPERSEDED
+    save_journal(journal)
+    clear_transaction_runonce(journal)
+    _cleanup_transaction(journal)
+    return journal.state
+
+
+def _recovery_registration(
+    journal: UpdateJournal, registration: Optional[InstallRegistration]
+) -> InstallRegistration:
+    """The per-user registration bound to this journal, with reparse-free trees."""
+    registration = registration or discover_install_registration()
+    if (
+        registration is None
+        or registration.hive != "HKCU"
+        or not paths_equal(registration.install_location, journal.app_dir)
+        or is_process_elevated()
+        or _is_under_program_files(journal.app_dir)
+    ):
+        raise UpdateApplyError("The install registration is no longer valid.")
+    expected_uninstaller = uninstaller_basenames(registration)
+    if (
+        not expected_uninstaller
+        or expected_uninstaller[0] not in journal.uninstaller_files
+    ):
+        raise UpdateApplyError("The rollback uninstaller is not bound.")
+    reject_reparse_chain(os.path.dirname(journal.app_dir), "Install parent")
+    for path in (
+        journal.app_dir,
+        journal.candidate_dir,
+        journal.rollback_dir,
+    ):
+        if os.path.lexists(path):
+            reject_reparse_chain(path, "Update tree")
+    return registration
+
+
+def _classify_active_tree(journal: UpdateJournal) -> Tuple[bool, bool]:
+    """``(active_is_new, active_is_old)`` for the tree at the install path."""
+    try:
+        _verify_update_tree(journal.app_dir, journal)
+        return True, False
+    except (OSError, UpdateApplyError, ValueError, json.JSONDecodeError):
+        try:
+            _verify_old_tree(journal.app_dir, journal)
+            return False, True
+        except (OSError, UpdateApplyError):
+            return False, False
+
+
+def _reconcile_interrupted_commit(
+    journal: UpdateJournal, registration: InstallRegistration
+) -> Tuple[str, bool]:
+    """Finish or roll back a commit; returns ``(final state, relaunch the app)``."""
+    if journal.state in {TransactionState.OLD_MOVED, TransactionState.NEW_ACTIVE}:
+        journal.cleanup_rollback = True
+        save_journal(journal)
+    app_exists = os.path.isdir(journal.app_dir)
+    candidate_exists = os.path.isdir(journal.candidate_dir)
+    rollback_exists = os.path.isdir(journal.rollback_dir)
+
+    rollback_valid = False
+    if rollback_exists:
+        _verify_old_tree(journal.rollback_dir, journal)
+        rollback_valid = True
+
+    active_is_new, active_is_old = (
+        _classify_active_tree(journal) if app_exists else (False, False)
+    )
+
+    health_confirmed = (
+        journal.state == TransactionState.HEALTHY
+        or _health_file_matches(journal)
+    )
+    if active_is_new and health_confirmed:
+        update_arp_after_success(journal, registration)
+        journal.state = TransactionState.HEALTHY
+        save_journal(journal)
+        _clear_runonce()
+        _cleanup_transaction(journal)
+        return journal.state, True
+
+    if active_is_old:
+        journal.cleanup_rollback = journal.cleanup_rollback or rollback_valid
+    elif rollback_valid:
+        if _foreign_executable_installed(journal):
+            # Setup or another repair now owns this installation. An old
+            # recovery must not replace an executable it did not install.
+            journal.state = TransactionState.SUPERSEDED
+            journal.cleanup_rollback = True
+            save_journal(journal)
+            _clear_runonce()
+            _cleanup_transaction(journal)
+            return journal.state, False
+        _restore_rollback(journal)
+    else:
+        raise UpdateApplyError(
+            "The interrupted update has no validated rollback tree."
+        )
+
+    _finish_recovered_rollback(journal, registration, candidate_exists, health_confirmed)
+    return journal.state, True
+
+
+def _foreign_executable_installed(journal: UpdateJournal) -> bool:
+    """True when the active executable is neither the old nor the new release's."""
+    active_exe = os.path.join(journal.app_dir, APP_EXE_NAME)
+    return os.path.isfile(active_exe) and file_sha256(active_exe) not in {
+        journal.old_exe_sha256, journal.new_exe_sha256,
+    }
+
+
+def _finish_recovered_rollback(
+    journal: UpdateJournal,
+    registration: InstallRegistration,
+    candidate_exists: bool,
+    health_confirmed: bool,
+) -> None:
+    if candidate_exists and os.path.isdir(journal.candidate_dir):
+        shutil.rmtree(journal.candidate_dir, ignore_errors=True)
+    _verify_old_tree(journal.app_dir, journal)
+    if not health_confirmed:
+        from services.update_data import restore_data
+        restore_data(journal)
+    restore_arp_after_rollback(journal, registration)
+    journal.state = TransactionState.ROLLED_BACK
+    save_journal(journal)
+    write_apply_error(
+        "The previous update was interrupted and was rolled back.",
+        journal.appdata or None,
+    )
+    _clear_runonce()
+    _cleanup_transaction(journal)
 
 
 def native_message_box(message: str) -> None:
