@@ -34,14 +34,7 @@ def openai_transcribe(request: dict) -> dict:
     return {"text": response if isinstance(response, str) else response.text}
 
 
-def main():
-    port = int(os.environ.pop("OPENWHISPER_WORKER_PORT"))
-    token = os.environ.pop("OPENWHISPER_WORKER_TOKEN")
-    connection = socket.create_connection(("127.0.0.1", port), timeout=10.)
-    connection.sendall(token.encode("ascii"))
-    connection.settimeout(None)
-    protocol = connection.makefile("w", encoding="utf-8", buffering=1)
-    incoming = connection.makefile("r", encoding="utf-8")
+def _redirect_stdout_to_stderr() -> None:
     # Libraries that write progress to stdout must not corrupt protocol data.
     # A frozen GUI executable may have no standard Python streams at all.
     if sys.stderr is None:
@@ -52,66 +45,99 @@ def main():
     except OSError:
         pass
 
-    def watch_parent():
-        # A crashed parent cannot run cleanup. Stop even if the main worker
-        # thread is stuck in native inference or a network read at that time.
-        while True:
-            try:
-                readable, _, _ = select.select([connection], [], [], .5)
-                if readable and connection.recv(1, socket.MSG_PEEK) == b"":
-                    os._exit(0)
-            except OSError:
-                os._exit(0)
-            threading.Event().wait(.2)
 
-    threading.Thread(target=watch_parent, name="worker-parent-watch", daemon=True).start()
+def _watch_parent(connection: socket.socket) -> None:
+    # A crashed parent cannot run cleanup. Stop even if the main worker
+    # thread is stuck in native inference or a network read at that time.
+    while True:
+        try:
+            readable, _, _ = select.select([connection], [], [], .5)
+            if readable and connection.recv(1, socket.MSG_PEEK) == b"":
+                os._exit(0)
+        except OSError:
+            os._exit(0)
+        threading.Event().wait(.2)
+
+
+def _progress_writer(protocol, request: dict):
+    def progress(done, total):
+        protocol.write(json.dumps({"id": request["id"], "progress": [done, total]}) + "\n")
+        protocol.flush()
+
+    return progress
+
+
+def _load_whisper(request: dict):
+    from faster_whisper import WhisperModel
+    from services.whisper_sources import cached_model_path, is_custom_model, model_revision
+    name = request["model"]
+    path = name
+    if is_custom_model(name) or model_revision(name):
+        path = cached_model_path(name)
+    return WhisperModel(path, **request["options"])
+
+
+def _transcribe_whisper(model, request: dict) -> dict:
+    if model is None:
+        raise RuntimeError("Whisper model is not loaded")
+    audio = request["audio_path"]
+    if request.get("numpy_audio"):
+        import numpy as np
+        audio_path = audio
+        audio = np.load(audio_path, allow_pickle=False)
+        # Don't retain raw preview audio while native inference is
+        # running: a parent crash must not leave it on disk.
+        os.unlink(audio_path)
+    segments, info = model.transcribe(audio, **request["options"])
+    return {"segments": [{"text": s.text, "start": s.start, "end": s.end}
+                         for s in segments],
+            "info": {"language": info.language,
+                     "language_probability": info.language_probability}}
+
+
+def _run_operation(op, request: dict, model, protocol) -> dict:
+    """Every operation but ``whisper_load``, which replaces the worker's model."""
+    if op == "discover_whisper_models":
+        from services.whisper_sources import discover_hub_models_in_process
+        return {"models": discover_hub_models_in_process(
+            request["repo_id"], request.get("subfolder", ""))}
+    if op == "whisper_transcribe":
+        return _transcribe_whisper(model, request)
+    if op == "download_model":
+        from services.hf_access import _download_model_files_in_process
+        progress = _progress_writer(protocol, request)
+        return {"path": _download_model_files_in_process(request["model"], progress)}
+    if op == "openai_transcribe":
+        return openai_transcribe(request)
+    if op == "ping":
+        return {"ready": True}
+    raise ValueError("Unknown isolated worker operation")
+
+
+def main():
+    port = int(os.environ.pop("OPENWHISPER_WORKER_PORT"))
+    token = os.environ.pop("OPENWHISPER_WORKER_TOKEN")
+    connection = socket.create_connection(("127.0.0.1", port), timeout=10.)
+    connection.sendall(token.encode("ascii"))
+    connection.settimeout(None)
+    protocol = connection.makefile("w", encoding="utf-8", buffering=1)
+    incoming = connection.makefile("r", encoding="utf-8")
+    _redirect_stdout_to_stderr()
+
+    threading.Thread(
+        target=_watch_parent, args=(connection,), name="worker-parent-watch", daemon=True
+    ).start()
     model = None
     for line in incoming:
         request = {}
         try:
             request = json.loads(line)
-
-            def progress(done, total):
-                protocol.write(json.dumps({"id": request["id"], "progress": [done, total]}) + "\n")
-                protocol.flush()
-
             op = request["op"]
             if op == "whisper_load":
-                from faster_whisper import WhisperModel
-                from services.whisper_sources import cached_model_path, is_custom_model, model_revision
-                name = request["model"]
-                path = cached_model_path(name) if is_custom_model(name) or model_revision(name) else name
-                model = WhisperModel(path, **request["options"])
+                model = _load_whisper(request)
                 result = {}
-            elif op == "discover_whisper_models":
-                from services.whisper_sources import discover_hub_models_in_process
-                result = {"models": discover_hub_models_in_process(
-                    request["repo_id"], request.get("subfolder", ""))}
-            elif op == "whisper_transcribe":
-                if model is None:
-                    raise RuntimeError("Whisper model is not loaded")
-                audio = request["audio_path"]
-                if request.get("numpy_audio"):
-                    import numpy as np
-                    audio_path = audio
-                    audio = np.load(audio_path, allow_pickle=False)
-                    # Don't retain raw preview audio while native inference is
-                    # running: a parent crash must not leave it on disk.
-                    os.unlink(audio_path)
-                segments, info = model.transcribe(audio, **request["options"])
-                result = {"segments": [{"text": s.text, "start": s.start, "end": s.end}
-                                       for s in segments],
-                          "info": {"language": info.language,
-                                   "language_probability": info.language_probability}}
-            elif op == "download_model":
-                from services.hf_access import _download_model_files_in_process
-                result = {"path": _download_model_files_in_process(request["model"], progress)}
-            elif op == "openai_transcribe":
-                result = openai_transcribe(request)
-            elif op == "ping":
-                result = {"ready": True}
             else:
-                raise ValueError("Unknown isolated worker operation")
+                result = _run_operation(op, request, model, protocol)
             response = {"id": request["id"], "result": result}
         except Exception as exc:
             response = {"id": request.get("id"), "error": str(exc),
