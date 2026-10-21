@@ -11,7 +11,9 @@ local speech worker takes over stdin (services/local_asr/worker.py):
 answers once the model has loaded; the client then reconnects. Hosts from
 before model switching send no ``models`` and answer ``select_model`` with
 an unknown-operation error. A successful reply carries ``host_ms``, the time
-the host spent on the request, which older hosts leave out.
+the host spent on the request from receiving it, waiting for a work slot
+included, which older hosts leave out. Some older hosts started the clock
+after that wait, so their replies count it as network time.
 
 Opt-in model management is advertised only to authenticated clients as
 ``ready.capabilities.model_management`` (missing means unsupported).

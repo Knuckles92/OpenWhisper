@@ -7,6 +7,12 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Fixed
+- **Host Mode serves more paired computers at once** — each computer holds a connection for dictation and another for history, and a meeting adds one, so twelve shared slots filled at about six computers. Connections that hadn't said who they were also took those slots. Paired computers now share 32 slots, and connections still saying hello have their own 12, so neither can crowd out the other.
+- **Record uploads no longer hold up dictation on a shared host** — storing records used the same two work slots as transcription, so a computer backing up its history could make another computer's dictation wait or come back "busy". Records use the disk, not the speech engine, so they now go through without a work slot.
+- **Remote timing no longer counts the host's queue as network time** — the time a request waited for a work slot on the host showed up as network delay. The host now reports its time from when the request arrived.
+- **The host no longer keeps a lock for every record it has received** — locks for finished uploads now go away instead of piling up for as long as sharing stays on.
+
 ## [2.7.6] - 2026-10-18
 
 ### Changed
