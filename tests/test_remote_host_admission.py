@@ -51,7 +51,7 @@ def _wait_for(predicate, timeout=3):
     return predicate()
 
 
-def _host(tmp_path, *, connections=5, active=1, queued=1):
+def _host(tmp_path, *, connections=5, handshakes=5, active=1, queued=1, records=None):
     entries = []
     engine = _BlockingEngine()
 
@@ -62,13 +62,16 @@ def _host(tmp_path, *, connections=5, active=1, queued=1):
         engine_provider=lambda: engine,
         registry=DeviceRegistry(lambda: list(entries), save),
         identity=ensure_host_identity(str(tmp_path / "identity")),
+        records=records,
         max_connections=connections,
+        max_handshakes=handshakes,
         max_active_jobs=active,
         max_queued_jobs=queued,
     )
     host.start(port=0, bind="127.0.0.1")
     pairing = pair_with_host("127.0.0.1", host.port, host.open_pairing(), "laptop")
     assert _wait_for(lambda: host._connection_slots._value == connections)
+    assert _wait_for(lambda: host._handshake_slots._value == handshakes)
     return host, engine, pairing
 
 
@@ -110,6 +113,48 @@ def test_connection_cap_is_retryable_and_releases_after_disconnect(tmp_path):
             first.close()
         if second is not None:
             second.close()
+        engine.release.set()
+        host.stop()
+
+
+def test_a_connection_that_never_says_hello_leaves_paired_slots_free(tmp_path):
+    from services.remote_asr.client import _open, _quiet_close
+
+    host, engine, pairing = _host(tmp_path, connections=1, handshakes=2)
+    idle = paired = None
+    try:
+        idle = _open("127.0.0.1", host.port, 5)
+        assert _wait_for(lambda: host._handshake_slots._value == 1)
+
+        paired = _connection(host, pairing)
+        assert host._connection_slots._value == 0
+        assert _wait_for(lambda: host._handshake_slots._value == 1)
+    finally:
+        if idle is not None:
+            _quiet_close(idle)
+        if paired is not None:
+            paired.close()
+        engine.release.set()
+        host.stop()
+
+
+def test_paired_connections_return_their_handshake_slot(tmp_path):
+    from services.remote_asr.client import probe_host
+
+    host, engine, pairing = _host(tmp_path, connections=3, handshakes=1)
+    connections = []
+    try:
+        connections = [_connection(host, pairing) for _ in range(3)]
+        assert _wait_for(lambda: host._handshake_slots._value == 1)
+        assert probe_host("127.0.0.1", host.port, timeout=5).protocol
+
+        extra = RemoteConnection("127.0.0.1", host.port, pairing.token, pairing.fingerprint)
+        with pytest.raises(RemoteHostBusy):
+            extra.connect()
+        assert _wait_for(lambda: host._handshake_slots._value == 1)
+    finally:
+        for connection in connections:
+            connection.close()
         engine.release.set()
         host.stop()
 
@@ -212,6 +257,62 @@ def test_disconnected_queued_client_releases_its_slot(tmp_path):
         assert connections[2].request(
             "transcribe", audio=np.zeros(1600, dtype=np.float32)
         )["text"] == "job 2"
+    finally:
+        engine.release.set()
+        for connection in connections:
+            connection.close()
+        host.stop()
+
+
+def test_host_time_includes_waiting_for_a_work_slot(tmp_path):
+    host, engine, pairing = _host(tmp_path)
+    connections = []
+    results = {}
+    try:
+        connections = [_connection(host, pairing) for _ in range(2)]
+        first = threading.Thread(target=_request, args=(connections[0], results, "first"))
+        first.start()
+        assert engine.entered.wait(3)
+
+        def queued():
+            results["second"] = connections[1].request_timed(
+                "transcribe", audio=np.zeros(1600, dtype=np.float32), timeout=5,
+            )
+
+        second = threading.Thread(target=queued)
+        second.start()
+        assert _wait_for(lambda: len(host._work_admission._queue) == 1)
+        time.sleep(0.3)
+        engine.release.set()
+        first.join(5)
+        second.join(5)
+
+        result, host_s = results["second"]
+        assert result["text"] == "job 2"
+        assert host_s >= 0.3
+    finally:
+        engine.release.set()
+        for connection in connections:
+            connection.close()
+        host.stop()
+
+
+def test_record_transfers_do_not_wait_for_speech_work(tmp_path):
+    host, engine, pairing = _host(
+        tmp_path, active=1, queued=0, records=lambda op, header, payload, device: {"op": op},
+    )
+    connections = []
+    results = {}
+    try:
+        connections = [_connection(host, pairing) for _ in range(2)]
+        first = threading.Thread(target=_request, args=(connections[0], results, "first"))
+        first.start()
+        assert engine.entered.wait(3)
+
+        assert connections[1].request("records_list", timeout=5) == {"op": "records_list"}
+        with pytest.raises(RemoteRequestError) as refused:
+            connections[1].request("transcribe", audio=np.zeros(1600, dtype=np.float32))
+        assert refused.value.code == "busy"
     finally:
         engine.release.set()
         for connection in connections:

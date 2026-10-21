@@ -188,6 +188,15 @@ def test_host_mode_moves_an_entry_with_its_audio(host, client, tmp_path):
     assert client.list_remote("dictation") == []
 
 
+def test_a_finished_upload_leaves_no_record_lock_behind(host, client, tmp_path):
+    client.set_location("host")
+    _dictate(tmp_path)
+    client.run_once()
+
+    assert host.db.get_history_entries()
+    assert len(host.store._locks) == 0
+
+
 def test_both_mode_copies_and_a_delete_here_deletes_the_host_copy(host, client, tmp_path):
     from services.history_manager import history_manager
 
