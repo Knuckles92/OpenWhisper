@@ -37,10 +37,15 @@ PAIRING_TTL_S = 300.0
 #: Wrong codes allowed before the host closes pairing.
 MAX_PAIRING_FAILURES = 5
 PAIRING_CODE_DIGITS = 6
-#: A connection owns a server thread and may hold a history or speech stream.
-MAX_CLIENT_CONNECTIONS = 12
-#: Engine/model/record operations share a small fair work pool. Waiting work
-#: is bounded too, so one overloaded host cannot accumulate unbounded threads.
+#: Paired computers' open connections. Dictation and history hold one each and
+#: a meeting adds one; an idle connection costs a few threads and little memory.
+MAX_CLIENT_CONNECTIONS = 32
+#: Connections that haven't yet said who they are (hello, probe or pairing).
+#: Counted apart from paired ones, so they can't crowd paired computers out.
+MAX_PENDING_HANDSHAKES = 12
+#: Engine and model operations share a small fair work pool. Waiting work is
+#: bounded too, so one overloaded host cannot accumulate unbounded threads.
+#: Record transfers stay out of it: they use the disk, not the engine.
 MAX_ACTIVE_JOBS = 2
 MAX_QUEUED_JOBS = 4
 MAX_JOB_WAIT_S = 30.0
@@ -238,6 +243,23 @@ class _Client:
     since: float = 0.0
 
 
+class _Reservation:
+    """One slot of a semaphore, released at most once."""
+
+    def __init__(self, slots: threading.BoundedSemaphore) -> None:
+        self._slots = slots
+        self._held = False
+
+    def acquire(self) -> bool:
+        self._held = self._slots.acquire(blocking=False)
+        return self._held
+
+    def release(self) -> None:
+        if self._held:
+            self._held = False
+            self._slots.release()
+
+
 class _WorkAdmission:
     """FIFO admission for costly requests across all paired connections."""
 
@@ -358,6 +380,7 @@ class SpeechHost:
         mcp: Optional[Callable[[str, dict, str], dict]] = None,
         history=None,
         max_connections: int = MAX_CLIENT_CONNECTIONS,
+        max_handshakes: int = MAX_PENDING_HANDSHAKES,
         max_active_jobs: int = MAX_ACTIVE_JOBS,
         max_queued_jobs: int = MAX_QUEUED_JOBS,
     ):
@@ -393,6 +416,7 @@ class SpeechHost:
         self.discovery = discovery.DiscoveryResponder(self._discovery_info)
         self._clients: Dict[str, _Client] = {}
         self._connection_slots = threading.BoundedSemaphore(max(1, int(max_connections)))
+        self._handshake_slots = threading.BoundedSemaphore(max(1, int(max_handshakes)))
         self._work_admission = _WorkAdmission(
             max(1, int(max_active_jobs)), max(0, int(max_queued_jobs)), MAX_JOB_WAIT_S,
         )
@@ -638,22 +662,28 @@ class SpeechHost:
     def _send(ws, message: dict) -> None:
         ws.send(json.dumps(message, separators=(",", ":")))
 
+    def _refuse_busy(self, ws) -> None:
+        try:
+            self._send(ws, {"type": "error", "code": "busy",
+                            "message": "The host is busy. Try again shortly.",
+                            "retry_after_ms": 1000})
+            ws.close(protocol.CLOSE_BUSY, "host busy")
+        except Exception:
+            logger.debug("Could not send connection limit response", exc_info=True)
+
     def _handle(self, ws) -> None:
-        if not self._connection_slots.acquire(blocking=False):
-            try:
-                self._send(ws, {"type": "error", "code": "busy",
-                                "message": "The host is busy. Try again shortly.",
-                                "retry_after_ms": 1000})
-                ws.close(protocol.CLOSE_BUSY, "host busy")
-            except Exception:
-                logger.debug("Could not send connection limit response", exc_info=True)
+        # Every connection starts in a handshake slot; a paired computer's
+        # hello trades it for a long-lived connection slot (see _serve).
+        handshake = _Reservation(self._handshake_slots)
+        if not handshake.acquire():
+            self._refuse_busy(ws)
             return
         try:
-            self._handle_admitted(ws)
+            self._handle_admitted(ws, handshake)
         finally:
-            self._connection_slots.release()
+            handshake.release()
 
-    def _handle_admitted(self, ws) -> None:
+    def _handle_admitted(self, ws, handshake: _Reservation) -> None:
         peer = ws.remote_address
         address = str(peer[0]) if isinstance(peer, tuple) and peer else "unknown"
         message = self._receive_hello(ws)
@@ -675,7 +705,7 @@ class SpeechHost:
             })
             ws.close(protocol.CLOSE_BAD_REQUEST, "protocol version")
             return
-        self._route_hello(ws, message, address)
+        self._route_hello(ws, message, address, handshake)
 
     @staticmethod
     def _receive_hello(ws) -> Optional[dict]:
@@ -696,7 +726,7 @@ class SpeechHost:
             return None
         return message
 
-    def _route_hello(self, ws, message: dict, address: str) -> None:
+    def _route_hello(self, ws, message: dict, address: str, handshake: _Reservation) -> None:
         kind = message.get("type")
         if kind == "pair" and message.get("tailscale") is True:
             self._pair_tailscale(ws, message, address)
@@ -705,7 +735,7 @@ class SpeechHost:
         elif kind == "pair_request":
             self._pair_request(ws, message, address)
         elif kind == "hello":
-            self._serve(ws, message, address)
+            self._serve(ws, message, address, handshake)
         else:
             ws.close(protocol.CLOSE_BAD_REQUEST, "expected hello")
 
@@ -964,7 +994,7 @@ class SpeechHost:
             return "stopped"
         return "allowed" if request.decision else "denied"
 
-    def _serve(self, ws, message: dict, address: str) -> None:
+    def _serve(self, ws, message: dict, address: str, handshake: _Reservation) -> None:
         device = self.registry.authenticate(message.get("token"))
         if device is None:
             self._send(ws, {
@@ -974,6 +1004,17 @@ class SpeechHost:
             })
             ws.close(protocol.CLOSE_UNAUTHORIZED, "unauthorized")
             return
+        connection = _Reservation(self._connection_slots)
+        if not connection.acquire():
+            self._refuse_busy(ws)
+            return
+        handshake.release()
+        try:
+            self._serve_device(ws, message, address, device)
+        finally:
+            connection.release()
+
+    def _serve_device(self, ws, message: dict, address: str, device: dict) -> None:
         if message.get("purpose") == "history":
             self.history.serve(ws, device, message.get("token"), message.get("history_enabled"))
             return
@@ -1060,15 +1101,26 @@ class SpeechHost:
     def _dispatch(self, frame, engine: HostEngine, identity: tuple,
                   connection_id: str, streams: set, device_name: str = "",
                    device_id: str = "", ws=None) -> dict:
+        received = time.perf_counter()
+        reply = self._admit_and_dispatch(frame, engine, identity, connection_id, streams,
+                                         device_name, device_id, ws)
+        if "result" in reply:
+            # All of the time spent here, waiting for a work slot included,
+            # so the client doesn't count this host's queue as network time.
+            reply["host_ms"] = round((time.perf_counter() - received) * 1000, 1)
+        return reply
+
+    def _admit_and_dispatch(self, frame, engine: HostEngine, identity: tuple,
+                            connection_id: str, streams: set, device_name: str,
+                            device_id: str, ws) -> dict:
         try:
             header, payload = protocol.unpack_frame(frame)
         except protocol.ProtocolError as exc:
             return {"id": None, "error": str(exc), "code": "bad_request"}
         request_id = header.get("id")
         op = header.get("op")
-        costly = (op in ("transcribe", "stream", "select_model", "configure_runtime",
-                         "model_catalog", "download_model", "install_runtime")
-                  or isinstance(op, str) and op.startswith("records_"))
+        costly = op in ("transcribe", "stream", "select_model", "configure_runtime",
+                        "model_catalog", "download_model", "install_runtime")
         if costly:
             from websockets.protocol import State
 
@@ -1165,10 +1217,7 @@ class SpeechHost:
         finally:
             if decodes:
                 self._set_busy(connection_id, False)
-        # Time spent here, including any wait behind this computer's own
-        # dictation, so the client can tell it apart from the network's.
-        host_ms = round((time.perf_counter() - started) * 1000, 1)
-        return {"id": request_id, "result": result, "host_ms": host_ms}
+        return {"id": request_id, "result": result}
 
     def _manage_model_request(self, request_id, header: dict, device_name: str) -> dict:
         # Checked for EVERY request, not just hello: turning the setting off
