@@ -229,10 +229,13 @@ class Arrow:
         return _distance(self.start, self.end) >= MIN_DRAG
 
     def bounds(self) -> QRectF:
+        # From the parts, not the united outline: this runs on every drag step.
+        shaft, head = arrow_shapes(self.start, self.end, self.width)
+        grow = self.width / 2 + 3
         return (
-            arrow_outline(self.start, self.end, self.width)
-            .boundingRect()
-            .adjusted(-3, -3, 3, 4)
+            shaft.boundingRect()
+            .united(head.boundingRect())
+            .adjusted(-grow, -grow, grow, grow + 1)
         )
 
     def paint(self, painter: QPainter) -> None:
@@ -305,12 +308,11 @@ class Stroke:
         return bool(self.points)
 
     def bounds(self) -> QRectF:
+        # The smoothed curve never leaves the points' box, which is cheap to
+        # find on every drag step of a long stroke.
         grow = self.width / 2 + 3
-        return (
-            smooth_path(self.points)
-            .boundingRect()
-            .adjusted(-grow, -grow, grow, grow + 1)
-        )
+        box = QPolygonF(self.points).boundingRect()
+        return box.adjusted(-grow, -grow, grow, grow + 1)
 
     def paint(self, painter: QPainter) -> None:
         path = smooth_path(self.points)

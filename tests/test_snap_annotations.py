@@ -1,8 +1,8 @@
 """Snap's annotation model: undo and redo, step numbers, drafts and shapes."""
 
 import pytest
-from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QPointF, QRect, QRectF, Qt
+from PyQt6.QtGui import QColor, QImage, QPainter
 
 from ui_qt.snap.annotations import (
     HIGHLIGHTER_WIDTH,
@@ -182,3 +182,53 @@ def test_badge_ink_is_white_on_dark_fills_and_dark_on_amber():
         "Blue": True,
         "Green": True,
     }
+
+
+def _painted_rect(image: QImage) -> QRect:
+    """The box around every pixel with any alpha, on a premultiplied ARGB image."""
+    data = image.constBits().asstring(image.sizeInBytes())
+    stride = image.bytesPerLine()
+    rows = [
+        y
+        for y in range(image.height())
+        if any(data[y * stride + 3 : (y + 1) * stride : 4])
+    ]
+    columns = [
+        x
+        for x in range(image.width())
+        if any(data[x * 4 + 3 + y * stride] for y in rows)
+    ]
+    return QRect(
+        min(columns),
+        min(rows),
+        max(columns) - min(columns) + 1,
+        max(rows) - min(rows) + 1,
+    )
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        Arrow(QPointF(40, 120), QPointF(200, 60), CORAL),
+        Arrow(QPointF(200, 60), QPointF(40, 140), CORAL),
+        Box(QPointF(30, 30), QPointF(120, 90), CORAL),
+        Stroke(
+            [QPointF(30, 100), QPointF(60, 40), QPointF(90, 120), QPointF(140, 50)],
+            CORAL,
+        ),
+        Stroke([QPointF(30, 100), QPointF(160, 104)], CORAL, highlighter=True),
+        Step(QPointF(100, 100), 7, CORAL),
+        Label(QPointF(20, 20), "Click here first", CORAL),
+    ],
+    ids=["arrow", "arrow-back", "box", "pen", "highlighter", "step", "label"],
+)
+def test_marks_paint_inside_their_bounds(item):
+    # The overlay repaints only bounds() while drawing; ink outside it smears.
+    image = QImage(260, 200, QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    item.paint(painter)
+    painter.end()
+
+    assert item.bounds().adjusted(-1, -1, 1, 1).contains(QRectF(_painted_rect(image)))
