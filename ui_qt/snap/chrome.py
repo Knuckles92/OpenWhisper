@@ -144,23 +144,51 @@ class HintPill:
     GAP = 7
     KEY_PAD = 6
 
-    def __init__(self, hint: str, base_font: QFont, palette: Palette) -> None:
+    def __init__(
+        self, hint: str, base_font: QFont, palette: Palette, max_width: int = 0
+    ) -> None:
         self._palette = palette
         self._font = chrome_font(base_font, 12.5)
         self._key_font = chrome_font(base_font, 11.5, QFont.Weight.DemiBold)
-        metrics, key_metrics = QFontMetrics(self._font), QFontMetrics(self._key_font)
-        parts = ((("text", hint), ("dot", "·")) if hint.strip() else ()) + _KEY_HINT
-        self._pieces = [
-            _Piece(
-                kind,
-                text,
-                key_metrics.horizontalAdvance(text) + 2 * self.KEY_PAD
-                if kind == "key"
-                else metrics.horizontalAdvance(text),
+        keys = [self._piece(kind, text) for kind, text in _KEY_HINT]
+        self._pieces = self._hint_pieces(hint.strip(), keys, max_width) + keys
+        self._height = (
+            max(
+                QFontMetrics(self._font).height(),
+                QFontMetrics(self._key_font).height() + 4,
             )
-            for kind, text in parts
-        ]
-        self._height = max(metrics.height(), key_metrics.height() + 4) + 12
+            + 12
+        )
+
+    def _piece(self, kind: str, text: str) -> _Piece:
+        if kind == "key":
+            width = (
+                QFontMetrics(self._key_font).horizontalAdvance(text) + 2 * self.KEY_PAD
+            )
+        else:
+            width = QFontMetrics(self._font).horizontalAdvance(text)
+        return _Piece(kind, text, width)
+
+    def _hint_pieces(
+        self, hint: str, keys: list[_Piece], max_width: int
+    ) -> list[_Piece]:
+        """The caller's hint and a dot, cut short so the keys fit ``max_width``."""
+        if not hint:
+            return []
+        dot = self._piece("dot", "·")
+        used = (
+            2 * self.PAD_X
+            + dot.width
+            + sum(key.width + self.GAP for key in keys)
+            + self.GAP
+        )
+        room = max_width - used if max_width > 0 else 1 << 20
+        if room < 40:
+            return []
+        text = QFontMetrics(self._font).elidedText(
+            hint, Qt.TextElideMode.ElideRight, room
+        )
+        return [self._piece("text", text), dot]
 
     def size(self) -> QSize:
         width = sum(piece.width for piece in self._pieces) + self.GAP * (

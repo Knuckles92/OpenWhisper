@@ -148,6 +148,10 @@ class LabelEditor(QLineEdit):
         self.setPalette(palette)
         self._fit()
 
+    def refit(self) -> None:
+        """Size to the text again, now that the editor has its place."""
+        self._fit()
+
     def keyPressEvent(self, event: QKeyEvent) -> None:
         key = event.key()
         if key in _KEEP_KEYS:
@@ -167,12 +171,14 @@ class LabelEditor(QLineEdit):
         return False
 
     def _fit(self) -> None:
+        """Grow with the text, but never past the screen's right edge (it scrolls)."""
         self.ensurePolished()
         metrics = self.fontMetrics()
         text = self.text() or self.placeholderText()
+        width = round(metrics.horizontalAdvance(text) + 2 * LABEL_PAD_X + 8)
+        room = self.parentWidget().width() - self.x() - 8
         self.resize(
-            round(metrics.horizontalAdvance(text) + 2 * LABEL_PAD_X + 8),
-            round(metrics.height() + 2 * LABEL_PAD_Y + 2),
+            max(48, min(width, room)), round(metrics.height() + 2 * LABEL_PAD_Y + 2)
         )
 
 
@@ -192,7 +198,9 @@ class SnapOverlay(QWidget):
         self._screen = screen
         self._palette = current_palette()
         base_font = QGuiApplication.font()
-        self._hint = chrome.HintPill(hint, base_font, self._palette)
+        self._hint = chrome.HintPill(
+            hint, base_font, self._palette, self._canvas.width() - 2 * _HINT_EDGE
+        )
         self._badge_font = chrome.chrome_font(base_font, 11.5, QFont.Weight.DemiBold)
         self._phase = Phase.SELECT
         self._selection: QRect | None = None
@@ -541,6 +549,7 @@ class SnapOverlay(QWidget):
         editor.cancelled.connect(self._close_label)
         self._editor_pos = self._label_origin(local, editor.size())
         editor.move((QPointF(self._selection.topLeft()) + self._editor_pos).toPoint())
+        editor.refit()
         self._editor = editor
         editor.show()
         editor.setFocus(Qt.FocusReason.MouseFocusReason)

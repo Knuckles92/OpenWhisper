@@ -11,7 +11,9 @@ from PyQt6.QtWidgets import QApplication
 from ui_qt.snap import overlay as overlay_module
 from ui_qt.snap import support
 from ui_qt.snap.annotations import SWATCHES, Arrow, Box, Label, Step, Tool
+from ui_qt.snap.chrome import HintPill
 from ui_qt.snap.overlay import Phase, SnapOverlay, window_flags
+from ui_qt.utils.palette import DARK_PALETTE
 
 SIZE = (640, 400)
 
@@ -453,6 +455,16 @@ class TestLabels:
         assert editor.hasFocus()
         assert overlay.label_editor is editor
 
+    def test_a_long_label_stays_on_screen(self, make_overlay):
+        overlay = make_overlay()
+        _drag(overlay, (100, 50), (SIZE[0], 300))
+        overlay.set_tool(Tool.TEXT)
+        _click(overlay, SIZE[0] - 60, 150)
+
+        QTest.keyClicks(overlay.label_editor, "A rather long note " * 6)
+
+        assert overlay.label_editor.geometry().right() < SIZE[0]
+
     def test_undo_while_typing_discards_the_label(self, make_overlay):
         overlay = make_overlay()
         editor = self._start_label(overlay)
@@ -482,3 +494,24 @@ def test_window_flags_suit_each_desktop(monkeypatch, platform, wayland, kind, on
     assert flags & Qt.WindowType.WindowType_Mask == kind
     assert bool(flags & Qt.WindowType.FramelessWindowHint)
     assert bool(flags & Qt.WindowType.WindowStaysOnTopHint) is on_top
+
+
+class TestHintPill:
+    def test_a_long_hint_is_cut_short_so_the_keys_still_fit(self):
+        font = QApplication.font()
+        keys_only = HintPill("", font, DARK_PALETTE, 600).size().width()
+        short = HintPill("Snap 2", font, DARK_PALETTE, 600).size().width()
+        long = (
+            HintPill("Walkthrough step " * 40, font, DARK_PALETTE, 600).size().width()
+        )
+
+        assert keys_only < short < long <= 600
+
+    def test_without_room_for_the_hint_only_the_keys_show(self):
+        font = QApplication.font()
+        keys_only = HintPill("", font, DARK_PALETTE, 0).size().width()
+
+        assert (
+            HintPill("Walkthrough", font, DARK_PALETTE, keys_only + 10).size().width()
+            == keys_only
+        )
